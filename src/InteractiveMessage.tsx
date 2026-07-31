@@ -160,14 +160,13 @@ function isWidget(value: unknown): value is InteractiveWidget {
         && isText(item.id)
         && isText(item.label)
         && isFiniteNumber(item.value)
-        && item.value >= 0
         && (item.max === undefined || (isFiniteNumber(item.max) && item.max > 0))
         && isOptionalText(item.unit)
         && isOptionalText(item.detail));
   }
 
   if (value.type === "steps") {
-    return (value.current === undefined || (Number.isInteger(value.current) && Number(value.current) > 0))
+    return (value.current === undefined || (Number.isInteger(value.current) && Number(value.current) >= 0))
       && Array.isArray(value.steps)
       && value.steps.length > 0
       && value.steps.length <= 10
@@ -321,7 +320,7 @@ function BarsView({ widget }: { widget: BarsWidget }) {
   const initial = widget.items.find((item) => item.id === widget.defaultId)?.id || widget.items[0].id;
   const [selectedId, setSelectedId] = useState(initial);
   const selected = widget.items.find((item) => item.id === selectedId) || widget.items[0];
-  const commonMax = Math.max(1, ...widget.items.map((item) => item.max || item.value));
+  const commonMax = Math.max(1, ...widget.items.map((item) => item.max || Math.abs(item.value)));
 
   return (
     <section className="interactive-block interactive-bars">
@@ -329,7 +328,7 @@ function BarsView({ widget }: { widget: BarsWidget }) {
       <div className="bar-list">
         {widget.items.map((item) => {
           const max = item.max && item.max > 0 ? item.max : commonMax;
-          const width = Math.min(100, (item.value / max) * 100);
+          const width = Math.min(100, Math.max(0, (Math.abs(item.value) / max) * 100));
           const active = item.id === selected.id;
           return (
             <button
@@ -355,7 +354,7 @@ function BarsView({ widget }: { widget: BarsWidget }) {
 }
 
 function StepsView({ widget }: { widget: StepsWidget }) {
-  const initial = Math.min(widget.steps.length - 1, Math.max(0, (widget.current || 1) - 1));
+  const initial = Math.min(widget.steps.length - 1, Math.max(0, (widget.current ?? 1) - 1));
   const [current, setCurrent] = useState(initial);
   const step = widget.steps[current];
   const progress = ((current + 1) / widget.steps.length) * 100;

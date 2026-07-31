@@ -1661,6 +1661,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
     + "  2. slider：{\"type\":\"slider\",\"title\":\"参数模拟\",\"label\":\"专注时长\",\"min\":10,\"max\":90,\"step\":5,\"value\":40,\"unit\":\" 分钟\",\"feedback\":[{\"from\":10,\"label\":\"轻量\",\"description\":\"适合快速处理\"},{\"from\":45,\"label\":\"深入\",\"description\":\"适合复杂任务\"}]}\n"
     + "  3. bars：{\"type\":\"bars\",\"title\":\"数据对比\",\"defaultId\":\"a\",\"items\":[{\"id\":\"a\",\"label\":\"周一\",\"value\":42,\"max\":90,\"unit\":\" 分钟\",\"detail\":\"低于本周平均\"}]}\n"
     + "  4. steps：{\"type\":\"steps\",\"title\":\"办理步骤\",\"current\":1,\"steps\":[{\"label\":\"准备材料\",\"description\":\"收集所需文件\"},{\"label\":\"提交审核\",\"description\":\"核对后提交\"}]}\n"
+    + "- steps 的 current 表示当前进行到第几步，可省略或用 0，都会从第 1 步开始展示。\n"
     + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。",
   ];
   const goalLine = goal
