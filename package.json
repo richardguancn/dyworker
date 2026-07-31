@@ -1,0 +1,108 @@
+{
+  "name": "dyworker",
+  "productName": "DYWorker",
+  "desktopName": "dyworker.desktop",
+  "version": "0.1.16",
+  "description": "面向办公用户的本地 AI 工作助手",
+  "author": {
+    "name": "DYWorker Team",
+    "email": "support@dyworker.local"
+  },
+  "private": true,
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "concurrently -k \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on tcp:5173 && electron .\"",
+    "build": "tsc --noEmit && vite build",
+    "build:renderer": "tsc --noEmit && vite build",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "verify": "npm run build:renderer && npm test",
+    "test:packaged-renderer": "node --test tests/packaged-renderer.test.mjs",
+    "test:desktop": "node --test tests/desktop-contract.test.mjs",
+    "test:settings": "node --test tests/settings.test.mjs",
+    "test:skills": "node --test tests/skills.test.mjs",
+    "test:agent": "node --test tests/agent.test.mjs",
+    "test:channels": "node --test tests/channels.test.mjs",
+    "test:memory": "node --test tests/memory.test.mjs",
+    "package": "npm run verify && electron-builder --dir",
+    "package:mac": "npm run verify && electron-builder --mac dir",
+    "package:linux:arm64": "npm run verify && electron-builder --linux deb --arm64",
+    "package:windows:x64": "npm run verify && electron-builder --win --x64",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "weixin-clawbot": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "5.0.4",
+    "concurrently": "^9.1.2",
+    "electron": "^41.0.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.7.2",
+    "vite": "6.4.2",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "local.dyworker.app",
+    "productName": "DYWorker",
+    "asar": true,
+    "asarUnpack": [
+      "electron/scripts/linux_computer_use.py"
+    ],
+    "directories": {
+      "output": "output/electron",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/client/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dir"
+      ],
+      "icon": "build/dyworker.svg"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/dyworker.svg",
+      "artifactName": "dyworker-${version}-windows-${arch}-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "linux": {
+      "category": "Utility",
+      "target": [
+        "deb"
+      ],
+      "icon": "build/dyworker.svg",
+      "maintainer": "DYWorker Team <support@dyworker.local>",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "artifactName": "dyworker-${version}-${arch}.${ext}"
+    }
+  }
+}

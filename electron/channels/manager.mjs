@@ -1,0 +1,211 @@
+// 渠道管理层:协议适配器(QQ/微信)与 DyWork 任务引擎之间的胶水。
+// 职责:按设置启停渠道、状态广播、渠道聊天 ↔ 会话映射持久化、每聊天串行队列、
+// 审批/提问的 IM 侧决议路由(与桌面收件箱共用同一个决议入口)。
+// 本文件不依赖 electron,方便用 node --test 直接测试。
+
+import { randomUUID } from "node:crypto";
+import { createQqBotClient, parseApprovalReply } from "./qq-bot.mjs";
+import { createWechatChannel } from "./wechat.mjs";
+
+export const CHANNEL_IDS = ["qq", "wechat"];
+export const CHANNEL_LABELS = { qq: "QQ", wechat: "微信" };
+
+export function chatKeyOf(channel, chatId) {
+  return `${channel}:${chatId}`;
+}
+
+// 渠道消息里的特殊指令(不走 agent)
+const STOP_WORDS = new Set(["停止", "取消任务", "stop"]);
+
+export function createChannelManager({
+  readChats, // () => Promise<object>  持久化的 channel-chats 映射
+  writeChats, // (chats) => Promise<void>
+  onStatus = () => { }, // (statusMap) => void  广播给渲染端
+  onRunTask = async () => { }, // ({ channel, chat, text, chatRecord, queueLength }) => void  由 main 执行 agent
+  onResolvePending = async () => { }, // ({ chatRecord, pending, replyText }) => Promise<boolean>  IM 决议,返回是否命中
+  onSaveWechatCredentials = async () => { }, // 微信扫码成功后落盘凭据
+  defaultWorkspace = () => "", // 推导新渠道会话的工作区
+  createQqClient = createQqBotClient,
+  createWechat = createWechatChannel,
+} = {}) {
+  const adapters = new Map(); // channelId → adapter 实例
+  const statusMap = {
+    qq: { status: "disabled", detail: "" },
+    wechat: { status: "disabled", detail: "" },
+  };
+  const queues = new Map(); // chatKey → Promise(队尾)
+  const queueLengths = new Map(); // chatKey → 排队中的消息数
+  const pendingByChat = new Map(); // chatKey → { itemId, kind: "approval"|"question", options }
+  let chats = null; // chatKey → { sessionId, workspacePath, title, createdAt, updatedAt }
+
+  async function loadChats() {
+    if (!chats) {
+      const stored = await readChats();
+      chats = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    }
+    return chats;
+  }
+
+  async function chatRecordFor(message) {
+    const all = await loadChats();
+    const key = chatKeyOf(message.channel, message.chatId);
+    if (all[key]) return { key, record: all[key], created: false };
+    const label = CHANNEL_LABELS[message.channel] || message.channel;
+    all[key] = {
+      sessionId: randomUUID(),
+      workspacePath: defaultWorkspace(),
+      title: `${label}·${message.userName || message.chatId.slice(0, 12)}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeChats(all);
+    return { key, record: all[key], created: true };
+  }
+
+  async function touchChat(key) {
+    const all = await loadChats();
+    if (all[key]) {
+      all[key].updatedAt = new Date().toISOString();
+      await writeChats(all);
+    }
+  }
+
+  function emitStatus() {
+    onStatus(JSON.parse(JSON.stringify(statusMap)));
+  }
+
+  function handleAdapterStatus(event) {
+    const current = statusMap[event.channel] || {};
+    statusMap[event.channel] = { status: event.status, detail: event.detail || "", ...(event.qrUrl ? { qrUrl: event.qrUrl } : {}) };
+    if (event.status !== current.status || event.detail !== current.detail || event.qrUrl) emitStatus();
+  }
+
+  // 每聊天串行:同一聊天的任务排队执行,不同聊天共用全局 busy guard(由 main 侧仲裁)
+  function enqueue(key, task) {
+    const tail = queues.get(key) || Promise.resolve();
+    queueLengths.set(key, (queueLengths.get(key) || 0) + 1);
+    const next = tail.then(task, task);
+    queues.set(key, next);
+    void next.finally(() => {
+      queueLengths.set(key, Math.max(0, (queueLengths.get(key) || 1) - 1));
+      if (queues.get(key) === next) queues.delete(key);
+    });
+    return queueLengths.get(key);
+  }
+
+  async function handleInbound(message) {
+    const adapter = adapters.get(message.channel);
+    const reply = (text) => (adapter ? adapter.sendText(message, text) : Promise.resolve());
+    const { key, record, created } = await chatRecordFor(message);
+    // 1. 命中待决议(审批/提问)→ 直接决议,不进任务队列
+    const pending = pendingByChat.get(key);
+    if (pending) {
+      const handled = await onResolvePending({ channel: message.channel, chatRecord: record, pending, replyText: message.text });
+      if (handled) {
+        pendingByChat.delete(key);
+        await reply(pending.kind === "approval" ? "收到,已按您的决定继续执行。" : "收到,继续处理。").catch(() => { });
+        return;
+      }
+      // 不是有效决议回复 → 提示后仍按待决议等待(避免审批被新任务淹没)
+      await reply(pending.kind === "approval"
+        ? "请先回复「允许」或「拒绝」处理上面的审批;也可以到电脑端的审批收件箱处理。"
+        : "请先回复上面的问题(可回复选项序号),或到电脑端处理。").catch(() => { });
+      return;
+    }
+    // 2. 特殊指令
+    if (STOP_WORDS.has(message.text.trim().toLowerCase())) {
+      await reply("渠道任务暂不支持中途停止,请到电脑端停止。").catch(() => { });
+      return;
+    }
+    // 3. 正常任务:串行入队
+    const position = enqueue(key, async () => {
+      await touchChat(key);
+      await onRunTask({
+        channel: message.channel,
+        chat: message,
+        text: message.text,
+        chatRecord: record,
+        isNewChat: created,
+        reply,
+        registerPending: (pending) => pendingByChat.set(key, pending),
+        clearPending: () => pendingByChat.delete(key),
+      });
+    });
+    if (position > 1) {
+      await reply(`排队中,前面还有 ${position - 1} 个任务。`).catch(() => { });
+    }
+  }
+
+  function makeAdapter(channelId, config) {
+    if (channelId === "qq") {
+      return createQqClient({
+        appId: config.appId,
+        appSecret: config.appSecret,
+        onMessage: (message) => void handleInbound(message).catch(() => { }),
+        onStatus: handleAdapterStatus,
+      });
+    }
+    if (channelId === "wechat") {
+      return createWechat({
+        token: config.token,
+        userId: config.userId,
+        baseUrl: config.baseUrl,
+        onMessage: (message) => void handleInbound(message).catch(() => { }),
+        onStatus: handleAdapterStatus,
+        onLogin: onSaveWechatCredentials,
+      });
+    }
+    return null;
+  }
+
+  return {
+    // 按设置 diff 启停;settings.channels 形如 { qq: { enabled, appId, appSecret }, wechat: { enabled, token, userId, baseUrl } }
+    async reconcile(channelsConfig = {}) {
+      for (const channelId of CHANNEL_IDS) {
+        const config = channelsConfig[channelId] || {};
+        const existing = adapters.get(channelId);
+        if (!config.enabled) {
+          if (existing) {
+            adapters.delete(channelId);
+            await existing.stop().catch(() => { });
+          }
+          if (statusMap[channelId].status !== "disabled") {
+            statusMap[channelId] = { status: "disabled", detail: "" };
+            emitStatus();
+          }
+          continue;
+        }
+        // 启用:配置变化(凭据/账号)时重建适配器
+        const signature = JSON.stringify(config);
+        if (existing && existing._signature === signature) continue;
+        if (existing) {
+          adapters.delete(channelId);
+          await existing.stop().catch(() => { });
+        }
+        try {
+          const adapter = makeAdapter(channelId, config);
+          if (!adapter) continue;
+          adapter._signature = signature;
+          adapters.set(channelId, adapter);
+          await adapter.start();
+        } catch (error) {
+          statusMap[channelId] = { status: "error", detail: error instanceof Error ? error.message : String(error) };
+          emitStatus();
+        }
+      }
+    },
+
+    async stopAll() {
+      for (const adapter of adapters.values()) {
+        await adapter.stop().catch(() => { });
+      }
+      adapters.clear();
+    },
+
+    status: () => JSON.parse(JSON.stringify(statusMap)),
+    pendingCount: () => pendingByChat.size,
+    // 测试/调试钩子
+    _handleInbound: handleInbound,
+    _pendingByChat: pendingByChat,
+  };
+}

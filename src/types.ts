@@ -1,0 +1,381 @@
+export type Role = "user" | "assistant" | "system";
+
+export type ActivityKind =
+  | "thinking"
+  | "update_plan"
+  | "list_files"
+  | "read_file"
+  | "write_file"
+  | "edit_file"
+  | "make_directory"
+  | "append_file"
+  | "copy_file"
+  | "move_file"
+  | "delete_file"
+  | "find_files"
+  | "search_in_files"
+  | "get_datetime"
+  | "export_excel_workbook"
+  | "run_command"
+  | "save_memory"
+  | "search_history"
+  | "read_history_context"
+  | "list_skills"
+  | "load_skill"
+  | "save_skill"
+  | "update_skill"
+  | "web_search"
+  | "gov_search"
+  | "fetch_web_page"
+  | "scan_sensitive_info"
+  | "check_official_document"
+  | "dispatch_agent"
+  | "ask_user"
+  | "sleep_until"
+  | "finish";
+
+export interface ActivityRecord {
+  id: string;
+  kind: ActivityKind;
+  title: string;
+  detail?: string;
+  status: "running" | "success" | "error";
+}
+
+export interface ApprovalAction {
+  id: string;
+  kind: string;
+  title: string;
+  details: string;
+  suggestedRule?: StandingRuleSuggestion;
+}
+
+// 常驻允许规则(见 electron/agent.mjs matchStandingRule):审批卡片「始终允许」生成
+export interface StandingRuleSuggestion {
+  kind: "path-glob" | "domain" | "mcp-tool" | "command-prefix";
+  tool: string;
+  pattern: string;
+  label: string;
+}
+
+export interface StandingRule extends StandingRuleSuggestion {
+  id: string;
+  createdAt: string;
+}
+
+// 审批收件箱条目(见 electron/main.mjs createInboxItem):无人值守任务的审批/提问
+export interface InboxItem {
+  id: string;
+  kind: "approval" | "question";
+  sessionId: string;
+  scheduleId?: string;
+  tool?: string;
+  title?: string;
+  details?: string;
+  question?: string;
+  options?: string[];
+  createdAt: string;
+  status: "pending" | "resolved" | "expired";
+  resolution?: string;
+  resolvedAt?: string;
+}
+
+// ask_user 工具的提问请求(交互会话内联显示)
+export interface QuestionRequest {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+export interface PlanStep {
+  title: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface FileChange {
+  path: string;
+  added: number;
+  removed: number;
+  diff?: string;
+}
+
+export interface AgentResult {
+  status: "done" | "paused" | "cancelled" | "error" | "sleeping";
+  finalText: string;
+  reason?: string;
+  demo?: boolean;
+  wake?: { wakeAt: string; reason: string };
+  changes?: FileChange[];
+  plan?: PlanStep[];
+  memories?: Array<Omit<MemoryItem, "id" | "createdAt" | "workspacePath">>;
+}
+
+export interface DebugLogEntry {
+  id: string;
+  time: string;
+  kind: "model-request" | "model-response" | "tool-call" | "tool-result";
+  title: string;
+  content: string;
+}
+
+// 工具钩子规则(见 electron/agent.mjs evaluateHooks)
+export interface HookRule {
+  event?: string;
+  tool: string | string[];
+  path?: string;
+  command?: string;
+  action: "block" | "require_approval";
+  message?: string;
+}
+
+// 一次模型调用的 token 用量记录；estimated=true 表示端点未回 usage、为本地估算
+export interface UsageRecord {
+  time: string;
+  model: string;
+  prompt: number;
+  completion: number;
+  estimated: boolean;
+}
+
+export type ApprovalMode = "interactive" | "allow-writes" | "full-access" | "deny-changes";
+
+export type AgentEvent =
+  | { type: "activity"; activity: ActivityRecord }
+  | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string }
+  | { type: "assistant-text"; text: string }
+  | { type: "approval-request"; action: ApprovalAction }
+  | { type: "ask-user"; request: QuestionRequest }
+  | { type: "debug-log"; entry: DebugLogEntry }
+  | { type: "context-usage"; used: number; completion: number; total?: number; estimated: boolean }
+  | { type: "context-compacted" }
+  | { type: "token-usage"; model: string; prompt: number; completion: number; estimated: boolean }
+  | { type: "file-change"; changes: FileChange[] }
+  | { type: "plan-update"; steps: PlanStep[] }
+  | { type: "memory-saved"; item: Omit<MemoryItem, "id" | "createdAt" | "workspacePath"> }
+  | { type: "skill-saved"; item: { name: string; description: string; instructions: string } }
+  | { type: "skill-updated"; item: { id: string; name: string; description: string; instructions: string } }
+  | { type: "loop-state"; active: boolean; iteration: number; maximum: number; status: string }
+  | { type: "agent-finished"; result: AgentResult };
+
+export interface Attachment {
+  name: string;
+  path: string;
+  size: number;
+  mimeType: string;
+  isImage?: boolean;
+}
+
+export interface ChatMessage {
+  id?: string;
+  role: Role;
+  content: string;
+  // 引用技能时:content 含完整技能指令(发给模型),气泡只显示 displayContent + skillsUsed 标签
+  displayContent?: string;
+  skillsUsed?: string[];
+  createdAt: string;
+  attachments?: Attachment[];
+  activities?: ActivityRecord[];
+  changes?: FileChange[];
+  plan?: PlanStep[];
+  durationMs?: number;
+}
+
+export interface SessionRecord {
+  id: string;
+  title: string;
+  workspacePath: string;
+  // /goal 设定的长期目标：跨轮持续驱动，注入之后每个任务的系统提示
+  goal?: string;
+  // 来源渠道(QQ/微信消息驱动的会话),用于列表标识
+  channel?: "qq" | "wechat";
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+  contextTokens?: number;
+  contextTokensExact?: boolean;
+  contextModel?: string;
+  contextEndpoint?: string;
+  pinned?: boolean;
+  archived?: boolean;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  children?: WorkspaceEntry[];
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+}
+
+// 已保存的模型配置档案:切换服务商/模型时一键带入,密钥在 main 进程加密落盘
+export interface ModelProfile {
+  id: string;
+  name: string;
+  endpoint: string;
+  model: string;
+  apiKey: string;
+  transcriptionEndpoint?: string;
+  transcriptionModel?: string;
+}
+
+// IM 消息渠道配置(见 electron/channels/):QQ 官方机器人 / 微信 ClawBot
+// 微信登录凭据不进设置(主进程单独加密落盘),渲染端只持有开关
+// modelProfileId 为空 = 渠道任务跟随桌面端当前模型;否则固定使用某个模型档案
+// approvalMode:allow-writes(默认,搜索/读写自动放行,仅高危操作确认)/ interactive(严格,逐次确认)
+export interface ChannelsConfig {
+  qq: { enabled: boolean; appId: string; appSecret: string };
+  wechat: { enabled: boolean };
+  modelProfileId: string;
+  approvalMode: "allow-writes" | "interactive";
+}
+
+export type ChannelConnectionStatus = "disabled" | "connecting" | "awaiting-scan" | "online" | "error";
+
+export interface ChannelStatus {
+  status: ChannelConnectionStatus;
+  detail: string;
+  qrUrl?: string;
+}
+
+export type ChannelsStatusMap = Record<"qq" | "wechat", ChannelStatus>;
+
+export interface ProviderSettings {
+  endpoint: string;
+  model: string;
+  apiKey: string;
+  profiles: ModelProfile[];
+  transcriptionEndpoint: string;
+  transcriptionModel: string;
+  searxngEndpoint: string;
+  bochaApiKey: string;
+  domesticSearchOnly: boolean;
+  // 防止休眠:off 关闭 / tasks 仅任务运行期间 / always 始终唤醒(只阻止系统挂起,屏幕照常锁屏)
+  preventSleep: "off" | "tasks" | "always";
+  mcpServers: McpServerConfig[];
+  channels: ChannelsConfig;
+}
+
+export interface MemoryItem {
+  id: string;
+  category: string;
+  content: string;
+  kind: "preference" | "rule" | "taboo" | "fact" | "experience";
+  scope: "global" | "workspace";
+  workspacePath: string;
+  relation: "extends" | "refines" | "supersedes";
+  relatedMemoryId: string;
+  createdAt: string;
+}
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  enabled: boolean;
+  builtIn?: boolean;
+  source?: "builtin" | "saved" | "global" | "workspace";
+  sourceLabel?: string;
+  path?: string;
+  readOnly?: boolean;
+  createdAt: string;
+}
+
+export interface ScheduleRecord {
+  id: string;
+  name: string;
+  prompt: string;
+  workspacePath: string;
+  recurrence: "once" | "hourly" | "daily" | "weekly";
+  nextRun: string;
+  lastRun: string;
+  enabled: boolean;
+  allowWorkspaceWrites: boolean;
+  lastStatus: "" | "running" | "success" | "failed" | "sleeping";
+  lastSummary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DyworkerBridge {
+  getInitialState(): Promise<{
+    sessions: SessionRecord[];
+    workspacePath: string;
+    workspaceEntries: WorkspaceEntry[];
+    settings: ProviderSettings;
+    platform: string;
+  }>;
+  saveSessions(sessions: SessionRecord[]): Promise<{ ok: boolean; error?: string }>;
+  chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
+  chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
+  refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
+  openPath(path: string): Promise<{ ok: boolean; error?: string }>;
+  saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;
+  completeChat(payload: {
+    settings: ProviderSettings;
+    messages: ChatMessage[];
+  }): Promise<{ content: string; demo?: boolean }>;
+  sendTask(payload: {
+    settings: ProviderSettings;
+    workspacePath: string;
+    contextLimit?: number;
+    goal?: string;
+    messages: ChatMessage[];
+    loop?: { enabled: boolean; maximum: number };
+    approvalMode?: ApprovalMode;
+    sessionId?: string;
+  }): Promise<{ ok: boolean; result?: AgentResult; error?: string }>;
+  resolveApproval(actionId: string, approved: boolean): Promise<{ ok: boolean }>;
+  cancelTask(): Promise<{ ok: boolean }>;
+  onAgentEvent(callback: (event: AgentEvent) => void): () => void;
+  listMemories(): Promise<MemoryItem[]>;
+  listUsageStats(): Promise<UsageRecord[]>;
+  clearUsageStats(): Promise<{ ok: boolean }>;
+  listHooks(): Promise<{ builtin: HookRule[]; user: HookRule[]; userPath: string }>;
+  openUserHooks(): Promise<string>;
+  listRules(): Promise<StandingRule[]>;
+  addRule(rule: StandingRuleSuggestion): Promise<{ ok: boolean; error?: string; duplicated?: boolean }>;
+  deleteRule(id: string): Promise<{ ok: boolean }>;
+  openAuditLog(): Promise<string>;
+  listInbox(): Promise<InboxItem[]>;
+  resolveInbox(payload: { id: string; approved?: boolean; answer?: string }): Promise<{ ok: boolean; error?: string }>;
+  dismissInbox(id: string): Promise<{ ok: boolean; error?: string }>;
+  resolveQuestion(requestId: string, answer: string): Promise<{ ok: boolean }>;
+  onInboxChanged(callback: () => void): () => void;
+  deleteMemory(id: string): Promise<{ ok: boolean }>;
+  listSkills(workspacePath?: string): Promise<SkillRecord[]>;
+  setSkillEnabled(id: string, enabled: boolean, workspacePath?: string): Promise<{ ok: boolean }>;
+  deleteSkill(id: string): Promise<{ ok: boolean; error?: string }>;
+  listSchedules(): Promise<ScheduleRecord[]>;
+  saveSchedule(payload: Partial<ScheduleRecord>): Promise<{ ok: boolean; error?: string }>;
+  deleteSchedule(id: string): Promise<{ ok: boolean }>;
+  setScheduleEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }>;
+  triggerSchedule(id: string): Promise<{ ok: boolean; error?: string }>;
+  onSchedulesChanged(callback: () => void): () => void;
+  onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
+  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; messages: ChatMessage[] }) => void): () => void;
+  cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
+  getChannelsStatus(): Promise<ChannelsStatusMap>;
+  onChannelsStatus(callback: (statusMap: ChannelsStatusMap) => void): () => void;
+  transcribeAudio(payload: {
+    settings: ProviderSettings;
+    audio: number[];
+    mimeType: string;
+  }): Promise<{ text: string }>;
+  minimize(): Promise<void>;
+  toggleMaximize(): Promise<void>;
+  close(): Promise<void>;
+}
+
+declare global {
+  interface Window {
+    dyworker?: DyworkerBridge;
+  }
+}
