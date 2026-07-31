@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import zlib from "node:zlib";
 import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
@@ -53,6 +54,48 @@ async function makeWorkspace(files = {}) {
     await fs.writeFile(path.join(root, name), content, "utf8");
   }
   return root;
+}
+
+async function trySymlink(t, target, linkPath) {
+  try {
+    await fs.symlink(target, linkPath);
+    return true;
+  } catch (error) {
+    t.skip(`当前环境无法创建符号链接（${error.code || error.message}），跳过`);
+    return false;
+  }
+}
+
+function readZipEntry(buffer, entryName) {
+  let eocd = -1;
+  const min = Math.max(0, buffer.length - 65557);
+  for (let index = buffer.length - 22; index >= min; index--) {
+    if (buffer.readUInt32LE(index) === 0x06054b50) { eocd = index; break; }
+  }
+  assert.ok(eocd > 0, "docx 中未找到 zip 结束记录");
+  const entryCount = buffer.readUInt16LE(eocd + 10);
+  const dirOffset = buffer.readUInt32LE(eocd + 16);
+  let cursor = dirOffset;
+  for (let index = 0; index < entryCount; index++) {
+    const entry = cursor;
+    const nameLength = buffer.readUInt16LE(entry + 28);
+    const extraLength = buffer.readUInt16LE(entry + 30);
+    const commentLength = buffer.readUInt16LE(entry + 32);
+    const name = buffer.subarray(entry + 46, entry + 46 + nameLength).toString("utf8");
+    cursor = entry + 46 + nameLength + extraLength + commentLength;
+    if (name !== entryName) continue;
+    const method = buffer.readUInt16LE(entry + 10);
+    const compressedSize = buffer.readUInt32LE(entry + 20);
+    const localOffset = buffer.readUInt32LE(entry + 42);
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const start = localOffset + 30 + localNameLength + localExtraLength;
+    const data = buffer.subarray(start, start + compressedSize);
+    if (method === 0) return data.toString("utf8");
+    if (method === 8) return zlib.inflateRawSync(data).toString("utf8");
+    throw new Error(`不支持的 zip 压缩方式：${method}`);
+  }
+  throw new Error(`zip 中未找到条目：${entryName}`);
 }
 
 // scriptedMessages: 每次模型调用按顺序取一条；取尽后重复最后一条。
@@ -223,11 +266,11 @@ test("Workspace 的工作区外授权只在单次操作期间有效", async () =
   await assert.rejects(workspace.readFile(target), /必须先获得用户授权/);
 });
 
-test("工作区内软链接指向外部文件时同样要求授权", async () => {
+test("工作区内软链接指向外部文件时同样要求授权", async (t) => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "资料.txt": "软链接外部内容" });
   const link = path.join(root, "外部资料.txt");
-  await fs.symlink(path.join(outside, "资料.txt"), link);
+  if (!(await trySymlink(t, path.join(outside, "资料.txt"), link))) return;
   const workspace = new Workspace(root);
   assert.deepEqual(externalPathsForTool(workspace, "read_file", { path: "外部资料.txt" }), ["外部资料.txt"]);
   assert.deepEqual(externalPathsForTool(workspace, "run_command", { command: "cat 外部资料.txt" }), ["外部资料.txt"]);
@@ -237,10 +280,10 @@ test("工作区内软链接指向外部文件时同样要求授权", async () =>
   release();
 });
 
-test("以短横线开头的软链接指向外部文件时同样要求授权", async () => {
+test("以短横线开头的软链接指向外部文件时同样要求授权", async (t) => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "资料.txt": "短横线软链接外部内容" });
-  await fs.symlink(path.join(outside, "资料.txt"), path.join(root, "-外部资料"));
+  if (!(await trySymlink(t, path.join(outside, "资料.txt"), path.join(root, "-外部资料")))) return;
   const workspace = new Workspace(root);
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat -- -外部资料" }),
@@ -773,15 +816,13 @@ test("export_word_document 生成合法 docx（WPS 可打开）", async () => {
   });
   assert.equal(result.status, "done");
   const file = path.join(root, "通知.docx");
-  const header = await fs.readFile(file);
-  assert.equal(header.subarray(0, 2).toString(), "PK", "docx 应为 zip 容器");
-  const listing = await new Promise((resolve, reject) => {
-    execFile("python3", ["-c", `import zipfile,sys; z=zipfile.ZipFile(sys.argv[1]); print(z.read("word/document.xml").decode())`, file], (error, stdout) => error ? reject(error) : resolve(stdout));
-  });
-  assert.match(listing, /关于开展检查的通知/);
-  assert.match(listing, /方正小标宋简体/);
-  assert.match(listing, /仿宋_GB2312/);
-  assert.match(listing, /2026年7月24日/);
+  const buffer = await fs.readFile(file);
+  assert.equal(buffer.subarray(0, 2).toString(), "PK", "docx 应为 zip 容器");
+  const documentXml = readZipEntry(buffer, "word/document.xml");
+  assert.match(documentXml, /关于开展检查的通知/);
+  assert.match(documentXml, /方正小标宋简体/);
+  assert.match(documentXml, /仿宋_GB2312/);
+  assert.match(documentXml, /2026年7月24日/);
 });
 
 test("export_word_document 被规则要求审批时展示详情", async () => {

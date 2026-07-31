@@ -78,7 +78,7 @@ def sheet_xml(rows):
 
 
 def main():
-    payload = json.load(sys.stdin)
+    payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     sheets = payload.get("sheets") or []
     if not sheets:
         raise SystemExit("sheets 不能为空")

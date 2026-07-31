@@ -1,8 +1,8 @@
-# DYWorker：跑在你电脑上的 AI 工作助手，国产麒麟 V10 也能用
+# DYWorker：媲美ChatGPT/Codex的 AI 工作助手，国产麒麟 V10 也能用
 
 > 选中一个工作文件夹，告诉它你要什么，剩下的交给它：读资料、理内容、写文档、做表格，甚至在有风险的操作前先问你一句"确认吗？"
 
-【截图占位：DYWorker 主界面 —— 任务对话窗口】
+![DYWorker 主界面 —— 任务对话窗口](https://fastly.jsdelivr.net/gh/bucketio/img4@main/2026/07/31/1785507208850-05bd5b67-b5d5-4504-a9c1-84cf312b4584.png)
 
 ## 为什么又做一个 AI 助手？
 
@@ -20,17 +20,29 @@ DYWorker 就是冲着这三个痛点来的：一个**完全本地运行**的开�
 
 选择一个文件夹作为工作区，用自然语言描述目标。助手会自己拆解步骤、逐步执行，任务历史和工作区文件随时可浏览。
 
-【截图占位：任务对话 + 工作区文件浏览界面】
+![任务对话 + 工作区文件浏览界面](https://fastly.jsdelivr.net/gh/bucketio/img11@main/2026/07/31/1785507487214-938fd4de-0924-4305-9fc9-de80f82568a2.png)
 
 ### 📄 办公全家桶读写能力
 
 文本、PDF、Word、Excel、PPT 都能读；还能直接**创建和导出 Word 文档、Excel 表格**——不是给你一段文本让你自己贴，而是直接生成文件放进你的工作区。
 
-【截图占位：AI 生成 Excel 表格 / Word 文档的效果】
+![](https://fastly.jsdelivr.net/gh/bucketio/img0@main/2026/07/31/1785507683436-df708ef3-ecbd-48bf-b5b4-aa10b3939ca6.png)
+
+
+![生成的Word文档](https://fastly.jsdelivr.net/gh/bucketio/img10@main/2026/07/31/1785507864018-82a78fad-e17f-40a8-934c-f64fd1289f66.png)
+
+![生成的Excel文档](https://fastly.jsdelivr.net/gh/bucketio/img11@main/2026/07/31/1785507900991-4b7e1980-d457-48a0-95c1-a245796820dd.png)
+
+
+![支持类似Codex的可视化展示能力](https://fastly.jsdelivr.net/gh/bucketio/img16@main/2026/07/31/1785509508687-00d637f0-0a29-4168-afaf-d8a20aa82ce0.png)
 
 ### 🧠 长期记忆 + 工作模板
 
 告诉它一次"我们单位的公文格式要求"，它就记住了。记忆分偏好、规则、禁忌、事实、经验五类，可以全局通用，也可以只属某个工作区。常用任务还能沉淀为**工作模板**，下次一键复用。
+
+![刚才的对话中已经记了两条记忆](https://fastly.jsdelivr.net/gh/bucketio/img7@main/2026/07/31/1785507748444-777e484a-29a4-45a2-8660-b7446598a3f9.png)
+
+![支持Skills](https://fastly.jsdelivr.net/gh/bucketio/img3@main/2026/07/31/1785509547905-6161ddc3-621a-445e-9c5a-7d6def7985b7.png)
 
 ### ⏰ 计划任务与自动续跑
 
@@ -40,13 +52,19 @@ DYWorker 就是冲着这三个痛点来的：一个**完全本地运行**的开�
 
 兼容常见的 **OpenAI Chat Completions 接口**，支持多套模型配置自由切换——DeepSeek、通义、智谱，或是单位内网自建的模型服务，填上地址和密钥就能用。密钥通过**系统安全存储加密保存**，绝不明文落盘。
 
-【截图占位：设置页 - 模型服务配置】
+![支持主流的模型配置](https://fastly.jsdelivr.net/gh/bucketio/img4@main/2026/07/31/1785509652430-a4849bb8-f982-4748-955b-727b3669c52d.png)
 
 ### 💬 QQ / 微信消息渠道
 
-不在电脑前也没关系。DYWorker 支持接入 **QQ 官方机器人**和**微信 ClawBot**，手机上发消息就能远程派活、收结果。
+不在电脑前也没关系。DYWorker 支持接入 **QQ 官方机器人**和**微信 ClawBot**，手机上发消息就能远程派活、收结果。QQ机器人配置：https://q.qq.com/#/apps
 
-【截图占位：手机 QQ/微信 远程对话派任务】
+![QQ机器人配置](https://fastly.jsdelivr.net/gh/bucketio/img7@main/2026/07/31/1785509982421-1ce2f380-dac8-4279-b133-b3d015f8d6fb.png)
+
+![消息渠道接入QQ机器人](https://fastly.jsdelivr.net/gh/bucketio/img19@main/2026/07/31/1785510030973-30b667ab-b8a0-496a-b690-59db02cf003a.png)
+
+![QQ远程对话](https://fastly.jsdelivr.net/gh/bucketio/img9@main/2026/07/31/1785512245196-2bff12d4-9797-47fc-bed9-523305f5ad07.png)
+
+![QQ远程对话派任务](https://fastly.jsdelivr.net/gh/bucketio/img3@main/2026/07/31/1785511401791-aed9a4e0-d835-4ce6-b780-ce9eafd3cf80.png)
 
 ## 最大亮点：国产电脑开箱即用
 
@@ -63,13 +81,13 @@ npm ci
 npm run package:linux:arm64
 ```
 
-【截图占位：麒麟 V10 系统上运行的 DYWorker】
-
 ### ✅ 一键检查本机操控环境
 
 首次使用，在应用里执行"**检查并安装本机操控环境**"，助手会自动检测 xdotool、wmctrl、python3-pyatspi 等组件，缺什么装什么（安装前请求系统授权），不用自己折腾命令行。
 
-【截图占位：操控环境检查结果界面】
+![操作电脑](https://fastly.jsdelivr.net/gh/bucketio/img2@main/2026/07/31/1785512303595-8d6f03bb-829f-41ca-b54b-c8575f70df64.png)
+
+![浏览器打开网址](https://fastly.jsdelivr.net/gh/bucketio/img16@main/2026/07/31/1785512212919-bc2b585a-2d14-448d-ac6a-a2cd83217f17.png)
 
 ### ✅ 真正操作国产系统上的办公软件
 
@@ -88,9 +106,9 @@ npm run package:linux:arm64
 - 📋 **操作全程可审计**：文件、命令、联网、外部工具调用全部留痕；
 - 🏠 **数据不出本机**：密钥、登录凭据、任务数据只保存在本机用户数据目录。
 
-【截图占位：风险操作确认弹窗】
+![风险操作确认弹窗](https://fastly.jsdelivr.net/gh/bucketio/img8@main/2026/07/31/1785512443267-56681d8f-048d-4dc1-bcba-8b7dc74bf2a8.png)
 
-## 三分钟上手
+## 一分钟上手
 
 **环境要求**：Node.js 22+、npm 10+，支持 macOS、Windows 10/11、常见 Linux 桌面（含麒麟 V10）。
 
@@ -118,12 +136,11 @@ DYWorker 想做的事很简单：**让 AI 助手在每一台办公电脑上都�
 
 项目以 MIT 协议开源，欢迎试用、提 Issue、贡献代码。
 
-【截图占位：项目仓库首页 / Star 引导图】
+<QRCodeBlock url="https://github.com/richardguancn/dyworker" text="https://github.com/richardguancn/dyworker" size="150" />
+Github仓库地址：https://github.com/richardguancn/dyworker
 
-> 项目地址：【占位：填写仓库地址】
+> 项目地址：https://github.com/richardguancn/dyworker
 >
 > 如果你在麒麟 V10 或其他国产系统上试了，欢迎留言分享体验！
 
 ---
-
-*本文截图将陆续补充，占位符处为计划截图位置。*

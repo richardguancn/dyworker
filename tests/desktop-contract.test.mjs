@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const app = fs.readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const preload = fs.readFileSync(new URL("../electron/preload.cjs", import.meta.url), "utf8");
-const main = fs.readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8");
-const settingsStorage = fs.readFileSync(new URL("../electron/settings.mjs", import.meta.url), "utf8");
-const packageJson = fs.readFileSync(new URL("../package.json", import.meta.url), "utf8");
-const providers = fs.readFileSync(new URL("../src/providers.ts", import.meta.url), "utf8");
-const styles = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const html = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+// 统一读成 LF，避免 Windows 检出 CRLF 时多行正则失效。
+const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
+
+const app = readSource(new URL("../src/App.tsx", import.meta.url));
+const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
+const main = readSource(new URL("../electron/main.mjs", import.meta.url));
+const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
+const packageJson = readSource(new URL("../package.json", import.meta.url));
+const providers = readSource(new URL("../src/providers.ts", import.meta.url));
+const styles = readSource(new URL("../src/styles.css", import.meta.url));
+const html = readSource(new URL("../index.html", import.meta.url));
 
 test("desktop controls are connected across renderer, preload, and main process", () => {
   for (const action of ["chooseAttachments", "transcribeAudio"]) {
@@ -133,7 +137,7 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
 });
 
 test("codex alignment surfaces are wired end to end", () => {
-  const agent = fs.readFileSync(new URL("../electron/agent.mjs", import.meta.url), "utf8");
+  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
   // AGENTS.md 项目指令、edit_file 局部编辑、update_plan 计划、file-change 变更事件
   assert.match(agent, /loadProjectInstructions/);
   assert.match(agent, /AGENTS\.md/);
@@ -299,9 +303,9 @@ test("codex alignment surfaces are wired end to end", () => {
 });
 
 test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱/自我唤醒/留痕/审计)", () => {
-  const agent = fs.readFileSync(new URL("../electron/agent.mjs", import.meta.url), "utf8");
-  const risk = fs.readFileSync(new URL("../electron/risk.mjs", import.meta.url), "utf8");
-  const auditSource = fs.readFileSync(new URL("../electron/audit.mjs", import.meta.url), "utf8");
+  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
+  const risk = readSource(new URL("../electron/risk.mjs", import.meta.url));
+  const auditSource = readSource(new URL("../electron/audit.mjs", import.meta.url));
 
   // 1. 统一风险分级:risk.mjs 为单源,审批管线 evaluateApproval 驱动,approvalDecision 保持兼容包装
   assert.match(risk, /export const RISK/);
@@ -389,7 +393,7 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
 });
 
 test("技能引用消息只显示标签与正文,不回显完整提示词", () => {
-  const types = fs.readFileSync(new URL("../src/types.ts", import.meta.url), "utf8");
+  const types = readSource(new URL("../src/types.ts", import.meta.url));
   // 完整技能指令仍在 content 里发给模型;气泡只渲染 displayContent + 技能标签
   assert.match(types, /displayContent\?: string/);
   assert.match(types, /skillsUsed\?: string\[\]/);
@@ -403,10 +407,10 @@ test("技能引用消息只显示标签与正文,不回显完整提示词", () =
 });
 
 test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () => {
-  const qqBot = fs.readFileSync(new URL("../electron/channels/qq-bot.mjs", import.meta.url), "utf8");
-  const wechat = fs.readFileSync(new URL("../electron/channels/wechat.mjs", import.meta.url), "utf8");
-  const manager = fs.readFileSync(new URL("../electron/channels/manager.mjs", import.meta.url), "utf8");
-  const types = fs.readFileSync(new URL("../src/types.ts", import.meta.url), "utf8");
+  const qqBot = readSource(new URL("../electron/channels/qq-bot.mjs", import.meta.url));
+  const wechat = readSource(new URL("../electron/channels/wechat.mjs", import.meta.url));
+  const manager = readSource(new URL("../electron/channels/manager.mjs", import.meta.url));
+  const types = readSource(new URL("../src/types.ts", import.meta.url));
 
   // 1. QQ 官方机器人:手写协议(appSecret→token、gateway、WSS identify/心跳/resume)、归一化与出站切片
   assert.match(qqBot, /getAppAccessToken/);
@@ -492,6 +496,6 @@ test("main-process modules pass node --check syntax validation", async () => {
   const dir = new URL("../electron/", import.meta.url);
   for (const entry of fs.readdirSync(dir)) {
     if (!/\.(mjs|cjs)$/.test(entry)) continue;
-    execFileSync(process.execPath, ["--check", new URL(entry, dir).pathname], { stdio: "pipe" });
+    execFileSync(process.execPath, ["--check", fileURLToPath(new URL(entry, dir))], { stdio: "pipe" });
   }
 });

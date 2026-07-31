@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { build } from "esbuild";
+import { build, stop } from "esbuild";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -47,6 +47,8 @@ await build({
 const { parseInteractiveMessage } = await import(pathToFileURL(bundlePath).href);
 const require = createRequire(import.meta.url);
 const { renderMessage } = require(renderBundlePath);
+// 关闭 esbuild 常驻服务，避免 Windows 下测试结束后进程因残留句柄不退出。
+await stop();
 
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });

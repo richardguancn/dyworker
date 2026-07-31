@@ -70,7 +70,7 @@ def build_document(title, paragraphs):
 
 
 def main():
-    payload = json.load(sys.stdin)
+    payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     document = build_document(payload.get("title") or "", payload.get("paragraphs") or [])
     with zipfile.ZipFile(payload["path"], "w", zipfile.ZIP_DEFLATED) as docx:
         docx.writestr("[Content_Types].xml", CONTENT_TYPES)

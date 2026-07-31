@@ -71,6 +71,16 @@ function runProcess(program, args, timeoutMs, maxOutput, options = {}) {
   });
 }
 
+// Windows 上常见命令名是 python，macOS/Linux 是 python3；依次尝试直到能启动。
+async function runPython(args, timeoutMs, maxOutput, options = {}) {
+  const candidates = process.platform === "win32" ? ["python", "python3"] : ["python3", "python"];
+  for (const program of candidates) {
+    const result = await runProcess(program, args, timeoutMs, maxOutput, options);
+    if (result.ok || !result.output.startsWith("无法启动程序")) return result;
+  }
+  return { ok: false, output: `未找到 Python 运行环境（已尝试 ${candidates.join("、")}），请先安装 Python` };
+}
+
 export function isSafeRelativePath(relativePath) {
   const value = String(relativePath || "").trim();
   if (!value) return true; // 空路径表示工作区根目录
@@ -326,7 +336,7 @@ export class Workspace {
     const scriptSource = path.join(moduleDir, "scripts", "extract_office.py");
     const temporary = path.join(os.tmpdir(), `dyworker-office-${process.pid}.py`);
     await fs.copyFile(scriptSource, temporary);
-    const result = await runProcess("python3", [temporary, file], 60_000, READ_LIMIT);
+    const result = await runPython([temporary, file], 60_000, READ_LIMIT);
     if (!result.ok) throw new Error(`办公文档解析失败：${result.output}`);
     return result.output.trim() || "（文档中没有可提取的文字）";
   }
@@ -487,7 +497,10 @@ export class Workspace {
 
   runCommand(command) {
     return new Promise((resolve) => {
-      const child = spawn("/bin/bash", ["-lc", String(command)], { cwd: this.root });
+      const win32 = process.platform === "win32";
+      const program = win32 ? "cmd.exe" : "/bin/bash";
+      const args = win32 ? ["/d", "/s", "/c", String(command)] : ["-lc", String(command)];
+      const child = spawn(program, args, { cwd: this.root });
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -712,7 +725,7 @@ async function exportWordDocument(workspace, relativePath, title, content) {
   const temporary = path.join(os.tmpdir(), `dyworker-docx-${process.pid}.py`);
   await fs.copyFile(scriptSource, temporary);
   const paragraphs = String(content ?? "").split("\n");
-  const result = await runProcess("python3", [temporary], 60_000, 2000, {
+  const result = await runPython([temporary], 60_000, 2000, {
     input: JSON.stringify({ path: file, title: String(title || ""), paragraphs }),
   });
   if (!result.ok) throw new Error(`Word 导出失败：${result.output}`);
@@ -736,7 +749,7 @@ async function exportExcelWorkbook(workspace, relativePath, sheets) {
   const scriptSource = path.join(moduleDir, "scripts", "make_xlsx.py");
   const temporary = path.join(os.tmpdir(), `dyworker-xlsx-${process.pid}.py`);
   await fs.copyFile(scriptSource, temporary);
-  const result = await runProcess("python3", [temporary], 60_000, 2000, {
+  const result = await runPython([temporary], 60_000, 2000, {
     input: JSON.stringify({ path: file, sheets: normalized }),
   });
   if (!result.ok) throw new Error(`Excel 导出失败：${result.output}`);
@@ -1307,11 +1320,12 @@ function shellWords(command) {
   let current = "";
   let quote = "";
   let escaped = false;
+  const backslashEscapes = process.platform !== "win32";
   for (const character of String(command || "")) {
     if (escaped) {
       current += character;
       escaped = false;
-    } else if (character === "\\" && quote !== "'") {
+    } else if (character === "\\" && quote !== "'" && backslashEscapes) {
       escaped = true;
     } else if (quote) {
       if (character === quote) quote = "";
@@ -1333,12 +1347,14 @@ function shellWords(command) {
 function commandPathCandidates(command, workspace) {
   return shellWords(command)
     .map((word) => word.includes("=") ? word.slice(word.indexOf("=") + 1) : word)
-    .map((word) => word
-      .replace(/^~(?=\/|$)/, os.homedir())
-      .replace(/^\$HOME(?=\/|$)/, os.homedir())
-      .replace(/^\$\{HOME\}(?=\/|$)/, os.homedir())
-      .replace(/^\$PWD(?=\/|$)/, workspace.root)
-      .replace(/^\$\{PWD\}(?=\/|$)/, workspace.root))
+    .map((word) => {
+      if (/^~(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice(1));
+      if (/^\$HOME(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice("$HOME".length));
+      if (/^\$\{HOME\}(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice("${HOME}".length));
+      if (/^\$PWD(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("$PWD".length));
+      if (/^\$\{PWD\}(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("${PWD}".length));
+      return word;
+    })
     .filter(Boolean);
 }
 
