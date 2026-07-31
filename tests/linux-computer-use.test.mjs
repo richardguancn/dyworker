@@ -20,7 +20,15 @@ import {
   unpackedResourcePath,
 } from "../electron/linux-computer-use-server.mjs";
 
-test("解析麒麟 X11 窗口并保留应用名称与标题", () => {
+// 该文件全部为 Linux 桌面操控专项测试（依赖 X11、dpkg、/usr/bin/python3 等），
+// 非 Linux 平台整组跳过，避免 Windows 打包验证时误跑报错。
+const isLinux = process.platform === "linux";
+const linuxTest = (name, fn) => test(
+  name,
+  isLinux ? fn : { skip: `Linux 专项测试仅在 Linux 平台运行（当前平台 ${process.platform}）` },
+);
+
+linuxTest("解析麒麟 X11 窗口并保留应用名称与标题", () => {
   const windows = parseWmctrlOutput([
     "0x03e00007  0 host-name wps.wps        项目汇报.docx - WPS Office",
     "0x0460000a  0 host-name chromium.Chromium 政务服务 - Chromium",
@@ -33,7 +41,7 @@ test("解析麒麟 X11 窗口并保留应用名称与标题", () => {
   assert.equal(findBestWindow(windows, "chromium")?.id, "0x0460000a");
 });
 
-test("同一应用多个窗口时必须绑定明确窗口编号", () => {
+linuxTest("同一应用多个窗口时必须绑定明确窗口编号", () => {
   const windows = [
     { id: "0x01", desktop: "0", className: "wps.wps", title: "项目甲.docx - WPS Office" },
     { id: "0x02", desktop: "0", className: "wps.wps", title: "项目乙.docx - WPS Office" },
@@ -46,7 +54,7 @@ test("同一应用多个窗口时必须绑定明确窗口编号", () => {
   assert.throws(() => selectWindow(windows, "WPS", "0x02", "已关闭的文档.docx - WPS Office"), /标题已经变化/);
 });
 
-test("Linux 桌面服务提供与 macOS 一致的基础操作", () => {
+linuxTest("Linux 桌面服务提供与 macOS 一致的基础操作", () => {
   const names = desktopToolDefinitions().map((tool) => tool.name);
   assert.deepEqual(names, [
     "check_dependencies",
@@ -82,7 +90,7 @@ test("Linux 桌面服务提供与 macOS 一致的基础操作", () => {
   }
 });
 
-test("麒麟环境安装工具使用系统授权安装固定依赖", () => {
+linuxTest("麒麟环境安装工具使用系统授权安装固定依赖", () => {
   assert.deepEqual(linuxDependencyPackages, [
     "xdotool",
     "wmctrl",
@@ -95,7 +103,7 @@ test("麒麟环境安装工具使用系统授权安装固定依赖", () => {
   });
 });
 
-test("麒麟安装由受系统托管的单任务在软件锁内完成", async () => {
+linuxTest("麒麟安装由受系统托管的单任务在软件锁内完成", async () => {
   const source = await fs.readFile(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
     "utf8",
@@ -113,7 +121,7 @@ test("麒麟安装由受系统托管的单任务在软件锁内完成", async ()
   assert.match(source, /state: "plan_changed"/);
 });
 
-test("管理员任务拒绝普通用户拥有的同名程序", async () => {
+linuxTest("管理员任务拒绝普通用户拥有的同名程序", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-untrusted-system-tool-"));
   const fakeApt = path.join(root, "apt-get");
   await fs.writeFile(fakeApt, "#!/bin/sh\nexit 0");
@@ -122,7 +130,7 @@ test("管理员任务拒绝普通用户拥有的同名程序", async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test("系统原生软件锁在后台 worker 运行期间持续生效", async (t) => {
+linuxTest("系统原生软件锁在后台 worker 运行期间持续生效", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-package-lock-"));
   const lockFile = path.join(root, "dpkg-lock");
   const ready = path.join(root, "ready");
@@ -164,7 +172,7 @@ test("系统原生软件锁在后台 worker 运行期间持续生效", async (t)
   }
 });
 
-test("Linux 只截取目标应用窗口，不会退回上传整个桌面", async () => {
+linuxTest("Linux 只截取目标应用窗口，不会退回上传整个桌面", async () => {
   const source = await fs.readFile(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
     "utf8",
@@ -174,7 +182,7 @@ test("Linux 只截取目标应用窗口，不会退回上传整个桌面", async
   assert.doesNotMatch(source, /gnome-screenshot", \["-f", file\]/);
 });
 
-test("Linux 截图坐标换算为目标窗口坐标并阻止越界点击", () => {
+linuxTest("Linux 截图坐标换算为目标窗口坐标并阻止越界点击", () => {
   const geometry = parseXdotoolGeometry("WINDOW=123\nX=120\nY=80\nWIDTH=900\nHEIGHT=600\n");
   assert.deepEqual(geometry, { x: 120, y: 80, width: 900, height: 600 });
   assert.deepEqual(absoluteWindowPoint(geometry, 25, 30, "点击"), { x: 145, y: 110 });
@@ -182,7 +190,7 @@ test("Linux 截图坐标换算为目标窗口坐标并阻止越界点击", () =>
   assert.throws(() => absoluteWindowPoint(geometry, -1, 30, "点击"), /超出目标窗口范围/);
 });
 
-test("打包后 Python 无障碍助手从实际解包目录读取", () => {
+linuxTest("打包后 Python 无障碍助手从实际解包目录读取", () => {
   assert.equal(
     unpackedResourcePath("/opt/DYWorker/resources/app.asar/electron/scripts/linux_computer_use.py"),
     "/opt/DYWorker/resources/app.asar.unpacked/electron/scripts/linux_computer_use.py",
@@ -193,7 +201,7 @@ test("打包后 Python 无障碍助手从实际解包目录读取", () => {
   );
 });
 
-test("Linux 无障碍树只读取已绑定的具体窗口", async () => {
+linuxTest("Linux 无障碍树只读取已绑定的具体窗口", async () => {
   const helper = await fs.readFile(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "scripts", "linux_computer_use.py"),
     "utf8",
@@ -205,7 +213,7 @@ test("Linux 无障碍树只读取已绑定的具体窗口", async () => {
   assert.doesNotMatch(helper, /element_at\(application,/);
 });
 
-test("Linux 桌面服务可通过 DYWorker 的基础工具通道完成握手", async () => {
+linuxTest("Linux 桌面服务可通过 DYWorker 的基础工具通道完成握手", async () => {
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
   const client = new McpClient({ command: process.execPath, args: [server] });
   await client.connect();
@@ -217,7 +225,7 @@ test("Linux 桌面服务可通过 DYWorker 的基础工具通道完成握手", a
   await client.close();
 });
 
-test("Linux 桌面服务把麒麟窗口转换为模型可读的应用列表", async () => {
+linuxTest("Linux 桌面服务把麒麟窗口转换为模型可读的应用列表", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-linux-cua-"));
   const wmctrl = path.join(root, "wmctrl");
   await fs.writeFile(wmctrl, [
@@ -240,7 +248,7 @@ test("Linux 桌面服务把麒麟窗口转换为模型可读的应用列表", as
   await fs.rm(root, { recursive: true, force: true });
 });
 
-test("Linux 安装工具获得系统授权后执行固定安装并重新检查", async (t) => {
+linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检查", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-linux-install-"));
   const marker = path.join(root, "installed");
   const log = path.join(root, "install.log");
@@ -325,7 +333,7 @@ test("Linux 安装工具获得系统授权后执行固定安装并重新检查",
   assert.match(authorization, /\/var\/lib\/dpkg\/lock-frontend/);
 });
 
-test("关闭聊天后系统后台安装继续，重新连接可以检查结果", async (t) => {
+linuxTest("关闭聊天后系统后台安装继续，重新连接可以检查结果", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-linux-install-resume-"));
   const marker = path.join(root, "installed");
   const scripts = {
@@ -403,7 +411,7 @@ test("关闭聊天后系统后台安装继续，重新连接可以检查结果",
   assert.match(checked.text, /环境已准备完成/);
 });
 
-test("管理员级安装计划发生变化时停止安装", async (t) => {
+linuxTest("管理员级安装计划发生变化时停止安装", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-linux-plan-change-"));
   const counter = path.join(root, "plan-count");
   const installed = path.join(root, "installed");

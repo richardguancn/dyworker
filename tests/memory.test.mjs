@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import {
   buildMemoryRecord,
@@ -151,7 +152,7 @@ test("新记录根据作用范围绑定当前工作区", () => {
     content: "发布前必须完成测试",
     kind: "rule",
     scope: "workspace",
-    workspacePath: "/work/a",
+    workspacePath: path.normalize("/work/a"),
     relation: "extends",
     relatedMemoryId: "",
     createdAt: "2026-07-27T00:00:00.000Z",
@@ -169,5 +170,5 @@ test("根目录工作区不会被误降级为全局记忆", () => {
   }]);
 
   assert.equal(memory.scope, "workspace");
-  assert.equal(memory.workspacePath, "/");
+  assert.equal(memory.workspacePath, path.normalize("/"));
 });
