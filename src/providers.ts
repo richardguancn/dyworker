@@ -11,8 +11,8 @@ export interface ProviderPreset {
 
 export const providerPresets: ProviderPreset[] = [
   {
-    id: "deepseek-responses",
-    name: "DeepSeek V4（Responses API）",
+    id: "deepseek",
+    name: "DeepSeek（深度求索）",
     endpoint: "https://api.deepseek.com/responses",
     models: ["deepseek-v4-flash"],
     defaultModel: "deepseek-v4-flash",
@@ -21,8 +21,8 @@ export const providerPresets: ProviderPreset[] = [
     defaultContextLimit: 1048576,
   },
   {
-    id: "deepseek",
-    name: "DeepSeek V3（Chat Completions）",
+    id: "deepseek-v3",
+    name: "DeepSeek V3（旧版接口）",
     endpoint: "https://api.deepseek.com/v1/chat/completions",
     models: ["deepseek-chat", "deepseek-reasoner"],
     defaultModel: "deepseek-chat",

@@ -1556,7 +1556,7 @@ function SettingsDialog({
           服务地址
           <input
             value={draft.endpoint}
-            placeholder={providerId === "deepseek-responses" ? "https://api.deepseek.com/responses" : "https://api.example.com/v1/chat/completions"}
+            placeholder={providerId === "deepseek" ? "https://api.deepseek.com/responses" : "https://api.example.com/v1/chat/completions"}
             onChange={(event) => applyEndpoint(event.target.value)}
           />
         </label>
