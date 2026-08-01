@@ -279,6 +279,7 @@ export interface MemoryItem {
   relation: "extends" | "refines" | "supersedes";
   relatedMemoryId: string;
   createdAt: string;
+  builtIn?: boolean;
 }
 
 export interface SkillRecord {

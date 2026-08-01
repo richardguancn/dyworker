@@ -2,12 +2,76 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import {
+  builtinMemories,
   buildMemoryRecord,
   extractExplicitMemoryInstruction,
   extractExplicitMemoryInstructions,
+  isBuiltinMemoryId,
+  mergeBuiltinMemories,
   normalizeMemories,
   selectRelevantMemories,
 } from "../electron/memory.mjs";
+
+test("新安装会自动获得只读的模型能力认知", () => {
+  const memories = mergeBuiltinMemories([]);
+
+  assert.equal(memories.length, builtinMemories.length);
+  assert.ok(memories.length >= 3);
+  assert.ok(memories.every((item) => item.builtIn === true && item.scope === "global"));
+  assert.ok(memories.some((item) => /Kimi K3/.test(item.content) && /定制化看板/.test(item.content) && /同花顺/.test(item.content) && /天眼查/.test(item.content)));
+  assert.ok(memories.some((item) => /DeepSeek V4 Flash/.test(item.content) && /GLM-5\.2/.test(item.content)));
+  assert.ok(memories.some((item) => /模型能力/.test(item.content) && /产品能力/.test(item.content) && /官方资料/.test(item.content)));
+});
+
+test("升级和重复启动会保留用户记忆且不会复制内置认知", () => {
+  const saved = {
+    id: "saved-user-rule",
+    category: "用户偏好",
+    content: "汇报保持简洁",
+    kind: "preference",
+    scope: "global",
+  };
+  const duplicatedBuiltin = { ...builtinMemories[0], builtIn: false };
+
+  const once = mergeBuiltinMemories([saved, duplicatedBuiltin]);
+  const twice = mergeBuiltinMemories(once);
+
+  assert.equal(once.filter((item) => item.id === saved.id).length, 1);
+  assert.equal(once.filter((item) => item.content === builtinMemories[0].content).length, 1);
+  assert.deepEqual(twice, once);
+});
+
+test("只有固定清单中的记忆才具有内置只读身份", () => {
+  const forged = {
+    id: "builtin-user-note",
+    category: "用户偏好",
+    content: "这仍然是用户自己的记忆",
+    kind: "preference",
+    scope: "global",
+    builtIn: true,
+  };
+  const merged = mergeBuiltinMemories([forged]);
+  const restored = merged.find((item) => item.id === forged.id);
+
+  assert.equal(restored?.builtIn, undefined);
+  assert.equal(isBuiltinMemoryId(builtinMemories[0].id), true);
+  assert.equal(isBuiltinMemoryId(forged.id), false);
+});
+
+test("模型认知只在相关任务中注入，不会挤占无关任务的记忆", () => {
+  const memories = mergeBuiltinMemories([]);
+  const related = selectRelevantMemories(memories, {
+    query: "比较 Kimi K3、K2.7、DeepSeek V4 Flash、V4 Pro 和 GLM-5.2，选择适合开发的模型",
+    limit: 5,
+  });
+  const unrelated = selectRelevantMemories(memories, {
+    query: "根据会议记录整理一份会议纪要",
+    limit: 5,
+  });
+
+  assert.deepEqual(new Set(related.map((item) => item.id)), new Set(builtinMemories.map((item) => item.id)));
+  assert.deepEqual(unrelated, []);
+});
 
 test("用户明确要求记住时提取稳定内容，普通讨论不会误存", () => {
   assert.deepEqual(

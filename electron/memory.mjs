@@ -4,6 +4,61 @@ export const memoryKinds = ["preference", "rule", "taboo", "fact", "experience"]
 export const memoryScopes = ["global", "workspace"];
 export const memoryRelations = ["extends", "refines", "supersedes"];
 
+// 随应用发布的只读认知，不写入用户的 memory.json。涉及会变化的模型资料时注明核对日期，
+// 并用长期规则要求执行前复核官方资料，避免把快照当成永久事实。
+export const builtinMemories = [
+  {
+    id: "builtin-model-kimi-product-2026-08-01",
+    category: "模型能力",
+    content: "截至 2026-08-01，Kimi 完整产品围绕 Kimi K3 提供定制化看板、小组件任务、定时任务、目标模式、多 Agent 并行与集群、Kimi Claw、精选插件、同花顺和天眼查等专业数据库，以及制作并发布带数据库的网站；具体可用范围和额度受产品版本及会员档位限制。",
+    kind: "fact",
+    scope: "global",
+    workspacePath: "",
+    relation: "extends",
+    relatedMemoryId: "",
+    createdAt: "2026-08-01T00:00:00.000+08:00",
+    builtIn: true,
+  },
+  {
+    id: "builtin-model-kimi-selection-2026-08-01",
+    category: "模型选型",
+    content: "截至 2026-08-01，Kimi K3 是适合复杂办公、长文档、多步骤和长期自主任务的综合旗舰模型，支持百万级上下文；Kimi K2.7 Code 面向编程和长期开发，支持约 26 万上下文且必须开启思考，不应代替 K3 承担综合办公任务。",
+    kind: "fact",
+    scope: "global",
+    workspacePath: "",
+    relation: "extends",
+    relatedMemoryId: "",
+    createdAt: "2026-08-01T00:00:00.000+08:00",
+    builtIn: true,
+  },
+  {
+    id: "builtin-model-deepseek-glm-2026-08-01",
+    category: "模型选型",
+    content: "截至 2026-08-01，DeepSeek V4 Flash 支持百万级上下文，适合重视速度和成本的日常执行；DeepSeek V4 Pro 更适合高难度复杂任务，但接入前必须核对当前接口支持情况；GLM-5.2 支持百万级上下文，适合大型工程、复杂开发和长程交付。",
+    kind: "fact",
+    scope: "global",
+    workspacePath: "",
+    relation: "extends",
+    relatedMemoryId: "",
+    createdAt: "2026-08-01T00:00:00.000+08:00",
+    builtIn: true,
+  },
+  {
+    id: "builtin-model-capability-boundary",
+    category: "模型规则",
+    content: "评估、推荐或接入模型时，必须同时了解模型能力与服务商产品能力，并明确区分两者：模型负责理解、推理、生成和工具调用；看板、定时任务、目标模式、集群、插件、专业数据库和网站发布需要产品自身提供。模型版本、接口和权益会变化，正式使用前必须核对服务商最新官方资料。",
+    kind: "experience",
+    scope: "global",
+    workspacePath: "",
+    relation: "extends",
+    relatedMemoryId: "",
+    createdAt: "2026-08-01T00:00:00.000+08:00",
+    builtIn: true,
+  },
+];
+
+const builtinMemoryIds = new Set(builtinMemories.map((item) => item.id));
+
 function clean(value) {
   return String(value || "").trim();
 }
@@ -98,12 +153,30 @@ export function normalizeMemoryItem(item) {
     relation: memoryRelations.includes(item.relation) ? item.relation : "extends",
     relatedMemoryId: clean(item.relatedMemoryId),
     createdAt: clean(item.createdAt),
+    ...(item.builtIn ? { builtIn: true } : {}),
   };
 }
 
 export function normalizeMemories(items) {
   if (!Array.isArray(items)) return [];
   return items.map(normalizeMemoryItem).filter(Boolean);
+}
+
+export function isBuiltinMemoryId(value) {
+  return builtinMemoryIds.has(clean(value));
+}
+
+export function mergeBuiltinMemories(items) {
+  const builtins = normalizeMemories(builtinMemories);
+  const builtinContents = new Set(builtins.map((item) => item.content));
+  const saved = normalizeMemories(items)
+    .filter((item) => !isBuiltinMemoryId(item.id) && !builtinContents.has(item.content))
+    .map((item) => {
+      const savedItem = { ...item };
+      delete savedItem.builtIn;
+      return savedItem;
+    });
+  return [...builtins, ...saved];
 }
 
 export function buildMemoryRecord(item, { id, workspacePath, now } = {}) {

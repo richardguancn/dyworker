@@ -706,11 +706,14 @@ function MemoriesPanel({ items, onDelete }: { items: MemoryItem[]; onDelete: (id
               <span className="memory-category">{item.category}</span>
               <span className="memory-badge">{kindLabels[item.kind] || "事实"}</span>
               <span className="memory-badge">{item.scope === "workspace" ? "当前工作区" : "全部工作区"}</span>
+              {item.builtIn ? <span className="memory-badge accent">内置</span> : null}
               {item.relation === "supersedes" ? <span className="memory-badge accent">已更新旧记忆</span> : null}
             </div>
-            <button className="icon-button subtle tiny" onClick={() => onDelete(item.id)} aria-label="删除这条记忆">
-              <Trash2 size={13} />
-            </button>
+            {!item.builtIn ? (
+              <button className="icon-button subtle tiny" onClick={() => onDelete(item.id)} aria-label="删除这条记忆">
+                <Trash2 size={13} />
+              </button>
+            ) : null}
           </div>
           <p>{item.content}</p>
         </div>

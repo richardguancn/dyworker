@@ -9,7 +9,7 @@ import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
-import { buildMemoryRecord, extractExplicitMemoryInstructions, normalizeMemories } from "./memory.mjs";
+import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
 import { decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizePreventSleep, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
@@ -426,13 +426,17 @@ ipcMain.handle("voice:transcribe", async (_event, payload) => {
 const activeAgents = new Map();
 let mcpShuttingDown = false;
 
-async function readMemories() {
+async function readSavedMemories() {
   const items = await readJson(dataFile("memory.json"), []);
   return normalizeMemories(items);
 }
 
+async function readMemories() {
+  return mergeBuiltinMemories(await readSavedMemories());
+}
+
 async function appendMemory(item, workspacePath) {
-  const items = await readMemories();
+  const items = await readSavedMemories();
   const record = buildMemoryRecord(item, {
     id: crypto.randomUUID(),
     workspacePath,
@@ -1200,7 +1204,8 @@ ipcMain.handle("usage:clear", async () => {
 });
 
 ipcMain.handle("memories:delete", async (_event, id) => {
-  const items = await readMemories();
+  if (isBuiltinMemoryId(id)) return { ok: false, error: "内置记忆不能删除" };
+  const items = await readSavedMemories();
   await writeJson(dataFile("memory.json"), items.filter((item) => String(item.id) !== String(id)));
   return { ok: true };
 });

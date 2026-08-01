@@ -76,6 +76,14 @@ test("image attachments render real previews before and after sending", () => {
   assert.match(styles, /\.attachment-preview-image/);
 });
 
+test("built-in model knowledge is always loaded and cannot be deleted as user memory", () => {
+  assert.match(main, /mergeBuiltinMemories/);
+  assert.match(main, /return mergeBuiltinMemories\(await readSavedMemories\(\)\)/);
+  assert.match(main, /if \(isBuiltinMemoryId\(id\)\)/);
+  assert.match(app, /item\.builtIn/);
+  assert.match(app, />内置</);
+});
+
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
   assert.match(app, /请求批准/);
   assert.match(app, /替我审批/);
