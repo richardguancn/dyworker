@@ -1561,6 +1561,20 @@ test("McpClient 可以为系统安装关闭聊天请求超时", async () => {
   await client.close();
 });
 
+test("McpClient 只取消当前工具调用并保留共享连接", async () => {
+  const serverFile = await makeMockMcpServer();
+  const client = new McpClient({ command: process.execPath, args: [serverFile] });
+  await client.connect();
+  const controller = new AbortController();
+  const cancelled = client.callTool("echo", { text: "应取消", delay: 100 }, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(cancelled, /任务已停止/);
+  const result = await client.callTool("echo", { text: "仍可使用" });
+  assert.equal(result.text, "echo:仍可使用");
+  assert.ok(client.process, "取消一个调用后共享连接应继续可用");
+  await client.close();
+});
+
 test("McpClient 初始化超时后会关闭子进程", async () => {
   const serverFile = path.join(os.tmpdir(), `dyworker-hanging-mcp-${process.pid}.mjs`);
   await fs.writeFile(serverFile, "process.stdin.resume();");

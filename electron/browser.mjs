@@ -76,9 +76,11 @@ export class BrowserAgent {
       backgroundColor: "#ffffff",
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
-    this.win.on("closed", () => { this.win = null; });
     // 下载资料：保存到工作区“下载”文件夹，文件名冲突时由系统追加序号
-    this.win.webContents.session.on("will-download", (_event, item) => {
+    const browserSession = this.win.webContents.session;
+    const webContentsId = this.win.webContents.id;
+    const handleDownload = (_event, item, webContents) => {
+      if (webContents?.id !== webContentsId) return;
       if (!this.workspacePath) return;
       const name = path.basename(item.getFilename() || "download");
       if (!isSafeRelativePath(name)) return;
@@ -87,6 +89,11 @@ export class BrowserAgent {
       item.once("done", (_e, state) => {
         if (state === "completed") this.downloads.push(`下载/${name}`);
       });
+    };
+    browserSession.on("will-download", handleDownload);
+    this.win.on("closed", () => {
+      browserSession.removeListener("will-download", handleDownload);
+      this.win = null;
     });
     return this.win;
   }

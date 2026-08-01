@@ -71,6 +71,7 @@ export class McpClient {
       if (!entry) continue;
       this.pending.delete(message.id);
       clearTimeout(entry.timer);
+      entry.signal?.removeEventListener("abort", entry.onAbort);
       if (message.error) entry.reject(new Error(message.error.message || "MCP 调用失败"));
       else entry.resolve(message.result);
     }
@@ -79,6 +80,7 @@ export class McpClient {
   failAll(error) {
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
+      entry.signal?.removeEventListener("abort", entry.onAbort);
       entry.reject(error);
     }
     this.pending.clear();
@@ -89,25 +91,41 @@ export class McpClient {
     this.process.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
-  request(method, params, requestTimeoutMs = this.requestTimeoutMs) {
+  request(method, params, requestTimeoutMs = this.requestTimeoutMs, signal) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("任务已停止"));
+        return;
+      }
       const normalizedTimeout = Number(requestTimeoutMs);
       const effectiveTimeout = normalizedTimeout === 0
         ? 0
         : Math.max(1, normalizedTimeout || this.requestTimeoutMs);
+      const onAbort = () => {
+        const entry = this.pending.get(id);
+        if (!entry) return;
+        this.pending.delete(id);
+        clearTimeout(entry.timer);
+        this.notify("notifications/cancelled", { requestId: id, reason: "任务已停止" });
+        reject(new Error("任务已停止"));
+      };
       const timer = effectiveTimeout > 0
         ? setTimeout(() => {
+          const entry = this.pending.get(id);
           this.pending.delete(id);
+          entry?.signal?.removeEventListener("abort", entry.onAbort);
           reject(new Error(`MCP 请求超时：${method}`));
         }, effectiveTimeout)
         : null;
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, signal, onAbort });
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
         this.send({ jsonrpc: "2.0", id, method, params });
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(id);
+        signal?.removeEventListener("abort", onAbort);
         reject(error);
       }
     });
@@ -121,8 +139,8 @@ export class McpClient {
     }
   }
 
-  async callTool(name, args, { requestTimeoutMs } = {}) {
-    const result = await this.request("tools/call", { name, arguments: args || {} }, requestTimeoutMs);
+  async callTool(name, args, { requestTimeoutMs, signal } = {}) {
+    const result = await this.request("tools/call", { name, arguments: args || {} }, requestTimeoutMs, signal);
     const parts = Array.isArray(result?.content) ? result.content : [];
     const text = parts
       .filter((part) => part?.type === "text")

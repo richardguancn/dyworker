@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),
   resolveApproval: (sessionId, actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { sessionId, actionId, approved }),
-  cancelTask: (sessionId) => ipcRenderer.invoke("agent:cancel", { sessionId }),
+  cancelTask: (sessionId, runId) => ipcRenderer.invoke("agent:cancel", { sessionId, runId }),
   onAgentEvent: (callback) => {
     const listener = (_event, agentEvent) => callback(agentEvent);
     ipcRenderer.on("agent:event", listener);

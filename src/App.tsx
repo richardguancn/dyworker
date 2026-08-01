@@ -1783,10 +1783,8 @@ export function App() {
   const [platform, setPlatform] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [sessionError, setSessionError] = useState("");
-  const [errorSessionId, setErrorSessionId] = useState<string | null>(null);
-  const [sessionNotice, setSessionNotice] = useState("");
-  const [noticeSessionId, setNoticeSessionId] = useState<string | null>(null);
+  const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
+  const [sessionNotices, setSessionNotices] = useState<Record<string, string>>({});
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalAction>>({});
   const [pendingQuestions, setPendingQuestions] = useState<Record<string, QuestionRequest>>({});
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
@@ -1814,6 +1812,8 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
+  const runningRunIdsRef = useRef<Map<string, string>>(new Map());
+  const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -1900,20 +1900,13 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
-  useEffect(() => {
-    if (!sessionNotice) return;
-    const timeout = window.setTimeout(() => {
-      setSessionNotice("");
-      setNoticeSessionId(null);
-    }, 3200);
-    return () => window.clearTimeout(timeout);
-  }, [sessionNotice]);
-
   useEffect(() => () => {
     recorderRef.current?.stop();
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
     for (const unsubscribe of agentUnsubscribeRefs.current.values()) unsubscribe();
     agentUnsubscribeRefs.current.clear();
+    for (const timeout of sessionNoticeTimersRef.current.values()) window.clearTimeout(timeout);
+    sessionNoticeTimersRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -2018,8 +2011,8 @@ export function App() {
     ? Math.floor((Date.now() - runningStartedAt[activeSession.id]) / 1000)
     : 0;
   const inboxPendingCount = inboxItems.filter((item) => item.status === "pending").length;
-  const activeSessionError = errorSessionId === activeSession?.id ? sessionError : "";
-  const activeSessionNotice = noticeSessionId === activeSession?.id ? sessionNotice : "";
+  const activeSessionError = activeSession?.id ? sessionErrors[activeSession.id] || "" : "";
+  const activeSessionNotice = activeSession?.id ? sessionNotices[activeSession.id] || "" : "";
   const visibleSessions = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     const pool = sessions
@@ -2031,6 +2024,22 @@ export function App() {
 
   const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
+  };
+
+  const showSessionNotice = (sessionId: string, message: string) => {
+    setSessionNotices((current) => ({ ...current, [sessionId]: message }));
+    const previous = sessionNoticeTimersRef.current.get(sessionId);
+    if (previous) window.clearTimeout(previous);
+    const timeout = window.setTimeout(() => {
+      setSessionNotices((current) => {
+        if (current[sessionId] !== message) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      sessionNoticeTimersRef.current.delete(sessionId);
+    }, 3200);
+    sessionNoticeTimersRef.current.set(sessionId, timeout);
   };
 
   const createTask = () => {
@@ -2375,10 +2384,18 @@ export function App() {
     setActiveSkills([]);
     setMentionMenu(null);
     const taskSessionId = activeSession.id;
-    setSessionError("");
-    setErrorSessionId(taskSessionId);
-    setSessionNotice("");
-    setNoticeSessionId(taskSessionId);
+    const taskRunId = crypto.randomUUID();
+    runningRunIdsRef.current.set(taskSessionId, taskRunId);
+    setSessionErrors((current) => {
+      const next = { ...current };
+      delete next[taskSessionId];
+      return next;
+    });
+    setSessionNotices((current) => {
+      const next = { ...current };
+      delete next[taskSessionId];
+      return next;
+    });
     setRunningSessionIds((current) => {
       const next = new Set(current);
       next.add(taskSessionId);
@@ -2451,16 +2468,14 @@ export function App() {
             return { ...current, content, changes: result.changes?.length ? result.changes : current.changes, plan: result.plan?.length ? result.plan : current.plan, durationMs: Date.now() - taskStartedAt };
           });
           if (result.status === "done" && !result.demo) {
-            setSessionNotice("任务已完成");
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, "任务已完成");
           } else if (result.status === "sleeping" && result.wake) {
-            setSessionNotice(`已挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续`);
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, `已挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续`);
           }
         };
         let finishedEventSeen = false;
         const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
-          if (sessionAgentEvent.sessionId !== taskSessionId) return;
+          if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
           const agentEvent = sessionAgentEvent.event;
           if (agentEvent.type === "activity") {
             patchAssistant((current) => ({ ...current, activities: [...(current.activities || []), agentEvent.activity] }));
@@ -2494,16 +2509,13 @@ export function App() {
             });
           } else if (agentEvent.type === "memory-saved") {
             void refreshMemories();
-            setSessionNotice("已保存一条长期记忆");
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, "已保存一条长期记忆");
           } else if (agentEvent.type === "skill-saved") {
             void refreshSkills();
-            setSessionNotice(`工作模板「${agentEvent.item.name}」已保存`);
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已保存`);
           } else if (agentEvent.type === "skill-updated") {
             void refreshSkills();
-            setSessionNotice(`工作模板「${agentEvent.item.name}」已改进`);
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已改进`);
           } else if (agentEvent.type === "debug-log") {
             setDebugLogs((logs) => [...logs.slice(-299), agentEvent.entry]);
           } else if (agentEvent.type === "context-usage") {
@@ -2523,15 +2535,14 @@ export function App() {
               contextModel: undefined,
               contextEndpoint: undefined,
             }));
-            setSessionNotice("上下文空间不足，已自动把早前工作压缩为摘要，任务继续");
-            setNoticeSessionId(taskSessionId);
+            showSessionNotice(taskSessionId, "上下文空间不足，已自动把早前工作压缩为摘要，任务继续");
           } else if (agentEvent.type === "agent-finished") {
             finishedEventSeen = true;
             void refreshMemories();
             applyAgentResult(agentEvent.result);
           }
         });
-        agentUnsubscribeRefs.current.set(taskSessionId, unsubscribeAgent);
+        agentUnsubscribeRefs.current.set(taskRunId, unsubscribeAgent);
         try {
           const response = await window.dyworker.sendTask({
             settings,
@@ -2542,13 +2553,14 @@ export function App() {
             messages: updatedSession.messages,
             loop: { enabled: goalDriven, maximum: goalDriven ? 10 : 1 },
             approvalMode,
+            runId: taskRunId,
           });
           if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
           if (!finishedEventSeen) applyAgentResult(response.result);
         } finally {
           // webContents.send 的尾部事件可能晚于 invoke 响应到达，延迟取消订阅避免丢事件
-          const unsubscribe = agentUnsubscribeRefs.current.get(taskSessionId);
-          agentUnsubscribeRefs.current.delete(taskSessionId);
+          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
+          agentUnsubscribeRefs.current.delete(taskRunId);
           if (unsubscribe) window.setTimeout(unsubscribe, 1000);
           setLoopStates((current) => {
             const next = { ...current };
@@ -2581,8 +2593,7 @@ export function App() {
       }
     } catch (requestError) {
       const detail = requestError instanceof Error ? requestError.message : String(requestError);
-      setSessionError(detail);
-      setErrorSessionId(taskSessionId);
+      setSessionErrors((current) => ({ ...current, [taskSessionId]: detail }));
       updateSession(activeSession.id, (session) => ({
         ...session,
         messages: [...session.messages, {
@@ -2592,6 +2603,9 @@ export function App() {
         }],
       }));
     } finally {
+      if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+        runningRunIdsRef.current.delete(taskSessionId);
+      }
       setRunningSessionIds((current) => {
         const next = new Set(current);
         next.delete(taskSessionId);
@@ -3309,7 +3323,11 @@ export function App() {
                 {activeTaskRunning ? (
                   <button
                     className="send-button stop"
-                    onClick={() => activeSession && void window.dyworker?.cancelTask(activeSession.id)}
+                    onClick={() => {
+                      if (!activeSession) return;
+                      const runId = runningRunIdsRef.current.get(activeSession.id);
+                      if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
+                    }}
                     aria-label="停止任务"
                     title="停止任务"
                   >

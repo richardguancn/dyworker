@@ -9,6 +9,7 @@ const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 const app = readSource(new URL("../src/App.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
+const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
@@ -35,18 +36,24 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(app, /setRunningSessionIds/);
   assert.match(app, /runningSessionIds\.has\(activeSession\.id/);
   assert.match(app, /pendingApprovals\[activeSession\.id/);
-  assert.match(app, /sessionAgentEvent\.sessionId !== taskSessionId/);
-  assert.match(app, /cancelTask\(activeSession\.id\)/);
+  assert.match(app, /sessionAgentEvent\.sessionId !== taskSessionId \|\| sessionAgentEvent\.runId !== taskRunId/);
+  assert.match(app, /cancelTask\(activeSession\.id, runId\)/);
+  assert.match(app, /runningRunIdsRef\.current\.set\(taskSessionId, taskRunId\)/);
+  assert.match(app, /agentUnsubscribeRefs\.current\.set\(taskRunId, unsubscribeAgent\)/);
   assert.doesNotMatch(app, /\|\| busy \|\|/);
   assert.match(main, /const activeAgents = new Map\(\)/);
   assert.match(main, /activeAgents\.has\(sessionId\)/);
   assert.match(main, /activeAgents\.set\(sessionId, agentState\)/);
   assert.match(main, /activeAgents\.delete\(sessionId\)/);
-  assert.match(main, /sender\.send\("agent:event", \{ sessionId, event: agentEvent \}\)/);
-  assert.match(preload, /cancelTask: \(sessionId\)/);
+  assert.match(main, /sender\.send\("agent:event", \{ sessionId, runId, event: agentEvent \}\)/);
+  assert.match(main, /activeAgents\.set\(sessionId, agentState\);\n\s*trackTaskStart\(\);\n\s*try \{/);
+  assert.match(main, /agentState\.abortController\.abort\(\)/);
+  assert.match(main, /const mcpClientConnections = new Map\(\)/);
+  assert.match(main, /if \(pendingConnection\) return pendingConnection/);
+  assert.match(preload, /cancelTask: \(sessionId, runId\)/);
   assert.match(app, /shouldScrollToBottomRef\.current !== activeId/);
-  assert.match(app, /noticeSessionId === activeSession\?\.id/);
-  assert.match(app, /errorSessionId === activeSession\?\.id/);
+  assert.match(app, /sessionNotices\[activeSession\.id\]/);
+  assert.match(app, /sessionErrors\[activeSession\.id\]/);
 });
 
 test("opening a conversation starts at the latest message", () => {
@@ -95,7 +102,8 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /请确认当前使用 X11 桌面会话/);
   assert.match(main, /toolName === "install_dependencies"/);
   assert.match(main, /COMPUTER_USE_INSTALL_TIMEOUT_MS/);
-  assert.match(main, /void closeMcpClient\(COMPUTER_USE_SERVER_ID\)/);
+  assert.match(main, /signal: abortController\.signal/);
+  assert.doesNotMatch(main, /await client\.close\(\);\n\s*mcpClients\.delete/);
   assert.match(main, /请确认 Codex Computer Use 已获得辅助功能和屏幕录制权限/);
   assert.match(app, /本机应用操作已作为基础能力接入/);
   assert.match(packageJson, /electron\/scripts\/linux_computer_use\.py/);
@@ -178,6 +186,8 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(main, /browserToolDefinitions/);
   assert.match(main, /routeExtraTool/);
   assert.ok(fs.existsSync(new URL("../electron/browser.mjs", import.meta.url)));
+  assert.match(browserSource, /webContents\?\.id !== webContentsId/);
+  assert.match(browserSource, /removeListener\("will-download", handleDownload\)/);
   assert.match(agent, /browserReadOnlyTools/);
   // 变更卡片可直接打开产出文件
   assert.match(app, /dyworker\.openPath/);

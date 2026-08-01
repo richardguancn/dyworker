@@ -639,6 +639,7 @@ async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4
 // ---- MCP 工具服务器（stdio） ----
 
 const mcpClients = new Map();
+const mcpClientConnections = new Map();
 const builtInComputerUseServer = discoverComputerUseServer();
 
 function mcpServersOf(settings) {
@@ -661,24 +662,34 @@ async function getMcpClient(server) {
   const key = String(server.id || server.name || server.command);
   const existing = mcpClients.get(key);
   if (existing?.process) return existing;
-  const client = new McpClient({
-    command: String(server.command),
-    args: mcpServerArgs(server),
-    cwd: server.cwd ? String(server.cwd) : undefined,
-    env: server.env && typeof server.env === "object" ? server.env : undefined,
-    requestTimeoutMs: server.requestTimeoutMs,
-  });
-  try {
-    await client.connect();
-    if (mcpShuttingDown) {
+  const pendingConnection = mcpClientConnections.get(key);
+  if (pendingConnection) return pendingConnection;
+  const connection = (async () => {
+    const client = new McpClient({
+      command: String(server.command),
+      args: mcpServerArgs(server),
+      cwd: server.cwd ? String(server.cwd) : undefined,
+      env: server.env && typeof server.env === "object" ? server.env : undefined,
+      requestTimeoutMs: server.requestTimeoutMs,
+    });
+    try {
+      await client.connect();
+      if (mcpShuttingDown) {
+        await client.close();
+        throw new Error("应用正在退出，已停止新建本机操作连接");
+      }
+      mcpClients.set(key, client);
+      return client;
+    } catch (error) {
       await client.close();
-      throw new Error("应用正在退出，已停止新建本机操作连接");
+      throw error;
     }
-    mcpClients.set(key, client);
-    return client;
-  } catch (error) {
-    await client.close();
-    throw error;
+  })();
+  mcpClientConnections.set(key, connection);
+  try {
+    return await connection;
+  } finally {
+    if (mcpClientConnections.get(key) === connection) mcpClientConnections.delete(key);
   }
 }
 
@@ -708,7 +719,7 @@ async function mcpExtraTools(settings) {
   return extra;
 }
 
-async function callMcpTool(settings, fullName, args) {
+async function callMcpTool(settings, fullName, args, { signal } = {}) {
   const rest = fullName.slice(5);
   for (const server of mcpServersOf(settings)) {
     const prefix = `${server.id || server.name}__`;
@@ -720,11 +731,12 @@ async function callMcpTool(settings, fullName, args) {
         requestTimeoutMs: server.id === COMPUTER_USE_SERVER_ID && toolName === "install_dependencies"
           ? COMPUTER_USE_INSTALL_TIMEOUT_MS
           : undefined,
+        signal,
       });
       return { ok: !result.isError, result: result.text, images: result.images };
     } catch (error) {
-      await client.close();
-      mcpClients.delete(String(server.id || server.name || server.command));
+      if (!client.process) mcpClients.delete(String(server.id || server.name || server.command));
+      if (signal?.aborted) return { ok: false, result: "任务已停止" };
       if (server.id === COMPUTER_USE_SERVER_ID) {
         const guidance = process.platform === "linux"
           ? "请确认当前使用 X11 桌面会话，并已安装 xdotool、wmctrl、python3-pyatspi 和 ImageMagick。"
@@ -746,25 +758,18 @@ async function closeAllMcpClients() {
   await Promise.allSettled(clients.map((client) => client.close()));
 }
 
-async function closeMcpClient(key) {
-  const client = mcpClients.get(String(key));
-  if (!client) return;
-  mcpClients.delete(String(key));
-  await client.close();
-}
-
 // ---- 浏览器协作（可见窗口，操作可审计） ----
 
 function agentExtraTools(mcpTools) {
   return [...mcpTools, ...browserToolDefinitions()];
 }
 
-function createExtraToolRouter(settings, workspacePath) {
+function createExtraToolRouter(settings, workspacePath, { signal } = {}) {
   const browserAgent = new BrowserAgent();
   browserAgent.setWorkspace(workspacePath);
   return (name, args) => {
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
-    return callMcpTool(settings, name, args);
+    return callMcpTool(settings, name, args, { signal });
   };
 }
 
@@ -773,63 +778,71 @@ ipcMain.handle("agent:send", async (event, payload) => {
   const settings = payload?.settings || {};
   const workspacePath = String(payload?.workspacePath || "").trim();
   const sessionId = String(payload?.sessionId || "").trim();
-  if (!sessionId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
+  const runId = String(payload?.runId || "").trim();
+  if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
   if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
-  const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
+  const abortController = new AbortController();
+  const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController };
   const sender = event.sender;
   const emit = (agentEvent) => {
-    if (!sender.isDestroyed()) sender.send("agent:event", { sessionId, event: agentEvent });
+    if (!sender.isDestroyed()) sender.send("agent:event", { sessionId, runId, event: agentEvent });
   };
-  const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
-  const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
-  for (const memory of explicitMemories) {
-    if (memory.scope === "workspace" && !workspacePath) continue;
-    const record = await appendMemory(memory, workspacePath);
-    if (record) emit({ type: "memory-saved", item: record });
-  }
-
-  if (!settings.endpoint || !settings.model || !settings.apiKey) {
-    let filesNote = "";
-    try {
-      const entries = workspacePath ? await fs.readdir(workspacePath) : [];
-      filesNote = workspacePath ? `文件列表读取正常（${entries.length} 项）。` : "还没有选择工作文件夹。";
-    } catch {
-      filesNote = "工作文件夹暂时无法访问。";
-    }
-    const demoResult = {
-      status: "done",
-      demo: true,
-      finalText: `这是演示模式。我已经收到你的任务，当前工作文件夹可以正常访问。${filesNote}\n\n要让助手真正读取资料并完成任务，请在左下角“设置”中填写模型服务信息。`,
-    };
-    emit({ type: "agent-finished", result: demoResult });
-    return { ok: true, result: demoResult };
-  }
-  if (!workspacePath) return { ok: false, error: "请先选择工作文件夹，助手只能在工作文件夹内操作" };
-
-  const loop = payload?.loop?.enabled
-    ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
-    : { enabled: false, iteration: 1, maximum: 1 };
-  const memories = await readMemories();
-  const skills = await readSkills(workspacePath);
-  // 每个任务结束前都做一次轻量判断；没有稳定价值的信息时不会保存。
-  // 这样也覆盖同一会话切换话题的边界，不再依赖“每三轮”这种偶然触发。
-  const memoryReviewDue = true;
-  // 附件（图片/文本）展开为模型可读的多模态内容，与 chat:complete 同一套逻辑
-  const agentConversation = await Promise.all(conversation.map(async (message) => ({
-    role: message?.role,
-    content: await providerMessageContent(message),
-  })));
-  const approvalMode = ["interactive", "deny-changes", "allow-writes", "full-access"].includes(payload?.approvalMode)
-    ? payload.approvalMode
-    : "interactive";
-  const extraTools = agentExtraTools(await mcpExtraTools(settings));
-  const routeExtraTool = createExtraToolRouter(settings, workspacePath);
-
-  if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
-  const agentState = { cancelled: false, pending: new Map(), sessionId };
+  const cancelledResponse = () => {
+    const result = { status: "cancelled", finalText: "" };
+    emit({ type: "agent-finished", result });
+    return { ok: true, result };
+  };
   activeAgents.set(sessionId, agentState);
   trackTaskStart();
   try {
+    const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
+    const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
+    const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
+    for (const memory of explicitMemories) {
+      if (memory.scope === "workspace" && !workspacePath) continue;
+      const record = await appendMemory(memory, workspacePath);
+      if (record) emit({ type: "memory-saved", item: record });
+    }
+    if (agentState.cancelled) return cancelledResponse();
+
+    if (!settings.endpoint || !settings.model || !settings.apiKey) {
+      let filesNote = "";
+      try {
+        const entries = workspacePath ? await fs.readdir(workspacePath) : [];
+        filesNote = workspacePath ? `文件列表读取正常（${entries.length} 项）。` : "还没有选择工作文件夹。";
+      } catch {
+        filesNote = "工作文件夹暂时无法访问。";
+      }
+      if (agentState.cancelled) return cancelledResponse();
+      const demoResult = {
+        status: "done",
+        demo: true,
+        finalText: `这是演示模式。我已经收到你的任务，当前工作文件夹可以正常访问。${filesNote}\n\n要让助手真正读取资料并完成任务，请在左下角“设置”中填写模型服务信息。`,
+      };
+      emit({ type: "agent-finished", result: demoResult });
+      return { ok: true, result: demoResult };
+    }
+    if (!workspacePath) return { ok: false, error: "请先选择工作文件夹，助手只能在工作文件夹内操作" };
+
+    const loop = payload?.loop?.enabled
+      ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
+      : { enabled: false, iteration: 1, maximum: 1 };
+    const memories = await readMemories();
+    const skills = await readSkills(workspacePath);
+    // 每个任务结束前都做一次轻量判断；没有稳定价值的信息时不会保存。
+    // 这样也覆盖同一会话切换话题的边界，不再依赖“每三轮”这种偶然触发。
+    const memoryReviewDue = true;
+    // 附件（图片/文本）展开为模型可读的多模态内容，与 chat:complete 同一套逻辑
+    const agentConversation = await Promise.all(conversation.map(async (message) => ({
+      role: message?.role,
+      content: await providerMessageContent(message),
+    })));
+    const approvalMode = ["interactive", "deny-changes", "allow-writes", "full-access"].includes(payload?.approvalMode)
+      ? payload.approvalMode
+      : "interactive";
+    const extraTools = agentExtraTools(await mcpExtraTools(settings));
+    const routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal });
+    if (agentState.cancelled) return cancelledResponse();
     let iterationMessages = agentConversation;
     let finalResult = null;
     while (true) {
@@ -928,15 +941,17 @@ ipcMain.handle("agent:resolve-question", (_event, payload) => {
 
 ipcMain.handle("agent:cancel", async (_event, payload) => {
   const sessionId = String(payload?.sessionId || "");
+  const runId = String(payload?.runId || "");
+  if (!sessionId || !runId) return { ok: false };
   const agentState = activeAgents.get(sessionId);
   if (!agentState) return { ok: false };
+  if (agentState.runId !== runId) return { ok: false };
   agentState.cancelled = true;
+  agentState.abortController.abort();
   for (const resolve of agentState.pending.values()) resolve(false);
   agentState.pending.clear();
   // 任务被取消时,它登记的待唤醒一并取消
   await cancelWakesForSession(sessionId);
-  // Computer Use 服务由所有任务共享；只有最后一个任务停止时才关闭，避免中断其他会话。
-  if (activeAgents.size === 1) void closeMcpClient(COMPUTER_USE_SERVER_ID);
   return { ok: true };
 });
 

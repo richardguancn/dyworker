@@ -159,6 +159,7 @@ export type AgentEvent =
 
 export interface SessionAgentEvent {
   sessionId: string;
+  runId: string;
   event: AgentEvent;
 }
 
@@ -336,9 +337,10 @@ export interface DyworkerBridge {
     loop?: { enabled: boolean; maximum: number };
     approvalMode?: ApprovalMode;
     sessionId?: string;
+    runId?: string;
   }): Promise<{ ok: boolean; result?: AgentResult; error?: string }>;
   resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
-  cancelTask(sessionId: string): Promise<{ ok: boolean }>;
+  cancelTask(sessionId: string, runId: string): Promise<{ ok: boolean }>;
   onAgentEvent(callback: (event: SessionAgentEvent) => void): () => void;
   listMemories(): Promise<MemoryItem[]>;
   listUsageStats(): Promise<UsageRecord[]>;
