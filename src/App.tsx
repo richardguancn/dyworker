@@ -2983,14 +2983,13 @@ export function App() {
                         <div className="message-attachments">
                           {message.attachments?.map((attachment) => (
                             attachment.isImage && attachment.previewUrl ? (
-                              <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`}>
-                                <img className="attachment-preview-image" src={attachment.previewUrl} alt={attachment.name} />
-                                <figcaption title={attachment.path}>{attachment.name}</figcaption>
+                              <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`} aria-label="图片附件">
+                                <img className="attachment-preview-image" src={attachment.previewUrl} alt="上传的图片" />
                               </figure>
                             ) : (
                               <span key={`${message.createdAt}-${attachment.path}`}>
                                 {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
-                                {attachment.name}
+                                {attachment.isImage ? "图片" : attachment.name}
                               </span>
                             )
                           ))}
@@ -3176,11 +3175,16 @@ export function App() {
                   </span>
                 ))}
                 {attachments.map((attachment) => (
-                  <span className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : ""}`} key={attachment.path}>
+                  <span
+                    className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : ""}`}
+                    key={attachment.path}
+                  >
                     {attachment.isImage && attachment.previewUrl
-                      ? <img className="attachment-preview-image" src={attachment.previewUrl} alt={attachment.name} />
+                      ? <img className="attachment-preview-image" src={attachment.previewUrl} alt="待发送的图片" />
                       : attachment.isImage ? <FileImage size={14} /> : <FileText size={14} />}
-                    <span title={attachment.path}>{attachment.name}</span>
+                    {!(attachment.isImage && attachment.previewUrl) && (
+                      <span title={attachment.path}>{attachment.isImage ? "图片" : attachment.name}</span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setAttachments((current) => current.filter((item) => item.path !== attachment.path))}

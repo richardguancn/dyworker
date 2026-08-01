@@ -73,7 +73,11 @@ test("image attachments render real previews before and after sending", () => {
   assert.match(main, /previewUrl/);
   assert.match(app, /attachment\.isImage && attachment\.previewUrl/);
   assert.match(app, /className="attachment-preview-image"/);
+  assert.doesNotMatch(app, /<figcaption[^>]*>\{attachment\.name\}<\/figcaption>/);
+  assert.match(app, /!\(attachment\.isImage && attachment\.previewUrl\) && \(/);
+  assert.match(app, /attachment\.isImage \? "图片" : attachment\.name/);
   assert.match(styles, /\.attachment-preview-image/);
+  assert.match(styles, /\.image-attachment-chip > button\s*\{[^}]*position:\s*absolute/s);
 });
 
 test("built-in model knowledge is always loaded and cannot be deleted as user memory", () => {
