@@ -232,6 +232,67 @@ test("Responses API 流式回复以 response.completed 结束且无需 DONE", as
   assert.equal(calls.length, 1);
 });
 
+test("DeepSeek V4 不支持图片时明确失败且不发送图片数据", async () => {
+  const root = await makeWorkspace();
+  let requested = false;
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ],
+    }],
+    fetchImpl: async () => { requested = true; throw new Error("不应发起请求"); },
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /不支持图片/);
+  assert.equal(requested, false);
+});
+
+test("Responses API 输出被截断或流提前结束时不会误报成功", async (t) => {
+  const root = await makeWorkspace();
+  await t.test("response.incomplete", async () => {
+    const result = await runAgent({
+      settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+      workspacePath: root,
+      conversation: [{ role: "user", content: "写长文" }],
+      fetchImpl: mockResponsesStream([
+        { type: "response.output_text.delta", sequence_number: 0, delta: "未完成内容" },
+        {
+          type: "response.incomplete",
+          sequence_number: 1,
+          response: {
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "未完成内容" }] }],
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          },
+        },
+      ]),
+    });
+    assert.equal(result.status, "error");
+    assert.equal(result.finalText, "未完成内容");
+    assert.match(result.reason, /未完成|截断/);
+  });
+
+  await t.test("缺少终止事件", async () => {
+    const result = await runAgent({
+      settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+      workspacePath: root,
+      conversation: [{ role: "user", content: "打招呼" }],
+      fetchImpl: mockResponsesStream([
+        { type: "response.output_text.delta", sequence_number: 0, delta: "半截" },
+      ]),
+    });
+    assert.equal(result.status, "error");
+    assert.match(result.reason, /中断|终止/);
+  });
+});
+
 test("isSafeRelativePath 阻止绝对路径和越界路径", () => {
   assert.equal(isSafeRelativePath("docs/a.md"), true);
   assert.equal(isSafeRelativePath(""), true);
