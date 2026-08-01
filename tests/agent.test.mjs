@@ -108,9 +108,129 @@ function mockFetch(scriptedMessages, calls = []) {
   };
 }
 
+function mockResponsesFetch(scriptedResponses, calls = []) {
+  return async (url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push({ url, body });
+    const response = scriptedResponses.length > 1 ? scriptedResponses.shift() : scriptedResponses[0];
+    return {
+      ok: true,
+      headers: { get: () => "application/json" },
+      json: async () => response,
+    };
+  };
+}
+
+function mockResponsesStream(events, calls = []) {
+  return async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body) });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    });
+    return {
+      ok: true,
+      headers: { get: () => "text/event-stream" },
+      body,
+    };
+  };
+}
+
 function toolCall(id, name, args) {
   return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
+
+test("Responses API 完成普通回复并上报真实用量", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const events = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    emit: (event) => events.push(event),
+    fetchImpl: mockResponsesFetch([{
+      id: "resp_1",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "你好，我在。" }] }],
+      usage: { input_tokens: 25, output_tokens: 6, total_tokens: 31 },
+    }], calls),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "你好，我在。");
+  assert.equal(calls[0].url, "https://api.deepseek.com/responses");
+  assert.equal(calls[0].body.model, "deepseek-v4-flash");
+  assert.ok(Array.isArray(calls[0].body.input));
+  assert.equal(calls[0].body.messages, undefined);
+  assert.equal(calls[0].body.stream, true);
+  assert.equal(calls[0].body.stream_options, undefined);
+  assert.equal(calls[0].body.tools[0].type, "function");
+  assert.equal(typeof calls[0].body.tools[0].name, "string");
+  assert.equal(calls[0].body.tools[0].function, undefined);
+  const usage = events.find((event) => event.type === "token-usage");
+  assert.deepEqual({ prompt: usage.prompt, completion: usage.completion, estimated: usage.estimated }, { prompt: 25, completion: 6, estimated: false });
+});
+
+test("Responses API 工具调用结果按 input items 原样回传", async () => {
+  const root = await makeWorkspace({ "报告.md": "# 季度总结\n内容" });
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "读取报告" }],
+    fetchImpl: mockResponsesFetch([
+      {
+        output: [{ type: "function_call", id: "fc_1", call_id: "call_1", name: "read_file", arguments: '{"path":"报告.md"}' }],
+        usage: { input_tokens: 20, output_tokens: 8, total_tokens: 28 },
+      },
+      {
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "报告标题是季度总结。" }] }],
+        usage: { input_tokens: 42, output_tokens: 9, total_tokens: 51 },
+      },
+    ], calls),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "报告标题是季度总结。");
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].body.input.some((item) => item.type === "function_call" && item.call_id === "call_1"));
+  const output = calls[1].body.input.find((item) => item.type === "function_call_output");
+  assert.equal(output.call_id, "call_1");
+  assert.match(output.output, /季度总结/);
+});
+
+test("Responses API 流式回复以 response.completed 结束且无需 DONE", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "打个招呼" }],
+    fetchImpl: mockResponsesStream([
+      { type: "response.created", sequence_number: 0, response: { status: "in_progress" } },
+      { type: "response.output_text.delta", sequence_number: 1, item_id: "msg_1", output_index: 0, content_index: 0, delta: "你" },
+      { type: "response.output_text.delta", sequence_number: 2, item_id: "msg_1", output_index: 0, content_index: 0, delta: "好" },
+      {
+        type: "response.completed",
+        sequence_number: 3,
+        response: {
+          status: "completed",
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "你好" }] }],
+          usage: { input_tokens: 18, output_tokens: 2, total_tokens: 20 },
+        },
+      },
+    ], calls),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "你好");
+  assert.equal(calls.length, 1);
+});
 
 test("isSafeRelativePath 阻止绝对路径和越界路径", () => {
   assert.equal(isSafeRelativePath("docs/a.md"), true);

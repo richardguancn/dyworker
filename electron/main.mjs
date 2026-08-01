@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { builtinHooks, runAgent, suggestStandingRule } from "./agent.mjs";
+import { builtinHooks, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -370,20 +370,8 @@ ipcMain.handle("chat:complete", async (_event, payload) => {
   const messages = await Promise.all((payload.messages || [])
     .filter((message) => message.role === "user" || message.role === "assistant")
     .map(async (message) => ({ role: message.role, content: await providerMessageContent(message) })));
-  const response = await fetch(settings.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
-    body: JSON.stringify({ model: settings.model, messages, stream: false }),
-  });
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 1200);
-    throw new Error(`模型请求失败（${response.status}）：${detail}`);
-  }
-  const result = await response.json();
-  const content = result?.choices?.[0]?.message?.content;
+  const result = await requestModel({ settings, messages, fetchImpl: fetch, tools: false });
+  const content = result?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("模型没有返回可显示的内容");
   return { content };
 });

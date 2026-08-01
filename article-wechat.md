@@ -50,7 +50,7 @@ DYWorker 就是冲着这三个痛点来的：一个**完全本地运行**的开�
 
 ### 🔌 开放模型接入
 
-兼容常见的 **OpenAI Chat Completions 接口**，支持多套模型配置自由切换——DeepSeek、通义、智谱，或是单位内网自建的模型服务，填上地址和密钥就能用。密钥通过**系统安全存储加密保存**，绝不明文落盘。
+兼容常见的 **OpenAI Chat Completions 和 Responses API**，已内置 DeepSeek V4 Flash，支持多套模型配置自由切换——DeepSeek、通义、智谱，或是单位内网自建的模型服务，填上地址和密钥就能用。密钥通过**系统安全存储加密保存**，绝不明文落盘。
 
 ![支持主流的模型配置](https://fastly.jsdelivr.net/gh/bucketio/img4@main/2026/07/31/1785509652430-a4849bb8-f982-4748-955b-727b3669c52d.png)
 

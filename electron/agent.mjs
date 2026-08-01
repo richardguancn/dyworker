@@ -1711,20 +1711,225 @@ async function postChat({ settings, payload, fetchImpl, signal }) {
   return response;
 }
 
+export function isResponsesEndpoint(endpoint) {
+  try {
+    return /\/responses\/?$/.test(new URL(String(endpoint || "").trim()).pathname);
+  } catch {
+    return /\/responses\/?(?:[?#].*)?$/.test(String(endpoint || "").trim());
+  }
+}
+
+function responsesContent(role, content) {
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (part?.type === "text") {
+      return { type: role === "assistant" ? "output_text" : "input_text", text: String(part.text || "") };
+    }
+    if (part?.type === "image_url") {
+      const imageUrl = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+      return { type: "input_image", image_url: String(imageUrl || ""), ...(part.image_url?.detail ? { detail: part.image_url.detail } : {}) };
+    }
+    return part;
+  });
+}
+
+export function responsesInput(messages) {
+  const input = [];
+  for (const message of messages || []) {
+    if (message?.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: String(message.tool_call_id || ""),
+        output: messageText(message),
+      });
+      continue;
+    }
+    if (!["user", "assistant", "system", "developer"].includes(message?.role)) continue;
+    const content = message.content;
+    if ((typeof content === "string" && content) || (Array.isArray(content) && content.length)) {
+      input.push({ role: message.role, content: responsesContent(message.role, content) });
+    }
+    if (message.role === "assistant") {
+      for (const call of Array.isArray(message.tool_calls) ? message.tool_calls : []) {
+        if (call?.type !== "function" || !call.function?.name) continue;
+        input.push({
+          type: "function_call",
+          call_id: String(call.id || ""),
+          name: String(call.function.name),
+          arguments: String(call.function.arguments || ""),
+        });
+      }
+    }
+  }
+  return input;
+}
+
+function responsesTools(tools) {
+  return (tools || []).map((tool) => {
+    if (tool?.type !== "function" || !tool.function) return tool;
+    return {
+      type: "function",
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters,
+      ...(tool.function.strict !== undefined ? { strict: tool.function.strict } : {}),
+    };
+  });
+}
+
+function normalizedUsage(usage, responsesApi) {
+  if (!usage || typeof usage !== "object") return null;
+  if (!responsesApi) return usage;
+  const prompt = Number(usage.input_tokens) || 0;
+  const completion = Number(usage.output_tokens) || 0;
+  return {
+    ...usage,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: Number(usage.total_tokens) || prompt + completion,
+  };
+}
+
+function messageFromResponses(result) {
+  if (result?.error) {
+    throw new Error(`模型服务返回错误：${result.error.message || JSON.stringify(result.error)}`);
+  }
+  let content = "";
+  const toolCalls = [];
+  for (const item of Array.isArray(result?.output) ? result.output : []) {
+    if (item?.type === "message") {
+      for (const part of Array.isArray(item.content) ? item.content : []) {
+        if ((part?.type === "output_text" || part?.type === "text") && typeof part.text === "string") content += part.text;
+      }
+      continue;
+    }
+    if (item?.type === "function_call" && item.name) {
+      toolCalls.push({
+        id: String(item.call_id || item.id || `call-${toolCalls.length}`),
+        type: "function",
+        function: { name: String(item.name), arguments: String(item.arguments || "") },
+      });
+    }
+  }
+  const message = { role: "assistant", content: content || null };
+  if (toolCalls.length) message.tool_calls = toolCalls;
+  return message;
+}
+
+function responsesPayload({ model, messages, tools, stream }) {
+  const payload = { model, input: responsesInput(messages), stream };
+  if (tools !== false) {
+    payload.tools = responsesTools(tools);
+    payload.tool_choice = "auto";
+  }
+  return payload;
+}
+
+async function readResponsesStream(response, { onText, onUsage }) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let terminalResponse = null;
+  let failure = null;
+  const toolCalls = new Map();
+
+  const toolKey = (event, item) => String(
+    item?.id || event?.item_id || item?.call_id
+      || (event?.output_index !== undefined ? event.output_index : toolCalls.size),
+  );
+  const storeTool = (event, item, replaceArguments = false) => {
+    if (item?.type !== "function_call" && !event?.type?.startsWith("response.function_call_arguments.")) return;
+    const key = toolKey(event, item);
+    const current = toolCalls.get(key) || {
+      id: String(item?.call_id || item?.id || ""),
+      type: "function",
+      function: { name: String(item?.name || ""), arguments: "" },
+    };
+    if (item?.call_id || item?.id) current.id = String(item.call_id || item.id);
+    if (item?.name) current.function.name = String(item.name);
+    if (item?.arguments !== undefined) {
+      current.function.arguments = replaceArguments ? String(item.arguments || "") : current.function.arguments + String(item.arguments || "");
+    }
+    toolCalls.set(key, current);
+  };
+
+  const applyEvent = (event) => {
+    if (!event || typeof event !== "object") return;
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      content += event.delta;
+      onText?.(content);
+    } else if (event.type === "response.output_item.added") {
+      storeTool(event, event.item);
+    } else if (event.type === "response.output_item.done") {
+      storeTool(event, event.item, true);
+    } else if (event.type === "response.function_call_arguments.delta") {
+      storeTool(event, { type: "function_call", arguments: event.delta });
+    } else if (event.type === "response.function_call_arguments.done") {
+      storeTool(event, { type: "function_call", arguments: event.arguments }, true);
+    } else if (["response.completed", "response.incomplete"].includes(event.type)) {
+      terminalResponse = event.response || null;
+    } else if (event.type === "response.failed") {
+      failure = event.response?.error || event.error || { message: "模型生成失败" };
+      terminalResponse = event.response || null;
+    }
+  };
+
+  const consumeBlock = (block) => {
+    const data = block.split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") return;
+    try { applyEvent(JSON.parse(data)); } catch { }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let match;
+    while ((match = /\r?\n\r?\n/.exec(buffer))) {
+      consumeBlock(buffer.slice(0, match.index));
+      buffer = buffer.slice(match.index + match[0].length);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+
+  if (failure) throw new Error(`模型生成失败：${failure.message || JSON.stringify(failure)}`);
+  if (terminalResponse) {
+    if (terminalResponse.usage) onUsage?.(normalizedUsage(terminalResponse.usage, true));
+    return messageFromResponses(terminalResponse);
+  }
+  const message = { role: "assistant", content: content || null };
+  const calls = [...toolCalls.values()].filter((call) => call.function.name);
+  if (calls.length) message.tool_calls = calls;
+  return message;
+}
+
 // 优先流式（SSE），端点不支持时回退普通响应；onText 回调收到逐步累积的正文
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null }) {
+export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
-  const basePayload = { model: settings.model, messages };
-  if (tools !== false) {
-    basePayload.tools = tools || toolDefinitionsWith(extraTools);
+  const responsesApi = isResponsesEndpoint(settings.endpoint);
+  const selectedTools = tools || toolDefinitionsWith(extraTools);
+  const basePayload = responsesApi
+    ? responsesPayload({ model: settings.model, messages, tools: tools === false ? false : selectedTools, stream: false })
+    : { model: settings.model, messages };
+  if (!responsesApi && tools !== false) {
+    basePayload.tools = selectedTools;
     basePayload.tool_choice = "auto";
   }
   let response;
   try {
-    response = await postChat({ settings, payload: { ...basePayload, stream: true, stream_options: { include_usage: true } }, fetchImpl, signal });
+    const streamPayload = responsesApi
+      ? { ...basePayload, stream: true }
+      : { ...basePayload, stream: true, stream_options: { include_usage: true } };
+    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal });
   } catch (error) {
     if (error?.status !== 400 && error?.status !== 404 && error?.status !== 422) throw error;
     response = await postChat({ settings, payload: basePayload, fetchImpl, signal });
@@ -1734,6 +1939,10 @@ async function requestModel({ settings, messages, fetchImpl, signal, onText, ext
   if (!contentType.includes("text/event-stream") || !response.body?.getReader) {
     onTransport?.("json");
     const result = await response.json();
+    if (responsesApi) {
+      if (result?.usage) onUsage?.(normalizedUsage(result.usage, true));
+      return messageFromResponses(result);
+    }
     const message = result?.choices?.[0]?.message;
     if (!message || typeof message !== "object") throw new Error("模型服务没有返回结果");
     if (result?.usage) onUsage?.(result.usage);
@@ -1741,6 +1950,7 @@ async function requestModel({ settings, messages, fetchImpl, signal, onText, ext
   }
 
   onTransport?.("sse");
+  if (responsesApi) return readResponsesStream(response, { onText, onUsage });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
