@@ -157,6 +157,11 @@ export type AgentEvent =
   | { type: "loop-state"; active: boolean; iteration: number; maximum: number; status: string }
   | { type: "agent-finished"; result: AgentResult };
 
+export interface SessionAgentEvent {
+  sessionId: string;
+  event: AgentEvent;
+}
+
 export interface Attachment {
   name: string;
   path: string;
@@ -332,9 +337,9 @@ export interface DyworkerBridge {
     approvalMode?: ApprovalMode;
     sessionId?: string;
   }): Promise<{ ok: boolean; result?: AgentResult; error?: string }>;
-  resolveApproval(actionId: string, approved: boolean): Promise<{ ok: boolean }>;
-  cancelTask(): Promise<{ ok: boolean }>;
-  onAgentEvent(callback: (event: AgentEvent) => void): () => void;
+  resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
+  cancelTask(sessionId: string): Promise<{ ok: boolean }>;
+  onAgentEvent(callback: (event: SessionAgentEvent) => void): () => void;
   listMemories(): Promise<MemoryItem[]>;
   listUsageStats(): Promise<UsageRecord[]>;
   clearUsageStats(): Promise<{ ok: boolean }>;
@@ -347,7 +352,7 @@ export interface DyworkerBridge {
   listInbox(): Promise<InboxItem[]>;
   resolveInbox(payload: { id: string; approved?: boolean; answer?: string }): Promise<{ ok: boolean; error?: string }>;
   dismissInbox(id: string): Promise<{ ok: boolean; error?: string }>;
-  resolveQuestion(requestId: string, answer: string): Promise<{ ok: boolean }>;
+  resolveQuestion(sessionId: string, requestId: string, answer: string): Promise<{ ok: boolean }>;
   onInboxChanged(callback: () => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;

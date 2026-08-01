@@ -10,8 +10,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),
-  resolveApproval: (actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { actionId, approved }),
-  cancelTask: () => ipcRenderer.invoke("agent:cancel"),
+  resolveApproval: (sessionId, actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { sessionId, actionId, approved }),
+  cancelTask: (sessionId) => ipcRenderer.invoke("agent:cancel", { sessionId }),
   onAgentEvent: (callback) => {
     const listener = (_event, agentEvent) => callback(agentEvent);
     ipcRenderer.on("agent:event", listener);
@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   listInbox: () => ipcRenderer.invoke("inbox:list"),
   resolveInbox: (payload) => ipcRenderer.invoke("inbox:resolve", payload),
   dismissInbox: (id) => ipcRenderer.invoke("inbox:dismiss", id),
-  resolveQuestion: (requestId, answer) => ipcRenderer.invoke("agent:resolve-question", { requestId, answer }),
+  resolveQuestion: (sessionId, requestId, answer) => ipcRenderer.invoke("agent:resolve-question", { sessionId, requestId, answer }),
   onInboxChanged: (callback) => {
     const listener = () => callback();
     ipcRenderer.on("inbox:changed", listener);

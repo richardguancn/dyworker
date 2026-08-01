@@ -31,10 +31,19 @@ test("composer preserves input method composition before keyboard submission", (
   assert.match(app, /keyCode === 229/);
 });
 
-test("conversation-only runtime state does not render in another conversation", () => {
-  assert.match(app, /setRunningSessionId\(taskSessionId\)/);
-  assert.match(app, /busy && activeSession\?\.id === runningSessionId/);
-  assert.match(app, /pendingApproval\?\.sessionId === activeSession\?\.id/);
+test("conversation tasks can run concurrently without leaking runtime state", () => {
+  assert.match(app, /setRunningSessionIds/);
+  assert.match(app, /runningSessionIds\.has\(activeSession\.id/);
+  assert.match(app, /pendingApprovals\[activeSession\.id/);
+  assert.match(app, /sessionAgentEvent\.sessionId !== taskSessionId/);
+  assert.match(app, /cancelTask\(activeSession\.id\)/);
+  assert.doesNotMatch(app, /\|\| busy \|\|/);
+  assert.match(main, /const activeAgents = new Map\(\)/);
+  assert.match(main, /activeAgents\.has\(sessionId\)/);
+  assert.match(main, /activeAgents\.set\(sessionId, agentState\)/);
+  assert.match(main, /activeAgents\.delete\(sessionId\)/);
+  assert.match(main, /sender\.send\("agent:event", \{ sessionId, event: agentEvent \}\)/);
+  assert.match(preload, /cancelTask: \(sessionId\)/);
   assert.match(app, /shouldScrollToBottomRef\.current !== activeId/);
   assert.match(app, /noticeSessionId === activeSession\?\.id/);
   assert.match(app, /errorSessionId === activeSession\?\.id/);
@@ -436,7 +445,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   // 4. 主进程接线:渠道任务引擎、全局忙碌守卫、决议共用入口、状态广播、生命周期
   assert.match(main, /from "\.\/channels\/manager\.mjs"/);
   assert.match(main, /async function runChannelTask/);
-  assert.match(main, /runningChannelTask \|\| activeAgent/);
+  assert.match(main, /runningChannelTask \|\| activeAgents\.size/);
   assert.match(main, /resolveInboxInternal/);
   assert.match(main, /ipcMain\.handle\("channels:get-status"/);
   assert.match(main, /broadcastChannelsStatus/);

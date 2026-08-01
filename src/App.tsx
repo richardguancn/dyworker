@@ -1769,8 +1769,8 @@ export function App() {
   const [query, setQuery] = useState("");
   const [composer, setComposer] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [runningSessionId, setRunningSessionId] = useState<string | null>(null);
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1787,12 +1787,12 @@ export function App() {
   const [errorSessionId, setErrorSessionId] = useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = useState("");
   const [noticeSessionId, setNoticeSessionId] = useState<string | null>(null);
-  const [pendingApproval, setPendingApproval] = useState<{ sessionId: string; action: ApprovalAction } | null>(null);
-  const [pendingQuestion, setPendingQuestion] = useState<{ sessionId: string; request: QuestionRequest } | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalAction>>({});
+  const [pendingQuestions, setPendingQuestions] = useState<Record<string, QuestionRequest>>({});
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("allow-writes");
-  const [loopState, setLoopState] = useState<{ iteration: number; maximum: number; status: string } | null>(null);
+  const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
@@ -1803,7 +1803,7 @@ export function App() {
   const [mentionSkills, setMentionSkills] = useState<SkillRecord[]>([]);
   const [activeSkills, setActiveSkills] = useState<SkillRecord[]>([]);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [, setElapsedTick] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -1813,7 +1813,7 @@ export function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
-  const agentUnsubscribeRef = useRef<(() => void) | null>(null);
+  const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -1892,7 +1892,7 @@ export function App() {
     if (shouldScrollToBottomRef.current !== activeId) return;
     viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
     shouldScrollToBottomRef.current = null;
-  }, [sessions, busy, activeId]);
+  }, [sessions, runningSessionIds, activeId]);
 
   useEffect(() => {
     if (!notice) return;
@@ -1912,7 +1912,8 @@ export function App() {
   useEffect(() => () => {
     recorderRef.current?.stop();
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-    agentUnsubscribeRef.current?.();
+    for (const unsubscribe of agentUnsubscribeRefs.current.values()) unsubscribe();
+    agentUnsubscribeRefs.current.clear();
   }, []);
 
   useEffect(() => {
@@ -1993,12 +1994,10 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!busy) return;
-    const started = Date.now();
-    setElapsedSeconds(0);
-    const timer = window.setInterval(() => setElapsedSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    if (!runningSessionIds.size) return;
+    const timer = window.setInterval(() => setElapsedTick((tick) => tick + 1), 1000);
     return () => window.clearInterval(timer);
-  }, [busy]);
+  }, [runningSessionIds]);
 
   const syncAtBottom = () => {
     const viewport = viewportRef.current;
@@ -2008,12 +2007,16 @@ export function App() {
 
   useEffect(() => {
     syncAtBottom();
-  }, [sessions, busy, activeId]);
+  }, [sessions, runningSessionIds, activeId]);
 
   const activeSession = sessions.find((session) => session.id === activeId) || sessions[0];
-  const activeTaskRunning = busy && activeSession?.id === runningSessionId;
-  const activePendingApproval = pendingApproval?.sessionId === activeSession?.id ? pendingApproval.action : null;
-  const activePendingQuestion = pendingQuestion?.sessionId === activeSession?.id ? pendingQuestion.request : null;
+  const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
+  const activePendingApproval = activeSession?.id ? pendingApprovals[activeSession.id] || null : null;
+  const activePendingQuestion = activeSession?.id ? pendingQuestions[activeSession.id] || null : null;
+  const activeLoopState = activeSession?.id ? loopStates[activeSession.id] || null : null;
+  const activeElapsedSeconds = activeSession?.id && runningStartedAt[activeSession.id]
+    ? Math.floor((Date.now() - runningStartedAt[activeSession.id]) / 1000)
+    : 0;
   const inboxPendingCount = inboxItems.filter((item) => item.status === "pending").length;
   const activeSessionError = errorSessionId === activeSession?.id ? sessionError : "";
   const activeSessionNotice = noticeSessionId === activeSession?.id ? sessionNotice : "";
@@ -2342,7 +2345,7 @@ export function App() {
 
   const sendMessage = async () => {
     let content = composer.trim();
-    if ((!content && !attachments.length && !activeSkills.length) || busy || !activeSession) return;
+    if ((!content && !attachments.length && !activeSkills.length) || activeTaskRunning || !activeSession) return;
     // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
     const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
     let goalDriven = false;
@@ -2376,8 +2379,12 @@ export function App() {
     setErrorSessionId(taskSessionId);
     setSessionNotice("");
     setNoticeSessionId(taskSessionId);
-    setBusy(true);
-    setRunningSessionId(taskSessionId);
+    setRunningSessionIds((current) => {
+      const next = new Set(current);
+      next.add(taskSessionId);
+      return next;
+    });
+    setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
     shouldScrollToBottomRef.current = taskSessionId;
     const skillsBlock = selectedSkills.length
       ? `请按照以下技能执行：\n${selectedSkills.map((skill) => {
@@ -2452,7 +2459,9 @@ export function App() {
           }
         };
         let finishedEventSeen = false;
-        agentUnsubscribeRef.current = window.dyworker.onAgentEvent((agentEvent) => {
+        const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
+          if (sessionAgentEvent.sessionId !== taskSessionId) return;
+          const agentEvent = sessionAgentEvent.event;
           if (agentEvent.type === "activity") {
             patchAssistant((current) => ({ ...current, activities: [...(current.activities || []), agentEvent.activity] }));
           } else if (agentEvent.type === "activity-update") {
@@ -2470,13 +2479,19 @@ export function App() {
           } else if (agentEvent.type === "plan-update") {
             patchAssistant((current) => ({ ...current, plan: agentEvent.steps }));
           } else if (agentEvent.type === "approval-request") {
-            setPendingApproval({ sessionId: taskSessionId, action: agentEvent.action });
+            setPendingApprovals((current) => ({ ...current, [taskSessionId]: agentEvent.action }));
           } else if (agentEvent.type === "ask-user") {
-            setPendingQuestion({ sessionId: taskSessionId, request: agentEvent.request });
+            setPendingQuestions((current) => ({ ...current, [taskSessionId]: agentEvent.request }));
           } else if (agentEvent.type === "loop-state") {
-            setLoopState(agentEvent.active
-              ? { iteration: agentEvent.iteration, maximum: agentEvent.maximum, status: agentEvent.status }
-              : null);
+            setLoopStates((current) => {
+              const next = { ...current };
+              if (agentEvent.active) {
+                next[taskSessionId] = { iteration: agentEvent.iteration, maximum: agentEvent.maximum, status: agentEvent.status };
+              } else {
+                delete next[taskSessionId];
+              }
+              return next;
+            });
           } else if (agentEvent.type === "memory-saved") {
             void refreshMemories();
             setSessionNotice("已保存一条长期记忆");
@@ -2516,6 +2531,7 @@ export function App() {
             applyAgentResult(agentEvent.result);
           }
         });
+        agentUnsubscribeRefs.current.set(taskSessionId, unsubscribeAgent);
         try {
           const response = await window.dyworker.sendTask({
             settings,
@@ -2531,10 +2547,14 @@ export function App() {
           if (!finishedEventSeen) applyAgentResult(response.result);
         } finally {
           // webContents.send 的尾部事件可能晚于 invoke 响应到达，延迟取消订阅避免丢事件
-          const unsubscribe = agentUnsubscribeRef.current;
-          agentUnsubscribeRef.current = null;
+          const unsubscribe = agentUnsubscribeRefs.current.get(taskSessionId);
+          agentUnsubscribeRefs.current.delete(taskSessionId);
           if (unsubscribe) window.setTimeout(unsubscribe, 1000);
-          setLoopState(null);
+          setLoopStates((current) => {
+            const next = { ...current };
+            delete next[taskSessionId];
+            return next;
+          });
         }
       } else {
         let response;
@@ -2572,9 +2592,26 @@ export function App() {
         }],
       }));
     } finally {
-      setBusy(false);
-      setRunningSessionId(null);
-      setPendingApproval((current) => current?.sessionId === taskSessionId ? null : current);
+      setRunningSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(taskSessionId);
+        return next;
+      });
+      setRunningStartedAt((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
+      setPendingApprovals((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
+      setPendingQuestions((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
     }
   };
 
@@ -2684,7 +2721,7 @@ export function App() {
     settings.model,
     settings.endpoint,
   ]);
-  const canSend = Boolean((composer.trim() || attachments.length || activeSkills.length) && !busy && voiceState !== "transcribing");
+  const canSend = Boolean((composer.trim() || attachments.length || activeSkills.length) && !activeTaskRunning && voiceState !== "transcribing");
 
   return (
     <div className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
@@ -2991,7 +3028,7 @@ export function App() {
               <div className="message-row assistant">
                 <div className="assistant-working">
                   <LoaderCircle className="spin" size={17} />
-                  <span>{loopState ? `持续执行 第 ${loopState.iteration}/${loopState.maximum} 轮 · ${loopState.status}` : `正在处理任务${elapsedSeconds > 1 ? ` · ${elapsedSeconds} 秒` : ""}`}</span>
+                  <span>{activeLoopState ? `持续执行 第 ${activeLoopState.iteration}/${activeLoopState.maximum} 轮 · ${activeLoopState.status}` : `正在处理任务${activeElapsedSeconds > 1 ? ` · ${activeElapsedSeconds} 秒` : ""}`}</span>
                 </div>
               </div>
             )}
@@ -3001,8 +3038,13 @@ export function App() {
                 <ApprovalCard
                   action={activePendingApproval}
                   onResolve={(approved) => {
-                    void window.dyworker?.resolveApproval(activePendingApproval.id, approved);
-                    setPendingApproval(null);
+                    if (!activeSession) return;
+                    void window.dyworker?.resolveApproval(activeSession.id, activePendingApproval.id, approved);
+                    setPendingApprovals((current) => {
+                      const next = { ...current };
+                      delete next[activeSession.id];
+                      return next;
+                    });
                   }}
                 />
               </div>
@@ -3013,8 +3055,13 @@ export function App() {
                 <QuestionCard
                   request={activePendingQuestion}
                   onResolve={(answer) => {
-                    void window.dyworker?.resolveQuestion(activePendingQuestion.id, answer);
-                    setPendingQuestion(null);
+                    if (!activeSession) return;
+                    void window.dyworker?.resolveQuestion(activeSession.id, activePendingQuestion.id, answer);
+                    setPendingQuestions((current) => {
+                      const next = { ...current };
+                      delete next[activeSession.id];
+                      return next;
+                    });
                   }}
                 />
               </div>
@@ -3053,10 +3100,10 @@ export function App() {
                 <span className="goal-banner-icon"><Target size={13} /></span>
                 <span className="goal-banner-label">长期目标</span>
                 <span className="goal-banner-text">{activeSession.goal}</span>
-                {activeTaskRunning && loopState && (
+                {activeTaskRunning && activeLoopState && (
                   <span className="goal-banner-status">
                     <LoaderCircle className="spin" size={11} />
-                    推进中 {loopState.iteration}/{loopState.maximum} 轮
+                    推进中 {activeLoopState.iteration}/{activeLoopState.maximum} 轮
                   </span>
                 )}
                 <button
@@ -3262,7 +3309,7 @@ export function App() {
                 {activeTaskRunning ? (
                   <button
                     className="send-button stop"
-                    onClick={() => void window.dyworker?.cancelTask()}
+                    onClick={() => activeSession && void window.dyworker?.cancelTask(activeSession.id)}
                     aria-label="停止任务"
                     title="停止任务"
                   >

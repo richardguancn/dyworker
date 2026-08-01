@@ -405,7 +405,7 @@ ipcMain.handle("voice:transcribe", async (_event, payload) => {
 
 // ---- 本地代理 ----
 
-let activeAgent = null;
+const activeAgents = new Map();
 let mcpShuttingDown = false;
 
 async function readMemories() {
@@ -755,27 +755,30 @@ async function closeMcpClient(key) {
 
 // ---- 浏览器协作（可见窗口，操作可审计） ----
 
-const browserAgent = new BrowserAgent();
-
 function agentExtraTools(mcpTools) {
   return [...mcpTools, ...browserToolDefinitions()];
 }
 
-function routeExtraTool(settings, name, args) {
-  if (name.startsWith("browser__")) return browserAgent.handle(name, args);
-  return callMcpTool(settings, name, args);
+function createExtraToolRouter(settings, workspacePath) {
+  const browserAgent = new BrowserAgent();
+  browserAgent.setWorkspace(workspacePath);
+  return (name, args) => {
+    if (name.startsWith("browser__")) return browserAgent.handle(name, args);
+    return callMcpTool(settings, name, args);
+  };
 }
 
 ipcMain.handle("agent:send", async (event, payload) => {
   if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
-  if (activeAgent) return { ok: false, error: "上一个任务还在执行，请先停止或等待完成" };
   const settings = payload?.settings || {};
   const workspacePath = String(payload?.workspacePath || "").trim();
   const sessionId = String(payload?.sessionId || "").trim();
+  if (!sessionId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
+  if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
   const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
   const sender = event.sender;
   const emit = (agentEvent) => {
-    if (!sender.isDestroyed()) sender.send("agent:event", agentEvent);
+    if (!sender.isDestroyed()) sender.send("agent:event", { sessionId, event: agentEvent });
   };
   const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
   const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
@@ -820,10 +823,11 @@ ipcMain.handle("agent:send", async (event, payload) => {
     ? payload.approvalMode
     : "interactive";
   const extraTools = agentExtraTools(await mcpExtraTools(settings));
-  browserAgent.setWorkspace(workspacePath);
+  const routeExtraTool = createExtraToolRouter(settings, workspacePath);
 
-  activeAgent = { cancelled: false, pending: new Map(), sessionId };
-  const agentState = activeAgent;
+  if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
+  const agentState = { cancelled: false, pending: new Map(), sessionId };
+  activeAgents.set(sessionId, agentState);
   trackTaskStart();
   try {
     let iterationMessages = agentConversation;
@@ -846,7 +850,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
         standingRules: await readStandingRules(),
         audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode }),
         extraTools,
-        onExtraTool: (name, args) => routeExtraTool(settings, name, args),
+        onExtraTool: routeExtraTool,
         emit: (agentEvent) => {
           if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
           if (agentEvent?.type === "skill-updated") void updateSkill(agentEvent.item);
@@ -899,35 +903,40 @@ ipcMain.handle("agent:send", async (event, payload) => {
     return { ok: false, error: reason };
   } finally {
     trackTaskEnd();
-    if (activeAgent === agentState) activeAgent = null;
+    if (activeAgents.get(sessionId) === agentState) activeAgents.delete(sessionId);
   }
 });
 
 ipcMain.handle("agent:resolve-approval", (_event, payload) => {
-  const resolve = activeAgent?.pending.get(String(payload?.actionId || ""));
+  const agentState = activeAgents.get(String(payload?.sessionId || ""));
+  const resolve = agentState?.pending.get(String(payload?.actionId || ""));
   if (!resolve) return { ok: false };
-  activeAgent.pending.delete(String(payload?.actionId || ""));
+  agentState.pending.delete(String(payload?.actionId || ""));
   resolve(Boolean(payload?.approved));
   return { ok: true };
 });
 
 ipcMain.handle("agent:resolve-question", (_event, payload) => {
+  const agentState = activeAgents.get(String(payload?.sessionId || ""));
   const key = `q:${String(payload?.requestId || "")}`;
-  const resolve = activeAgent?.pending.get(key);
+  const resolve = agentState?.pending.get(key);
   if (!resolve) return { ok: false };
-  activeAgent.pending.delete(key);
+  agentState.pending.delete(key);
   resolve({ ok: true, answer: String(payload?.answer || "") });
   return { ok: true };
 });
 
-ipcMain.handle("agent:cancel", async () => {
-  if (!activeAgent) return { ok: false };
-  activeAgent.cancelled = true;
-  for (const resolve of activeAgent.pending.values()) resolve(false);
-  activeAgent.pending.clear();
+ipcMain.handle("agent:cancel", async (_event, payload) => {
+  const sessionId = String(payload?.sessionId || "");
+  const agentState = activeAgents.get(sessionId);
+  if (!agentState) return { ok: false };
+  agentState.cancelled = true;
+  for (const resolve of agentState.pending.values()) resolve(false);
+  agentState.pending.clear();
   // 任务被取消时,它登记的待唤醒一并取消
-  await cancelWakesForSession(activeAgent.sessionId);
-  void closeMcpClient(COMPUTER_USE_SERVER_ID);
+  await cancelWakesForSession(sessionId);
+  // Computer Use 服务由所有任务共享；只有最后一个任务停止时才关闭，避免中断其他会话。
+  if (activeAgents.size === 1) void closeMcpClient(COMPUTER_USE_SERVER_ID);
   return { ok: true };
 });
 
@@ -1319,7 +1328,7 @@ async function resumeWake(wake) {
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法续跑挂起的任务");
     }
-    browserAgent.setWorkspace(wake.workspacePath);
+    const routeExtraTool = createExtraToolRouter(settings, wake.workspacePath);
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
@@ -1340,7 +1349,7 @@ async function resumeWake(wake) {
       standingRules: await readStandingRules(),
       audit: (entry) => auditLog.record({ ...entry, sessionId: wake.sessionId, approvalMode }),
       extraTools: agentExtraTools(await mcpExtraTools(settings)),
-      onExtraTool: (name, args) => routeExtraTool(settings, name, args),
+      onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(wake.sessionId),
       // 续跑同样无人值守：审批与提问进收件箱挂起等待
@@ -1406,7 +1415,7 @@ async function resumeWake(wake) {
 }
 
 async function checkDueWakes() {
-  if (mcpShuttingDown || runningScheduledTask || runningChannelTask || activeAgent) return;
+  if (mcpShuttingDown || runningScheduledTask || runningChannelTask || activeAgents.size) return;
   const now = new Date();
   const wakes = await readWakes();
   const due = wakes.find((wake) => wake.status === "pending" && wake.wakeAt && new Date(wake.wakeAt) <= now);
@@ -1475,7 +1484,7 @@ async function runScheduledTask(record) {
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
-    browserAgent.setWorkspace(record.workspacePath);
+    const routeExtraTool = createExtraToolRouter(settings, record.workspacePath);
     const collector = createTranscriptCollector();
     const result = await runAgent({
       settings,
@@ -1490,7 +1499,7 @@ async function runScheduledTask(record) {
       standingRules: await readStandingRules(),
       audit: (entry) => auditLog.record({ ...entry, sessionId: scheduleSessionId, approvalMode: record.allowWorkspaceWrites ? "allow-writes" : "deny-changes" }),
       extraTools: agentExtraTools(await mcpExtraTools(settings)),
-      onExtraTool: (name, args) => routeExtraTool(settings, name, args),
+      onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(scheduleSessionId),
       // 无人值守：需要确认的操作与提问不再静默失败，改为进审批收件箱，任务挂起等待处理
@@ -1569,7 +1578,7 @@ async function runScheduledTask(record) {
 }
 
 async function checkDueSchedules() {
-  if (mcpShuttingDown || runningScheduledTask || runningChannelTask || activeAgent) return;
+  if (mcpShuttingDown || runningScheduledTask || runningChannelTask || activeAgents.size) return;
   const now = new Date();
   const items = await readSchedules();
   const due = items.find((item) => item.enabled && item.nextRun && new Date(item.nextRun) <= now);
@@ -1673,7 +1682,7 @@ async function reconcileChannels() {
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
 async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, reply, registerPending, clearPending }) {
   // 渠道消息不可丢弃:桌面交互任务/定时任务执行期间,排队等待全局空闲
-  while (!mcpShuttingDown && (activeAgent || runningScheduledTask || runningChannelTask)) {
+  while (!mcpShuttingDown && (activeAgents.size || runningScheduledTask || runningChannelTask)) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   if (mcpShuttingDown) return;
@@ -1723,7 +1732,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     }
     // 渠道审批严格度:默认省心(allow-writes,搜索/读写自动放行),可在渠道设置切严格
     const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "allow-writes";
-    browserAgent.setWorkspace(workspacePath);
+    const routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
     const collector = createTranscriptCollector();
     const prior = await visibleConversationForSession(sessionId, "", "");
     await reply("收到,正在处理…").catch(() => { });
@@ -1740,7 +1749,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
       standingRules: await readStandingRules(),
       audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode, channel }),
       extraTools: agentExtraTools(await mcpExtraTools(taskSettings)),
-      onExtraTool: (name, args) => routeExtraTool(taskSettings, name, args),
+      onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(sessionId),
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
@@ -1919,10 +1928,10 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (schedulerTimer) clearInterval(schedulerTimer);
   schedulerTimer = null;
-  if (activeAgent) {
-    activeAgent.cancelled = true;
-    for (const resolve of activeAgent.pending.values()) resolve(false);
-    activeAgent.pending.clear();
+  for (const agentState of activeAgents.values()) {
+    agentState.cancelled = true;
+    for (const resolve of agentState.pending.values()) resolve(false);
+    agentState.pending.clear();
   }
   void expireAllPendingInbox("应用在等待处理期间关闭，任务已终止")
     .catch(() => { })
