@@ -886,7 +886,10 @@ ipcMain.handle("agent:send", async (event, payload) => {
           emit({ type: "ask-user", request });
         }),
       });
-      for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath);
+      for (const memory of memoriesFromAgentResult(result)) {
+        if (agentState.cancelled) break;
+        await appendMemory(memory, workspacePath);
+      }
       finalResult = result;
       if (agentState.cancelled) {
         await cancelWakesForSession(sessionId);
