@@ -21,16 +21,6 @@ export const providerPresets: ProviderPreset[] = [
     defaultContextLimit: 1048576,
   },
   {
-    id: "deepseek-v3",
-    name: "DeepSeek V3（旧版接口）",
-    endpoint: "https://api.deepseek.com/v1/chat/completions",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    defaultModel: "deepseek-chat",
-    keyHint: "platform.deepseek.com 申请",
-    contextLimits: { "deepseek-chat": 65536, "deepseek-reasoner": 131072 },
-    defaultContextLimit: 65536,
-  },
-  {
     id: "kimi",
     name: "Kimi（月之暗面）",
     endpoint: "https://api.kimi.com/coding/v1/chat/completions",
