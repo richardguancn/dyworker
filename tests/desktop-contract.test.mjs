@@ -193,6 +193,8 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(browserSource, /dispose\(\)/);
   assert.match(main, /routeExtraTool\?\.dispose\(\)/);
   assert.match(linuxComputerUseSource, /message\.method === "notifications\/cancelled"/);
+  assert.match(linuxComputerUseSource, /cancelledToolRequests\.add\(requestId\)/);
+  assert.match(linuxComputerUseSource, /cancelled: cancelledToolRequests\.delete\(message\.id\)/);
   assert.match(linuxComputerUseSource, /activeToolRequest\?\.cancelled/);
   assert.match(agent, /browserReadOnlyTools/);
   // 变更卡片可直接打开产出文件

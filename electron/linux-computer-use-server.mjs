@@ -203,6 +203,7 @@ export function desktopToolDefinitions() {
 }
 
 const activeChildren = new Set();
+const cancelledToolRequests = new Set();
 let activeToolRequest = null;
 let shutdownRequested = false;
 
@@ -1153,7 +1154,10 @@ function responseContent(result) {
 async function handleMessage(message) {
   if (!message?.method) return null;
   if (message.method === "notifications/cancelled") {
-    if (activeToolRequest?.id === message.params?.requestId) {
+    const requestId = message.params?.requestId;
+    if (requestId == null) return null;
+    cancelledToolRequests.add(requestId);
+    if (activeToolRequest?.id === requestId) {
       activeToolRequest.cancelled = true;
       for (const child of activeChildren) stopChild(child, "SIGTERM");
     }
@@ -1175,9 +1179,10 @@ async function handleMessage(message) {
     return { jsonrpc: "2.0", id: message.id, result: { tools: desktopToolDefinitions() } };
   }
   if (message.method === "tools/call") {
-    const requestState = { id: message.id, cancelled: false };
+    const requestState = { id: message.id, cancelled: cancelledToolRequests.delete(message.id) };
     activeToolRequest = requestState;
     try {
+      if (requestState.cancelled) throw new Error("任务已停止");
       const result = await callTool(String(message.params?.name || ""), message.params?.arguments || {});
       if (requestState.cancelled) throw new Error("任务已停止");
       return { jsonrpc: "2.0", id: message.id, result: { content: responseContent(result), isError: false } };
@@ -1191,6 +1196,7 @@ async function handleMessage(message) {
         },
       };
     } finally {
+      cancelledToolRequests.delete(message.id);
       if (activeToolRequest === requestState) activeToolRequest = null;
     }
   }
