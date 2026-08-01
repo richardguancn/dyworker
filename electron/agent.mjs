@@ -2210,6 +2210,7 @@ export async function runAgent({
   requestUserInput = null,
   fetchImpl = fetch,
   isCancelled = () => false,
+  signal: cancellationSignal = null,
   depth = 0,
   contextLimit = 128000,
   modelTimeoutMs = MODEL_TIMEOUT_MS,
@@ -2315,11 +2316,15 @@ export async function runAgent({
 
   const withModelTimeout = async (operation) => {
     const controller = new AbortController();
+    const cancelCurrentRequest = () => controller.abort();
+    if (cancellationSignal?.aborted) controller.abort();
+    else cancellationSignal?.addEventListener("abort", cancelCurrentRequest, { once: true });
     const timer = setTimeout(() => controller.abort(), Math.max(1, Number(modelTimeoutMs) || MODEL_TIMEOUT_MS));
     try {
       return await operation(controller.signal);
     } finally {
       clearTimeout(timer);
+      cancellationSignal?.removeEventListener("abort", cancelCurrentRequest);
     }
   };
 
@@ -2800,6 +2805,7 @@ export async function runAgent({
                 requestApproval: queuedApproval,
                 fetchImpl,
                 isCancelled,
+                signal: cancellationSignal,
                 depth: depth + 1,
                 modelTimeoutMs,
               });

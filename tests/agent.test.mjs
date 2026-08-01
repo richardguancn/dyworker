@@ -1575,6 +1575,35 @@ test("McpClient 只取消当前工具调用并保留共享连接", async () => {
   await client.close();
 });
 
+test("等待模型回复时可以立即停止当前任务", async () => {
+  const root = await makeWorkspace();
+  const controller = new AbortController();
+  const fetchImpl = (_url, options = {}) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({
+      ok: true,
+      json: async () => ({ choices: [{ message: { role: "assistant", content: "不应返回" } }] }),
+    }), 180);
+    options.signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    }, { once: true });
+  });
+  const running = runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "等待回复" }],
+    fetchImpl,
+    isCancelled: () => controller.signal.aborted,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 10);
+  const result = await running;
+  assert.equal(result.status, "cancelled");
+  assert.notEqual(result.finalText, "不应返回");
+});
+
 test("McpClient 初始化超时后会关闭子进程", async () => {
   const serverFile = path.join(os.tmpdir(), `dyworker-hanging-mcp-${process.pid}.mjs`);
   await fs.writeFile(serverFile, "process.stdin.resume();");

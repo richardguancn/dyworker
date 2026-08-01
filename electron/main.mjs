@@ -871,6 +871,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
           emit(agentEvent);
         },
         isCancelled: () => agentState.cancelled || mcpShuttingDown,
+        signal: abortController.signal,
         sleepGuard: () => hasPendingWakeForSession(sessionId),
         requestApproval: (action) => new Promise((resolve) => {
           agentState.pending.set(action.id, resolve);
