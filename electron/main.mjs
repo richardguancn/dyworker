@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
@@ -169,12 +169,30 @@ function attachmentType(filePath) {
 async function describeAttachment(filePath) {
   const stat = await fs.stat(filePath);
   const mimeType = attachmentType(filePath);
+  const isImage = mimeType.startsWith("image/");
+  let previewUrl;
+  if (isImage) {
+    const source = nativeImage.createFromPath(filePath);
+    if (!source.isEmpty()) {
+      const size = source.getSize();
+      const scale = Math.min(1, 480 / Math.max(1, size.width), 320 / Math.max(1, size.height));
+      const preview = scale < 1
+        ? source.resize({
+            width: Math.max(1, Math.round(size.width * scale)),
+            height: Math.max(1, Math.round(size.height * scale)),
+            quality: "good",
+          })
+        : source;
+      previewUrl = `data:image/png;base64,${preview.toPNG().toString("base64")}`;
+    }
+  }
   return {
     name: path.basename(filePath),
     path: filePath,
     size: stat.size,
     mimeType,
-    isImage: mimeType.startsWith("image/"),
+    isImage,
+    ...(previewUrl ? { previewUrl } : {}),
   };
 }
 

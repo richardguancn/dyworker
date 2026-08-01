@@ -69,6 +69,13 @@ test("workspace files can be dragged into the composer as references", () => {
   assert.match(app, /addWorkspaceFile\(file\)/);
 });
 
+test("image attachments render real previews before and after sending", () => {
+  assert.match(main, /previewUrl/);
+  assert.match(app, /attachment\.isImage && attachment\.previewUrl/);
+  assert.match(app, /className="attachment-preview-image"/);
+  assert.match(styles, /\.attachment-preview-image/);
+});
+
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
   assert.match(app, /请求批准/);
   assert.match(app, /替我审批/);

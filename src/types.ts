@@ -169,6 +169,7 @@ export interface Attachment {
   size: number;
   mimeType: string;
   isImage?: boolean;
+  previewUrl?: string;
 }
 
 export interface ChatMessage {

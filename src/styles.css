@@ -1350,6 +1350,32 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.message-attachment-image {
+  width: min(260px, 58vw);
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgba(102, 105, 98, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.message-attachment-image .attachment-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.message-attachment-image figcaption {
+  overflow: hidden;
+  padding: 5px 8px;
+  color: #71756e;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 技能引用标签(/skill 显示在用户气泡上方,对齐 Codex/Kimi 的引用呈现) */
 .message-skills {
   margin-top: 0;
@@ -2014,6 +2040,20 @@ textarea:focus-visible {
   color: #656961;
   background: #f2f2ee;
   font-size: 12px;
+}
+
+.attachment-chip.image-attachment-chip {
+  height: 64px;
+  padding-left: 5px;
+}
+
+.image-attachment-chip .attachment-preview-image {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 54px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .attachment-chip > span {

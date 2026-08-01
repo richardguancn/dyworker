@@ -1925,7 +1925,7 @@ async function readResponsesStream(response, { onText, onUsage }) {
 export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const responsesApi = isResponsesEndpoint(settings.endpoint);
-  if (responsesApi && String(settings.model || "").trim().toLowerCase() === "deepseek-v4-flash" && messagesHaveImages(messages)) {
+  if (String(settings.model || "").trim().toLowerCase() === "deepseek-v4-flash" && messagesHaveImages(messages)) {
     const error = new Error("DeepSeek V4 Flash 当前不支持图片输入，请改用文字资料或支持图片的模型");
     error.status = 415;
     throw error;

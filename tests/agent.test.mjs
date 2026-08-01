@@ -253,6 +253,27 @@ test("DeepSeek V4 不支持图片时明确失败且不发送图片数据", async
   assert.equal(requested, false);
 });
 
+test("DeepSeek V4 使用兼容聊天地址时也不会把图片发给纯文本接口", async () => {
+  const root = await makeWorkspace();
+  let requested = false;
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
+      ],
+    }],
+    fetchImpl: async () => { requested = true; throw new Error("不应发起请求"); },
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /不支持图片/);
+  assert.equal(requested, false);
+});
+
 test("Responses API 输出被截断或流提前结束时不会误报成功", async (t) => {
   const root = await makeWorkspace();
   await t.test("response.incomplete", async () => {

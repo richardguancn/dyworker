@@ -2979,10 +2979,17 @@ export function App() {
                       {Boolean(message.attachments?.length) && (
                         <div className="message-attachments">
                           {message.attachments?.map((attachment) => (
-                            <span key={`${message.createdAt}-${attachment.path}`}>
-                              {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
-                              {attachment.name}
-                            </span>
+                            attachment.isImage && attachment.previewUrl ? (
+                              <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`}>
+                                <img className="attachment-preview-image" src={attachment.previewUrl} alt={attachment.name} />
+                                <figcaption title={attachment.path}>{attachment.name}</figcaption>
+                              </figure>
+                            ) : (
+                              <span key={`${message.createdAt}-${attachment.path}`}>
+                                {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
+                                {attachment.name}
+                              </span>
+                            )
                           ))}
                         </div>
                       )}
@@ -3166,8 +3173,10 @@ export function App() {
                   </span>
                 ))}
                 {attachments.map((attachment) => (
-                  <span className="attachment-chip" key={attachment.path}>
-                    {attachment.isImage ? <FileImage size={14} /> : <FileText size={14} />}
+                  <span className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : ""}`} key={attachment.path}>
+                    {attachment.isImage && attachment.previewUrl
+                      ? <img className="attachment-preview-image" src={attachment.previewUrl} alt={attachment.name} />
+                      : attachment.isImage ? <FileImage size={14} /> : <FileText size={14} />}
                     <span title={attachment.path}>{attachment.name}</span>
                     <button
                       type="button"
