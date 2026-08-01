@@ -203,6 +203,7 @@ export function desktopToolDefinitions() {
 }
 
 const activeChildren = new Set();
+let activeToolRequest = null;
 let shutdownRequested = false;
 
 function stopChild(child, signal = "SIGTERM") {
@@ -224,6 +225,10 @@ function run(program, args = [], {
   env = {},
 } = {}) {
   return new Promise((resolve, reject) => {
+    if (activeToolRequest?.cancelled && !protectedSystemTransaction) {
+      reject(new Error("任务已停止"));
+      return;
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -1146,7 +1151,15 @@ function responseContent(result) {
 }
 
 async function handleMessage(message) {
-  if (!message || message.id == null || !message.method) return null;
+  if (!message?.method) return null;
+  if (message.method === "notifications/cancelled") {
+    if (activeToolRequest?.id === message.params?.requestId) {
+      activeToolRequest.cancelled = true;
+      for (const child of activeChildren) stopChild(child, "SIGTERM");
+    }
+    return null;
+  }
+  if (message.id == null) return null;
   if (message.method === "initialize") {
     return {
       jsonrpc: "2.0",
@@ -1162,8 +1175,11 @@ async function handleMessage(message) {
     return { jsonrpc: "2.0", id: message.id, result: { tools: desktopToolDefinitions() } };
   }
   if (message.method === "tools/call") {
+    const requestState = { id: message.id, cancelled: false };
+    activeToolRequest = requestState;
     try {
       const result = await callTool(String(message.params?.name || ""), message.params?.arguments || {});
+      if (requestState.cancelled) throw new Error("任务已停止");
       return { jsonrpc: "2.0", id: message.id, result: { content: responseContent(result), isError: false } };
     } catch (error) {
       return {
@@ -1174,6 +1190,8 @@ async function handleMessage(message) {
           isError: true,
         },
       };
+    } finally {
+      if (activeToolRequest === requestState) activeToolRequest = null;
     }
   }
   return {
@@ -1194,13 +1212,17 @@ async function startServer() {
       const line = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);
       if (!line) continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (message.method === "notifications/cancelled") {
+        void handleMessage(message);
+        continue;
+      }
       chain = chain.then(async () => {
-        let message;
-        try {
-          message = JSON.parse(line);
-        } catch {
-          return;
-        }
         const response = await handleMessage(message);
         if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
       });

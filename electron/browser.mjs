@@ -105,6 +105,10 @@ export class BrowserAgent {
     return note;
   }
 
+  dispose() {
+    if (this.win && !this.win.isDestroyed()) this.win.close();
+  }
+
   async evaluate(script) {
     if (!this.win || this.win.isDestroyed()) return { ok: false, result: "浏览器窗口还没有打开网页，请先用 browser__open 打开" };
     try {

@@ -767,10 +767,12 @@ function agentExtraTools(mcpTools) {
 function createExtraToolRouter(settings, workspacePath, { signal } = {}) {
   const browserAgent = new BrowserAgent();
   browserAgent.setWorkspace(workspacePath);
-  return (name, args) => {
+  const route = (name, args) => {
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
     return callMcpTool(settings, name, args, { signal });
   };
+  route.dispose = () => browserAgent.dispose();
+  return route;
 }
 
 ipcMain.handle("agent:send", async (event, payload) => {
@@ -792,6 +794,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
     emit({ type: "agent-finished", result });
     return { ok: true, result };
   };
+  let routeExtraTool = null;
   activeAgents.set(sessionId, agentState);
   trackTaskStart();
   try {
@@ -799,6 +802,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
     const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
     const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
     for (const memory of explicitMemories) {
+      if (agentState.cancelled) return cancelledResponse();
       if (memory.scope === "workspace" && !workspacePath) continue;
       const record = await appendMemory(memory, workspacePath);
       if (record) emit({ type: "memory-saved", item: record });
@@ -841,7 +845,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
       ? payload.approvalMode
       : "interactive";
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
-    const routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal });
+    routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal });
     if (agentState.cancelled) return cancelledResponse();
     let iterationMessages = agentConversation;
     let finalResult = null;
@@ -884,6 +888,11 @@ ipcMain.handle("agent:send", async (event, payload) => {
       });
       for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath);
       finalResult = result;
+      if (agentState.cancelled) {
+        await cancelWakesForSession(sessionId);
+        finalResult = { status: "cancelled", finalText: result.finalText || "" };
+        break;
+      }
       // 主动挂起（self-wake）：登记唤醒记录,到点由调度 tick 续跑,不再进入下一轮
       if (result.status === "sleeping" && result.wake) {
         await registerWake({
@@ -894,6 +903,10 @@ ipcMain.handle("agent:send", async (event, payload) => {
           prompt: latestUserText,
           finalText: result.finalText,
         });
+        if (agentState.cancelled) {
+          await cancelWakesForSession(sessionId);
+          finalResult = { status: "cancelled", finalText: result.finalText || "" };
+        }
         break;
       }
       const shouldContinue = loop.enabled
@@ -916,6 +929,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
     emit({ type: "agent-finished", result: { status: "error", finalText: "", reason } });
     return { ok: false, error: reason };
   } finally {
+    routeExtraTool?.dispose();
     trackTaskEnd();
     if (activeAgents.get(sessionId) === agentState) activeAgents.delete(sessionId);
   }
@@ -1339,12 +1353,13 @@ async function visibleConversationForSession(sessionId, fallbackPrompt, fallback
 async function resumeWake(wake) {
   runningScheduledTask = true;
   trackTaskStart();
+  let routeExtraTool = null;
   try {
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法续跑挂起的任务");
     }
-    const routeExtraTool = createExtraToolRouter(settings, wake.workspacePath);
+    routeExtraTool = createExtraToolRouter(settings, wake.workspacePath);
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
@@ -1425,6 +1440,7 @@ async function resumeWake(wake) {
       await markScheduleFinished(wake.scheduleId, false, error instanceof Error ? error.message : String(error));
     }
   } finally {
+    routeExtraTool?.dispose();
     trackTaskEnd();
     runningScheduledTask = false;
   }
@@ -1495,12 +1511,13 @@ async function runScheduledTask(record) {
   broadcastSchedulesChanged();
   // 本次执行的会话 id：收件箱条目、审计记录与最终留痕会话共用同一个
   const scheduleSessionId = crypto.randomUUID();
+  let routeExtraTool = null;
   try {
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
-    const routeExtraTool = createExtraToolRouter(settings, record.workspacePath);
+    routeExtraTool = createExtraToolRouter(settings, record.workspacePath);
     const collector = createTranscriptCollector();
     const result = await runAgent({
       settings,
@@ -1587,6 +1604,7 @@ async function runScheduledTask(record) {
   } catch (error) {
     await markScheduleFinished(record.id, false, error instanceof Error ? error.message : String(error));
   } finally {
+    routeExtraTool?.dispose();
     trackTaskEnd();
     runningScheduledTask = false;
     broadcastSchedulesChanged();
@@ -1704,6 +1722,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
   if (mcpShuttingDown) return;
   runningChannelTask = true;
   trackTaskStart();
+  let routeExtraTool = null;
   const channelLabel = CHANNEL_LABELS[channel] || channel;
   const sessionId = chatRecord.sessionId;
   const workspacePath = String(chatRecord.workspacePath || "");
@@ -1748,7 +1767,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     }
     // 渠道审批严格度:默认省心(allow-writes,搜索/读写自动放行),可在渠道设置切严格
     const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "allow-writes";
-    const routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
+    routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
     const collector = createTranscriptCollector();
     const prior = await visibleConversationForSession(sessionId, "", "");
     await reply("收到,正在处理…").catch(() => { });
@@ -1832,6 +1851,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     await reply(`出错了:${friendly}`).catch(() => { });
     sendAssistantMessages([{ role: "assistant", content: `出错了:${message}`, createdAt: new Date().toISOString() }]);
   } finally {
+    routeExtraTool?.dispose();
     clearPending();
     trackTaskEnd();
     runningChannelTask = false;

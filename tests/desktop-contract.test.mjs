@@ -10,6 +10,7 @@ const app = readSource(new URL("../src/App.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
+const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
@@ -48,6 +49,7 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(main, /sender\.send\("agent:event", \{ sessionId, runId, event: agentEvent \}\)/);
   assert.match(main, /activeAgents\.set\(sessionId, agentState\);\n\s*trackTaskStart\(\);\n\s*try \{/);
   assert.match(main, /agentState\.abortController\.abort\(\)/);
+  assert.match(main, /if \(agentState\.cancelled\) \{\n\s*await cancelWakesForSession\(sessionId\)/);
   assert.match(main, /const mcpClientConnections = new Map\(\)/);
   assert.match(main, /if \(pendingConnection\) return pendingConnection/);
   assert.match(preload, /cancelTask: \(sessionId, runId\)/);
@@ -188,6 +190,10 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.ok(fs.existsSync(new URL("../electron/browser.mjs", import.meta.url)));
   assert.match(browserSource, /webContents\?\.id !== webContentsId/);
   assert.match(browserSource, /removeListener\("will-download", handleDownload\)/);
+  assert.match(browserSource, /dispose\(\)/);
+  assert.match(main, /routeExtraTool\?\.dispose\(\)/);
+  assert.match(linuxComputerUseSource, /message\.method === "notifications\/cancelled"/);
+  assert.match(linuxComputerUseSource, /activeToolRequest\?\.cancelled/);
   assert.match(agent, /browserReadOnlyTools/);
   // 变更卡片可直接打开产出文件
   assert.match(app, /dyworker\.openPath/);
