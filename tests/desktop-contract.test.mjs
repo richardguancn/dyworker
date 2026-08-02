@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 
 const app = readSource(new URL("../src/App.tsx", import.meta.url));
+const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
@@ -78,6 +79,23 @@ test("image attachments render real previews before and after sending", () => {
   assert.match(app, /attachment\.isImage \? "图片" : attachment\.name/);
   assert.match(styles, /\.attachment-preview-image/);
   assert.match(styles, /\.image-attachment-chip > button\s*\{[^}]*position:\s*absolute/s);
+});
+
+test("assistant local images only stay loaded near the viewport and share in-flight reads", () => {
+  assert.match(interactiveMessage, /IntersectionObserver/);
+  assert.match(interactiveMessage, /rootMargin:\s*"400px 0px"/);
+  assert.match(interactiveMessage, /setShouldLoad\(entry\.isIntersecting\)/);
+  assert.match(interactiveMessage, /localImageReads/);
+  assert.match(interactiveMessage, /maxConcurrentLocalImageReads\s*=\s*3/);
+  assert.match(interactiveMessage, /activeLocalImageReads\s*<\s*maxConcurrentLocalImageReads/);
+  assert.match(interactiveMessage, /setState\(\{ status: "loading" \}\)/);
+});
+
+test("assistant local image reader is exposed only to the trusted renderer", () => {
+  assert.match(preload, /readLocalImage:\s*\(path\).*local-image:read/);
+  assert.match(main, /registerLocalImageIpc\(ipcMain,\s*\{\s*isTrustedSender:/s);
+  assert.match(main, /isTrustedRendererUrl\(event\.senderFrame\?\.url\)/);
+  assert.match(main, /webContents\.on\("will-navigate"/);
 });
 
 test("built-in model knowledge is always loaded and cannot be deleted as user memory", () => {

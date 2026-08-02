@@ -1421,6 +1421,46 @@ textarea:focus-visible {
   margin: 0 0 14px;
 }
 
+.markdown-local-image {
+  display: block;
+  width: fit-content;
+  max-width: min(100%, 760px);
+  margin: 12px 0 18px;
+  overflow: hidden;
+  border: 1px solid #dedfd9;
+  border-radius: 12px;
+  background: #f3f4f0;
+}
+
+.markdown-local-image > img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.markdown-local-image-status {
+  display: block;
+  min-width: 220px;
+  padding: 18px 20px;
+  color: #777b74;
+  font-size: 13px;
+  text-align: center;
+}
+
+.markdown-local-image.error .markdown-local-image-status {
+  color: #a24d45;
+}
+
+.markdown-local-image-caption {
+  display: block;
+  padding: 7px 10px;
+  border-top: 1px solid #dedfd9;
+  color: #70746d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .markdown-content ul,
 .markdown-content ol {
   margin: 10px 0 17px;

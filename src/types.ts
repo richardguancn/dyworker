@@ -323,6 +323,7 @@ export interface DyworkerBridge {
   saveSessions(sessions: SessionRecord[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
+  readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;

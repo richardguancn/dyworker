@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, po
 import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { builtinHooks, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
@@ -13,6 +13,7 @@ import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId
 import { McpClient } from "./mcp.mjs";
 import { decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizePreventSleep, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
+import { registerLocalImageIpc } from "./local-image.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -42,7 +43,21 @@ if (
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isDevelopment = !app.isPackaged;
+const rendererEntryUrl = isDevelopment
+  ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
+  : pathToFileURL(path.join(here, "../dist/client/index.html")).href;
 let mainWindow;
+
+function isTrustedRendererUrl(rawUrl) {
+  try {
+    const actual = new URL(String(rawUrl || ""));
+    const expected = new URL(rendererEntryUrl);
+    if (isDevelopment) return actual.origin === expected.origin;
+    return actual.protocol === "file:" && actual.pathname === expected.pathname;
+  } catch {
+    return false;
+  }
+}
 
 app.setName("DYWorker");
 nativeTheme.themeSource = "system";
@@ -305,10 +320,24 @@ function createWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    try {
+      const target = new URL(url);
+      if (target.protocol === "http:" || target.protocol === "https:") void shell.openExternal(url);
+    } catch {
+      // Ignore malformed navigation targets.
+    }
+  });
 
-  if (isDevelopment) mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173");
+  if (isDevelopment) mainWindow.loadURL(rendererEntryUrl);
   else mainWindow.loadFile(path.join(here, "../dist/client/index.html"));
 }
+
+registerLocalImageIpc(ipcMain, {
+  isTrustedSender: (event) => isTrustedRendererUrl(event.senderFrame?.url),
+});
 
 ipcMain.handle("app:initial-state", async () => {
   const sessions = await readJson(dataFile("sessions.json"), defaultSessions());

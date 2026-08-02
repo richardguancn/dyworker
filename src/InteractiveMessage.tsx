@@ -8,9 +8,132 @@ import {
   ListChecks,
   SlidersHorizontal,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { localImagePathFromSource } from "../electron/local-image-path.mjs";
+
+const localImageMarker = "dyworker-local-image:";
+
+export function markdownUrlTransform(url: string, _key: string, node: Readonly<{ tagName: string }>) {
+  if (node.tagName === "img") {
+    const filePath = localImagePathFromSource(url);
+    if (filePath) return `${localImageMarker}${encodeURIComponent(filePath)}`;
+  }
+  return defaultUrlTransform(url);
+}
+
+type LocalImageState =
+  | { status: "loading" }
+  | { status: "loaded"; dataUrl: string }
+  | { status: "error"; error: string };
+
+type LocalImageReadResult = { ok: boolean; dataUrl?: string; error?: string };
+const localImageReads = new Map<string, Promise<LocalImageReadResult>>();
+const localImageReadQueue: Array<() => void> = [];
+const maxConcurrentLocalImageReads = 3;
+let activeLocalImageReads = 0;
+
+function drainLocalImageReadQueue() {
+  while (activeLocalImageReads < maxConcurrentLocalImageReads && localImageReadQueue.length) {
+    const start = localImageReadQueue.shift();
+    if (!start) break;
+    activeLocalImageReads += 1;
+    start();
+  }
+}
+
+function scheduleLocalImageRead(reader: () => Promise<LocalImageReadResult>) {
+  return new Promise<LocalImageReadResult>((resolve) => {
+    localImageReadQueue.push(() => {
+      void reader()
+        .then(resolve)
+        .catch(() => resolve({ ok: false, error: "图片不存在或读取失败" }))
+        .finally(() => {
+          activeLocalImageReads -= 1;
+          drainLocalImageReadQueue();
+        });
+    });
+    drainLocalImageReadQueue();
+  });
+}
+
+function readLocalImage(filePath: string): Promise<LocalImageReadResult> {
+  const pending = localImageReads.get(filePath);
+  if (pending) return pending;
+  const reader = window.dyworker?.readLocalImage;
+  if (!reader) return Promise.resolve<LocalImageReadResult>({ ok: false, error: "当前环境无法读取本地图片" });
+  const request = scheduleLocalImageRead(() => reader(filePath))
+    .finally(() => {
+      if (localImageReads.get(filePath) === request) localImageReads.delete(filePath);
+    });
+  localImageReads.set(filePath, request);
+  return request;
+}
+
+function LocalMarkdownImage({ encodedPath, alt }: { encodedPath: string; alt: string }) {
+  const [state, setState] = useState<LocalImageState>({ status: "loading" });
+  const [shouldLoad, setShouldLoad] = useState(false);
+  const containerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setShouldLoad(entry.isIntersecting);
+    }, { rootMargin: "400px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [encodedPath]);
+
+  useEffect(() => {
+    if (!shouldLoad) {
+      setState({ status: "loading" });
+      return;
+    }
+    let active = true;
+    setState({ status: "loading" });
+    let filePath = "";
+    try {
+      filePath = decodeURIComponent(encodedPath);
+    } catch {
+      setState({ status: "error", error: "图片地址无效" });
+      return () => { active = false; };
+    }
+    void readLocalImage(filePath).then((result) => {
+      if (!active) return;
+      if (result.ok && result.dataUrl) setState({ status: "loaded", dataUrl: result.dataUrl });
+      else setState({ status: "error", error: result.error || "图片无法显示" });
+    });
+    return () => { active = false; };
+  }, [encodedPath, shouldLoad]);
+
+  return (
+    <span className={`markdown-local-image ${state.status}`} ref={containerRef}>
+      {state.status === "loaded" ? (
+        <img src={state.dataUrl} alt={alt} loading="lazy" />
+      ) : (
+        <span className="markdown-local-image-status">
+          {state.status === "loading" ? "正在加载图片…" : state.error}
+        </span>
+      )}
+      {alt && <span className="markdown-local-image-caption">{alt}</span>}
+    </span>
+  );
+}
+
+function MarkdownImage({ src, alt, node: _node, ...props }: ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
+  if (typeof src === "string" && src.startsWith(localImageMarker)) {
+    return <LocalMarkdownImage encodedPath={src.slice(localImageMarker.length)} alt={alt || "本地图片"} />;
+  }
+  return <img {...props} src={src} alt={alt || "图片"} loading="lazy" />;
+}
+
+const markdownComponents = { img: MarkdownImage };
 
 interface Metric {
   label: string;
@@ -410,7 +533,7 @@ export function InteractiveMessage({ content }: { content: string }) {
         <InteractiveBlock widget={segment.widget} key={`widget-${index}`} />
       ) : segment.content.trim() ? (
         <div className="markdown-content" key={`markdown-${index}`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{segment.content}</ReactMarkdown>
+          <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]} urlTransform={markdownUrlTransform}>{segment.content}</ReactMarkdown>
         </div>
       ) : null)}
     </div>

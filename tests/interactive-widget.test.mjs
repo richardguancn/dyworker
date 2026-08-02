@@ -44,7 +44,7 @@ await build({
   logLevel: "silent",
 });
 
-const { parseInteractiveMessage } = await import(pathToFileURL(bundlePath).href);
+const { markdownUrlTransform, parseInteractiveMessage } = await import(pathToFileURL(bundlePath).href);
 const require = createRequire(import.meta.url);
 const { renderMessage } = require(renderBundlePath);
 // 关闭 esbuild 常驻服务，避免 Windows 下测试结束后进程因残留句柄不退出。
@@ -132,4 +132,41 @@ test("用户的赛程内容能真实渲染为步骤组件", () => {
   assert.match(html, /8月27日 男篮世预赛/);
   assert.match(html, /10月底 CBA新赛季/);
   assert.match(html, /第 1 步/);
+});
+
+test("助手回复中的本地图片地址会交给本地图片预览", () => {
+  const imageNode = { tagName: "img" };
+  assert.equal(
+    markdownUrlTransform("/Users/demo/Pictures/a b.png", "src", imageNode),
+    `dyworker-local-image:${encodeURIComponent("/Users/demo/Pictures/a b.png")}`,
+  );
+  assert.equal(
+    markdownUrlTransform("file:///C:/Users/demo/Pictures/a%20b.jpg", "src", imageNode),
+    `dyworker-local-image:${encodeURIComponent("C:/Users/demo/Pictures/a b.jpg")}`,
+  );
+  assert.equal(markdownUrlTransform("https://example.com/a.png", "src", imageNode), "https://example.com/a.png");
+  assert.equal(markdownUrlTransform("javascript:alert(1)", "src", imageNode), "");
+});
+
+test("本地图片在助手回复中渲染为图片区域而不是路径", () => {
+  const html = renderMessage("这是现场图片：\n\n![现场照片](</Users/demo/Pictures/现场照片.png>)");
+
+  assert.match(html, /class="markdown-local-image/);
+  assert.match(html, /正在加载图片/);
+  assert.doesNotMatch(html, /dyworker-local-image/);
+  assert.doesNotMatch(html, /\/Users\/demo\/Pictures/);
+});
+
+test("Windows 绝对路径同样渲染为本地图片区域", () => {
+  const html = renderMessage("![现场照片](<C:/Users/demo/Pictures/现场 照片.jpg>)");
+
+  assert.match(html, /class="markdown-local-image/);
+  assert.doesNotMatch(html, /C:\/Users\/demo/);
+});
+
+test("Windows 网络共享路径同样渲染为本地图片区域", () => {
+  const html = renderMessage(String.raw`![共享图片](<\\server\share\现场照片.png>)`);
+
+  assert.match(html, /class="markdown-local-image/);
+  assert.doesNotMatch(html, /server.*share/);
 });

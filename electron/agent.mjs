@@ -1678,7 +1678,8 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
     + "  3. bars：{\"type\":\"bars\",\"title\":\"数据对比\",\"defaultId\":\"a\",\"items\":[{\"id\":\"a\",\"label\":\"周一\",\"value\":42,\"max\":90,\"unit\":\" 分钟\",\"detail\":\"低于本周平均\"}]}\n"
     + "  4. steps：{\"type\":\"steps\",\"title\":\"办理步骤\",\"current\":1,\"steps\":[{\"label\":\"准备材料\",\"description\":\"收集所需文件\"},{\"label\":\"提交审核\",\"description\":\"核对后提交\"}]}\n"
     + "- steps 的 current 表示当前进行到第几步，可省略或用 0，都会从第 1 步开始展示。\n"
-    + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。",
+    + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。\n"
+    + "- 用户明确要求显示本地图片时，先确认图片存在，再用绝对路径写成 Markdown 图片，例如 ![现场照片](</绝对路径/现场照片.png>)；路径放在尖括号内以兼容空格，Windows 路径使用 C:/目录/图片.png 这种正斜杠写法，网络共享路径使用 file://server/share/图片.png。不要只回复图片路径，也不要把图片写进代码块。支持 png、jpg、jpeg、gif、webp、bmp。用户没有要求显示时，不要擅自嵌入本地图片。",
   ];
   const goalLine = goal
     ? `本任务的长期目标是：${goal}。把它当作最高优先级：每轮交付前对照目标自检——已达成则在 finish_task 中明确说明目标已达成；未达成就继续推进下一步，不得提前宣布完成。目标在达成前持续有效。`
