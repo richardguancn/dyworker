@@ -61,6 +61,10 @@ test("打包后把 JXA 助手解析到 app.asar.unpacked 路径", () => {
     unpackedResourcePath(packed),
     "/Applications/DYWorker.app/Contents/Resources/app.asar.unpacked/electron/scripts/macos_computer_use.js",
   );
+  assert.equal(
+    unpackedResourcePath("C:\\DYWorker\\resources\\app.asar\\electron\\scripts\\macos_computer_use.js"),
+    "C:\\DYWorker\\resources\\app.asar.unpacked\\electron\\scripts\\macos_computer_use.js",
+  );
   assert.equal(unpackedResourcePath("/tmp/plain/path.js"), "/tmp/plain/path.js");
 });
 

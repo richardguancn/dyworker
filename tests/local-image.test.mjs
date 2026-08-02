@@ -7,12 +7,16 @@ import test from "node:test";
 import { localImagePathFromSource, readLocalImageData, registerLocalImageIpc } from "../electron/local-image.mjs";
 
 test("助手回复可以识别 macOS、Linux 和 Windows 的本地图片地址", () => {
+  const windowsSpacedPath = "C:\\Users\\demo\\现场 照片.png";
+  const windowsNetworkPath = "\\\\server\\share\\现场 照片.png";
   assert.equal(localImagePathFromSource("/Users/demo/Pictures/现场照片.png"), "/Users/demo/Pictures/现场照片.png");
   assert.equal(localImagePathFromSource("file:///home/demo/Pictures/a%20b.jpg"), "/home/demo/Pictures/a b.jpg");
   assert.equal(localImagePathFromSource("C:/Users/demo/Pictures/a b.webp"), "C:/Users/demo/Pictures/a b.webp");
   assert.equal(localImagePathFromSource("file:///C:/Users/demo/Pictures/a%20b.jpeg"), "C:/Users/demo/Pictures/a b.jpeg");
   assert.equal(localImagePathFromSource("file://server/share/a%20b.png"), "//server/share/a b.png");
   assert.equal(localImagePathFromSource("%5Cserver%5Cshare%5Ca.png"), "\\\\server\\share\\a.png");
+  assert.equal(localImagePathFromSource(encodeURI(windowsSpacedPath)), windowsSpacedPath);
+  assert.equal(localImagePathFromSource(encodeURI(windowsNetworkPath)), windowsNetworkPath);
   assert.equal(localImagePathFromSource("/Users/demo/Pictures/100%20done.png"), "/Users/demo/Pictures/100%20done.png");
 });
 

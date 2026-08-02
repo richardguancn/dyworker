@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 export function unpackedResourcePath(file) {
-  return String(file).replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+  return String(file).replace(/([\\/])app\.asar([\\/])/, "$1app.asar.unpacked$2");
 }
 
 const macosHelper = unpackedResourcePath(path.join(here, "scripts", "macos_computer_use.js"));

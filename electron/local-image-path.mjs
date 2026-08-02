@@ -35,8 +35,13 @@ export function localImagePathFromSource(source) {
   if (!value) return "";
   const filePath = /^file:/i.test(value)
     ? pathFromFileUrl(value)
-    : /^%5c/i.test(value)
-      ? `\\${decodePath(value)}`
+    : /^[a-z]:(?:%5c|%2f)/i.test(value)
+      ? decodePath(value)
+      : /^%5c/i.test(value)
+        ? (() => {
+            const decoded = decodePath(value);
+            return decoded.startsWith("\\\\") ? decoded : `\\${decoded}`;
+          })()
       : value;
   if (!filePath || !isAbsoluteLocalPath(filePath)) return "";
   return localImageExtensions.has(imageExtension(filePath)) ? filePath : "";
