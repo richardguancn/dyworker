@@ -19,18 +19,18 @@ export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch
 export const browserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);
 
 // 本机界面操作是否属于变更（变更操作即使在完全访问模式下也必须逐次确认，
-// 避免误点付款、删除、安全设置等高风险控件）。
+// 避免误点付款、删除、安全设置等高风险控件）。读取应用状态属于只读操作；
+// 内置实现不会在读取时自动启动应用，启动必须先经过 launch_app 授权。
 export function computerUseActionNeedsApproval(name, platform = process.platform) {
   const action = computerUseAction(name);
   if (
     !action
     || action === "list_apps"
+    || action === "get_app_state"
     || action === "check_dependencies"
+    || action === "check_permissions"
     || action === "prepare_dependency_install"
   ) return false;
-  // macOS 官方 Computer Use 的 get_app_state 会在应用未运行时自动启动它；
-  // Linux 内置实现只读取已经运行的窗口。
-  if (action === "get_app_state") return platform === "darwin";
   return true;
 }
 

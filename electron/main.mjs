@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { builtinHooks, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { builtinHooks, isSafePublicUrl, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -304,6 +304,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   };
 
@@ -334,6 +335,23 @@ function createWindow() {
   if (isDevelopment) mainWindow.loadURL(rendererEntryUrl);
   else mainWindow.loadFile(path.join(here, "../dist/client/index.html"));
 }
+
+// 右侧浏览器标签页使用 webview 内嵌网页；远程页面始终关闭 Node 能力，并拦截本机/内网跳转。
+app.on("will-attach-webview", (event, webPreferences, params) => {
+  delete webPreferences.preload;
+  webPreferences.nodeIntegration = false;
+  webPreferences.contextIsolation = true;
+  webPreferences.sandbox = true;
+  if (params.src && params.src !== "about:blank" && !isSafePublicUrl(params.src).ok) event.preventDefault();
+});
+
+app.on("web-contents-created", (_event, contents) => {
+  if (contents.getType() !== "webview") return;
+  contents.on("will-navigate", (event, url) => {
+    if (!isSafePublicUrl(url).ok) event.preventDefault();
+  });
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+});
 
 registerLocalImageIpc(ipcMain, {
   isTrustedSender: (event) => isTrustedRendererUrl(event.senderFrame?.url),
@@ -391,6 +409,12 @@ ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(Str
 ipcMain.handle("workspace:open", async (_event, targetPath) => {
   const error = await shell.openPath(String(targetPath || ""));
   return error ? { ok: false, error } : { ok: true };
+});
+ipcMain.handle("browser:open", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "浏览器请求来源无效" };
+  const check = isSafePublicUrl(String(payload?.url || ""));
+  if (!check.ok) return { ok: false, result: check.error };
+  return { ok: true, url: check.url.toString(), result: "已在当前浏览器标签页打开网页" };
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
   try {
@@ -791,7 +815,7 @@ async function callMcpTool(settings, fullName, args, { signal } = {}) {
       if (server.id === COMPUTER_USE_SERVER_ID) {
         const guidance = process.platform === "linux"
           ? "请确认当前使用 X11 桌面会话，并已安装 xdotool、wmctrl、python3-pyatspi 和 ImageMagick。"
-          : "请确认 Codex Computer Use 已获得辅助功能和屏幕录制权限。";
+          : "请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用；可先让助手调用 check_permissions 查看权限状态。";
         return {
           ok: false,
           result: `本机应用操作没有获得系统响应。${guidance}然后重试。原始原因：${error instanceof Error ? error.message : String(error)}`,
@@ -892,7 +916,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
       role: message?.role,
       content: await providerMessageContent(message),
     })));
-    const approvalMode = ["interactive", "deny-changes", "allow-writes", "full-access"].includes(payload?.approvalMode)
+    const approvalMode = ["interactive", "reviewer", "deny-changes", "allow-writes", "full-access"].includes(payload?.approvalMode)
       ? payload.approvalMode
       : "interactive";
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
@@ -1046,7 +1070,8 @@ ipcMain.handle("hooks:open-user", async () => {
 
 // ---- 常驻允许规则（审批卡片上的「始终允许」，借鉴 openworker standing rules）----
 // 只覆盖可安全规则化的工具：工作区内按扩展名的文件写入、按域名的网页访问、按名称的外部 MCP 工具；
-// 运行命令、本机界面操作、浏览器变更操作永远逐次确认。
+// 运行命令支持受信只读命令与常用开发命令（npm/python3/git 提交等）按 argv 前缀规则化，
+// 系统级破坏性命令（rm/sudo/dd 等）、本机界面操作、浏览器变更操作永远逐次确认。
 
 async function readStandingRules() {
   const rules = await readJson(dataFile("standing-rules.json"), []);
@@ -1419,7 +1444,7 @@ async function resumeWake(wake) {
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector();
-    const approvalMode = ["interactive", "deny-changes", "allow-writes", "full-access"].includes(wake.approvalMode)
+    const approvalMode = ["interactive", "reviewer", "deny-changes", "allow-writes", "full-access"].includes(wake.approvalMode)
       ? wake.approvalMode
       : "allow-writes";
     const result = await runAgent({

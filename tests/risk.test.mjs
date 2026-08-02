@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RISK, classify, isConsequential } from "../electron/risk.mjs";
-import { approvalDecision, evaluateApproval, isAutoApprovableCommand, toolDefinitions } from "../electron/agent.mjs";
+import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, toolDefinitions } from "../electron/agent.mjs";
 
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
 const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
@@ -15,8 +15,7 @@ function oracleNeedsApproval(name, platform) {
   if (name.startsWith("browser__")) return !oracleBrowserReadOnlyTools.has(name);
   if (name.startsWith("mcp__computer-use__")) {
     const action = name.slice("mcp__computer-use__".length);
-    if (!action || action === "list_apps" || action === "check_dependencies" || action === "prepare_dependency_install") return false;
-    if (action === "get_app_state") return platform === "darwin";
+    if (!action || action === "list_apps" || action === "get_app_state" || action === "check_dependencies" || action === "check_permissions" || action === "prepare_dependency_install") return false;
     return true;
   }
   return oracleToolsNeedingApproval.has(name) || name.startsWith("mcp__");
@@ -28,7 +27,7 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
   if (approvalMode === "deny-changes" && normallyNeedsApproval) return "deny";
   if (hookRequiresApproval) return "ask";
   if (approvalMode === "full-access") return computerUseMutation ? "ask" : "allow";
-  if (approvalMode === "interactive") {
+  if (approvalMode === "interactive" || approvalMode === "reviewer") {
     if (hasExternalPaths || oracleInternetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
     if (oracleWorkspaceWriteTools.has(name)) return "allow";
@@ -38,7 +37,9 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
   if (approvalMode === "allow-writes") {
     if (hasExternalPaths) return "ask";
     if (computerUseMutation) return "ask";
-    if (name === "run_command") return isAutoApprovableCommand(args.command) ? "allow" : "ask";
+    if (name === "run_command") {
+      return (isAutoApprovableCommand(args.command) || isDevAutoApprovableCommand(args.command)) ? "allow" : "ask";
+    }
     return "allow";
   }
   if (hasExternalPaths) return "ask";
@@ -58,7 +59,7 @@ const TOOL_MATRIX = [
 ];
 
 const ARG_VARIANTS = {
-  run_command: [{ command: "ls -la" }, { command: "rm -rf build" }, { command: "python3 x.py | tee log" }],
+  run_command: [{ command: "ls -la" }, { command: "npm install" }, { command: "rm -rf build" }, { command: "python3 -c 1" }],
   fetch_web_page: [{ url: "https://www.gov.cn/x" }],
   browser__open: [{ url: "https://example.com" }],
 };
@@ -84,14 +85,15 @@ test("classify 风险分级矩阵", () => {
   assert.equal(classify("mcp__other__tool").risk, RISK.EXTERNAL);
   assert.equal(classify("mcp__computer-use__click").computerUseMutation, true);
   assert.equal(classify("mcp__computer-use__list_apps").risk, RISK.READ);
-  assert.equal(classify("mcp__computer-use__get_app_state", {}, { platform: "darwin" }).consequential, true);
+  assert.equal(classify("mcp__computer-use__check_permissions").risk, RISK.READ);
+  assert.equal(classify("mcp__computer-use__get_app_state", {}, { platform: "darwin" }).consequential, false);
   assert.equal(classify("mcp__computer-use__get_app_state", {}, { platform: "linux" }).consequential, false);
   assert.equal(isConsequential("read_file"), false);
   assert.equal(isConsequential("write_file"), true);
 });
 
 test("evaluateApproval 与历史 approvalDecision 全矩阵等价（无常驻规则）", () => {
-  const modes = ["interactive", "allow-writes", "full-access", "deny-changes"];
+  const modes = ["interactive", "reviewer", "allow-writes", "full-access", "deny-changes"];
   const platforms = ["darwin", "linux"];
   for (const name of TOOL_MATRIX) {
     for (const approvalMode of modes) {

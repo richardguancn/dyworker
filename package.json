@@ -57,7 +57,8 @@
     "productName": "DYWorker",
     "asar": true,
     "asarUnpack": [
-      "electron/scripts/linux_computer_use.py"
+      "electron/scripts/linux_computer_use.py",
+      "electron/scripts/macos_computer_use.js"
     ],
     "directories": {
       "output": "output/electron",

@@ -114,6 +114,7 @@ test("built-in model knowledge is always loaded and cannot be deleted as user me
 
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
   assert.match(app, /请求批准/);
+  assert.match(app, /自动审核/);
   assert.match(app, /替我审批/);
   assert.match(app, /完全访问权限/);
   assert.match(app, /approval-mode-menu/);
@@ -149,9 +150,10 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /COMPUTER_USE_INSTALL_TIMEOUT_MS/);
   assert.match(main, /signal: abortController\.signal/);
   assert.doesNotMatch(main, /await client\.close\(\);\n\s*mcpClients\.delete/);
-  assert.match(main, /请确认 Codex Computer Use 已获得辅助功能和屏幕录制权限/);
+  assert.match(main, /请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用/);
   assert.match(app, /本机应用操作已作为基础能力接入/);
   assert.match(packageJson, /electron\/scripts\/linux_computer_use\.py/);
+  assert.match(packageJson, /electron\/scripts\/macos_computer_use\.js/);
 });
 
 test("context ring exposes used tokens, total capacity, and percentage", () => {
@@ -385,13 +387,20 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(agent, /export function approvalDecision\(opts = \{\}\) \{\n\s+return evaluateApproval/);
 
   // 2. 常驻允许规则:匹配/建议、rules IPC、审批卡始终允许按钮;
-  //    run_command 仅受信只读程序可按 argv 前缀规则化(command-prefix),computer-use 永不规则化
+  //    run_command 支持受信只读命令与常用开发命令按 argv 前缀规则化(command-prefix),
+  //    系统破坏命令、computer-use 永不规则化
   assert.match(agent, /export function matchStandingRule/);
   assert.match(agent, /export function suggestStandingRule/);
   assert.match(agent, /shell asks forever/);
   assert.match(agent, /command-prefix/);
   assert.match(agent, /ruleTrustedPrograms/);
   assert.match(agent, /commandChainingPattern/);
+  // 审核助手:规则定边界、模型做判断,系统破坏/外部路径/本机界面/钩子绕过审核
+  assert.match(agent, /REVIEWER_POLICY/);
+  assert.match(agent, /export async function reviewApproval/);
+  assert.match(agent, /export function isReviewerEligible/);
+  assert.match(agent, /reviewer-allowed/);
+  assert.match(main, /"reviewer"/);
   assert.match(main, /standing-rules\.json/);
   assert.match(main, /ipcMain\.handle\("rules:list"/);
   assert.match(main, /ipcMain\.handle\("rules:add"/);

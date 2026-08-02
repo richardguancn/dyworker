@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -14,7 +14,7 @@ test("Codex 三档权限按文件边界、联网和风险操作作出决定", ()
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "write_file" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "web_search" }), "ask");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "read_file", hasExternalPaths: true }), "ask");
-  assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), "allow");
   assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "web_search" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: "read_file", hasExternalPaths: true }), "allow");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: "run_command", args: { command: "npm install" } }), "allow");
@@ -25,23 +25,26 @@ test("Codex 三档权限按文件边界、联网和风险操作作出决定", ()
 test("Computer Use 只读查看直接执行，界面操作遵守当前权限档位", () => {
   const stateTool = "mcp__computer-use__get_app_state";
   const checkTool = "mcp__computer-use__check_dependencies";
+  const permissionTool = "mcp__computer-use__check_permissions";
   const prepareTool = "mcp__computer-use__prepare_dependency_install";
   const installTool = "mcp__computer-use__install_dependencies";
   const launchTool = "mcp__computer-use__launch_app";
   const clickTool = "mcp__computer-use__click";
-  assert.equal(computerUseActionNeedsApproval(stateTool, "darwin"), true);
+  assert.equal(computerUseActionNeedsApproval(stateTool, "darwin"), false);
   assert.equal(computerUseActionNeedsApproval(stateTool, "linux"), false);
+  assert.equal(computerUseActionNeedsApproval(permissionTool), false);
   assert.equal(approvalDecision({ approvalMode: "interactive", name: checkTool }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: permissionTool }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: prepareTool }), "allow");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: prepareTool }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: installTool }), "ask");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: installTool }), "ask");
-  assert.equal(approvalDecision({ approvalMode: "interactive", name: stateTool, platform: "darwin" }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: stateTool, platform: "darwin" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: stateTool, platform: "linux" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: launchTool }), "ask");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: clickTool }), "ask");
   assert.equal(approvalDecision({ approvalMode: "allow-writes", name: clickTool }), "ask");
-  assert.equal(approvalDecision({ approvalMode: "deny-changes", name: stateTool, platform: "darwin" }), "deny");
+  assert.equal(approvalDecision({ approvalMode: "deny-changes", name: stateTool, platform: "darwin" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: stateTool, platform: "linux" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: clickTool }), "deny");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: clickTool }), "ask");
@@ -382,6 +385,175 @@ test("审批通过后 run_command 在工作区内执行", async () => {
   assert.equal(result.status, "done");
 });
 
+test("允许执行后,本次任务内同类命令自动放行(会话级规则不落盘)", async () => {
+  const root = await makeWorkspace();
+  let approvals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "跑两次脚本" }],
+    requestApproval: async () => {
+      approvals += 1;
+      return true;
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "node -e \"1+1\"" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "run_command", { command: "node -e \"2+2\"" })] },
+      { role: "assistant", content: "两条命令都执行了。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals, 1, "同类命令第二次应自动放行,不再弹审批");
+});
+
+test("工作区外路径授权不进入会话规则:每次读取仍单独询问", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "allow-writes",
+    conversation: [{ role: "user", content: "读两个外部文件" }],
+    requestApproval: async (action) => {
+      approvals.push(action.kind);
+      return true;
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "read_file", { path: path.join(outside, "b.txt") })] },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 2, "外部路径每次仍需明确授权,不能被会话规则放行");
+});
+
+test("自动审核模式:审核助手放行时不再弹人工审批", async () => {
+  const root = await makeWorkspace();
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "查看 npm 版本" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"查看版本无风险"}' },
+      { role: "assistant", content: "已查看。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 0, "审核助手放行后不应弹人工审批");
+});
+
+test("自动审核模式:审核助手拒绝后不执行并告知模型", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "执行一个危险操作" }],
+    requestApproval: async () => { throw new Error("审核拒绝后不应再问用户"); },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: '{"decision":"deny","reason":"该操作存在外发风险"}' },
+      { role: "assistant", content: "明白了，我不执行。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  const toolMessage = calls[2].messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /审核助手拒绝了这次操作/);
+  assert.match(toolMessage.content, /外发风险/);
+});
+
+test("自动审核模式:审核助手拿不准时转人工审批", async () => {
+  const root = await makeWorkspace();
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "执行一个模糊操作" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: '{"decision":"ask","reason":"意图不够明确"}' },
+      { role: "assistant", content: "已执行。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 1, "审核助手转人工后应弹出审批");
+});
+
+test("自动审核模式:工作区外路径仍直接问用户,不经过审核助手", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "a" });
+  const calls = [];
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "读外部文件" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: "读取完成。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(calls.length, 2, "审核助手不应被调用");
+  assert.equal(userApprovals, 1, "外部路径仍应弹人工审批");
+});
+
+test("自动审核模式:钩子强制审批仍直接问用户,不经过审核助手", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    hooks: [{ tool: "run_command", action: "require_approval" }],
+    conversation: [{ role: "user", content: "跑一条命令" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: "已执行。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(calls.length, 2, "审核助手不应被调用");
+  assert.equal(userApprovals, 1, "钩子强制审批仍应弹人工审批");
+});
+
+test("自动审核模式:审核助手连续拒绝 3 次后熔断,后续审批转人工", async () => {
+  const root = await makeWorkspace();
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "跑四条命令" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: '{"decision":"deny","reason":"拒绝一"}' },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "run_command", { command: "node --version" })] },
+      { role: "assistant", content: '{"decision":"deny","reason":"拒绝二"}' },
+      { role: "assistant", content: null, tool_calls: [toolCall("c3", "run_command", { command: "python3 --version" })] },
+      { role: "assistant", content: '{"decision":"deny","reason":"拒绝三"}' },
+      { role: "assistant", content: null, tool_calls: [toolCall("c4", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: "四条都处理完了。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 1, "熔断后第四条应转人工审批");
+});
+
 test("工作区外路径会弹出单次授权，拒绝后不会读取", async () => {
   const root = await makeWorkspace({ "a.txt": "1" });
   const calls = [];
@@ -715,6 +887,69 @@ test("isAutoApprovableCommand 只放行简单只读命令", () => {
   assert.equal(isAutoApprovableCommand("ls; rm x"), false);
   assert.equal(isAutoApprovableCommand("echo $(whoami)"), false);
   assert.equal(isAutoApprovableCommand("cat a | grep x"), false);
+});
+
+test("isDevAutoApprovableCommand 只放行省心模式的常用开发命令", () => {
+  assert.equal(isDevAutoApprovableCommand("npm install"), true);
+  assert.equal(isDevAutoApprovableCommand("npm run build"), true);
+  assert.equal(isDevAutoApprovableCommand("pnpm install express"), true);
+  assert.equal(isDevAutoApprovableCommand("git add ."), true);
+  assert.equal(isDevAutoApprovableCommand("git push origin main"), true);
+  assert.equal(isDevAutoApprovableCommand("python3 scripts/export.py --full"), true);
+  assert.equal(isDevAutoApprovableCommand("node server.js"), true);
+  assert.equal(isDevAutoApprovableCommand("pytest tests"), true);
+  // 内联代码、全局安装、危险子命令、系统破坏、复合命令一律不放行
+  assert.equal(isDevAutoApprovableCommand("python3 -c \"print(1)\""), false);
+  assert.equal(isDevAutoApprovableCommand("node -e \"1+1\""), false);
+  assert.equal(isDevAutoApprovableCommand("npm install -g x"), false);
+  assert.equal(isDevAutoApprovableCommand("yarn global add x"), false);
+  assert.equal(isDevAutoApprovableCommand("git reset --hard HEAD"), false);
+  assert.equal(isDevAutoApprovableCommand("sudo npm install"), false);
+  assert.equal(isDevAutoApprovableCommand("rm -rf x"), false);
+  assert.equal(isDevAutoApprovableCommand("npm install | tee log"), false);
+  assert.equal(isDevAutoApprovableCommand("npm install; ls"), false);
+  assert.equal(isDevAutoApprovableCommand("python3"), false);
+});
+
+test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败兜底", async () => {
+  const action = { kind: "run_command", title: "运行命令", details: "npm install" };
+  const allow = await reviewApproval({
+    settings,
+    action,
+    fetchImpl: mockFetch([{ role: "assistant", content: '{"decision":"allow","reason":"操作安全"}' }]),
+  });
+  assert.deepEqual(allow, { decision: "allow", reason: "操作安全" });
+  const deny = await reviewApproval({
+    settings,
+    action,
+    fetchImpl: mockFetch([{ role: "assistant", content: '{"decision":"deny","reason":"可能外发数据"}' }]),
+  });
+  assert.deepEqual(deny, { decision: "deny", reason: "可能外发数据" });
+  const ask = await reviewApproval({
+    settings,
+    action,
+    fetchImpl: mockFetch([{ role: "assistant", content: "抱歉，我看不出安不安全" }]),
+  });
+  assert.equal(ask.decision, "ask");
+  const broken = await reviewApproval({
+    settings,
+    action,
+    fetchImpl: async () => { throw new Error("连接失败"); },
+  });
+  assert.equal(broken.decision, "ask");
+  assert.match(broken.reason, /审核助手不可用/);
+});
+
+test("isReviewerEligible 只接管可审核的越界请求,系统破坏/外部路径/本机界面/钩子一律转人工", () => {
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "npm install" } }), true);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "git push origin main" } }), true);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "fetch_web_page", args: { url: "https://example.com" } }), true);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "sudo rm -rf x" } }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "git reset --hard HEAD" } }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "read_file", args: { path: "/tmp/x" }, externalPaths: true }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "write_file", hookRequiresApproval: true }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "mcp__computer-use__click" }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), false);
 });
 
 test("交互模式下受信只读命令自动批准并在详情中注明", async () => {
@@ -1378,6 +1613,22 @@ test("allow-writes 模式不询问直接批准", async () => {
   });
   assert.equal(result.status, "done");
   assert.equal(await fs.readFile(path.join(root, "a.txt"), "utf8"), "hello");
+});
+
+test("省心模式下常用开发命令直接执行,不再弹审批", async () => {
+  const root = await makeWorkspace();
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查一下 npm 版本" }],
+    approvalMode: "allow-writes",
+    requestApproval: async () => { throw new Error("常用开发命令不应询问审批"); },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm --version" })] },
+      { role: "assistant", content: "已查看版本。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
 });
 
 test("匹配的工作模板注入系统提示", async () => {
@@ -2782,19 +3033,27 @@ test("command-prefix 规则:argv 前缀匹配,拒绝管道与复合命令", asyn
   assert.equal(matchStandingRule(rule, "write_file", { command: "ls" }), false);
 });
 
-test("suggestStandingRule 的 command-prefix:仅受信只读程序可规则化", async () => {
+test("suggestStandingRule 的 command-prefix:受信只读与常用开发命令可规则化,系统破坏命令不可", async () => {
   const lsRule = suggestStandingRule("run_command", { command: "ls /Users/example/.claude/skills/" });
   assert.deepEqual(lsRule?.kind, "command-prefix");
   assert.deepEqual(lsRule?.pattern, "ls");
   const gitRule = suggestStandingRule("run_command", { command: "git log --oneline -5" });
   assert.deepEqual(gitRule?.pattern, "git log");
-  // 写操作、管道、未知程序、空命令都不可规则化
-  assert.equal(suggestStandingRule("run_command", { command: "python3 script.py" }), null);
+  // 常用开发命令:包管理器取前两个词、解释器贴近具体脚本、git 提交/推送按子命令
+  assert.deepEqual(suggestStandingRule("run_command", { command: "npm install express" })?.pattern, "npm install");
+  assert.deepEqual(suggestStandingRule("run_command", { command: "npm run build" })?.pattern, "npm run");
+  assert.deepEqual(suggestStandingRule("run_command", { command: "python3 scripts/export.py --full" })?.pattern, "python3 scripts/export.py");
+  assert.deepEqual(suggestStandingRule("run_command", { command: "git push origin main" })?.pattern, "git push");
+  // 未分类的简单命令记住完整命令(精确前缀)
+  assert.deepEqual(suggestStandingRule("run_command", { command: "docker compose ps" })?.pattern, "docker compose ps");
+  // 系统破坏命令、危险子命令、管道/复合、空命令都不可规则化
   assert.equal(suggestStandingRule("run_command", { command: "rm -rf /tmp/x" }), null);
+  assert.equal(suggestStandingRule("run_command", { command: "sudo rm -rf /tmp/x" }), null);
+  assert.equal(suggestStandingRule("run_command", { command: "git reset --hard HEAD" }), null);
   assert.equal(suggestStandingRule("run_command", { command: "ls -la | grep x" }), null);
   assert.equal(suggestStandingRule("run_command", { command: "ls; whoami" }), null);
-  assert.equal(suggestStandingRule("run_command", { command: "git push origin main" }), null);
   assert.equal(suggestStandingRule("run_command", { command: "" }), null);
   // 建议出的规则必须能被 matchStandingRule 命中(与 rules:add 的 probe 同一条路径)
   assert.equal(matchStandingRule([lsRule], "run_command", { command: "ls /tmp" }), true);
+  assert.equal(matchStandingRule([suggestStandingRule("run_command", { command: "npm install express" })], "run_command", { command: "npm install lodash" }), true);
 });

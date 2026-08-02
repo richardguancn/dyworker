@@ -791,7 +791,7 @@ async function desktopEntries() {
         const namesInFile = [...content.matchAll(/^Name(?:\[[^\]]+\])?=(.+)$/gm)].map((match) => match[1].trim());
         const exec = content.match(/^Exec=(.+)$/m)?.[1]?.trim() || "";
         const startupClass = content.match(/^StartupWMClass=(.+)$/m)?.[1]?.trim() || "";
-        entries.push({ id: name.slice(0, -8), names: namesInFile, exec, startupClass });
+        entries.push({ id: name.slice(0, -8), path: path.join(directory, name), names: namesInFile, exec, startupClass });
       } catch {
         // 单个损坏的 desktop 文件不影响其他应用
       }
@@ -816,6 +816,8 @@ async function launchApp(query) {
   if (entry) {
     const launched = await tryRun("gtk-launch", [entry.id], { timeoutMs: 8_000 });
     if (launched.code === 0) return;
+    const viaGio = await tryRun("gio", ["launch", entry.path], { timeoutMs: 8_000 });
+    if (viaGio.code === 0) return;
     const words = shellWords(entry.exec).filter((word) => !/^%[a-zA-Z]$/.test(word));
     if (words.length) {
       await run(words[0], words.slice(1), { detached: true });

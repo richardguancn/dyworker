@@ -2,6 +2,7 @@ import {
   AlarmClock,
   ArrowDown,
   ArrowUp,
+  ArrowUpRight,
   BarChart3,
   Bell,
   Bot,
@@ -29,6 +30,7 @@ import {
   Monitor,
   Moon,
   MoreHorizontal,
+  MoreVertical,
   Paperclip,
   Pin,
   Plus,
@@ -37,6 +39,8 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  SquarePlus,
+  SquareTerminal,
   Sparkles,
   Square,
   Target,
@@ -45,7 +49,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
 import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillRecord, StandingRule, UsageRecord, WorkspaceEntry } from "./types";
@@ -137,6 +141,7 @@ const defaultSettings: ProviderSettings = {
   searxngEndpoint: "",
   bochaApiKey: "",
   domesticSearchOnly: false,
+  approvalMode: "allow-writes",
   preventSleep: "tasks",
   mcpServers: [],
   channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "allow-writes" },
@@ -178,9 +183,15 @@ const composerApprovalModes = [
     icon: Hand,
   },
   {
+    value: "reviewer" as ApprovalMode,
+    label: "自动审核",
+    description: "越界操作先由审核助手按规则判断，拿不准才问你",
+    icon: Bot,
+  },
+  {
     value: "allow-writes" as ApprovalMode,
     label: "替我审批",
-    description: "仅对检测到的风险操作请求批准",
+    description: "常用开发命令自动放行，仅对检测到的风险操作请求批准",
     icon: ShieldCheck,
   },
   {
@@ -230,6 +241,20 @@ function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
     isImage,
   };
 }
+
+type ToolPanelTab = {
+  id: string;
+  kind: "browser" | "files";
+  title: string;
+  url?: string;
+  loadedUrl?: string;
+};
+
+type BrowserWebviewElement = HTMLElement & {
+  goBack?: () => void;
+  goForward?: () => void;
+  reload?: () => void;
+};
 
 function WorkspaceNode({ entry, depth = 0 }: { entry: WorkspaceEntry; depth?: number }) {
   const [expanded, setExpanded] = useState(depth === 0);
@@ -550,6 +575,9 @@ function ApprovalCard({ action, onResolve }: { action: ApprovalAction; onResolve
         )}
       </div>
       {action.suggestedRule && <p className="approval-rule-hint">{action.suggestedRule.label}</p>}
+      {action.suggestedRule && !String(action.details || "").includes("工作区外路径") && (
+        <p className="approval-rule-hint">允许后本次任务内同类操作自动放行；「始终允许」则长期生效。</p>
+      )}
       {ruleError && <p className="approval-rule-hint error">{ruleError}</p>}
     </div>
   );
@@ -1099,7 +1127,7 @@ function HooksPanel() {
             <Trash2 size={13} />
           </button>
         </div>
-      )) : <p className="dialog-note">还没有常驻规则。在审批卡片上点「始终允许」后会出现在这里；受信只读命令（ls/cat/grep 等）、同类文件写入、同域名网页可以规则化，本机界面操作永远逐次确认。</p>}
+      )) : <p className="dialog-note">还没有常驻规则。在审批卡片上点「始终允许」后会出现在这里；受信只读命令、常用开发命令（npm/python3/git 提交等）、同类文件写入、同域名网页可以规则化，本机界面操作永远逐次确认。</p>}
       <div className="dialog-section-title">内置规则（始终生效，不可覆盖）</div>
       {(data?.builtin || []).map((rule, index) => {
         const text = hookRuleText(rule);
@@ -1631,7 +1659,7 @@ function SettingsDialog({
         </>)}
         {tab === "mcp" && (<>
         <div className="dialog-section-title">MCP 工具服务器（可选）</div>
-        <p className="dialog-note">本机应用操作已作为基础能力接入：macOS 自动使用 Codex Computer Use，麒麟 V10 等 Linux 电脑自动使用内置桌面操控，无需重复添加。</p>
+        <p className="dialog-note">本机应用操作已作为基础能力接入：macOS 与 Linux 均使用应用内置的桌面操控服务，无需额外安装；首次使用请允许 DYWorker 的辅助功能权限（macOS 另需屏幕录制权限用于查看界面截图）。</p>
         {draft.mcpServers.map((server) => (
           <div className="mcp-server-row" key={server.id}>
             <label className="skill-switch" title={server.enabled ? "点击停用" : "点击启用"}>
@@ -1763,6 +1791,45 @@ function SettingsDialog({
   );
 }
 
+// 图标来自 opensvg.dev（MynaUI 图标集）：mynaui:panel-left / mynaui:panel-right
+function PanelLeftIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 3.5v17M3 9.4c0-2.24 0-3.36.436-4.216a4 4 0 0 1 1.748-1.748C6.04 3 7.16 3 9.4 3h5.2c2.24 0 3.36 0 4.216.436a4 4 0 0 1 1.748 1.748C21 6.04 21 7.16 21 9.4v5.2c0 2.24 0 3.36-.436 4.216a4 4 0 0 1-1.748 1.748C17.96 21 16.84 21 14.6 21H9.4c-2.24 0-3.36 0-4.216-.436a4 4 0 0 1-1.748-1.748C3 17.96 3 16.84 3 14.6z" />
+    </svg>
+  );
+}
+
+function PanelRightIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M15 3.5v17M3 9.4c0-2.24 0-3.36.436-4.216a4 4 0 0 1 1.748-1.748C6.04 3 7.16 3 9.4 3h5.2c2.24 0 3.36 0 4.216.436a4 4 0 0 1 1.748 1.748C21 6.04 21 7.16 21 9.4v5.2c0 2.24 0 3.36-.436 4.216a4 4 0 0 1-1.748 1.748C17.96 21 16.84 21 14.6 21H9.4c-2.24 0-3.36 0-4.216-.436a4 4 0 0 1-1.748-1.748C3 17.96 3 16.84 3 14.6z" />
+    </svg>
+  );
+}
+
 export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   const [activeId, setActiveId] = useState(previewSessions[0].id);
@@ -1781,7 +1848,20 @@ export function App() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [toolPanelWidth, setToolPanelWidth] = useState(() => {
+    const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
+    return Math.min(520, Math.max(340, Math.round(viewportWidth * 0.28)));
+  });
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([
+    { id: "browser-1", kind: "browser", title: "新标签页", url: "" },
+  ]);
+  const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("browser-1");
+  const [browserOpening, setBrowserOpening] = useState(false);
+  const [toolPanelMenuOpen, setToolPanelMenuOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
   const [platform, setPlatform] = useState("");
   const [error, setError] = useState("");
@@ -1819,6 +1899,9 @@ export function App() {
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
+  const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
+  const toolPanelTabSequenceRef = useRef(1);
   const composingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -1826,7 +1909,7 @@ export function App() {
   const shouldScrollToBottomRef = useRef<string | null>(null);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = sessionMenuId !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen;
+  const anyMenuOpen = sessionMenuId !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
@@ -1835,6 +1918,7 @@ export function App() {
       setAddMenuOpen(false);
       setModelMenuOpen(false);
       setApprovalMenuOpen(false);
+      setToolPanelMenuOpen(false);
     };
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-menu-root]")) return;
@@ -1850,6 +1934,31 @@ export function App() {
       document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [anyMenuOpen]);
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const resize = panelResizeRef.current;
+      if (!resize) return;
+      if (resize.edge === "left") {
+        const maxWidth = Math.max(260, window.innerWidth - (rightPanelOpen ? toolPanelWidth : 0) - 420);
+        setSidebarWidth(Math.min(Math.max(event.clientX, 220), Math.min(520, maxWidth)));
+      } else {
+        const nextWidth = window.innerWidth - event.clientX;
+        const maxWidth = Math.max(360, window.innerWidth - (sidebarOpen ? sidebarWidth : 0) - 420);
+        setToolPanelWidth(Math.min(Math.max(nextWidth, 320), maxWidth));
+      }
+    };
+    const onPointerUp = () => {
+      panelResizeRef.current = null;
+      document.body.classList.remove("resizing-panels");
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [rightPanelOpen, sidebarOpen, sidebarWidth, toolPanelWidth]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1883,6 +1992,14 @@ export function App() {
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions]);
+
+  // 审批模式记住上次选择：启动时从设置恢复，切换后立即落盘
+  useEffect(() => {
+    const saved = settings?.approvalMode;
+    if (saved && ["interactive", "reviewer", "allow-writes", "full-access", "deny-changes"].includes(saved)) {
+      setApprovalMode(saved as ApprovalMode);
+    }
+  }, [settings?.approvalMode]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -2025,6 +2142,31 @@ export function App() {
     return [...pool].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
   }, [query, sessions, showArchived]);
 
+  const workspaceSessionGroups = useMemo(() => {
+    const groups = new Map<string, SessionRecord[]>();
+    const recent: SessionRecord[] = [];
+    for (const session of visibleSessions) {
+      const path = String(session.workspacePath || "").trim();
+      if (!path) {
+        recent.push(session);
+        continue;
+      }
+      const current = groups.get(path) || [];
+      current.push(session);
+      groups.set(path, current);
+    }
+    const order = (items: SessionRecord[]) => [...items].sort((a, b) => {
+      const pinned = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+      return pinned || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+    return {
+      workspaces: [...groups.entries()]
+        .map(([path, items]) => ({ path, sessions: order(items) }))
+        .sort((a, b) => new Date(b.sessions[0]?.updatedAt || 0).getTime() - new Date(a.sessions[0]?.updatedAt || 0).getTime()),
+      recent: order(recent),
+    };
+  }, [visibleSessions]);
+
   const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
   };
@@ -2046,9 +2188,12 @@ export function App() {
   };
 
   const createTask = () => {
-    const session = makeSession(workspacePath);
+    // 新任务默认不绑定工作目录；需要时再从顶部或“+”菜单选择。
+    const session = makeSession();
     setSessions((current) => [session, ...current]);
     setActiveId(session.id);
+    setWorkspacePath("");
+    setWorkspaceEntries([]);
     setComposer("");
     setAttachments([]);
     setNotice("");
@@ -2062,7 +2207,9 @@ export function App() {
     setSessions((current) => {
       const remaining = current.filter((session) => session.id !== id);
       if (!remaining.length) {
-        const fresh = makeSession(workspacePath);
+        const fresh = makeSession();
+        setWorkspacePath("");
+        setWorkspaceEntries([]);
         setActiveId(fresh.id);
         return [fresh];
       }
@@ -2088,7 +2235,9 @@ export function App() {
       const next = sessions.find((session) => session.id !== id && !session.archived);
       if (next) setActiveId(next.id);
       else {
-        const fresh = makeSession(workspacePath);
+        const fresh = makeSession();
+        setWorkspacePath("");
+        setWorkspaceEntries([]);
         setSessions((current) => [fresh, ...current]);
         setActiveId(fresh.id);
       }
@@ -2260,6 +2409,93 @@ export function App() {
       textareaRef.current?.focus();
     } catch (attachmentError) {
       setError(`无法添加附件：${attachmentError instanceof Error ? attachmentError.message : String(attachmentError)}`);
+    }
+  };
+
+  const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
+  const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
+  const activeBrowserUrl = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "";
+
+  const updateToolPanelTab = (id: string, patch: Partial<ToolPanelTab>) => {
+    setToolPanelTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...patch } : tab));
+  };
+
+  const focusToolPanelTab = (id: string) => {
+    setActiveToolPanelTabId(id);
+    setToolPanelMenuOpen(false);
+  };
+
+  const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false) => {
+    if (!createNew) {
+      const existing = toolPanelTabs.find((tab) => tab.kind === kind);
+      if (existing) {
+        focusToolPanelTab(existing.id);
+        return existing.id;
+      }
+    }
+    const sequence = toolPanelTabSequenceRef.current++;
+    const tab: ToolPanelTab = {
+      id: `${kind}-${sequence}`,
+      kind,
+      title: kind === "browser" ? "新标签页" : (workspacePath ? displayWorkspace(workspacePath) : "文件"),
+      ...(kind === "browser" ? { url: "" } : {}),
+    };
+    setToolPanelTabs((current) => [...current, tab]);
+    setActiveToolPanelTabId(tab.id);
+    setToolPanelMenuOpen(false);
+    return tab.id;
+  };
+
+  const closeToolPanelTab = (id: string) => {
+    if (toolPanelTabs.length === 1) {
+      updateToolPanelTab(id, { kind: "browser", title: "新标签页", url: "" });
+      setActiveToolPanelTabId(id);
+      return;
+    }
+    const index = toolPanelTabs.findIndex((tab) => tab.id === id);
+    const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
+    setToolPanelTabs(nextTabs);
+    if (id === activeToolPanelTabId) {
+      setActiveToolPanelTabId(nextTabs[Math.max(0, index - 1)]?.id || nextTabs[0].id);
+    }
+  };
+
+  const openBrowserUrl = async () => {
+    const tab = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab : undefined;
+    const raw = activeBrowserUrl.trim();
+    if (!tab) {
+      openToolPanelTab("browser");
+      return;
+    }
+    if (!raw) {
+      setError("请输入网址");
+      return;
+    }
+    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    updateToolPanelTab(tab.id, { url });
+    setError("");
+    setBrowserOpening(true);
+    try {
+      if (!window.dyworker?.openBrowser) {
+        setNotice("当前预览环境没有连接浏览器窗口");
+        return;
+      }
+      const result = await window.dyworker.openBrowser({ url, workspacePath });
+      if (!result.ok) {
+        setError(result.error || result.result || "网页打开失败");
+        return;
+      }
+      const loadedUrl = result.url || url;
+      updateToolPanelTab(tab.id, {
+        url: loadedUrl,
+        loadedUrl,
+        title: loadedUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
+      });
+      setNotice("已在当前浏览器标签页打开网页");
+    } catch (browserError) {
+      setError(`网页打开失败：${browserError instanceof Error ? browserError.message : String(browserError)}`);
+    } finally {
+      setBrowserOpening(false);
     }
   };
 
@@ -2739,18 +2975,150 @@ export function App() {
     settings.endpoint,
   ]);
   const canSend = Boolean((composer.trim() || attachments.length || activeSkills.length) && !activeTaskRunning && voiceState !== "transcribing");
+  const recentExpanded = workspaceGroupOpen.__recent__ !== false;
+
+  const selectSession = (session: SessionRecord) => {
+    setSessionMenuId(null);
+    setActiveId(session.id);
+    const path = String(session.workspacePath || "").trim();
+    setWorkspacePath(path);
+    if (!path) {
+      setWorkspaceEntries([]);
+      return;
+    }
+    if (window.dyworker?.refreshWorkspace) {
+      void window.dyworker.refreshWorkspace(path).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
+    }
+  };
+
+  const clearWorkspace = () => {
+    if (!activeSession) return;
+    setWorkspacePath("");
+    setWorkspaceEntries([]);
+    updateSession(activeSession.id, (session) => ({ ...session, workspacePath: "" }));
+    setNotice("已移除这个会话的工作目录，会话归入最近");
+  };
+
+  const renderSessionItem = (session: SessionRecord) => (
+    <div className={`session-item-wrap ${session.id === activeId ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
+      {renamingId === session.id ? (
+        <input
+          className="session-rename-input"
+          autoFocus
+          defaultValue={session.title}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") renameSession(session.id, event.currentTarget.value);
+            if (event.key === "Escape") setRenamingId(null);
+          }}
+          onBlur={(event) => renameSession(session.id, event.target.value)}
+        />
+      ) : (
+        <button className={`session-item ${session.id === activeId ? "active" : ""}`} onClick={() => selectSession(session)} title={session.title}>
+          {session.pinned && <Pin size={12} className="pin-icon" />}
+          {session.channel && (
+            <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : "微信"}</span>
+          )}
+          <span>{session.title}</span>
+          {runningSessionIds.has(session.id) && <LoaderCircle className="spin session-running-icon" size={15} />}
+        </button>
+      )}
+      <button
+        className="icon-button subtle tiny session-menu-button"
+        aria-label="任务操作"
+        onClick={(event) => {
+          event.stopPropagation();
+          setSessionMenuId(sessionMenuId === session.id ? null : session.id);
+        }}
+      >
+        <MoreHorizontal size={14} />
+      </button>
+      {sessionMenuId === session.id && (
+        <div className="session-menu" role="menu">
+          <button role="menuitem" onClick={() => { setSessionMenuId(null); setRenamingId(session.id); }}>重命名</button>
+          <button role="menuitem" onClick={() => { setSessionMenuId(null); togglePin(session.id); }}>
+            {session.pinned ? "取消置顶" : "置顶"}
+          </button>
+          {session.archived ? (
+            <button role="menuitem" onClick={() => unarchiveSession(session.id)}>取消归档</button>
+          ) : (
+            <button role="menuitem" onClick={() => { setSessionMenuId(null); archiveSession(session.id); }}>归档</button>
+          )}
+          <button role="menuitem" className="danger" onClick={() => deleteSession(session.id)}>删除</button>
+        </div>
+      )}
+    </div>
+  );
+
+  const beginPanelResize = (edge: "left" | "right", event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    panelResizeRef.current = {
+      edge,
+      startX: event.clientX,
+      startWidth: edge === "left" ? sidebarWidth : toolPanelWidth,
+    };
+    document.body.classList.add("resizing-panels");
+  };
+
+  const panelStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+    "--tool-panel-width": `${toolPanelWidth}px`,
+  } as CSSProperties;
+
+  const toolPanelMenu = (
+    <div className="tool-panel-menu" role="menu">
+      <button role="menuitem" onClick={() => { setToolPanelMenuOpen(false); setInboxOpen(true); }}>
+        <SquarePlus size={18} />
+        <span>审阅</span>
+        {inboxPendingCount > 0 && <small className="tool-panel-count">{inboxPendingCount}</small>}
+        <span className="tool-panel-shortcut">⌃⇧G</span>
+      </button>
+      <button role="menuitem" className={debugOpen ? "active" : ""} onClick={() => { setToolPanelMenuOpen(false); setDebugOpen((value) => !value); }}>
+        <SquareTerminal size={18} />
+        <span>终端</span>
+        <span className="tool-panel-shortcut">⌘J</span>
+      </button>
+      <button role="menuitem" className={activeToolPanelKind === "browser" ? "active" : ""} onClick={() => openToolPanelTab("browser")}>
+        <Globe size={18} />
+        <span>浏览器</span>
+        <span className="tool-panel-shortcut">⌘T</span>
+      </button>
+      <button role="menuitem" className={activeToolPanelKind === "files" ? "active" : ""} onClick={() => openToolPanelTab("files")}>
+        <FolderOpen size={18} />
+        <span>文件</span>
+        <span className="tool-panel-shortcut">⌘P</span>
+      </button>
+      <button role="menuitem" onClick={() => { setToolPanelMenuOpen(false); setNotice("侧边聊天将在当前会话中继续"); }}>
+        <MessageCircleQuestion size={18} />
+        <span>侧边聊天</span>
+        <span className="tool-panel-shortcut">⌥⌘S</span>
+      </button>
+    </div>
+  );
 
   return (
-    <div className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}>
+    <div
+      className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
+      style={panelStyle}
+    >
       <aside className="sidebar" aria-label="任务侧栏">
         <div className="native-controls-space" />
         <div className="sidebar-brand-row">
           <span className="brand-button" aria-label="DYWorker">
             <span>DYWorker</span>
           </span>
-          <button className="icon-button subtle" aria-label="搜索任务" onClick={() => setQuery((value) => value ? "" : " ")}>
-            <Search size={18} />
-          </button>
+          <div className="sidebar-brand-actions">
+            <button className="icon-button subtle" aria-label="搜索任务" onClick={() => setQuery((value) => value ? "" : " ")}>
+              <Search size={18} />
+            </button>
+            <button
+              className="icon-button subtle"
+              aria-label="收起侧栏"
+              title="收起侧栏"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <PanelLeftIcon size={18} />
+            </button>
+          </div>
         </div>
 
         <button className="new-task-button" onClick={createTask}>
@@ -2767,96 +3135,48 @@ export function App() {
         )}
 
         <div className="sidebar-scroll">
-          <section className="sidebar-section recent-section">
-            <span className="section-caption">最近任务</span>
-            <div className="session-list">
-              {visibleSessions.map((session) => (
-                <div className={`session-item-wrap ${session.id === activeId ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
-                  {renamingId === session.id ? (
-                    <input
-                      className="session-rename-input"
-                      autoFocus
-                      defaultValue={session.title}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") renameSession(session.id, event.currentTarget.value);
-                        if (event.key === "Escape") setRenamingId(null);
-                      }}
-                      onBlur={(event) => renameSession(session.id, event.target.value)}
-                    />
-                  ) : (
-                    <button
-                      className={`session-item ${session.id === activeId ? "active" : ""}`}
-                      onClick={() => {
-                        setSessionMenuId(null);
-                        setActiveId(session.id);
-                        if (session.workspacePath) setWorkspacePath(session.workspacePath);
-                      }}
-                      title={session.title}
-                    >
-                      {session.pinned && <Pin size={12} className="pin-icon" />}
-                      {session.channel && (
-                        <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : "微信"}</span>
-                      )}
-                      <span>{session.title}</span>
-                    </button>
-                  )}
-                  <button
-                    className="icon-button subtle tiny session-menu-button"
-                    aria-label="任务操作"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSessionMenuId(sessionMenuId === session.id ? null : session.id);
-                    }}
-                  >
-                    <MoreHorizontal size={14} />
-                  </button>
-                  {sessionMenuId === session.id && (
-                    <div className="session-menu" role="menu">
-                      <button role="menuitem" onClick={() => { setSessionMenuId(null); setRenamingId(session.id); }}>重命名</button>
-                      <button role="menuitem" onClick={() => { setSessionMenuId(null); togglePin(session.id); }}>
-                        {session.pinned ? "取消置顶" : "置顶"}
+          {workspaceSessionGroups.workspaces.length > 0 && (
+            <section className="sidebar-section workspace-session-section">
+              <div className="workspace-session-list">
+                {workspaceSessionGroups.workspaces.map((group) => {
+                  const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
+                  return (
+                    <div className={`workspace-session-group ${expanded ? "expanded" : ""}`} key={group.path}>
+                      <button
+                        className="workspace-session-heading"
+                        onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
+                        aria-expanded={expanded}
+                        title={group.path}
+                      >
+                        {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+                        <span>{displayWorkspace(group.path)}</span>
                       </button>
-                      {session.archived ? (
-                        <button role="menuitem" onClick={() => unarchiveSession(session.id)}>取消归档</button>
-                      ) : (
-                        <button role="menuitem" onClick={() => { setSessionMenuId(null); archiveSession(session.id); }}>归档</button>
-                      )}
-                      <button role="menuitem" className="danger" onClick={() => deleteSession(session.id)}>删除</button>
+                      {expanded && <div className="session-list workspace-session-items">{group.sessions.map(renderSessionItem)}</div>}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section className="sidebar-section recent-section">
+            <button
+              className="recent-section-toggle"
+              onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, __recent__: !recentExpanded }))}
+              aria-expanded={recentExpanded}
+            >
+              {recentExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <span>最近</span>
+            </button>
+            {recentExpanded && workspaceSessionGroups.recent.length ? (
+              <div className="session-list">{workspaceSessionGroups.recent.map(renderSessionItem)}</div>
+            ) : null}
             {sessions.some((session) => session.archived) && (
               <button className="archived-toggle" onClick={() => setShowArchived((value) => !value)}>
                 {showArchived ? "隐藏归档任务" : `显示归档任务（${sessions.filter((session) => session.archived).length}）`}
               </button>
             )}
           </section>
-
-          <section className="sidebar-section workspace-section">
-            <div className="section-caption-row">
-              <button className="section-caption-button" onClick={() => setWorkspaceOpen((value) => !value)} aria-expanded={workspaceOpen}>
-                {workspaceOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                工作区文件
-              </button>
-              <button className="icon-button subtle tiny" onClick={() => void refreshWorkspace()} aria-label="刷新文件列表" title="刷新文件列表">
-                <RefreshCw size={13} />
-              </button>
-            </div>
-            {workspaceOpen && (
-              !workspacePath ? (
-                <p className="panel-empty">选择工作文件夹后，在这里浏览文件。</p>
-              ) : workspaceEntries.length ? (
-                <div className="workspace-tree">
-                  {workspaceEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} />)}
-                </div>
-              ) : (
-                <p className="panel-empty">这个文件夹是空的。</p>
-              )
-            )}
-          </section>
-
         </div>
 
         <div className="sidebar-footer">
@@ -2870,9 +3190,27 @@ export function App() {
         </div>
       </aside>
 
+      {sidebarOpen && (
+        <div
+          className="panel-resize-handle panel-resize-left"
+          role="separator"
+          aria-label="调整左侧面板宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => beginPanelResize("left", event)}
+        />
+      )}
+
       <main className="main-panel">
         <header className="topbar">
           <div className="topbar-left no-drag">
+            <button
+              className="icon-button subtle sidebar-toggle"
+              aria-label="展开侧栏"
+              title="展开侧栏"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <PanelRightIcon size={18} />
+            </button>
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
             <div className="topbar-menu-wrap" data-menu-root>
@@ -2901,6 +3239,16 @@ export function App() {
             </div>
           </div>
           <div className="topbar-right no-drag">
+            {!rightPanelOpen && (
+              <button
+                className="icon-button subtle tool-panel-toggle"
+                aria-label="展开右侧工具栏"
+                title="展开右侧工具栏"
+                onClick={() => setRightPanelOpen(true)}
+              >
+                <PanelLeftIcon size={18} />
+              </button>
+            )}
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="审批收件箱"
@@ -3308,6 +3656,7 @@ export function App() {
                             onClick={() => {
                               setApprovalMode(option.value);
                               setApprovalMenuOpen(false);
+                              void saveProviderSettings({ ...settings, approvalMode: option.value }, "审批模式已记住，下次启动继续生效");
                             }}
                           >
                             <OptionIcon size={19} />
@@ -3362,6 +3711,153 @@ export function App() {
           )}
         </div>
       </main>
+
+      {rightPanelOpen && (
+        <div
+          className="panel-resize-handle panel-resize-right"
+          role="separator"
+          aria-label="调整右侧面板宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => beginPanelResize("right", event)}
+        />
+      )}
+
+      <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label="右侧工具栏">
+        <div className="tool-panel-tabs" role="tablist" aria-label="打开的文件和网页">
+          {toolPanelTabs.map((tab) => (
+            <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} role="presentation">
+              <button
+                className="tool-panel-tab-main"
+                role="tab"
+                aria-selected={tab.id === activeToolPanelTabId}
+                onClick={() => focusToolPanelTab(tab.id)}
+                title={tab.title}
+              >
+                {tab.kind === "browser" ? <Globe size={16} /> : <FileText size={16} />}
+                <span>{tab.title}</span>
+              </button>
+              <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          <button
+            className={`tool-panel-new-tab ${toolPanelMenuOpen ? "active" : ""}`}
+            aria-label="打开侧边操作"
+            title="打开侧边操作"
+            onClick={() => setToolPanelMenuOpen((value) => !value)}
+          >
+            <Plus size={18} />
+          </button>
+          <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
+            <button
+              className={`icon-button subtle ${toolPanelMenuOpen ? "active" : ""}`}
+              aria-label="打开侧边操作"
+              title="打开侧边操作"
+              onClick={() => setToolPanelMenuOpen((value) => !value)}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+            <button
+              className="icon-button subtle"
+              aria-label="收起右侧工具栏"
+              title="收起右侧工具栏"
+              onClick={() => setRightPanelOpen(false)}
+            >
+              <PanelRightIcon size={18} />
+            </button>
+          </div>
+        </div>
+        {toolPanelMenuOpen && <div className="tool-panel-menu-host" data-menu-root>{toolPanelMenu}</div>}
+        <div className={`tool-panel-scroll ${activeToolPanelKind === "browser" ? "browser-scroll" : ""}`}>
+          {activeToolPanelKind === "browser" && (
+            <section className="browser-panel">
+              <div className="browser-toolbar">
+                <button className="browser-toolbar-button" aria-label="后退" onClick={() => browserWebviewRef.current?.goBack?.()} disabled={!activeToolPanelTab?.loadedUrl}>
+                  <ChevronRight size={17} className="browser-back-icon" />
+                </button>
+                <button className="browser-toolbar-button" aria-label="前进" onClick={() => browserWebviewRef.current?.goForward?.()} disabled={!activeToolPanelTab?.loadedUrl}>
+                  <ChevronRight size={17} />
+                </button>
+                <button className="browser-toolbar-button" aria-label="刷新" onClick={() => browserWebviewRef.current?.reload?.()} disabled={!activeToolPanelTab?.loadedUrl}>
+                  <RefreshCw size={16} />
+                </button>
+                <div className="browser-url-wrap">
+                  <input
+                    className="browser-url-input"
+                    placeholder="输入 URL"
+                    aria-label="网页地址"
+                    value={activeBrowserUrl}
+                    onChange={(event) => activeToolPanelTab && updateToolPanelTab(activeToolPanelTab.id, { url: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void openBrowserUrl();
+                    }}
+                    disabled={browserOpening}
+                  />
+                  <button
+                    className="browser-url-submit"
+                    aria-label="打开网页"
+                    title="打开网页"
+                    onClick={() => void openBrowserUrl()}
+                    disabled={browserOpening}
+                  >
+                    <ArrowUpRight size={16} />
+                  </button>
+                </div>
+                <button className="browser-toolbar-more" aria-label="浏览器更多操作" title="更多操作"><MoreVertical size={16} /></button>
+              </div>
+              <div className="browser-content">
+                {activeToolPanelTab?.loadedUrl ? (
+                  createElement("webview", {
+                    key: activeToolPanelTab.id,
+                    ref: (node: BrowserWebviewElement | null) => { browserWebviewRef.current = node; },
+                    className: "browser-webview",
+                    src: activeToolPanelTab.loadedUrl,
+                    partition: "persist:dyworker-browser",
+                    title: activeToolPanelTab.title,
+                    allowpopups: false,
+                  })
+                ) : (
+                  <div className="browser-empty-state">
+                    <Globe size={46} />
+                    <strong>开始浏览</strong>
+                    <span>输入 URL 以打开页面</span>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeToolPanelKind === "files" && (
+            <section className="tool-file-browser">
+              <div className="tool-file-browser-header">
+                <div className="tool-panel-content-heading">
+                  <FolderOpen size={16} />
+                  <span>文件</span>
+                </div>
+                <button className="icon-button subtle tiny" onClick={() => void refreshWorkspace()} aria-label="刷新文件列表" title="刷新文件列表">
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+              <div className="tool-file-browser-title">
+                <Folder size={16} />
+                <span title={workspacePath}>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
+              </div>
+              {workspacePath && (
+                <button className="tool-file-browser-clear" onClick={clearWorkspace}>移除这个会话的工作目录</button>
+              )}
+              {workspaceOpen && (workspaceEntries.length ? (
+                <div className="workspace-tree">
+                  {workspaceEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} />)}
+                </div>
+              ) : (
+                <p className="panel-empty">这个文件夹是空的。</p>
+              ))}
+              {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+            </section>
+          )}
+        </div>
+      </aside>
 
       {settingsOpen && (
         <SettingsDialog

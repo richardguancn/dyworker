@@ -4,6 +4,10 @@ export function normalizePreventSleep(value) {
   return ["off", "tasks", "always"].includes(value) ? value : "tasks";
 }
 
+export function normalizeApprovalMode(value) {
+  return ["interactive", "reviewer", "allow-writes", "full-access", "deny-changes"].includes(value) ? value : "allow-writes";
+}
+
 function encryptionAvailable(secretStorage) {
   try {
     return Boolean(secretStorage?.isEncryptionAvailable?.());
@@ -138,6 +142,7 @@ export function deserializeSettings(stored, secretStorage) {
     searxngEndpoint: String(source.searxngEndpoint || ""),
     bochaApiKey: String(source.bochaApiKey || ""),
     domesticSearchOnly: source.domesticSearchOnly === true,
+    approvalMode: normalizeApprovalMode(source.approvalMode),
     preventSleep: normalizePreventSleep(source.preventSleep),
     mcpServers: Array.isArray(source.mcpServers) ? source.mcpServers : [],
     channels: normalizeChannels(source.channels, secretStorage, "deserialize"),
@@ -156,6 +161,7 @@ export function serializeSettings(settings, secretStorage) {
     searxngEndpoint: String(settings?.searxngEndpoint || "").trim(),
     bochaApiKey: String(settings?.bochaApiKey || "").trim(),
     domesticSearchOnly: settings?.domesticSearchOnly === true,
+    approvalMode: normalizeApprovalMode(settings?.approvalMode),
     preventSleep: normalizePreventSleep(settings?.preventSleep),
     mcpServers: (Array.isArray(settings?.mcpServers) ? settings.mcpServers : [])
       .filter((server) => server && String(server.command || "").trim())
@@ -176,6 +182,7 @@ export function serializeSettings(settings, secretStorage) {
     searxngEndpoint: normalized.searxngEndpoint,
     bochaApiKey: normalized.bochaApiKey,
     domesticSearchOnly: normalized.domesticSearchOnly,
+    approvalMode: normalized.approvalMode,
     preventSleep: normalized.preventSleep,
     mcpServers: normalized.mcpServers,
     channels: normalizeChannels(settings?.channels, secretStorage, "serialize"),

@@ -137,7 +137,8 @@ export interface UsageRecord {
   estimated: boolean;
 }
 
-export type ApprovalMode = "interactive" | "allow-writes" | "full-access" | "deny-changes";
+// reviewer = 自动审核：越界操作先由审核助手（模型+规则）判断，拿不准才转人工
+export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-access" | "deny-changes";
 
 export type AgentEvent =
   | { type: "activity"; activity: ActivityRecord }
@@ -263,6 +264,8 @@ export interface ProviderSettings {
   searxngEndpoint: string;
   bochaApiKey: string;
   domesticSearchOnly: boolean;
+  // 桌面端审批模式(composer 下拉选择):记住上次选择,下次启动继续生效
+  approvalMode: ApprovalMode;
   // 防止休眠:off 关闭 / tasks 仅任务运行期间 / always 始终唤醒(只阻止系统挂起,屏幕照常锁屏)
   preventSleep: "off" | "tasks" | "always";
   mcpServers: McpServerConfig[];
@@ -326,6 +329,7 @@ export interface DyworkerBridge {
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
+  openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;
   completeChat(payload: {
     settings: ProviderSettings;
