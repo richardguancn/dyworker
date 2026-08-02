@@ -81,6 +81,12 @@ test("image attachments render real previews before and after sending", () => {
   assert.match(styles, /\.image-attachment-chip > button\s*\{[^}]*position:\s*absolute/s);
 });
 
+test("title bar does not show a workspace folder chooser", () => {
+  const topbar = app.match(/<header className="topbar">([\s\S]*?)<div className="topbar-menu-wrap"/)?.[1] || "";
+  assert.doesNotMatch(topbar, /context-folder-chip/);
+  assert.doesNotMatch(topbar, /chooseWorkspace/);
+});
+
 test("assistant local images only stay loaded near the viewport and share in-flight reads", () => {
   assert.match(interactiveMessage, /IntersectionObserver/);
   assert.match(interactiveMessage, /rootMargin:\s*"400px 0px"/);

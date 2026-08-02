@@ -2875,14 +2875,6 @@ export function App() {
           <div className="topbar-left no-drag">
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
-            <button
-              className="context-folder-chip"
-              onClick={() => void chooseWorkspace()}
-              title={workspacePath ? `上下文文件夹：${workspacePath}\n点击更换` : "为这个任务选择上下文文件夹"}
-            >
-              <FolderOpen size={13} />
-              {displayWorkspace(workspacePath)}
-            </button>
             <div className="topbar-menu-wrap" data-menu-root>
               <button
                 className="icon-button subtle"
