@@ -63,6 +63,16 @@ test("opening a conversation starts at the latest message", () => {
   assert.match(app, /scrollTo\(\{ top: viewport\.scrollHeight \}\)/);
 });
 
+test("任务完成时自动收口工作计划", () => {
+  assert.match(app, /result\.status === "done" && plan\?\.length/);
+  assert.match(app, /status: "completed" as const/);
+  assert.match(app, /function completedPlanForMessage/);
+  assert.match(app, /taskStatus: result\.status/);
+  assert.match(main, /finalResult\?\.status === "done" && Array\.isArray\(finalResult\.plan\)/);
+  assert.match(main, /emit\(\{ type: "plan-update", steps: completedPlan \}\)/);
+  assert.match(main, /const finalPlan = result\?\.status === "done" && plan\?\.length/);
+});
+
 test("workspace files can be dragged into the composer as references", () => {
   assert.match(app, /WORKSPACE_FILE_DRAG_TYPE/);
   assert.match(app, /draggable=\{!isDirectory\}/);

@@ -186,6 +186,7 @@ export interface ChatMessage {
   changes?: FileChange[];
   plan?: PlanStep[];
   durationMs?: number;
+  taskStatus?: AgentResult["status"];
 }
 
 export interface SessionRecord {

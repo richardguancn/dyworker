@@ -363,6 +363,18 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
   );
 }
 
+function completedPlanForMessage(message: ChatMessage) {
+  if (!message.plan?.length) return undefined;
+  if (message.taskStatus === "done") {
+    return message.plan.map((step) => ({ ...step, status: "completed" as const }));
+  }
+  // 兼容修复前已经保存的消息：有耗时且没有暂停、挂起、停止或报错提示时，视为正常完成。
+  if (message.taskStatus || !message.durationMs || /已暂停|已主动挂起|已按你的要求停止|任务执行出错|任务失败|任务错误/.test(message.content)) {
+    return message.plan;
+  }
+  return message.plan.map((step) => ({ ...step, status: "completed" as const }));
+}
+
 // Codex 风格的文件变更摘要卡片：数据来自 agent 的 file-change 事件（真实 +N/-M 统计，可展开 unified diff）
 function DiffView({ diff }: { diff: string }) {
   return (
@@ -2704,7 +2716,11 @@ export function App() {
             } else if (result.status === "error") {
               content = result.reason || content || "任务执行出错";
             }
-            return { ...current, content, changes: result.changes?.length ? result.changes : current.changes, plan: result.plan?.length ? result.plan : current.plan, durationMs: Date.now() - taskStartedAt };
+            const plan = result.plan?.length ? result.plan : current.plan;
+            const completedPlan = result.status === "done" && plan?.length
+              ? plan.map((step) => ({ ...step, status: "completed" as const }))
+              : plan;
+            return { ...current, content, changes: result.changes?.length ? result.changes : current.changes, plan: completedPlan, durationMs: Date.now() - taskStartedAt, taskStatus: result.status };
           });
           if (result.status === "done" && !result.demo) {
             showSessionNotice(taskSessionId, "任务已完成");
@@ -3338,7 +3354,7 @@ export function App() {
                     </div>
                   ) : (
                     <div className="assistant-message">
-                      {Boolean(message.plan?.length) && <PlanCard steps={message.plan!} />}
+                      {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
                       {(() => {
                         const visibleActivities = (message.activities || []).filter((activity) => activity.kind !== "thinking");
                         if (!visibleActivities.length) return null;

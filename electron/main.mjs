@@ -999,6 +999,11 @@ ipcMain.handle("agent:send", async (event, payload) => {
         { role: "user", content: "请继续推进任务：实际检查结果，完成剩余工作，全部满足验收条件后再交付。" },
       ];
     }
+    if (finalResult?.status === "done" && Array.isArray(finalResult.plan) && finalResult.plan.length) {
+      const completedPlan = finalResult.plan.map((step) => ({ ...step, status: "completed" }));
+      finalResult = { ...finalResult, plan: completedPlan };
+      emit({ type: "plan-update", steps: completedPlan });
+    }
     emit({ type: "loop-state", active: false, iteration: loop.iteration, maximum: loop.maximum, status: finalResult.status === "done" ? "已完成" : "已停止" });
     emit({ type: "agent-finished", result: finalResult });
     return { ok: true, result: finalResult };
@@ -1569,6 +1574,9 @@ function createTranscriptCollector() {
       }
     },
     buildMessages(userText, result, assistantContent) {
+      const finalPlan = result?.status === "done" && plan?.length
+        ? plan.map((step) => ({ ...step, status: "completed" }))
+        : plan;
       return [
         { role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
         {
@@ -1578,7 +1586,7 @@ function createTranscriptCollector() {
           activities: activities.map((item) => ({ ...item })),
           durationMs: Date.now() - startedAt,
           ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
-          ...(plan?.length ? { plan: plan.map((item) => ({ ...item })) } : {}),
+          ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
         },
       ];
     },
