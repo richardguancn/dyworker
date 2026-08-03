@@ -219,15 +219,16 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
   assert.match(app, /titlebar-right/);
 });
 
-test("linux 有合成器时用透明窗口自绘 mac 风格阴影，否则保持原样", () => {
+test("linux 无边框窗口默认不透明并主动申请焦点，避免输入事件失效", () => {
   assert.match(main, /supportsLinuxWindowShadow/);
-  assert.match(main, /_NET_WM_CM_S0/);
-  assert.match(main, /xprop/);
-  assert.match(main, /DYWORKER_NO_WINDOW_SHADOW/);
   assert.match(main, /DYWORKER_FORCE_WINDOW_SHADOW/);
-  assert.match(main, /XDG_SESSION_TYPE === "wayland"/);
   assert.match(main, /linux window shadow/);
-  assert.match(main, /transparent:\s*true/);
+  // 透明窗口在部分 X11/Wayland 环境下会让输入框无法点击聚焦，Linux 不启用
+  assert.doesNotMatch(main, /transparent:\s*true/);
+  // 无边框窗口显示后主动申请键盘焦点，并记录渲染端焦点状态便于排查
+  assert.match(main, /mainWindow\.on\("show"/);
+  assert.match(main, /mainWindow\.focus\(\)/);
+  assert.match(main, /document\.hasFocus\(\)/);
   assert.match(main, /"window:maximized-changed"/);
   assert.match(main, /windowShadow:/);
   assert.match(main, /windowMaximized:/);

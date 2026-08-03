@@ -1760,6 +1760,18 @@ body.resizing-panels .app-shell {
   display: none;
 }
 
+/* Linux：内容区显式排除拖拽区域，避免自绘标题栏的拖拽层吞掉输入框点击 */
+.platform-linux .sidebar,
+.platform-linux .main-panel,
+.platform-linux .tool-panel {
+  -webkit-app-region: no-drag;
+}
+
+.platform-linux input,
+.platform-linux textarea {
+  -webkit-app-region: no-drag;
+}
+
 .no-drag,
 .no-drag * {
   -webkit-app-region: no-drag;

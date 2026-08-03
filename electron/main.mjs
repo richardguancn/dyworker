@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -70,46 +70,23 @@ function systemWindowBackground() {
   return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
 }
 
-// Linux 无边框窗口默认没有系统阴影。主窗口改为透明窗口，由渲染端自绘
-// 类似 macOS 的圆角与阴影：
-// - Wayland 会话：应用走 XWayland，由 Wayland 合成器负责混合透明窗口，
-//   直接启用；
-// - X11 会话：仅在检测到合成器（_NET_WM_CM_S0）时启用，避免无特效
-//   桌面上出现黑色边角。
-// 环境变量可覆盖：DYWORKER_NO_WINDOW_SHADOW=1 强制关闭，
-// DYWORKER_FORCE_WINDOW_SHADOW=1 强制启用。
+// Linux 无边框窗口默认不使用透明窗口：透明无边框窗口在部分 X11/XWayland
+// 桌面上会拿不到键盘焦点，表现为主界面能点但所有输入框都无法打字。
+// 因此默认用不透明窗口，保留自绘标题栏。若确实需要透明窗口 + 渲染端
+// 自绘阴影，可显式设置 DYWORKER_FORCE_WINDOW_SHADOW=1 临时开启
+// （已知有输入风险，仅用于排查阴影效果）。
 let linuxWindowShadowCache;
 function supportsLinuxWindowShadow() {
   if (process.platform !== "linux") return false;
   if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
-  if (process.env.DYWORKER_NO_WINDOW_SHADOW === "1") {
-    linuxWindowShadowCache = false;
-    return false;
-  }
   if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
     linuxWindowShadowCache = true;
+    console.log("[dyworker] linux window shadow: forced via DYWORKER_FORCE_WINDOW_SHADOW=1");
     return true;
   }
-  const waylandSession =
-    process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
-  let composited = waylandSession;
-  if (!composited && process.env.DISPLAY) {
-    try {
-      const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
-        encoding: "utf8",
-        timeout: 2000,
-      });
-      composited = probe.status === 0 && String(probe.stdout || "").includes("window id");
-    } catch {
-      composited = false;
-    }
-  }
-  linuxWindowShadowCache = composited;
-  console.log(
-    `[dyworker] linux window shadow: ${composited ? "enabled" : "disabled"}` +
-      ` (session=${process.env.XDG_SESSION_TYPE || "x11"}, wayland=${Boolean(process.env.WAYLAND_DISPLAY)})`,
-  );
-  return linuxWindowShadowCache;
+  linuxWindowShadowCache = false;
+  console.log("[dyworker] linux window shadow: disabled (solid window, input-safe)");
+  return false;
 }
 
 nativeTheme.on("updated", () => {
@@ -384,8 +361,11 @@ function createWindow() {
     backgroundColor: linuxWindowShadow ? "#00000000" : systemWindowBackground(),
     show: process.platform === "linux",
     title: "DYWorker",
+    // 全平台保持无边框自绘标题栏。Linux 默认不透明（透明窗口在部分
+    // X11/Wayland 环境下会让输入事件失效）；只有显式设置
+    // DYWORKER_FORCE_WINDOW_SHADOW=1 时才恢复透明窗口自绘阴影。
     frame: false,
-    ...(linuxWindowShadow ? { transparent: true } : {}),
+    transparent: linuxWindowShadow,
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
@@ -398,6 +378,25 @@ function createWindow() {
   mainWindow = new BrowserWindow(windowOptions);
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-changed", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-changed", false));
+  // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
+  // 被送到上一个窗口（X11/XWayland 无边框窗口的常见问题）。
+  if (process.platform === "linux") {
+    mainWindow.on("show", () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.focus();
+      mainWindow.webContents.focus();
+    });
+    mainWindow.webContents.on("did-finish-load", () => {
+      mainWindow?.webContents
+        .executeJavaScript("document.hasFocus()")
+        .then((hasFocus) => {
+          console.log(`[dyworker] linux window focus: rendererHasFocus=${String(hasFocus)}`);
+        })
+        .catch(() => {
+          // 诊断日志失败不影响窗口使用
+        });
+    });
+  }
   mainWindow.once("closed", () => {
     mainWindow = undefined;
   });
