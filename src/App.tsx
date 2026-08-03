@@ -1313,7 +1313,7 @@ function ChannelsPanel({ value, onSave }: {
         </div>
       ) : null}
       <p className="dialog-note">
-        启用后用手机微信扫码登录,他人给你的微信发消息即可让 DyWork 处理并回复。群聊与文件/图片消息暂不支持。
+        启用后用手机微信扫码登录,他人给你的微信发消息即可让 DYWorker 处理并回复。群聊与文件/图片消息暂不支持。
       </p>
       <div className="mcp-server-row">
         <label className="skill-switch" title={channels.wechat.enabled ? "点击停用" : "点击启用"}>
@@ -2200,12 +2200,11 @@ export function App() {
   };
 
   const createTask = () => {
-    // 新任务默认不绑定工作目录；需要时再从顶部或“+”菜单选择。
-    const session = makeSession();
+    // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
+    // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
+    const session = makeSession(workspacePath);
     setSessions((current) => [session, ...current]);
     setActiveId(session.id);
-    setWorkspacePath("");
-    setWorkspaceEntries([]);
     setComposer("");
     setAttachments([]);
     setNotice("");
@@ -3111,11 +3110,58 @@ export function App() {
     </div>
   );
 
+  const taskMenu = (
+    <div className="topbar-menu-wrap" data-menu-root>
+      <button
+        className="icon-button subtle"
+        aria-label="任务操作"
+        title="任务操作"
+        onClick={() => setTopMenuOpen((value) => !value)}
+      >
+        <MoreHorizontal size={17} />
+      </button>
+      {topMenuOpen && activeSession && (
+        <div className="session-menu topbar-menu" role="menu">
+          <button role="menuitem" onClick={() => { setTopMenuOpen(false); setRenamingId(activeSession.id); }}>重命名任务</button>
+          <button role="menuitem" onClick={() => togglePin(activeSession.id)}>
+            {activeSession.pinned ? "取消置顶" : "置顶任务"}
+          </button>
+          <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
+          <button role="menuitem" onClick={() => {
+            setTopMenuOpen(false);
+            setPlanSeed({ name: activeSession.title, prompt: "" });
+            setSettingsTab("plans");
+            setSettingsOpen(true);
+          }}>添加计划任务</button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
       style={panelStyle}
     >
+      <header className="titlebar" aria-label="标题栏">
+        <div className="titlebar-left">
+          <span className="titlebar-brand">DYWorker</span>
+        </div>
+        <div className="titlebar-right">
+          {taskMenu}
+          <div className="window-controls" aria-label="窗口控制">
+            <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
+              <Minus size={15} />
+            </button>
+            <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
+              <Square size={11} />
+            </button>
+            <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+      </header>
       <aside className="sidebar" aria-label="任务侧栏">
         <div className="native-controls-space" />
         <div className="sidebar-brand-row">
@@ -3229,30 +3275,6 @@ export function App() {
             </button>
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
-            <div className="topbar-menu-wrap" data-menu-root>
-              <button
-                className="icon-button subtle"
-                aria-label="任务操作"
-                onClick={() => setTopMenuOpen((value) => !value)}
-              >
-                <MoreHorizontal size={17} />
-              </button>
-              {topMenuOpen && activeSession && (
-                <div className="session-menu topbar-menu" role="menu">
-                  <button role="menuitem" onClick={() => { setTopMenuOpen(false); setRenamingId(activeSession.id); }}>重命名任务</button>
-                  <button role="menuitem" onClick={() => togglePin(activeSession.id)}>
-                    {activeSession.pinned ? "取消置顶" : "置顶任务"}
-                  </button>
-                  <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
-                  <button role="menuitem" onClick={() => {
-                    setTopMenuOpen(false);
-                    setPlanSeed({ name: activeSession.title, prompt: "" });
-                    setSettingsTab("plans");
-                    setSettingsOpen(true);
-                  }}>添加计划任务</button>
-                </div>
-              )}
-            </div>
           </div>
           <div className="topbar-right no-drag">
             {!rightPanelOpen && (
@@ -3293,17 +3315,6 @@ export function App() {
             >
               <Terminal size={17} />
             </button>
-            <div className="window-controls" aria-label="窗口控制">
-              <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
-                <Minus size={15} />
-              </button>
-              <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
-                <Square size={11} />
-              </button>
-              <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
-                <X size={15} />
-              </button>
-            </div>
           </div>
         </header>
 
@@ -3313,7 +3324,9 @@ export function App() {
               <div className="empty-conversation">
                 <span className="empty-mark"><Sparkles size={25} /></span>
                 <h1>从一个工作任务开始</h1>
-                <p>选择工作文件夹，然后告诉 DYWorker 你希望完成什么。</p>
+                <p>{workspacePath
+                  ? "选择工作文件夹，然后告诉 DYWorker 你希望完成什么。"
+                  : "还没有工作文件夹也能先提问；需要读取或保存文件时，先选择工作文件夹。"}</p>
                 <button className="button-secondary" onClick={() => void chooseWorkspace()}>
                   <FolderOpen size={16} />
                   选择工作文件夹

@@ -928,7 +928,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
       let filesNote = "";
       try {
         const entries = workspacePath ? await fs.readdir(workspacePath) : [];
-        filesNote = workspacePath ? `文件列表读取正常（${entries.length} 项）。` : "还没有选择工作文件夹。";
+        filesNote = workspacePath ? `文件列表读取正常（${entries.length} 项）。` : "当前还没有选择工作文件夹，选择后助手才能读取工作区资料。";
       } catch {
         filesNote = "工作文件夹暂时无法访问。";
       }
@@ -936,12 +936,11 @@ ipcMain.handle("agent:send", async (event, payload) => {
       const demoResult = {
         status: "done",
         demo: true,
-        finalText: `这是演示模式。我已经收到你的任务，当前工作文件夹可以正常访问。${filesNote}\n\n要让助手真正读取资料并完成任务，请在左下角“设置”中填写模型服务信息。`,
+        finalText: `这是演示模式。我已经收到你的任务。${filesNote}\n\n要让助手真正读取资料并完成任务，请在左下角“设置”中填写模型服务信息。`,
       };
       emit({ type: "agent-finished", result: demoResult });
       return { ok: true, result: demoResult };
     }
-    if (!workspacePath) return { ok: false, error: "请先选择工作文件夹，助手只能在工作文件夹内操作" };
 
     const loop = payload?.loop?.enabled
       ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
@@ -1891,7 +1890,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
       throw new Error("模型还没有配置,请先在电脑端完成设置");
     }
     if (!workspacePath) {
-      throw new Error("还没有选择工作区,请先在电脑端打开 DyWork 并选择工作区");
+      throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
     }
     // 渠道审批严格度:默认省心(allow-writes,搜索/读写自动放行),可在渠道设置切严格
     const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "allow-writes";

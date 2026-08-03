@@ -8,6 +8,7 @@
   --sidebar-width: 300px;
   --tool-panel-width: 320px;
   --topbar-height: 54px;
+  --titlebar-height: 48px;
   --surface: #f8f6ee;
   --sidebar: #f2efe5;
   --sidebar-hover: rgba(72, 74, 68, 0.05);
@@ -68,6 +69,7 @@ textarea:focus-visible {
   height: 100%;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--tool-panel-width);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
   background: var(--surface);
   transition: grid-template-columns 180ms ease;
 }
@@ -1701,6 +1703,67 @@ body.resizing-panels .app-shell {
 .window-controls .window-close:hover {
   color: #fff;
   background: #c42b1c;
+}
+
+/* 单独的全宽标题栏：右上角为任务菜单与窗口按钮，对齐 Codex 桌面版布局 */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  padding-left: 18px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.1);
+  background: rgba(247, 247, 244, 0.92);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-left,
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.titlebar-right {
+  align-self: stretch;
+  gap: 6px;
+}
+
+.titlebar-brand {
+  font-size: 19px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+  color: #242622;
+  white-space: nowrap;
+}
+
+.titlebar .topbar-menu {
+  top: 36px;
+  left: auto;
+  right: 0;
+}
+
+.sidebar,
+.main-panel,
+.tool-panel {
+  grid-row: 2;
+}
+
+.panel-resize-handle {
+  top: var(--titlebar-height);
+}
+
+.sidebar-brand-row .brand-button {
+  display: none;
 }
 
 .no-drag,
@@ -4653,6 +4716,14 @@ body.resizing-panels .app-shell {
 
   .topbar {
     background: rgba(24, 25, 22, 0.84);
+  }
+
+  .titlebar {
+    background: rgba(24, 25, 22, 0.88);
+  }
+
+  .titlebar-brand {
+    color: #e0e3db;
   }
 
   .sidebar-search-wrap,

@@ -366,6 +366,33 @@ test("write_file 被用户拒绝时不写文件并反馈给模型", async () => 
   assert.match(toolMessage.content, /用户拒绝/);
 });
 
+test("没有工作目录时文件工具给出明确提示，不写文件", async () => {
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: "",
+    conversation: [{ role: "user", content: "把内容写到 报告.md" }],
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "报告.md", content: "内容" })] },
+      { role: "assistant", content: "需要先选择工作文件夹才能写文件。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "需要先选择工作文件夹才能写文件。");
+  const toolMessage = calls[1].messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /还没有选择工作文件夹/);
+});
+
+test("没有工作目录的 Workspace 拒绝文件操作与命令", async () => {
+  const workspace = new Workspace("");
+  await assert.rejects(() => workspace.listFiles(""), /还没有选择工作文件夹/);
+  await assert.rejects(() => workspace.readFile("a.txt"), /还没有选择工作文件夹/);
+  await assert.rejects(() => workspace.writeFile("a.txt", "x"), /还没有选择工作文件夹/);
+  const command = await workspace.runCommand("echo hi");
+  assert.equal(command.ok, false);
+  assert.match(command.output, /还没有选择工作文件夹/);
+});
+
 test("审批通过后 run_command 在工作区内执行", async () => {
   const root = await makeWorkspace();
   const result = await runAgent({

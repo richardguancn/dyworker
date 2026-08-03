@@ -208,6 +208,10 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
   assert.match(app, /dyworker\?\.minimize/);
   assert.match(app, /dyworker\?\.toggleMaximize/);
   assert.match(app, /dyworker\?\.close/);
+  // 单独的全宽标题栏：菜单与三个窗口按钮固定在右上角
+  assert.match(app, /className="titlebar"/);
+  assert.match(app, /titlebar-brand/);
+  assert.match(app, /titlebar-right/);
 });
 
 test("codex alignment surfaces are wired end to end", () => {

@@ -185,8 +185,10 @@ export function unifiedDiff(before, after, filePath = "", context = 3) {
 
 // 读取工作区根目录的 AGENTS.md 项目约定（对照 Codex 的项目指令加载）
 export async function loadProjectInstructions(workspacePath, limit = 32 * 1024) {
+  const root = String(workspacePath || "").trim();
+  if (!root) return "";
   try {
-    const file = path.join(String(workspacePath || ""), "AGENTS.md");
+    const file = path.join(root, "AGENTS.md");
     const stat = await fs.stat(file);
     if (!stat.isFile()) return "";
     return clipped(await fs.readFile(file, "utf8"), limit).trim();
@@ -197,10 +199,13 @@ export async function loadProjectInstructions(workspacePath, limit = 32 * 1024) 
 
 export class Workspace {
   constructor(root) {
-    const resolvedRoot = path.resolve(String(root || ""));
-    this.root = (() => {
-      try { return realpathSync(resolvedRoot); } catch { return resolvedRoot; }
-    })();
+    this.root = String(root || "").trim();
+    if (this.root) {
+      const resolvedRoot = path.resolve(this.root);
+      this.root = (() => {
+        try { return realpathSync(resolvedRoot); } catch { return resolvedRoot; }
+      })();
+    }
     this.externalAuthorizations = new Map();
   }
 
@@ -242,6 +247,9 @@ export class Workspace {
   }
 
   resolve(relativePath) {
+    if (!this.root) {
+      throw new Error("还没有选择工作文件夹，无法读写文件。请先告诉用户选择工作文件夹后再继续。");
+    }
     const value = String(relativePath || "").trim();
     const absolute = path.resolve(this.root, value);
     if (!this.isOutside(value)) return absolute;
@@ -496,6 +504,9 @@ export class Workspace {
   }
 
   runCommand(command) {
+    if (!this.root) {
+      return Promise.resolve({ ok: false, output: "还没有选择工作文件夹，无法运行命令。请先告诉用户选择工作文件夹后再继续。" });
+    }
     return new Promise((resolve) => {
       const win32 = process.platform === "win32";
       const program = win32 ? "cmd.exe" : "/bin/bash";
@@ -1746,8 +1757,11 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
   const goalLine = goal
     ? `本任务的长期目标是：${goal}。把它当作最高优先级：每轮交付前对照目标自检——已达成则在 finish_task 中明确说明目标已达成；未达成就继续推进下一步，不得提前宣布完成。目标在达成前持续有效。`
     : "";
+  const workspaceLine = workspacePath
+    ? `当前工作区是：${workspacePath}。你可以自动查看工作区目录，并读取文本、PDF、Word、Excel、PPT 文件中的文字内容。写文件、创建文件夹、运行程序会由应用按当前审批设置处理。`
+    : "当前会话还没有选择工作文件夹。你可以正常回答不涉及本地文件的问题（政策检索、写作、计算、整理思路等）；如果需要读取或写入本地文件、运行命令或创建文件夹，必须在回复中告诉用户先选择工作文件夹，等用户选择并再次发送消息后继续。不要猜测任何文件路径，也不要用文件工具尝试访问任意位置。";
   const dynamicSections = [
-    `当前工作区是：${workspacePath}。你可以自动查看工作区目录，并读取文本、PDF、Word、Excel、PPT 文件中的文字内容。写文件、创建文件夹、运行程序会由应用按当前审批设置处理。`,
+    workspaceLine,
     goalLine,
     loopLine,
     reviewLine,
