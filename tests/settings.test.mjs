@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deserializeSettings, needsSecretMigration, serializeSettings } from "../electron/settings.mjs";
+import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, serializeSettings } from "../electron/settings.mjs";
 
 const secretStorage = {
   isEncryptionAvailable: () => true,
@@ -74,6 +74,41 @@ test("旧版单模型设置仍可读取且自动迁移为第一套配置", () =>
   assert.equal(JSON.stringify(migrated).includes("legacy-key"), false);
   assert.equal(migrated.encrypted, true);
   assert.equal(migrated.profiles[0].encrypted, true);
+});
+
+test("应用改名后旧加密密钥无法解密时被准确统计", () => {
+  const brokenStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(`encrypted:${value}`, "utf8"),
+    decryptString: () => {
+      throw new Error("无法解密");
+    },
+  };
+  const stored = {
+    apiKey: "current-key",
+    encrypted: true,
+    profiles: [
+      {
+        id: "one",
+        endpoint: "https://one.example/v1/chat/completions",
+        model: "model-one",
+        apiKey: "key-one",
+        encrypted: true,
+      },
+    ],
+    channels: {
+      qq: {
+        enabled: true,
+        appId: "app-id",
+        appSecret: "qq-secret",
+        appSecretEncrypted: true,
+      },
+    },
+  };
+  assert.equal(countUndecryptableSecrets(stored, brokenStorage), 3);
+  assert.equal(countUndecryptableSecrets({ ...stored, encrypted: false }, brokenStorage), 2);
+  assert.equal(countUndecryptableSecrets({ apiKey: "", encrypted: true }, brokenStorage), 0);
+  assert.equal(countUndecryptableSecrets({ apiKey: "plain", encrypted: false }, brokenStorage), 0);
 });
 
 test("用户明确删除全部配置后不会被当前连接重新创建", () => {

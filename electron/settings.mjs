@@ -46,6 +46,23 @@ export function needsSecretMigration(stored) {
     .some((profile) => profile?.apiKey && profile?.encrypted !== true);
 }
 
+// 统计"已加密但用当前安全存储解不开"的密钥数量。
+// 应用改名后系统加密口令会跟着应用名变化，旧密文无法再解开；
+// 迁移旧数据时用这个函数提示用户重新填写密钥。
+export function countUndecryptableSecrets(stored, secretStorage) {
+  const source = stored && typeof stored === "object" ? stored : {};
+  const stuck = (value, encrypted) =>
+    Boolean(value) && encrypted === true && !decryptSecret(value, true, secretStorage);
+  let count = 0;
+  if (stuck(source.apiKey, source.encrypted)) count += 1;
+  for (const profile of Array.isArray(source.profiles) ? source.profiles : []) {
+    if (stuck(profile?.apiKey, profile?.encrypted)) count += 1;
+  }
+  const qq = source.channels?.qq && typeof source.channels.qq === "object" ? source.channels.qq : {};
+  if (stuck(qq.appSecret, qq.appSecretEncrypted)) count += 1;
+  return count;
+}
+
 // IM 消息渠道配置(QQ 官方机器人 / 微信 ClawBot);QQ appSecret 与 apiKey 同款加密。
 // 微信登录凭据(bot_token)不进设置文件,由主进程单独存 channel-credentials.json,避免渲染端陈旧覆盖。
 function normalizeChannels(channels, secretStorage, direction) {

@@ -11,9 +11,10 @@ import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
-import { decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizePreventSleep, serializeSettings } from "./settings.mjs";
+import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizePreventSleep, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
+import { importLegacyData } from "./legacy-data.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -163,6 +164,45 @@ async function readSettings() {
 
 async function saveSettings(settings) {
   await writeJson(dataFile("settings.json"), serializeSettings(settings, safeStorage));
+}
+
+// 应用由 DYWork 改名为 DYWorker，用户数据目录随之改变。
+// 首次启动 DYWorker 时把旧目录里的配置与对话记录搬过来；
+// 旧版加密密钥（macOS/Linux 的加密口令绑定应用名）需要提示用户重新填写。
+async function migrateLegacyDataOnFirstRun() {
+  let result;
+  try {
+    result = await importLegacyData({ currentDirectory: app.getPath("userData") });
+  } catch {
+    return;
+  }
+  if (!result.imported) return;
+
+  let stuckSecrets = 0;
+  try {
+    const stored = await readJson(dataFile("settings.json"), {});
+    stuckSecrets += countUndecryptableSecrets(stored, safeStorage);
+    const credentials = await readJson(dataFile("channel-credentials.json"), {});
+    if (
+      credentials?.wechatToken
+      && credentials.wechatTokenEncrypted === true
+      && !decryptChannelSecret(credentials.wechatToken, true, safeStorage)
+    ) {
+      stuckSecrets += 1;
+    }
+  } catch {
+    // 密钥检查失败不阻塞启动，用户仍可自行核对设置
+  }
+
+  const message = stuckSecrets > 0
+    ? `已把 DYWork 的配置和对话记录导入 DYWorker。\n\n应用改名后系统加密不再认识旧口令，有 ${stuckSecrets} 项密钥需要重新填写（模型 API Key、QQ 机器人或微信渠道凭据）。`
+    : "已把 DYWork 的配置和对话记录导入 DYWorker。";
+  await dialog.showMessageBox({
+    type: "info",
+    title: "已导入旧版数据",
+    message,
+    buttons: ["知道了"],
+  });
 }
 
 const ignoredNames = new Set([".git", "node_modules", "dist", ".DS_Store"]);
@@ -2027,6 +2067,7 @@ ipcMain.handle("window:toggle-maximize", () => {
 ipcMain.handle("window:close", () => mainWindow?.close());
 
 app.whenReady().then(async () => {
+  await migrateLegacyDataOnFirstRun();
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
