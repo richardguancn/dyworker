@@ -40,6 +40,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SquarePlus,
+  SquarePen,
   SquareTerminal,
   Sparkles,
   Square,
@@ -1847,6 +1848,7 @@ export function App() {
   const [activeId, setActiveId] = useState(previewSessions[0].id);
   const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
+  const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
   const [query, setQuery] = useState("");
   const [composer, setComposer] = useState("");
@@ -1892,6 +1894,7 @@ export function App() {
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
+  const [workspaceMenuPath, setWorkspaceMenuPath] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [mentionMenu, setMentionMenu] = useState<{ kind: "slash" | "at"; query: string; start: number } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -1923,11 +1926,12 @@ export function App() {
   const shouldScrollToBottomRef = useRef<string | null>(null);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = sessionMenuId !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen;
+  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
       setSessionMenuId(null);
+      setWorkspaceMenuPath(null);
       setTopMenuOpen(false);
       setAddMenuOpen(false);
       setModelMenuOpen(false);
@@ -1990,6 +1994,7 @@ export function App() {
         setWorkspacePath(state.workspacePath);
         setWorkspaceEntries(state.workspaceEntries);
         setSettings(state.settings);
+        setPinnedWorkspacePaths(state.pinnedWorkspacePaths || []);
         setPlatform(state.platform || "");
         setWindowShadow(Boolean(state.windowShadow));
         setWindowMaximized(Boolean(state.windowMaximized));
@@ -2023,6 +2028,12 @@ export function App() {
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions]);
+
+  useEffect(() => {
+    if (!ready || !window.dyworker) return;
+    const timeout = window.setTimeout(() => void window.dyworker?.savePinnedWorkspaces(pinnedWorkspacePaths), 180);
+    return () => window.clearTimeout(timeout);
+  }, [pinnedWorkspacePaths, ready]);
 
   // 审批模式记住上次选择：启动时从设置恢复，切换后立即落盘
   useEffect(() => {
@@ -2192,11 +2203,18 @@ export function App() {
     });
     return {
       workspaces: [...groups.entries()]
-        .map(([path, items]) => ({ path, sessions: order(items) }))
-        .sort((a, b) => new Date(b.sessions[0]?.updatedAt || 0).getTime() - new Date(a.sessions[0]?.updatedAt || 0).getTime()),
+        .map(([path, items]) => ({
+          path,
+          sessions: order(items),
+          pinned: pinnedWorkspacePaths.includes(path),
+        }))
+        .sort((a, b) => {
+          const pinned = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+          return pinned || new Date(b.sessions[0]?.updatedAt || 0).getTime() - new Date(a.sessions[0]?.updatedAt || 0).getTime();
+        }),
       recent: order(recent),
     };
-  }, [visibleSessions]);
+  }, [pinnedWorkspacePaths, visibleSessions]);
 
   const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
@@ -2218,12 +2236,27 @@ export function App() {
     sessionNoticeTimersRef.current.set(sessionId, timeout);
   };
 
-  const createTask = () => {
+  const createTask = (targetWorkspacePath = workspacePath) => {
     // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
     // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
-    const session = makeSession(workspacePath);
+    const session = makeSession(targetWorkspacePath);
     setSessions((current) => [session, ...current]);
     setActiveId(session.id);
+    setWorkspacePath(targetWorkspacePath);
+    setWorkspaceMenuPath(null);
+    if (targetWorkspacePath) {
+      setWorkspaceOpen(true);
+      setWorkspaceGroupOpen((current) => ({ ...current, [targetWorkspacePath]: true }));
+      if (targetWorkspacePath !== workspacePath) {
+        if (window.dyworker?.refreshWorkspace) {
+          void window.dyworker.refreshWorkspace(targetWorkspacePath).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
+        } else {
+          setWorkspaceEntries(targetWorkspacePath === "/workspace/dyworker" ? previewWorkspace : []);
+        }
+      }
+    } else {
+      setWorkspaceEntries([]);
+    }
     setComposer("");
     setAttachments([]);
     setNotice("");
@@ -2256,6 +2289,33 @@ export function App() {
   const togglePin = (id: string) => {
     setTopMenuOpen(false);
     updateSession(id, (session) => ({ ...session, pinned: !session.pinned }));
+  };
+
+  const toggleWorkspacePin = (targetWorkspacePath: string) => {
+    const pinned = pinnedWorkspacePaths.includes(targetWorkspacePath);
+    setPinnedWorkspacePaths((current) => pinned
+      ? current.filter((path) => path !== targetWorkspacePath)
+      : [...current, targetWorkspacePath]);
+    setWorkspaceMenuPath(null);
+    setNotice(pinned ? "已取消置顶工作目录" : "工作目录已置顶");
+  };
+
+  const openWorkspaceInFileManager = async (targetWorkspacePath: string) => {
+    setWorkspaceMenuPath(null);
+    if (!window.dyworker?.openPath) {
+      setNotice("当前预览环境无法打开系统文件管理器");
+      return;
+    }
+    try {
+      const result = await window.dyworker.openPath(targetWorkspacePath);
+      if (!result.ok) {
+        setError(result.error || "无法打开工作目录");
+        return;
+      }
+      setNotice("已在系统文件管理器中打开工作目录");
+    } catch (openError) {
+      setError(`无法打开工作目录：${openError instanceof Error ? openError.message : String(openError)}`);
+    }
   };
 
   const archiveSession = (id: string) => {
@@ -3010,6 +3070,11 @@ export function App() {
   ]);
   const canSend = Boolean((composer.trim() || attachments.length || activeSkills.length) && !activeTaskRunning && voiceState !== "transcribing");
   const recentExpanded = workspaceGroupOpen.__recent__ !== false;
+  const fileManagerLabel = platform === "darwin"
+    ? "在 Finder 中显示"
+    : platform === "win32"
+      ? "在文件资源管理器中显示"
+      : "在文件管理器中显示";
 
   const selectSession = (session: SessionRecord) => {
     setSessionMenuId(null);
@@ -3061,6 +3126,7 @@ export function App() {
         aria-label="任务操作"
         onClick={(event) => {
           event.stopPropagation();
+          setWorkspaceMenuPath(null);
           setSessionMenuId(sessionMenuId === session.id ? null : session.id);
         }}
       >
@@ -3201,7 +3267,7 @@ export function App() {
           </div>
         </div>
 
-        <button className="new-task-button" onClick={createTask}>
+        <button className="new-task-button" onClick={() => createTask()}>
           <MessageSquarePlus size={18} />
           新建任务
         </button>
@@ -3221,16 +3287,53 @@ export function App() {
                 {workspaceSessionGroups.workspaces.map((group) => {
                   const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
                   return (
-                    <div className={`workspace-session-group ${expanded ? "expanded" : ""}`} key={group.path}>
-                      <button
-                        className="workspace-session-heading"
-                        onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
-                        aria-expanded={expanded}
-                        title={group.path}
-                      >
-                        {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
-                        <span>{displayWorkspace(group.path)}</span>
-                      </button>
+                    <div className={`workspace-session-group ${expanded ? "expanded" : ""} ${group.pinned ? "pinned" : ""}`} key={group.path} data-menu-root>
+                      <div className="workspace-session-row">
+                        <button
+                          className="workspace-session-heading"
+                          onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
+                          aria-expanded={expanded}
+                          title={group.path}
+                        >
+                          {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+                          <span>{displayWorkspace(group.path)}</span>
+                          {group.pinned && <Pin size={12} className="workspace-pin-indicator" aria-label="已置顶" />}
+                        </button>
+                        <div className="workspace-session-actions">
+                          <button
+                            className="icon-button subtle tiny"
+                            aria-label={`${displayWorkspace(group.path)} 更多操作`}
+                            title="更多操作"
+                            aria-expanded={workspaceMenuPath === group.path}
+                            onClick={() => {
+                              setSessionMenuId(null);
+                              setWorkspaceMenuPath((current) => current === group.path ? null : group.path);
+                            }}
+                          >
+                            <MoreHorizontal size={15} />
+                          </button>
+                          <button
+                            className="icon-button subtle tiny"
+                            aria-label={`在 ${displayWorkspace(group.path)} 中新建对话`}
+                            title="新建对话"
+                            onClick={() => createTask(group.path)}
+                          >
+                            <SquarePen size={15} />
+                          </button>
+                        </div>
+                      </div>
+                      {workspaceMenuPath === group.path && (
+                        <div className="session-menu workspace-menu" role="menu">
+                          <button role="menuitem" onClick={() => toggleWorkspacePin(group.path)}>
+                            <Pin size={15} />
+                            <span>{group.pinned ? "取消置顶项目" : "置顶项目"}</span>
+                          </button>
+                          <button role="menuitem" onClick={() => void openWorkspaceInFileManager(group.path)}>
+                            <FolderOpen size={15} />
+                            <span>{fileManagerLabel}</span>
+                          </button>
+                        </div>
+                      )}
                       {expanded && <div className="session-list workspace-session-items">{group.sessions.map(renderSessionItem)}</div>}
                     </div>
                   );

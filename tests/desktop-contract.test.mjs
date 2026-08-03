@@ -102,6 +102,23 @@ test("title bar does not show a workspace folder chooser", () => {
   assert.doesNotMatch(topbar, /chooseWorkspace/);
 });
 
+test("工作目录支持新建对话、置顶和在系统文件管理器中打开", () => {
+  assert.match(types, /pinnedWorkspacePaths: string\[\]/);
+  assert.match(app, /workspaceMenuPath/);
+  assert.match(app, /pinnedWorkspacePaths\.includes\(path\)/);
+  assert.match(app, /toggleWorkspacePin/);
+  assert.match(app, /createTask\(group\.path\)/);
+  assert.match(app, /openWorkspaceInFileManager\(group\.path\)/);
+  assert.match(app, /在 Finder 中显示/);
+  assert.match(app, /在文件资源管理器中显示/);
+  assert.match(app, /在文件管理器中显示/);
+  assert.match(app, /Number\(Boolean\(b\.pinned\)\) - Number\(Boolean\(a\.pinned\)\)/);
+  assert.match(styles, /\.workspace-session-actions/);
+  assert.match(styles, /\.workspace-menu/);
+  assert.match(preload, /savePinnedWorkspaces: \(paths\).*workspace-pins:save/);
+  assert.match(main, /ipcMain\.handle\("workspace-pins:save"/);
+});
+
 test("assistant local images only stay loaded near the viewport and share in-flight reads", () => {
   assert.match(interactiveMessage, /IntersectionObserver/);
   assert.match(interactiveMessage, /rootMargin:\s*"400px 0px"/);

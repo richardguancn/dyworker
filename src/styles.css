@@ -381,11 +381,19 @@ body.resizing-panels .app-shell {
 }
 
 .workspace-session-group {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-session-row {
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 
 .workspace-session-heading {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -399,6 +407,49 @@ body.resizing-panels .app-shell {
   text-align: left;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+}
+
+.workspace-session-actions .icon-button {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+}
+
+.workspace-session-group:not(:hover):not(:focus-within) .workspace-session-actions {
+  opacity: 0.64;
+}
+
+.workspace-pin-indicator {
+  flex: 0 0 auto;
+  color: #83877e;
+}
+
+.workspace-menu {
+  top: 34px;
+  right: 2px;
+  min-width: 190px;
+}
+
+.workspace-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.workspace-menu button svg {
+  flex: 0 0 auto;
+  color: #7b8077;
 }
 
 .workspace-session-heading:hover,

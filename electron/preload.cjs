@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("dyworker", {
   getInitialState: () => ipcRenderer.invoke("app:initial-state"),
   saveSessions: (sessions) => ipcRenderer.invoke("sessions:save", sessions),
+  savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
   readLocalImage: (path) => ipcRenderer.invoke("local-image:read", path),

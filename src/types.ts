@@ -322,11 +322,13 @@ export interface DyworkerBridge {
     workspacePath: string;
     workspaceEntries: WorkspaceEntry[];
     settings: ProviderSettings;
+    pinnedWorkspacePaths: string[];
     platform: string;
     windowShadow: boolean;
     windowMaximized: boolean;
   }>;
   saveSessions(sessions: SessionRecord[]): Promise<{ ok: boolean; error?: string }>;
+  savePinnedWorkspaces(paths: string[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;

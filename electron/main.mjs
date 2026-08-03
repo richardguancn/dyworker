@@ -448,11 +448,15 @@ registerLocalImageIpc(ipcMain, {
 ipcMain.handle("app:initial-state", async () => {
   const sessions = await readJson(dataFile("sessions.json"), defaultSessions());
   const workspacePath = sessions.find((session) => session.workspacePath)?.workspacePath || "";
+  const pinnedWorkspacePaths = await readJson(dataFile("workspace-pins.json"), []);
   return {
     sessions,
     workspacePath,
     workspaceEntries: await listWorkspace(workspacePath),
     settings: await readSettings(),
+    pinnedWorkspacePaths: Array.isArray(pinnedWorkspacePaths)
+      ? pinnedWorkspacePaths.filter((item) => typeof item === "string" && item.trim())
+      : [],
     platform: process.platform,
     windowShadow: supportsLinuxWindowShadow(),
     windowMaximized: mainWindow?.isMaximized() ?? false,
@@ -462,6 +466,18 @@ ipcMain.handle("app:initial-state", async () => {
 ipcMain.handle("sessions:save", async (_event, sessions) => {
   try {
     await writeJson(dataFile("sessions.json"), Array.isArray(sessions) ? sessions : []);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("workspace-pins:save", async (_event, paths) => {
+  try {
+    const normalized = Array.isArray(paths)
+      ? [...new Set(paths.map((item) => String(item || "").trim()).filter(Boolean))]
+      : [];
+    await writeJson(dataFile("workspace-pins.json"), normalized);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
