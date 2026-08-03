@@ -332,15 +332,18 @@ async function dependencyInstallPlan(packages) {
   return dependencyPlanFromOutput(packages, `${result.stdout}\n${result.stderr}`);
 }
 
-function dependencyInstallStatusDirectory() {
+function dependencyInstallTestMode() {
   const testDirectory = String(process.env.DYWORKER_TEST_DEPENDENCY_STATUS_DIR || "");
   const temporaryRoot = path.resolve(os.tmpdir());
-  if (
-    process.platform !== "linux"
-    && testDirectory
+  return Boolean(
+    testDirectory
     && path.resolve(testDirectory).startsWith(`${temporaryRoot}${path.sep}`)
-  ) {
-    return path.resolve(testDirectory);
+  );
+}
+
+function dependencyInstallStatusDirectory() {
+  if (dependencyInstallTestMode()) {
+    return path.resolve(String(process.env.DYWORKER_TEST_DEPENDENCY_STATUS_DIR));
   }
   return "/run/dyworker";
 }
@@ -416,7 +419,7 @@ async function dependencyStatusText(status) {
 }
 
 async function assertPackageManagerAvailable() {
-  if (process.platform !== "linux" && process.env.DYWORKER_TEST_DEPENDENCY_STATUS_DIR) {
+  if (dependencyInstallTestMode()) {
     return {
       "apt-get": "apt-get",
       pkexec: "pkexec",
@@ -465,12 +468,17 @@ async function runDependencyInstallerWorker(uid, token, packages) {
     process.exitCode = 2;
     return;
   }
-  const aptGet = process.platform === "linux" ? systemPrograms["apt-get"] : "apt-get";
+  const aptGet = dependencyInstallTestMode()
+    ? "apt-get"
+    : process.platform === "linux"
+      ? systemPrograms["apt-get"]
+      : "apt-get";
   const inheritedLockFds = String(process.env.DYWORKER_DPKG_LOCK_FDS || "").split(",").filter(Boolean);
   const lockFdsAccessible = await Promise.all(inheritedLockFds.map(async (fd) =>
     /^\d+$/.test(fd) && await fs.access(`/proc/self/fd/${fd}`).then(() => true).catch(() => false)));
   if (
     process.platform === "linux"
+    && !dependencyInstallTestMode()
     && (
       typeof process.getuid !== "function"
       || process.getuid() !== 0
@@ -587,7 +595,7 @@ async function launchDependencyInstaller(packages, token, programs) {
     "--setenv=ELECTRON_RUN_AS_NODE=1",
   ];
   const testStatusDirectory = String(process.env.DYWORKER_TEST_DEPENDENCY_STATUS_DIR || "");
-  if (process.platform !== "linux" && testStatusDirectory) {
+  if (dependencyInstallTestMode()) {
     systemdArgs.push(`--setenv=DYWORKER_TEST_DEPENDENCY_STATUS_DIR=${testStatusDirectory}`);
   }
   systemdArgs.push(
