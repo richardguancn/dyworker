@@ -156,6 +156,19 @@ test("composer uses the Codex permission menu and keeps secondary controls compa
   assert.doesNotMatch(app, /className=\{`icon-button voice-button/);
 });
 
+test("开启完全访问权限前必须经过明确确认", () => {
+  assert.match(app, /fullAccessDialogOpen/);
+  assert.match(app, /要开启完整访问权限吗\?/);
+  assert.match(app, /文件和文件夹/);
+  assert.match(app, /终端命令/);
+  assert.match(app, /互联网和已连接的应用/);
+  assert.match(app, /setFullAccessDialogOpen\(true\)/);
+  assert.match(app, /setApprovalMode\("full-access"\)/);
+  assert.match(app, /完整访问权限已开启/);
+  assert.match(styles, /\.full-access-dialog/);
+  assert.match(styles, /\.full-access-confirm/);
+});
+
 test("Codex skills are refreshed for the active workspace and managed in settings", () => {
   assert.match(preload, /listSkills: \(workspacePath\)/);
   assert.match(app, /listSkills\?\.\(workspacePath\)/);

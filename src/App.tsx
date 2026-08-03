@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
@@ -1081,6 +1082,89 @@ function UsageStatsDialog({ records, onClose, onClear }: { records: UsageRecord[
   );
 }
 
+function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => Promise<boolean> }) {
+  const [showDetails, setShowDetails] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose, saving]);
+
+  const confirm = async () => {
+    setSaving(true);
+    try {
+      await onConfirm();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop full-access-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+      <div
+        className="full-access-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="full-access-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="full-access-title-row">
+          <AlertTriangle size={29} strokeWidth={2.2} aria-hidden="true" />
+          <h2 id="full-access-dialog-title">要开启完整访问权限吗?</h2>
+        </div>
+        <p className="full-access-intro">
+          DYWorker 将能够在未经您许可的情况下，在这台计算机上的任何位置运行命令、使用互联网，以及创建和编辑文件。这包括但不限于：
+        </p>
+        <div className="full-access-capabilities">
+          <div className="full-access-capability">
+            <FolderOpen size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>文件和文件夹</strong>
+              <small>读取、创建、修改、上传或删除此计算机上任意位置的文件</small>
+            </span>
+          </div>
+          <div className="full-access-capability">
+            <SquareTerminal size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>终端命令</strong>
+              <small>运行命令、安装软件和更改系统设置</small>
+            </span>
+          </div>
+          <div className="full-access-capability">
+            <Globe size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>互联网和已连接的应用</strong>
+              <small>访问网站、发送数据并使用已启用的插件</small>
+            </span>
+          </div>
+        </div>
+        <p className="full-access-warning">
+          这会带来敏感数据丢失或泄露以及提示注入等风险。你可以关闭此功能。
+          <button type="button" className="full-access-learn-more" onClick={() => setShowDetails((value) => !value)}>
+            了解更多
+          </button>
+        </p>
+        {showDetails && (
+          <p className="full-access-details">
+            开启后，任务会减少逐次确认，更适合你明确承担风险并希望连续执行的场景。你可以随时从输入框旁的审批模式菜单切回自动审核或请示批准。
+          </p>
+        )}
+        <div className="full-access-actions">
+          <button type="button" className="full-access-cancel" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="full-access-confirm" onClick={() => void confirm()} disabled={saving}>
+            <AlertTriangle size={17} aria-hidden="true" />
+            {saving ? "开启中…" : "确认"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "memories" | "skills" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
@@ -1882,6 +1966,7 @@ export function App() {
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("reviewer");
+  const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
   const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [skills, setSkills] = useState<SkillRecord[]>([]);
@@ -3003,6 +3088,25 @@ export function App() {
     }
   };
 
+  const selectApprovalMode = (nextMode: ApprovalMode) => {
+    if (nextMode === "full-access") {
+      setApprovalMenuOpen(false);
+      setFullAccessDialogOpen(true);
+      return;
+    }
+    setApprovalMode(nextMode);
+    setApprovalMenuOpen(false);
+    void saveProviderSettings({ ...settings, approvalMode: nextMode }, "审批模式已记住，下次启动继续生效");
+  };
+
+  const confirmFullAccess = async () => {
+    const saved = await saveProviderSettings({ ...settings, approvalMode: "full-access" }, "完整访问权限已开启");
+    if (!saved) return false;
+    setApprovalMode("full-access");
+    setFullAccessDialogOpen(false);
+    return true;
+  };
+
   const activateModelProfile = async (profile: ModelProfile) => {
     const nextSettings = settingsWithProfile(settings, profile);
     setModelMenuOpen(false);
@@ -3799,11 +3903,7 @@ export function App() {
                             aria-checked={selected}
                             className={`${selected ? "selected" : ""} ${option.warning ? "warning" : ""}`}
                             key={option.value}
-                            onClick={() => {
-                              setApprovalMode(option.value);
-                              setApprovalMenuOpen(false);
-                              void saveProviderSettings({ ...settings, approvalMode: option.value }, "审批模式已记住，下次启动继续生效");
-                            }}
+                            onClick={() => selectApprovalMode(option.value)}
                           >
                             <OptionIcon size={19} />
                             <span>
@@ -4054,6 +4154,12 @@ export function App() {
             setUsageStats([]);
             void window.dyworker?.clearUsageStats();
           }}
+        />
+      )}
+      {fullAccessDialogOpen && (
+        <FullAccessDialog
+          onClose={() => setFullAccessDialogOpen(false)}
+          onConfirm={confirmFullAccess}
         />
       )}
     </div>
