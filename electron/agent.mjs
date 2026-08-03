@@ -1419,6 +1419,34 @@ export function isDevAutoApprovableCommand(command) {
   return true;
 }
 
+// 自动审核模式下的低风险开发命令。这里比旧的宽松模式范围更窄：
+// 只放行查看、测试、构建、检查这类工作区内操作，不把安装依赖、提交/推送代码、
+// 任意脚本或带副作用的命令伪装成安全命令。
+const reviewerSafeScripts = new Set([
+  "build", "check", "compile", "coverage", "format", "format:check", "lint",
+  "test", "test:agent", "test:desktop", "test:settings", "test:skills", "test:channels",
+  "test:memory", "test:packaged-renderer", "typecheck", "validate", "verify",
+]);
+const reviewerSafeGitCommands = new Set(["status", "diff", "log", "show", "branch", "ls-files", "remote"]);
+
+export function isReviewerAutoApprovableCommand(command) {
+  const text = String(command || "").trim();
+  if (!text || devAutoAllowShellOperators.test(text)) return false;
+  const argv = shellWords(text);
+  const program = argv[0] || "";
+  if (!program) return false;
+  if (program === "git") return reviewerSafeGitCommands.has(argv[1] || "");
+  if (["npm", "pnpm", "yarn", "bun"].includes(program)) {
+    if (argv[1] === "test") return true;
+    return argv[1] === "run" && reviewerSafeScripts.has(argv[2] || "");
+  }
+  if (program === "tsc") return argv.includes("--noEmit") && !argv.includes("--build");
+  if (program === "eslint") return !argv.includes("--fix");
+  if (program === "prettier") return argv.includes("--check") && !argv.includes("--write");
+  if (program === "pytest") return true;
+  return false;
+}
+
 // 统一审批管线（借鉴 openworker coworker/permissions.py 的 evaluate 流程）：
 // 分级(classify) → 只读模式拦截 → 钩子强制 → 常驻规则放行 → 各模式判定。
 // approvalDecision 是它的薄包装（无常驻规则），行为与历史版本完全一致。
@@ -1446,7 +1474,10 @@ export function evaluateApproval({
     if (hasExternalPaths || internetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
     if (workspaceWriteTools.has(name)) return "allow";
-    if (name === "run_command" && isAutoApprovableCommand(args.command)) return "allow";
+    if (name === "run_command" && (
+      isAutoApprovableCommand(args.command)
+      || (approvalMode === "reviewer" && isReviewerAutoApprovableCommand(args.command))
+    )) return "allow";
     return "ask";
   }
 
@@ -2132,15 +2163,16 @@ function parseArguments(toolCall) {
 }
 
 // ---- 审核助手（借鉴 Codex Auto-review：规则定边界、模型做判断）----
-// 审核助手只在“本来要问用户”的越界请求上运行；工作区外路径、本机界面操作、
+// 审核助手只在“本来要问用户”的边界请求上运行；工作区外路径、本机界面操作、
 // 用户钩子强制审批、系统破坏性命令一律绕过审核、直接交给用户。
 export const REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的职责：在用户不盯着的任务里，判断一次本来需要人工确认的操作是否可以放行。
 审核纪律：
 1. 只输出放行、拒绝、转人工三种结果，不执行操作，不改写用户要求。
 2. 必须拒绝（deny）：向外发送私密数据、密钥或凭据；探测或读取凭据、令牌、Cookie 等敏感材料；削弱系统或应用安全配置；明显不可逆且高破坏性的操作；绕过用户明确规则的操作。
 3. 必须转人工（ask）：操作意图不明确或上下文不足；涉及工作区外的个人隐私或单位敏感数据；影响系统账户、权限、安装、删除等重大且难以回退的变更；把本机数据发往陌生网络目标；无法自信地判断安全性。
-4. 只有操作明显安全、可回退、且与当前任务目标一致时才放行（allow）。
-5. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
+4. 普通工作区内的查看、测试、构建、格式检查，以及用户明确要求的文件整理，默认放行；不要因为操作会写入工作区或会读取公开网页就机械转人工。
+5. 只有涉及外发数据、凭据、系统权限、不可逆破坏、外部路径、代码发布，或确实无法判断意图时才转人工（ask）。
+6. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
 
 const REVIEWER_HARD_BLOCK_GIT = new Set(["reset", "clean", "rebase", "gc"]);
 
@@ -2347,7 +2379,7 @@ function messageText(message) {
 //   isCancelled() => boolean
 // 返回 { status: "done" | "paused" | "cancelled" | "error", finalText, memory? }
 // options 新增：
-//   approvalMode  "interactive"（工作区外/联网询问）| "allow-writes"（仅风险操作询问）| "full-access"（完全访问）| "deny-changes"（拒绝修改，用于只读计划）
+//   approvalMode  "interactive"（严格请示）| "reviewer"（安全操作自动继续）| "full-access"（完全访问）| "deny-changes"（拒绝修改，用于只读计划）
 export async function runAgent({
   settings,
   workspacePath,
@@ -2697,8 +2729,11 @@ export async function runAgent({
         const decision = evaluateApproval({ ...decisionInput, standingRules: [...standingRules, ...sessionRules] });
         // 常驻规则把"ask"改判为"allow"时标记，活动与审计里注明是按规则自动放行
         const ruleAllowed = decision === "allow" && baseDecision === "ask";
-        const autoApproved = decision === "allow" && name === "run_command"
-          && (isAutoApprovableCommand(args.command) || isDevAutoApprovableCommand(args.command));
+        const readOnlyAutoApproved = decision === "allow" && name === "run_command"
+          && isAutoApprovableCommand(args.command);
+        const autoApproved = readOnlyAutoApproved || (decision === "allow" && name === "run_command"
+          && (isDevAutoApprovableCommand(args.command)
+            || (approvalMode === "reviewer" && isReviewerAutoApprovableCommand(args.command))));
         const consequential = needsApproval(name);
         if (decision === "allow" && consequential) {
           auditRecord({
@@ -3106,7 +3141,11 @@ export async function runAgent({
         } finally {
           releaseExternalAuthorization();
         }
-        const autoNote = ruleAllowed ? "（按常驻允许规则自动放行）" : autoApproved ? "（只读命令，已自动批准）" : "";
+        const autoNote = ruleAllowed
+          ? "（按常驻允许规则自动放行）"
+          : readOnlyAutoApproved
+            ? "（只读命令，已自动批准）"
+            : autoApproved ? "（安全命令，已自动放行）" : "";
         finishActivity(activityId, ok ? "success" : "error", clipped(autoNote ? `${autoNote}\n${result}` : result, 500));
         if (consequential) {
           auditRecord({

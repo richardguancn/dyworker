@@ -11,7 +11,7 @@ import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
-import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizePreventSleep, serializeSettings } from "./settings.mjs";
+import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
@@ -175,7 +175,9 @@ function defaultSessions() {
 async function readSettings() {
   const stored = await readJson(dataFile("settings.json"), {});
   const settings = deserializeSettings(stored, safeStorage);
-  if (needsSecretMigration(stored)) {
+  const approvalModeMigrated = stored?.approvalMode !== settings.approvalMode
+    || stored?.channels?.approvalMode === "allow-writes";
+  if (needsSecretMigration(stored) || approvalModeMigrated) {
     await writeJson(dataFile("settings.json"), serializeSettings(settings, safeStorage));
   }
   return settings;
@@ -1021,9 +1023,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
       role: message?.role,
       content: await providerMessageContent(message),
     })));
-    const approvalMode = ["interactive", "reviewer", "deny-changes", "allow-writes", "full-access"].includes(payload?.approvalMode)
-      ? payload.approvalMode
-      : "interactive";
+    const approvalMode = normalizeApprovalMode(payload?.approvalMode);
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
     routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal });
     if (agentState.cancelled) return cancelledResponse();
@@ -1501,7 +1501,7 @@ async function registerWake({ sessionId, scheduleId, workspacePath, approvalMode
     sessionId: String(sessionId),
     ...(scheduleId ? { scheduleId: String(scheduleId) } : {}),
     workspacePath: String(workspacePath),
-    approvalMode: String(approvalMode || "allow-writes"),
+    approvalMode: normalizeApprovalMode(approvalMode),
     wakeAt: wake.wakeAt,
     reason: String(wake.reason || "等待约定时间").slice(0, 300),
     prompt: String(prompt || "").slice(0, 2000),
@@ -1554,9 +1554,7 @@ async function resumeWake(wake) {
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector();
-    const approvalMode = ["interactive", "reviewer", "deny-changes", "allow-writes", "full-access"].includes(wake.approvalMode)
-      ? wake.approvalMode
-      : "allow-writes";
+    const approvalMode = normalizeApprovalMode(wake.approvalMode);
     const result = await runAgent({
       settings,
       workspacePath: wake.workspacePath,
@@ -1721,9 +1719,9 @@ async function runScheduledTask(record) {
       memoryReviewDue: true,
       skills: await readSkills(record.workspacePath),
       history: { search: searchHistory, readContext: readHistoryContext },
-      approvalMode: record.allowWorkspaceWrites ? "allow-writes" : "deny-changes",
+      approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
       standingRules: await readStandingRules(),
-      audit: (entry) => auditLog.record({ ...entry, sessionId: scheduleSessionId, approvalMode: record.allowWorkspaceWrites ? "allow-writes" : "deny-changes" }),
+      audit: (entry) => auditLog.record({ ...entry, sessionId: scheduleSessionId, approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes" }),
       extraTools: agentExtraTools(await mcpExtraTools(settings)),
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
@@ -1761,7 +1759,7 @@ async function runScheduledTask(record) {
         sessionId: scheduleSessionId,
         scheduleId: record.id,
         workspacePath: record.workspacePath,
-        approvalMode: record.allowWorkspaceWrites ? "allow-writes" : "deny-changes",
+        approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
         wake: result.wake,
         prompt: record.prompt,
         finalText: result.finalText,
@@ -1958,8 +1956,8 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     if (!workspacePath) {
       throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
     }
-    // 渠道审批严格度:默认省心(allow-writes,搜索/读写自动放行),可在渠道设置切严格
-    const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "allow-writes";
+    // 渠道审批严格度：默认自动审核，安全操作自动继续，风险操作进入收件箱。
+    const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "reviewer";
     routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
     const collector = createTranscriptCollector();
     const prior = await visibleConversationForSession(sessionId, "", "");

@@ -38,7 +38,6 @@ import {
   Search,
   Settings,
   ShieldAlert,
-  ShieldCheck,
   SquarePlus,
   SquarePen,
   SquareTerminal,
@@ -142,10 +141,10 @@ const defaultSettings: ProviderSettings = {
   searxngEndpoint: "",
   bochaApiKey: "",
   domesticSearchOnly: false,
-  approvalMode: "allow-writes",
+  approvalMode: "reviewer",
   preventSleep: "tasks",
   mcpServers: [],
-  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "allow-writes" },
+  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "reviewer" },
   profiles: [],
 };
 
@@ -179,21 +178,15 @@ const builtinCommands = [
 const composerApprovalModes = [
   {
     value: "interactive" as ApprovalMode,
-    label: "请求批准",
-    description: "访问工作区外文件和使用互联网时始终询问",
+    label: "请示批准",
+    description: "遇到需要授权的操作时先征求你的同意",
     icon: Hand,
   },
   {
     value: "reviewer" as ApprovalMode,
     label: "自动审核",
-    description: "越界操作先由审核助手按规则判断，拿不准才问你",
+    description: "安全操作自动继续，只在越界、外发、破坏性或不明确时请示",
     icon: Bot,
-  },
-  {
-    value: "allow-writes" as ApprovalMode,
-    label: "替我审批",
-    description: "常用开发命令自动放行，仅对检测到的风险操作请求批准",
-    icon: ShieldCheck,
   },
   {
     value: "full-access" as ApprovalMode,
@@ -1253,7 +1246,7 @@ function ChannelsPanel({ value, onSave }: {
       <div className="mcp-server-row">
         <span className="mcp-server-name">
           <strong>审批严格度</strong>
-          <small>省心模式只对本机界面操作、工作区外写入、非常规命令要求确认</small>
+          <small>自动审核会放行安全操作，只把越界、外发和高风险操作送入收件箱</small>
         </span>
         <select
           className="channel-model-select"
@@ -1261,7 +1254,7 @@ function ChannelsPanel({ value, onSave }: {
           disabled={saving}
           onChange={(event) => void saveChannels({ ...channels, approvalMode: event.target.value as ChannelsConfig["approvalMode"] }, "审批严格度已更新")}
         >
-          <option value="allow-writes">省心（搜索/读写自动放行）</option>
+          <option value="reviewer">自动审核（安全操作自动放行）</option>
           <option value="interactive">严格（联网与重要操作逐次确认）</option>
         </select>
       </div>
@@ -1888,7 +1881,7 @@ export function App() {
   const [pendingQuestions, setPendingQuestions] = useState<Record<string, QuestionRequest>>({});
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>("allow-writes");
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>("reviewer");
   const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [skills, setSkills] = useState<SkillRecord[]>([]);
@@ -2038,7 +2031,9 @@ export function App() {
   // 审批模式记住上次选择：启动时从设置恢复，切换后立即落盘
   useEffect(() => {
     const saved = settings?.approvalMode;
-    if (saved && ["interactive", "reviewer", "allow-writes", "full-access", "deny-changes"].includes(saved)) {
+    if (saved === "allow-writes") {
+      setApprovalMode("reviewer");
+    } else if (saved && ["interactive", "reviewer", "full-access", "deny-changes"].includes(saved)) {
       setApprovalMode(saved as ApprovalMode);
     }
   }, [settings?.approvalMode]);

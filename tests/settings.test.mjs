@@ -160,14 +160,15 @@ test("安全存储不可用时不启用旧版明文密钥", () => {
   assert.deepEqual(restored.profiles, []);
 });
 
-test("桌面审批模式记住上次选择,非法值回退省心模式", () => {
+test("桌面审批模式记住上次选择,旧省心模式迁移到自动审核", () => {
   const stored = serializeSettings({ approvalMode: "full-access", profiles: [] }, secretStorage);
   assert.equal(stored.approvalMode, "full-access");
   assert.equal(deserializeSettings(stored, secretStorage).approvalMode, "full-access");
   assert.equal(deserializeSettings({ approvalMode: "reviewer" }, secretStorage).approvalMode, "reviewer");
   assert.equal(serializeSettings({ approvalMode: "reviewer", profiles: [] }, secretStorage).approvalMode, "reviewer");
-  assert.equal(deserializeSettings({ approvalMode: "bogus" }, secretStorage).approvalMode, "allow-writes");
-  assert.equal(deserializeSettings({}, secretStorage).approvalMode, "allow-writes");
+  assert.equal(deserializeSettings({ approvalMode: "allow-writes" }, secretStorage).approvalMode, "reviewer");
+  assert.equal(deserializeSettings({ approvalMode: "bogus" }, secretStorage).approvalMode, "reviewer");
+  assert.equal(deserializeSettings({}, secretStorage).approvalMode, "reviewer");
 });
 
 test("某条密钥无法解密时不影响其他配置恢复", () => {

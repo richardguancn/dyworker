@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -992,6 +992,36 @@ test("isDevAutoApprovableCommand 只放行省心模式的常用开发命令", ()
   assert.equal(isDevAutoApprovableCommand("npm install | tee log"), false);
   assert.equal(isDevAutoApprovableCommand("npm install; ls"), false);
   assert.equal(isDevAutoApprovableCommand("python3"), false);
+});
+
+test("自动审核只自动放行常见检查命令,安装/发布命令仍进入审核", () => {
+  assert.equal(isReviewerAutoApprovableCommand("npm test"), true);
+  assert.equal(isReviewerAutoApprovableCommand("npm run build"), true);
+  assert.equal(isReviewerAutoApprovableCommand("pnpm run typecheck"), true);
+  assert.equal(isReviewerAutoApprovableCommand("git diff --stat"), true);
+  assert.equal(isReviewerAutoApprovableCommand("npm install"), false);
+  assert.equal(isReviewerAutoApprovableCommand("git push origin main"), false);
+  assert.equal(isReviewerAutoApprovableCommand("npm run build | tee build.log"), false);
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "npm run build" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "npm install" } }), "ask");
+});
+
+test("自动审核执行常见构建命令时不再额外调用审核助手", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "运行构建检查" }],
+    requestApproval: async () => { throw new Error("常见构建命令不应转人工"); },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm run build" })] },
+      { role: "assistant", content: "构建检查已完成。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(calls.length, 2, "安全构建命令不应额外调用审核助手");
 });
 
 test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败兜底", async () => {

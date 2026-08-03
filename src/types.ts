@@ -137,7 +137,8 @@ export interface UsageRecord {
   estimated: boolean;
 }
 
-// reviewer = 自动审核：越界操作先由审核助手（模型+规则）判断，拿不准才转人工
+// reviewer = 自动审核：安全操作自动继续，越界操作由规则和审核助手判断，拿不准才转人工。
+// allow-writes 仅作为旧版本数据的兼容值，新的界面和设置不再提供该模式。
 export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-access" | "deny-changes";
 
 export type AgentEvent =
@@ -237,12 +238,12 @@ export interface ModelProfile {
 // IM 消息渠道配置(见 electron/channels/):QQ 官方机器人 / 微信 ClawBot
 // 微信登录凭据不进设置(主进程单独加密落盘),渲染端只持有开关
 // modelProfileId 为空 = 渠道任务跟随桌面端当前模型;否则固定使用某个模型档案
-// approvalMode:allow-writes(默认,搜索/读写自动放行,仅高危操作确认)/ interactive(严格,逐次确认)
+// approvalMode:reviewer(默认,安全操作自动放行,高风险操作转人工)/ interactive(严格)
 export interface ChannelsConfig {
   qq: { enabled: boolean; appId: string; appSecret: string };
   wechat: { enabled: boolean };
   modelProfileId: string;
-  approvalMode: "allow-writes" | "interactive";
+  approvalMode: "reviewer" | "interactive";
 }
 
 export type ChannelConnectionStatus = "disabled" | "connecting" | "awaiting-scan" | "online" | "error";

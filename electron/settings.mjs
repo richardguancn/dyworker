@@ -5,7 +5,10 @@ export function normalizePreventSleep(value) {
 }
 
 export function normalizeApprovalMode(value) {
-  return ["interactive", "reviewer", "allow-writes", "full-access", "deny-changes"].includes(value) ? value : "allow-writes";
+  // 兼容旧版本审批数据，但统一迁移到新的自动审核模式，避免
+  // 界面显示一个模式、任务实际按另一个模式运行。
+  if (value === "allow-writes") return "reviewer";
+  return ["interactive", "reviewer", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
 }
 
 function encryptionAvailable(secretStorage) {
@@ -79,7 +82,7 @@ function normalizeChannels(channels, secretStorage, direction) {
         appSecretEncrypted: secret.encrypted,
       },
       wechat: { enabled: wechat.enabled === true },
-      approvalMode: source.approvalMode === "interactive" ? "interactive" : "allow-writes",
+      approvalMode: source.approvalMode === "interactive" ? "interactive" : "reviewer",
       modelProfileId: String(source.modelProfileId || ""),
     };
   }
@@ -90,7 +93,7 @@ function normalizeChannels(channels, secretStorage, direction) {
       appSecret: decryptSecret(qq.appSecret, qq.appSecretEncrypted === true, secretStorage),
     },
     wechat: { enabled: wechat.enabled === true },
-    approvalMode: source.approvalMode === "interactive" ? "interactive" : "allow-writes",
+    approvalMode: source.approvalMode === "interactive" ? "interactive" : "reviewer",
     modelProfileId: String(source.modelProfileId || ""),
   };
 }

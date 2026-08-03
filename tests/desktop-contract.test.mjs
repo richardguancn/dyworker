@@ -145,10 +145,10 @@ test("built-in model knowledge is always loaded and cannot be deleted as user me
 });
 
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
-  assert.match(app, /请求批准/);
+  assert.match(app, /请示批准/);
   assert.match(app, /自动审核/);
-  assert.match(app, /替我审批/);
   assert.match(app, /完全访问权限/);
+  assert.doesNotMatch(app, /替我审批/);
   assert.match(app, /approval-mode-menu/);
   assert.match(app, /title="Enter 发送"/);
   assert.doesNotMatch(app, /className="shortcut-hint"/);
@@ -617,14 +617,14 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(styles, /\.session-channel-badge/);
 
   // 8. 渠道审批:createInboxItem 不能把内层 promise 包进 async 外层(会吞掉 .itemId,
-  //    IM 回复「允许」路由不到挂起条目——regression);审批严格度可调,默认省心
+  //    IM 回复「允许」路由不到挂起条目——regression);审批严格度可调,默认自动审核
   assert.doesNotMatch(main, /async function createInboxItem/);
   assert.match(main, /pending\.itemId = item\.id/);
   assert.match(main, /inboxPersistQueue/);
   assert.match(main, /settings\.channels\?\.approvalMode/);
   assert.match(settingsStorage, /approvalMode: source\.approvalMode === "interactive"/);
   assert.match(app, /审批严格度/);
-  assert.match(app, /allow-writes/);
+  assert.match(app, /value="reviewer"/);
 });
 
 function agentEventTypeRegex(eventType) {
