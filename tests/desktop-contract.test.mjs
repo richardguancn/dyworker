@@ -15,6 +15,7 @@ const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-us
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
+const types = readSource(new URL("../src/types.ts", import.meta.url));
 const styles = readSource(new URL("../src/styles.css", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
@@ -212,6 +213,26 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
   assert.match(app, /className="titlebar"/);
   assert.match(app, /titlebar-brand/);
   assert.match(app, /titlebar-right/);
+});
+
+test("linux 有合成器时用透明窗口自绘 mac 风格阴影，否则保持原样", () => {
+  assert.match(main, /supportsLinuxWindowShadow/);
+  assert.match(main, /_NET_WM_CM_S0/);
+  assert.match(main, /xprop/);
+  assert.match(main, /transparent:\s*true/);
+  assert.match(main, /"window:maximized-changed"/);
+  assert.match(main, /windowShadow:/);
+  assert.match(main, /windowMaximized:/);
+  assert.match(preload, /onWindowStateChange/);
+  assert.match(preload, /window:maximized-changed/);
+  assert.match(app, /window-shadow/);
+  assert.match(app, /window-maximized/);
+  assert.match(app, /onWindowStateChange/);
+  assert.match(styles, /html\.window-shadow/);
+  assert.match(styles, /html\.window-shadow\.window-maximized/);
+  assert.match(styles, /box-shadow:/);
+  assert.match(types, /windowShadow: boolean/);
+  assert.match(types, /onWindowStateChange/);
 });
 
 test("codex alignment surfaces are wired end to end", () => {

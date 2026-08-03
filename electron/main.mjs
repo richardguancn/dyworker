@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -70,8 +70,36 @@ function systemWindowBackground() {
   return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
 }
 
+// Linux 无边框窗口默认没有系统阴影。若 X11 合成器可用（通过
+// _NET_WM_CM_S0 检测），主窗口改为透明窗口，由渲染端自绘类似 macOS 的
+// 圆角与阴影；无合成器或 Wayland/XWayland 会话保持原样，避免黑色边角。
+// 测试或特殊环境可设 DYWORKER_FORCE_WINDOW_SHADOW=1 强制启用。
+let linuxWindowShadowCache;
+function supportsLinuxWindowShadow() {
+  if (process.platform !== "linux") return false;
+  if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
+  if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
+    linuxWindowShadowCache = true;
+    return true;
+  }
+  let composited = false;
+  if (process.env.DISPLAY) {
+    try {
+      const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
+        encoding: "utf8",
+        timeout: 2000,
+      });
+      composited = probe.status === 0 && String(probe.stdout || "").includes("window id");
+    } catch {
+      composited = false;
+    }
+  }
+  linuxWindowShadowCache = composited;
+  return linuxWindowShadowCache;
+}
+
 nativeTheme.on("updated", () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  if (mainWindow && !mainWindow.isDestroyed() && !supportsLinuxWindowShadow()) {
     mainWindow.setBackgroundColor(systemWindowBackground());
   }
 });
@@ -330,15 +358,17 @@ function createWindow() {
     Menu.setApplicationMenu(null);
   }
 
+  const linuxWindowShadow = supportsLinuxWindowShadow();
   const windowOptions = {
     width: 1480,
     height: 920,
     minWidth: 980,
     minHeight: 660,
-    backgroundColor: systemWindowBackground(),
+    backgroundColor: linuxWindowShadow ? "#00000000" : systemWindowBackground(),
     show: process.platform === "linux",
     title: "DYWorker",
     frame: false,
+    ...(linuxWindowShadow ? { transparent: true } : {}),
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
@@ -349,6 +379,8 @@ function createWindow() {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
+  mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-changed", true));
+  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-changed", false));
   mainWindow.once("closed", () => {
     mainWindow = undefined;
   });
@@ -406,6 +438,8 @@ ipcMain.handle("app:initial-state", async () => {
     workspaceEntries: await listWorkspace(workspacePath),
     settings: await readSettings(),
     platform: process.platform,
+    windowShadow: supportsLinuxWindowShadow(),
+    windowMaximized: mainWindow?.isMaximized() ?? false,
   };
 });
 

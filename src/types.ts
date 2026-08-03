@@ -323,6 +323,8 @@ export interface DyworkerBridge {
     workspaceEntries: WorkspaceEntry[];
     settings: ProviderSettings;
     platform: string;
+    windowShadow: boolean;
+    windowMaximized: boolean;
   }>;
   saveSessions(sessions: SessionRecord[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
@@ -387,6 +389,7 @@ export interface DyworkerBridge {
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
+  onWindowStateChange(callback: (maximized: boolean) => void): () => void;
 }
 
 declare global {

@@ -1876,6 +1876,8 @@ export function App() {
   const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
   const [platform, setPlatform] = useState("");
+  const [windowShadow, setWindowShadow] = useState(false);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
@@ -1989,6 +1991,8 @@ export function App() {
         setWorkspaceEntries(state.workspaceEntries);
         setSettings(state.settings);
         setPlatform(state.platform || "");
+        setWindowShadow(Boolean(state.windowShadow));
+        setWindowMaximized(Boolean(state.windowMaximized));
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : String(loadError));
       } finally {
@@ -1997,6 +2001,21 @@ export function App() {
     };
     void load();
     return () => { cancelled = true; };
+  }, []);
+
+  // Linux 透明窗口模式：由渲染端负责圆角、留白与阴影；最大化时贴满屏幕。
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("window-shadow", windowShadow);
+    root.classList.toggle("window-maximized", windowMaximized);
+  }, [windowShadow, windowMaximized]);
+
+  useEffect(() => {
+    if (!window.dyworker) return;
+    const unsubscribe = window.dyworker.onWindowStateChange?.((maximized) =>
+      setWindowMaximized(Boolean(maximized)),
+    );
+    return () => unsubscribe?.();
   }, []);
 
   useEffect(() => {
@@ -3148,7 +3167,6 @@ export function App() {
           <span className="titlebar-brand">DYWorker</span>
         </div>
         <div className="titlebar-right">
-          {taskMenu}
           <div className="window-controls" aria-label="窗口控制">
             <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
               <Minus size={15} />
@@ -3275,6 +3293,7 @@ export function App() {
             </button>
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
+            {taskMenu}
           </div>
           <div className="topbar-right no-drag">
             {!rightPanelOpen && (

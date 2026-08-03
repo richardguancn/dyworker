@@ -1746,12 +1746,6 @@ body.resizing-panels .app-shell {
   white-space: nowrap;
 }
 
-.titlebar .topbar-menu {
-  top: 36px;
-  left: auto;
-  right: 0;
-}
-
 .sidebar,
 .main-panel,
 .tool-panel {
@@ -5255,6 +5249,50 @@ body.resizing-panels .app-shell {
     background: var(--ink);
     color: #1b1c19;
   }
+}
+
+/* ---- Linux 窗口阴影（透明窗口 + 自绘阴影，仅当合成器可用时启用） ---- */
+html.window-shadow,
+html.window-shadow body,
+html.window-shadow #root {
+  background: transparent;
+}
+
+html.window-shadow .app-shell {
+  margin: 24px;
+  width: calc(100% - 48px);
+  height: calc(100% - 48px);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.055),
+    0 2px 8px rgba(0, 0, 0, 0.1),
+    0 18px 24px rgba(0, 0, 0, 0.16);
+}
+
+/* 最大化/还原时贴满屏幕，避免桌面透过边角或出现残影 */
+html.window-shadow.window-maximized body {
+  background: var(--surface);
+}
+
+html.window-shadow.window-maximized .app-shell {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+}
+
+/* 阴影模式下遮罩只盖住窗口主体（跟随卡片内缩），不延伸到透明留白 */
+html.window-shadow .modal-backdrop {
+  inset: 24px;
+  border-radius: 12px;
+}
+
+html.window-shadow.window-maximized .modal-backdrop {
+  inset: 0;
+  border-radius: 0;
 }
 
 /* 消息渠道面板 */

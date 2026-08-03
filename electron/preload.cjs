@@ -72,4 +72,9 @@ contextBridge.exposeInMainWorld("dyworker", {
   minimize: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
   close: () => ipcRenderer.invoke("window:close"),
+  onWindowStateChange: (callback) => {
+    const listener = (_event, maximized) => callback(maximized);
+    ipcRenderer.on("window:maximized-changed", listener);
+    return () => ipcRenderer.removeListener("window:maximized-changed", listener);
+  },
 });
