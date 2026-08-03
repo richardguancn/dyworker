@@ -405,6 +405,11 @@ linuxTest("关闭聊天后系统后台安装继续，重新连接可以检查结
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await fs.access(marker);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const status = await fs.readFile(statusFile, "utf8").then(JSON.parse).catch(() => null);
+    if (status?.state === "completed") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   assert.equal(JSON.parse(await fs.readFile(statusFile, "utf8")).state, "completed");
   await resumedClient.connect();
   const checked = await resumedClient.callTool("check_dependencies", {});
