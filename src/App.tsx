@@ -3296,16 +3296,6 @@ export function App() {
             {taskMenu}
           </div>
           <div className="topbar-right no-drag">
-            {!rightPanelOpen && (
-              <button
-                className="icon-button subtle tool-panel-toggle"
-                aria-label="展开右侧工具栏"
-                title="展开右侧工具栏"
-                onClick={() => setRightPanelOpen(true)}
-              >
-                <PanelLeftIcon size={18} />
-              </button>
-            )}
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="审批收件箱"
@@ -3334,6 +3324,16 @@ export function App() {
             >
               <Terminal size={17} />
             </button>
+            {!rightPanelOpen && (
+              <button
+                className="icon-button subtle tool-panel-toggle"
+                aria-label="展开右侧工具栏"
+                title="展开右侧工具栏"
+                onClick={() => setRightPanelOpen(true)}
+              >
+                <PanelRightIcon size={18} />
+              </button>
+            )}
           </div>
         </header>
 
