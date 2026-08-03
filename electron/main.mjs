@@ -70,20 +70,30 @@ function systemWindowBackground() {
   return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
 }
 
-// Linux 无边框窗口默认没有系统阴影。若 X11 合成器可用（通过
-// _NET_WM_CM_S0 检测），主窗口改为透明窗口，由渲染端自绘类似 macOS 的
-// 圆角与阴影；无合成器或 Wayland/XWayland 会话保持原样，避免黑色边角。
-// 测试或特殊环境可设 DYWORKER_FORCE_WINDOW_SHADOW=1 强制启用。
+// Linux 无边框窗口默认没有系统阴影。主窗口改为透明窗口，由渲染端自绘
+// 类似 macOS 的圆角与阴影：
+// - Wayland 会话：应用走 XWayland，由 Wayland 合成器负责混合透明窗口，
+//   直接启用；
+// - X11 会话：仅在检测到合成器（_NET_WM_CM_S0）时启用，避免无特效
+//   桌面上出现黑色边角。
+// 环境变量可覆盖：DYWORKER_NO_WINDOW_SHADOW=1 强制关闭，
+// DYWORKER_FORCE_WINDOW_SHADOW=1 强制启用。
 let linuxWindowShadowCache;
 function supportsLinuxWindowShadow() {
   if (process.platform !== "linux") return false;
   if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
+  if (process.env.DYWORKER_NO_WINDOW_SHADOW === "1") {
+    linuxWindowShadowCache = false;
+    return false;
+  }
   if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
     linuxWindowShadowCache = true;
     return true;
   }
-  let composited = false;
-  if (process.env.DISPLAY) {
+  const waylandSession =
+    process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
+  let composited = waylandSession;
+  if (!composited && process.env.DISPLAY) {
     try {
       const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
         encoding: "utf8",
@@ -95,6 +105,10 @@ function supportsLinuxWindowShadow() {
     }
   }
   linuxWindowShadowCache = composited;
+  console.log(
+    `[dyworker] linux window shadow: ${composited ? "enabled" : "disabled"}` +
+      ` (session=${process.env.XDG_SESSION_TYPE || "x11"}, wayland=${Boolean(process.env.WAYLAND_DISPLAY)})`,
+  );
   return linuxWindowShadowCache;
 }
 

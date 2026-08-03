@@ -223,6 +223,10 @@ test("linux 有合成器时用透明窗口自绘 mac 风格阴影，否则保持
   assert.match(main, /supportsLinuxWindowShadow/);
   assert.match(main, /_NET_WM_CM_S0/);
   assert.match(main, /xprop/);
+  assert.match(main, /DYWORKER_NO_WINDOW_SHADOW/);
+  assert.match(main, /DYWORKER_FORCE_WINDOW_SHADOW/);
+  assert.match(main, /XDG_SESSION_TYPE === "wayland"/);
+  assert.match(main, /linux window shadow/);
   assert.match(main, /transparent:\s*true/);
   assert.match(main, /"window:maximized-changed"/);
   assert.match(main, /windowShadow:/);
