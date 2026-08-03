@@ -28,6 +28,10 @@ test("desktop controls are connected across renderer, preload, and main process"
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
 });
 
+test("Responses 端点不会把语音转写请求误发到模型地址", () => {
+  assert.match(main, /completions\\\/\?\$\/\.test\(url\.pathname\)\) return ""/);
+});
+
 test("composer preserves input method composition before keyboard submission", () => {
   assert.match(app, /onCompositionStart=/);
   assert.match(app, /onCompositionEnd=/);

@@ -1769,8 +1769,8 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
   return [...staticSections, ...dynamicSections].join("\n\n");
 }
 
-async function postChat({ settings, payload, fetchImpl, signal }) {
-  const response = await fetchImpl(settings.endpoint, {
+async function postChat({ settings, payload, fetchImpl, signal, endpoint = null }) {
+  const response = await fetchImpl(endpoint || settings.endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1788,11 +1788,31 @@ async function postChat({ settings, payload, fetchImpl, signal }) {
   return response;
 }
 
-export function isResponsesEndpoint(endpoint) {
+// DeepSeek 官方 Responses API 的 base_url 是 https://api.deepseek.com（不带路径），
+// 实际请求地址是 https://api.deepseek.com/responses；用户按文档只填根地址时自动补齐。
+export function normalizeModelEndpoint(endpoint) {
+  const value = String(endpoint || "").trim();
+  if (!value) return "";
   try {
-    return /\/responses\/?$/.test(new URL(String(endpoint || "").trim()).pathname);
+    const url = new URL(value);
+    if (url.hostname === "api.deepseek.com" && (url.pathname === "" || url.pathname === "/")) {
+      url.pathname = "/responses";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
   } catch {
-    return /\/responses\/?(?:[?#].*)?$/.test(String(endpoint || "").trim());
+    // 非合法 URL 时保持原样，交由请求阶段报错
+  }
+  return value;
+}
+
+export function isResponsesEndpoint(endpoint) {
+  const value = normalizeModelEndpoint(endpoint);
+  try {
+    return /\/responses\/?$/.test(new URL(value).pathname);
+  } catch {
+    return /\/responses\/?(?:[?#].*)?$/.test(value);
   }
 }
 
@@ -1990,7 +2010,10 @@ async function readResponsesStream(response, { onText, onUsage }) {
   if (failure) throw new Error(`模型生成失败：${failure.message || JSON.stringify(failure)}`);
   if (terminalResponse) {
     if (terminalResponse.usage) onUsage?.(normalizedUsage(terminalResponse.usage, true));
-    return messageFromResponses(terminalResponse);
+    const message = messageFromResponses(terminalResponse);
+    // 个别实现终态 response 不含输出文本时，用流式增量兜底，避免已收到的内容丢失
+    if (!message.content && content) message.content = content;
+    return message;
   }
   throw new Error("模型流式响应意外中断，未收到终止事件");
 }
@@ -2001,7 +2024,8 @@ async function readResponsesStream(response, { onText, onUsage }) {
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
 export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
-  const responsesApi = isResponsesEndpoint(settings.endpoint);
+  const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
+  const responsesApi = isResponsesEndpoint(effectiveEndpoint);
   if (String(settings.model || "").trim().toLowerCase() === "deepseek-v4-flash" && messagesHaveImages(messages)) {
     const error = new Error("DeepSeek V4 Flash 当前不支持图片输入，请改用文字资料或支持图片的模型");
     error.status = 415;
@@ -2020,10 +2044,10 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     const streamPayload = responsesApi
       ? { ...basePayload, stream: true }
       : { ...basePayload, stream: true, stream_options: { include_usage: true } };
-    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal });
+    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint });
   } catch (error) {
     if (error?.status !== 400 && error?.status !== 404 && error?.status !== 422) throw error;
-    response = await postChat({ settings, payload: basePayload, fetchImpl, signal });
+    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint });
   }
 
   const contentType = response.headers?.get?.("content-type") || "";

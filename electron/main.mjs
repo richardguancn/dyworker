@@ -319,6 +319,9 @@ function transcriptionEndpoint(settings) {
   if (!endpoint) return "";
   try {
     const url = new URL(endpoint);
+    // 只有 Chat Completions 端点能可靠推导出同级语音转写地址；
+    // Responses 端点（如 DeepSeek /responses）没有对应转写服务，返回空让用户显式配置。
+    if (!/\/chat\/completions\/?$/.test(url.pathname)) return "";
     url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, "/audio/transcriptions");
     return url.toString();
   } catch {

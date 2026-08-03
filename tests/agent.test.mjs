@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -179,6 +179,31 @@ test("Responses API 完成普通回复并上报真实用量", async () => {
   assert.deepEqual({ prompt: usage.prompt, completion: usage.completion, estimated: usage.estimated }, { prompt: 25, completion: 6, estimated: false });
 });
 
+test("DeepSeek 官方 base_url 自动归一化为 /responses", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: mockResponsesFetch([{
+      id: "resp_1",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "你好" }] }],
+      usage: { input_tokens: 25, output_tokens: 6, total_tokens: 31 },
+    }], calls),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].url, "https://api.deepseek.com/responses");
+  assert.equal(calls[0].body.messages, undefined);
+  assert.ok(Array.isArray(calls[0].body.input));
+  assert.equal(calls[0].body.stream, true);
+  assert.equal(normalizeModelEndpoint("https://api.deepseek.com"), "https://api.deepseek.com/responses");
+  assert.equal(normalizeModelEndpoint("https://api.deepseek.com/"), "https://api.deepseek.com/responses");
+  assert.equal(normalizeModelEndpoint("https://api.deepseek.com/responses"), "https://api.deepseek.com/responses");
+  assert.equal(normalizeModelEndpoint("https://api.deepseek.com/chat/completions"), "https://api.deepseek.com/chat/completions");
+});
+
 test("Responses API 工具调用结果按 input items 原样回传", async () => {
   const root = await makeWorkspace({ "报告.md": "# 季度总结\n内容" });
   const calls = [];
@@ -233,6 +258,31 @@ test("Responses API 流式回复以 response.completed 结束且无需 DONE", as
   assert.equal(result.status, "done");
   assert.equal(result.finalText, "你好");
   assert.equal(calls.length, 1);
+});
+
+test("Responses 流式终态缺少输出文本时保留已收到的增量", async () => {
+  const root = await makeWorkspace();
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "打个招呼" }],
+    fetchImpl: mockResponsesStream([
+      { type: "response.created", sequence_number: 0, response: { status: "in_progress" } },
+      { type: "response.output_text.delta", sequence_number: 1, item_id: "msg_1", output_index: 0, content_index: 0, delta: "你好" },
+      {
+        type: "response.completed",
+        sequence_number: 2,
+        response: {
+          status: "completed",
+          output: [],
+          usage: { input_tokens: 18, output_tokens: 2, total_tokens: 20 },
+        },
+      },
+    ]),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "你好");
 });
 
 test("DeepSeek V4 不支持图片时明确失败且不发送图片数据", async () => {
