@@ -226,6 +226,7 @@ export class Workspace {
   }
 
   isOutside(relativePath) {
+    if (!this.root) return false;
     const absolute = this.canonicalPath(relativePath);
     return absolute !== this.root && !absolute.startsWith(this.root + path.sep);
   }

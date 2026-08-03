@@ -418,10 +418,15 @@ test("write_file 被用户拒绝时不写文件并反馈给模型", async () => 
 
 test("没有工作目录时文件工具给出明确提示，不写文件", async () => {
   const calls = [];
+  let approvals = 0;
   const result = await runAgent({
     settings,
     workspacePath: "",
     conversation: [{ role: "user", content: "把内容写到 报告.md" }],
+    requestApproval: async () => {
+      approvals += 1;
+      return false;
+    },
     fetchImpl: mockFetch([
       { role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "报告.md", content: "内容" })] },
       { role: "assistant", content: "需要先选择工作文件夹才能写文件。" },
@@ -429,6 +434,7 @@ test("没有工作目录时文件工具给出明确提示，不写文件", async
   });
   assert.equal(result.status, "done");
   assert.equal(result.finalText, "需要先选择工作文件夹才能写文件。");
+  assert.equal(approvals, 0, "没有工作目录时不应先弹出审批");
   const toolMessage = calls[1].messages.find((message) => message.role === "tool");
   assert.match(toolMessage.content, /还没有选择工作文件夹/);
 });
