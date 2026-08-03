@@ -1,6 +1,5 @@
 // DYWorker 浏览器协作（ROADMAP：在用户明确授权后打开网页、填写表单、下载资料和保存截图）。
-// 主进程持有，窗口用户可见，操作可审计；导航走 SSRF 守卫，每次导航后重检重定向目标。
-import { BrowserWindow } from "electron";
+// 右侧浏览器面板持有页面内容，操作可审计；导航走 SSRF 守卫，每次导航后重检重定向目标。
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isSafePublicUrl, isSafeRelativePath } from "./agent.mjs";
@@ -55,10 +54,15 @@ const TEXT_SCRIPT = `(() => {
 })()`;
 
 export class BrowserAgent {
-  constructor() {
-    this.win = null;
+  constructor({ openPanel, closePanel, getContents } = {}) {
+    this.openPanel = openPanel;
+    this.closePanel = closePanel;
+    this.getContents = getContents;
+    this.contents = null;
     this.workspacePath = "";
     this.downloads = [];
+    this.downloadSession = null;
+    this.downloadHandler = null;
   }
 
   setWorkspace(workspacePath) {
@@ -66,19 +70,22 @@ export class BrowserAgent {
     this.downloads = [];
   }
 
-  ensureWindow() {
-    if (this.win && !this.win.isDestroyed()) return this.win;
-    this.win = new BrowserWindow({
-      width: 1120,
-      height: 780,
-      title: "DYWorker 浏览器协作",
-      autoHideMenuBar: true,
-      backgroundColor: "#ffffff",
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-    });
+  ensureContents() {
+    const candidate = this.contents && !this.contents.isDestroyed?.()
+      ? this.contents
+      : this.getContents?.();
+    if (!candidate || candidate.isDestroyed?.()) return null;
+    this.contents = candidate;
+    this.attachDownloadHandler(candidate);
+    return candidate;
+  }
+
+  attachDownloadHandler(contents) {
+    if (this.downloadSession === contents.session && this.downloadHandler) return;
+    this.detachDownloadHandler();
     // 下载资料：保存到工作区“下载”文件夹，文件名冲突时由系统追加序号
-    const browserSession = this.win.webContents.session;
-    const webContentsId = this.win.webContents.id;
+    const browserSession = contents.session;
+    const webContentsId = contents.id;
     const handleDownload = (_event, item, webContents) => {
       if (webContents?.id !== webContentsId) return;
       if (!this.workspacePath) return;
@@ -91,11 +98,16 @@ export class BrowserAgent {
       });
     };
     browserSession.on("will-download", handleDownload);
-    this.win.on("closed", () => {
-      browserSession.removeListener("will-download", handleDownload);
-      this.win = null;
-    });
-    return this.win;
+    this.downloadSession = browserSession;
+    this.downloadHandler = handleDownload;
+  }
+
+  detachDownloadHandler() {
+    if (this.downloadSession && this.downloadHandler) {
+      this.downloadSession.removeListener("will-download", this.downloadHandler);
+    }
+    this.downloadSession = null;
+    this.downloadHandler = null;
   }
 
   downloadNote() {
@@ -106,13 +118,15 @@ export class BrowserAgent {
   }
 
   dispose() {
-    if (this.win && !this.win.isDestroyed()) this.win.close();
+    this.detachDownloadHandler();
+    this.contents = null;
   }
 
   async evaluate(script) {
-    if (!this.win || this.win.isDestroyed()) return { ok: false, result: "浏览器窗口还没有打开网页，请先用 browser__open 打开" };
+    const contents = this.ensureContents();
+    if (!contents) return { ok: false, result: "右侧浏览器面板还没有打开网页，请先用 browser__open 打开" };
     try {
-      const value = await this.win.webContents.executeJavaScript(script, true);
+      const value = await contents.executeJavaScript(script, true);
       return { ok: true, result: String(value ?? "（没有返回内容）") + this.downloadNote() };
     } catch (error) {
       return { ok: false, result: `页面操作失败：${error instanceof Error ? error.message : String(error)}` };
@@ -122,33 +136,33 @@ export class BrowserAgent {
   async open(rawUrl) {
     const check = isSafePublicUrl(rawUrl);
     if (!check.ok) return { ok: false, result: check.error };
-    const win = this.ensureWindow();
-    win.show();
-    try {
-      await win.webContents.loadURL(check.url.toString());
-    } catch (error) {
-      return { ok: false, result: `网页打开失败：${error instanceof Error ? error.message : String(error)}` };
-    }
+    if (!this.openPanel) return { ok: false, result: "当前应用没有连接右侧浏览器面板" };
+    const panel = await this.openPanel(check.url.toString());
+    if (!panel?.ok || !panel.contents) return panel || { ok: false, result: "右侧浏览器面板打开失败" };
+    const contents = panel.contents;
+    this.contents = contents;
+    this.attachDownloadHandler(contents);
     // 重定向后的最终地址也要过守卫，防止跳到内网
-    const finalUrl = win.webContents.getURL();
+    const finalUrl = contents.getURL();
     if (finalUrl && finalUrl !== "about:blank") {
       const finalCheck = isSafePublicUrl(finalUrl);
       if (!finalCheck.ok) {
-        await win.webContents.loadURL("about:blank").catch(() => {});
+        await contents.loadURL("about:blank").catch(() => {});
         return { ok: false, result: `网页重定向到了不允许的地址，已拦截：${finalUrl}` };
       }
     }
-    return { ok: true, result: `已打开：${win.webContents.getTitle() || finalUrl}\n${finalUrl}${this.downloadNote()}` };
+    return { ok: true, url: finalUrl || check.url.toString(), result: `已在右侧浏览器面板打开网页\n${finalUrl || check.url}${this.downloadNote()}` };
   }
 
   async screenshot(relativePath) {
-    if (!this.win || this.win.isDestroyed()) return { ok: false, result: "浏览器窗口还没有打开网页" };
+    const contents = this.ensureContents();
+    if (!contents) return { ok: false, result: "右侧浏览器面板还没有打开网页" };
     const name = String(relativePath || "").trim() || `截图-${Date.now()}.png`;
     if (!isSafeRelativePath(name) || !this.workspacePath) return { ok: false, result: "截图只能保存到工作区内" };
     const target = path.resolve(this.workspacePath, name.endsWith(".png") ? name : `${name}.png`);
     if (!target.startsWith(path.resolve(this.workspacePath) + path.sep)) return { ok: false, result: "截图只能保存到工作区内" };
     try {
-      const image = await this.win.webContents.capturePage();
+      const image = await contents.capturePage();
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, image.toPNG());
       return { ok: true, result: `截图已保存到工作区：${path.relative(this.workspacePath, target)}` };
@@ -166,9 +180,9 @@ export class BrowserAgent {
       case "browser__type": return this.evaluate(TYPE_SCRIPT(Number(args?.ref) || 0, String(args?.text ?? "")));
       case "browser__screenshot": return this.screenshot(args?.path);
       case "browser__close":
-        if (this.win && !this.win.isDestroyed()) this.win.close();
-        this.win = null;
-        return { ok: true, result: "浏览器窗口已关闭" };
+        await this.closePanel?.();
+        this.contents = null;
+        return { ok: true, result: "右侧浏览器面板已关闭" };
       default:
         return { ok: false, result: `未知浏览器操作：${name}` };
     }
@@ -182,12 +196,12 @@ export function browserToolDefinitions() {
     function: { name, description, parameters: { type: "object", properties, required } },
   });
   return [
-    tool("browser__open", "在可见的浏览器窗口中打开一个公开网页（用户可全程看到操作）。不得访问本机或内网地址。", { url: stringArg("公开 HTTP/HTTPS 网址") }, ["url"]),
+    tool("browser__open", "在当前任务窗口右侧的浏览器面板中打开一个公开网页（用户可全程看到操作）。不得访问本机或内网地址。", { url: stringArg("公开 HTTP/HTTPS 网址") }, ["url"]),
     tool("browser__read", "读取当前网页的正文文字内容。", {}, []),
     tool("browser__snapshot", "列出当前网页的可交互元素（链接、按钮、输入框等）及编号，点击或输入前先获取。", {}, []),
     tool("browser__click", "点击网页中的一个元素（用 browser__snapshot 返回的编号）。", { ref: { type: "integer", description: "元素编号" } }, ["ref"]),
     tool("browser__type", "在网页输入框中填写文字（用 browser__snapshot 返回的编号）。", { ref: { type: "integer", description: "输入框编号" }, text: stringArg("要填写的文字") }, ["ref", "text"]),
     tool("browser__screenshot", "把当前网页截图保存到工作区，用于留存证据。", { path: stringArg("相对工作区的保存路径，以 .png 结尾") }, ["path"]),
-    tool("browser__close", "关闭浏览器窗口，结束浏览器协作。", {}, []),
+    tool("browser__close", "关闭右侧浏览器面板，结束浏览器协作。", {}, []),
   ];
 }

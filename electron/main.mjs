@@ -48,6 +48,7 @@ const rendererEntryUrl = isDevelopment
   ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
   : pathToFileURL(path.join(here, "../dist/client/index.html")).href;
 let mainWindow;
+let embeddedBrowserContents = null;
 
 function isTrustedRendererUrl(rawUrl) {
   try {
@@ -437,11 +438,90 @@ app.on("will-attach-webview", (event, webPreferences, params) => {
 
 app.on("web-contents-created", (_event, contents) => {
   if (contents.getType() !== "webview") return;
+  embeddedBrowserContents = contents;
+  contents.once("destroyed", () => {
+    if (embeddedBrowserContents === contents) embeddedBrowserContents = null;
+  });
   contents.on("will-navigate", (event, url) => {
     if (!isSafePublicUrl(url).ok) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
+
+function waitForEmbeddedBrowser(sender, url) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const previousUrl = embeddedBrowserContents?.getURL?.() || "";
+    let observedContents = null;
+    let timer = null;
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (observedContents) {
+        observedContents.removeListener("did-stop-loading", onStop);
+        observedContents.removeListener("did-fail-load", onFail);
+        observedContents.removeListener("destroyed", onDestroyed);
+      }
+      resolve(result);
+    };
+    const onStop = () => {
+      const contents = observedContents;
+      if (!contents || contents.isDestroyed()) return;
+      const currentUrl = contents.getURL();
+      if (!currentUrl || currentUrl === "about:blank" || currentUrl === previousUrl) return;
+      finish({ ok: true, contents });
+    };
+    const onFail = (_event, errorCode, errorDescription) => {
+      finish({ ok: false, result: `网页加载失败：${errorDescription || errorCode}` });
+    };
+    const onDestroyed = () => {
+      observedContents = null;
+      poll();
+    };
+    const poll = () => {
+      if (settled) return;
+      if (!sender || sender.isDestroyed()) {
+        finish({ ok: false, result: "当前任务窗口已关闭" });
+        return;
+      }
+      if (Date.now() - startedAt > 20000) {
+        finish({ ok: false, result: "右侧浏览器面板加载超时" });
+        return;
+      }
+      const contents = embeddedBrowserContents;
+      if (contents && !contents.isDestroyed()) {
+        if (observedContents !== contents) {
+          observedContents = contents;
+          contents.once("did-stop-loading", onStop);
+          contents.once("did-fail-load", onFail);
+          contents.once("destroyed", onDestroyed);
+        }
+        const currentUrl = contents.getURL();
+        if (currentUrl === url && !contents.isLoading()) {
+          finish({ ok: true, contents });
+          return;
+        }
+      }
+      timer = setTimeout(poll, 50);
+    };
+
+    try {
+      sender.send("browser:panel-request", { action: "open", url });
+    } catch (error) {
+      finish({ ok: false, result: `无法打开右侧浏览器面板：${error instanceof Error ? error.message : String(error)}` });
+      return;
+    }
+    poll();
+  });
+}
+
+function requestCloseEmbeddedBrowser(sender) {
+  if (!sender || sender.isDestroyed()) return;
+  sender.send("browser:panel-request", { action: "close" });
+}
 
 registerLocalImageIpc(ipcMain, {
   isTrustedSender: (event) => isTrustedRendererUrl(event.senderFrame?.url),
@@ -947,8 +1027,12 @@ function agentExtraTools(mcpTools) {
   return [...mcpTools, ...browserToolDefinitions()];
 }
 
-function createExtraToolRouter(settings, workspacePath, { signal } = {}) {
-  const browserAgent = new BrowserAgent();
+function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {}) {
+  const browserAgent = new BrowserAgent({
+    openPanel: renderer ? (url) => waitForEmbeddedBrowser(renderer, url) : undefined,
+    closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer) : undefined,
+    getContents: () => embeddedBrowserContents,
+  });
   browserAgent.setWorkspace(workspacePath);
   const route = (name, args) => {
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
@@ -1025,7 +1109,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
     })));
     const approvalMode = normalizeApprovalMode(payload?.approvalMode);
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
-    routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal });
+    routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal, renderer: sender });
     if (agentState.cancelled) return cancelledResponse();
     let iterationMessages = agentConversation;
     let finalResult = null;

@@ -183,7 +183,9 @@ body.resizing-panels .app-shell {
 .sidebar-brand-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: space-between;
+  flex: 1;
+  min-width: 0;
 }
 
 .sidebar-brand-row .icon-button {
@@ -1901,6 +1903,7 @@ body.resizing-panels .app-shell {
 }
 
 .message-row {
+  position: relative;
   width: 100%;
   margin: 0 0 29px;
 }
@@ -2143,6 +2146,133 @@ body.resizing-panels .app-shell {
   justify-content: flex-end;
 }
 
+/* 多轮对话概览栏：所有回合压缩在视口边缘，不跟随正文滚动 */
+.conversation-turn-rail {
+  position: absolute;
+  z-index: 16;
+  top: 50%;
+  bottom: auto;
+  left: 16px;
+  width: 32px;
+  max-height: calc(100% - 96px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.conversation-turn-marker-wrap {
+  position: relative;
+  width: 32px;
+  height: 10px;
+  flex: 0 0 10px;
+  pointer-events: auto;
+}
+
+.conversation-turn-marker {
+  position: relative;
+  width: 32px;
+  height: 10px;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation-turn-marker::before {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 6px;
+  height: 2px;
+  content: "";
+  border-radius: 999px;
+  background: #d5d7d0;
+  transition: width 140ms ease, background 140ms ease;
+}
+
+.conversation-turn-marker.wave-distance-0::before {
+  width: 26px;
+  background: #697067;
+}
+
+.conversation-turn-marker.wave-distance-1::before {
+  width: 20px;
+  background: #8f958d;
+}
+
+.conversation-turn-marker.wave-distance-2::before {
+  width: 14px;
+  background: #afb4ad;
+}
+
+.conversation-turn-marker.wave-distance-3::before {
+  width: 10px;
+  background: #c9cdc6;
+}
+
+.conversation-turn-preview {
+  position: absolute;
+  top: 0;
+  left: 42px;
+  width: min(480px, calc(100vw - 180px));
+  display: grid;
+  gap: 7px;
+  padding: 16px 18px 14px;
+  border: 1px solid rgba(74, 77, 69, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.97);
+  box-shadow: var(--shadow-lg);
+  color: #60655d;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(16px) saturate(1.15);
+}
+
+.conversation-turn-preview::before {
+  position: absolute;
+  top: 16px;
+  left: -6px;
+  width: 10px;
+  height: 10px;
+  content: "";
+  border-bottom: 1px solid rgba(74, 77, 69, 0.16);
+  border-left: 1px solid rgba(74, 77, 69, 0.16);
+  background: rgba(255, 253, 247, 0.97);
+  transform: rotate(45deg);
+}
+
+.conversation-turn-preview strong {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  color: #454a43;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-turn-preview span {
+  position: relative;
+  z-index: 1;
+  color: #8b9087;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.conversation-turn-preview small {
+  position: relative;
+  z-index: 1;
+  color: #afb2aa;
+  font-size: 11px;
+}
+
 .user-bubble {
   max-width: min(680px, 76%);
   padding: 11px 16px;
@@ -2221,15 +2351,34 @@ body.resizing-panels .app-shell {
 }
 
 .activity-divider {
-  width: 100%;
+  width: fit-content;
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin: 5px 0 26px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e3e3dd;
+  gap: 7px;
+  min-height: 28px;
+  margin: 0 0 9px;
+  padding: 0;
+  border: 0;
   color: #9a9d96;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
+  letter-spacing: -0.008em;
+}
+
+.activity-divider .activity-summary-icon {
+  flex: 0 0 auto;
+  color: #92978e;
+  stroke-width: 1.8;
+}
+
+.activity-divider .activity-summary-label {
+  white-space: nowrap;
+}
+
+.activity-divider > svg:not(.activity-summary-icon) {
+  flex: 0 0 auto;
+  color: #858a82;
+  stroke-width: 1.8;
 }
 
 .markdown-content h1,
@@ -4074,6 +4223,10 @@ body.resizing-panels .app-shell {
   color: #6d7166;
 }
 
+.activity-divider.clickable:hover > svg {
+  color: #737970;
+}
+
 .topbar-menu-wrap {
   position: relative;
 }
@@ -4204,6 +4357,7 @@ body.resizing-panels .app-shell {
 
   .right-panel-collapsed .tool-panel { display: none; }
   .tool-panel-toggle { display: inline-flex; }
+  .conversation-turn-rail { display: none; }
   .conversation-column { width: calc(100% - 32px); padding-top: 30px; }
   .composer-dock { padding-inline: 16px; }
   /* 窄窗时设置导航折叠为顶部横排 */
@@ -4234,24 +4388,32 @@ body.resizing-panels .app-shell {
 /* ---- 代理工具活动列表（Codex 风格：无卡片边框，竖向导线连接标题，行式平铺） ---- */
 
 .activity-list {
-  margin: -2px 0 14px 7px;
-  padding: 2px 0 2px 11px;
+  margin: 0 0 16px 7px;
+  padding: 2px 0 3px 12px;
   border-left: 1px solid var(--border);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.activity-list.command-list {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
 }
 
 .activity-row-main {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-height: 28px;
-  padding: 0 8px;
+  gap: 8px;
+  min-height: 30px;
+  padding: 1px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   font: inherit;
   color: #6d7168;
+  line-height: 1.45;
   text-align: left;
 }
 
@@ -4260,14 +4422,27 @@ body.resizing-panels .app-shell {
 }
 
 .activity-row-main:not(:disabled):hover {
-  background: #f2f2ed;
+  background: rgba(116, 120, 110, 0.08);
 }
 
 .activity-status {
   display: inline-flex;
-  width: 15px;
+  width: 16px;
+  height: 18px;
+  flex: 0 0 16px;
+  align-items: center;
   justify-content: center;
   color: #7fa400;
+}
+
+.activity-status-command {
+  color: #8d9289;
+}
+
+.activity-row-main > svg {
+  flex: 0 0 auto;
+  color: #959a91;
+  stroke-width: 1.8;
 }
 
 .activity-row.running .activity-status {
@@ -4281,8 +4456,31 @@ body.resizing-panels .app-shell {
 .activity-title {
   flex: 1;
   overflow: hidden;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.activity-row.command .activity-title {
+  color: #8e928b;
+  font-size: 14px;
+  letter-spacing: -0.006em;
+}
+
+.activity-list.command-list .activity-row-main {
+  padding-left: 0;
+}
+
+.activity-row.command .activity-row-main > svg:last-child {
+  display: none;
+}
+
+.activity-row.command .activity-status-command {
+  color: #8d9289;
+}
+
+.activity-row.command.error .activity-status-command {
+  color: #c15a51;
 }
 
 .activity-detail {
@@ -4296,6 +4494,10 @@ body.resizing-panels .app-shell {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.activity-row.command .activity-detail {
+  padding-left: 33px;
 }
 
 /* ---- 操作确认卡片 ---- */
@@ -4868,6 +5070,53 @@ body.resizing-panels .app-shell {
     background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
   }
 
+  .conversation-turn-marker::before {
+    background: #4c514a;
+  }
+
+  .conversation-turn-marker.wave-distance-0::before {
+    width: 26px;
+    background: #b8beb4;
+  }
+
+  .conversation-turn-marker.wave-distance-1::before {
+    width: 20px;
+    background: #8f968d;
+  }
+
+  .conversation-turn-marker.wave-distance-2::before {
+    width: 14px;
+    background: #6d746b;
+  }
+
+  .conversation-turn-marker.wave-distance-3::before {
+    width: 10px;
+    background: #5b6259;
+  }
+
+  .conversation-turn-preview {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(37, 38, 34, 0.97);
+    color: #bdc2b8;
+  }
+
+  .conversation-turn-preview::before {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(37, 38, 34, 0.97);
+  }
+
+  .conversation-turn-preview strong {
+    color: #e1e4dc;
+  }
+
+  .conversation-turn-preview span {
+    color: #a4a99f;
+  }
+
+  .conversation-turn-preview small {
+    color: #777d73;
+  }
+
   .tool-panel {
     border-left-color: rgba(255, 255, 255, 0.065);
     background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
@@ -5194,6 +5443,16 @@ body.resizing-panels .app-shell {
   .context-folder-chip:hover,
   .activity-divider.clickable:hover span {
     color: #d3d6ce;
+  }
+
+  .activity-divider .activity-summary-icon,
+  .activity-divider > svg:not(.activity-summary-icon),
+  .activity-row-main > svg {
+    color: #a6aba2;
+  }
+
+  .activity-row.command .activity-title {
+    color: #a4a89f;
   }
 
   .workspace-section,

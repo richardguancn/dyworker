@@ -119,6 +119,43 @@ test("工作目录支持新建对话、置顶和在系统文件管理器中打�
   assert.match(main, /ipcMain\.handle\("workspace-pins:save"/);
 });
 
+test("主对话区为每个用户回合提供定位线和悬停简介", () => {
+  assert.match(app, /conversationTurnPreview/);
+  assert.match(app, /hoveredTurnIndex/);
+  assert.match(app, /conversation-turn-marker/);
+  assert.match(app, /conversationTurnRefs/);
+  assert.match(app, /jumpToConversationTurn/);
+  assert.match(app, /scrollIntoView\(\{ behavior: "smooth"/);
+  assert.match(app, /conversation-turn-rail/);
+  assert.match(app, /aria-describedby=\{hoveredTurnIndex === turnIndex/);
+  assert.match(app, /role="tooltip"/);
+  assert.match(styles, /\.conversation-turn-rail/);
+  assert.match(app, /conversationTurns\.length > 5/);
+  assert.match(styles, /\.conversation-turn-rail \{[\s\S]*top: 50%;[\s\S]*transform: translateY\(-50%\);/);
+  assert.match(styles, /\.conversation-turn-rail \{[\s\S]*gap: 0;/);
+  assert.match(styles, /\.conversation-turn-marker::before \{[\s\S]*width: 6px;[\s\S]*height: 2px;/);
+  assert.match(styles, /\.conversation-turn-marker\.wave-distance-0::before[\s\S]*width: 26px;/);
+  assert.match(styles, /\.conversation-turn-marker\.wave-distance-1::before[\s\S]*width: 20px;/);
+  assert.match(app, /waveDistance/);
+  assert.doesNotMatch(styles, /\.conversation-turn-marker\.active::before/);
+  assert.match(styles, /\.conversation-turn-marker-wrap/);
+  assert.match(styles, /\.conversation-turn-preview/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*conversation-turn-rail \{ display: none; \}/);
+});
+
+test("模型浏览器工具复用当前任务的右侧浏览器面板", () => {
+  assert.match(app, /onBrowserPanelRequest/);
+  assert.match(app, /setRightPanelOpen\(true\)/);
+  assert.match(app, /createElement\("webview"/);
+  assert.match(preload, /onBrowserPanelRequest/);
+  assert.match(main, /browser:panel-request/);
+  assert.match(main, /waitForEmbeddedBrowser/);
+  assert.match(main, /new BrowserAgent\(\{[\s\S]*openPanel:/);
+  assert.match(browserSource, /openPanel/);
+  assert.match(browserSource, /右侧浏览器面板/);
+  assert.doesNotMatch(browserSource, /new BrowserWindow/);
+});
+
 test("assistant local images only stay loaded near the viewport and share in-flight reads", () => {
   assert.match(interactiveMessage, /IntersectionObserver/);
   assert.match(interactiveMessage, /rootMargin:\s*"400px 0px"/);
@@ -308,7 +345,7 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(main, /routeExtraTool/);
   assert.ok(fs.existsSync(new URL("../electron/browser.mjs", import.meta.url)));
   assert.match(browserSource, /webContents\?\.id !== webContentsId/);
-  assert.match(browserSource, /removeListener\("will-download", handleDownload\)/);
+  assert.match(browserSource, /removeListener\("will-download", this\.downloadHandler\)/);
   assert.match(browserSource, /dispose\(\)/);
   assert.match(main, /routeExtraTool\?\.dispose\(\)/);
   assert.match(linuxComputerUseSource, /message\.method === "notifications\/cancelled"/);

@@ -336,6 +336,7 @@ export interface DyworkerBridge {
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
+  onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;
   completeChat(payload: {
     settings: ProviderSettings;

@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld("dyworker", {
   refreshWorkspace: (path) => ipcRenderer.invoke("workspace:refresh", path),
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
+  onBrowserPanelRequest: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on("browser:panel-request", listener);
+    return () => ipcRenderer.removeListener("browser:panel-request", listener);
+  },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),

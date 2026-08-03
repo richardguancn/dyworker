@@ -226,6 +226,35 @@ function shortTitle(content: string) {
   return title.length > 28 ? `${title.slice(0, 28)}…` : title || "新任务";
 }
 
+function plainConversationText(content: string) {
+  return content
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[#>*_~`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function conversationTurnPreview(messages: ChatMessage[], messageIndex: number) {
+  const userMessage = messages[messageIndex];
+  const userText = plainConversationText(userMessage.displayContent ?? userMessage.content);
+  const nextUserIndex = messages.findIndex((message, index) => index > messageIndex && message.role === "user");
+  const assistantText = plainConversationText(
+    messages
+      .slice(messageIndex + 1, nextUserIndex === -1 ? undefined : nextUserIndex)
+      .find((message) => message.role === "assistant")?.content || "",
+  );
+  const title = shortTitle(userText);
+  const detail = userText.length > title.length
+    ? userText.slice(title.length).trim()
+    : assistantText || (userMessage.attachments?.length ? `包含 ${userMessage.attachments.length} 个附件` : "本轮对话");
+  return {
+    title,
+    detail: detail.length > 140 ? `${detail.slice(0, 140)}…` : detail,
+  };
+}
+
 function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
   const isImage = /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name);
   return {
@@ -485,8 +514,6 @@ function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
       return <FileText size={14} />;
     case "write_file":
       return <FileCode2 size={14} />;
-    case "run_command":
-      return <Terminal size={14} />;
     case "save_memory":
     case "search_history":
     case "read_history_context":
@@ -518,25 +545,37 @@ function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
   }
 }
 
+function activityDisplayTitle(activity: ActivityRecord) {
+  if (activity.kind !== "run_command") return activity.title;
+  const command = activity.title.replace(/^运行命令[：:]\s*/, "");
+  if (/^(已运行|正在运行|运行失败)\s/.test(activity.title)) return activity.title;
+  if (activity.status === "running") return `正在运行 ${command}`;
+  if (activity.status === "error") return `运行失败 ${command}`;
+  return `已运行 ${command}`;
+}
+
 function ActivityRow({ activity }: { activity: ActivityRecord }) {
   const [open, setOpen] = useState(false);
   const expandable = Boolean(activity.detail);
+  const isCommand = activity.kind === "run_command";
   return (
-    <div className={`activity-row ${activity.status}`}>
+    <div className={`activity-row ${activity.status} ${isCommand ? "command" : ""}`}>
       <button
         className="activity-row-main"
         onClick={() => expandable && setOpen((value) => !value)}
         disabled={!expandable}
       >
-        <span className="activity-status">
+        <span className={`activity-status ${isCommand ? "activity-status-command" : ""}`}>
           {activity.status === "running"
             ? <LoaderCircle className="spin" size={13} />
             : activity.status === "error"
               ? <X size={13} />
-              : <Check size={13} />}
+              : isCommand
+                ? <SquareTerminal size={16} />
+                : <Check size={13} />}
         </span>
-        <ActivityIcon kind={activity.kind} />
-        <span className="activity-title">{activity.title}</span>
+        {!isCommand && <ActivityIcon kind={activity.kind} />}
+        <span className="activity-title">{activityDisplayTitle(activity)}</span>
         {expandable && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
       </button>
       {open && activity.detail && <pre className="activity-detail">{activity.detail}</pre>}
@@ -546,8 +585,9 @@ function ActivityRow({ activity }: { activity: ActivityRecord }) {
 
 function ActivityList({ activities }: { activities: ActivityRecord[] }) {
   if (!activities.length) return null;
+  const commandOnly = activities.every((activity) => activity.kind === "run_command");
   return (
-    <div className="activity-list">
+    <div className={`activity-list ${commandOnly ? "command-list" : ""}`}>
       {activities.map((activity) => <ActivityRow key={activity.id} activity={activity} />)}
     </div>
   );
@@ -1979,6 +2019,7 @@ export function App() {
   const [mentionSkills, setMentionSkills] = useState<SkillRecord[]>([]);
   const [activeSkills, setActiveSkills] = useState<SkillRecord[]>([]);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
+  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
   const [, setElapsedTick] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
@@ -1993,6 +2034,7 @@ export function App() {
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
+  const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
@@ -2002,6 +2044,43 @@ export function App() {
   const recordingChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
+
+  // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
+  useEffect(() => {
+    const unsubscribe = window.dyworker?.onBrowserPanelRequest((request) => {
+      if (request.action === "close") {
+        setRightPanelOpen(false);
+        return;
+      }
+      const url = String(request.url || "").trim();
+      if (!url) return;
+      setRightPanelOpen(true);
+      setToolPanelTabs((current) => {
+        const browserTab = current.find((tab) => tab.kind === "browser");
+        if (browserTab) {
+          setActiveToolPanelTabId(browserTab.id);
+          return current.map((tab) => tab.id === browserTab.id
+            ? {
+                ...tab,
+                url,
+                loadedUrl: url,
+                title: url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
+              }
+            : tab);
+        }
+        const id = `browser-${toolPanelTabSequenceRef.current++}`;
+        setActiveToolPanelTabId(id);
+        return [...current, {
+          id,
+          kind: "browser",
+          title: url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
+          url,
+          loadedUrl: url,
+        }];
+      });
+    });
+    return unsubscribe;
+  }, []);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
   const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen;
@@ -2131,6 +2210,10 @@ export function App() {
   }, [activeId, ready]);
 
   useEffect(() => {
+    setHoveredTurnIndex(null);
+  }, [activeId]);
+
+  useEffect(() => {
     if (shouldScrollToBottomRef.current !== activeId) return;
     viewportRef.current?.scrollTo({ top: viewportRef.current.scrollHeight, behavior: "smooth" });
     shouldScrollToBottomRef.current = null;
@@ -2245,6 +2328,18 @@ export function App() {
   }, [sessions, runningSessionIds, activeId]);
 
   const activeSession = sessions.find((session) => session.id === activeId) || sessions[0];
+  const conversationTurns = useMemo(() => {
+    if (!activeSession) return [];
+    return activeSession.messages.reduce<Array<{ messageIndex: number; preview: ReturnType<typeof conversationTurnPreview> }>>((turns, message, messageIndex) => {
+      if (message.role === "user") {
+        turns.push({
+          messageIndex,
+          preview: conversationTurnPreview(activeSession.messages, messageIndex),
+        });
+      }
+      return turns;
+    }, []);
+  }, [activeSession]);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
   const activePendingApproval = activeSession?.id ? pendingApprovals[activeSession.id] || null : null;
   const activePendingQuestion = activeSession?.id ? pendingQuestions[activeSession.id] || null : null;
@@ -3189,6 +3284,11 @@ export function App() {
     }
   };
 
+  const jumpToConversationTurn = (turnIndex: number) => {
+    setHoveredTurnIndex(turnIndex);
+    conversationTurnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const clearWorkspace = () => {
     if (!activeSession) return;
     setWorkspacePath("");
@@ -3539,6 +3639,45 @@ export function App() {
           </div>
         </header>
 
+        {conversationTurns.length > 5 && (
+          <nav className="conversation-turn-rail" aria-label="对话回合导航">
+            {conversationTurns.map((turn, turnIndex) => {
+              const turnActive = turnIndex === hoveredTurnIndex
+                || (hoveredTurnIndex === null && turnIndex === conversationTurns.length - 1);
+              const waveDistance = hoveredTurnIndex === null
+                ? null
+                : Math.min(Math.abs(turnIndex - hoveredTurnIndex), 3);
+              return (
+                <div className="conversation-turn-marker-wrap" key={`${turn.messageIndex}-${turnIndex}`}>
+                  <button
+                    type="button"
+                    className={`conversation-turn-marker${waveDistance === null ? "" : ` wave-distance-${waveDistance}`}`}
+                    aria-label={`第 ${turnIndex + 1} 轮对话：${turn.preview.title}`}
+                    aria-current={turnActive ? "step" : undefined}
+                    aria-describedby={hoveredTurnIndex === turnIndex ? `conversation-turn-preview-${turnIndex}` : undefined}
+                    onClick={() => jumpToConversationTurn(turnIndex)}
+                    onMouseEnter={() => setHoveredTurnIndex(turnIndex)}
+                    onMouseLeave={() => setHoveredTurnIndex(null)}
+                    onFocus={() => setHoveredTurnIndex(turnIndex)}
+                    onBlur={() => setHoveredTurnIndex(null)}
+                  />
+                  {hoveredTurnIndex === turnIndex && (
+                    <div
+                      id={`conversation-turn-preview-${turnIndex}`}
+                      className="conversation-turn-preview"
+                      role="tooltip"
+                    >
+                      <strong>{turn.preview.title}</strong>
+                      <span>{turn.preview.detail}</span>
+                      <small>第 {turnIndex + 1} 轮对话</small>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+        )}
+
         <div className="conversation-viewport" ref={viewportRef} onScroll={syncAtBottom}>
           <div className="conversation-column">
             {!activeSession?.messages.length ? (
@@ -3554,10 +3693,19 @@ export function App() {
                 </button>
               </div>
             ) : (
-              activeSession.messages.map((message, index) => (
-                <div className={`message-row ${message.role}`} key={`${message.createdAt}-${index}`}>
+              activeSession.messages.map((message, index) => {
+                const turnIndex = message.role === "user"
+                  ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
+                  : -1;
+                return (
+                <div
+                  className={`message-row ${message.role}`}
+                  key={`${message.createdAt}-${index}`}
+                  ref={message.role === "user" ? (node) => { conversationTurnRefs.current[turnIndex] = node; } : undefined}
+                >
                   {message.role === "system" ? null : message.role === "user" ? (
-                    <div className="user-bubble">
+                    <>
+                      <div className="user-bubble">
                       {Boolean(message.skillsUsed?.length) && (
                         <div className="message-attachments message-skills">
                           {message.skillsUsed?.map((name) => (
@@ -3585,7 +3733,8 @@ export function App() {
                           ))}
                         </div>
                       )}
-                    </div>
+                      </div>
+                    </>
                   ) : (
                     <div className="assistant-message">
                       {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
@@ -3601,10 +3750,11 @@ export function App() {
                             ? false
                             : Boolean(message.durationMs);
                         const duration = formatDuration(message.durationMs);
+                        const commandOnly = visibleActivities.every((activity) => activity.kind === "run_command");
                         return (
                           <>
                             <button
-                              className="activity-divider clickable"
+                              className={`activity-divider clickable ${commandOnly ? "command-summary" : ""}`}
                               onClick={() => setCollapsedActivities((current) => {
                                 const next = new Set(current);
                                 if (collapsed) {
@@ -3618,12 +3768,14 @@ export function App() {
                               })}
                               aria-expanded={!collapsed}
                             >
-                              {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                              <span>
-                                已处理
+                              {commandOnly && <SquareTerminal className="activity-summary-icon" size={16} />}
+                              {!commandOnly && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
+                              <span className="activity-summary-label">
+                                {commandOnly ? "运行了命令" : "已处理"}
                                 {duration ? ` · 用时 ${duration}` : ""}
                                 {collapsed ? ` · ${visibleActivities.length} 步` : ""}
                               </span>
+                              {commandOnly && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
                             </button>
                             {!collapsed && <ActivityList activities={visibleActivities} />}
                           </>
@@ -3634,7 +3786,8 @@ export function App() {
                     </div>
                   )}
                 </div>
-              ))
+                );
+              })
             )}
 
             {activeTaskRunning && (
