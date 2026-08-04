@@ -1713,17 +1713,27 @@ function approvalDetails(name, args) {
   return String(args.path || "");
 }
 
-// 系统提示词按「静态纪律在前、会话动态信息在尾」组织（借鉴 Claude Code 的静态/动态分层），
-// 静态部分跨会话保持逐字节稳定，让 DeepSeek/GLM 等端点的自动前缀缓存命中率最大化。
-function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
+// 系统提示词按「身份与静态纪律在前、会话动态信息在尾」组织（借鉴 Claude Code 的静态/动态分层），
+// 同一身份下的固定部分跨会话保持稳定，让 DeepSeek/GLM 等端点的自动前缀缓存命中率最大化。
+function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity = "general") {
   const loopLine = loop?.enabled
     ? `当前处于持续执行模式，第 ${loop.iteration}/${loop.maximum} 轮。你必须实际检查结果并继续推进；只有目标和验收条件都满足时才调用 finish_task。若还未完成，不要提前总结为完成。`
     : "任务真正完成并完成必要检查后，可以调用 finish_task 交付最终结果。";
   const reviewLine = memoryReviewDue
     ? "本轮需要做一次记忆复盘：结束前判断是否出现了未来仍有价值的新偏好、长期规则、项目事实或用户纠正；有则先调用 save_memory，没有则不要勉强保存。"
     : "";
+  const governmentMode = identity === "government";
+  const governmentSections = governmentMode ? [
+    "# 公文与政府事务\n"
+    + "- 起草公文（通知、请示、报告、函、纪要等）时遵循党政机关公文规范：标题准确、主送明确、正文结构清晰（依据—事项—要求）、用语庄重、落款完整。公文成稿后用 check_official_document 自查格式要素；用户需要 Word 版本时用 export_word_document 导出。\n"
+    + "- 涉及行政许可、答复、办理期限等问题时用 calculate_workdays 按工作日推算截止日期，并提醒法定节假日以国务院放假安排为准。\n"
+    + "- 凡涉及政策、法规、补贴、审批、文号、条款的问题，先用 gov_search 在政府官网检索，再用 fetch_web_page 打开原文核对文号、条款和时效；核实不了的必须明说，不得编造文号、条款或出处。\n"
+    + "- 文件要对外发布、上报或共享前，先用 scan_sensitive_info 检查是否含有身份证号、手机号等敏感信息，发现问题必须提醒用户脱敏后再交付。",
+  ] : [];
   const staticSections = [
-    "你是 DYWorker，一个服务政府单位办公人员的本地工作助手。你的目标是完成用户的工作并交付结果，而不是教用户输入命令。",
+    governmentMode
+      ? "你是 DYWorker，一个服务政府单位办公人员的本地工作助手。你的目标是完成用户的工作并交付结果，而不是教用户输入命令。"
+      : "你是 DYWorker，一个面向个人、企业、开发者和各类组织的本地工作助手。你的目标是完成用户的工作并交付结果，而不是教用户输入命令。",
 
     "# 任务纪律\n"
     + "- 只做用户要求的事，不多做也不少做：不要擅自扩展范围、添加未要求的内容或「润色发挥」——公文的措辞口径尤其不能自作主张改动；但「最少」不等于「不过终点线」，用户要的结果必须完整交付。\n"
@@ -1752,11 +1762,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "") {
     + "- 遇到验证码、不可恢复删除、签署合同或条款、安装来源不明的软件、创建长期凭据或权限、修改安全或网络设置，必须在最终动作前停下，说明具体影响并取得用户当下明确确认；之前的概括授权不能代替这次确认。\n"
     + "- 发送敏感信息、上传文件或发布有重大影响的内容，只有用户明确说明了具体内容和接收方时才可继续，否则在提交前确认。普通只读查看不需要确认。",
 
-    "# 公文与政府事务\n"
-    + "- 起草公文（通知、请示、报告、函、纪要等）时遵循党政机关公文规范：标题准确、主送明确、正文结构清晰（依据—事项—要求）、用语庄重、落款完整。公文成稿后用 check_official_document 自查格式要素；用户需要 Word 版本时用 export_word_document 导出。\n"
-    + "- 涉及行政许可、答复、办理期限等问题时用 calculate_workdays 按工作日推算截止日期，并提醒法定节假日以国务院放假安排为准。\n"
-    + "- 凡涉及政策、法规、补贴、审批、文号、条款的问题，先用 gov_search 在政府官网检索，再用 fetch_web_page 打开原文核对文号、条款和时效；核实不了的必须明说，不得编造文号、条款或出处。\n"
-    + "- 文件要对外发布、上报或共享前，先用 scan_sensitive_info 检查是否含有身份证号、手机号等敏感信息，发现问题必须提醒用户脱敏后再交付。",
+    ...governmentSections,
 
     "# 安全与保密\n"
     + "- 默认使用工作区内的相对路径。用户任务明确涉及工作区外的本机路径时，可以把该绝对路径交给文件工具；应用会针对这次操作单独弹出授权，只有用户允许后才能访问。不得绕过或诱导用户批准。\n"
@@ -2417,7 +2423,7 @@ export async function runAgent({
   const reviewerContext = conversation.slice(-4)
     .map((message) => `${message?.role}: ${clipped(messageText({ content: message?.content }), 600)}`)
     .join("\n");
-  const messages = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal) }];
+  const messages = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity) }];
   if (depth === 0) {
     messages[0].content += "对相互独立、可并行的子任务（如多主题调研、多文件分析），可以用 dispatch_agent 派发子代理并行处理；子代理看不到当前对话，任务描述必须完整自足并说明期望的产出形式；有先后顺序依赖的步骤不要派发。子代理的写入、命令等操作仍会按当前审批设置处理。";
   } else {

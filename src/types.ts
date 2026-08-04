@@ -256,7 +256,10 @@ export interface ChannelStatus {
 
 export type ChannelsStatusMap = Record<"qq" | "wechat", ChannelStatus>;
 
+export type UserIdentity = "general" | "government";
+
 export interface ProviderSettings {
+  identity: UserIdentity | null;
   endpoint: string;
   model: string;
   apiKey: string;

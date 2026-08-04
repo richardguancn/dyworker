@@ -11,6 +11,10 @@ export function normalizeApprovalMode(value) {
   return ["interactive", "reviewer", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
 }
 
+export function normalizeIdentity(value) {
+  return value === "general" || value === "government" ? value : null;
+}
+
 function encryptionAvailable(secretStorage) {
   try {
     return Boolean(secretStorage?.isEncryptionAvailable?.());
@@ -153,6 +157,7 @@ export function deserializeSettings(stored, secretStorage) {
     apiKey: decryptSecret(profile?.apiKey, profile?.encrypted === true, secretStorage),
   })), ...legacyProfile]);
   return {
+    identity: normalizeIdentity(source.identity),
     endpoint: String(source.endpoint || ""),
     model: String(source.model || ""),
     apiKey: currentApiKey,
@@ -172,6 +177,7 @@ export function deserializeSettings(stored, secretStorage) {
 export function serializeSettings(settings, secretStorage) {
   const normalizedProfiles = normalizeProfiles(settings?.profiles);
   const normalized = {
+    identity: normalizeIdentity(settings?.identity),
     endpoint: String(settings?.endpoint || "").trim(),
     model: String(settings?.model || "").trim(),
     apiKey: String(settings?.apiKey || "").trim(),
@@ -195,6 +201,7 @@ export function serializeSettings(settings, secretStorage) {
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   return {
+    identity: normalized.identity,
     endpoint: normalized.endpoint,
     model: normalized.model,
     transcriptionEndpoint: normalized.transcriptionEndpoint,

@@ -2648,6 +2648,32 @@ test("系统提示词按静态纪律在前、动态信息在尾组织", async ()
   assert.match(system, /绝对路径.*Markdown 图片/);
 });
 
+test("通用身份不再默认带入政府单位语境,政府身份保留政务规则", async () => {
+  const root = await makeWorkspace();
+  const generalCalls = [];
+  await runAgent({
+    settings: { ...settings, identity: "general" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: mockFetch([{ role: "assistant", content: "你好" }], generalCalls),
+  });
+  const generalSystem = generalCalls[0].messages[0].content;
+  assert.match(generalSystem, /面向个人、企业、开发者和各类组织/);
+  assert.doesNotMatch(generalSystem, /服务政府单位办公人员/);
+  assert.doesNotMatch(generalSystem, /# 公文与政府事务/);
+
+  const governmentCalls = [];
+  await runAgent({
+    settings: { ...settings, identity: "government" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: mockFetch([{ role: "assistant", content: "你好" }], governmentCalls),
+  });
+  const governmentSystem = governmentCalls[0].messages[0].content;
+  assert.match(governmentSystem, /服务政府单位办公人员/);
+  assert.match(governmentSystem, /# 公文与政府事务/);
+});
+
 test("find_files 按名称递归查找并支持通配", async () => {
   const root = await makeWorkspace({ "通知/会议通知.docx": "x", "通知/议程.txt": "y", "总结.txt": "z" });
   const workspace = new Workspace(root);

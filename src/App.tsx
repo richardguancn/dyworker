@@ -53,7 +53,7 @@ import {
 import { CSSProperties, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
-import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillRecord, StandingRule, UsageRecord, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
 const now = new Date().toISOString();
@@ -134,6 +134,7 @@ const previewWorkspace: WorkspaceEntry[] = [
 ];
 
 const defaultSettings: ProviderSettings = {
+  identity: null,
   endpoint: "",
   model: "",
   apiKey: "",
@@ -1205,7 +1206,89 @@ function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; onConfi
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "memories" | "skills" | "plans" | "usage" | "hooks";
+function IdentitySetupDialog({ onChoose }: { onChoose: (identity: UserIdentity) => Promise<boolean> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const choose = async (identity: UserIdentity) => {
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await onChoose(identity);
+      if (!saved) setError("身份没有保存成功，请重试。");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop identity-backdrop" role="presentation">
+      <div className="identity-dialog" role="dialog" aria-modal="true" aria-labelledby="identity-dialog-title">
+        <div className="identity-dialog-mark"><Sparkles size={21} aria-hidden="true" /></div>
+        <span className="dialog-kicker">首次使用</span>
+        <h2 id="identity-dialog-title">你准备怎样使用 DYWorker？</h2>
+        <p className="identity-dialog-intro">选择后，助手会按对应场景组织回答和执行方式。这个选择会保存在当前设备上，之后也可以在设置中修改。</p>
+        <div className="identity-options">
+          <button type="button" className="identity-option" disabled={saving} onClick={() => void choose("general")}>
+            <span className="identity-option-icon"><UserRound size={23} aria-hidden="true" /></span>
+            <span className="identity-option-copy">
+              <strong>通用身份</strong>
+              <small>适合个人、企业、开发者和一般办公场景，使用更通用的工作助手设定。</small>
+            </span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" className="identity-option" disabled={saving} onClick={() => void choose("government")}>
+            <span className="identity-option-icon"><Landmark size={23} aria-hidden="true" /></span>
+            <span className="identity-option-copy">
+              <strong>政府单位</strong>
+              <small>适合党政机关、事业单位等场景，优先遵循公文、政策和保密相关工作规则。</small>
+            </span>
+            <ChevronRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+        {saving && <p className="identity-dialog-status">正在保存选择…</p>}
+        {error && <p className="identity-dialog-error">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function IdentitySettingsPanel({ value, onSave }: {
+  value: ProviderSettings;
+  onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const select = async (identity: UserIdentity) => {
+    if (identity === value.identity) return;
+    setSaving(true);
+    try {
+      await onSave({ ...value, identity }, "身份设置已更新");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="identity-settings-panel">
+      <div className="dialog-section-title">助手身份</div>
+      <p className="profile-section-hint">身份只影响助手默认的工作语境，不会限制你使用其他功能。</p>
+      <div className="identity-settings-options">
+        <button type="button" className={`identity-option compact ${value.identity === "general" ? "selected" : ""}`} disabled={saving} onClick={() => void select("general")}>
+          <span className="identity-option-icon"><UserRound size={20} aria-hidden="true" /></span>
+          <span className="identity-option-copy"><strong>通用身份</strong><small>个人、企业、开发者和一般办公场景</small></span>
+          {value.identity === "general" && <Check size={17} aria-hidden="true" />}
+        </button>
+        <button type="button" className={`identity-option compact ${value.identity === "government" ? "selected" : ""}`} disabled={saving} onClick={() => void select("government")}>
+          <span className="identity-option-icon"><Landmark size={20} aria-hidden="true" /></span>
+          <span className="identity-option-copy"><strong>政府单位</strong><small>党政机关、事业单位和政务办公场景</small></span>
+          {value.identity === "government" && <Check size={17} aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "identity" | "memories" | "skills" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
 const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings }[] }[] = [
@@ -1216,6 +1299,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
     { id: "channels", label: "消息渠道", icon: MessagesSquare },
   ] },
   { group: "偏好", items: [
+    { id: "identity", label: "助手身份", icon: UserRound },
     { id: "power", label: "电源", icon: Moon },
     { id: "mcp", label: "MCP 工具", icon: Bot },
   ] },
@@ -1687,7 +1771,16 @@ function SettingsDialog({
             <X size={18} />
           </button>
         </div>
-        {["model", "voice", "search", "power", "mcp"].includes(tab) ? (
+        {tab === "identity" ? (
+          <IdentitySettingsPanel
+            value={draft}
+            onSave={async (next, message) => {
+              const saved = await onSave(next, message);
+              if (saved) setDraft(next);
+              return saved;
+            }}
+          />
+        ) : ["model", "voice", "search", "power", "mcp"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
         <div className="dialog-section-title">已保存的模型</div>
@@ -2866,6 +2959,10 @@ export function App() {
   };
 
   const sendMessage = async () => {
+    if (!settings.identity) {
+      setNotice("请先选择 DYWorker 的使用身份");
+      return;
+    }
     let content = composer.trim();
     if ((!content && !attachments.length && !activeSkills.length) || activeTaskRunning || !activeSession) return;
     // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
@@ -3192,6 +3289,9 @@ export function App() {
     }
   };
 
+  const chooseIdentity = (identity: UserIdentity) =>
+    saveProviderSettings({ ...settings, identity }, "身份设置已保存");
+
   const selectApprovalMode = (nextMode: ApprovalMode) => {
     if (nextMode === "full-access") {
       setApprovalMenuOpen(false);
@@ -3246,6 +3346,7 @@ export function App() {
   };
 
   const hasModel = Boolean(settings.endpoint && settings.model && settings.apiKey);
+  const identitySetupOpen = ready && settings.identity === null;
   const activeApprovalMode = composerApprovalModes.find((option) => option.value === approvalMode) || composerApprovalModes[1];
   const ActiveApprovalIcon = activeApprovalMode.icon;
   const contextUsage = useMemo(() => {
@@ -4324,6 +4425,7 @@ export function App() {
           onConfirm={confirmFullAccess}
         />
       )}
+      {identitySetupOpen && <IdentitySetupDialog onChoose={chooseIdentity} />}
     </div>
   );
 }

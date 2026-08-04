@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, serializeSettings } from "../electron/settings.mjs";
+import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, serializeSettings } from "../electron/settings.mjs";
 
 const secretStorage = {
   isEncryptionAvailable: () => true,
@@ -169,6 +169,20 @@ test("桌面审批模式记住上次选择,旧省心模式迁移到自动审核"
   assert.equal(deserializeSettings({ approvalMode: "allow-writes" }, secretStorage).approvalMode, "reviewer");
   assert.equal(deserializeSettings({ approvalMode: "bogus" }, secretStorage).approvalMode, "reviewer");
   assert.equal(deserializeSettings({}, secretStorage).approvalMode, "reviewer");
+});
+
+test("首次身份选择会保存并在下次启动恢复,旧设置保持待选择", () => {
+  assert.equal(normalizeIdentity("general"), "general");
+  assert.equal(normalizeIdentity("government"), "government");
+  assert.equal(normalizeIdentity("unknown"), null);
+
+  const stored = serializeSettings({ identity: "general", profiles: [] }, secretStorage);
+  assert.equal(stored.identity, "general");
+  assert.equal(deserializeSettings(stored, secretStorage).identity, "general");
+  assert.equal(deserializeSettings({ profiles: [] }, secretStorage).identity, null);
+
+  const government = serializeSettings({ identity: "government", profiles: [] }, secretStorage);
+  assert.equal(deserializeSettings(government, secretStorage).identity, "government");
 });
 
 test("某条密钥无法解密时不影响其他配置恢复", () => {

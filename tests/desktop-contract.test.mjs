@@ -28,6 +28,27 @@ test("desktop controls are connected across renderer, preload, and main process"
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
 });
 
+test("首次启动必须选择身份,并可在设置中重新选择", () => {
+  assert.match(app, /IdentitySetupDialog/);
+  assert.match(app, /首次使用/);
+  assert.match(app, /通用身份/);
+  assert.match(app, /政府单位/);
+  assert.match(app, /identitySetupOpen/);
+  assert.match(app, /identity: null/);
+  assert.match(app, /助手身份/);
+  assert.match(styles, /\.identity-dialog/);
+  assert.match(settingsStorage, /normalizeIdentity/);
+  assert.match(settingsStorage, /identity: normalized\.identity/);
+});
+
+test("身份会切换代理的默认工作语境", () => {
+  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
+  assert.match(agent, /settings\?\.identity/);
+  assert.match(agent, /面向个人、企业、开发者和各类组织/);
+  assert.match(agent, /governmentMode/);
+  assert.match(agent, /# 公文与政府事务/);
+});
+
 test("Responses 端点不会把语音转写请求误发到模型地址", () => {
   assert.match(main, /completions\\\/\?\$\/\.test\(url\.pathname\)\) return ""/);
 });
