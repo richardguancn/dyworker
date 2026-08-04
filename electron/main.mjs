@@ -15,6 +15,7 @@ import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, e
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
+import { listWorkspace } from "./workspace.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -272,7 +273,6 @@ async function migrateLegacyDataOnFirstRun() {
   });
 }
 
-const ignoredNames = new Set([".git", "node_modules", "dist", ".DS_Store"]);
 const textExtensions = new Set([
   ".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".html", ".ini", ".java", ".js", ".json",
   ".jsx", ".log", ".md", ".mjs", ".py", ".rs", ".sh", ".sql", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
@@ -366,33 +366,6 @@ function transcriptionEndpoint(settings) {
   } catch {
     return "";
   }
-}
-
-async function listWorkspace(root, depth = 0, budget = { remaining: 500 }) {
-  if (!root || depth > 4 || budget.remaining <= 0) return [];
-  let directoryEntries;
-  try {
-    directoryEntries = await fs.readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  directoryEntries.sort((a, b) => {
-    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-    return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
-  });
-  const result = [];
-  for (const entry of directoryEntries) {
-    if (budget.remaining-- <= 0 || ignoredNames.has(entry.name)) break;
-    const fullPath = path.join(root, entry.name);
-    const item = {
-      name: entry.name,
-      path: fullPath,
-      kind: entry.isDirectory() ? "directory" : "file",
-    };
-    if (entry.isDirectory()) item.children = await listWorkspace(fullPath, depth + 1, budget);
-    result.push(item);
-  }
-  return result;
 }
 
 function createWindow({ solidFallback = false } = {}) {
