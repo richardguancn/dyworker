@@ -285,7 +285,111 @@ test("Responses 流式终态缺少输出文本时保留已收到的增量", asyn
   assert.equal(result.finalText, "你好");
 });
 
-test("DeepSeek V4 不支持图片时明确失败且不发送图片数据", async () => {
+test("DeepSeek V4 Flash 通过视觉服务识别图片后再请求 Responses", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const visionEndpoint = "https://vision.example/v1/chat/completions";
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/responses",
+      model: "deepseek-v4-flash",
+      apiKey: "k",
+      visionEndpoint,
+      visionModel: "vision-model",
+      visionApiKey: "vision-k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ],
+    }],
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      if (url === visionEndpoint) {
+        return {
+          ok: true,
+          headers: { get: () => "application/json" },
+          json: async () => ({ choices: [{ message: { content: "图中有一个登录窗口，能看到用户名和密码输入框。" } }] }),
+        };
+      }
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        json: async () => ({
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "已识别图片。" }] }],
+        }),
+      };
+    },
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "已识别图片。");
+  assert.equal(calls[0].url, visionEndpoint);
+  assert.equal(calls[0].body.model, "vision-model");
+  assert.equal(calls[0].body.messages[1].content[1].type, "image_url");
+  assert.equal(calls[1].url, "https://api.deepseek.com/responses");
+  const deepSeekInput = calls[1].body.input;
+  assert.ok(deepSeekInput.some((item) => Array.isArray(item.content)
+    && item.content.some((part) => part.type === "input_text" && /登录窗口/.test(part.text))));
+  assert.ok(!deepSeekInput.some((item) => Array.isArray(item.content)
+    && item.content.some((part) => part.type === "input_image")));
+});
+
+test("DeepSeek V4 Flash 使用兼容聊天地址时也会先识别图片", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const visionEndpoint = "https://vision.example/v1/chat/completions";
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      apiKey: "k",
+      visionEndpoint,
+      visionModel: "vision-model",
+      visionApiKey: "vision-k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
+      ],
+    }],
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      if (url === visionEndpoint) {
+        return {
+          ok: true,
+          headers: { get: () => "application/json" },
+          json: async () => ({ choices: [{ message: { content: "图片中是一张项目进度表。" } }] }),
+        };
+      }
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "已读取项目进度表。" } }] }),
+      };
+    },
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "已读取项目进度表。");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, visionEndpoint);
+  assert.equal(calls[1].url, "https://api.deepseek.com/chat/completions");
+  assert.ok(calls[1].body.messages.some((message) =>
+    Array.isArray(message.content) && message.content.some((part) => part.type === "text" && /项目进度表/.test(part.text))));
+  assert.ok(!calls[1].body.messages.some((message) =>
+    Array.isArray(message.content) && message.content.some((part) => part.type === "image_url")));
+});
+
+test("DeepSeek V4 Flash 未配置视觉服务时不把图片直接发给模型", async () => {
   const root = await makeWorkspace();
   let requested = false;
   const result = await runAgent({
@@ -302,28 +406,7 @@ test("DeepSeek V4 不支持图片时明确失败且不发送图片数据", async
   });
 
   assert.equal(result.status, "error");
-  assert.match(result.reason, /不支持图片/);
-  assert.equal(requested, false);
-});
-
-test("DeepSeek V4 使用兼容聊天地址时也不会把图片发给纯文本接口", async () => {
-  const root = await makeWorkspace();
-  let requested = false;
-  const result = await runAgent({
-    settings: { endpoint: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash", apiKey: "k" },
-    workspacePath: root,
-    conversation: [{
-      role: "user",
-      content: [
-        { type: "text", text: "看看这张图" },
-        { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } },
-      ],
-    }],
-    fetchImpl: async () => { requested = true; throw new Error("不应发起请求"); },
-  });
-
-  assert.equal(result.status, "error");
-  assert.match(result.reason, /不支持图片/);
+  assert.match(result.reason, /视觉识别服务/);
   assert.equal(requested, false);
 });
 

@@ -263,6 +263,9 @@ export interface ProviderSettings {
   endpoint: string;
   model: string;
   apiKey: string;
+  visionEndpoint: string;
+  visionModel: string;
+  visionApiKey: string;
   profiles: ModelProfile[];
   transcriptionEndpoint: string;
   transcriptionModel: string;

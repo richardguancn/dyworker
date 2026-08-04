@@ -138,6 +138,9 @@ const defaultSettings: ProviderSettings = {
   endpoint: "",
   model: "",
   apiKey: "",
+  visionEndpoint: "",
+  visionModel: "",
+  visionApiKey: "",
   transcriptionEndpoint: "",
   transcriptionModel: "whisper-1",
   searxngEndpoint: "",
@@ -1835,6 +1838,35 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
         </label>
+        {draft.model.trim().toLowerCase() === "deepseek-v4-flash" && (<>
+        <div className="dialog-section-title">图片识别（DeepSeek V4 Flash）</div>
+        <p className="dialog-note">DeepSeek V4 Flash 本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。</p>
+        <label>
+          视觉服务地址
+          <input
+            value={draft.visionEndpoint}
+            placeholder="https://api.example.com/v1/chat/completions"
+            onChange={(event) => setDraft({ ...draft, visionEndpoint: event.target.value })}
+          />
+        </label>
+        <label>
+          视觉模型名称
+          <input
+            value={draft.visionModel}
+            placeholder="填写视觉服务提供的模型名称"
+            onChange={(event) => setDraft({ ...draft, visionModel: event.target.value })}
+          />
+        </label>
+        <label>
+          视觉服务密钥
+          <input
+            value={draft.visionApiKey}
+            type="password"
+            placeholder="仅保存在当前设备"
+            onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })}
+          />
+        </label>
+        </>)}
         </>)}
         {tab === "power" && (<>
         <div className="dialog-section-title">电源</div>

@@ -13,6 +13,9 @@ test("多套模型配置加密保存后可以完整恢复", () => {
     endpoint: " https://one.example/v1/chat/completions ",
     model: " model-one ",
     apiKey: " current-key ",
+    visionEndpoint: " https://vision.example/v1/chat/completions ",
+    visionModel: " vision-model ",
+    visionApiKey: " vision-key ",
     profiles: [
       {
         id: "one",
@@ -38,6 +41,7 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   const stored = serializeSettings(settings, secretStorage);
   const raw = JSON.stringify(stored);
   assert.equal(raw.includes("current-key"), false);
+  assert.equal(raw.includes("vision-key"), false);
   assert.equal(raw.includes("key-one"), false);
   assert.equal(raw.includes("key-two"), false);
   assert.equal(stored.profiles.every((profile) => profile.encrypted), true);
@@ -46,6 +50,9 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   assert.equal(restored.endpoint, "https://one.example/v1/chat/completions");
   assert.equal(restored.model, "model-one");
   assert.equal(restored.apiKey, "current-key");
+  assert.equal(restored.visionEndpoint, "https://vision.example/v1/chat/completions");
+  assert.equal(restored.visionModel, "vision-model");
+  assert.equal(restored.visionApiKey, "vision-key");
   assert.deepEqual(restored.profiles.map(({ id, apiKey }) => ({ id, apiKey })), [
     { id: "one", apiKey: "key-one" },
     { id: "two", apiKey: "key-two" },
@@ -87,6 +94,8 @@ test("应用改名后旧加密密钥无法解密时被准确统计", () => {
   const stored = {
     apiKey: "current-key",
     encrypted: true,
+    visionApiKey: "vision-key",
+    visionApiKeyEncrypted: true,
     profiles: [
       {
         id: "one",
@@ -105,8 +114,8 @@ test("应用改名后旧加密密钥无法解密时被准确统计", () => {
       },
     },
   };
-  assert.equal(countUndecryptableSecrets(stored, brokenStorage), 3);
-  assert.equal(countUndecryptableSecrets({ ...stored, encrypted: false }, brokenStorage), 2);
+  assert.equal(countUndecryptableSecrets(stored, brokenStorage), 4);
+  assert.equal(countUndecryptableSecrets({ ...stored, encrypted: false }, brokenStorage), 3);
   assert.equal(countUndecryptableSecrets({ apiKey: "", encrypted: true }, brokenStorage), 0);
   assert.equal(countUndecryptableSecrets({ apiKey: "plain", encrypted: false }, brokenStorage), 0);
 });

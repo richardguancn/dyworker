@@ -49,6 +49,7 @@ function decryptSecret(value, encrypted, secretStorage) {
 export function needsSecretMigration(stored) {
   const source = stored && typeof stored === "object" ? stored : {};
   if (source.apiKey && source.encrypted !== true) return true;
+  if (source.visionApiKey && source.visionApiKeyEncrypted !== true) return true;
   return (Array.isArray(source.profiles) ? source.profiles : [])
     .some((profile) => profile?.apiKey && profile?.encrypted !== true);
 }
@@ -62,6 +63,7 @@ export function countUndecryptableSecrets(stored, secretStorage) {
     Boolean(value) && encrypted === true && !decryptSecret(value, true, secretStorage);
   let count = 0;
   if (stuck(source.apiKey, source.encrypted)) count += 1;
+  if (stuck(source.visionApiKey, source.visionApiKeyEncrypted)) count += 1;
   for (const profile of Array.isArray(source.profiles) ? source.profiles : []) {
     if (stuck(profile?.apiKey, profile?.encrypted)) count += 1;
   }
@@ -161,6 +163,9 @@ export function deserializeSettings(stored, secretStorage) {
     endpoint: String(source.endpoint || ""),
     model: String(source.model || ""),
     apiKey: currentApiKey,
+    visionEndpoint: String(source.visionEndpoint || ""),
+    visionModel: String(source.visionModel || ""),
+    visionApiKey: decryptSecret(source.visionApiKey, source.visionApiKeyEncrypted === true, secretStorage),
     profiles,
     transcriptionEndpoint: String(source.transcriptionEndpoint || ""),
     transcriptionModel: String(source.transcriptionModel || "whisper-1"),
@@ -181,6 +186,9 @@ export function serializeSettings(settings, secretStorage) {
     endpoint: String(settings?.endpoint || "").trim(),
     model: String(settings?.model || "").trim(),
     apiKey: String(settings?.apiKey || "").trim(),
+    visionEndpoint: String(settings?.visionEndpoint || "").trim(),
+    visionModel: String(settings?.visionModel || "").trim(),
+    visionApiKey: String(settings?.visionApiKey || "").trim(),
     profiles: normalizedProfiles,
     transcriptionEndpoint: String(settings?.transcriptionEndpoint || "").trim(),
     transcriptionModel: String(settings?.transcriptionModel || "whisper-1").trim(),
@@ -200,10 +208,15 @@ export function serializeSettings(settings, secretStorage) {
       })),
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
+  const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
   return {
     identity: normalized.identity,
     endpoint: normalized.endpoint,
     model: normalized.model,
+    visionEndpoint: normalized.visionEndpoint,
+    visionModel: normalized.visionModel,
+    visionApiKey: visionSecret.value,
+    visionApiKeyEncrypted: visionSecret.encrypted,
     transcriptionEndpoint: normalized.transcriptionEndpoint,
     transcriptionModel: normalized.transcriptionModel,
     searxngEndpoint: normalized.searxngEndpoint,
