@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -71,30 +71,75 @@ function systemWindowBackground() {
   return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
 }
 
-// Linux 无边框窗口默认不使用透明窗口：透明无边框窗口在部分 X11/XWayland
-// 桌面上会拿不到键盘焦点，表现为主界面能点但所有输入框都无法打字。
-// 因此默认用不透明窗口，保留自绘标题栏。若确实需要透明窗口 + 渲染端
-// 自绘阴影，可显式设置 DYWORKER_FORCE_WINDOW_SHADOW=1 临时开启
-// （已知有输入风险，仅用于排查阴影效果）。
+// Linux 无边框窗口默认没有系统阴影，需要透明窗口由渲染端自绘。
+// 默认启用条件：
+// - Wayland 会话（应用走 XWayland）：由 Wayland 合成器负责混合透明窗口；
+// - X11 会话：检测到合成器（_NET_WM_CM_S0）。
+// 透明窗口在部分 X11/XWayland 桌面上会拿不到键盘焦点（窗口未被窗口管理器
+// 接管，表现为能点但无法打字）。创建后会做焦点健康检查，确认拿不到焦点时
+// 自动重建为不透明窗口（见 createWindow 内 Linux 分支），保证输入可用。
+// 环境变量覆盖：DYWORKER_NO_WINDOW_SHADOW=1 强制关闭；
+// DYWORKER_FORCE_WINDOW_SHADOW=1 强制开启（保留诊断日志，不自动回退）。
 let linuxWindowShadowCache;
+let currentWindowShadow = false;
 function supportsLinuxWindowShadow() {
   if (process.platform !== "linux") return false;
   if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
+  if (process.env.DYWORKER_NO_WINDOW_SHADOW === "1") {
+    linuxWindowShadowCache = false;
+    return false;
+  }
   if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
     linuxWindowShadowCache = true;
-    console.log("[dyworker] linux window shadow: forced via DYWORKER_FORCE_WINDOW_SHADOW=1");
     return true;
   }
-  linuxWindowShadowCache = false;
-  console.log("[dyworker] linux window shadow: disabled (solid window, input-safe)");
-  return false;
+  const waylandSession =
+    process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
+  let composited = waylandSession;
+  if (!composited && process.env.DISPLAY) {
+    try {
+      const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
+        encoding: "utf8",
+        timeout: 2000,
+      });
+      composited = probe.status === 0 && String(probe.stdout || "").includes("window id");
+    } catch {
+      composited = false;
+    }
+  }
+  linuxWindowShadowCache = composited;
+  console.log(
+    `[dyworker] linux window shadow: ${composited ? "enabled" : "disabled"}` +
+      ` (session=${process.env.XDG_SESSION_TYPE || "x11"}, wayland=${Boolean(process.env.WAYLAND_DISPLAY)})`,
+  );
+  return linuxWindowShadowCache;
 }
 
 nativeTheme.on("updated", () => {
-  if (mainWindow && !mainWindow.isDestroyed() && !supportsLinuxWindowShadow()) {
+  if (mainWindow && !mainWindow.isDestroyed() && !currentWindowShadow) {
     mainWindow.setBackgroundColor(systemWindowBackground());
   }
 });
+
+// 诊断：检查 X11 窗口是否被窗口管理器接管。透明无边框窗口拿不到键盘焦点
+// 的常见原因是窗口成了 override-redirect（不受 WM 管理）。
+function describeLinuxWindowState(win) {
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (!handle || handle.length < 4) return "no-native-handle";
+    const xid = `0x${handle.readUInt32LE(0).toString(16)}`;
+    const probe = spawnSync("xwininfo", ["-id", xid], { encoding: "utf8", timeout: 2000 });
+    if (probe.status !== 0) {
+      const detail = String(probe.stderr || probe.error?.message || "unknown").trim().slice(0, 60);
+      return `xwininfo-failed(${detail || "no-stderr"})`;
+    }
+    const override = /Override Redirect State:\s*(yes|no)/i.exec(probe.stdout);
+    const managed = /WM_STATE/i.test(probe.stdout) ? "managed" : "no-wm-state";
+    return override ? `override-redirect=${override[1]},${managed}` : `xwininfo-parse-miss,${managed}`;
+  } catch (error) {
+    return `xwininfo-error(${error instanceof Error ? error.message : String(error)})`;
+  }
+}
 
 function dataFile(name) {
   return path.join(app.getPath("userData"), name);
@@ -350,12 +395,13 @@ async function listWorkspace(root, depth = 0, budget = { remaining: 500 }) {
   return result;
 }
 
-function createWindow() {
+function createWindow({ solidFallback = false } = {}) {
   if (process.platform === "linux") {
     Menu.setApplicationMenu(null);
   }
 
-  const linuxWindowShadow = supportsLinuxWindowShadow();
+  const linuxWindowShadow = !solidFallback && supportsLinuxWindowShadow();
+  currentWindowShadow = linuxWindowShadow;
   const windowOptions = {
     width: 1480,
     height: 920,
@@ -364,11 +410,8 @@ function createWindow() {
     backgroundColor: linuxWindowShadow ? "#00000000" : systemWindowBackground(),
     show: process.platform === "linux",
     title: "DYWorker",
-    // 全平台保持无边框自绘标题栏。Linux 默认不透明（透明窗口在部分
-    // X11/Wayland 环境下会让输入事件失效）；只有显式设置
-    // DYWORKER_FORCE_WINDOW_SHADOW=1 时才恢复透明窗口自绘阴影。
     frame: false,
-    transparent: linuxWindowShadow,
+    ...(linuxWindowShadow ? { transparent: true } : {}),
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
@@ -398,6 +441,56 @@ function createWindow() {
         .catch(() => {
           // 诊断日志失败不影响窗口使用
         });
+    });
+  }
+  // 透明窗口健康检查：部分 X11/XWayland 桌面上透明无边框窗口拿不到键盘
+  // 焦点（override-redirect，能点但无法打字）。用户点击窗口后若仍拿不到
+  // 焦点，自动重建为不透明窗口，保证输入可用。仅在用户实际点击窗口后
+  // 检查，避免在用户使用其他窗口时抢焦点。
+  if (process.platform === "linux" && linuxWindowShadow) {
+    let everFocused = false;
+    mainWindow.on("focus", () => {
+      everFocused = true;
+    });
+    const tryEnsureFocus = () => {
+      if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
+      if (everFocused || mainWindow.isFocused()) return;
+      mainWindow.focus();
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const windowState = describeLinuxWindowState(mainWindow);
+        mainWindow.webContents
+          .executeJavaScript("document.hasFocus()")
+          .then((hasFocus) => {
+            if (hasFocus || mainWindow.isFocused()) return;
+            if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
+              console.log(
+                `[dyworker] linux transparent window cannot gain keyboard focus (${windowState}); ` +
+                  "DYWORKER_FORCE_WINDOW_SHADOW=1 keeps it for diagnosis",
+              );
+              return;
+            }
+            console.log(
+              `[dyworker] linux transparent window cannot gain keyboard focus (${windowState}); ` +
+                "rebuilding as a solid window without shadow",
+            );
+            const bounds = mainWindow.getBounds();
+            const maximized = mainWindow.isMaximized();
+            mainWindow.destroy();
+            createWindow({ solidFallback: true });
+            if (mainWindow) {
+              if (maximized) mainWindow.maximize();
+              else mainWindow.setBounds(bounds);
+            }
+          })
+          .catch(() => {
+            // 诊断失败不影响窗口使用
+          });
+      }, 400);
+    };
+    ipcMain.on("window:pointer-down", tryEnsureFocus);
+    mainWindow.once("closed", () => {
+      ipcMain.removeListener("window:pointer-down", tryEnsureFocus);
     });
   }
   mainWindow.once("closed", () => {
@@ -540,7 +633,7 @@ ipcMain.handle("app:initial-state", async () => {
       ? pinnedWorkspacePaths.filter((item) => typeof item === "string" && item.trim())
       : [],
     platform: process.platform,
-    windowShadow: supportsLinuxWindowShadow(),
+    windowShadow: currentWindowShadow,
     windowMaximized: mainWindow?.isMaximized() ?? false,
   };
 });

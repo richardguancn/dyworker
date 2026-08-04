@@ -394,6 +394,7 @@ export interface DyworkerBridge {
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;
   onWindowStateChange(callback: (maximized: boolean) => void): () => void;
+  reportWindowPointerDown(): void;
 }
 
 declare global {

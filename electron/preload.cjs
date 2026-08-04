@@ -83,4 +83,5 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("window:maximized-changed", listener);
     return () => ipcRenderer.removeListener("window:maximized-changed", listener);
   },
+  reportWindowPointerDown: () => ipcRenderer.send("window:pointer-down"),
 });

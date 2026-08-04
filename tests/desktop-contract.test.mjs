@@ -286,16 +286,25 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
   assert.match(app, /titlebar-right/);
 });
 
-test("linux 无边框窗口默认不透明并主动申请焦点，避免输入事件失效", () => {
+test("linux 默认用透明窗口自绘阴影，拿不到键盘焦点时自动回退不透明窗口", () => {
   assert.match(main, /supportsLinuxWindowShadow/);
+  assert.match(main, /_NET_WM_CM_S0/);
+  assert.match(main, /xprop/);
+  assert.match(main, /DYWORKER_NO_WINDOW_SHADOW/);
   assert.match(main, /DYWORKER_FORCE_WINDOW_SHADOW/);
+  assert.match(main, /XDG_SESSION_TYPE === "wayland"/);
   assert.match(main, /linux window shadow/);
-  // 透明窗口在部分 X11/Wayland 环境下会让输入框无法点击聚焦，Linux 不启用
-  assert.doesNotMatch(main, /transparent:\s*true/);
+  assert.match(main, /transparent:\s*true/);
+  // 透明窗口拿不到焦点时自动重建为不透明窗口，保证输入可用
+  assert.match(main, /solidFallback/);
+  assert.match(main, /describeLinuxWindowState/);
+  assert.match(main, /xwininfo/);
+  assert.match(main, /document\.hasFocus\(\)/);
+  assert.match(main, /rebuilding as a solid window without shadow/);
+  assert.match(main, /window:pointer-down/);
   // 无边框窗口显示后主动申请键盘焦点，并记录渲染端焦点状态便于排查
   assert.match(main, /mainWindow\.on\("show"/);
   assert.match(main, /mainWindow\.focus\(\)/);
-  assert.match(main, /document\.hasFocus\(\)/);
   assert.match(main, /"window:maximized-changed"/);
   assert.match(main, /windowShadow:/);
   assert.match(main, /windowMaximized:/);
@@ -304,11 +313,14 @@ test("linux 无边框窗口默认不透明并主动申请焦点，避免输入�
   assert.match(app, /window-shadow/);
   assert.match(app, /window-maximized/);
   assert.match(app, /onWindowStateChange/);
+  assert.match(app, /reportWindowPointerDown/);
   assert.match(styles, /html\.window-shadow/);
   assert.match(styles, /html\.window-shadow\.window-maximized/);
   assert.match(styles, /box-shadow:/);
   assert.match(types, /windowShadow: boolean/);
   assert.match(types, /onWindowStateChange/);
+  assert.match(types, /reportWindowPointerDown/);
+  assert.match(preload, /reportWindowPointerDown/);
 });
 
 test("codex alignment surfaces are wired end to end", () => {

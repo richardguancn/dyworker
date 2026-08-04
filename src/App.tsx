@@ -2180,6 +2180,15 @@ export function App() {
     return () => unsubscribe?.();
   }, []);
 
+  // Linux 透明窗口输入健康检查：用户点击窗口后，主进程会确认窗口是否
+  // 真正获得键盘焦点，拿不到时自动退回不透明窗口。
+  useEffect(() => {
+    if (!window.dyworker) return;
+    const onPointerDown = () => window.dyworker?.reportWindowPointerDown?.();
+    window.addEventListener("pointerdown", onPointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+  }, []);
+
   useEffect(() => {
     if (!ready || !window.dyworker) return;
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
