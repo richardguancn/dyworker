@@ -580,6 +580,7 @@ test("工作区外路径授权不进入会话规则:每次读取仍单独询问"
     settings,
     workspacePath: root,
     approvalMode: "allow-writes",
+    trustTempDirs: false,
     conversation: [{ role: "user", content: "读两个外部文件" }],
     requestApproval: async (action) => {
       approvals.push(action.kind);
@@ -663,6 +664,7 @@ test("自动审核模式:工作区外路径仍直接问用户,不经过审核助
     settings,
     workspacePath: root,
     approvalMode: "reviewer",
+    trustTempDirs: false,
     conversation: [{ role: "user", content: "读外部文件" }],
     requestApproval: async () => { userApprovals += 1; return true; },
     fetchImpl: mockFetch([
@@ -673,6 +675,27 @@ test("自动审核模式:工作区外路径仍直接问用户,不经过审核助
   assert.equal(result.status, "done");
   assert.equal(calls.length, 2, "审核助手不应被调用");
   assert.equal(userApprovals, 1, "外部路径仍应弹人工审批");
+});
+
+test("自动审核模式:读取系统临时目录不再弹审批", async () => {
+  const root = await makeWorkspace();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-temp-read-"));
+  const tempFile = path.join(tempDir, "note.txt");
+  await fs.writeFile(tempFile, "临时内容", "utf8");
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "读一下临时文件" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: tempFile })] },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 0, "临时目录读写不应触发审批");
 });
 
 test("自动审核模式:钩子强制审批仍直接问用户,不经过审核助手", async () => {
@@ -727,6 +750,7 @@ test("工作区外路径会弹出单次授权，拒绝后不会读取", async ()
   const result = await runAgent({
     settings,
     workspacePath: root,
+    trustTempDirs: false,
     conversation: [{ role: "user", content: "读 ../secret" }],
     requestApproval: async (action) => {
       approval = action;
@@ -754,6 +778,7 @@ test("自动修改模式下读取工作区外文件仍需用户明确授权", as
     settings,
     workspacePath: root,
     approvalMode: "allow-writes",
+    trustTempDirs: false,
     conversation: [{ role: "user", content: `读取 ${target}` }],
     requestApproval: async (action) => {
       approvals.push(action);
@@ -780,6 +805,7 @@ test("完全访问权限可直接读取工作区外文件", async () => {
     settings,
     workspacePath: root,
     approvalMode: "full-access",
+    trustTempDirs: false,
     conversation: [{ role: "user", content: `读取 ${target}` }],
     requestApproval: async () => {
       throw new Error("完全访问权限不应弹出审批");
@@ -798,7 +824,7 @@ test("Workspace 的工作区外授权只在单次操作期间有效", async () =
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "资料.txt": "一次授权" });
   const target = path.join(outside, "资料.txt");
-  const workspace = new Workspace(root);
+  const workspace = new Workspace(root, { trustTempDirs: false });
   await assert.rejects(workspace.readFile(target), /必须先获得用户授权/);
   const release = workspace.authorizeExternalPaths([target]);
   assert.equal(await workspace.readFile(target), "一次授权");
@@ -806,12 +832,28 @@ test("Workspace 的工作区外授权只在单次操作期间有效", async () =
   await assert.rejects(workspace.readFile(target), /必须先获得用户授权/);
 });
 
+test("系统临时目录视为工作区内,不再触发审批", async () => {
+  const root = await makeWorkspace();
+  const workspace = new Workspace(root);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-temp-ok-"));
+  assert.equal(workspace.isOutside(tempDir), false);
+  assert.equal(workspace.isOutside(path.join(tempDir, "note.txt")), false);
+  assert.deepEqual(externalPathsForTool(workspace, "read_file", { path: path.join(tempDir, "note.txt") }), []);
+  assert.deepEqual(externalPathsForTool(workspace, "run_command", { command: `cat ${path.join(tempDir, "note.txt")}` }), []);
+  if (process.platform !== "win32") {
+    assert.equal(workspace.isOutside("/tmp/dyworker-temp-path"), false);
+  }
+  const outside = await makeWorkspace({ "x.txt": "x" });
+  const strictWorkspace = new Workspace(root, { trustTempDirs: false });
+  assert.equal(strictWorkspace.isOutside(path.join(outside, "x.txt")), true);
+});
+
 test("工作区内软链接指向外部文件时同样要求授权", async (t) => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "资料.txt": "软链接外部内容" });
   const link = path.join(root, "外部资料.txt");
   if (!(await trySymlink(t, path.join(outside, "资料.txt"), link))) return;
-  const workspace = new Workspace(root);
+  const workspace = new Workspace(root, { trustTempDirs: false });
   assert.deepEqual(externalPathsForTool(workspace, "read_file", { path: "外部资料.txt" }), ["外部资料.txt"]);
   assert.deepEqual(externalPathsForTool(workspace, "run_command", { command: "cat 外部资料.txt" }), ["外部资料.txt"]);
   await assert.rejects(workspace.readFile("外部资料.txt"), /必须先获得用户授权/);
@@ -824,7 +866,7 @@ test("以短横线开头的软链接指向外部文件时同样要求授权", as
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "资料.txt": "短横线软链接外部内容" });
   if (!(await trySymlink(t, path.join(outside, "资料.txt"), path.join(root, "-外部资料")))) return;
-  const workspace = new Workspace(root);
+  const workspace = new Workspace(root, { trustTempDirs: false });
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat -- -外部资料" }),
     ["-外部资料"],
@@ -833,7 +875,7 @@ test("以短横线开头的软链接指向外部文件时同样要求授权", as
 
 test("自动模式也能识别命令中带引号的工作区外路径", async () => {
   const root = await makeWorkspace();
-  const workspace = new Workspace(root);
+  const workspace = new Workspace(root, { trustTempDirs: false });
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: 'wc -l "/media/user/DATA1/资料.txt"' }),
     ["/media/user/DATA1/资料.txt"],
@@ -3208,6 +3250,7 @@ test("审计回调在 阻止/拒绝/批准/规则放行/执行 各路径触发",
   await runAgent({
     settings,
     workspacePath: root,
+    trustTempDirs: false,
     conversation: [{ role: "user", content: "写外部文件" }],
     audit,
     standingRules: [{ kind: "path-glob", tool: "write_file", pattern: "*.txt" }],

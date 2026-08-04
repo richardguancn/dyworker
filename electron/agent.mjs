@@ -199,7 +199,7 @@ export async function loadProjectInstructions(workspacePath, limit = 32 * 1024) 
 }
 
 export class Workspace {
-  constructor(root) {
+  constructor(root, options = {}) {
     this.root = String(root || "").trim();
     if (this.root) {
       const resolvedRoot = path.resolve(this.root);
@@ -208,6 +208,9 @@ export class Workspace {
       })();
     }
     this.externalAuthorizations = new Map();
+    // 系统临时目录视为工作区内（对齐 Codex 沙盒的 :tmpdir / :slash_tmp）：
+    // 办公转换、构建脚本和系统工具频繁读写临时目录，不应每次都要求授权。
+    this.trustedTempRoots = options.trustTempDirs === false ? [] : collectTempRoots();
   }
 
   canonicalPath(relativePath) {
@@ -229,7 +232,9 @@ export class Workspace {
   isOutside(relativePath) {
     if (!this.root) return false;
     const absolute = this.canonicalPath(relativePath);
-    return absolute !== this.root && !absolute.startsWith(this.root + path.sep);
+    if (absolute === this.root || absolute.startsWith(this.root + path.sep)) return false;
+    // 临时目录不是"工作区外"，不触发审批/审核
+    return !this.trustedTempRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep));
   }
 
   authorizeExternalPaths(values) {
@@ -540,6 +545,23 @@ export class Workspace {
       });
     });
   }
+}
+
+function collectTempRoots() {
+  const candidates = [os.tmpdir()];
+  if (process.platform !== "win32") candidates.push("/tmp");
+  const roots = new Set();
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    roots.add(resolved);
+    try {
+      roots.add(realpathSync(resolved));
+    } catch {
+      // 目录不存在时保留解析后的路径即可
+    }
+  }
+  return [...roots];
 }
 
 // ---- 政府办公工具：保密检查与公文格式检查 ----
@@ -2536,10 +2558,11 @@ export async function runAgent({
   hooks = [],
   goal = "",
   standingRules = [],
+  trustTempDirs = true,
   audit = null,
   sleepGuard = null,
 }) {
-  const workspace = new Workspace(workspacePath);
+  const workspace = new Workspace(workspacePath, { trustTempDirs });
   // 本次任务内的自动放行规则：用户点一次「允许执行」后，同一任务里同类操作不再反复询问；
   // 只在本轮任务内存活、不落盘；涉及工作区外路径的授权仍保持单次，不进入这里。
   const sessionRules = [];
@@ -3196,6 +3219,7 @@ export async function runAgent({
                 loop: { enabled: false, iteration: 1, maximum: 1 },
                 approvalMode,
                 standingRules: [...standingRules, ...sessionRules],
+                trustTempDirs,
                 extraTools,
                 onExtraTool,
                 emit: (event) => {
