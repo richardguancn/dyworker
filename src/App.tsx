@@ -4313,6 +4313,9 @@ export function App() {
                   ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
                   : -1;
                 const isEditing = editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index;
+                const hideAssistantActions = message.role === "assistant"
+                  && activeTaskRunning
+                  && index === activeSession.messages.length - 1;
                 return (
                 <div
                   className={`message-row ${message.role}`}
@@ -4410,12 +4413,14 @@ export function App() {
                       })()}
                       {Boolean(message.changes?.length) && <ChangesSummary changes={message.changes!} workspacePath={activeSession.workspacePath || workspacePath} />}
                       {message.content && <InteractiveMessage content={message.content} />}
-                      <div className="message-actions assistant" aria-label="助手消息操作">
-                        <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
-                          <Copy size={16} />
-                        </button>
-                        <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-                      </div>
+                      {!hideAssistantActions && (
+                        <div className="message-actions assistant" aria-label="助手消息操作">
+                          <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
+                            <Copy size={16} />
+                          </button>
+                          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -149,6 +149,8 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(app, /copyMessage/);
   assert.match(app, /className="message-actions user"/);
   assert.match(app, /className="message-actions assistant"/);
+  assert.match(app, /hideAssistantActions/);
+  assert.match(app, /activeTaskRunning[\s\S]*index === activeSession\.messages\.length - 1/);
   assert.match(app, /startMessageEdit/);
   assert.match(app, /setEditingMessage\(null\)/);
   assert.match(app, /activeSession\.messages\.slice\(0, editingMessage\.messageIndex\)/);
