@@ -357,6 +357,7 @@ export interface DyworkerBridge {
   savePinnedWorkspaces(paths: string[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
+  saveClipboardImage(payload: { data: number[]; mimeType: string }): Promise<{ ok: boolean; attachment?: Attachment; error?: string }>;
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;

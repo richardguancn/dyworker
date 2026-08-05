@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
+  saveClipboardImage: (payload) => ipcRenderer.invoke("attachments:save-clipboard-image", payload),
   readLocalImage: (path) => ipcRenderer.invoke("local-image:read", path),
   refreshWorkspace: (path) => ipcRenderer.invoke("workspace:refresh", path),
   readWorkspaceMarkdown: (workspacePath, filePath) => ipcRenderer.invoke("workspace:read-markdown", { workspacePath, filePath }),

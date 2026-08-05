@@ -52,7 +52,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { CSSProperties, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
 import ReactMarkdown from "react-markdown";
@@ -2900,6 +2900,48 @@ export function App() {
     if (file) addWorkspaceFile(file);
   };
 
+  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
+    const image = imageItem?.getAsFile();
+    if (!image) return;
+    event.preventDefault();
+    setError("");
+    if (image.size > 12 * 1024 * 1024) {
+      setError("剪贴板图片超过 12 MB，无法添加");
+      return;
+    }
+    try {
+      const bytes = Array.from(new Uint8Array(await image.arrayBuffer()));
+      let attachment: Attachment | undefined;
+      if (window.dyworker?.saveClipboardImage) {
+        const result = await window.dyworker.saveClipboardImage({ data: bytes, mimeType: image.type || "image/png" });
+        if (!result.ok || !result.attachment) throw new Error(result.error || "剪贴板图片保存失败");
+        attachment = result.attachment;
+      } else {
+        const previewUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("剪贴板图片预览失败"));
+          reader.readAsDataURL(image);
+        });
+        attachment = {
+          name: "剪贴板图片.png",
+          path: `clipboard-preview:${crypto.randomUUID()}`,
+          size: image.size,
+          mimeType: image.type || "image/png",
+          isImage: true,
+          previewUrl,
+        };
+      }
+      setAttachments((current) => current.some((entry) => entry.path === attachment!.path)
+        ? current
+        : [...current, attachment!].slice(0, 12));
+      setNotice("已粘贴剪贴板图片");
+    } catch (pasteError) {
+      setError(`无法添加剪贴板图片：${pasteError instanceof Error ? pasteError.message : String(pasteError)}`);
+    }
+  };
+
   const mentionItems = useMemo((): { id: string; title: string; detail: string; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string }[] => {
     if (!mentionMenu) return [];
     const query = mentionMenu.query.toLowerCase();
@@ -4396,6 +4438,7 @@ export function App() {
               ref={textareaRef}
               value={composer}
               onChange={(event) => updateComposer(event.target.value)}
+              onPaste={(event) => void handleComposerPaste(event)}
               onKeyDown={onComposerKeyDown}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => { composingRef.current = false; }}

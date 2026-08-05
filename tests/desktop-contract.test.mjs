@@ -20,12 +20,21 @@ const styles = readSource(new URL("../src/styles.css", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
 test("desktop controls are connected across renderer, preload, and main process", () => {
-  for (const action of ["chooseAttachments", "transcribeAudio"]) {
+  for (const action of ["chooseAttachments", "saveClipboardImage", "transcribeAudio"]) {
     assert.match(app, new RegExp(`dyworker\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
   assert.match(main, /ipcMain\.handle\("attachments:choose"/);
+  assert.match(main, /ipcMain\.handle\("attachments:save-clipboard-image"/);
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
+});
+
+test("消息框可以把剪贴板图片加入待发送附件", () => {
+  assert.match(app, /onPaste=\{\(event\) => void handleComposerPaste\(event\)\}/);
+  assert.match(app, /getAsFile\(\)/);
+  assert.match(app, /已粘贴剪贴板图片/);
+  assert.match(preload, /saveClipboardImage: \(payload\)/);
+  assert.match(styles, /\.attachment-preview-image/);
 });
 
 test("首次启动必须选择身份,并可在设置中重新选择", () => {

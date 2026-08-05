@@ -15,6 +15,7 @@ import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, e
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
+import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
 
@@ -658,6 +659,15 @@ ipcMain.handle("attachments:choose", async () => {
     }
   }
   return { canceled: false, attachments };
+});
+ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取剪贴板图片" };
+  try {
+    const saved = await saveClipboardImage(payload, path.join(app.getPath("userData"), "clipboard-images"));
+    return { ok: true, attachment: await describeAttachment(saved.filePath) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
