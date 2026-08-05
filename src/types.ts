@@ -108,6 +108,7 @@ export interface AgentResult {
   changes?: FileChange[];
   plan?: PlanStep[];
   memories?: Array<Omit<MemoryItem, "id" | "createdAt" | "workspacePath">>;
+  workingContext?: string;
 }
 
 export interface DebugLogEntry {
@@ -188,6 +189,7 @@ export interface ChatMessage {
   plan?: PlanStep[];
   durationMs?: number;
   taskStatus?: AgentResult["status"];
+  workingContext?: string;
 }
 
 export interface SessionRecord {
@@ -196,6 +198,8 @@ export interface SessionRecord {
   workspacePath: string;
   // /goal 设定的长期目标：跨轮持续驱动，注入之后每个任务的系统提示
   goal?: string;
+  // 上一轮实际读取和操作得到的工作资料，作为下一轮的隐藏上下文保存
+  workingContext?: string;
   // 来源渠道(QQ/微信消息驱动的会话),用于列表标识
   channel?: "qq" | "wechat";
   createdAt: string;
@@ -374,6 +378,7 @@ export interface DyworkerBridge {
     workspacePath: string;
     contextLimit?: number;
     goal?: string;
+    workingContext?: string;
     messages: ChatMessage[];
     loop?: { enabled: boolean; maximum: number };
     approvalMode?: ApprovalMode;

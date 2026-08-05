@@ -1200,6 +1200,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
         settings,
         workspacePath,
         contextLimit: Math.max(30000, Number(payload?.contextLimit) || 128000),
+        workingContext: String(payload?.workingContext || ""),
         hooks: await readHooks(workspacePath),
         goal: String(payload?.goal || "").trim().slice(0, 500),
         conversation: iterationMessages,
@@ -1724,6 +1725,17 @@ async function visibleConversationForSession(sessionId, fallbackPrompt, fallback
   return fallback;
 }
 
+async function workingContextForSession(sessionId) {
+  const sessions = await readJson(dataFile("sessions.json"), []);
+  const session = Array.isArray(sessions) ? sessions.find((item) => String(item?.id) === String(sessionId)) : null;
+  if (!session) return "";
+  const messageContext = [...(session.messages || [])]
+    .reverse()
+    .find((message) => Object.prototype.hasOwnProperty.call(message || {}, "workingContext"))
+    ?.workingContext;
+  return String(session.workingContext ?? messageContext ?? "").trim();
+}
+
 async function resumeWake(wake) {
   runningScheduledTask = true;
   trackTaskStart();
@@ -1735,6 +1747,7 @@ async function resumeWake(wake) {
     }
     routeExtraTool = createExtraToolRouter(settings, wake.workspacePath);
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
+    const workingContext = await workingContextForSession(wake.sessionId);
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector();
@@ -1743,6 +1756,7 @@ async function resumeWake(wake) {
       settings,
       workspacePath: wake.workspacePath,
       hooks: await readHooks(wake.workspacePath),
+      workingContext,
       conversation: [...prior, { role: "user", content: wakeText }],
       memories: await readMemories(),
       memoryReviewDue: true,
@@ -1874,6 +1888,7 @@ function createTranscriptCollector() {
           durationMs: Date.now() - startedAt,
           ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
           ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
+          ...(result?.workingContext ? { workingContext: result.workingContext } : {}),
         },
       ];
     },
@@ -2145,11 +2160,13 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
     const collector = createTranscriptCollector();
     const prior = await visibleConversationForSession(sessionId, "", "");
+    const workingContext = await workingContextForSession(sessionId);
     await reply("收到,正在处理…").catch(() => { });
     const result = await runAgent({
       settings: taskSettings,
       workspacePath,
       hooks: await readHooks(workspacePath),
+      workingContext,
       conversation: [...prior, { role: "user", content: userText }],
       memories: await readMemories(),
       memoryReviewDue: true,

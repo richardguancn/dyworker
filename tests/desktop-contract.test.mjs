@@ -10,6 +10,7 @@ const app = readSource(new URL("../src/App.tsx", import.meta.url));
 const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
+const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
 const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
@@ -92,6 +93,14 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(app, /shouldScrollToBottomRef\.current !== activeId/);
   assert.match(app, /sessionNotices\[activeSession\.id\]/);
   assert.match(app, /sessionErrors\[activeSession\.id\]/);
+});
+
+test("多轮任务会保存并传递上一轮工作记录", () => {
+  assert.match(app, /workingContext/);
+  assert.match(app, /workingContext: updatedSession\.workingContext/);
+  assert.match(main, /workingContext: String\(payload\?\.workingContext \|\| ""\)/);
+  assert.match(agent, /前几轮已经完成的工作记录/);
+  assert.match(agent, /buildWorkingContext/);
 });
 
 test("opening a conversation starts at the latest message", () => {

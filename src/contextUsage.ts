@@ -24,8 +24,9 @@ export function estimateTextTokens(text: string) {
   return cjk + Math.ceil((text.length - cjk) / 4);
 }
 
-export function estimateSessionTokens(messages: MessageLike[]) {
+export function estimateSessionTokens(messages: MessageLike[], workingContext = "") {
   let tokens = 3;
+  tokens += estimateTextTokens(String(workingContext || ""));
   for (const message of messages || []) {
     tokens += 4 + estimateTextTokens(String(message.content || ""));
     for (const attachment of message.attachments || []) {

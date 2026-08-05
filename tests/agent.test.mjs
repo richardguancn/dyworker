@@ -2604,6 +2604,51 @@ test("debug-log 事件记录模型请求/响应与工具调用细节", async () 
   assert.match(toolResult.content, /内容一/);
 });
 
+test("多轮任务保留上一轮文件读取结果，下一轮无需重新读取", async () => {
+  const root = await makeWorkspace({ "a.txt": "内容一" });
+  const calls = [];
+  const firstToolCall = toolCall("c1", "read_file", { path: "a.txt" });
+  const fetchImpl = mockFetch([
+    { role: "assistant", content: null, tool_calls: [firstToolCall] },
+    { role: "assistant", content: "第一轮已读取文件。" },
+    { role: "assistant", content: "第二轮直接根据已读取内容继续。" },
+  ], calls);
+
+  const first = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "读取 a.txt" }],
+    fetchImpl,
+  });
+  assert.match(first.workingContext || "", /读取 a\.txt/);
+  assert.match(first.workingContext || "", /内容一/);
+
+  const second = await runAgent({
+    settings,
+    workspacePath: root,
+    workingContext: first.workingContext,
+    conversation: [
+      { role: "user", content: "读取 a.txt" },
+      { role: "assistant", content: "第一轮已读取文件。" },
+      { role: "user", content: "根据刚才的文件继续" },
+    ],
+    fetchImpl,
+  });
+  assert.equal(second.finalText, "第二轮直接根据已读取内容继续。");
+  assert.equal(calls[2].messages.some((message) => message.role === "tool"), false);
+  assert.ok(calls[2].messages.some((message) => String(message.content).includes("内容一")), "第二轮请求应带上上一轮读取内容");
+
+  await runAgent({
+    settings,
+    workspacePath: root,
+    workingContext: "x".repeat(100_000),
+    conversation: [{ role: "user", content: "继续" }],
+    fetchImpl,
+  });
+  const carriedContext = calls[3].messages.find((message) => String(message.content).includes("前几轮已经完成的工作记录"));
+  assert.ok(carriedContext && carriedContext.content.length < 50_000, "跨轮工作记录应在传递前收缩");
+});
+
 function sseResponse(chunks) {
   const text = chunks.map((chunk) => `data: ${typeof chunk === "string" ? chunk : JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
   const encoded = new TextEncoder().encode(text);

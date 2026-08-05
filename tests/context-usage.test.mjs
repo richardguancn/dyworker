@@ -30,3 +30,7 @@ test("会话回退估算使用文本四字符一标记并区分图片", () => {
   ]);
   assert.equal(used, 4 + 3 + 100 + 1024 + 3);
 });
+
+test("会话回退估算包含隐藏的跨轮工作记录", () => {
+  assert.equal(estimateSessionTokens([], "已读取文件内容"), 3 + 7);
+});

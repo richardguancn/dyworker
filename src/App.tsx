@@ -315,6 +315,11 @@ function conversationTurnPreview(messages: ChatMessage[], messageIndex: number) 
   };
 }
 
+function latestWorkingContext(messages: ChatMessage[]): string | undefined {
+  const message = [...messages].reverse().find((item) => Object.prototype.hasOwnProperty.call(item, "workingContext"));
+  return message ? message.workingContext : undefined;
+}
+
 function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
   const isImage = /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name);
   return {
@@ -2590,7 +2595,8 @@ export function App() {
       void window.dyworker?.listMemories?.().then(setMemories);
     });
     const offPrepend = window.dyworker?.onSessionPrepend?.((session) => {
-      setSessions((current) => [session, ...current]);
+      const workingContext = session.workingContext ?? latestWorkingContext(session.messages);
+      setSessions((current) => [{ ...session, ...(workingContext !== undefined ? { workingContext } : {}) }, ...current]);
       setNotice(session.channel
         ? `收到${session.channel === "qq" ? "QQ" : "微信"}消息，渠道会话已建立`
         : "定时计划已执行，结果已保存到最近任务");
@@ -2598,9 +2604,15 @@ export function App() {
     const offAppend = window.dyworker?.onSessionAppend?.((payload) => {
       setSessions((current) => {
         const existing = current.find((session) => session.id === payload.sessionId);
+        const workingContext = latestWorkingContext(payload.messages);
         if (existing) {
           return current.map((session) => session.id === payload.sessionId
-            ? { ...session, messages: [...session.messages, ...payload.messages], updatedAt: new Date().toISOString() }
+            ? {
+                ...session,
+                ...(workingContext !== undefined ? { workingContext } : {}),
+                messages: [...session.messages, ...payload.messages],
+                updatedAt: new Date().toISOString(),
+              }
             : session);
         }
         const now = new Date().toISOString();
@@ -2609,6 +2621,7 @@ export function App() {
           title: payload.channel ? `${payload.channel === "qq" ? "QQ" : "微信"}消息` : "到点自动唤醒续跑",
           workspacePath: payload.workspacePath,
           ...(payload.channel ? { channel: payload.channel } : {}),
+          ...(workingContext !== undefined ? { workingContext } : {}),
           createdAt: now,
           updatedAt: now,
           messages: payload.messages,
@@ -3365,6 +3378,7 @@ export function App() {
     const updatedSession: SessionRecord = {
       ...activeSession,
       ...(goalDriven ? { goal: content } : {}),
+      ...(editingTarget ? { workingContext: undefined } : {}),
       title: baseMessages.length === 0 ? shortTitle(content) : activeSession.title,
       workspacePath,
       updatedAt: new Date().toISOString(),
@@ -3411,8 +3425,19 @@ export function App() {
             const completedPlan = result.status === "done" && plan?.length
               ? plan.map((step) => ({ ...step, status: "completed" as const }))
               : plan;
-            return { ...current, content, changes: result.changes?.length ? result.changes : current.changes, plan: completedPlan, durationMs: Date.now() - taskStartedAt, taskStatus: result.status };
+            return {
+              ...current,
+              content,
+              changes: result.changes?.length ? result.changes : current.changes,
+              plan: completedPlan,
+              durationMs: Date.now() - taskStartedAt,
+              taskStatus: result.status,
+              ...(result.workingContext !== undefined ? { workingContext: result.workingContext } : {}),
+            };
           });
+          if (result.workingContext !== undefined) {
+            updateSession(activeSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
+          }
           if (result.status === "done" && !result.demo) {
             showSessionNotice(taskSessionId, "任务已完成");
           } else if (result.status === "sleeping" && result.wake) {
@@ -3495,6 +3520,7 @@ export function App() {
             workspacePath,
             sessionId: updatedSession.id,
             contextLimit: modelContextLimit(settings.model, settings.endpoint),
+            workingContext: updatedSession.workingContext,
             goal: updatedSession.goal,
             messages: updatedSession.messages,
             loop: { enabled: goalDriven, maximum: goalDriven ? 10 : 1 },
@@ -3693,10 +3719,11 @@ export function App() {
         exact: Boolean(activeSession.contextTokensExact),
       };
     }
-    const tokens = estimateSessionTokens(activeSession?.messages || []);
+    const tokens = estimateSessionTokens(activeSession?.messages || [], activeSession?.workingContext || "");
     return { used: tokens, limit: modelContextLimit(settings.model, settings.endpoint), exact: false };
   }, [
     activeSession?.messages,
+    activeSession?.workingContext,
     activeSession?.contextTokens,
     activeSession?.contextTokensExact,
     activeSession?.contextModel,
