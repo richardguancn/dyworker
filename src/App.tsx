@@ -876,11 +876,22 @@ function SkillsPanel({
   onRefresh: () => void;
   onOpen: (skill: SkillRecord) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const filteredItems = useMemo(() => {
+    const text = query.trim().toLowerCase();
+    if (!text) return items;
+    return items.filter((skill) => [skill.name, skill.description, skill.path, skill.sourceLabel]
+      .some((value) => String(value || "").toLowerCase().includes(text)));
+  }, [items, query]);
+
   return (
     <div className="skills-panel">
-      <div className="skill-management-head">
+      <div className="skill-management-head skill-management-head-enhanced">
         <div>
-          <strong>已发现 {items.length} 个技能</strong>
+          <div className="skill-management-title">
+            <strong>已安装技能</strong>
+            <span className="skill-count-badge">{items.length}</span>
+          </div>
           <small>自动读取用户目录与当前工作区中的 SKILL.md</small>
         </div>
         <button type="button" className="button-secondary" onClick={onRefresh}>
@@ -888,11 +899,42 @@ function SkillsPanel({
           刷新技能
         </button>
       </div>
+      <div className="skill-search-field">
+        <Search size={14} />
+        <input
+          value={query}
+          aria-label="搜索已安装技能"
+          placeholder="搜索名称、用途或路径"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {query && (
+          <button type="button" className="skill-search-clear" onClick={() => setQuery("")} aria-label="清除技能搜索">
+            <X size={13} />
+          </button>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="skill-list-summary">
+          <span>{query.trim() ? `找到 ${filteredItems.length} 个技能` : `共 ${items.length} 个技能`}</span>
+          <span>{items.filter((skill) => skill.enabled).length} 个已启用</span>
+        </div>
+      )}
       {!items.length ? (
-        <p className="panel-empty">还没有发现技能。可放在 ~/.agents/skills、~/.agent/skills、~/.codex/skills，或当前工作区对应的技能目录中。</p>
+        <div className="skill-empty-state">
+          <FileCode2 size={18} />
+          <strong>还没有发现技能</strong>
+          <p>可放在 ~/.agents/skills、~/.agent/skills、~/.codex/skills，或当前工作区对应的技能目录中。</p>
+        </div>
+      ) : !filteredItems.length ? (
+        <div className="skill-empty-state">
+          <Search size={18} />
+          <strong>没有匹配的技能</strong>
+          <p>换个名称、用途关键词，或清除搜索条件。</p>
+          <button type="button" className="button-secondary" onClick={() => setQuery("")}>清除搜索</button>
+        </div>
       ) : (
-        <div className="panel-list">
-          {items.map((skill) => (
+        <div className="panel-list skill-list">
+          {filteredItems.map((skill) => (
             <div className={`skill-item ${skill.enabled ? "" : "disabled"}`} key={skill.id}>
               <div className="skill-item-head">
                 <div className="skill-name-block">
@@ -938,18 +980,8 @@ function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
   const [installingSlug, setInstallingSlug] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const saveLibraries = async (next: SkillLibraryConfig[], message: string) => {
-    setSaving(true);
-    try {
-      await onSave({ ...value, skillLibraries: next }, message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const search = async () => {
-    const text = query.trim();
-    if (!text) return;
+  const search = async (nextQuery = query) => {
+    const text = nextQuery.trim();
     setSearching(true);
     setWarnings([]);
     try {
@@ -966,6 +998,19 @@ function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
       setWarnings([error instanceof Error ? error.message : String(error)]);
     } finally {
       setSearching(false);
+    }
+  };
+
+  useEffect(() => {
+    void search("");
+  }, []);
+
+  const saveLibraries = async (next: SkillLibraryConfig[], message: string) => {
+    setSaving(true);
+    try {
+      await onSave({ ...value, skillLibraries: next }, message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -989,9 +1034,15 @@ function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
 
   return (
     <div className="skill-libraries-panel">
+      <div className="skill-library-intro">
+        <div>
+          <span className="dialog-kicker">资源中心</span>
+          <h3>发现新技能</h3>
+        </div>
+        <p>从技能库查找可复用能力，安装后会出现在“技能”列表中。</p>
+      </div>
       <div className="dialog-section-title">技能库来源</div>
-      <p className="dialog-note">技能库负责搜索和安装，安装后的内容仍由本机“技能”列表统一管理。来源配置按列表设计，后续可继续接入内部或其他技能库。</p>
-      <div className="panel-list">
+      <div className="panel-list skill-library-list">
         {libraries.map((library) => (
           <div className={`skill-library-row ${library.enabled ? "" : "disabled"}`} key={library.id}>
             <label className="skill-switch" title={library.enabled ? "点击停用" : "点击启用"}>
@@ -1005,7 +1056,7 @@ function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
                 )}
               />
             </label>
-            <span className="mcp-server-name">
+            <span className="mcp-server-name skill-library-name">
               <strong>{library.name}</strong>
               <small>{library.description || "未填写说明"}</small>
             </span>
@@ -1017,41 +1068,69 @@ function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
       <div className="dialog-section-title">搜索并安装</div>
       <p className="dialog-note">当前接入 SkillHub。需要先在本机安装 SkillHub CLI；安装时会写入用户技能目录，DYWorker 刷新后即可识别。</p>
       <div className="skill-library-search-form">
-        <input
-          value={query}
-          placeholder="搜索技能名称或用途，例如：PDF、网页自动化"
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              void search();
-            }
-          }}
-        />
-        <button type="button" className="button-secondary" onClick={() => void search()} disabled={searching || !query.trim()}>
+        <div className="skill-search-field">
+          <Search size={14} />
+          <input
+            value={query}
+            aria-label="搜索技能库"
+            placeholder="搜索技能名称或用途，例如：PDF、网页自动化"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void search();
+              }
+            }}
+          />
+          {query && (
+            <button type="button" className="skill-search-clear" onClick={() => { setQuery(""); void search(""); }} aria-label="清除技能库搜索">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <button type="button" className="button-secondary" onClick={() => void search()} disabled={searching}>
           {searching ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />}
           搜索
         </button>
       </div>
       {warnings.map((warning) => <p className="skill-library-message" key={warning}>{warning}</p>)}
+      <div className="skill-library-results-head">
+        <div>
+          <strong>{query.trim() ? "搜索结果" : "技能列表"}</strong>
+          <small>{searching ? "正在加载…" : results.length ? `显示 ${results.length} 个，可直接安装` : "暂时没有可显示的技能"}</small>
+        </div>
+        <button type="button" className="icon-button subtle tiny" onClick={() => void search()} disabled={searching} aria-label="刷新技能列表" title="刷新技能列表">
+          <RefreshCw size={13} className={searching ? "spin" : ""} />
+        </button>
+      </div>
       {results.length ? (
         <div className="skill-library-results">
           {results.map((result) => {
             const installing = installingSlug === `${result.libraryId}:${result.slug}`;
             return (
               <div className="skill-library-result" key={`${result.libraryId}:${result.slug}`}>
-                <div>
-                  <strong>{result.name}</strong>
-                  <small>{result.libraryName} · {result.slug}{result.version ? ` · ${result.version}` : ""}</small>
+                <div className="skill-library-result-mark"><Sparkles size={15} /></div>
+                <div className="skill-library-result-main">
+                  <div className="skill-library-result-title">
+                    <strong>{result.name}</strong>
+                    <span>{result.libraryName}</span>
+                  </div>
+                  <small>{result.slug}{result.version ? ` · ${result.version}` : ""}</small>
+                  {result.description && <p>{result.description}</p>}
                 </div>
                 <button type="button" className="button-secondary" onClick={() => void install(result)} disabled={Boolean(installingSlug)}>
                   {installing ? <LoaderCircle size={13} className="spin" /> : <Plus size={13} />}
                   {installing ? "安装中…" : "安装"}
                 </button>
-                {result.description && <p>{result.description}</p>}
               </div>
             );
           })}
+        </div>
+      ) : !searching ? (
+        <div className="skill-library-empty">
+          <Sparkles size={18} />
+          <strong>{query.trim() ? "没有找到匹配技能" : "暂时没有技能列表"}</strong>
+          <p>{query.trim() ? "换个关键词再试试。" : "请确认 SkillHub CLI 已安装，并检查网络连接。"}</p>
         </div>
       ) : null}
     </div>

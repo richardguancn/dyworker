@@ -54,6 +54,33 @@ test("搜索会通过 SkillHub CLI 返回统一结果，并标记来源", async 
   }]);
 });
 
+test("空搜索会加载技能列表，并限制展示数量", async () => {
+  let received;
+  const response = await searchSkillLibraries([DEFAULT_SKILL_LIBRARIES[0]], "", {
+    limit: 2,
+    execFileImpl: async (command, args) => {
+      received = { command, args };
+      return {
+        stdout: JSON.stringify({
+          results: [
+            { slug: "one", name: "第一个技能" },
+            { slug: "two", name: "第二个技能" },
+            { slug: "three", name: "第三个技能" },
+          ],
+        }),
+        stderr: "",
+      };
+    },
+  });
+
+  assert.deepEqual(received, {
+    command: "skillhub",
+    args: ["--skip-self-upgrade", "search", "--json", "--search-url", "https://api.skillhub.cn/api/v1/search", "*"],
+  });
+  assert.deepEqual(response.results.map((item) => item.slug), ["one", "two"]);
+  assert.equal(response.warnings.length, 0);
+});
+
 test("搜索失败时返回对应技能库的提示", async () => {
   const response = await searchSkillLibraries([DEFAULT_SKILL_LIBRARIES[0]], "合同", {
     execFileImpl: async () => {

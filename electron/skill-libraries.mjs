@@ -68,7 +68,8 @@ function skillHubCommandArgs(action, library, value) {
   if (library.id !== "skillhub") throw new Error(`暂不支持技能库：${library.id}`);
   const searchUrl = stringValue(library.searchUrl);
   if (action === "search") {
-    return ["--skip-self-upgrade", "search", "--json", ...(searchUrl ? ["--search-url", searchUrl] : []), value];
+    const args = ["--skip-self-upgrade", "search", "--json", ...(searchUrl ? ["--search-url", searchUrl] : [])];
+    return [...args, stringValue(value, "*")];
   }
   if (action === "install") {
     return ["--skip-self-upgrade", "install", value, "--dir", skillLibraryInstallRoot({ homeDir: library.homeDir }), ...(searchUrl ? ["--search-url", searchUrl] : []), "--json"];
@@ -144,9 +145,9 @@ function activeLibraries(value) {
 
 export async function searchSkillLibraries(value, query, options = {}) {
   const text = stringValue(query);
-  if (!text) return { results: [], warnings: ["请输入搜索内容"] };
   const libraries = activeLibraries(value);
   if (!libraries.length) return { results: [], warnings: ["没有启用的技能库"] };
+  const resultLimit = Math.min(50, Math.max(1, Number(options.limit) || 24));
   const settled = await Promise.allSettled(libraries.map(async (library) => {
     const { stdout } = await runSkillHubCommand(
       skillHubCommandArgs("search", library, text),
@@ -163,7 +164,7 @@ export async function searchSkillLibraries(value, query, options = {}) {
     if (outcome.status === "fulfilled") results.push(...outcome.value);
     else warnings.push(`${libraries[index].name}：${outcome.reason?.message || "搜索失败"}`);
   });
-  return { results, warnings };
+  return { results: results.slice(0, resultLimit), warnings };
 }
 
 export async function installSkillFromLibrary(value, libraryId, slug, options = {}) {

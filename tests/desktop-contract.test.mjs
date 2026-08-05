@@ -304,6 +304,9 @@ test("Codex skills are refreshed for the active workspace and managed in setting
   assert.match(app, /label: "技能"/);
   assert.match(app, /skill-source-badge/);
   assert.match(app, /刷新技能/);
+  assert.match(app, /搜索已安装技能/);
+  assert.match(app, /没有匹配的技能/);
+  assert.match(styles, /\.skill-search-field/);
   assert.doesNotMatch(app, /\[\.\.\.commands, \.\.\.skills\]\.slice/);
   assert.match(main, /readSkills\(workspacePath\)/);
 });
@@ -317,6 +320,9 @@ test("技能库设置贯通配置、主进程和渲染端", () => {
   assert.match(main, /ipcMain\.handle\("skill-libraries:install"/);
   assert.match(app, /label: "技能库"/);
   assert.match(app, /searchSkillLibraries\(text\)/);
+  assert.match(app, /search\(""\)/);
+  assert.match(app, /技能列表/);
+  assert.match(app, /没有找到匹配技能/);
   assert.match(app, /installSkillFromLibrary\(\{ libraryId: result\.libraryId, slug: result\.slug \}\)/);
 });
 
