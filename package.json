@@ -26,13 +26,14 @@
     "test:agent": "node --test tests/agent.test.mjs",
     "test:channels": "node --test tests/channels.test.mjs",
     "test:memory": "node --test tests/memory.test.mjs",
-    "package": "npm run verify && electron-builder --dir",
-    "package:mac": "npm run verify && electron-builder --mac dir",
-    "package:linux:arm64": "npm run verify && electron-builder --linux deb --arm64",
-    "package:windows:x64": "npm run verify && electron-builder --win --x64",
+    "package": "npm run verify && electron-builder --dir --publish never",
+    "package:mac": "npm run verify && electron-builder --mac dmg zip --publish never",
+    "package:linux:arm64": "npm run verify && electron-builder --linux AppImage deb --arm64 --publish never",
+    "package:windows:x64": "npm run verify && electron-builder --win --x64 --publish never",
     "preview": "vite preview"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "lucide-react": "^0.468.0",
     "qrcode": "^1.5.4",
     "react": "19.2.0",
@@ -105,6 +106,13 @@
     },
     "deb": {
       "artifactName": "dyworker-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "richardguancn",
+      "repo": "dyworker",
+      "releaseType": "release",
+      "tagNamePrefix": "v"
     }
   }
 }

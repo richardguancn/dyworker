@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("browser:panel-request", listener);
   },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  getAppUpdateStatus: () => ipcRenderer.invoke("app-update:status"),
+  checkForAppUpdate: () => ipcRenderer.invoke("app-update:check"),
+  downloadAppUpdate: () => ipcRenderer.invoke("app-update:download"),
+  installAppUpdate: () => ipcRenderer.invoke("app-update:install"),
+  onAppUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("app-update:status", listener);
+    return () => ipcRenderer.removeListener("app-update:status", listener);
+  },
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),
   resolveApproval: (sessionId, actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { sessionId, actionId, approved }),

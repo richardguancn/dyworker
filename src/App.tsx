@@ -57,7 +57,7 @@ import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./
 import { InteractiveMessage } from "./InteractiveMessage";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
 const now = new Date().toISOString();
@@ -1485,6 +1485,73 @@ function IdentitySettingsPanel({ value, onSave }: {
   );
 }
 
+function AppUpdateDialog({
+  status,
+  onClose,
+  onCheck,
+  onDownload,
+  onInstall,
+}: {
+  status: AppUpdateStatus;
+  onClose: () => void;
+  onCheck: () => void;
+  onDownload: () => void;
+  onInstall: () => void;
+}) {
+  const isChecking = status.state === "checking";
+  const isDownloading = status.state === "downloading";
+  const progress = Math.round(Math.max(0, Math.min(100, status.percent || 0)));
+  const title = status.state === "available"
+    ? "发现新版本"
+    : status.state === "downloaded"
+      ? "更新已准备好"
+      : status.state === "downloading"
+        ? "正在下载更新"
+        : status.state === "error"
+          ? "更新检查失败"
+          : "应用更新";
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div className="app-update-dialog" role="dialog" aria-modal="true" aria-labelledby="app-update-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="dialog-header">
+          <div>
+            <span className="dialog-kicker">DYWorker</span>
+            <h2 id="app-update-title">{title}</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭更新提示">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="app-update-version">当前版本 {status.currentVersion || "未知"}{status.version ? ` · 新版本 ${status.version}` : ""}</p>
+        {status.state === "available" && (
+          <p className="app-update-copy">GitHub 已发布新版本，下载完成后重启应用即可完成更新。</p>
+        )}
+        {isChecking && <p className="app-update-copy">正在检查 GitHub 标签对应的最新版本，请稍候。</p>}
+        {isDownloading && (
+          <div className="app-update-progress" aria-label={`下载进度 ${progress}%`}>
+            <div className="app-update-progress-track"><span style={{ width: `${progress}%` }} /></div>
+            <span>{progress}%</span>
+          </div>
+        )}
+        {status.state === "downloaded" && <p className="app-update-copy">更新文件已下载完成，现在重启应用即可安装。</p>}
+        {status.state === "not-available" && <p className="app-update-copy">当前已经是最新版本。</p>}
+        {status.state === "unavailable" && <p className="app-update-copy">开发环境或当前安装方式暂不检查更新。</p>}
+        {status.state === "error" && <p className="app-update-copy error-text">{status.error || "暂时无法连接 GitHub，请稍后重试。"}</p>}
+        <div className="dialog-actions app-update-actions">
+          <button type="button" className="button-secondary" onClick={onClose}>稍后</button>
+          {status.state === "available" && <button type="button" className="button-primary" onClick={onDownload}>下载更新</button>}
+          {status.state === "downloaded" && <button type="button" className="button-primary" onClick={onInstall}>重启并安装</button>}
+          {(status.state === "not-available" || status.state === "error" || status.state === "unavailable") && (
+            <button type="button" className="button-primary" onClick={onCheck} disabled={isChecking}>重新检查</button>
+          )}
+          {(isChecking || isDownloading) && <button type="button" className="button-primary" disabled><LoaderCircle size={14} className="spin" />处理中</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "identity" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
@@ -2349,6 +2416,8 @@ export function App() {
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const [usageStatsOpen, setUsageStatsOpen] = useState(false);
   const [usageStats, setUsageStats] = useState<UsageRecord[] | null>(null);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: "idle", currentVersion: "" });
+  const [appUpdateDialogOpen, setAppUpdateDialogOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
@@ -2588,6 +2657,17 @@ export function App() {
     if ((!usageStatsOpen && !(settingsOpen && settingsTab === "usage")) || !window.dyworker) return;
     void window.dyworker.listUsageStats().then(setUsageStats);
   }, [usageStatsOpen, settingsOpen, settingsTab]);
+
+  useEffect(() => {
+    const updater = window.dyworker;
+    if (!updater?.onAppUpdateStatus) return;
+    const offUpdate = updater.onAppUpdateStatus((status) => {
+      setAppUpdate(status);
+      if (status.state === "available" || status.state === "downloaded") setAppUpdateDialogOpen(true);
+    });
+    void updater.getAppUpdateStatus().then(setAppUpdate);
+    return () => offUpdate?.();
+  }, []);
 
   useEffect(() => {
     const offSchedules = window.dyworker?.onSchedulesChanged?.(() => {
@@ -3647,6 +3727,33 @@ export function App() {
     }
   };
 
+  const checkAppUpdate = async () => {
+    setAppUpdateDialogOpen(true);
+    try {
+      const result = await window.dyworker?.checkForAppUpdate();
+      if (result && !result.ok && result.error) setNotice(result.error);
+    } catch (updateError) {
+      setNotice(updateError instanceof Error ? updateError.message : String(updateError));
+    }
+  };
+
+  const openAppUpdateDialog = () => {
+    setAppUpdateDialogOpen(true);
+    if (["idle", "not-available", "error", "unavailable"].includes(appUpdate.state)) void checkAppUpdate();
+  };
+
+  const downloadAppUpdate = () => {
+    void window.dyworker?.downloadAppUpdate().then((result) => {
+      if (!result.ok && result.error) setNotice(result.error);
+    });
+  };
+
+  const installAppUpdate = () => {
+    void window.dyworker?.installAppUpdate().then((result) => {
+      if (!result.ok && result.error) setNotice(result.error);
+    });
+  };
+
   const chooseIdentity = (identity: UserIdentity) =>
     saveProviderSettings({ ...settings, identity }, "身份设置已保存");
 
@@ -4095,6 +4202,17 @@ export function App() {
             {taskMenu}
           </div>
           <div className="topbar-right no-drag">
+            <button
+              className={`icon-button subtle app-update-button ${appUpdate.state === "available" || appUpdate.state === "downloaded" ? "ready" : ""}`}
+              aria-label="检查应用更新"
+              title={appUpdate.state === "available" ? `发现新版本 ${appUpdate.version || ""}` : appUpdate.state === "downloaded" ? "更新已下载，点击安装" : "检查应用更新"}
+              onClick={openAppUpdateDialog}
+            >
+              {appUpdate.state === "checking" || appUpdate.state === "downloading"
+                ? <LoaderCircle size={17} className="spin" />
+                : <RefreshCw size={17} />}
+              {(appUpdate.state === "available" || appUpdate.state === "downloaded") && <span className="inbox-badge">!</span>}
+            </button>
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="审批收件箱"
@@ -4853,6 +4971,15 @@ export function App() {
           tab={settingsTab}
           onTabChange={setSettingsTab}
           planSeed={planSeed}
+        />
+      )}
+      {appUpdateDialogOpen && (
+        <AppUpdateDialog
+          status={appUpdate}
+          onClose={() => setAppUpdateDialogOpen(false)}
+          onCheck={() => void checkAppUpdate()}
+          onDownload={downloadAppUpdate}
+          onInstall={installAppUpdate}
         />
       )}
       {usageStatsOpen && (

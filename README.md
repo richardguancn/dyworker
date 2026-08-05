@@ -104,15 +104,21 @@ npm run dev
 | 平台 | 命令 | 产物 |
 | --- | --- | --- |
 | Windows x64 | `npm run package:windows:x64` | setup.exe（按当前用户安装，免管理员权限） |
-| macOS | `npm run package:mac` | 应用目录（当前架构） |
-| Linux ARM64 / 麒麟 V10 | `npm run package:linux:arm64` | `.deb` 安装包 |
+| macOS | `npm run package:mac` | `.dmg` + `.zip`（当前架构） |
+| Linux ARM64 / 麒麟 V10 | `npm run package:linux:arm64` | `.AppImage` + `.deb` |
 
 产物统一位于 `output/electron/`。
 
 - **Windows**：推荐在 Windows 10/11 的 PowerShell 中执行 `npm ci && npm run package:windows:x64`。未签名的安装程序可能触发 SmartScreen 提示，正式公开发布时建议配置 Windows 代码签名证书后再打包（证书和密码不要写入仓库）。
-- **macOS**：`npm run package:mac` 使用当前 Mac 的处理器架构生成未压缩应用目录。
-- **Linux ARM64 / 麒麟 V10**：`npm run package:linux:arm64` 生成 `.deb` 安装包。桌面操控建议使用 X11 会话；Wayland 下应用会提示切换。首次使用时可在应用中执行"检查并安装本机操控环境"，按提示安装缺少的系统组件。
+- **macOS**：`npm run package:mac` 使用当前 Mac 的处理器架构生成 `.dmg` 和 `.zip`。正式发布并自动更新时需要使用有效的 Apple 签名。
+- **Linux ARM64 / 麒麟 V10**：`npm run package:linux:arm64` 生成 `.AppImage` 和 `.deb` 安装包。桌面操控建议使用 X11 会话；Wayland 下应用会提示切换。首次使用时可在应用中执行"检查并安装本机操控环境"，按提示安装缺少的系统组件。
 - 最可靠的发布方式是在对应系统上打包：Windows 包在 Windows 上生成，macOS 包在 macOS 上生成，Linux 包在 Linux 上生成。
+
+### GitHub 标签发布与自动更新
+
+应用会在启动后自动检查 GitHub Releases，并以发布标签作为版本依据。发布时必须让标签和 `package.json` 版本一致：例如版本是 `0.1.17`，标签必须是 `v0.1.17`。推送 `v*` 标签后，GitHub Actions 会生成各平台安装包并发布到该标签对应的 Release；已安装的应用发现新版本后会提示下载并重启安装。
+
+正式发布请使用 GitHub Actions，并为 macOS 配置签名相关密钥；未签名的 macOS 应用不能完成自动更新。
 
 如需在 macOS 或 Linux 上交叉生成 Windows 安装程序，可使用 electron-builder 官方的 Wine Docker 镜像：
 

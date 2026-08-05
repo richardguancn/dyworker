@@ -14,6 +14,8 @@ const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
 const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
+const appUpdater = readSource(new URL("../electron/app-updater.mjs", import.meta.url));
+const releaseWorkflow = readSource(new URL("../.github/workflows/release.yml", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
 const types = readSource(new URL("../src/types.ts", import.meta.url));
@@ -101,6 +103,24 @@ test("多轮任务会保存并传递上一轮工作记录", () => {
   assert.match(main, /workingContext: String\(payload\?\.workingContext \|\| ""\)/);
   assert.match(agent, /前几轮已经完成的工作记录/);
   assert.match(agent, /buildWorkingContext/);
+});
+
+test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程", () => {
+  assert.match(packageJson, /"provider": "github"/);
+  assert.match(packageJson, /"owner": "richardguancn"/);
+  assert.match(packageJson, /"repo": "dyworker"/);
+  assert.match(packageJson, /"tagNamePrefix": "v"/);
+  assert.match(releaseWorkflow, /tags:\s*\n\s*- "v\*"/);
+  assert.match(releaseWorkflow, /tag_version=.*GITHUB_REF_NAME#v/);
+  assert.match(releaseWorkflow, /gh release create/);
+  assert.match(appUpdater, /isReleaseTagForVersion/);
+  assert.match(main, /createUpdaterController/);
+  assert.match(main, /ipcMain\.handle\("app-update:check"/);
+  assert.match(main, /autoUpdater\.autoDownload = false/);
+  assert.match(preload, /onAppUpdateStatus/);
+  assert.match(preload, /downloadAppUpdate/);
+  assert.match(app, /AppUpdateDialog/);
+  assert.match(app, /checkForAppUpdate/);
 });
 
 test("opening a conversation starts at the latest message", () => {

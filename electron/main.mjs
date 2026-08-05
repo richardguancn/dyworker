@@ -18,6 +18,10 @@ import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
+import electronUpdater from "electron-updater";
+import { createUpdaterController } from "./app-updater.mjs";
+
+const { autoUpdater } = electronUpdater;
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -52,6 +56,9 @@ const rendererEntryUrl = isDevelopment
   : pathToFileURL(path.join(here, "../dist/client/index.html")).href;
 let mainWindow;
 let embeddedBrowserContents = null;
+let appUpdater;
+let appUpdateTimer = null;
+let appUpdateInterval = null;
 
 function isTrustedRendererUrl(rawUrl) {
   try {
@@ -147,6 +154,39 @@ function describeLinuxWindowState(win) {
 function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
+
+function initializeAppUpdater() {
+  appUpdater = createUpdaterController({
+    updater: autoUpdater,
+    isPackaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    getWindow: () => mainWindow,
+  });
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+}
+
+async function checkForAppUpdate() {
+  return appUpdater?.check() || { ok: false, state: "unavailable", error: "更新服务尚未准备好" };
+}
+
+ipcMain.handle("app-update:status", () => appUpdater?.getStatus() || {
+  state: "unavailable",
+  currentVersion: app.getVersion(),
+});
+
+ipcMain.handle("app-update:check", () => checkForAppUpdate());
+ipcMain.handle("app-update:download", () => appUpdater?.download() || {
+  ok: false,
+  state: "unavailable",
+  error: "更新服务尚未准备好",
+});
+ipcMain.handle("app-update:install", () => appUpdater?.install() || {
+  ok: false,
+  state: "unavailable",
+  error: "更新服务尚未准备好",
+});
 
 // 审计日志（audit.jsonl）：有副作用的工具调用，审批决策与执行结果逐条落盘
 const auditLog = createAuditLog({ filePath: path.join(app.getPath("userData"), "audit.jsonl") });
@@ -2335,7 +2375,12 @@ app.whenReady().then(async () => {
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
+  initializeAppUpdater();
   createWindow();
+  if (app.isPackaged) {
+    appUpdateTimer = setTimeout(() => void checkForAppUpdate(), 8_000);
+    appUpdateInterval = setInterval(() => void checkForAppUpdate(), 6 * 60 * 60 * 1000);
+  }
   await expireOrphanedInboxItems();
   startScheduler();
   // IM 渠道(QQ/微信)按设置启动;失败不影响主程序
@@ -2355,6 +2400,10 @@ app.on("before-quit", (event) => {
   mcpShutdownStarted = true;
   mcpShuttingDown = true;
   event.preventDefault();
+  if (appUpdateTimer) clearTimeout(appUpdateTimer);
+  if (appUpdateInterval) clearInterval(appUpdateInterval);
+  appUpdateTimer = null;
+  appUpdateInterval = null;
   if (schedulerTimer) clearInterval(schedulerTimer);
   schedulerTimer = null;
   for (const agentState of activeAgents.values()) {

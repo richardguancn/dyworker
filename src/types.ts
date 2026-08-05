@@ -262,6 +262,21 @@ export type ChannelsStatusMap = Record<"qq" | "wechat", ChannelStatus>;
 
 export type UserIdentity = "general" | "government";
 
+export type AppUpdateState = "idle" | "checking" | "available" | "downloading" | "downloaded" | "not-available" | "error" | "unavailable";
+
+export interface AppUpdateStatus {
+  state: AppUpdateState;
+  currentVersion: string;
+  version?: string;
+  releaseName?: string;
+  releaseDate?: string;
+  percent?: number;
+  bytesPerSecond?: number;
+  transferred?: number;
+  total?: number;
+  error?: string;
+}
+
 export interface ProviderSettings {
   identity: UserIdentity | null;
   endpoint: string;
@@ -369,6 +384,11 @@ export interface DyworkerBridge {
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;
+  getAppUpdateStatus(): Promise<AppUpdateStatus>;
+  checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;
+  downloadAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;
+  installAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;
+  onAppUpdateStatus(callback: (status: AppUpdateStatus) => void): () => void;
   completeChat(payload: {
     settings: ProviderSettings;
     messages: ChatMessage[];

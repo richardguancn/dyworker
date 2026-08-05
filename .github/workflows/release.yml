@@ -1,0 +1,94 @@
+name: 发布桌面应用
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    name: 校验版本标签
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 校验标签和应用版本一致
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$package_version" ]; then
+            echo "标签版本 $tag_version 与 package.json 版本 $package_version 不一致"
+            exit 1
+          fi
+
+  build:
+    name: 构建 ${{ matrix.name }}
+    needs: validate-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            command: npx electron-builder --win nsis --x64 --publish never
+          - name: macOS
+            os: macos-latest
+            command: npx electron-builder --mac dmg zip --publish never
+          - name: Linux ARM64
+            os: ubuntu-latest
+            command: npx electron-builder --linux AppImage deb --arm64 --publish never
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装依赖
+        run: npm ci
+      - name: 构建并运行检查
+        run: npm run verify
+      - name: 生成发布包
+        run: ${{ matrix.command }}
+      - name: 保存发布产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: |
+            output/electron/*.exe
+            output/electron/*.exe.blockmap
+            output/electron/*.dmg
+            output/electron/*.dmg.blockmap
+            output/electron/*.zip
+            output/electron/*.zip.blockmap
+            output/electron/*.AppImage
+            output/electron/*.AppImage.blockmap
+            output/electron/*.deb
+            output/electron/latest*.yml
+          if-no-files-found: error
+
+  publish:
+    name: 发布 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部发布产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: 发布到标签对应的 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --verify-tag \
+            --title "DYWorker $GITHUB_REF_NAME" \
+            --generate-notes
