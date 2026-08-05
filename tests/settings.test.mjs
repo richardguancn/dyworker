@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, serializeSettings } from "../electron/settings.mjs";
+import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mjs";
 
 const secretStorage = {
   isEncryptionAvailable: () => true,
@@ -69,6 +70,14 @@ test("技能库配置会随设置保存，并为旧设置补上 SkillHub", () =>
   assert.equal(restored.skillLibraries.length, 1);
   assert.equal(restored.skillLibraries[0].id, "skillhub");
   assert.equal(restored.skillLibraries[0].enabled, true);
+});
+
+test("应用更新地址默认使用 GitHub，并可保存自定义仓库", () => {
+  assert.equal(deserializeSettings({ profiles: [] }, secretStorage).updateUrl, DEFAULT_UPDATE_URL);
+  const stored = serializeSettings({ updateUrl: " https://github.com/example/dyworker-updates/ " }, secretStorage);
+  assert.equal(stored.updateUrl, "https://github.com/example/dyworker-updates");
+  assert.equal(deserializeSettings(stored, secretStorage).updateUrl, "https://github.com/example/dyworker-updates");
+  assert.equal(deserializeSettings({ updateUrl: "not-a-url", profiles: [] }, secretStorage).updateUrl, DEFAULT_UPDATE_URL);
 });
 
 test("旧版单模型设置仍可读取且自动迁移为第一套配置", () => {

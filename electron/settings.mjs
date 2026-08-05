@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { DEFAULT_UPDATE_URL, normalizeUpdateUrl } from "./app-updater.mjs";
 import { normalizeSkillLibraries } from "./skill-libraries.mjs";
 
 export function normalizePreventSleep(value) {
@@ -175,6 +176,7 @@ export function deserializeSettings(stored, secretStorage) {
     domesticSearchOnly: source.domesticSearchOnly === true,
     approvalMode: normalizeApprovalMode(source.approvalMode),
     preventSleep: normalizePreventSleep(source.preventSleep),
+    updateUrl: normalizeUpdateUrl(source.updateUrl || DEFAULT_UPDATE_URL),
     mcpServers: Array.isArray(source.mcpServers) ? source.mcpServers : [],
     channels: normalizeChannels(source.channels, secretStorage, "deserialize"),
     skillLibraries: normalizeSkillLibraries(source.skillLibraries),
@@ -199,6 +201,7 @@ export function serializeSettings(settings, secretStorage) {
     domesticSearchOnly: settings?.domesticSearchOnly === true,
     approvalMode: normalizeApprovalMode(settings?.approvalMode),
     preventSleep: normalizePreventSleep(settings?.preventSleep),
+    updateUrl: normalizeUpdateUrl(settings?.updateUrl || DEFAULT_UPDATE_URL),
     mcpServers: (Array.isArray(settings?.mcpServers) ? settings.mcpServers : [])
       .filter((server) => server && String(server.command || "").trim())
       .map((server) => ({
@@ -227,6 +230,7 @@ export function serializeSettings(settings, secretStorage) {
     domesticSearchOnly: normalized.domesticSearchOnly,
     approvalMode: normalized.approvalMode,
     preventSleep: normalized.preventSleep,
+    updateUrl: normalized.updateUrl,
     mcpServers: normalized.mcpServers,
     channels: normalizeChannels(settings?.channels, secretStorage, "serialize"),
     skillLibraries: normalized.skillLibraries,

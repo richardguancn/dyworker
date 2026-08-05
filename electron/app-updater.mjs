@@ -1,4 +1,5 @@
 const DEFAULT_TAG_PREFIX = "v";
+export const DEFAULT_UPDATE_URL = "https://github.com/richardguancn/dyworker";
 
 export const UPDATE_STATES = new Set([
   "idle",
@@ -19,6 +20,52 @@ function versionText(value) {
   return String(value || "").trim();
 }
 
+export function parseGithubUpdateUrl(value = DEFAULT_UPDATE_URL) {
+  const raw = String(value || "").trim() || DEFAULT_UPDATE_URL;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("应用更新地址必须是 GitHub 仓库地址，例如 https://github.com/组织名/仓库名");
+  }
+  if (url.protocol !== "https:" || url.search || url.hash) {
+    throw new Error("应用更新地址必须使用 HTTPS 的 GitHub 仓库地址");
+  }
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) {
+    throw new Error("应用更新地址必须指向 GitHub 仓库，例如 https://github.com/组织名/仓库名");
+  }
+  let owner;
+  let rawRepo;
+  try {
+    [owner, rawRepo] = parts.map((part) => decodeURIComponent(part));
+  } catch {
+    throw new Error("GitHub 仓库地址中的组织名和仓库名无效");
+  }
+  const repo = rawRepo.replace(/\.git$/i, "");
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+    throw new Error("GitHub 仓库地址中的组织名和仓库名无效");
+  }
+  const host = url.host.toLowerCase() === "www.github.com" ? "github.com" : url.host;
+  return {
+    provider: "github",
+    owner,
+    repo,
+    tagNamePrefix: DEFAULT_TAG_PREFIX,
+    ...(host === "github.com" ? {} : { host }),
+  };
+}
+
+export function normalizeUpdateUrl(value) {
+  try {
+    const options = parseGithubUpdateUrl(value);
+    const host = options.host || "github.com";
+    return `https://${host}/${options.owner}/${options.repo}`;
+  } catch {
+    return DEFAULT_UPDATE_URL;
+  }
+}
+
 function releaseText(value, limit = 240) {
   return String(value || "").trim().slice(0, limit);
 }
@@ -33,12 +80,13 @@ export function isReleaseTagForVersion(tag, version, prefix = DEFAULT_TAG_PREFIX
   return String(tag || "").trim() === releaseTagForVersion(version, prefix);
 }
 
-export function createUpdaterController({ updater, isPackaged, currentVersion, getWindow }) {
+export function createUpdaterController({ updater, isPackaged, currentVersion, getWindow, updateUrl = DEFAULT_UPDATE_URL }) {
   let status = {
     state: isPackaged ? "idle" : "unavailable",
     currentVersion: versionText(currentVersion),
   };
   let checkPromise = null;
+  let configuredUpdateUrl = normalizeUpdateUrl(updateUrl);
 
   const publish = (next) => {
     status = { ...status, ...next };
@@ -47,6 +95,20 @@ export function createUpdaterController({ updater, isPackaged, currentVersion, g
     target.webContents?.send("app-update:status", { ...status });
     return status;
   };
+
+  const configure = (nextUrl) => {
+    const options = parseGithubUpdateUrl(nextUrl);
+    if (updater?.setFeedURL) updater.setFeedURL(options);
+    configuredUpdateUrl = normalizeUpdateUrl(nextUrl);
+    status = {
+      state: isPackaged ? "idle" : "unavailable",
+      currentVersion: versionText(currentVersion),
+    };
+    publish(status);
+    return { ok: true, updateUrl: configuredUpdateUrl };
+  };
+
+  configure(configuredUpdateUrl);
 
   const register = (event, handler) => {
     updater?.on?.(event, handler);
@@ -136,5 +198,5 @@ export function createUpdaterController({ updater, isPackaged, currentVersion, g
 
   const getStatus = () => ({ ...status });
 
-  return { check, download, install, getStatus, publish };
+  return { check, configure, download, install, getStatus, getUpdateUrl: () => configuredUpdateUrl, publish };
 }

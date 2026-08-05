@@ -19,7 +19,7 @@ import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
 import electronUpdater from "electron-updater";
-import { createUpdaterController } from "./app-updater.mjs";
+import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
 
 const { autoUpdater } = electronUpdater;
 
@@ -155,12 +155,13 @@ function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
 
-function initializeAppUpdater() {
+function initializeAppUpdater(updateUrl = DEFAULT_UPDATE_URL) {
   appUpdater = createUpdaterController({
     updater: autoUpdater,
     isPackaged: app.isPackaged,
     currentVersion: app.getVersion(),
     getWindow: () => mainWindow,
+    updateUrl,
   });
   if (!app.isPackaged) return;
   autoUpdater.autoDownload = false;
@@ -266,14 +267,21 @@ async function readSettings() {
   const settings = deserializeSettings(stored, safeStorage);
   const approvalModeMigrated = stored?.approvalMode !== settings.approvalMode
     || stored?.channels?.approvalMode === "allow-writes";
-  if (needsSecretMigration(stored) || approvalModeMigrated) {
+  const updateUrlMigrated = stored?.updateUrl !== settings.updateUrl;
+  if (needsSecretMigration(stored) || approvalModeMigrated || updateUrlMigrated) {
     await writeJson(dataFile("settings.json"), serializeSettings(settings, safeStorage));
   }
   return settings;
 }
 
 async function saveSettings(settings) {
-  await writeJson(dataFile("settings.json"), serializeSettings(settings, safeStorage));
+  const rawUpdateUrl = String(settings?.updateUrl || DEFAULT_UPDATE_URL).trim() || DEFAULT_UPDATE_URL;
+  parseGithubUpdateUrl(rawUpdateUrl);
+  const updateUrl = normalizeUpdateUrl(rawUpdateUrl);
+  const nextSettings = { ...settings, updateUrl };
+  await writeJson(dataFile("settings.json"), serializeSettings(nextSettings, safeStorage));
+  if (appUpdater && appUpdater.getUpdateUrl() !== updateUrl) appUpdater.configure(updateUrl);
+  return updateUrl;
 }
 
 // 应用由 DYWork 改名为 DYWorker，用户数据目录随之改变。
@@ -727,12 +735,12 @@ ipcMain.handle("browser:open", async (event, payload) => {
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
   try {
-    await saveSettings(settings);
+    const updateUrl = await saveSettings(settings);
     sleepBlockMode = normalizePreventSleep(settings?.preventSleep);
     updateSleepBlocker();
     // 渠道配置热生效:按新设置 diff 启停 QQ/微信连接
     await reconcileChannels();
-    return { ok: true };
+    return { ok: true, updateUrl };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -2375,7 +2383,7 @@ app.whenReady().then(async () => {
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
-  initializeAppUpdater();
+  initializeAppUpdater(storedSettings.updateUrl);
   createWindow();
   if (app.isPackaged) {
     appUpdateTimer = setTimeout(() => void checkForAppUpdate(), 8_000);

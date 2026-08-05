@@ -114,13 +114,21 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(releaseWorkflow, /tag_version=.*GITHUB_REF_NAME#v/);
   assert.match(releaseWorkflow, /gh release create/);
   assert.match(appUpdater, /isReleaseTagForVersion/);
+  assert.match(appUpdater, /parseGithubUpdateUrl/);
+  assert.match(appUpdater, /setFeedURL/);
   assert.match(main, /createUpdaterController/);
+  assert.match(main, /storedSettings\.updateUrl/);
+  assert.match(main, /appUpdater\.getUpdateUrl\(\)/);
+  assert.match(main, /appUpdater\.configure\(updateUrl\)/);
   assert.match(main, /ipcMain\.handle\("app-update:check"/);
   assert.match(main, /autoUpdater\.autoDownload = false/);
   assert.match(preload, /onAppUpdateStatus/);
   assert.match(preload, /downloadAppUpdate/);
   assert.match(app, /AppUpdateDialog/);
   assert.match(app, /checkForAppUpdate/);
+  assert.match(app, /更新地址/);
+  assert.match(app, /draft\.updateUrl/);
+  assert.match(settingsStorage, /updateUrl/);
 });
 
 test("opening a conversation starts at the latest message", () => {

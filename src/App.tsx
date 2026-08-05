@@ -152,6 +152,7 @@ const defaultSettings: ProviderSettings = {
   domesticSearchOnly: false,
   approvalMode: "reviewer",
   preventSleep: "tasks",
+  updateUrl: "https://github.com/richardguancn/dyworker",
   mcpServers: [],
   channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "reviewer" },
   skillLibraries: [{
@@ -1552,7 +1553,7 @@ function AppUpdateDialog({
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "identity" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "channels" | "identity" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
 const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings }[] }[] = [
@@ -1565,6 +1566,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
   { group: "偏好", items: [
     { id: "identity", label: "助手身份", icon: UserRound },
     { id: "power", label: "电源", icon: Moon },
+    { id: "updates", label: "应用更新", icon: RefreshCw },
     { id: "mcp", label: "MCP 工具", icon: Bot },
   ] },
   { group: "资源", items: [
@@ -2045,7 +2047,7 @@ function SettingsDialog({
               return saved;
             }}
           />
-        ) : ["model", "voice", "search", "power", "mcp"].includes(tab) ? (
+        ) : ["model", "voice", "search", "power", "updates", "mcp"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
         <div className="dialog-section-title">已保存的模型</div>
@@ -2144,6 +2146,19 @@ function SettingsDialog({
           </select>
         </label>
         <p className="dialog-note">只阻止系统挂起，屏幕照常关闭、照常锁定，锁屏安全不受影响；长任务（持续执行、/goal、定时计划）跑到一半电脑睡着时可开启。无人值守的机器建议选「仅任务运行期间」，「始终保持唤醒」请确认符合单位安全规定。Linux 依赖 systemd-logind，个别桌面环境可能不支持。</p>
+        </>)}
+        {tab === "updates" && (<>
+        <div className="dialog-section-title">应用更新来源</div>
+        <label>
+          更新地址
+          <input
+            type="url"
+            value={draft.updateUrl}
+            placeholder="https://github.com/组织名/仓库名"
+            onChange={(event) => setDraft({ ...draft, updateUrl: event.target.value })}
+          />
+        </label>
+        <p className="dialog-note">默认使用 DYWorker 的 GitHub 仓库。你也可以改成自己的 GitHub 仓库；应用会按 v + 版本号的标签检查发布版本，例如 v0.1.17。</p>
         </>)}
         {tab === "search" && (<>
         <div className="dialog-section-title">搜索（可选）</div>
@@ -3718,7 +3733,7 @@ export function App() {
         setError(result.error || "模型设置保存失败");
         return false;
       }
-      setSettings(nextSettings);
+      setSettings({ ...nextSettings, updateUrl: result?.updateUrl || nextSettings.updateUrl });
       setNotice(successMessage);
       return true;
     } catch (saveError) {

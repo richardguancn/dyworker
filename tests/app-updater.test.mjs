@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createUpdaterController, isReleaseTagForVersion, releaseTagForVersion } from "../electron/app-updater.mjs";
+import { createUpdaterController, isReleaseTagForVersion, parseGithubUpdateUrl, releaseTagForVersion } from "../electron/app-updater.mjs";
+
+test("更新地址解析为 GitHub 仓库和版本标签配置", () => {
+  assert.deepEqual(parseGithubUpdateUrl("https://github.com/example/dyworker-updates/"), {
+    provider: "github",
+    owner: "example",
+    repo: "dyworker-updates",
+    tagNamePrefix: "v",
+  });
+  assert.throws(() => parseGithubUpdateUrl("https://example.com/downloads"), /GitHub/);
+});
 
 test("发布标签严格对应应用版本", () => {
   assert.equal(releaseTagForVersion("0.1.17"), "v0.1.17");
@@ -13,6 +23,7 @@ test("更新控制器转发检查、下载和安装状态", async () => {
   const listeners = new Map();
   const sent = [];
   let installed = false;
+  const feedUrls = [];
   const updater = {
     on(event, listener) {
       listeners.set(event, listener);
@@ -27,11 +38,15 @@ test("更新控制器转发检查、下载和安装状态", async () => {
     quitAndInstall() {
       installed = true;
     },
+    setFeedURL(options) {
+      feedUrls.push(options);
+    },
   };
   const controller = createUpdaterController({
     updater,
     isPackaged: true,
     currentVersion: "0.1.16",
+    updateUrl: "https://github.com/example/dyworker-updates",
     getWindow: () => ({ webContents: { send: (_name, status) => sent.push(status) } }),
   });
 
@@ -42,6 +57,12 @@ test("更新控制器转发检查、下载和安装状态", async () => {
   assert.equal(controller.getStatus().state, "downloaded");
   assert.deepEqual(controller.install(), { ok: true, state: "installing" });
   assert.equal(installed, true);
+  assert.deepEqual(feedUrls[0], {
+    provider: "github",
+    owner: "example",
+    repo: "dyworker-updates",
+    tagNamePrefix: "v",
+  });
   assert.ok(sent.some((status) => status.state === "downloading"));
 });
 

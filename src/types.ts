@@ -295,6 +295,8 @@ export interface ProviderSettings {
   approvalMode: ApprovalMode;
   // 防止休眠:off 关闭 / tasks 仅任务运行期间 / always 始终唤醒(只阻止系统挂起,屏幕照常锁屏)
   preventSleep: "off" | "tasks" | "always";
+  // 应用更新来源:默认 GitHub 仓库,也可切换到其他 GitHub 仓库
+  updateUrl: string;
   mcpServers: McpServerConfig[];
   channels: ChannelsConfig;
   skillLibraries: SkillLibraryConfig[];
@@ -383,7 +385,7 @@ export interface DyworkerBridge {
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
-  saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string }>;
+  saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   getAppUpdateStatus(): Promise<AppUpdateStatus>;
   checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;
   downloadAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;
