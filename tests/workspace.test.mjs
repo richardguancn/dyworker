@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { listWorkspace, readWorkspaceMarkdown } from "../electron/workspace.mjs";
+import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown } from "../electron/workspace.mjs";
 
 async function makeWorkspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-"));
@@ -51,4 +51,13 @@ test("Markdown 预览只读取工作目录内的 Markdown 文件", async () => {
     await fs.rm(outsidePath, { force: true });
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("工作区上下文返回目录名，Git 分支按实际目录读取", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-context-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const context = await getWorkspaceContext(root);
+  assert.equal(context.name, path.basename(root));
+  assert.equal(context.branch, "");
 });

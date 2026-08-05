@@ -2700,10 +2700,10 @@ body.resizing-panels .app-shell {
 .message-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  margin-top: 5px;
-  color: #9b9e97;
+  gap: 6px;
+  min-height: 20px;
+  margin-top: 4px;
+  color: #8d9289;
   font-size: 12px;
   line-height: 1;
 }
@@ -2723,21 +2723,26 @@ body.resizing-panels .app-shell {
 }
 
 .message-actions button {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   color: inherit;
   background: transparent;
   cursor: pointer;
 }
 
+.message-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
 .message-actions button:hover:not(:disabled) {
-  color: #454943;
+  color: #747a70;
   background: rgba(72, 74, 68, 0.08);
 }
 
@@ -3463,9 +3468,10 @@ body.resizing-panels .app-shell {
   position: absolute;
   z-index: 12;
   inset: auto 0 0;
-  height: 166px;
+  height: 190px;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   padding: 0 22px 18px;
   pointer-events: none;
@@ -3493,6 +3499,28 @@ body.resizing-panels .app-shell {
 .composer-card.drag-over {
   border-color: #979b91;
   box-shadow: 0 0 0 3px rgba(106, 111, 101, 0.12), var(--shadow-lg);
+}
+
+.composer-context {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  padding: 0 4px 5px;
+  color: #62665e;
+  font-size: 13.5px;
+}
+
+.composer-context-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.composer-context-item svg {
+  color: #73786f;
 }
 
 .composer-card textarea {
@@ -4824,7 +4852,7 @@ body.resizing-panels .app-shell {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 
 .context-folder-chip {
@@ -4852,6 +4880,7 @@ body.resizing-panels .app-shell {
 }
 
 .context-folder-clear {
+  position: relative;
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -4859,19 +4888,44 @@ body.resizing-panels .app-shell {
   justify-content: center;
   flex: 0 0 auto;
   border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #9a9d95;
-  opacity: 0;
-  pointer-events: none;
+  border-radius: 50%;
+  background: var(--card);
+  color: #61665d;
+  opacity: 1;
+  pointer-events: auto;
+  box-shadow: var(--shadow-xs);
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
-.context-folder-wrap:hover .context-folder-clear,
-.context-folder-clear:focus-visible {
+.workspace-clear-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  z-index: 2;
+  width: max-content;
+  padding: 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  color: #5d6159;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.context-folder-clear:hover .workspace-clear-tooltip,
+.context-folder-clear:focus-visible .workspace-clear-tooltip {
   opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
+  transform: translate(-50%, 0);
 }
 
 .context-folder-clear:hover {
@@ -6033,12 +6087,12 @@ body.resizing-panels .app-shell {
   .markdown-file-preview-title,
   .message-actions,
   .message-actions time {
-    color: #a4a99f;
+    color: #969c91;
   }
 
   .message-actions button:hover:not(:disabled),
   .message-editing-banner button:hover {
-    color: #e0e3db;
+    color: #c0c5bb;
     background: rgba(255, 255, 255, 0.055);
   }
 
@@ -6434,6 +6488,25 @@ body.resizing-panels .app-shell {
   .composer-card,
   .status-toast {
     background: rgba(37, 38, 34, 0.97);
+  }
+
+  .composer-context,
+  .composer-context-item {
+    color: #a4a89f;
+  }
+
+  .composer-context-item svg {
+    color: #8b9187;
+  }
+
+  .context-folder-clear {
+    color: #a4a89f;
+    background: #30312d;
+  }
+
+  .workspace-clear-tooltip {
+    color: #a4a89f;
+    background: #252622;
   }
 
   .attachment-chip {

@@ -220,6 +220,11 @@ export interface WorkspaceEntry {
   children?: WorkspaceEntry[];
 }
 
+export interface WorkspaceContext {
+  name: string;
+  branch: string;
+}
+
 export interface McpServerConfig {
   id: string;
   name: string;
@@ -381,6 +386,7 @@ export interface DyworkerBridge {
   saveClipboardImage(payload: { data: number[]; mimeType: string }): Promise<{ ok: boolean; attachment?: Attachment; error?: string }>;
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
+  getWorkspaceContext(path: string): Promise<WorkspaceContext>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;

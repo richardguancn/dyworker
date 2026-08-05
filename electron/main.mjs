@@ -17,7 +17,7 @@ import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
-import { listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
+import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
 import electronUpdater from "electron-updater";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
 
@@ -719,6 +719,7 @@ ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
+ipcMain.handle("workspace:context", (_event, workspacePath) => getWorkspaceContext(String(workspacePath || "")));
 ipcMain.handle("workspace:read-markdown", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
   return readWorkspaceMarkdown(String(payload?.workspacePath || ""), String(payload?.filePath || ""));

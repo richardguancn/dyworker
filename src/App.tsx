@@ -18,6 +18,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  GitBranch,
   Globe,
   Hand,
   History,
@@ -57,7 +58,7 @@ import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./
 import { InteractiveMessage } from "./InteractiveMessage";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
 const now = new Date().toISOString();
@@ -225,6 +226,16 @@ function makeSession(workspacePath = ""): SessionRecord {
     updatedAt: createdAt,
     messages: [],
   };
+}
+
+function keepSingleUnstartedSession(items: SessionRecord[]) {
+  let kept = false;
+  return items.filter((session) => {
+    if (session.archived || session.messages.length > 0) return true;
+    if (kept) return false;
+    kept = true;
+    return true;
+  });
 }
 
 function displayWorkspace(path: string) {
@@ -2447,6 +2458,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   const [activeId, setActiveId] = useState(previewSessions[0].id);
   const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
+  const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext | null>(null);
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
   const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
@@ -2534,6 +2546,7 @@ export function App() {
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
   const workspacePreviewRequestRef = useRef(0);
+  const newTaskGuardRef = useRef(false);
 
   // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
   useEffect(() => {
@@ -2635,7 +2648,7 @@ export function App() {
       try {
         const state = await window.dyworker.getInitialState();
         if (cancelled) return;
-        const loaded = state.sessions.length ? state.sessions : [makeSession(state.workspacePath)];
+        const loaded = keepSingleUnstartedSession(state.sessions.length ? state.sessions : [makeSession(state.workspacePath)]);
         setSessions(loaded);
         setActiveId(loaded[0].id);
         setWorkspacePath(state.workspacePath);
@@ -2684,6 +2697,23 @@ export function App() {
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions]);
+
+  useEffect(() => {
+    const targetPath = String(workspacePath || "").trim();
+    if (!targetPath) {
+      setWorkspaceContext(null);
+      return;
+    }
+    setWorkspaceContext({ name: displayWorkspace(targetPath), branch: "" });
+    if (!ready || !window.dyworker?.getWorkspaceContext) return;
+    let cancelled = false;
+    void window.dyworker.getWorkspaceContext(targetPath).then((context) => {
+      if (!cancelled) setWorkspaceContext(context);
+    }).catch(() => {
+      // 工作目录仍可用时，至少保留目录名。
+    });
+    return () => { cancelled = true; };
+  }, [ready, workspacePath]);
 
   useEffect(() => {
     if (!ready || !window.dyworker) return;
@@ -2936,12 +2966,7 @@ export function App() {
     setWorkspacePreviewError("");
   };
 
-  const createTask = (targetWorkspacePath = workspacePath) => {
-    // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
-    // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
-    const session = makeSession(targetWorkspacePath);
-    setSessions((current) => [session, ...current]);
-    setActiveId(session.id);
+  const applyWorkspaceSelection = (targetWorkspacePath: string) => {
     setWorkspacePath(targetWorkspacePath);
     setWorkspaceMenuPath(null);
     if (targetWorkspacePath) {
@@ -2957,6 +2982,30 @@ export function App() {
     } else {
       setWorkspaceEntries([]);
     }
+  };
+
+  const createTask = (targetWorkspacePath = workspacePath) => {
+    const nextWorkspacePath = String(targetWorkspacePath || "");
+    const unstartedSession = sessions.find((session) => !session.archived && session.messages.length === 0);
+    if (unstartedSession) {
+      setActiveId(unstartedSession.id);
+      setWorkspaceMenuPath(null);
+      if (unstartedSession.workspacePath !== nextWorkspacePath) {
+        updateSession(unstartedSession.id, (session) => ({ ...session, workspacePath: nextWorkspacePath }));
+        applyWorkspaceSelection(nextWorkspacePath);
+      }
+      window.setTimeout(() => textareaRef.current?.focus(), 0);
+      return;
+    }
+    if (newTaskGuardRef.current) return;
+    newTaskGuardRef.current = true;
+
+    // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
+    // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
+    const session = makeSession(nextWorkspacePath);
+    setSessions((current) => [session, ...current]);
+    setActiveId(session.id);
+    applyWorkspaceSelection(nextWorkspacePath);
     setComposer("");
     setAttachments([]);
     setActiveSkills([]);
@@ -2968,6 +3017,7 @@ export function App() {
 
   const deleteSession = (id: string) => {
     setSessionMenuId(null);
+    newTaskGuardRef.current = false;
     // 会话删除时,它登记的待唤醒一并取消,避免无主的自动续跑
     void window.dyworker?.cancelWakesForSession?.(id);
     setSessions((current) => {
@@ -3508,6 +3558,7 @@ export function App() {
     setActiveSkills([]);
     setMentionMenu(null);
     const taskSessionId = activeSession.id;
+    newTaskGuardRef.current = false;
     const taskRunId = crypto.randomUUID();
     runningRunIdsRef.current.set(taskSessionId, taskRunId);
     setSessionErrors((current) => {
@@ -4453,9 +4504,11 @@ export function App() {
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
                             <Copy size={16} />
                           </button>
-                          <button type="button" onClick={() => startMessageEdit(message, index)} disabled={activeTaskRunning} aria-label="编辑消息" title="编辑消息">
-                            <Pencil size={16} />
-                          </button>
+                          {!activeTaskRunning && (
+                            <button type="button" onClick={() => startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
+                              <Pencil size={16} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </>
@@ -4593,6 +4646,36 @@ export function App() {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
+            {workspacePath && (
+              <div className="composer-context" aria-label="当前工作上下文">
+                <div className="context-folder-wrap">
+                  <button
+                    type="button"
+                    className="context-folder-clear"
+                    onClick={clearWorkspace}
+                    aria-label="移除当前工作目录"
+                    title="不在项目中工作"
+                  >
+                    <X size={13} strokeWidth={2.4} />
+                    <span className="workspace-clear-tooltip" role="tooltip">不在项目中工作</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="context-folder-chip"
+                    onClick={() => void chooseWorkspace()}
+                    title={workspacePath}
+                  >
+                    <span>{workspaceContext?.name || displayWorkspace(workspacePath)}</span>
+                  </button>
+                </div>
+                {workspaceContext?.branch && (
+                  <span className="composer-context-item">
+                    <GitBranch size={17} />
+                    <span>{workspaceContext.branch}</span>
+                  </span>
+                )}
+              </div>
+            )}
             {activeSession?.goal && (
               <div className="goal-banner" title={`长期目标：${activeSession.goal}`}>
                 <span className="goal-banner-icon"><Target size={13} /></span>

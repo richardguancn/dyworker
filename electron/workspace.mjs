@@ -1,9 +1,31 @@
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
 const ignoredNames = new Set([".git", "node_modules", "dist", ".DS_Store"]);
 const MAX_ENTRIES_PER_DIRECTORY = 500;
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
+
+function readGitBranch(root) {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", root, "branch", "--show-current"],
+      { encoding: "utf8", timeout: 1500, windowsHide: true },
+      (_error, stdout) => resolve(String(stdout || "").trim()),
+    );
+  });
+}
+
+export async function getWorkspaceContext(root) {
+  const workspacePath = String(root || "").trim();
+  if (!workspacePath) return { name: "", branch: "" };
+  const name = path.basename(path.normalize(workspacePath)) || workspacePath;
+  return {
+    name,
+    branch: await readGitBranch(workspacePath),
+  };
+}
 
 function isInsideWorkspace(root, target) {
   const relative = path.relative(root, target);
