@@ -106,6 +106,29 @@ test("workspace files can be dragged into the composer as references", () => {
   assert.match(app, /addWorkspaceFile\(file\)/);
 });
 
+test("消息支持复制、时间显示和编辑后重新发送", () => {
+  assert.match(app, /formatMessageTime/);
+  assert.match(app, /copyMessage/);
+  assert.match(app, /className="message-actions user"/);
+  assert.match(app, /className="message-actions assistant"/);
+  assert.match(app, /startMessageEdit/);
+  assert.match(app, /setEditingMessage\(null\)/);
+  assert.match(app, /activeSession\.messages\.slice\(0, editingMessage\.messageIndex\)/);
+  assert.match(app, /重新发送/);
+  assert.match(preload, /readWorkspaceMarkdown/);
+  assert.match(styles, /\.message-actions/);
+});
+
+test("右侧文件面板支持直接预览 Markdown", () => {
+  assert.match(app, /isMarkdownFile/);
+  assert.match(app, /readWorkspaceMarkdown\(workspacePath, entry\.path\)/);
+  assert.match(app, /ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}/);
+  assert.match(app, /返回文件/);
+  assert.match(main, /ipcMain\.handle\("workspace:read-markdown"/);
+  assert.match(main, /readWorkspaceMarkdown/);
+  assert.match(styles, /\.markdown-file-preview/);
+});
+
 test("image attachments render real previews before and after sending", () => {
   assert.match(main, /previewUrl/);
   assert.match(app, /attachment\.isImage && attachment\.previewUrl/);

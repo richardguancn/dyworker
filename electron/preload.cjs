@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
   readLocalImage: (path) => ipcRenderer.invoke("local-image:read", path),
   refreshWorkspace: (path) => ipcRenderer.invoke("workspace:refresh", path),
+  readWorkspaceMarkdown: (workspacePath, filePath) => ipcRenderer.invoke("workspace:read-markdown", { workspacePath, filePath }),
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
   onBrowserPanelRequest: (callback) => {

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { listWorkspace } from "../electron/workspace.mjs";
+import { listWorkspace, readWorkspaceMarkdown } from "../electron/workspace.mjs";
 
 async function makeWorkspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-"));
@@ -29,4 +29,26 @@ test("工作区根目录不会因子目录过多而漏掉后面的项目", async
   assert.ok(names.includes("frontend"), `缺少根目录项目：${names.join(", ")}`);
   assert.ok(names.includes("README.md"), `缺少根目录文件：${names.join(", ")}`);
   assert.ok(!names.includes(".DS_Store"));
+});
+
+test("Markdown 预览只读取工作目录内的 Markdown 文件", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-"));
+  const markdownPath = path.join(root, "README.md");
+  const textPath = path.join(root, "notes.txt");
+  const outsidePath = path.join(path.dirname(root), `${path.basename(root)}-outside.md`);
+  try {
+    await fs.writeFile(markdownPath, "# 预览\n\n正文", "utf8");
+    await fs.writeFile(textPath, "普通文本", "utf8");
+    await fs.writeFile(outsidePath, "外部文件", "utf8");
+
+    assert.deepEqual(await readWorkspaceMarkdown(root, markdownPath), {
+      ok: true,
+      content: "# 预览\n\n正文",
+    });
+    assert.equal((await readWorkspaceMarkdown(root, textPath)).ok, false);
+    assert.equal((await readWorkspaceMarkdown(root, outsidePath)).ok, false);
+  } finally {
+    await fs.rm(outsidePath, { force: true });
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

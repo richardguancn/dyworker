@@ -359,6 +359,7 @@ export interface DyworkerBridge {
   chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
+  readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;

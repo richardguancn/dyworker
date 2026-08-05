@@ -16,7 +16,7 @@ import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
-import { listWorkspace } from "./workspace.mjs";
+import { listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -661,6 +661,10 @@ ipcMain.handle("attachments:choose", async () => {
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
+ipcMain.handle("workspace:read-markdown", (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
+  return readWorkspaceMarkdown(String(payload?.workspacePath || ""), String(payload?.filePath || ""));
+});
 ipcMain.handle("workspace:open", async (_event, targetPath) => {
   const error = await shell.openPath(String(targetPath || ""));
   return error ? { ok: false, error } : { ok: true };

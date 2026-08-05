@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  Copy,
   FileCode2,
   File,
   FileImage,
@@ -33,6 +34,7 @@ import {
   MoreHorizontal,
   MoreVertical,
   Paperclip,
+  Pencil,
   Pin,
   Plus,
   RefreshCw,
@@ -53,6 +55,8 @@ import {
 import { CSSProperties, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
@@ -248,6 +252,50 @@ function plainConversationText(content: string) {
     .trim();
 }
 
+function formatMessageTime(createdAt: string) {
+  const timestamp = new Date(createdAt).getTime();
+  if (!Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function messageVisibleText(message: ChatMessage) {
+  return (message.displayContent ?? message.content).trim();
+}
+
+function isMarkdownFile(filePath: string) {
+  return /\.(?:md|markdown)$/i.test(filePath);
+}
+
+async function copyTextToClipboard(content: string) {
+  if (!content) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(content);
+      return true;
+    }
+  } catch {
+    // Electron 的剪贴板权限被系统拦截时，继续尝试兼容方案。
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = content;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 function conversationTurnPreview(messages: ChatMessage[], messageIndex: number) {
   const userMessage = messages[messageIndex];
   const userText = plainConversationText(userMessage.displayContent ?? userMessage.content);
@@ -292,14 +340,14 @@ type BrowserWebviewElement = HTMLElement & {
   reload?: () => void;
 };
 
-function WorkspaceNode({ entry, depth = 0 }: { entry: WorkspaceEntry; depth?: number }) {
+function WorkspaceNode({ entry, depth = 0, onOpenFile }: { entry: WorkspaceEntry; depth?: number; onOpenFile: (entry: WorkspaceEntry) => void }) {
   const [expanded, setExpanded] = useState(depth === 0);
   const isDirectory = entry.kind === "directory";
   const hasChildren = Boolean(entry.children?.length);
 
   const activate = () => {
     if (isDirectory) setExpanded((value) => !value);
-    else void window.dyworker?.openPath(entry.path);
+    else onOpenFile(entry);
   };
 
   return (
@@ -323,7 +371,7 @@ function WorkspaceNode({ entry, depth = 0 }: { entry: WorkspaceEntry; depth?: nu
         <span title={entry.path}>{entry.name}</span>
       </button>
       {expanded && entry.children?.map((child) => (
-        <WorkspaceNode entry={child} depth={depth + 1} key={child.path} />
+        <WorkspaceNode entry={child} depth={depth + 1} key={child.path} onOpenFile={onOpenFile} />
       ))}
     </div>
   );
@@ -2299,6 +2347,10 @@ export function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
+  const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
+  const [workspacePreview, setWorkspacePreview] = useState<{ path: string; name: string; content: string } | null>(null);
+  const [workspacePreviewLoading, setWorkspacePreviewLoading] = useState(false);
+  const [workspacePreviewError, setWorkspacePreviewError] = useState("");
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
@@ -2313,6 +2365,7 @@ export function App() {
   const recordingChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
+  const workspacePreviewRequestRef = useRef(0);
 
   // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
   useEffect(() => {
@@ -2689,6 +2742,13 @@ export function App() {
     sessionNoticeTimersRef.current.set(sessionId, timeout);
   };
 
+  const resetWorkspacePreview = () => {
+    workspacePreviewRequestRef.current += 1;
+    setWorkspacePreview(null);
+    setWorkspacePreviewLoading(false);
+    setWorkspacePreviewError("");
+  };
+
   const createTask = (targetWorkspacePath = workspacePath) => {
     // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
     // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
@@ -2712,6 +2772,9 @@ export function App() {
     }
     setComposer("");
     setAttachments([]);
+    setActiveSkills([]);
+    setEditingMessage(null);
+    resetWorkspacePreview();
     setNotice("");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
@@ -2989,6 +3052,49 @@ export function App() {
     return tab.id;
   };
 
+  const openWorkspaceFile = async (entry: WorkspaceEntry) => {
+    if (!isMarkdownFile(entry.path)) {
+      if (!window.dyworker?.openPath) {
+        setNotice("当前预览环境无法打开文件");
+        return;
+      }
+      try {
+        const result = await window.dyworker.openPath(entry.path);
+        if (!result.ok) setError(result.error || "无法打开文件");
+      } catch (openError) {
+        setError(`无法打开文件：${openError instanceof Error ? openError.message : String(openError)}`);
+      }
+      return;
+    }
+    setRightPanelOpen(true);
+    openToolPanelTab("files");
+    const requestId = workspacePreviewRequestRef.current + 1;
+    workspacePreviewRequestRef.current = requestId;
+    setWorkspacePreview({ path: entry.path, name: entry.name, content: "" });
+    setWorkspacePreviewLoading(true);
+    setWorkspacePreviewError("");
+    if (!window.dyworker?.readWorkspaceMarkdown) {
+      setWorkspacePreviewLoading(false);
+      setWorkspacePreviewError("当前预览环境无法读取 Markdown 文件");
+      return;
+    }
+    try {
+      const result = await window.dyworker.readWorkspaceMarkdown(workspacePath, entry.path);
+      if (workspacePreviewRequestRef.current !== requestId) return;
+      if (!result.ok) {
+        setWorkspacePreviewError(result.error || "Markdown 文件读取失败");
+        return;
+      }
+      setWorkspacePreview({ path: entry.path, name: entry.name, content: result.content || "" });
+    } catch (previewError) {
+      if (workspacePreviewRequestRef.current === requestId) {
+        setWorkspacePreviewError(`Markdown 文件读取失败：${previewError instanceof Error ? previewError.message : String(previewError)}`);
+      }
+    } finally {
+      if (workspacePreviewRequestRef.current === requestId) setWorkspacePreviewLoading(false);
+    }
+  };
+
   const closeToolPanelTab = (id: string) => {
     if (toolPanelTabs.length === 1) {
       updateToolPanelTab(id, { kind: "browser", title: "新标签页", url: "" });
@@ -3141,6 +3247,9 @@ export function App() {
     }
     let content = composer.trim();
     if ((!content && !attachments.length && !activeSkills.length) || activeTaskRunning || !activeSession) return;
+    const editingTarget = editingMessage?.sessionId === activeSession.id
+      ? activeSession.messages[editingMessage.messageIndex]
+      : null;
     // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
     const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
     let goalDriven = false;
@@ -3197,6 +3306,7 @@ export function App() {
         }).join("\n\n")}\n\n以下是我的任务:\n`
       : "";
     const message: ChatMessage = {
+      id: crypto.randomUUID(),
       role: "user",
       // content 带完整技能指令发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
       content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : "请处理这些附件。")),
@@ -3207,14 +3317,18 @@ export function App() {
       attachments: selectedAttachments,
       createdAt: new Date().toISOString(),
     };
+    const baseMessages = editingTarget && editingMessage
+      ? activeSession.messages.slice(0, editingMessage.messageIndex)
+      : activeSession.messages;
     const updatedSession: SessionRecord = {
       ...activeSession,
       ...(goalDriven ? { goal: content } : {}),
-      title: activeSession.messages.length === 0 ? shortTitle(content) : activeSession.title,
+      title: baseMessages.length === 0 ? shortTitle(content) : activeSession.title,
       workspacePath,
       updatedAt: new Date().toISOString(),
-      messages: [...activeSession.messages, message],
+      messages: [...baseMessages, message],
     };
+    setEditingMessage(null);
     setSessions((current) => current.map((session) => session.id === activeSession.id ? updatedSession : session));
 
     try {
@@ -3559,6 +3673,8 @@ export function App() {
   const selectSession = (session: SessionRecord) => {
     setSessionMenuId(null);
     setActiveId(session.id);
+    setEditingMessage(null);
+    resetWorkspacePreview();
     const path = String(session.workspacePath || "").trim();
     setWorkspacePath(path);
     if (!path) {
@@ -3579,8 +3695,34 @@ export function App() {
     if (!activeSession) return;
     setWorkspacePath("");
     setWorkspaceEntries([]);
+    resetWorkspacePreview();
     updateSession(activeSession.id, (session) => ({ ...session, workspacePath: "" }));
     setNotice("已移除这个会话的工作目录，会话归入最近");
+  };
+
+  const copyMessage = async (message: ChatMessage) => {
+    const copied = await copyTextToClipboard(messageVisibleText(message));
+    setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
+  };
+
+  const startMessageEdit = (message: ChatMessage, messageIndex: number) => {
+    if (!activeSession || message.role !== "user" || activeTaskRunning) return;
+    setEditingMessage({ sessionId: activeSession.id, messageIndex, original: message });
+    setComposer(messageVisibleText(message));
+    setAttachments(message.attachments ? [...message.attachments] : []);
+    setActiveSkills(message.skillsUsed?.length ? skills.filter((skill) => message.skillsUsed?.includes(skill.name)) : []);
+    setMentionMenu(null);
+    setNotice("已载入消息，修改后点击发送即可替换原消息并重新处理");
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const cancelMessageEdit = () => {
+    setEditingMessage(null);
+    setComposer("");
+    setAttachments([]);
+    setActiveSkills([]);
+    setNotice("已取消编辑");
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
   const renderSessionItem = (session: SessionRecord) => (
@@ -3983,6 +4125,7 @@ export function App() {
                 const turnIndex = message.role === "user"
                   ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
                   : -1;
+                const isEditing = editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index;
                 return (
                 <div
                   className={`message-row ${message.role}`}
@@ -3991,34 +4134,45 @@ export function App() {
                 >
                   {message.role === "system" ? null : message.role === "user" ? (
                     <>
-                      <div className="user-bubble">
-                      {Boolean(message.skillsUsed?.length) && (
-                        <div className="message-attachments message-skills">
-                          {message.skillsUsed?.map((name) => (
-                            <span key={`${message.createdAt}-${name}`} className="skill-ref-chip">
-                              <FileCode2 size={13} />
-                              /{name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      <span>{message.displayContent ?? message.content}</span>
-                      {Boolean(message.attachments?.length) && (
-                        <div className="message-attachments">
-                          {message.attachments?.map((attachment) => (
-                            attachment.isImage && attachment.previewUrl ? (
-                              <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`} aria-label="图片附件">
-                                <img className="attachment-preview-image" src={attachment.previewUrl} alt="上传的图片" />
-                              </figure>
-                            ) : (
-                              <span key={`${message.createdAt}-${attachment.path}`}>
-                                {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
-                                {attachment.isImage ? "图片" : attachment.name}
+                      <div className="user-message-stack">
+                        <div className={`user-bubble${isEditing ? " editing" : ""}`}>
+                        {Boolean(message.skillsUsed?.length) && (
+                          <div className="message-attachments message-skills">
+                            {message.skillsUsed?.map((name) => (
+                              <span key={`${message.createdAt}-${name}`} className="skill-ref-chip">
+                                <FileCode2 size={13} />
+                                /{name}
                               </span>
-                            )
-                          ))}
+                            ))}
+                          </div>
+                        )}
+                        <span>{message.displayContent ?? message.content}</span>
+                        {Boolean(message.attachments?.length) && (
+                          <div className="message-attachments">
+                            {message.attachments?.map((attachment) => (
+                              attachment.isImage && attachment.previewUrl ? (
+                                <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`} aria-label="图片附件">
+                                  <img className="attachment-preview-image" src={attachment.previewUrl} alt="上传的图片" />
+                                </figure>
+                              ) : (
+                                <span key={`${message.createdAt}-${attachment.path}`}>
+                                  {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
+                                  {attachment.isImage ? "图片" : attachment.name}
+                                </span>
+                              )
+                            ))}
+                          </div>
+                        )}
                         </div>
-                      )}
+                        <div className="message-actions user" aria-label="用户消息操作">
+                          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+                          <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
+                            <Copy size={16} />
+                          </button>
+                          <button type="button" onClick={() => startMessageEdit(message, index)} disabled={activeTaskRunning} aria-label="编辑消息" title="编辑消息">
+                            <Pencil size={16} />
+                          </button>
+                        </div>
                       </div>
                     </>
                   ) : (
@@ -4069,6 +4223,12 @@ export function App() {
                       })()}
                       {Boolean(message.changes?.length) && <ChangesSummary changes={message.changes!} workspacePath={activeSession.workspacePath || workspacePath} />}
                       {message.content && <InteractiveMessage content={message.content} />}
+                      <div className="message-actions assistant" aria-label="助手消息操作">
+                        <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
+                          <Copy size={16} />
+                        </button>
+                        <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -4168,6 +4328,13 @@ export function App() {
                 >
                   <X size={12} />
                 </button>
+              </div>
+            )}
+            {editingMessage?.sessionId === activeSession?.id && (
+              <div className="message-editing-banner" role="status">
+                <Pencil size={13} />
+                <span>正在编辑：{shortTitle(messageVisibleText(editingMessage.original))}</span>
+                <button type="button" onClick={cancelMessageEdit}>取消编辑</button>
               </div>
             )}
             {mentionMenu && (
@@ -4380,7 +4547,7 @@ export function App() {
                     className="send-button"
                     onClick={() => void sendMessage()}
                     disabled={!canSend}
-                    aria-label="发送"
+                    aria-label={editingMessage ? "重新发送" : "发送"}
                     title="Enter 发送"
                   >
                     <ArrowUp size={19} />
@@ -4517,28 +4684,61 @@ export function App() {
             <section className="tool-file-browser">
               <div className="tool-file-browser-header">
                 <div className="tool-panel-content-heading">
-                  <FolderOpen size={16} />
-                  <span>文件</span>
+                  {workspacePreview ? (
+                    <button
+                      type="button"
+                      className="tool-file-browser-back"
+                      onClick={resetWorkspacePreview}
+                    >
+                      <ChevronRight className="tool-file-browser-back-icon" size={14} />
+                      <span>返回文件</span>
+                    </button>
+                  ) : (
+                    <>
+                      <FolderOpen size={16} />
+                      <span>文件</span>
+                    </>
+                  )}
                 </div>
                 <button className="icon-button subtle tiny" onClick={() => void refreshWorkspace()} aria-label="刷新文件列表" title="刷新文件列表">
                   <RefreshCw size={13} />
                 </button>
               </div>
-              <div className="tool-file-browser-title">
-                <Folder size={16} />
-                <span title={workspacePath}>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
-              </div>
-              {workspacePath && (
-                <button className="tool-file-browser-clear" onClick={clearWorkspace}>移除这个会话的工作目录</button>
-              )}
-              {workspaceOpen && (workspaceEntries.length ? (
-                <div className="workspace-tree">
-                  {workspaceEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} />)}
+              {workspacePreview ? (
+                <div className="markdown-file-preview">
+                  <div className="markdown-file-preview-title">
+                    <FileText size={16} />
+                    <strong title={workspacePreview.path}>{workspacePreview.name}</strong>
+                  </div>
+                  {workspacePreviewLoading ? (
+                    <p className="panel-empty">正在读取 Markdown 文件…</p>
+                  ) : workspacePreviewError ? (
+                    <p className="panel-empty error-text">{workspacePreviewError}</p>
+                  ) : (
+                    <article className="markdown-content markdown-file-preview-content">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{workspacePreview.content}</ReactMarkdown>
+                    </article>
+                  )}
                 </div>
               ) : (
-                <p className="panel-empty">这个文件夹是空的。</p>
-              ))}
-              {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+                <>
+                  <div className="tool-file-browser-title">
+                    <Folder size={16} />
+                    <span title={workspacePath}>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
+                  </div>
+                  {workspacePath && (
+                    <button className="tool-file-browser-clear" onClick={clearWorkspace}>移除这个会话的工作目录</button>
+                  )}
+                  {workspaceOpen && (workspaceEntries.length ? (
+                    <div className="workspace-tree">
+                      {workspaceEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} onOpenFile={openWorkspaceFile} />)}
+                    </div>
+                  ) : (
+                    <p className="panel-empty">这个文件夹是空的。</p>
+                  ))}
+                  {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+                </>
+              )}
             </section>
           )}
         </div>
