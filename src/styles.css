@@ -690,10 +690,10 @@ body.resizing-panels .app-shell {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 34px;
-  padding: 0 9px;
+  height: 40px;
+  padding: 0 11px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--card);
   color: #969a91;
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -859,6 +859,11 @@ body.resizing-panels .app-shell {
   flex: 0 0 auto;
   align-items: center;
   gap: 5px;
+}
+
+.skill-library-search-form .button-secondary {
+  min-height: 40px;
+  min-width: 74px;
 }
 
 .skill-library-message {
@@ -4596,6 +4601,26 @@ body.resizing-panels .app-shell {
 .settings-dialog .settings-content input:not([type="checkbox"]):focus {
   border-color: #aeb2a9;
   box-shadow: 0 0 0 3px rgba(108, 112, 104, 0.08);
+}
+
+/* 设置页的通用 input 规则不能套到这个内层输入框上，否则会出现双边框和溢出。 */
+.settings-dialog .settings-content .skill-search-field input {
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.settings-dialog .settings-content .skill-search-field input:focus,
+.settings-dialog .settings-content .skill-search-field input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
 }
 
 .dialog-note {
