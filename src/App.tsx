@@ -53,7 +53,7 @@ import {
 import { CSSProperties, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
-import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
 const now = new Date().toISOString();
@@ -150,6 +150,14 @@ const defaultSettings: ProviderSettings = {
   preventSleep: "tasks",
   mcpServers: [],
   channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "reviewer" },
+  skillLibraries: [{
+    id: "skillhub",
+    name: "SkillHub",
+    description: "面向中国用户的技能搜索与安装服务",
+    websiteUrl: "https://skillhub.cn/",
+    searchUrl: "https://api.skillhub.cn/api/v1/search",
+    enabled: true,
+  }],
   profiles: [],
 };
 
@@ -863,6 +871,139 @@ function SkillsPanel({
   );
 }
 
+function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
+  value: ProviderSettings;
+  onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
+  onRefreshSkills: () => void | Promise<void>;
+}) {
+  const libraries = value.skillLibraries ?? defaultSettings.skillLibraries;
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SkillLibrarySearchResult[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [installingSlug, setInstallingSlug] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const saveLibraries = async (next: SkillLibraryConfig[], message: string) => {
+    setSaving(true);
+    try {
+      await onSave({ ...value, skillLibraries: next }, message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const search = async () => {
+    const text = query.trim();
+    if (!text) return;
+    setSearching(true);
+    setWarnings([]);
+    try {
+      const response = await window.dyworker?.searchSkillLibraries(text);
+      if (!response?.ok) {
+        setResults([]);
+        setWarnings([response?.error || "技能库搜索失败"]);
+        return;
+      }
+      setResults(response.results || []);
+      setWarnings(response.warnings || []);
+    } catch (error) {
+      setResults([]);
+      setWarnings([error instanceof Error ? error.message : String(error)]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const install = async (result: SkillLibrarySearchResult) => {
+    setInstallingSlug(`${result.libraryId}:${result.slug}`);
+    setWarnings([]);
+    try {
+      const response = await window.dyworker?.installSkillFromLibrary({ libraryId: result.libraryId, slug: result.slug });
+      if (!response?.ok) {
+        setWarnings([response?.error || "技能安装失败"]);
+        return;
+      }
+      await onRefreshSkills();
+      setWarnings([`已安装「${result.name}」，现在可以在“技能”中启用或使用。`]);
+    } catch (error) {
+      setWarnings([error instanceof Error ? error.message : String(error)]);
+    } finally {
+      setInstallingSlug("");
+    }
+  };
+
+  return (
+    <div className="skill-libraries-panel">
+      <div className="dialog-section-title">技能库来源</div>
+      <p className="dialog-note">技能库负责搜索和安装，安装后的内容仍由本机“技能”列表统一管理。来源配置按列表设计，后续可继续接入内部或其他技能库。</p>
+      <div className="panel-list">
+        {libraries.map((library) => (
+          <div className={`skill-library-row ${library.enabled ? "" : "disabled"}`} key={library.id}>
+            <label className="skill-switch" title={library.enabled ? "点击停用" : "点击启用"}>
+              <input
+                type="checkbox"
+                checked={library.enabled}
+                disabled={saving}
+                onChange={(event) => void saveLibraries(
+                  libraries.map((item) => item.id === library.id ? { ...item, enabled: event.target.checked } : item),
+                  `${library.name}已${event.target.checked ? "启用" : "停用"}`,
+                )}
+              />
+            </label>
+            <span className="mcp-server-name">
+              <strong>{library.name}</strong>
+              <small>{library.description || "未填写说明"}</small>
+            </span>
+            {library.websiteUrl && <a className="skill-library-link" href={library.websiteUrl} target="_blank" rel="noreferrer">打开官网 <ArrowUpRight size={12} /></a>}
+          </div>
+        ))}
+      </div>
+
+      <div className="dialog-section-title">搜索并安装</div>
+      <p className="dialog-note">当前接入 SkillHub。需要先在本机安装 SkillHub CLI；安装时会写入用户技能目录，DYWorker 刷新后即可识别。</p>
+      <div className="skill-library-search-form">
+        <input
+          value={query}
+          placeholder="搜索技能名称或用途，例如：PDF、网页自动化"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void search();
+            }
+          }}
+        />
+        <button type="button" className="button-secondary" onClick={() => void search()} disabled={searching || !query.trim()}>
+          {searching ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />}
+          搜索
+        </button>
+      </div>
+      {warnings.map((warning) => <p className="skill-library-message" key={warning}>{warning}</p>)}
+      {results.length ? (
+        <div className="skill-library-results">
+          {results.map((result) => {
+            const installing = installingSlug === `${result.libraryId}:${result.slug}`;
+            return (
+              <div className="skill-library-result" key={`${result.libraryId}:${result.slug}`}>
+                <div>
+                  <strong>{result.name}</strong>
+                  <small>{result.libraryName} · {result.slug}{result.version ? ` · ${result.version}` : ""}</small>
+                </div>
+                <button type="button" className="button-secondary" onClick={() => void install(result)} disabled={Boolean(installingSlug)}>
+                  {installing ? <LoaderCircle size={13} className="spin" /> : <Plus size={13} />}
+                  {installing ? "安装中…" : "安装"}
+                </button>
+                {result.description && <p>{result.description}</p>}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const recurrenceLabels: Record<string, string> = { once: "一次", hourly: "每小时", daily: "每天", weekly: "每周" };
 
 function formatScheduleTime(iso: string) {
@@ -1291,7 +1432,7 @@ function IdentitySettingsPanel({ value, onSave }: {
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "identity" | "memories" | "skills" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "channels" | "identity" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
 const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings }[] }[] = [
@@ -1309,6 +1450,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
   { group: "资源", items: [
     { id: "memories", label: "记忆", icon: History },
     { id: "skills", label: "技能", icon: FileCode2 },
+    { id: "skill-libraries", label: "技能库", icon: Globe },
     { id: "plans", label: "定时计划", icon: ListTodo },
   ] },
   { group: "高级", items: [
@@ -2018,6 +2160,8 @@ function SettingsDialog({
             onRefresh={onRefreshSkills}
             onOpen={onOpenSkill}
           />
+        ) : tab === "skill-libraries" ? (
+          <SkillLibrariesPanel value={value} onSave={onSave} onRefreshSkills={onRefreshSkills} />
         ) : tab === "usage" ? (
           <>
             <UsageStatsPanel records={usageRecords} />

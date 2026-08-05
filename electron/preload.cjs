@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   listSkills: (workspacePath) => ipcRenderer.invoke("skills:list", workspacePath),
   setSkillEnabled: (id, enabled, workspacePath) => ipcRenderer.invoke("skills:set-enabled", { id, enabled, workspacePath }),
   deleteSkill: (id) => ipcRenderer.invoke("skills:delete", id),
+  searchSkillLibraries: (query) => ipcRenderer.invoke("skill-libraries:search", { query }),
+  installSkillFromLibrary: (payload) => ipcRenderer.invoke("skill-libraries:install", payload),
   listSchedules: () => ipcRenderer.invoke("schedules:list"),
   saveSchedule: (payload) => ipcRenderer.invoke("schedules:save", payload),
   deleteSchedule: (id) => ipcRenderer.invoke("schedules:delete", id),

@@ -237,6 +237,18 @@ test("Codex skills are refreshed for the active workspace and managed in setting
   assert.match(main, /readSkills\(workspacePath\)/);
 });
 
+test("技能库设置贯通配置、主进程和渲染端", () => {
+  assert.match(types, /skillLibraries: SkillLibraryConfig\[\]/);
+  assert.match(settingsStorage, /normalizeSkillLibraries/);
+  assert.match(preload, /searchSkillLibraries: \(query\)/);
+  assert.match(preload, /installSkillFromLibrary: \(payload\)/);
+  assert.match(main, /ipcMain\.handle\("skill-libraries:search"/);
+  assert.match(main, /ipcMain\.handle\("skill-libraries:install"/);
+  assert.match(app, /label: "技能库"/);
+  assert.match(app, /searchSkillLibraries\(text\)/);
+  assert.match(app, /installSkillFromLibrary\(\{ libraryId: result\.libraryId, slug: result\.slug \}\)/);
+});
+
 test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复配置", () => {
   assert.match(main, /discoverComputerUseServer\(\)/);
   assert.match(main, /builtInComputerUseServer/);

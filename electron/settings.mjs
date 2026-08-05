@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizeSkillLibraries } from "./skill-libraries.mjs";
 
 export function normalizePreventSleep(value) {
   return ["off", "tasks", "always"].includes(value) ? value : "tasks";
@@ -176,6 +177,7 @@ export function deserializeSettings(stored, secretStorage) {
     preventSleep: normalizePreventSleep(source.preventSleep),
     mcpServers: Array.isArray(source.mcpServers) ? source.mcpServers : [],
     channels: normalizeChannels(source.channels, secretStorage, "deserialize"),
+    skillLibraries: normalizeSkillLibraries(source.skillLibraries),
   };
 }
 
@@ -206,6 +208,7 @@ export function serializeSettings(settings, secretStorage) {
         args: Array.isArray(server.args) ? server.args.map(String) : String(server.args || "").split(" ").filter(Boolean),
         enabled: server.enabled !== false,
       })),
+    skillLibraries: normalizeSkillLibraries(settings?.skillLibraries),
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
@@ -226,6 +229,7 @@ export function serializeSettings(settings, secretStorage) {
     preventSleep: normalized.preventSleep,
     mcpServers: normalized.mcpServers,
     channels: normalizeChannels(settings?.channels, secretStorage, "serialize"),
+    skillLibraries: normalized.skillLibraries,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,
     profileStoreVersion: 1,

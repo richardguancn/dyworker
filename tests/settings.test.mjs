@@ -60,6 +60,17 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   assert.equal(restored.profiles[1].transcriptionModel, "whisper-two");
 });
 
+test("技能库配置会随设置保存，并为旧设置补上 SkillHub", () => {
+  const stored = serializeSettings({ skillLibraries: [{ id: "skillhub", enabled: false }] }, secretStorage);
+  assert.equal(stored.skillLibraries.find((item) => item.id === "skillhub")?.enabled, false);
+  assert.equal(stored.skillLibraries.find((item) => item.id === "skillhub")?.websiteUrl, "https://skillhub.cn/");
+
+  const restored = deserializeSettings({ profiles: [] }, secretStorage);
+  assert.equal(restored.skillLibraries.length, 1);
+  assert.equal(restored.skillLibraries[0].id, "skillhub");
+  assert.equal(restored.skillLibraries[0].enabled, true);
+});
+
 test("旧版单模型设置仍可读取且自动迁移为第一套配置", () => {
   const legacy = {
     endpoint: "https://legacy.example/v1/chat/completions",

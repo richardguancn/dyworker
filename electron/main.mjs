@@ -13,6 +13,7 @@ import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId
 import { McpClient } from "./mcp.mjs";
 import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
+import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { listWorkspace } from "./workspace.mjs";
@@ -1556,6 +1557,25 @@ ipcMain.handle("skills:delete", async (_event, id) => {
     }
   }
   return { ok: true };
+});
+
+ipcMain.handle("skill-libraries:search", async (_event, payload) => {
+  try {
+    const settings = await readSettings();
+    return { ok: true, ...(await searchSkillLibraries(settings.skillLibraries, payload?.query)) };
+  } catch (error) {
+    return { ok: false, results: [], warnings: [], error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("skill-libraries:install", async (_event, payload) => {
+  try {
+    const settings = await readSettings();
+    const result = await installSkillFromLibrary(settings.skillLibraries, payload?.libraryId, payload?.slug);
+    return { ok: true, slug: result.slug, targetDir: result.targetDir };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 // ---- 定时计划 ----

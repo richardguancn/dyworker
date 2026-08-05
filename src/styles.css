@@ -653,6 +653,108 @@ body.resizing-panels .app-shell {
   gap: 10px;
 }
 
+.skill-libraries-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.skill-library-row,
+.skill-library-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.skill-library-row.disabled {
+  opacity: 0.55;
+}
+
+.skill-library-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  color: #6e756a;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.skill-library-link:hover {
+  color: #3f5f49;
+}
+
+.skill-library-search-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-library-search-form input {
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-library-search-form .button-secondary,
+.skill-library-result .button-secondary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.skill-library-message {
+  margin: 0;
+  color: #6d756a;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.skill-library-results {
+  display: grid;
+  gap: 6px;
+}
+
+.skill-library-result {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.skill-library-result > div {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.skill-library-result strong {
+  overflow: hidden;
+  color: #3f433c;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-library-result small {
+  overflow: hidden;
+  color: #92958e;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-library-result p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #6a6e66;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .skill-management-head {
   display: flex;
   align-items: center;

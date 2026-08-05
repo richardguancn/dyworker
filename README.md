@@ -34,6 +34,8 @@ DYWorker 是一款本地运行的 AI 工作助手。选择一个文件夹作为�
 
 ![Skills 技能包](docs/screenshots/08-skills.png)
 
+打开“设置 → 技能库”即可搜索和安装 SkillHub 技能。首次使用前，请按 [SkillHub 安装说明](https://skillhub.cn/install/skillhub.md) 安装 CLI；安装后的技能会自动出现在“技能”列表中。技能库按来源列表管理，后续可以继续接入其他来源。
+
 ### ⏰ 计划任务与自动续跑
 
 长任务不用守着：支持定时唤醒（1 分钟到 12 小时），任务中断后自动续跑，像同事一样"记着把事情做完"。

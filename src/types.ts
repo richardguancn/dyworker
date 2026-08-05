@@ -278,6 +278,7 @@ export interface ProviderSettings {
   preventSleep: "off" | "tasks" | "always";
   mcpServers: McpServerConfig[];
   channels: ChannelsConfig;
+  skillLibraries: SkillLibraryConfig[];
 }
 
 export interface MemoryItem {
@@ -305,6 +306,24 @@ export interface SkillRecord {
   path?: string;
   readOnly?: boolean;
   createdAt: string;
+}
+
+export interface SkillLibraryConfig {
+  id: string;
+  name: string;
+  description: string;
+  websiteUrl: string;
+  searchUrl: string;
+  enabled: boolean;
+}
+
+export interface SkillLibrarySearchResult {
+  libraryId: string;
+  libraryName: string;
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
 }
 
 export interface ScheduleRecord {
@@ -380,6 +399,8 @@ export interface DyworkerBridge {
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;
   setSkillEnabled(id: string, enabled: boolean, workspacePath?: string): Promise<{ ok: boolean }>;
   deleteSkill(id: string): Promise<{ ok: boolean; error?: string }>;
+  searchSkillLibraries(query: string): Promise<{ ok: boolean; results: SkillLibrarySearchResult[]; warnings: string[]; error?: string }>;
+  installSkillFromLibrary(payload: { libraryId: string; slug: string }): Promise<{ ok: boolean; slug?: string; targetDir?: string; error?: string }>;
   listSchedules(): Promise<ScheduleRecord[]>;
   saveSchedule(payload: Partial<ScheduleRecord>): Promise<{ ok: boolean; error?: string }>;
   deleteSchedule(id: string): Promise<{ ok: boolean }>;
