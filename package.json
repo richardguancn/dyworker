@@ -8,6 +8,7 @@
     "name": "DYWorker Team",
     "email": "support@dyworker.local"
   },
+  "homepage": "https://github.com/richardguancn/dyworker",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",
