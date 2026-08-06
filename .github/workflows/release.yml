@@ -78,6 +78,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
       - name: 下载全部发布产物
         uses: actions/download-artifact@v4
         with:
