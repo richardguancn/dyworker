@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
@@ -489,20 +489,55 @@ function createWindow({ solidFallback = false } = {}) {
   // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
   // 被送到上一个窗口（X11/XWayland 无边框窗口的常见问题）。
   if (process.platform === "linux") {
+    // Linux 下记录窗口几何、显示器和渲染器状态，便于真机排查“进程在但
+    // 界面不显示”。正常环境这些日志不影响窗口与阴影。
+    const logWindowGeometry = (label) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        const bounds = mainWindow.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        console.log(
+          `[dyworker] linux window ${label}: bounds=${JSON.stringify(bounds)} ` +
+            `display=${JSON.stringify(display.bounds)} scale=${display.scaleFactor} ` +
+            `visible=${mainWindow.isVisible()} minimized=${mainWindow.isMinimized()} ` +
+            `maximized=${mainWindow.isMaximized()}`,
+        );
+      } catch (error) {
+        console.log(`[dyworker] linux window geometry failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    setTimeout(() => logWindowGeometry("created"), 500);
+    mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) {
+        console.log(
+          `[dyworker] linux renderer load failed: ${errorCode} ${errorDescription} (${validatedURL})`,
+        );
+      }
+    });
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+      console.log(
+        `[dyworker] linux renderer gone: reason=${details?.reason || "unknown"} ` +
+          `exitCode=${details?.exitCode ?? "unknown"}`,
+      );
+    });
+    mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
+      console.log(
+        `[dyworker] linux preload error: ${preloadPath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+    mainWindow.webContents.on("console-message", (details, level, message, line, sourceId) => {
+      const severity = details?.params?.level ?? ["verbose", "info", "warning", "error"][level] ?? String(level);
+      if (severity === "error" || level === 3) {
+        console.log(
+          `[dyworker] linux renderer error: ${details?.params?.message ?? message} ` +
+            `(${details?.params?.sourceId ?? sourceId}:${details?.params?.lineNumber ?? line})`,
+        );
+      }
+    });
     mainWindow.on("show", () => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.focus();
       mainWindow.webContents.focus();
-    });
-    mainWindow.webContents.on("did-finish-load", () => {
-      mainWindow?.webContents
-        .executeJavaScript("document.hasFocus()")
-        .then((hasFocus) => {
-          console.log(`[dyworker] linux window focus: rendererHasFocus=${String(hasFocus)}`);
-        })
-        .catch(() => {
-          // 诊断日志失败不影响窗口使用
-        });
     });
   }
   // 透明窗口健康检查：部分 X11/XWayland 桌面上透明无边框窗口拿不到键盘
@@ -579,6 +614,49 @@ function createWindow({ solidFallback = false } = {}) {
     ipcMain.on("window:pointer-down", tryEnsureFocus);
     mainWindow.once("closed", () => {
       ipcMain.removeListener("window:pointer-down", tryEnsureFocus);
+    });
+  }
+  // Linux 透明窗口下如果渲染器没有挂载任何内容，整个窗口是完全透明的，
+  // 表现为“进程在但界面不显示”。加载完成后检查一次渲染内容，空白时
+  // 先重新加载一次，仍空白则重建为不透明窗口，保证至少能看到界面。
+  if (process.platform === "linux") {
+    let rendererReloaded = false;
+    const inspectRendererContent = async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      try {
+        return await mainWindow.webContents.executeJavaScript(`(() => {
+          const root = document.getElementById("root");
+          return {
+            readyState: document.readyState,
+            rootChildren: root ? root.children.length : -1,
+            bodyTextLength: document.body ? (document.body.innerText || "").length : -1,
+            hasBridge: Boolean(window.dyworker),
+            hasFocus: document.hasFocus(),
+            shadowClass: document.documentElement.classList.contains("window-shadow"),
+          };
+        })()`);
+      } catch (error) {
+        return { checkError: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    const ensureRendererContent = async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const report = await inspectRendererContent();
+      console.log(`[dyworker] linux renderer content: ${JSON.stringify(report)}`);
+      if (!report || report.checkError || report.rootChildren > 0 || report.bodyTextLength > 0) return;
+      if (!rendererReloaded) {
+        rendererReloaded = true;
+        console.log("[dyworker] linux renderer is blank; reloading once");
+        mainWindow.webContents.reload();
+        return;
+      }
+      console.log("[dyworker] linux renderer still blank after reload; forcing solid window for visibility");
+      if (currentWindowShadow) {
+        rebuildLinuxWindowAsSolid();
+      }
+    };
+    mainWindow.webContents.on("did-finish-load", () => {
+      setTimeout(() => void ensureRendererContent(), 2000);
     });
   }
   mainWindow.once("closed", () => {

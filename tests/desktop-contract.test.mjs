@@ -449,6 +449,23 @@ test("linux 透明窗口启动后主动检查接管状态，未接管或重建�
   assert.match(main, /window-all-closed[\s\S]*!recreatingWindow/);
 });
 
+test("linux 记录窗口与渲染器诊断，渲染空白时先重载再强制不透明", () => {
+  // 启动时记录窗口几何、显示器信息，便于真机定位“进程在但界面不显示”
+  assert.match(main, /logWindowGeometry/);
+  assert.match(main, /screen\.getDisplayMatching/);
+  // 渲染器加载失败、进程退出、preload 报错、控制台错误都输出日志
+  assert.match(main, /did-fail-load/);
+  assert.match(main, /render-process-gone/);
+  assert.match(main, /preload-error/);
+  assert.match(main, /console-message/);
+  // 透明模式下检查渲染器是否真的挂载了内容；空白先重载一次，仍空白则
+  // 重建为不透明窗口，保证用户至少能看到界面
+  assert.match(main, /inspectRendererContent/);
+  assert.match(main, /rootChildren/);
+  assert.match(main, /renderer is blank; reloading once/);
+  assert.match(main, /renderer still blank after reload; forcing solid window/);
+});
+
 test("codex alignment surfaces are wired end to end", () => {
   const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
   // AGENTS.md 项目指令、edit_file 局部编辑、update_plan 计划、file-change 变更事件
