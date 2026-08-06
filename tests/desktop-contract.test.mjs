@@ -433,6 +433,22 @@ test("linux 默认用透明窗口自绘阴影，拿不到键盘焦点时自动�
   assert.match(preload, /reportWindowPointerDown/);
 });
 
+test("linux 透明窗口启动后主动检查接管状态，未接管或重建时不会退出应用", () => {
+  // 纯 Wayland（无 DISPLAY/XWayland）不启用透明阴影，避免老合成器下窗口
+  // 无法映射导致“进程在但界面不显示”
+  assert.match(main, /waylandSession && Boolean\(process\.env\.DISPLAY\)/);
+  // 窗口显示后主动检查是否被窗口管理器接管，未接管自动重建为不透明窗口
+  assert.match(main, /checkWindowMapped/);
+  assert.match(main, /is not managed/);
+  assert.match(main, /mainWindow\.once\("show"[\s\S]*setTimeout\(checkWindowMapped, 1200\)/);
+  // xwininfo 缺失时用 xprop 兜底判断接管状态
+  assert.match(main, /managed\(xprop\)/);
+  // 重建窗口期间不触发 window-all-closed 退出，避免进程活着但界面消失
+  assert.match(main, /rebuildLinuxWindowAsSolid/);
+  assert.match(main, /recreatingWindow/);
+  assert.match(main, /window-all-closed[\s\S]*!recreatingWindow/);
+});
+
 test("codex alignment surfaces are wired end to end", () => {
   const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
   // AGENTS.md 项目指令、edit_file 局部编辑、update_plan 计划、file-change 变更事件

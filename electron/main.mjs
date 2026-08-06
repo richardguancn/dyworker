@@ -92,6 +92,9 @@ function systemWindowBackground() {
 // DYWORKER_FORCE_WINDOW_SHADOW=1 强制开启（保留诊断日志，不自动回退）。
 let linuxWindowShadowCache;
 let currentWindowShadow = false;
+// 重建窗口期间置位：销毁最后一个窗口会触发 window-all-closed，若此时应用
+// 退出，就表现为“进程还在但界面消失”。重建期间不退出，等新窗口接管。
+let recreatingWindow = false;
 function supportsLinuxWindowShadow() {
   if (process.platform !== "linux") return false;
   if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
@@ -105,7 +108,9 @@ function supportsLinuxWindowShadow() {
   }
   const waylandSession =
     process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
-  let composited = waylandSession;
+  // 纯 Wayland（无 DISPLAY/XWayland）下老合成器既可能不映射窗口，也可能
+  // 不支持透明混合；此时不启用透明阴影，保证窗口可显示。
+  let composited = waylandSession && Boolean(process.env.DISPLAY);
   if (!composited && process.env.DISPLAY) {
     try {
       const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
@@ -139,15 +144,49 @@ function describeLinuxWindowState(win) {
     if (!handle || handle.length < 4) return "no-native-handle";
     const xid = `0x${handle.readUInt32LE(0).toString(16)}`;
     const probe = spawnSync("xwininfo", ["-id", xid], { encoding: "utf8", timeout: 2000 });
-    if (probe.status !== 0) {
-      const detail = String(probe.stderr || probe.error?.message || "unknown").trim().slice(0, 60);
-      return `xwininfo-failed(${detail || "no-stderr"})`;
+    if (probe.status === 0) {
+      const override = /Override Redirect State:\s*(yes|no)/i.exec(probe.stdout);
+      const managed = /WM_STATE/i.test(probe.stdout) ? "managed" : "no-wm-state";
+      return override ? `override-redirect=${override[1]},${managed}` : `xwininfo-parse-miss,${managed}`;
     }
-    const override = /Override Redirect State:\s*(yes|no)/i.exec(probe.stdout);
-    const managed = /WM_STATE/i.test(probe.stdout) ? "managed" : "no-wm-state";
-    return override ? `override-redirect=${override[1]},${managed}` : `xwininfo-parse-miss,${managed}`;
+    // xwininfo 缺失时退而用 xprop 判断窗口是否被窗口管理器接管
+    //（xprop 已用于合成器检测，作为兜底依赖更常见）。
+    const fallback = spawnSync("xprop", ["-id", xid, "WM_STATE", "_NET_WM_STATE"], {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+    if (fallback.status === 0) {
+      if (/WM_STATE\s*:/.test(fallback.stdout) || /_NET_WM_STATE\s*:/.test(fallback.stdout)) {
+        return "override-redirect=unknown,managed(xprop)";
+      }
+      return "override-redirect=unknown,no-wm-state";
+    }
+    const detail = String(fallback.stderr || fallback.error?.message || "unknown").trim().slice(0, 60);
+    return `xwininfo-failed(${detail || "no-stderr"})`;
   } catch (error) {
     return `xwininfo-error(${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+// Linux 透明窗口故障时重建为不透明窗口。重建期间置位 recreatingWindow，
+// 避免窗口销毁触发 window-all-closed 退出应用（表现为进程在但界面消失）。
+function rebuildLinuxWindowAsSolid() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const bounds = mainWindow.getBounds();
+  const maximized = mainWindow.isMaximized();
+  recreatingWindow = true;
+  try {
+    mainWindow.destroy();
+  } finally {
+    try {
+      createWindow({ solidFallback: true });
+    } finally {
+      recreatingWindow = false;
+    }
+  }
+  if (mainWindow) {
+    if (maximized) mainWindow.maximize();
+    else mainWindow.setBounds(bounds);
   }
 }
 
@@ -475,6 +514,39 @@ function createWindow({ solidFallback = false } = {}) {
     mainWindow.on("focus", () => {
       everFocused = true;
     });
+    // 启动后主动确认透明窗口被窗口管理器接管：部分 X11/XWayland 桌面上
+    // 透明无边框窗口会成为 override-redirect（不受 WM 管理），可能不显示
+    // 也不在任务栏。此时无法靠点击触发键盘焦点检查，改为窗口显示后定时
+    // 检查接管状态，未接管则自动重建为不透明窗口。
+    const checkWindowMapped = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!mainWindow.isVisible()) {
+        console.log("[dyworker] linux transparent window is not visible; rebuilding as solid");
+        rebuildLinuxWindowAsSolid();
+        return;
+      }
+      const windowState = describeLinuxWindowState(mainWindow);
+      if (
+        !windowState ||
+        windowState.includes("xwininfo-failed") ||
+        windowState.includes("xwininfo-error") ||
+        windowState.includes("xwininfo-parse-miss")
+      ) {
+        console.log(`[dyworker] linux window state check skipped: ${windowState || "unknown"}`);
+        return;
+      }
+      if (windowState.includes("override-redirect=yes") || windowState.includes("no-wm-state")) {
+        console.log(
+          `[dyworker] linux transparent window is not managed (${windowState}); rebuilding as solid`,
+        );
+        rebuildLinuxWindowAsSolid();
+        return;
+      }
+      console.log(`[dyworker] linux window state check: ${windowState}`);
+    };
+    mainWindow.once("show", () => {
+      setTimeout(checkWindowMapped, 1200);
+    });
     const tryEnsureFocus = () => {
       if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
       if (everFocused || mainWindow.isFocused()) return;
@@ -497,14 +569,7 @@ function createWindow({ solidFallback = false } = {}) {
               `[dyworker] linux transparent window cannot gain keyboard focus (${windowState}); ` +
                 "rebuilding as a solid window without shadow",
             );
-            const bounds = mainWindow.getBounds();
-            const maximized = mainWindow.isMaximized();
-            mainWindow.destroy();
-            createWindow({ solidFallback: true });
-            if (mainWindow) {
-              if (maximized) mainWindow.maximize();
-              else mainWindow.setBounds(bounds);
-            }
+            rebuildLinuxWindowAsSolid();
           })
           .catch(() => {
             // 诊断失败不影响窗口使用
@@ -2400,7 +2465,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin" && !recreatingWindow) app.quit();
 });
 
 let mcpShutdownStarted = false;
