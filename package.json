@@ -69,7 +69,8 @@
     "files": [
       "dist/client/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",

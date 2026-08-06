@@ -121,7 +121,12 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(main, /appUpdater\.getUpdateUrl\(\)/);
   assert.match(main, /appUpdater\.configure\(updateUrl\)/);
   assert.match(main, /ipcMain\.handle\("app-update:check"/);
-  assert.match(main, /autoUpdater\.autoDownload = false/);
+  assert.match(main, /updater\.autoDownload = false/);
+  // electron-updater 动态加载：缺失时只禁用自动更新，不影响窗口启动
+  assert.match(main, /loadElectronUpdater/);
+  assert.match(main, /electron-updater 不可用，自动更新已禁用/);
+  assert.match(main, /createWindow\(\)[\s\S]*loadElectronUpdater\(\)/);
+  assert.match(packageJson, /"node_modules\/\*\*\/\*"/);
   assert.match(preload, /onAppUpdateStatus/);
   assert.match(preload, /downloadAppUpdate/);
   assert.match(app, /AppUpdateDialog/);

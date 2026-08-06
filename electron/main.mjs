@@ -18,10 +18,7 @@ import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
-import electronUpdater from "electron-updater";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
-
-const { autoUpdater } = electronUpdater;
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -194,17 +191,35 @@ function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
 
-function initializeAppUpdater(updateUrl = DEFAULT_UPDATE_URL) {
+// 自动更新模块属于可选能力：如果打包产物缺少 electron-updater（历史上曾
+// 导致 Linux 主进程启动即崩溃、窗口无法创建），动态加载失败时只禁用自动
+// 更新，不影响应用正常打开。
+let electronUpdaterPromise = null;
+function loadElectronUpdater() {
+  electronUpdaterPromise ??= import("electron-updater")
+    .then((module) => module.autoUpdater || null)
+    .catch((error) => {
+      console.log(
+        `[dyworker] electron-updater 不可用，自动更新已禁用：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    });
+  return electronUpdaterPromise;
+}
+
+function initializeAppUpdater(updateUrl = DEFAULT_UPDATE_URL, updater) {
   appUpdater = createUpdaterController({
-    updater: autoUpdater,
+    updater: updater || null,
     isPackaged: app.isPackaged,
     currentVersion: app.getVersion(),
     getWindow: () => mainWindow,
     updateUrl,
   });
   if (!app.isPackaged) return;
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  if (updater) {
+    updater.autoDownload = false;
+    updater.autoInstallOnAppQuit = true;
+  }
 }
 
 async function checkForAppUpdate() {
@@ -2527,12 +2542,15 @@ app.whenReady().then(async () => {
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
-  initializeAppUpdater(storedSettings.updateUrl);
   createWindow();
-  if (app.isPackaged) {
-    appUpdateTimer = setTimeout(() => void checkForAppUpdate(), 8_000);
-    appUpdateInterval = setInterval(() => void checkForAppUpdate(), 6 * 60 * 60 * 1000);
-  }
+  // 窗口先创建，自动更新初始化不阻塞界面；electron-updater 缺失时仅禁用更新
+  void loadElectronUpdater().then((updater) => {
+    initializeAppUpdater(storedSettings.updateUrl, updater);
+    if (app.isPackaged) {
+      appUpdateTimer = setTimeout(() => void checkForAppUpdate(), 8_000);
+      appUpdateInterval = setInterval(() => void checkForAppUpdate(), 6 * 60 * 60 * 1000);
+    }
+  });
   await expireOrphanedInboxItems();
   startScheduler();
   // IM 渠道(QQ/微信)按设置启动;失败不影响主程序
