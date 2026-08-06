@@ -309,7 +309,7 @@ linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检
   const prepared = await client.callTool("prepare_dependency_install", {
     packages: ["wmctrl", "python3-pyatspi", "imagemagick"],
   });
-  assert.equal(prepared.isError, false);
+  assert.equal(prepared.isError, false, prepared.text);
   const planToken = prepared.text.match(/计划令牌：([a-f0-9]{64})/)?.[1];
   const planSummary = prepared.text.match(/完整安装预览：\n([\s\S]*?)\n计划令牌：/)?.[1];
   assert.ok(planToken);
@@ -320,7 +320,7 @@ linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检
     plan_token: planToken,
     plan_summary: planSummary,
   });
-  assert.equal(result.isError, false);
+  assert.equal(result.isError, false, result.text);
   assert.match(result.text, /环境安装完成/);
   assert.equal(
     (await fs.readFile(log, "utf8")).trim(),
