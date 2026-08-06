@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { DEFAULT_SKILL_LIBRARIES, installSkillFromLibrary, normalizeSkillLibraries, searchSkillLibraries } from "../electron/skill-libraries.mjs";
 
@@ -94,11 +95,12 @@ test("搜索失败时返回对应技能库的提示", async () => {
 
 test("安装使用固定的用户技能目录，并返回 CLI 结果", async () => {
   let received;
+  const skillsDir = path.join("/tmp/dyworker-home", ".agents", "skills");
   const result = await installSkillFromLibrary([DEFAULT_SKILL_LIBRARIES[0]], "skillhub", "pdf-tools", {
     homeDir: "/tmp/dyworker-home",
     execFileImpl: async (command, args) => {
       received = { command, args };
-      return { stdout: JSON.stringify({ success: true, slug: "pdf-tools", targetDir: "/tmp/dyworker-home/.agents/skills/pdf-tools" }), stderr: "" };
+      return { stdout: JSON.stringify({ success: true, slug: "pdf-tools", targetDir: path.join(skillsDir, "pdf-tools") }), stderr: "" };
     },
   });
 
@@ -109,11 +111,11 @@ test("安装使用固定的用户技能目录，并返回 CLI 结果", async () 
       "install",
       "pdf-tools",
       "--dir",
-      "/tmp/dyworker-home/.agents/skills",
+      skillsDir,
       "--search-url",
       "https://api.skillhub.cn/api/v1/search",
       "--json",
     ],
   });
-  assert.equal(result.targetDir, "/tmp/dyworker-home/.agents/skills/pdf-tools");
+  assert.equal(result.targetDir, path.join(skillsDir, "pdf-tools"));
 });
