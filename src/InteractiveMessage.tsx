@@ -4,11 +4,12 @@ import {
   BarChart3,
   Check,
   Circle,
+  Copy,
   Gauge,
   ListChecks,
   SlidersHorizontal,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { localImagePathFromSource } from "../electron/local-image-path.mjs";
@@ -133,7 +134,73 @@ function MarkdownImage({ src, alt, node: _node, ...props }: ComponentPropsWithou
   return <img {...props} src={src} alt={alt || "图片"} loading="lazy" />;
 }
 
-const markdownComponents = { img: MarkdownImage };
+// 从 react-markdown 的 <pre> 子树里还原代码原文，用于一键复制
+function extractCodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractCodeText).join("");
+  if (typeof node === "object" && "props" in node) {
+    return extractCodeText((node as ReactElement<{ children?: ReactNode }>).props.children);
+  }
+  return "";
+}
+
+async function copyCodeText(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Electron 剪贴板权限被系统拦截时走兼容方案
+  }
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function MarkdownPre({ children, node: _node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(0);
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  const handleCopy = () => {
+    const text = extractCodeText(children).replace(/\n$/, "");
+    void copyCodeText(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setCopied(false), 1600);
+    });
+  };
+  return (
+    <div className="code-block-wrap">
+      <button
+        type="button"
+        className={`code-copy-button${copied ? " copied" : ""}`}
+        onClick={handleCopy}
+        aria-label={copied ? "已复制代码" : "复制代码"}
+        title={copied ? "已复制" : "复制代码"}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        <span>{copied ? "已复制" : "复制"}</span>
+      </button>
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
+
+const markdownComponents = { img: MarkdownImage, pre: MarkdownPre };
 
 interface Metric {
   label: string;

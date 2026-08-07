@@ -138,7 +138,7 @@ export interface UsageRecord {
   estimated: boolean;
 }
 
-// reviewer = 自动审核：安全操作自动继续，越界操作由规则和审核助手判断，拿不准才转人工。
+// reviewer = 替我审批：低风险操作自动继续，越界操作由规则和审核助手判断，拿不准才转人工。
 // allow-writes 仅作为旧版本数据的兼容值，新的界面和设置不再提供该模式。
 export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-access" | "deny-changes";
 
@@ -185,8 +185,7 @@ export interface ChatMessage {
   createdAt: string;
   attachments?: Attachment[];
   activities?: ActivityRecord[];
-  changes?: FileChange[];
-  plan?: PlanStep[];
+  changes?: FileChange[];  plan?: PlanStep[];
   durationMs?: number;
   taskStatus?: AgentResult["status"];
   workingContext?: string;
@@ -211,6 +210,8 @@ export interface SessionRecord {
   contextEndpoint?: string;
   pinned?: boolean;
   archived?: boolean;
+  // 后台完成未读：任务在非当前会话完成时置 true，点开会话即清除（列表小绿点）
+  unread?: boolean;
 }
 
 export interface WorkspaceEntry {

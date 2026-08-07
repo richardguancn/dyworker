@@ -2,7 +2,7 @@
   "name": "dyworker",
   "productName": "DYWorker",
   "desktopName": "dyworker.desktop",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "面向办公用户的本地 AI 工作助手",
   "author": {
     "name": "DYWorker Team",

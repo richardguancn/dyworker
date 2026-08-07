@@ -1406,7 +1406,7 @@ function shellWords(command) {
       else current += character;
     } else if (character === "'" || character === '"') {
       quote = character;
-    } else if (/\s|[|;&<>]/.test(character)) {
+    } else if (/\s|[|;&<>()]/.test(character)) {
       if (current) words.push(current);
       current = "";
     } else {
@@ -1416,6 +1416,30 @@ function shellWords(command) {
   if (escaped) current += "\\";
   if (current) words.push(current);
   return words;
+}
+
+// 这些 shell 词不是真实的文件访问，不应触发“工作区外路径”授权：
+// - `2>/dev/null`（Windows 为 `2>NUL`）之类的设备文件/设备名
+// - awk/sed/grep 正则片段（如 '/\.swipe-content \{/,/\}/'），特征是含花括号，
+//   或 POSIX 下含反斜杠（shellWords 已消费路径里的合法转义，剩下的反斜杠基本只出现在正则里）
+// 注意 Windows 盘符/UNC 路径常含 GUID 花括号（如 C:\Temp\{ABCD-…}），不能按正则片段误杀；
+// `../{x}` 这类相对逃逸也保留候选，宁可多问一次。
+const safeDeviceFiles = new Set([
+  "/dev/null", "/dev/zero", "/dev/tty", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/random", "/dev/urandom",
+]);
+const windowsDeviceNamePattern = /^(?:nul|con|prn|aux|com[1-9]|lpt[1-9]):?$/i;
+
+function isPseudoPathWord(word) {
+  if (!word) return true;
+  if (process.platform === "win32") {
+    if (windowsDeviceNamePattern.test(word)) return true;
+    // 盘符、UNC、`..` 开头的按真实路径处理，不做正则片段猜测
+    if (/^(?:[a-zA-Z]:[\\/]|[\\/]{2}|\.{1,2}[\\/])/.test(word)) return false;
+    return /[{}]/.test(word) || (/^\//.test(word) && word.includes("\\"));
+  }
+  if (safeDeviceFiles.has(word)) return true;
+  if (/^\.{1,2}\//.test(word)) return false;
+  return /[{}]/.test(word) || word.includes("\\");
 }
 
 function commandPathCandidates(command, workspace) {
@@ -1429,7 +1453,7 @@ function commandPathCandidates(command, workspace) {
       if (/^\$\{PWD\}(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("${PWD}".length));
       return word;
     })
-    .filter(Boolean);
+    .filter((word) => word && !isPseudoPathWord(word));
 }
 
 export function externalPathsForTool(workspace, name, args = {}) {
@@ -1442,35 +1466,83 @@ export function externalPathsForTool(workspace, name, args = {}) {
     .filter((value) => value && workspace.isOutside(value)))];
 }
 
-// 受信只读命令：
-// 只允许单一、无管道/重定向/替换/复合的只读程序，其余一律照常询问。
-const trustedReadOnlyCommand = /^(ls|pwd|cat|head|tail|find|grep|rg|echo|printf|wc|file|stat|du|df|which|date|uname|git\s+(status|diff|log|show|branch|ls-files|remote))\b/;
+// 受信只读程序与复合命令拆分：
+// 单一只读命令自不必说；`cd 子目录 && grep … ; git log … | head` 这种每一环都只读的
+// 复合命令也自动放行——只读操作不会因为发生在工作区子目录就变成高风险。
+// 判定前会剥离 `2>/dev/null`、`2>&1`（Windows 为 `2>NUL`）这类无害重定向；
+// 出现文件重定向、命令替换、反引号、未识别的段，一律照常询问。
+const trustedReadOnlyPrograms = new Set([
+  "ls", "pwd", "cat", "head", "tail", "find", "grep", "rg", "echo", "printf",
+  "wc", "file", "stat", "du", "df", "which", "date", "uname",
+  "sort", "uniq", "diff", "comm", "tr", "basename", "dirname", "realpath",
+]);
+const trustedGitReadOnlySubcommands = new Set(["status", "diff", "log", "show", "branch", "ls-files", "remote"]);
+// 这些子命令虽在白名单里，但带上特定参数就会变更数据，需要排除
+const gitBranchMutationFlags = /^(-[dDmMcC]|--delete|--move|--copy)$/;
+const gitRemoteMutationSubcommands = new Set(["add", "remove", "rm", "set-url", "set-head", "set-branches", "prune", "rename", "update"]);
+const findMutationFlags = /^-(delete|exec|execdir|ok|okdir|fls|fprint|fprintf|fprint0|fprintf0)$/;
+
+function isCdSegment(argv) {
+  return argv[0] === "cd" && argv.length <= 2;
+}
+
+function isTrustedReadOnlySegment(argv) {
+  const program = argv[0] || "";
+  if (!program || ruleNeverAllowCommands.has(program)) return false;
+  if (isCdSegment(argv)) return true;
+  if (program === "find") return !argv.some((token) => findMutationFlags.test(token));
+  if (program === "git") {
+    const subcommand = argv[1] || "";
+    if (!trustedGitReadOnlySubcommands.has(subcommand)) return false;
+    if (subcommand === "branch" && argv.some((token) => gitBranchMutationFlags.test(token))) return false;
+    if (subcommand === "remote" && argv.some((token) => gitRemoteMutationSubcommands.has(token))) return false;
+    return true;
+  }
+  return trustedReadOnlyPrograms.has(program);
+}
+
+// 无害重定向：写入空设备（POSIX /dev/null、Windows NUL）或文件描述符复制（2>&1）。
+const nullDeviceTarget = process.platform === "win32"
+  ? String.raw`(?:NUL:?|"NUL"|'NUL')`
+  : String.raw`(?:/dev/null|"/dev/null"|'/dev/null')`;
+const safeRedirectionPattern = new RegExp(String.raw`(?:\d*>>?|&>)\s*(?:${nullDeviceTarget}|&\s*\d+)(?=\s|$)`, "gi");
+const commandSegmentSplit = /\s*(?:&&|\|\||[;|])\s*/;
+// & 不在此列：&&/|| 是复合分隔符，拆分后段内残留的单个 &（后台运行）再单独拒绝
+const unsafeCommandRemainder = /[<>`$\\()]/;
+
+// 把命令拆成逐段 argv；只要存在无法确认安全的部分就返回 null（退回人工确认）。
+function splitSafeCompoundCommand(command) {
+  const text = String(command || "").trim();
+  if (!text || /[\r\n]/.test(text)) return null;
+  const stripped = text.replace(safeRedirectionPattern, " ");
+  if (unsafeCommandRemainder.test(stripped)) return null;
+  const segments = stripped.split(commandSegmentSplit).map((segment) => segment.trim()).filter(Boolean);
+  if (!segments.length || segments.some((segment) => segment.includes("&"))) return null;
+  return segments.map((segment) => shellWords(segment));
+}
 
 export function isAutoApprovableCommand(command) {
-  const text = String(command || "").trim();
-  if (!text || /[\r\n]/.test(text)) return false;
-  if (/[>|;&`$\\()]/.test(text)) return false;
-  return trustedReadOnlyCommand.test(text);
+  const segments = splitSafeCompoundCommand(command);
+  return Boolean(segments) && segments.every(isTrustedReadOnlySegment);
 }
 
 // 省心模式（allow-writes）下的常用开发命令自动放行（借鉴 openworker allowed_commands）：
-// 包管理器/解释器/测试工具按程序放行，但拒绝一切 shell 复合与重定向；
-// 解释器要求第一个参数是脚本路径（排除 -c/-m/-e 等内联代码执行），
-// 包管理器排除全局安装（-g/--global），系统破坏性命令永不自动放行。
+// 包管理器/解释器/测试工具按程序放行；只读段与 cd 可以与其复合（如 `cd mobile && npm test`）；
+// 文件重定向、发布/登录类子命令、全局安装、系统破坏性命令永不自动放行。
 const devAutoAllowPrograms = new Set(["npm", "pnpm", "yarn", "bun", "python3", "python", "node", "deno", "pytest", "tsc"]);
 const devAutoAllowGitCommands = new Set(["status", "diff", "log", "show", "branch", "ls-files", "remote", "add", "commit", "push", "pull", "fetch"]);
-const devAutoAllowShellOperators = /[;&|<>`$()\r\n]/;
 const devAutoAllowGlobalFlags = new Set(["-g", "--global", "-G"]);
+// 包管理器的发布/账号类子命令会触达外部 registry，不属于工作区内操作
+const devBlockedPublishSubcommands = new Set(["publish", "unpublish", "deprecate", "owner", "token", "login", "logout", "adduser", "dist-tag"]);
 
-export function isDevAutoApprovableCommand(command) {
-  const text = String(command || "").trim();
-  if (!text || devAutoAllowShellOperators.test(text)) return false;
-  const argv = shellWords(text);
+function isDevAutoApprovableSegment(argv) {
   const program = argv[0] || "";
   if (!program || ruleNeverAllowCommands.has(program)) return false;
+  if (isCdSegment(argv) || isTrustedReadOnlySegment(argv)) return true;
   if (program === "git") return devAutoAllowGitCommands.has(argv[1] || "");
   if (!devAutoAllowPrograms.has(program)) return false;
-  // 包管理器:带全局安装标志或 yarn global 时不自动放行
+  // 包管理器:发布/登录类子命令、全局安装标志或 yarn global 时不自动放行
+  if (devBlockedPublishSubcommands.has(argv[1] || "")) return false;
   if (argv.some((token) => devAutoAllowGlobalFlags.has(token))) return false;
   if (program === "yarn" && argv[1] === "global") return false;
   // 解释器:第一个参数必须是脚本路径,不是 -c/-m/-e 等内联代码或 stdin 标志
@@ -1479,6 +1551,11 @@ export function isDevAutoApprovableCommand(command) {
     if (!firstArg || firstArg === "-" || firstArg.startsWith("-")) return false;
   }
   return true;
+}
+
+export function isDevAutoApprovableCommand(command) {
+  const segments = splitSafeCompoundCommand(command);
+  return Boolean(segments) && segments.every(isDevAutoApprovableSegment);
 }
 
 // 自动审核模式下的低风险开发命令。这里比旧的宽松模式范围更窄：
@@ -1491,12 +1568,10 @@ const reviewerSafeScripts = new Set([
 ]);
 const reviewerSafeGitCommands = new Set(["status", "diff", "log", "show", "branch", "ls-files", "remote"]);
 
-export function isReviewerAutoApprovableCommand(command) {
-  const text = String(command || "").trim();
-  if (!text || devAutoAllowShellOperators.test(text)) return false;
-  const argv = shellWords(text);
+function isReviewerAutoApprovableSegment(argv) {
   const program = argv[0] || "";
-  if (!program) return false;
+  if (!program || ruleNeverAllowCommands.has(program)) return false;
+  if (isCdSegment(argv) || isTrustedReadOnlySegment(argv)) return true;
   if (program === "git") return reviewerSafeGitCommands.has(argv[1] || "");
   if (["npm", "pnpm", "yarn", "bun"].includes(program)) {
     if (argv[1] === "test") return true;
@@ -1507,6 +1582,72 @@ export function isReviewerAutoApprovableCommand(command) {
   if (program === "prettier") return argv.includes("--check") && !argv.includes("--write");
   if (program === "pytest") return true;
   return false;
+}
+
+export function isReviewerAutoApprovableCommand(command) {
+  const segments = splitSafeCompoundCommand(command);
+  return Boolean(segments) && segments.every(isReviewerAutoApprovableSegment);
+}
+
+// 替我审批（reviewer）模式的风险判定（参考 Claude Code / Codex / Kimi 的审批思路）：
+// 不按程序白名单，而是默认放行低风险命令，只拦截明确危险的操作——
+// 删除/提权/杀进程/系统级变更、对外网络（curl/wget）、git 的破坏性用法、
+// 解释器内联代码、osascript 包 shell 等。工作区内的读写、构建、截图、
+// 数据处理（awk/sed/python 脚本）都直接自动执行，不再逐次打扰。
+const dangerousCommandPrograms = new Set([
+  "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "fdisk", "parted",
+  "mount", "umount", "sudo", "su", "doas", "pkexec",
+  "kill", "killall", "pkill", "passwd", "crontab",
+  "chown", "chgrp", "useradd", "usermod", "userdel", "groupadd", "groupmod", "groupdel",
+  "iptables", "ip6tables", "firewall-cmd", "systemctl", "launchctl", "scutil", "diskutil",
+  "shutdown", "reboot", "halt", "poweroff",
+  "curl", "wget",
+]);
+// 这些词只在命令位置才危险（`. ./env.sh` 是 source，但 `git add .` 里的点只是参数）
+const dangerousOnlyAsCommand = new Set(["eval", "exec", "source", "."]);
+// git 的对外与破坏性用法；提交、拉取、日常查看都自动放行
+const riskyGitSubcommands = new Set([
+  "push", "reset", "clean", "rebase", "checkout", "switch", "restore", "rm",
+  "filter-branch", "update-ref", "stash", "apply",
+]);
+const riskyGitFlags = /^(--force|--hard|--delete|-f$|-D$|-d$)/;
+const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
+const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
+// sh -c "…" / bash -c "…" 同样是内联任意代码；-c 必须紧跟其后
+const shellWrapperPrograms = new Set(["sh", "bash", "zsh", "dash", "ash"]);
+
+export function isLowRiskCommand(command) {
+  const text = String(command || "").trim();
+  // 反引号无法界定内容边界，保守退回人工
+  if (!text || /[\r\n`]/.test(text)) return false;
+  // 按 &&/||/;/| 切段：每段第一个词才是命令位置——
+  // `.`/`source`/`eval`/`exec` 只在命令位置危险，`git add .` 里的点只是参数
+  const segments = text.split(/&&|\|\||[;|]/);
+  const allWords = [];
+  for (const segment of segments) {
+    const words = shellWords(segment);
+    if (!words.length) continue;
+    allWords.push(...words);
+    for (let index = 0; index < words.length; index += 1) {
+      const word = words[index];
+      // /bin/rm 这类带路径的调用也要识别
+      const base = word.includes("/") ? word.slice(word.lastIndexOf("/") + 1) : word;
+      if (dangerousCommandPrograms.has(word) || dangerousCommandPrograms.has(base)) return false;
+      if (index === 0 && (dangerousOnlyAsCommand.has(word) || dangerousOnlyAsCommand.has(base))) return false;
+      if (word === "git") {
+        if (riskyGitSubcommands.has(words[index + 1] || "")) return false;
+      }
+      if (["npm", "pnpm", "yarn", "bun"].includes(word) && devBlockedPublishSubcommands.has(words[index + 1] || "")) return false;
+      // 解释器内联代码（python3 -c / node -e）等同任意代码，脚本文件则放行
+      if (interpreterPrograms.has(base) && words.slice(index + 1).some((token) => inlineCodeFlags.has(token))) return false;
+      if (shellWrapperPrograms.has(base) && words[index + 1] === "-c") return false;
+    }
+  }
+  if (!allWords.length) return false;
+  if (allWords.includes("git") && allWords.some((token) => riskyGitFlags.test(token))) return false;
+  // osascript 包一层 shell 等同任意命令；纯界面脚本交给本机界面操作的审批通道
+  if (allWords.includes("osascript")) return false;
+  return true;
 }
 
 // 统一审批管线（借鉴 openworker coworker/permissions.py 的 evaluate 流程）：
@@ -1538,7 +1679,7 @@ export function evaluateApproval({
     if (workspaceWriteTools.has(name)) return "allow";
     if (name === "run_command" && (
       isAutoApprovableCommand(args.command)
-      || (approvalMode === "reviewer" && isReviewerAutoApprovableCommand(args.command))
+      || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))
     )) return "allow";
     return "ask";
   }
@@ -2941,7 +3082,7 @@ export async function runAgent({
           && isAutoApprovableCommand(args.command);
         const autoApproved = readOnlyAutoApproved || (decision === "allow" && name === "run_command"
           && (isDevAutoApprovableCommand(args.command)
-            || (approvalMode === "reviewer" && isReviewerAutoApprovableCommand(args.command))));
+            || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))));
         const consequential = needsApproval(name);
         if (decision === "allow" && consequential) {
           auditRecord({
