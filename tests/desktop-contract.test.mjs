@@ -280,9 +280,9 @@ test("built-in model knowledge is always loaded and cannot be deleted as user me
 
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
   assert.match(app, /请示批准/);
-  assert.match(app, /自动审核/);
+  assert.match(app, /替我审批/);
   assert.match(app, /完全访问权限/);
-  assert.doesNotMatch(app, /替我审批/);
+  assert.doesNotMatch(app, /自动审核/);
   assert.match(app, /approval-mode-menu/);
   assert.match(app, /title="Enter 发送"/);
   assert.doesNotMatch(app, /className="shortcut-hint"/);
@@ -749,8 +749,11 @@ test("技能引用消息只显示标签与正文,不回显完整提示词", () =
   assert.match(types, /skillsUsed\?: string\[\]/);
   assert.match(app, /skillsUsed: selectedSkills/);
   assert.match(app, /message\.displayContent \?\? message\.content/);
-  assert.match(app, /skill-ref-chip/);
-  assert.match(styles, /\.message-skills > \.skill-ref-chip/);
+  // 引用以 Codex 风格的绿色 chip 内联展示（消息与输入框共用）
+  assert.match(app, /ref-chip/);
+  assert.match(app, /ref-attachment-chip/);
+  assert.match(styles, /\.ref-chip/);
+  assert.match(styles, /\.ref-attachment-chip/);
   // 文件型技能注入技能目录位置,agent 不必再全盘搜索技能文件
   assert.match(app, /技能目录:/);
   assert.match(app, /pathDirname/);

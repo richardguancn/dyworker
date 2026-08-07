@@ -34,6 +34,7 @@ import {
   Moon,
   MoreHorizontal,
   MoreVertical,
+  Package,
   Paperclip,
   Pencil,
   Pin,
@@ -203,8 +204,8 @@ const composerApprovalModes = [
   },
   {
     value: "reviewer" as ApprovalMode,
-    label: "自动审核",
-    description: "安全操作自动继续，只在越界、外发、破坏性或不明确时请示",
+    label: "替我审批",
+    description: "低风险操作自动继续，只在越界、外发、破坏性或不明确时请示",
     icon: Bot,
   },
   {
@@ -256,6 +257,7 @@ function shortTitle(content: string) {
 
 function plainConversationText(content: string) {
   return content
+    .replace(CONTROL_MARKER_PATTERN, " ")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
@@ -274,8 +276,21 @@ function formatMessageTime(createdAt: string) {
   }).format(new Date(timestamp));
 }
 
+// 模型偶尔会把其他 agent 框架的控制标记（如 ::git-stage{cwd="..."}）原样输出到回复里，
+// 展示、复制、生成标题时都应当过滤掉，避免用户看到原始指令文本。
+const CONTROL_MARKER_PATTERN = /::[a-zA-Z][\w‐‑‒–—-]*(?:\{[^{}]*\})?/g;
+
+function stripControlMarkers(text: string) {
+  const stripped = String(text || "")
+    .replace(CONTROL_MARKER_PATTERN, "")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return stripped || String(text || "").trim();
+}
+
 function messageVisibleText(message: ChatMessage) {
-  return (message.displayContent ?? message.content).trim();
+  return stripControlMarkers(message.displayContent ?? message.content);
 }
 
 function isMarkdownFile(filePath: string) {
@@ -1479,7 +1494,7 @@ function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; onConfi
         </p>
         {showDetails && (
           <p className="full-access-details">
-            开启后，任务会减少逐次确认，更适合你明确承担风险并希望连续执行的场景。你可以随时从输入框旁的审批模式菜单切回自动审核或请示批准。
+            开启后，任务会减少逐次确认，更适合你明确承担风险并希望连续执行的场景。你可以随时从输入框旁的审批模式菜单切回替我审批或请示批准。
           </p>
         )}
         <div className="full-access-actions">
@@ -1811,7 +1826,7 @@ function ChannelsPanel({ value, onSave }: {
       <div className="mcp-server-row">
         <span className="mcp-server-name">
           <strong>审批严格度</strong>
-          <small>自动审核会放行安全操作，只把越界、外发和高风险操作送入收件箱</small>
+          <small>替我审批会放行低风险操作，只把越界、外发和高风险操作送入收件箱</small>
         </span>
         <select
           className="channel-model-select"
@@ -1819,7 +1834,7 @@ function ChannelsPanel({ value, onSave }: {
           disabled={saving}
           onChange={(event) => void saveChannels({ ...channels, approvalMode: event.target.value as ChannelsConfig["approvalMode"] }, "审批严格度已更新")}
         >
-          <option value="reviewer">自动审核（安全操作自动放行）</option>
+          <option value="reviewer">替我审批（低风险操作自动放行）</option>
           <option value="interactive">严格（联网与重要操作逐次确认）</option>
         </select>
       </div>
@@ -2528,6 +2543,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
   const [workspacePreview, setWorkspacePreview] = useState<{ path: string; name: string; content: string } | null>(null);
   const [workspacePreviewLoading, setWorkspacePreviewLoading] = useState(false);
   const [workspacePreviewError, setWorkspacePreviewError] = useState("");
@@ -2535,6 +2551,8 @@ export function App() {
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
+  const composerDockRef = useRef<HTMLDivElement>(null);
+  const activeIdRef = useRef(activeId);
   const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
@@ -2548,11 +2566,38 @@ export function App() {
   const workspacePreviewRequestRef = useRef(0);
   const newTaskGuardRef = useRef(false);
 
+  // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
+  // 对话列表底部 padding 据此预留空间，避免最后一条消息被输入框遮挡。
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    const node = composerDockRef.current;
+    if (!node) return;
+    const update = () => {
+      document.documentElement.style.setProperty("--composer-height", `${Math.ceil(node.getBoundingClientRect().height)}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  // 图片预览浮层支持 Esc 关闭
+  useEffect(() => {
+    if (!imagePreview) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setImagePreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [imagePreview]);
+
   // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
   useEffect(() => {
     const unsubscribe = window.dyworker?.onBrowserPanelRequest((request) => {
-      if (request.action === "close") {
-        setRightPanelOpen(false);
+      if (request.action === "close") {        setRightPanelOpen(false);
         return;
       }
       const url = String(request.url || "").trim();
@@ -2651,7 +2696,8 @@ export function App() {
         const loaded = keepSingleUnstartedSession(state.sessions.length ? state.sessions : [makeSession(state.workspacePath)]);
         setSessions(loaded);
         setActiveId(loaded[0].id);
-        setWorkspacePath(state.workspacePath);
+        // 全局工作目录可能被上次的无目录会话清空，优先用当前会话保存的目录
+        setWorkspacePath(loaded[0].workspacePath || state.workspacePath);
         setWorkspaceEntries(state.workspaceEntries);
         setSettings(state.settings);
         setPinnedWorkspacePaths(state.pinnedWorkspacePaths || []);
@@ -2697,23 +2743,6 @@ export function App() {
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions]);
-
-  useEffect(() => {
-    const targetPath = String(workspacePath || "").trim();
-    if (!targetPath) {
-      setWorkspaceContext(null);
-      return;
-    }
-    setWorkspaceContext({ name: displayWorkspace(targetPath), branch: "" });
-    if (!ready || !window.dyworker?.getWorkspaceContext) return;
-    let cancelled = false;
-    void window.dyworker.getWorkspaceContext(targetPath).then((context) => {
-      if (!cancelled) setWorkspaceContext(context);
-    }).catch(() => {
-      // 工作目录仍可用时，至少保留目录名。
-    });
-    return () => { cancelled = true; };
-  }, [ready, workspacePath]);
 
   useEffect(() => {
     if (!ready || !window.dyworker) return;
@@ -2806,6 +2835,7 @@ export function App() {
         : "定时计划已执行，结果已保存到最近任务");
     });
     const offAppend = window.dyworker?.onSessionAppend?.((payload) => {
+      const appendUnread = payload.sessionId !== activeIdRef.current;
       setSessions((current) => {
         const existing = current.find((session) => session.id === payload.sessionId);
         const workingContext = latestWorkingContext(payload.messages);
@@ -2814,6 +2844,7 @@ export function App() {
             ? {
                 ...session,
                 ...(workingContext !== undefined ? { workingContext } : {}),
+                ...(appendUnread ? { unread: true } : {}),
                 messages: [...session.messages, ...payload.messages],
                 updatedAt: new Date().toISOString(),
               }
@@ -2826,6 +2857,7 @@ export function App() {
           workspacePath: payload.workspacePath,
           ...(payload.channel ? { channel: payload.channel } : {}),
           ...(workingContext !== undefined ? { workingContext } : {}),
+          ...(appendUnread ? { unread: true } : {}),
           createdAt: now,
           updatedAt: now,
           messages: payload.messages,
@@ -2876,6 +2908,35 @@ export function App() {
   }, [sessions, runningSessionIds, activeId]);
 
   const activeSession = sessions.find((session) => session.id === activeId) || sessions[0];
+  // 输入区展示的工作目录以当前会话为准，全局值仅作兜底（老会话可能保存了自己的目录）
+  const composerWorkspacePath = String(activeSession?.workspacePath || workspacePath || "").trim();
+
+  // 点开会话即视为已读，清掉未读小绿点
+  useEffect(() => {
+    setSessions((current) => current.some((session) => session.id === activeId && session.unread)
+      ? current.map((session) => session.id === activeId ? { ...session, unread: false } : session)
+      : current);
+  }, [activeId, sessions]);
+
+  // 工作目录 chip 只在新建会话（尚无消息）时展示；已有会话的工作目录已固定，不再占用输入区空间
+  const showComposerContext = Boolean(composerWorkspacePath) && (!activeSession || activeSession.messages.length === 0);
+
+  useEffect(() => {
+    if (!showComposerContext) {
+      setWorkspaceContext(null);
+      return;
+    }
+    setWorkspaceContext({ name: displayWorkspace(composerWorkspacePath), branch: "" });
+    if (!ready || !window.dyworker?.getWorkspaceContext) return;
+    let cancelled = false;
+    void window.dyworker.getWorkspaceContext(composerWorkspacePath).then((context) => {
+      if (!cancelled) setWorkspaceContext(context);
+    }).catch(() => {
+      // 工作目录仍可用时，至少保留目录名。
+    });
+    return () => { cancelled = true; };
+  }, [ready, composerWorkspacePath, showComposerContext]);
+
   const conversationTurns = useMemo(() => {
     if (!activeSession) return [];
     return activeSession.messages.reduce<Array<{ messageIndex: number; preview: ReturnType<typeof conversationTurnPreview> }>>((turns, message, messageIndex) => {
@@ -3605,7 +3666,8 @@ export function App() {
       ...(goalDriven ? { goal: content } : {}),
       ...(editingTarget ? { workingContext: undefined } : {}),
       title: baseMessages.length === 0 ? shortTitle(content) : activeSession.title,
-      workspacePath,
+      // 不能用空的全局值冲掉会话自己保存的工作目录（重启后全局值可能为空）
+      workspacePath: workspacePath || activeSession.workspacePath || "",
       updatedAt: new Date().toISOString(),
       messages: [...baseMessages, message],
     };
@@ -3662,6 +3724,10 @@ export function App() {
           });
           if (result.workingContext !== undefined) {
             updateSession(activeSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
+          }
+          // 非当前会话在后台完成时标记未读（列表小绿点），点开会话即清除
+          if ((result.status === "done" || result.status === "error") && taskSessionId !== activeIdRef.current) {
+            updateSession(taskSessionId, (session) => ({ ...session, unread: true }));
           }
           if (result.status === "done" && !result.demo) {
             showSessionNotice(taskSessionId, "任务已完成");
@@ -4066,6 +4132,7 @@ export function App() {
             <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : "微信"}</span>
           )}
           <span>{session.title}</span>
+          {session.unread && <span className="session-unread-dot" role="status" aria-label="有新的完成结果" title="有新的完成结果" />}
           {runningSessionIds.has(session.id) && <LoaderCircle className="spin session-running-icon" size={15} />}
         </button>
       )}
@@ -4471,28 +4538,48 @@ export function App() {
                     <>
                       <div className="user-message-stack">
                         <div className={`user-bubble${isEditing ? " editing" : ""}`}>
-                        {Boolean(message.skillsUsed?.length) && (
-                          <div className="message-attachments message-skills">
+                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage)) && (
+                          <span className="message-inline-refs">
                             {message.skillsUsed?.map((name) => (
-                              <span key={`${message.createdAt}-${name}`} className="skill-ref-chip">
-                                <FileCode2 size={13} />
-                                /{name}
+                              <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
+                                <Package size={13} />
+                                <span>{name}</span>
                               </span>
                             ))}
-                          </div>
+                            {message.attachments?.filter((attachment) => !attachment.isImage).map((attachment) => (
+                              <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
+                                {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
+                                <span>{attachment.name}</span>
+                              </span>
+                            ))}
+                          </span>
                         )}
-                        <span>{message.displayContent ?? message.content}</span>
-                        {Boolean(message.attachments?.length) && (
+                        <span>{messageVisibleText(message)}</span>
+                        {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
-                            {message.attachments?.map((attachment) => (
+                            {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
                               attachment.isImage && attachment.previewUrl ? (
-                                <figure className="message-attachment-image" key={`${message.createdAt}-${attachment.path}`} aria-label="图片附件">
+                                <figure
+                                  className="message-attachment-image clickable"
+                                  key={`${message.createdAt}-${attachment.path}`}
+                                  aria-label="图片附件，点击预览"
+                                  role="button"
+                                  tabIndex={0}
+                                  title="点击预览图片"
+                                  onClick={() => setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" })}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" });
+                                    }
+                                  }}
+                                >
                                   <img className="attachment-preview-image" src={attachment.previewUrl} alt="上传的图片" />
                                 </figure>
                               ) : (
                                 <span key={`${message.createdAt}-${attachment.path}`}>
-                                  {attachment.isImage ? <FileImage size={13} /> : <FileText size={13} />}
-                                  {attachment.isImage ? "图片" : attachment.name}
+                                  <FileImage size={13} />
+                                  图片
                                 </span>
                               )
                             ))}
@@ -4559,7 +4646,7 @@ export function App() {
                         );
                       })()}
                       {Boolean(message.changes?.length) && <ChangesSummary changes={message.changes!} workspacePath={activeSession.workspacePath || workspacePath} />}
-                      {message.content && <InteractiveMessage content={message.content} />}
+                      {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
@@ -4635,7 +4722,28 @@ export function App() {
           />
         )}
 
-        <div className="composer-dock">
+        {imagePreview && (
+          <div
+            className="image-lightbox"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`图片预览：${imagePreview.name}`}
+            onClick={() => setImagePreview(null)}
+          >
+            <img src={imagePreview.url} alt={imagePreview.name} onClick={(event) => event.stopPropagation()} />
+            <button
+              type="button"
+              className="image-lightbox-close"
+              onClick={() => setImagePreview(null)}
+              aria-label="关闭预览"
+              title="关闭（Esc）"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        )}
+
+        <div className="composer-dock" ref={composerDockRef}>
           {(error || activeSessionError) && <div className="status-toast error" role="alert">{error || activeSessionError}</div>}
           {!error && !activeSessionError && (notice || activeSessionNotice) && (
             <div className="status-toast" role="status">{notice || activeSessionNotice}</div>
@@ -4646,7 +4754,7 @@ export function App() {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {workspacePath && (
+            {showComposerContext && (
               <div className="composer-context" aria-label="当前工作上下文">
                 <div className="context-folder-wrap">
                   <button
@@ -4663,9 +4771,9 @@ export function App() {
                     type="button"
                     className="context-folder-chip"
                     onClick={() => void chooseWorkspace()}
-                    title={workspacePath}
+                    title={composerWorkspacePath}
                   >
-                    <span>{workspaceContext?.name || displayWorkspace(workspacePath)}</span>
+                    <span>{workspaceContext?.name || displayWorkspace(composerWorkspacePath)}</span>
                   </button>
                 </div>
                 {workspaceContext?.branch && (
@@ -4724,58 +4832,69 @@ export function App() {
                 )}
               </div>
             )}
-            {Boolean(activeSkills.length || attachments.length) && (
-              <div className="attachment-strip" aria-label={`已选择 ${activeSkills.length + attachments.length} 项`}>
-                {activeSkills.map((skill) => (
-                  <span className="attachment-chip skill-chip" key={skill.id}>
-                    <FileCode2 size={14} />
-                    <span title={skill.description}>/{skill.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveSkills((current) => current.filter((item) => item.id !== skill.id))}
-                      aria-label={`移除技能 ${skill.name}`}
-                    >
-                      <X size={13} />
-                    </button>
-                  </span>
-                ))}
-                {attachments.map((attachment) => (
-                  <span
-                    className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : ""}`}
-                    key={attachment.path}
+            <div
+              className={`attachment-strip${Boolean(activeSkills.length || attachments.length) ? " has-refs" : ""}`}
+              aria-label={Boolean(activeSkills.length || attachments.length) ? `已选择 ${activeSkills.length + attachments.length} 项` : undefined}
+            >
+              {activeSkills.map((skill) => (
+                <span className="attachment-chip ref-attachment-chip" key={skill.id}>
+                  <Package size={14} />
+                  <span title={skill.description}>/{skill.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSkills((current) => current.filter((item) => item.id !== skill.id))}
+                    aria-label={`移除技能 ${skill.name}`}
                   >
-                    {attachment.isImage && attachment.previewUrl
-                      ? <img className="attachment-preview-image" src={attachment.previewUrl} alt="待发送的图片" />
-                      : attachment.isImage ? <FileImage size={14} /> : <FileText size={14} />}
-                    {!(attachment.isImage && attachment.previewUrl) && (
-                      <span title={attachment.path}>{attachment.isImage ? "图片" : attachment.name}</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setAttachments((current) => current.filter((item) => item.path !== attachment.path))}
-                      aria-label={`移除附件 ${attachment.name}`}
-                    >
-                      <X size={13} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <textarea
-              ref={textareaRef}
-              value={composer}
-              onChange={(event) => updateComposer(event.target.value)}
-              onPaste={(event) => void handleComposerPaste(event)}
-              onKeyDown={onComposerKeyDown}
-              onCompositionStart={() => { composingRef.current = true; }}
-              onCompositionEnd={() => { composingRef.current = false; }}
-              placeholder="描述要完成的工作"
-              lang="zh-CN"
-              inputMode="text"
-              autoComplete="off"
-              spellCheck={false}
-              rows={3}
-            />
+                    <X size={13} />
+                  </button>
+                </span>
+              ))}
+              {attachments.map((attachment) => (
+                <span
+                  className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : " ref-attachment-chip"}`}
+                  key={attachment.path}
+                >
+                  {attachment.isImage && attachment.previewUrl
+                    ? (
+                      <img
+                        className="attachment-preview-image clickable"
+                        src={attachment.previewUrl}
+                        alt="待发送的图片，点击预览"
+                        title="点击预览图片"
+                        onClick={() => setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" })}
+                      />
+                    )
+                    : attachment.isImage
+                      ? <FileImage size={14} />
+                      : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}
+                  {!(attachment.isImage && attachment.previewUrl) && (
+                    <span title={attachment.path}>{attachment.isImage ? "图片" : attachment.name}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) => current.filter((item) => item.path !== attachment.path))}
+                    aria-label={`移除附件 ${attachment.name}`}
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+              ))}
+              <textarea
+                ref={textareaRef}
+                value={composer}
+                onChange={(event) => updateComposer(event.target.value)}
+                onPaste={(event) => void handleComposerPaste(event)}
+                onKeyDown={onComposerKeyDown}
+                onCompositionStart={() => { composingRef.current = true; }}
+                onCompositionEnd={() => { composingRef.current = false; }}
+                placeholder="描述要完成的工作"
+                lang="zh-CN"
+                inputMode="text"
+                autoComplete="off"
+                spellCheck={false}
+                rows={3}
+              />
+            </div>
             <div className="composer-toolbar">
               <div className="composer-actions">
                 <div className="add-menu-wrap" data-menu-root>

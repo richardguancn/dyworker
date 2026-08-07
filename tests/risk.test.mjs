@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RISK, classify, isConsequential } from "../electron/risk.mjs";
-import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, toolDefinitions } from "../electron/agent.mjs";
+import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, toolDefinitions } from "../electron/agent.mjs";
 
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
 const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
@@ -31,7 +31,10 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
     if (hasExternalPaths || oracleInternetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
     if (oracleWorkspaceWriteTools.has(name)) return "allow";
-    if (name === "run_command" && isAutoApprovableCommand(args.command)) return "allow";
+    if (name === "run_command" && (
+      isAutoApprovableCommand(args.command)
+      || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))
+    )) return "allow";
     return "ask";
   }
   if (approvalMode === "allow-writes") {
