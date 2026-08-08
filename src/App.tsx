@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Circle,
   Copy,
   FileCode2,
@@ -291,6 +292,82 @@ function stripControlMarkers(text: string) {
 
 function messageVisibleText(message: ChatMessage) {
   return stripControlMarkers(message.displayContent ?? message.content);
+}
+
+// 长消息折叠（Codex 风格“显示更多/收起”）：内容过长时默认收起，
+// 折叠状态下测量是否真的超出，避免短消息出现多余按钮。
+const LONG_TEXT_GATE = 300;
+
+function useClampToggle<T extends HTMLElement>(active: boolean) {
+  const ref = useRef<T>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!active || expanded) return;
+    const el = ref.current;
+    if (!el) return;
+    let raf = 0;
+    const check = () => {
+      raf = 0;
+      setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    };
+    const schedule = () => {
+      if (!raf) raf = window.requestAnimationFrame(check);
+    };
+    schedule();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    observer?.observe(el);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [active, expanded]);
+
+  // 内容变短后复位展开状态，避免残留“收起”按钮
+  useEffect(() => {
+    if (!active) {
+      setExpanded(false);
+      setOverflowing(false);
+    }
+  }, [active]);
+
+  return { ref, overflowing, expanded, setExpanded };
+}
+
+function ShowMoreToggle({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="show-more-toggle"
+      onClick={onToggle}
+      aria-expanded={expanded}
+    >
+      {expanded ? (
+        <>收起<ChevronUp size={13} /></>
+      ) : (
+        <>显示更多<ChevronDown size={13} /></>
+      )}
+    </button>
+  );
+}
+
+function ClampedUserText({ text }: { text: string }) {
+  const active = text.length > LONG_TEXT_GATE;
+  const { ref, overflowing, expanded, setExpanded } = useClampToggle<HTMLSpanElement>(active);
+  return (
+    <>
+      <span
+        ref={ref}
+        className={`user-message-text${active && !expanded ? " clamped" : ""}${expanded ? " expanded" : ""}`}
+      >
+        {text}
+      </span>
+      {overflowing && (
+        <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
+      )}
+    </>
+  );
 }
 
 function isMarkdownFile(filePath: string) {
@@ -4554,7 +4631,7 @@ export function App() {
                             ))}
                           </span>
                         )}
-                        <span>{messageVisibleText(message)}</span>
+                        <ClampedUserText text={messageVisibleText(message)} />
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (

@@ -1981,6 +1981,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
 
     "# 沟通风格\n"
     + "- 对用户使用简洁、自然的中文，说明做成了什么；不要展示内部工具名或原始命令，除非用户明确要求。\n"
+    + "- 中文回复一律使用全角标点（，。！？：；、「」），不要受用户消息里的标点习惯影响；代码、命令、URL 内保持原样。\n"
     + "- 完成后用一两句话说清结果即可，不要复述全文，不要追问「还需要什么」。",
 
     "# 聊天内可视化\n"
@@ -2022,6 +2023,17 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
   });
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 1200);
+    // 服务商内容安全拦截（阿里云百炼等的 content_filter）：拒的是整段上下文而非新消息，
+    // 给出可操作的指引，避免用户在已被"毒化"的会话里反复重试
+    if (/content_filter|considered high risk|data_inspection_failed|risk_control/i.test(detail)) {
+      const error = new Error(
+        "服务商的内容安全审核拒绝了本次请求。被拦的通常是会话历史里的内容（早前读取的文件、工具输出等），而不是你刚发的这句。"
+        + "这个会话之后的每次发送都会带上同一段历史，会持续被拦。建议：1) 新建一个任务继续；2) 或编辑/删除早前可能敏感的消息后再试；3) 也可以换其他模型服务商。",
+      );
+      error.status = response.status;
+      error.contentFiltered = true;
+      throw error;
+    }
     const error = new Error(`模型请求失败（${response.status}）：${detail}`);
     error.status = response.status;
     throw error;
@@ -2419,7 +2431,18 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   const contentType = response.headers?.get?.("content-type") || "";
   if (!contentType.includes("text/event-stream") || !response.body?.getReader) {
     onTransport?.("json");
-    const result = await response.json();
+    // 中转网关/WAF 有时用 200 状态返回 HTML 错误页（拦截页、限流页、欠费页），
+    // response.json() 会抛出 "Unexpected token '<' ..." 这种看不懂的报错，翻译成可读的提示
+    let result;
+    try {
+      result = await response.json();
+    } catch (parseError) {
+      throw new Error(
+        `模型服务返回的不是 JSON（HTTP ${response.status}，${contentType || "未知类型"}）。`
+        + "这通常是中转网关/代理返回了 HTML 错误页（限流、欠费、WAF 拦截或地址配置错误），而不是模型本身的回复。"
+        + `原始解析错误：${parseError instanceof Error ? parseError.message : String(parseError)}`,
+      );
+    }
     if (responsesApi) {
       if (result?.usage) onUsage?.(normalizedUsage(result.usage, true));
       return messageFromResponses(result);
