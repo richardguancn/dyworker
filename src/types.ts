@@ -151,6 +151,8 @@ export type AgentEvent =
   | { type: "debug-log"; entry: DebugLogEntry }
   | { type: "context-usage"; used: number; completion: number; total?: number; estimated: boolean }
   | { type: "context-compacted" }
+  | { type: "queued"; count: number }
+  | { type: "queue-start"; count: number }
   | { type: "token-usage"; model: string; prompt: number; completion: number; estimated: boolean }
   | { type: "file-change"; changes: FileChange[] }
   | { type: "plan-update"; steps: PlanStep[] }
@@ -179,6 +181,8 @@ export interface ChatMessage {
   id?: string;
   role: Role;
   content: string;
+  // 关联的任务运行标识：排队消息用它定位会话存档中的最新内容
+  runId?: string;
   // 引用技能时:content 含完整技能指令(发给模型),气泡只显示 displayContent + skillsUsed 标签
   displayContent?: string;
   skillsUsed?: string[];
@@ -187,7 +191,7 @@ export interface ChatMessage {
   activities?: ActivityRecord[];
   changes?: FileChange[];  plan?: PlanStep[];
   durationMs?: number;
-  taskStatus?: AgentResult["status"];
+  taskStatus?: AgentResult["status"] | "queued";
   workingContext?: string;
 }
 
@@ -224,6 +228,74 @@ export interface WorkspaceEntry {
 export interface WorkspaceContext {
   name: string;
   branch: string;
+}
+
+// 工作区 Git 状态（见 electron/git.mjs）：分支管理与提交推送
+export interface GitBranchesInfo {
+  isRepo: boolean;
+  current: string;
+  branches: string[];
+  uncommitted: number;
+  hasRemote: boolean;
+}
+
+export interface GitDiffStats {
+  isRepo: boolean;
+  added: number;
+  removed: number;
+  files: number;
+  untracked: number;
+}
+
+// Codex 风格审阅视图：工作区改动 vs 基线（HEAD 或 upstream）
+export interface GitReviewFile {
+  path: string;
+  status: "M" | "A" | "D" | "U";
+  added: number;
+  removed: number;
+  binary?: boolean;
+}
+
+export interface GitReviewOverview {
+  isRepo: boolean;
+  current: string;
+  upstream: string;
+  base: string;
+  files: GitReviewFile[];
+  totals: { added: number; removed: number };
+}
+
+// 本机可导入数据的浏览器（导入 Cookie、密码与浏览记录，见 electron/browser-import.mjs）
+export interface BrowserImportSource {
+  id: string;
+  name: string;
+  userDataDir: string;
+  profiles: { id: string; name: string }[];
+}
+
+export interface BrowserImportKinds {
+  cookies: boolean;
+  passwords: boolean;
+  history: boolean;
+}
+
+export interface BrowserImportResult {
+  ok: boolean;
+  browser?: string;
+  cookies?: number;
+  passwords?: number;
+  history?: number;
+  warnings?: string[];
+  weakProtection?: boolean;
+  error?: string;
+}
+
+// 已导入的浏览记录条目（地址栏联想用）
+export interface ImportedHistoryEntry {
+  url: string;
+  title: string;
+  visits: number;
+  lastVisit: number;
 }
 
 export interface McpServerConfig {
@@ -388,7 +460,19 @@ export interface DyworkerBridge {
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   getWorkspaceContext(path: string): Promise<WorkspaceContext>;
+  gitBranches(workspacePath: string): Promise<GitBranchesInfo>;
+  gitDiffStats(workspacePath: string): Promise<GitDiffStats>;
+  gitCheckout(workspacePath: string, branch: string): Promise<{ ok: boolean; error?: string }>;
+  gitCreateBranch(workspacePath: string, branch: string): Promise<{ ok: boolean; error?: string }>;
+  gitCommit(payload: { workspacePath: string; message: string; includeUnstaged: boolean }): Promise<{ ok: boolean; message?: string; error?: string }>;
+  gitPush(workspacePath: string): Promise<{ ok: boolean; error?: string }>;
+  gitReviewOverview(payload: { workspacePath: string; base?: string }): Promise<GitReviewOverview>;
+  gitFileDiff(payload: { workspacePath: string; base?: string; path: string; untracked?: boolean }): Promise<{ ok: boolean; diff?: string; binary?: boolean; truncated?: boolean; error?: string }>;
+  listImportableBrowsers(): Promise<BrowserImportSource[]>;
+  importBrowserData(payload: { id: string; userDataDir: string; profileId: string; kinds: BrowserImportKinds }): Promise<BrowserImportResult>;
+  listImportedHistory(): Promise<ImportedHistoryEntry[]>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
+  readWorkspaceFile(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; binary?: boolean; error?: string }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
@@ -413,7 +497,8 @@ export interface DyworkerBridge {
     approvalMode?: ApprovalMode;
     sessionId?: string;
     runId?: string;
-  }): Promise<{ ok: boolean; result?: AgentResult; error?: string }>;
+  }): Promise<{ ok: boolean; result?: AgentResult; queued?: boolean; runId?: string; error?: string }>;
+  removeQueuedTask(payload: { sessionId: string; runId: string }): Promise<{ ok: boolean; removed?: boolean }>;
   resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
   cancelTask(sessionId: string, runId: string): Promise<{ ok: boolean }>;
   onAgentEvent(callback: (event: SessionAgentEvent) => void): () => void;

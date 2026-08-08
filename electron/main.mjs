@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
@@ -17,7 +17,10 @@ import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
-import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown } from "./workspace.mjs";
+import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown } from "./workspace.mjs";
+import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitFileDiff, gitPush, gitReviewOverview, listGitBranches } from "./git.mjs";
+import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
+import { SessionQueue } from "./session-queue.mjs";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
@@ -878,9 +881,133 @@ ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
 ipcMain.handle("workspace:context", (_event, workspacePath) => getWorkspaceContext(String(workspacePath || "")));
+ipcMain.handle("git:branches", (_event, workspacePath) => listGitBranches(String(workspacePath || "")));
+ipcMain.handle("git:diff-stats", (_event, workspacePath) => gitDiffStats(String(workspacePath || "")));
+ipcMain.handle("git:checkout", (_event, payload) => gitCheckout(String(payload?.workspacePath || ""), String(payload?.branch || "")));
+ipcMain.handle("git:create-branch", (_event, payload) => gitCreateBranch(String(payload?.workspacePath || ""), String(payload?.branch || "")));
+ipcMain.handle("git:commit", (_event, payload) => gitCommit(String(payload?.workspacePath || ""), {
+  message: String(payload?.message || ""),
+  includeUnstaged: payload?.includeUnstaged !== false,
+}));
+ipcMain.handle("git:push", (_event, workspacePath) => gitPush(String(workspacePath || "")));
+ipcMain.handle("git:review-overview", (_event, payload) => gitReviewOverview(String(payload?.workspacePath || ""), String(payload?.base || "HEAD")));
+ipcMain.handle("git:file-diff", (_event, payload) => gitFileDiff(
+  String(payload?.workspacePath || ""),
+  String(payload?.base || "HEAD"),
+  String(payload?.path || ""),
+  Boolean(payload?.untracked),
+));
+
+// ---- 浏览器数据导入（导入 Cookie 和密码，对照 Codex 浏览器更多菜单） ----
+
+ipcMain.handle("browser-import:list", async (event) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return [];
+  const browsers = await listImportableBrowsers();
+  // keyNames 只用于主进程解密，不下发给渲染进程
+  return browsers.map(({ keyNames, ...browser }) => browser);
+});
+
+ipcMain.handle("browser-import:import", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许导入浏览器数据" };
+  try {
+    const kinds = {
+      cookies: payload?.kinds?.cookies !== false,
+      passwords: payload?.kinds?.passwords !== false,
+      history: payload?.kinds?.history !== false,
+    };
+    const result = await importBrowserData(
+      { id: String(payload?.id || ""), userDataDir: String(payload?.userDataDir || "") },
+      String(payload?.profileId || "Default"),
+      kinds,
+    );
+    if (!result.ok) return result;
+    // Cookie 写入右侧面板 webview 共用的持久分区
+    const targetSession = session.fromPartition("persist:dyworker-browser");
+    let cookieCount = 0;
+    for (const cookie of result.cookies) {
+      if (!cookie.host || !cookie.name) continue;
+      try {
+        const sameSite = cookie.sameSite === 0 ? "no_restriction" : cookie.sameSite === 1 ? "lax" : cookie.sameSite === 2 ? "strict" : "unspecified";
+        await targetSession.cookies.set({
+          url: `http${cookie.secure ? "s" : ""}://${cookie.host.replace(/^\./, "")}${cookie.path || "/"}`,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.host,
+          path: cookie.path || "/",
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          sameSite,
+          ...(cookie.expires ? { expirationDate: cookie.expires } : {}),
+        });
+        cookieCount += 1;
+      } catch {
+        // 单条 Cookie 不合法（如域与 URL 不匹配）时跳过，不中断整体导入
+      }
+    }
+    // 密码经 safeStorage 加密后存入 userData，供后续自动填充使用
+    let passwordCount = 0;
+    if (result.passwords.length) {
+      const storePath = path.join(app.getPath("userData"), "imported-passwords.json");
+      const existing = await readJson(storePath, []);
+      const known = new Set(existing.map((item) => `${item.origin}\n${item.username}`));
+      for (const item of result.passwords) {
+        const key = `${item.origin}\n${item.username}`;
+        if (known.has(key)) continue;
+        known.add(key);
+        existing.push({
+          origin: item.origin,
+          username: item.username,
+          passwordEnc: safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(item.password).toString("base64") : "",
+          passwordPlain: safeStorage.isEncryptionAvailable() ? undefined : item.password,
+          source: result.browser,
+          importedAt: new Date().toISOString(),
+        });
+        passwordCount += 1;
+      }
+      await writeJson(storePath, existing);
+    }
+    // 浏览记录存入 userData，供内置浏览器地址栏联想；按 URL 去重保留最近访问
+    let historyCount = 0;
+    if (result.history?.length) {
+      const storePath = path.join(app.getPath("userData"), "imported-history.json");
+      const existing = await readJson(storePath, []);
+      const byUrl = new Map(existing.map((item) => [item.url, item]));
+      for (const item of result.history) {
+        const known = byUrl.get(item.url);
+        if (known && Number(known.lastVisit || 0) >= Number(item.lastVisit || 0)) continue;
+        byUrl.set(item.url, { url: item.url, title: item.title, visits: Math.max(Number(known?.visits || 0), item.visits), lastVisit: item.lastVisit });
+        if (!known) historyCount += 1;
+      }
+      const merged = [...byUrl.values()].sort((a, b) => Number(b.lastVisit || 0) - Number(a.lastVisit || 0)).slice(0, 5000);
+      await writeJson(storePath, merged);
+    }
+    return {
+      ok: true,
+      browser: result.browser,
+      cookies: cookieCount,
+      passwords: passwordCount,
+      history: historyCount,
+      warnings: result.warnings,
+      weakProtection: !safeStorage.isEncryptionAvailable() && passwordCount > 0,
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// 已导入的浏览记录：地址栏联想用，不含敏感信息
+ipcMain.handle("browser-import:history", async (event) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return [];
+  const storePath = path.join(app.getPath("userData"), "imported-history.json");
+  return readJson(storePath, []);
+});
 ipcMain.handle("workspace:read-markdown", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
   return readWorkspaceMarkdown(String(payload?.workspacePath || ""), String(payload?.filePath || ""));
+});
+ipcMain.handle("workspace:read-file", (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
+  return readWorkspaceFile(String(payload?.workspacePath || ""), String(payload?.filePath || ""));
 });
 ipcMain.handle("workspace:open", async (_event, targetPath) => {
   const error = await shell.openPath(String(targetPath || ""));
@@ -953,6 +1080,7 @@ ipcMain.handle("voice:transcribe", async (_event, payload) => {
 // ---- 本地代理 ----
 
 const activeAgents = new Map();
+const sessionQueue = new SessionQueue();
 let mcpShuttingDown = false;
 
 async function readSavedMemories() {
@@ -1330,19 +1458,44 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {
   return route;
 }
 
-ipcMain.handle("agent:send", async (event, payload) => {
+function emitToSession(sender, sessionId, runId, agentEvent) {
+  if (!sender || sender.isDestroyed()) return;
+  sender.send("agent:event", { sessionId, runId, event: agentEvent });
+}
+
+// 执行排队消息时，从会话存档取该条消息的最新内容（用户可能已编辑），
+// 并截断到本条用户消息为止，避免把后面仍在排队的消息提前带进本轮对话。
+async function queuedPayloadFromSession({ sessionId, runId, payload }) {
+  const freshPayload = { ...(payload || {}) };
+  try {
+    const stored = await readJson(dataFile("sessions.json"), []);
+    const session = Array.isArray(stored) ? stored.find((item) => String(item?.id) === String(sessionId)) : null;
+    const messages = Array.isArray(session?.messages) ? session.messages : [];
+    const queuedIndex = messages.findIndex((message) => String(message?.runId || "") === String(runId) && message?.role === "user");
+    if (queuedIndex >= 0) freshPayload.messages = messages.slice(0, queuedIndex + 1);
+    if (session) {
+      if (typeof session.workingContext === "string") freshPayload.workingContext = session.workingContext;
+      if (typeof session.goal === "string") freshPayload.goal = session.goal;
+    }
+  } catch {
+    // 读档失败时退回入队时的快照，任务照常执行
+  }
+  return freshPayload;
+}
+
+// 一条会话消息完整执行：原 agent:send 主体。同一会话同时只能有一个在执行，
+// 其余消息进入 sessionQueue，由 drainSessionQueue 依次推进。
+async function executeAgentRun({ payload: initialPayload, sender }) {
+  let payload = initialPayload;
   if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
-  const settings = payload?.settings || {};
-  const workspacePath = String(payload?.workspacePath || "").trim();
   const sessionId = String(payload?.sessionId || "").trim();
   const runId = String(payload?.runId || "").trim();
   if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
   if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
   const abortController = new AbortController();
-  const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController };
-  const sender = event.sender;
+  const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController, sender };
   const emit = (agentEvent) => {
-    if (!sender.isDestroyed()) sender.send("agent:event", { sessionId, runId, event: agentEvent });
+    emitToSession(sender, sessionId, runId, agentEvent);
   };
   const cancelledResponse = () => {
     const result = { status: "cancelled", finalText: "" };
@@ -1353,6 +1506,14 @@ ipcMain.handle("agent:send", async (event, payload) => {
   activeAgents.set(sessionId, agentState);
   trackTaskStart();
   try {
+    // 排队消息：开始执行时从会话存档取最新内容（用户可能已编辑），
+    // 并在占用会话之后读取，避免读档期间新的发送请求并发进入同一会话
+    payload = await queuedPayloadFromSession({ sessionId, runId, payload });
+    // 统一通知渲染端本条消息已开始执行（首条消息与队列项都适用），
+    // 渲染端据此切换“排队中→执行中”并记录可停止的 runId
+    emit({ type: "queue-start", count: sessionQueue.count(sessionId) });
+    const settings = payload?.settings || {};
+    const workspacePath = String(payload?.workspacePath || "").trim();
     const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
     const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
     const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
@@ -1492,8 +1653,47 @@ ipcMain.handle("agent:send", async (event, payload) => {
   } finally {
     routeExtraTool?.dispose();
     trackTaskEnd();
-    if (activeAgents.get(sessionId) === agentState) activeAgents.delete(sessionId);
+    if (activeAgents.get(sessionId) === agentState) {
+      activeAgents.delete(sessionId);
+      drainSessionQueue(sessionId);
+    }
   }
+}
+
+function drainSessionQueue(sessionId) {
+  if (mcpShuttingDown) {
+    sessionQueue.clear();
+    return;
+  }
+  const entry = sessionQueue.shift(sessionId);
+  if (!entry) return;
+  if (!entry.sender || entry.sender.isDestroyed()) {
+    drainSessionQueue(sessionId);
+    return;
+  }
+  void executeAgentRun({ payload: entry.payload, sender: entry.sender }).catch(() => {
+    // executeAgentRun 内部已把失败上报给渲染端，这里只保证队列继续推进
+  });
+}
+
+ipcMain.handle("agent:send", async (event, payload) => {
+  if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
+  const sessionId = String(payload?.sessionId || "").trim();
+  const runId = String(payload?.runId || "").trim();
+  if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
+  if (activeAgents.has(sessionId)) {
+    const count = sessionQueue.push({ sessionId, runId, payload, sender: event.sender });
+    emitToSession(event.sender, sessionId, runId, { type: "queued", count });
+    return { ok: true, queued: true, runId };
+  }
+  return executeAgentRun({ payload, sender: event.sender });
+});
+
+ipcMain.handle("agent:remove-queued", (_event, payload) => {
+  const sessionId = String(payload?.sessionId || "").trim();
+  const runId = String(payload?.runId || "").trim();
+  const removed = sessionQueue.remove(sessionId, runId);
+  return { ok: true, removed };
 });
 
 ipcMain.handle("agent:resolve-approval", (_event, payload) => {

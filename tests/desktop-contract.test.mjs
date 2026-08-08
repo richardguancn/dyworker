@@ -12,6 +12,7 @@ const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
+const browserImport = readSource(new URL("../electron/browser-import.mjs", import.meta.url));
 const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const appUpdater = readSource(new URL("../electron/app-updater.mjs", import.meta.url));
@@ -97,6 +98,39 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(app, /sessionErrors\[activeSession\.id\]/);
 });
 
+test("任务运行期间发送消息进入会话队列，排队消息未执行前可编辑或取消", () => {
+  // 主进程：同一会话已有任务时入队并立即返回 queued，任务结束后自动推进下一条
+  assert.match(main, /const sessionQueue = new SessionQueue\(\)/);
+  assert.match(main, /sessionQueue\.push\(\{ sessionId, runId, payload, sender: event\.sender \}\)/);
+  assert.match(main, /queued: true, runId/);
+  assert.match(main, /drainSessionQueue\(sessionId\)/);
+  assert.match(main, /queue-start/, "队列项开始执行时通知渲染端");
+  assert.match(main, /queuedPayloadFromSession/, "执行前从会话存档取排队消息的最新内容");
+  assert.match(main, /messages\.slice\(0, queuedIndex \+ 1\)/, "只截取到本条排队消息，不提前带入后面的排队消息");
+  assert.match(main, /ipcMain\.handle\("agent:remove-queued"/);
+  // 预加载桥接
+  assert.match(preload, /removeQueuedTask/);
+  assert.match(preload, /agent:remove-queued/);
+  // 渲染端：运行中允许发送、排队状态与编辑/取消入口
+  assert.match(app, /queuedRunIds/);
+  assert.match(app, /agentEvent\.type === "queued"/);
+  assert.match(app, /agentEvent\.type === "queue-start"/);
+  assert.match(app, /activeTaskRunning && !queueSupported/);
+  assert.match(app, /排队中的消息允许编辑/);
+  assert.match(app, /editingQueuedRunId/);
+  assert.match(app, /取消排队/);
+  assert.match(app, /removeQueuedTask\(/);
+  assert.match(app, /排队中/);
+  assert.match(app, /等待当前任务完成后自动执行/);
+  assert.match(app, /还有 \{activeQueuedCount\} 条消息排队/);
+  assert.match(styles, /\.message-queued-badge/);
+  assert.match(styles, /\.assistant-queued/);
+  assert.match(styles, /\.queue-status-bar/);
+  // 队列消息的监听器保留到真正执行完成，避免排队期间被提前取消
+  assert.match(app, /排队消息的监听器一直保留到真正执行完成/);
+  assert.match(app, /非排队消息的监听器在此收尾/);
+});
+
 test("多轮任务会保存并传递上一轮工作记录", () => {
   assert.match(app, /workingContext/);
   assert.match(app, /workingContext: updatedSession\.workingContext/);
@@ -172,14 +206,130 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(styles, /\.message-actions/);
 });
 
-test("右侧文件面板支持直接预览 Markdown", () => {
+test("文件面板为左右分栏，Markdown 在内联预览（Codex 风格）", () => {
   assert.match(app, /isMarkdownFile/);
-  assert.match(app, /readWorkspaceMarkdown\(workspacePath, entry\.path\)/);
-  assert.match(app, /ReactMarkdown remarkPlugins=\{\[remarkGfm\]\}/);
-  assert.match(app, /返回文件/);
+  assert.match(app, /previewKind === "markdown" \? window\.dyworker\?\.readWorkspaceMarkdown : window\.dyworker\?\.readWorkspaceFile/);
+  assert.match(app, /function FilesSplitPanel/);
+  assert.match(app, /从工作区目录树中选择文件/);
+  assert.match(app, /<InteractiveMessage content=\{selection\.content\}/);
   assert.match(main, /ipcMain\.handle\("workspace:read-markdown"/);
   assert.match(main, /readWorkspaceMarkdown/);
-  assert.match(styles, /\.markdown-file-preview/);
+  assert.match(styles, /\.file-split/);
+  assert.match(styles, /\.file-split-markdown/);
+  assert.match(styles, /\.markdown-file-preview-content/);
+});
+
+test("任意文本文件在文件面板内联预览：语法高亮、面包屑与文件筛选（Codex 风格）", () => {
+  assert.match(app, /isTextPreviewFile/);
+  assert.match(app, /TEXT_PREVIEW_EXTENSIONS/);
+  assert.match(app, /<CodeView content=\{selection\.content\}/);
+  assert.match(app, /function CodeView/);
+  assert.match(app, /highlight\.js\/lib\/common/);
+  assert.match(app, /hljs\.highlight/);
+  assert.match(app, /codeBreadcrumbSegments/);
+  assert.match(app, /用系统默认应用打开/);
+  assert.match(app, /filterWorkspaceEntries/);
+  assert.match(app, /筛选文件…/);
+  assert.match(app, /forceExpand/);
+  assert.match(preload, /readWorkspaceFile/);
+  assert.match(main, /ipcMain\.handle\("workspace:read-file"/);
+  assert.match(styles, /\.code-view-gutter/);
+  assert.match(styles, /\.code-breadcrumb/);
+  assert.match(styles, /\.tool-file-filter/);
+});
+
+test("审阅面板按 Git 基线逐文件展示 diff（Codex 风格）", () => {
+  assert.match(app, /kind: "browser" \| "files" \| "review"/);
+  assert.match(app, /activeToolPanelKind === "review"/);
+  assert.match(app, /function GitReviewPanel/);
+  assert.match(app, /function parseReviewDiff/);
+  assert.match(app, /unmodified lines/);
+  // 非 Git 仓库回退到上一轮改动审阅
+  assert.match(app, /message\.role === "assistant" && message\.changes\?\.length/);
+  assert.match(app, /上一轮/);
+  assert.match(app, /gitReviewOverview/);
+  assert.match(app, /gitFileDiff/);
+  assert.match(app, /openToolPanelTab\("review"\)/);
+  assert.match(preload, /git:review-overview/);
+  assert.match(preload, /git:file-diff/);
+  assert.match(main, /ipcMain\.handle\("git:review-overview"/);
+  assert.match(main, /ipcMain\.handle\("git:file-diff"/);
+  assert.match(styles, /\.review-diff-row\.add/);
+  assert.match(styles, /\.review-diff-gap/);
+  assert.match(styles, /\.review-file-row/);
+  assert.match(styles, /\.review-split/);
+  assert.match(styles, /\.review-status-badge/);
+  // 左栏堆叠展示全部文件 diff，点文件树滚动定位（对照 Codex）
+  assert.match(app, /function ReviewFileDiffSection/);
+  assert.match(app, /data-review-path/);
+  assert.match(app, /scrollIntoView/);
+  // 文件树带类型彩色图标与状态图标徽标
+  assert.match(app, /function FileTypeIcon/);
+  assert.match(app, /function ReviewStatusIcon/);
+  assert.match(styles, /\.file-type-icon/);
+  assert.match(styles, /\.review-status-icon/);
+  // 基线选择器并入头部第一行，错误提示友好化（不抛 IPC 原文）
+  assert.match(app, /读取 Git 状态失败，请点击右上角刷新重试/);
+  assert.doesNotMatch(app, /review-base-arrow/);
+  // 差异支持折叠/展开：单文件区块可折叠 + 头部「展开/折叠全部差异」按钮（对照 Codex）
+  assert.match(app, /折叠全部差异/);
+  assert.match(app, /展开全部差异/);
+  assert.match(app, /collapsedPaths/);
+  assert.match(app, /onToggleCollapse/);
+  // 会话里的「查看更改」在右侧审阅窗口打开这条消息的改动（对照 Codex）
+  assert.match(app, /查看更改/);
+  assert.match(app, /setReviewFocusChanges\(changes\)/);
+  assert.match(app, /fallbackChanges=\{reviewFocusChanges \|\| reviewChanges\}/);
+});
+
+test("+ 按钮打开下拉菜单，终端在底部打开且面板界面无变化（Codex 风格）", () => {
+  assert.match(app, /toolPanelAddMenuOpen/);
+  assert.match(app, /setToolPanelAddMenuOpen\(\(value\) => !value\)/);
+  // 终端在底部展开，不关闭菜单页、不切换标签页
+  assert.match(app, /终端在底部展开，面板保持菜单页不动/);
+  assert.match(app, /if \(item\.key !== "terminal"\) setToolPanelMenuOpen\(false\)/);
+  assert.match(app, /setDebugOpen\(\(value\) => !value\)/);
+  assert.match(styles, /\.tool-panel-add-menu/);
+  // 标签栏层叠上下文必须高于面板内的吸顶表头（z-index:2），否则表头会盖住下拉菜单顶部条目并拦截点击
+  assert.match(styles, /\.tool-panel-tabs\s*\{[^}]*z-index:\s*[3-9]/s);
+});
+
+test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏览器）", () => {
+  assert.match(app, /browserMoreOpen/);
+  assert.match(app, /导入 Cookie 和密码…/);
+  assert.match(app, /BrowserImportDialog/);
+  assert.match(app, /listImportableBrowsers/);
+  assert.match(app, /importBrowserData/);
+  assert.match(preload, /browser-import:list/);
+  assert.match(preload, /browser-import:import/);
+  assert.match(main, /ipcMain\.handle\("browser-import:list"/);
+  assert.match(main, /ipcMain\.handle\("browser-import:import"/);
+  assert.match(main, /persist:dyworker-browser/);
+  assert.match(main, /imported-passwords\.json/);
+  assert.match(browserImport, /browser360/);
+  assert.match(browserImport, /qaxbrowser/);
+  assert.match(browserImport, /peanuts/);
+  assert.match(browserImport, /find-generic-password/);
+  assert.match(browserImport, /node:sqlite/);
+  // 对话框为 Codex 风格：标题 + 来源选择行 + 分类开关（密码/Cookie/浏览记录）
+  assert.match(app, /从浏览器导入/);
+  assert.match(app, /选择要导入到内置浏览器的数据/);
+  assert.match(app, /导入前，请完全关闭/);
+  assert.match(app, /已保存的密码/);
+  assert.match(app, /浏览记录/);
+  assert.match(app, /browser-import-switch/);
+  // 浏览记录：读取 History 库（无需解密）落盘，地址栏用 datalist 联想
+  assert.match(browserImport, /History/);
+  assert.match(browserImport, /FROM urls/);
+  assert.match(main, /imported-history\.json/);
+  assert.match(main, /ipcMain\.handle\("browser-import:history"/);
+  assert.match(preload, /browser-import:history/);
+  assert.match(app, /browser-history-suggestions/);
+  // 只导入浏览记录时不触发密钥链（不解析解密密钥）
+  assert.match(browserImport, /wantCookies \|\| wantPasswords/);
+  assert.match(styles, /\.browser-more-menu/);
+  assert.match(styles, /\.browser-import-dialog/);
+  assert.match(styles, /\.browser-import-kinds/);
 });
 
 test("image attachments render real previews before and after sending", () => {
@@ -485,6 +635,10 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(app, /agentEvent\.type === "plan-update"/);
   assert.match(app, /ChangesSummary/);
   assert.match(app, /PlanCard/);
+  // 改动卡片默认展开前 3 个文件，超出时「再显示 xx 个文件」点击展开（对照 Codex）
+  assert.match(app, /changes\.slice\(0, 3\)/);
+  assert.match(app, /再显示 \{hiddenCount\} 个文件/);
+  assert.match(styles, /\.changes-more/);
   // /diff 视图与受信只读命令免审批
   assert.match(agent, /unifiedDiff/);
   assert.match(agent, /isAutoApprovableCommand/);
@@ -851,4 +1005,59 @@ test("main-process modules pass node --check syntax validation", async () => {
     if (!/\.(mjs|cjs)$/.test(entry)) continue;
     execFileSync(process.execPath, ["--check", fileURLToPath(new URL(entry, dir))], { stdio: "pipe" });
   }
+});
+
+test("分支管理与提交推送端到端接线（Codex 风格）", () => {
+  // 顶栏分支按钮与下拉：搜索、当前分支打勾、创建并检出
+  assert.match(app, /className=\{`branch-button/);
+  assert.match(app, /创建并检出新分支/);
+  assert.match(app, /未提交：\{gitInfo\.uncommitted\} 个文件/);
+  assert.match(app, /switchBranch/);
+  // 提交面板：留空自动生成、包含未暂存的更改、diff 统计、三个动作
+  assert.match(app, /提交信息（留空将自动生成）/);
+  assert.match(app, /包含未暂存的更改/);
+  assert.match(app, /commit-diff-stats/);
+  assert.match(app, /提交并推送/);
+  // 主进程与 preload 的 Git 通道
+  assert.match(main, /ipcMain\.handle\("git:branches"/);
+  assert.match(main, /ipcMain\.handle\("git:commit"/);
+  assert.match(main, /ipcMain\.handle\("git:push"/);
+  assert.match(preload, /gitBranches/);
+  assert.match(preload, /gitCommit/);
+  assert.match(preload, /gitPush/);
+  assert.match(styles, /\.branch-menu,/);
+  assert.match(styles, /\.commit-panel\s*\{/);
+});
+
+test("右侧面板默认展示菜单且快捷键多平台适配", () => {
+  // 初始没有任何标签页：浏览器只是菜单里的一个选项，用户选择之前什么都不打开（对照 Codex）
+  assert.match(app, /useState<ToolPanelTab\[\]>\(\[\]\)/);
+  // 展开右侧面板且还没有标签页时展示菜单页
+  assert.match(app, /setToolPanelMenuOpen\(toolPanelTabs\.length === 0\)/);
+  // 菜单作为面板页面内容展示(对照 Codex),不是下拉浮层
+  assert.match(app, /tool-panel-menu-page/);
+  assert.doesNotMatch(app, /tool-panel-menu-host/);
+  // 纯净菜单页(还没有真实标签页)不显示标签栏和 + 按钮；无标签页时始终派生显示菜单页
+  // （拖动面板边框触发外部点击关闭也不会出现空白面板）
+  assert.match(app, /menuPageShown = toolPanelMenuOpen \|\| toolPanelTabs\.length === 0/);
+  assert.match(app, /pristineMenuPage = toolPanelTabs\.length === 0/);
+  assert.match(app, /\{!pristineMenuPage && toolPanelTabs\.map/);
+  // 关掉最后一个标签页回到菜单页，而不是再开一个空白浏览器
+  assert.doesNotMatch(app, /kind: "browser", title: "新标签页", url: "" \}\);\s*\n\s*setActiveToolPanelTabId\(id\)/);
+  // 快捷键标签按平台切换（macOS 符号 / Windows·Linux 文字）
+  assert.match(app, /shortcutLabel\("⌘T", "Ctrl\+T"\)/);
+  assert.match(app, /shortcutLabel\("⌘P", "Ctrl\+P"\)/);
+  assert.match(app, /shortcutLabel\("⌥⌘S", "Ctrl\+Alt\+S"\)/);
+  // 快捷键实际接线
+  assert.match(app, /key === "t"/);
+  assert.match(app, /key === "p"/);
+});
+
+test("应用更新入口在设置的应用更新页,而不是会话顶栏或侧栏", () => {
+  assert.doesNotMatch(app, /app-update-button/);
+  assert.match(app, /tab === "updates"/);
+  assert.match(app, /settings-update-row/);
+  assert.match(app, /onCheckUpdate=\{openAppUpdateDialog\}/);
+  assert.match(app, /当前版本 \{appUpdate\.currentVersion/);
+  assert.match(styles, /\.settings-update-row/);
 });
