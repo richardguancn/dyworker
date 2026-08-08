@@ -5,7 +5,6 @@
   color-scheme: light dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  font-variant-east-asian: proportional-width;
   --sidebar-width: 300px;
   --tool-panel-width: 320px;
   --topbar-height: 54px;
@@ -3155,6 +3154,61 @@ body.resizing-panels .app-shell {
 .markdown-content th:last-child,
 .markdown-content td:last-child { border-right: 0; }
 .markdown-content th { background: #eeefea; }
+
+/* 长消息折叠（Codex 风格“显示更多/收起”） */
+.user-bubble {
+  overflow-wrap: anywhere;
+}
+
+.user-message-text.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.show-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0 2px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #7d8178;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.show-more-toggle:hover {
+  color: #3f433c;
+  background: rgba(72, 74, 68, 0.08);
+}
+
+.markdown-content p,
+.markdown-content li,
+.markdown-content blockquote,
+.markdown-content a,
+.conversation-turn-preview span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-content pre {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.plan-step {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 .message-content > .markdown-content + .interactive-block,
 .message-content > .interactive-block + .markdown-content,

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -3471,4 +3471,40 @@ test("suggestStandingRule 的 command-prefix:受信只读与常用开发命令�
   // 建议出的规则必须能被 matchStandingRule 命中(与 rules:add 的 probe 同一条路径)
   assert.equal(matchStandingRule([lsRule], "run_command", { command: "ls /tmp" }), true);
   assert.equal(matchStandingRule([suggestStandingRule("run_command", { command: "npm install express" })], "run_command", { command: "npm install lodash" }), true);
+});
+
+test("模型请求:服务商内容安全拦截时给出可操作指引", async () => {
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 400,
+    text: async () => '{"error":{"code":400,"message":"The request was rejected because it was considered high risk","param":"prompt","type":"content_filter"}}',
+  });
+  await assert.rejects(
+    requestModel({ settings, messages: [{ role: "user", content: "今天的呢？" }], fetchImpl }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.contentFiltered, true);
+      assert.match(error.message, /内容安全审核/);
+      assert.match(error.message, /新建一个任务/);
+      return true;
+    },
+  );
+});
+
+test("模型请求:网关用 200 返回 HTML 错误页时翻译成可读提示", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => "text/html; charset=utf-8" },
+    json: async () => { throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`); },
+  });
+  await assert.rejects(
+    requestModel({ settings, messages: [{ role: "user", content: "hi" }], fetchImpl }),
+    (error) => {
+      assert.match(error.message, /不是 JSON/);
+      assert.match(error.message, /中转网关/);
+      assert.match(error.message, /DOCTYPE/);
+      return true;
+    },
+  );
 });
