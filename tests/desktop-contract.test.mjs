@@ -158,6 +158,7 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(main, /updater\.autoDownload = false/);
   // electron-updater 动态加载：缺失时只禁用自动更新，不影响窗口启动
   assert.match(main, /loadElectronUpdater/);
+  assert.match(main, /module\.autoUpdater \|\| module\.default\?\.autoUpdater/);
   assert.match(main, /electron-updater 不可用，自动更新已禁用/);
   assert.match(main, /createWindow\(\)[\s\S]*loadElectronUpdater\(\)/);
   assert.match(packageJson, /"node_modules\/\*\*\/\*"/);
@@ -1051,6 +1052,21 @@ test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   // 快捷键实际接线
   assert.match(app, /key === "t"/);
   assert.match(app, /key === "p"/);
+});
+
+test("侧边聊天是面板内的临时聊天 tab（对照 Codex）", () => {
+  // tab 类型含 chat，菜单页/+/快捷键都打开它
+  assert.match(app, /kind: "browser" \| "files" \| "review" \| "chat"/);
+  assert.match(app, /openToolPanelTab\("chat"\)/);
+  assert.match(app, /function SideChatPanel/);
+  // 空态文案：临时聊天，关闭应用后消失
+  assert.match(app, /侧边聊天是临时聊天，关闭应用后会消失。/);
+  // 输入框与发送：走 completeChat 直接问模型，消息只存在内存（useState），不落盘
+  assert.match(app, /随心输入/);
+  assert.match(app, /completeChat\(\{ settings, messages: next \}\)/);
+  assert.doesNotMatch(app, /侧边聊天将在当前会话中继续/);
+  assert.match(styles, /\.side-chat-panel/);
+  assert.match(styles, /\.side-chat-composer/);
 });
 
 test("应用更新入口在设置的应用更新页,而不是会话顶栏或侧栏", () => {
