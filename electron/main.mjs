@@ -200,7 +200,7 @@ function dataFile(name) {
 let electronUpdaterPromise = null;
 function loadElectronUpdater() {
   electronUpdaterPromise ??= import("electron-updater")
-    .then((module) => module.autoUpdater || null)
+    .then((module) => module.autoUpdater || module.default?.autoUpdater || null)
     .catch((error) => {
       console.log(
         `[dyworker] electron-updater 不可用，自动更新已禁用：${error instanceof Error ? error.message : String(error)}`,
