@@ -10,10 +10,14 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   ChevronUp,
   Circle,
+  Cookie,
   Copy,
   FileCode2,
+  FileDiff,
   File,
   FileImage,
   FileText,
@@ -23,6 +27,7 @@ import {
   Globe,
   Hand,
   History,
+  KeyRound,
   Landmark,
   ListTodo,
   LoaderCircle,
@@ -52,15 +57,16 @@ import {
   Target,
   Terminal,
   Trash2,
+  GitCommitHorizontal,
+  Upload,
   UserRound,
   X,
 } from "lucide-react";
+import hljs from "highlight.js/lib/common";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, HookRule, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets } from "./providers";
 
 const now = new Date().toISOString();
@@ -437,7 +443,7 @@ function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
 
 type ToolPanelTab = {
   id: string;
-  kind: "browser" | "files";
+  kind: "browser" | "files" | "review";
   title: string;
   url?: string;
   loadedUrl?: string;
@@ -449,8 +455,9 @@ type BrowserWebviewElement = HTMLElement & {
   reload?: () => void;
 };
 
-function WorkspaceNode({ entry, depth = 0, onOpenFile }: { entry: WorkspaceEntry; depth?: number; onOpenFile: (entry: WorkspaceEntry) => void }) {
-  const [expanded, setExpanded] = useState(depth === 0);
+function WorkspaceNode({ entry, depth = 0, onOpenFile, forceExpand = false }: { entry: WorkspaceEntry; depth?: number; onOpenFile: (entry: WorkspaceEntry) => void; forceExpand?: boolean }) {
+  const [expandedState, setExpanded] = useState(depth === 0);
+  const expanded = forceExpand || expandedState;
   const isDirectory = entry.kind === "directory";
   const hasChildren = Boolean(entry.children?.length);
 
@@ -480,7 +487,7 @@ function WorkspaceNode({ entry, depth = 0, onOpenFile }: { entry: WorkspaceEntry
         <span title={entry.path}>{entry.name}</span>
       </button>
       {expanded && entry.children?.map((child) => (
-        <WorkspaceNode entry={child} depth={depth + 1} key={child.path} onOpenFile={onOpenFile} />
+        <WorkspaceNode entry={child} depth={depth + 1} key={child.path} onOpenFile={onOpenFile} forceExpand={forceExpand} />
       ))}
     </div>
   );
@@ -556,6 +563,879 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
   );
 }
 
+// ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
+
+// 可在代码标签页预览的文本文件类型(其余交给系统默认应用)
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  "js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "json", "jsonc",
+  "css", "scss", "less", "html", "htm", "svg", "xml",
+  "py", "sh", "bash", "zsh", "md", "markdown", "txt", "log",
+  "yml", "yaml", "toml", "ini", "cfg", "conf", "env", "properties",
+  "java", "c", "h", "cpp", "cc", "cxx", "hpp", "go", "rs", "rb", "php", "sql", "vue",
+  "gitignore", "gitattributes", "editorconfig", "dockerignore", "npmignore",
+]);
+
+function fileExtension(filePath: string) {
+  const name = filePath.split(/[\\/]/).pop() || "";
+  if (name.startsWith(".") && !name.includes(".", 1)) return name.slice(1).toLowerCase(); // .gitignore 等点文件
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+function isTextPreviewFile(filePath: string) {
+  return TEXT_PREVIEW_EXTENSIONS.has(fileExtension(filePath));
+}
+
+// 扩展名 → highlight.js 语言名(getLanguage 兜底校验)
+const highlightLanguageMap: Record<string, string> = {
+  mjs: "javascript", cjs: "javascript", jsx: "javascript",
+  ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
+  htm: "xml", svg: "xml", vue: "xml",
+  sh: "bash", zsh: "bash",
+  yml: "yaml", md: "markdown",
+  h: "c", hpp: "cpp", cc: "cpp", cxx: "cpp",
+  toml: "ini", cfg: "ini", conf: "ini", env: "ini", properties: "ini",
+  gitignore: "plaintext", gitattributes: "plaintext", editorconfig: "ini", dockerignore: "plaintext", npmignore: "plaintext",
+  txt: "plaintext", log: "plaintext",
+};
+
+function highlightLanguageFor(filePath: string) {
+  const extension = fileExtension(filePath);
+  const candidate = highlightLanguageMap[extension] || extension;
+  return hljs.getLanguage(candidate) ? candidate : undefined;
+}
+
+function escapeHtml(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const CODE_VIEW_MAX_CHARS = 400 * 1024;
+
+// Codex 风格的代码查看:行号栏 + 整文件语法高亮
+function CodeView({ content, filePath }: { content: string; filePath: string }) {
+  const truncated = content.length > CODE_VIEW_MAX_CHARS;
+  const shown = truncated ? content.slice(0, CODE_VIEW_MAX_CHARS) : content;
+  const html = useMemo(() => {
+    const language = highlightLanguageFor(filePath);
+    try {
+      return language ? hljs.highlight(shown, { language, ignoreIllegals: true }).value : escapeHtml(shown);
+    } catch {
+      return escapeHtml(shown);
+    }
+  }, [shown, filePath]);
+  const lineNumbers = useMemo(() => {
+    const count = shown.split("\n").length;
+    return Array.from({ length: count }, (_value, index) => index + 1).join("\n");
+  }, [shown]);
+  return (
+    <div className="code-view">
+      <pre className="code-view-gutter" aria-hidden="true">{lineNumbers}</pre>
+      <pre className="code-view-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      {truncated && <div className="code-view-truncated">文件过大,仅显示前 400 KB</div>}
+    </div>
+  );
+}
+
+// 面包屑:工作区名 › 目录 › 文件
+function codeBreadcrumbSegments(filePath: string, workspacePath: string) {
+  const root = workspacePath.replace(/[\\/]+$/, "");
+  let relative = filePath;
+  if (root && (filePath.startsWith(`${root}/`) || filePath.startsWith(`${root}\\`))) {
+    relative = filePath.slice(root.length + 1);
+  }
+  const workspaceName = root.split(/[\\/]/).pop() || root;
+  return [workspaceName, ...relative.split(/[\\/]/).filter(Boolean)];
+}
+
+type ReviewDiffRow =
+  | { type: "add" | "del" | "ctx"; oldNo?: number; newNo?: number; text: string }
+  | { type: "gap"; count: number };
+
+// 解析 unified diff:带行号输出,hunk 之间插入"N unmodified lines"折叠条(对照 Codex 审阅视图)
+function parseReviewDiff(diff: string): ReviewDiffRow[] {
+  const rows: ReviewDiffRow[] = [];
+  const hunkPattern = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  let oldNo = 0;
+  let newNo = 0;
+  let inHunk = false;
+  for (const line of diff.split("\n")) {
+    const hunk = hunkPattern.exec(line);
+    if (hunk) {
+      const nextOld = Number(hunk[1]);
+      if (inHunk) {
+        const gap = nextOld - oldNo;
+        if (gap > 0) rows.push({ type: "gap", count: gap });
+      } else if (nextOld > 1) {
+        rows.push({ type: "gap", count: nextOld - 1 });
+      }
+      oldNo = nextOld;
+      newNo = Number(hunk[2]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk || line.startsWith("\\")) continue;
+    const marker = line[0];
+    const text = line.slice(1);
+    if (marker === "+") rows.push({ type: "add", newNo: newNo++, text });
+    else if (marker === "-") rows.push({ type: "del", oldNo: oldNo++, text });
+    else if (marker === " ") rows.push({ type: "ctx", oldNo: oldNo++, newNo: newNo++, text });
+  }
+  return rows;
+}
+
+function ReviewDiffView({ diff }: { diff: string }) {
+  const rows = useMemo(() => parseReviewDiff(diff), [diff]);
+  if (!rows.length) return <p className="panel-empty">暂无可展示的修改内容。</p>;
+  return (
+    <div className="review-diff">
+      {rows.map((row, index) => row.type === "gap" ? (
+        <div className="review-diff-gap" key={index}>{row.count} unmodified lines</div>
+      ) : (
+        <div className={`review-diff-row ${row.type}`} key={index}>
+          <span className="review-diff-no">{row.type !== "add" ? row.oldNo : ""}</span>
+          <span className="review-diff-no">{row.type !== "del" ? row.newNo : ""}</span>
+          <code className="review-diff-text">{row.text}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Codex 风格的审阅面板:上一轮改动汇总 + 文件列表 + 选中文件的内联 diff
+function ReviewPanel({ changes, workspacePath }: { changes: FileChange[]; workspacePath: string }) {
+  const [selectedPath, setSelectedPath] = useState(changes[0]?.path || "");
+  const totals = changes.reduce(
+    (accumulator, change) => ({ added: accumulator.added + change.added, removed: accumulator.removed + change.removed }),
+    { added: 0, removed: 0 },
+  );
+  const selected = changes.find((change) => change.path === selectedPath) || changes[0];
+  const openExternal = (change: FileChange) => {
+    if (!workspacePath) return;
+    void window.dyworker?.openPath(`${workspacePath.replace(/[\\/]+$/, "")}/${change.path}`);
+  };
+  return (
+    <div className="review-panel-body">
+      <div className="review-header">
+        <span className="review-round">上一轮</span>
+        <span className="review-totals"><b>+{totals.added}</b> <em>-{totals.removed}</em></span>
+      </div>
+      <div className="review-file-list">
+        {changes.map((change) => (
+          <div className={`review-file-row ${selected && change.path === selected.path ? "active" : ""}`} key={change.path}>
+            <button className="review-file-main" onClick={() => setSelectedPath(change.path)} title={change.path}>
+              <FileCode2 size={15} />
+              <span className="review-file-path">{change.path}</span>
+              <span className="tool-summary-side"><b>+{change.added}</b> <em>-{change.removed}</em></span>
+            </button>
+            <button
+              className="icon-button subtle tiny"
+              onClick={() => openExternal(change)}
+              disabled={!workspacePath}
+              aria-label={`打开 ${change.path}`}
+              title="打开文件"
+            >
+              <FolderOpen size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+      {selected && (selected.diff
+        ? <ReviewDiffView diff={selected.diff} />
+        : <p className="panel-empty">文件较大,仅显示变更统计。</p>)}
+    </div>
+  );
+}
+
+// ===== Codex 风格审阅视图:Git 工作区改动 vs 基线,左 diff 右文件树 =====
+
+type ReviewTreeDir = { name: string; path: string; dirs: ReviewTreeDir[]; files: GitReviewFile[] };
+
+// 把扁平的文件路径列表组装成目录树（对照 Codex 审阅页右侧的分组文件列表）
+function buildReviewTree(files: GitReviewFile[]): ReviewTreeDir {
+  const root: ReviewTreeDir = { name: "", path: "", dirs: [], files: [] };
+  for (const file of files) {
+    const segments = file.path.split("/");
+    let node = root;
+    for (let index = 0; index < segments.length - 1; index++) {
+      const dirPath = segments.slice(0, index + 1).join("/");
+      let next = node.dirs.find((dir) => dir.path === dirPath);
+      if (!next) {
+        next = { name: segments[index], path: dirPath, dirs: [], files: [] };
+        node.dirs.push(next);
+      }
+      node = next;
+    }
+    node.files.push(file);
+  }
+  return root;
+}
+
+const reviewStatusLabels: Record<GitReviewFile["status"], string> = { M: "已修改", A: "新增", D: "已删除", U: "未跟踪" };
+
+// 文件类型图标：按扩展名给彩色小方块（对照 Codex 审阅页的 JS/TS/{ } 图标）
+const FILE_TYPE_STYLES: [RegExp, string, string][] = [
+  [/\.tsx?$/i, "TS", "#3178c6"],
+  [/\.jsx?$/i, "JS", "#c9a227"],
+  [/\.mjs$/i, "JS", "#c9a227"],
+  [/\.cjs$/i, "JS", "#c9a227"],
+  [/\.jsonc?$/i, "{}", "#c9842d"],
+  [/\.s?css$/i, "CSS", "#7c5cd6"],
+  [/\.less$/i, "CSS", "#7c5cd6"],
+  [/\.html?$/i, "<>", "#d1543a"],
+  [/\.mdx?$/i, "MD", "#5f8a4b"],
+  [/\.py$/i, "PY", "#3572a5"],
+  [/\.go$/i, "GO", "#00add8"],
+  [/\.rs$/i, "RS", "#b7410e"],
+  [/\.java$/i, "JV", "#b07219"],
+  [/\.ya?ml$/i, "YML", "#6d8086"],
+  [/\.toml$/i, "TOML", "#6d8086"],
+  [/\.sh$/i, "SH", "#4eaa25"],
+  [/\.svg$/i, "SVG", "#d0881c"],
+  [/\.png$/i, "IMG", "#8a6d3b"],
+  [/\.jpe?g$/i, "IMG", "#8a6d3b"],
+  [/\.gif$/i, "IMG", "#8a6d3b"],
+];
+
+function FileTypeIcon({ path, size = 15 }: { path: string; size?: number }) {
+  const match = FILE_TYPE_STYLES.find(([pattern]) => pattern.test(path));
+  if (!match) return <File size={size} className="file-type-icon-fallback" />;
+  const [, label, color] = match;
+  return (
+    <span className="file-type-icon" style={{ color, width: size + 3, height: size + 1, fontSize: Math.max(7, size - 7) }} aria-hidden="true">
+      {label}
+    </span>
+  );
+}
+
+// 状态徽标（对照 Codex：新增绿色 ⊕、修改橙点、删除红色 −）
+function ReviewStatusIcon({ status }: { status: GitReviewFile["status"] }) {
+  const className = `review-status-icon status-${status.toLowerCase()}`;
+  if (status === "A" || status === "U") return <SquarePlus size={15} className={className} />;
+  if (status === "D") return <Square size={15} className={className} />;
+  return <SquarePen size={15} className={className} />;
+}
+
+function ReviewFileRow({ file, depth, selected, onSelect }: { file: GitReviewFile; depth: number; selected: boolean; onSelect: (path: string) => void }) {
+  const name = file.path.split("/").pop() || file.path;
+  return (
+    <button
+      className={`review-tree-row file ${selected ? "active" : ""}`}
+      style={{ paddingLeft: 8 + depth * 14 }}
+      onClick={() => onSelect(file.path)}
+      title={`${file.path}（${reviewStatusLabels[file.status]}）`}
+    >
+      <FileTypeIcon path={file.path} size={14} />
+      <span className="review-tree-name">{name}</span>
+      <ReviewStatusIcon status={file.status} />
+    </button>
+  );
+}
+
+function ReviewDirNode({ dir, depth, selectedPath, onSelect }: { dir: ReviewTreeDir; depth: number; selectedPath: string; onSelect: (path: string) => void }) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div className="review-tree-dir">
+      <button className="review-tree-row dir" style={{ paddingLeft: 8 + depth * 14 }} onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span className="review-tree-name">{dir.name}</span>
+      </button>
+      {expanded && (
+        <>
+          {dir.dirs.map((child) => <ReviewDirNode dir={child} depth={depth + 1} key={child.path} selectedPath={selectedPath} onSelect={onSelect} />)}
+          {dir.files.map((file) => <ReviewFileRow file={file} depth={depth + 1} key={file.path} selected={file.path === selectedPath} onSelect={onSelect} />)}
+        </>
+      )}
+    </div>
+  );
+}
+
+// 单个文件的 diff 区块（堆叠在左栏；对照 Codex：所有文件的 diff 上下排列滚动浏览，可单独折叠）
+function ReviewFileDiffSection({ workspacePath, base, file, active, collapsed, onToggleCollapse }: {
+  workspacePath: string;
+  base: string;
+  file: GitReviewFile;
+  active: boolean;
+  collapsed: boolean;
+  onToggleCollapse: (path: string) => void;
+}) {
+  const [diff, setDiff] = useState<{ text: string; binary?: boolean; truncated?: boolean } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (collapsed) return; // 折叠时不加载，展开后再拉取
+    if (!window.dyworker?.gitFileDiff) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void window.dyworker.gitFileDiff({ workspacePath, base, path: file.path, untracked: file.status === "U" })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) setDiff({ text: result.diff || "", binary: result.binary, truncated: result.truncated });
+        else setDiff(null);
+      })
+      .catch(() => { if (!cancelled) setDiff(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [workspacePath, base, file.path, file.status, collapsed]);
+
+  return (
+    <section className={`review-file-section ${active ? "active" : ""} ${collapsed ? "collapsed" : ""}`} data-review-path={file.path}>
+      <button
+        className="review-diff-filebar"
+        title={`${file.path}（${collapsed ? "展开差异" : "折叠差异"}）`}
+        aria-expanded={!collapsed}
+        onClick={() => onToggleCollapse(file.path)}
+      >
+        {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        <FileTypeIcon path={file.path} />
+        <span className="review-diff-filepath">{file.path}</span>
+        <span className="tool-summary-side"><b>+{file.added}</b> <em>-{file.removed}</em></span>
+      </button>
+      {!collapsed && (loading ? (
+        <p className="panel-empty">正在生成对比…</p>
+      ) : diff?.binary ? (
+        <p className="panel-empty">二进制文件无法展示对比。</p>
+      ) : diff && diff.text ? (
+        <>
+          <ReviewDiffView diff={diff.text} />
+          {diff.truncated && <p className="panel-empty">对比内容过大，仅显示前 400 KB。</p>}
+        </>
+      ) : (
+        <p className="panel-empty">暂无可展示的修改内容。</p>
+      ))}
+    </section>
+  );
+}
+
+// Git 仓库走基线对比视图；非 Git 仓库回退到“上一轮改动”审阅
+function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: string; fallbackChanges: FileChange[] }) {
+  const [overview, setOverview] = useState<GitReviewOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorText, setErrorText] = useState("");
+  const [base, setBase] = useState("HEAD");
+  const [baseMenuOpen, setBaseMenuOpen] = useState(false);
+  const [selectedPath, setSelectedPath] = useState("");
+  const [filter, setFilter] = useState("");
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+  const diffPaneRef = useRef<HTMLDivElement | null>(null);
+
+  const load = async (targetBase: string) => {
+    if (!window.dyworker?.gitReviewOverview) {
+      // 预览环境没有桌面桥接：按非 Git 仓库处理，回退到上一轮改动审阅
+      setOverview({ isRepo: false, current: "", upstream: "", base: "", files: [], totals: { added: 0, removed: 0 } });
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await window.dyworker.gitReviewOverview({ workspacePath, base: targetBase });
+      setOverview(result);
+      setErrorText("");
+    } catch {
+      // 不把底层 IPC 错误原文抛给用户，友好提示并可重试
+      setErrorText("读取 Git 状态失败，请点击右上角刷新重试");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setOverview(null);
+    setBase("HEAD");
+    setFilter("");
+    setSelectedPath("");
+    setCollapsedPaths(new Set());
+    void load("HEAD");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath]);
+
+  // 点击右侧文件树：左栏滚动到对应文件的 diff 区块（对照 Codex）
+  const scrollToFile = (path: string) => {
+    setSelectedPath(path);
+    diffPaneRef.current
+      ?.querySelector(`[data-review-path="${CSS.escape(path)}"]`)
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
+  if (!loading && overview && !overview.isRepo) {
+    return fallbackChanges.length ? (
+      <ReviewPanel changes={fallbackChanges} workspacePath={workspacePath} />
+    ) : (
+      <div className="browser-empty-state">
+        <FileDiff size={46} />
+        <strong>审阅改动</strong>
+        <span>当前工作区不是 Git 仓库；助手修改文件后，可在这里审阅上一轮改动</span>
+      </div>
+    );
+  }
+
+  const filteredFiles = (overview?.files || []).filter((file) => !filter.trim() || file.path.toLowerCase().includes(filter.trim().toLowerCase()));
+  const tree = buildReviewTree(filteredFiles);
+  const totals = overview?.totals || { added: 0, removed: 0 };
+
+  // 折叠/展开全部差异（对照 Codex 审阅头部工具按钮）
+  const allCollapsed = filteredFiles.length > 0 && filteredFiles.every((file) => collapsedPaths.has(file.path));
+  const toggleCollapseAll = () => {
+    setCollapsedPaths(allCollapsed ? new Set() : new Set(filteredFiles.map((file) => file.path)));
+  };
+  const toggleCollapse = (path: string) => {
+    setCollapsedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  return (
+    <div className="review-panel-body git-review">
+      <div className="review-header">
+        <div className="review-base-row" data-menu-root>
+          <button
+            className={`review-base-select ${baseMenuOpen ? "active" : ""}`}
+            onClick={() => setBaseMenuOpen((value) => !value)}
+            aria-expanded={baseMenuOpen}
+            title="选择对比基线"
+          >
+            <span>{base === "HEAD" ? "HEAD（未提交改动）" : base}</span>
+            <ChevronDown size={13} />
+          </button>
+          {baseMenuOpen && (
+            <div className="session-menu review-base-menu" role="menu">
+              <button role="menuitemradio" aria-checked={base === "HEAD"} onClick={() => { setBase("HEAD"); setBaseMenuOpen(false); void load("HEAD"); }}>
+                <span>HEAD（未提交改动）</span>
+                {base === "HEAD" && <Check size={14} />}
+              </button>
+              {overview?.upstream && (
+                <button role="menuitemradio" aria-checked={base === overview.upstream} onClick={() => { setBase(overview.upstream); setBaseMenuOpen(false); void load(overview.upstream); }}>
+                  <span>{overview.upstream}（含未推送提交）</span>
+                  {base === overview.upstream && <Check size={14} />}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <span className="review-totals"><b>+{totals.added.toLocaleString()}</b> <em>-{totals.removed.toLocaleString()}</em></span>
+        <span className="review-header-spacer" />
+        <button
+          className="icon-button subtle tiny"
+          onClick={toggleCollapseAll}
+          aria-label={allCollapsed ? "展开全部差异" : "折叠全部差异"}
+          title={allCollapsed ? "展开全部差异" : "折叠全部差异"}
+        >
+          {allCollapsed ? <ChevronsUpDown size={14} /> : <ChevronsDownUp size={14} />}
+        </button>
+        <button className="icon-button subtle tiny" onClick={() => void load(base)} aria-label="刷新改动列表" title="刷新改动列表">
+          <RefreshCw size={13} />
+        </button>
+      </div>
+      {errorText && <p className="panel-empty error-text">{errorText}</p>}
+      {loading && !overview ? (
+        <p className="panel-empty">正在读取 Git 改动…</p>
+      ) : overview && !overview.files.length ? (
+        <div className="browser-empty-state">
+          <FileDiff size={46} />
+          <strong>没有待审阅的改动</strong>
+          <span>{base === "HEAD" ? "工作区是干净的，助手修改文件后会出现在这里" : `与 ${base} 没有差异`}</span>
+        </div>
+      ) : (
+        <div className="review-split">
+          <div className="review-diff-pane" ref={diffPaneRef}>
+            {filteredFiles.map((file) => (
+              <ReviewFileDiffSection
+                key={`${overview?.base}-${file.path}`}
+                workspacePath={workspacePath}
+                base={overview?.base || "HEAD"}
+                file={file}
+                active={file.path === selectedPath}
+                collapsed={collapsedPaths.has(file.path)}
+                onToggleCollapse={toggleCollapse}
+              />
+            ))}
+          </div>
+          <div className="review-files-pane">
+            <div className="tool-file-filter">
+              <Search size={14} />
+              <input
+                placeholder="筛选文件…"
+                aria-label="筛选改动文件"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+              {filter.trim() && (
+                <button className="icon-button subtle tiny" aria-label="清除筛选" title="清除筛选" onClick={() => setFilter("")}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <div className="review-tree">
+              {tree.dirs.map((dir) => <ReviewDirNode dir={dir} depth={0} key={dir.path} selectedPath={selectedPath} onSelect={scrollToFile} />)}
+              {tree.files.map((file) => <ReviewFileRow file={file} depth={0} key={file.path} selected={file.path === selectedPath} onSelect={scrollToFile} />)}
+              {!filteredFiles.length && <p className="panel-empty">没有匹配「{filter.trim()}」的文件。</p>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===== Codex 风格文件浏览:左预览右目录树 =====
+
+type FilePanelSelection = {
+  path: string;
+  name: string;
+  kind: "markdown" | "code";
+  content: string;
+  loading: boolean;
+  error?: string;
+};
+
+function FilesSplitPanel({
+  workspacePath,
+  workspaceEntries,
+  workspaceOpen,
+  onRefresh,
+  onClearWorkspace,
+  onError,
+}: {
+  workspacePath: string;
+  workspaceEntries: WorkspaceEntry[];
+  workspaceOpen: boolean;
+  onRefresh: () => void;
+  onClearWorkspace: () => void;
+  onError: (message: string) => void;
+}) {
+  const [fileFilter, setFileFilter] = useState("");
+  const [selection, setSelection] = useState<FilePanelSelection | null>(null);
+  const fileFilterActive = Boolean(fileFilter.trim());
+  const visibleEntries = useMemo(
+    () => filterWorkspaceEntries(workspaceEntries, fileFilter),
+    [workspaceEntries, fileFilter],
+  );
+
+  useEffect(() => {
+    setSelection(null);
+    setFileFilter("");
+  }, [workspacePath]);
+
+  const previewFile = async (entry: WorkspaceEntry) => {
+    const previewKind: "markdown" | "code" | "" = isMarkdownFile(entry.path) ? "markdown" : isTextPreviewFile(entry.path) ? "code" : "";
+    if (!previewKind) {
+      // 二进制/未知类型交给系统默认应用
+      if (!window.dyworker?.openPath) return;
+      const result = await window.dyworker.openPath(entry.path);
+      if (!result.ok) onError(result.error || "无法打开文件");
+      return;
+    }
+    setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: true });
+    const readFile = previewKind === "markdown" ? window.dyworker?.readWorkspaceMarkdown : window.dyworker?.readWorkspaceFile;
+    if (!readFile) {
+      setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: "当前预览环境无法读取文件" });
+      return;
+    }
+    try {
+      const result = await readFile.call(window.dyworker, workspacePath, entry.path);
+      if (!result.ok) {
+        if ("binary" in result && result.binary) {
+          // 后缀像文本但内容是二进制：交给系统打开
+          setSelection(null);
+          void window.dyworker?.openPath(entry.path);
+          return;
+        }
+        setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: result.error || "文件读取失败" });
+        return;
+      }
+      setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: result.content || "", loading: false });
+    } catch (previewError) {
+      setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: `文件读取失败：${previewError instanceof Error ? previewError.message : String(previewError)}` });
+    }
+  };
+
+  return (
+    <div className="file-split">
+      <div className="file-split-preview">
+        {selection ? (
+          <div className="file-split-preview-inner">
+            <div className="code-panel-header">
+              <div className="code-breadcrumb" title={selection.path}>
+                {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
+                  <span className="code-breadcrumb-item" key={index}>
+                    {index > 0 && <span className="code-breadcrumb-sep">›</span>}
+                    <span className={index === segments.length - 1 ? "code-breadcrumb-current" : ""}>{segment}</span>
+                  </span>
+                ))}
+              </div>
+              <button
+                className="code-open-external"
+                onClick={() => void window.dyworker?.openPath(selection.path)}
+                title="用系统默认应用打开"
+              >
+                打开
+              </button>
+            </div>
+            {selection.loading ? (
+              <p className="panel-empty">正在读取文件…</p>
+            ) : selection.error ? (
+              <p className="panel-empty error-text">{selection.error}</p>
+            ) : selection.kind === "markdown" ? (
+              <article className="markdown-file-preview-content file-split-markdown">
+                <InteractiveMessage content={selection.content} />
+              </article>
+            ) : (
+              <CodeView content={selection.content} filePath={selection.path} />
+            )}
+          </div>
+        ) : (
+          <div className="browser-empty-state">
+            <FolderOpen size={46} />
+            <strong>打开文件</strong>
+            <span>从工作区目录树中选择文件</span>
+          </div>
+        )}
+      </div>
+      <div className="file-split-tree">
+        <div className="file-split-tree-header">
+          <span className="file-split-tree-path" title={workspacePath}>
+            <Folder size={14} />
+            <span>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
+          </span>
+          <button className="icon-button subtle tiny" onClick={onRefresh} aria-label="刷新文件列表" title="刷新文件列表" disabled={!workspacePath}>
+            <RefreshCw size={13} />
+          </button>
+        </div>
+        {workspacePath && (
+          <div className="tool-file-filter">
+            <Search size={14} />
+            <input
+              placeholder="筛选文件…"
+              aria-label="筛选文件"
+              value={fileFilter}
+              onChange={(event) => setFileFilter(event.target.value)}
+            />
+            {fileFilterActive && (
+              <button className="icon-button subtle tiny" aria-label="清除筛选" title="清除筛选" onClick={() => setFileFilter("")}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        )}
+        {workspacePath && (
+          <button className="tool-file-browser-clear" onClick={onClearWorkspace}>移除这个会话的工作目录</button>
+        )}
+        {workspaceOpen && (workspaceEntries.length ? (visibleEntries.length ? (
+          <div className="workspace-tree">
+            {visibleEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} onOpenFile={(item) => void previewFile(item)} forceExpand={fileFilterActive} />)}
+          </div>
+        ) : (
+          <p className="panel-empty">没有匹配「{fileFilter.trim()}」的文件。</p>
+        )) : (
+          workspacePath ? <p className="panel-empty">这个文件夹是空的。</p> : null
+        ))}
+        {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+      </div>
+    </div>
+  );
+}
+
+// ===== 浏览器「导入 Cookie 和密码」对话框（对照 Codex 浏览器更多菜单） =====
+
+// 浏览器品牌色（导入对话框的图标圆点）
+const BROWSER_BRAND_COLORS: Record<string, string> = {
+  chrome: "#ea4335",
+  edge: "#0c88c5",
+  chromium: "#4d6fd1",
+  brave: "#fb542b",
+  browser360: "#3aa655",
+  qaxbrowser: "#7b5cd6",
+};
+
+function BrowserBrandMark({ id, name }: { id: string; name: string }) {
+  const color = BROWSER_BRAND_COLORS[id] || "#8a8f85";
+  const initial = id === "qaxbrowser" ? "奇" : id === "browser360" ? "360" : name.trim().charAt(0).toUpperCase() || "?";
+  return <span className="browser-brand-mark" style={{ background: color }} aria-hidden="true">{initial}</span>;
+}
+
+// 从浏览器导入（对照 Codex）：选择来源浏览器 + 分类开关（密码/Cookie/浏览记录）
+function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void; onDone: (message: string) => void; onError: (message: string) => void }) {
+  const [sources, setSources] = useState<BrowserImportSource[] | null>(null);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [kinds, setKinds] = useState<BrowserImportKinds>({ passwords: true, cookies: true, history: true });
+  const [busy, setBusy] = useState(false);
+  const [resultText, setResultText] = useState("");
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!window.dyworker?.listImportableBrowsers) {
+      setSources([]);
+      return;
+    }
+    void window.dyworker.listImportableBrowsers()
+      .then((list) => {
+        if (cancelled) return;
+        setSources(list);
+        const first = list[0];
+        if (first) setSelectedKey(`${first.id}|${first.userDataDir}`);
+      })
+      .catch(() => { if (!cancelled) setSources([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selected = sources?.find((item) => `${item.id}|${item.userDataDir}` === selectedKey) || null;
+  const anyKindOn = kinds.passwords || kinds.cookies || kinds.history;
+
+  const runImport = async () => {
+    if (!selected || !window.dyworker?.importBrowserData) return;
+    if (busy) return;
+    setBusy(true);
+    setResultText("");
+    setWarnings([]);
+    try {
+      const result = await window.dyworker.importBrowserData({
+        id: selected.id,
+        userDataDir: selected.userDataDir,
+        profileId: selected.profiles[0]?.id || "Default",
+        kinds,
+      });
+      if (!result.ok) {
+        onError(result.error || "导入失败");
+        onClose();
+        return;
+      }
+      const parts: string[] = [];
+      if (kinds.passwords) parts.push(`${result.passwords ?? 0} 个密码`);
+      if (kinds.cookies) parts.push(`${result.cookies ?? 0} 条 Cookie`);
+      if (kinds.history) parts.push(`${result.history ?? 0} 条浏览记录`);
+      const summary = `已从${result.browser}导入 ${parts.join("、")}`
+        + (result.weakProtection ? "（当前系统没有密钥链，密码以弱保护方式存储）" : "");
+      setWarnings(result.warnings || []);
+      setResultText(summary);
+      onDone(summary);
+    } catch (importError) {
+      onError(`导入失败：${importError instanceof Error ? importError.message : String(importError)}`);
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound }[] = [
+    { key: "passwords", label: "已保存的密码", icon: KeyRound },
+    { key: "cookies", label: "Cookie", icon: Cookie },
+    { key: "history", label: "浏览记录", icon: History },
+  ];
+
+  return (
+    <div className="dialog-overlay" role="presentation" onClick={onClose}>
+      <div className="browser-import-dialog" role="dialog" aria-modal="true" aria-label="从浏览器导入" onClick={(event) => event.stopPropagation()}>
+        <div className="browser-import-header">
+          <div className="browser-import-title">
+            <strong>从浏览器导入</strong>
+            <span>选择要导入到内置浏览器的数据</span>
+          </div>
+          <button className="icon-button subtle tiny" onClick={onClose} aria-label="关闭" title="关闭"><X size={15} /></button>
+        </div>
+        {sources === null ? (
+          <p className="panel-empty">正在检测本机浏览器…</p>
+        ) : !sources.length ? (
+          <p className="panel-empty">没有检测到可导入的浏览器。支持 Chrome、Edge、Chromium、Brave，以及国产 Linux 环境下的 360 安全浏览器和奇安信可信浏览器。</p>
+        ) : (
+          <>
+            <div className="browser-import-from">
+              <span className="browser-import-from-label">从</span>
+              <div className="browser-import-picker" data-menu-root>
+                <button
+                  className="browser-import-picker-button"
+                  aria-haspopup="listbox"
+                  aria-expanded={pickerOpen}
+                  onClick={() => setPickerOpen((value) => !value)}
+                >
+                  {selected && <BrowserBrandMark id={selected.id} name={selected.name} />}
+                  <span className="browser-import-picker-name">{selected?.name || "选择浏览器"}</span>
+                  <ChevronDown size={14} />
+                </button>
+                {pickerOpen && (
+                  <div className="browser-import-picker-menu" role="listbox" aria-label="选择浏览器">
+                    {sources.map((source) => {
+                      const key = `${source.id}|${source.userDataDir}`;
+                      return (
+                        <button
+                          role="option"
+                          aria-selected={key === selectedKey}
+                          className={key === selectedKey ? "active" : ""}
+                          key={key}
+                          onClick={() => { setSelectedKey(key); setPickerOpen(false); }}
+                        >
+                          <BrowserBrandMark id={source.id} name={source.name} />
+                          <span className="browser-import-picker-name">{source.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            {selected && <p className="browser-import-hint">导入前，请完全关闭 {selected.name}</p>}
+            <div className="browser-import-kinds">
+              {kindRows.map((row) => {
+                const Icon = row.icon;
+                const on = kinds[row.key];
+                return (
+                  <div className="browser-import-kind-row" key={row.key}>
+                    <Icon size={18} />
+                    <span>{row.label}</span>
+                    <button
+                      className={`browser-import-switch ${on ? "on" : ""}`}
+                      role="switch"
+                      aria-checked={on}
+                      aria-label={row.label}
+                      onClick={() => setKinds((current) => ({ ...current, [row.key]: !current[row.key] }))}
+                    >
+                      <span className="browser-import-switch-thumb" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {resultText && <p className="browser-import-result" role="status">{resultText}</p>}
+            {warnings.map((warning) => <p className="browser-import-warning" key={warning}>{warning}</p>)}
+            <div className="browser-import-actions">
+              {resultText ? (
+                <button className="button-primary" onClick={onClose}>完成</button>
+              ) : (
+                <>
+                  <button className="button-secondary" onClick={onClose}>取消</button>
+                  <button className="button-primary" disabled={!selected || !anyKindOn || busy} onClick={() => void runImport()}>
+                    {busy ? "正在导入…" : "导入"}
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 按名称筛选文件树:保留命中项的祖先目录链
+function filterWorkspaceEntries(entries: WorkspaceEntry[], query: string): WorkspaceEntry[] {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) return entries;
+  const walk = (list: WorkspaceEntry[]): WorkspaceEntry[] => list.flatMap((entry) => {
+    if (entry.kind === "directory") {
+      const children = walk(entry.children || []);
+      return children.length || entry.name.toLowerCase().includes(keyword) ? [{ ...entry, children }] : [];
+    }
+    return entry.name.toLowerCase().includes(keyword) ? [entry] : [];
+  });
+  return walk(entries);
+}
+
 function completedPlanForMessage(message: ChatMessage) {
   if (!message.plan?.length) return undefined;
   if (message.taskStatus === "done") {
@@ -595,8 +1475,9 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
-function ChangesSummary({ changes, workspacePath }: { changes: FileChange[]; workspacePath: string }) {
-  const [open, setOpen] = useState(false);
+function ChangesSummary({ changes, workspacePath, onOpenReview }: { changes: FileChange[]; workspacePath: string; onOpenReview?: (changes: FileChange[]) => void }) {
+  // 默认展开显示前 3 个修改文件，超过 3 个时出「再显示 xx 个文件」（对照 Codex）
+  const [showAll, setShowAll] = useState(false);
   const [diffPath, setDiffPath] = useState("");
   const totals = changes.reduce(
     (accumulator, change) => ({ added: accumulator.added + change.added, removed: accumulator.removed + change.removed }),
@@ -606,19 +1487,25 @@ function ChangesSummary({ changes, workspacePath }: { changes: FileChange[]; wor
     if (!window.dyworker || !workspacePath) return;
     void window.dyworker.openPath(`${workspacePath.replace(/[\\/]+$/, "")}/${change.path}`);
   };
+  const visibleChanges = showAll ? changes : changes.slice(0, 3);
+  const hiddenCount = changes.length - visibleChanges.length;
   return (
     <div className="tool-summary">
-      <button className="tool-summary-header clickable" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <div>
-          <FileCode2 size={16} />
+      <div className="tool-summary-header changes-card">
+        <FileCode2 size={16} />
+        <span className="changes-card-text">
           <strong>已修改 {changes.length} 个文件</strong>
-        </div>
-        <span className="tool-summary-side">
-          <b>+{totals.added}</b> <em>-{totals.removed}</em>
-          {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          {onOpenReview && (
+            <button className="changes-review-link" onClick={() => onOpenReview(changes)}>
+              查看更改 <ArrowUpRight size={12} />
+            </button>
+          )}
         </span>
-      </button>
-      {open && changes.map((change) => (
+        <span className="tool-summary-side changes-card-totals">
+          <b>+{totals.added}</b> <em>-{totals.removed}</em>
+        </span>
+      </div>
+      {visibleChanges.map((change) => (
         <div className="tool-file-block" key={change.path}>
           <div className={`tool-file-row ${change.diff ? "clickable" : ""}`}>
             <button
@@ -647,6 +1534,16 @@ function ChangesSummary({ changes, workspacePath }: { changes: FileChange[]; wor
           {diffPath === change.path && change.diff && <DiffView diff={change.diff} />}
         </div>
       ))}
+      {hiddenCount > 0 && (
+        <button className="changes-more" onClick={() => setShowAll(true)}>
+          再显示 {hiddenCount} 个文件 <ChevronDown size={13} />
+        </button>
+      )}
+      {showAll && changes.length > 3 && (
+        <button className="changes-more" onClick={() => setShowAll(false)}>
+          收起文件列表 <ChevronUp size={13} />
+        </button>
+      )}
     </div>
   );
 }
@@ -2011,6 +2908,8 @@ function SettingsDialog({
   tab,
   onTabChange,
   planSeed,
+  appUpdate,
+  onCheckUpdate,
 }: {
   value: ProviderSettings;
   onClose: () => void;
@@ -2033,6 +2932,8 @@ function SettingsDialog({
   tab: SettingsTab;
   onTabChange: (tab: SettingsTab) => void;
   planSeed?: { name: string; prompt: string } | null;
+  appUpdate: AppUpdateStatus;
+  onCheckUpdate: () => void;
 }) {
   const [draft, setDraft] = useState(value);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
@@ -2330,6 +3231,20 @@ function SettingsDialog({
         <p className="dialog-note">只阻止系统挂起，屏幕照常关闭、照常锁定，锁屏安全不受影响；长任务（持续执行、/goal、定时计划）跑到一半电脑睡着时可开启。无人值守的机器建议选「仅任务运行期间」，「始终保持唤醒」请确认符合单位安全规定。Linux 依赖 systemd-logind，个别桌面环境可能不支持。</p>
         </>)}
         {tab === "updates" && (<>
+        <div className="dialog-section-title">应用更新</div>
+        <div className="settings-update-row">
+          <span className="settings-update-status">
+            当前版本 {appUpdate.currentVersion || "未知"}
+            {appUpdate.state === "available" && ` · 发现新版本 ${appUpdate.version || ""}`}
+            {appUpdate.state === "downloaded" && " · 更新已下载，可安装"}
+            {appUpdate.state === "downloading" && ` · 正在下载 ${Math.round(appUpdate.percent || 0)}%`}
+            {appUpdate.state === "checking" && " · 正在检查…"}
+            {appUpdate.state === "not-available" && " · 已是最新"}
+          </span>
+          <button type="button" className="settings-update-check" onClick={onCheckUpdate}>
+            {appUpdate.state === "downloaded" ? "安装更新" : appUpdate.state === "available" ? "查看更新" : "检查更新"}
+          </button>
+        </div>
         <div className="dialog-section-title">应用更新来源</div>
         <label>
           更新地址
@@ -2551,6 +3466,17 @@ export function App() {
   const [activeId, setActiveId] = useState(previewSessions[0].id);
   const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext | null>(null);
+  // 工作区 Git 状态：分支下拉与提交推送面板
+  const [gitInfo, setGitInfo] = useState<GitBranchesInfo | null>(null);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [branchQuery, setBranchQuery] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [commitPanelOpen, setCommitPanelOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [includeUnstaged, setIncludeUnstaged] = useState(true);
+  const [diffStats, setDiffStats] = useState<GitDiffStats | null>(null);
+  const [gitBusy, setGitBusy] = useState<"" | "switch" | "commit" | "commit-push" | "push">("");
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
   const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
@@ -2572,12 +3498,16 @@ export function App() {
     return Math.min(520, Math.max(340, Math.round(viewportWidth * 0.28)));
   });
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([
-    { id: "browser-1", kind: "browser", title: "新标签页", url: "" },
-  ]);
-  const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("browser-1");
+  // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
+  const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
+  const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("");
   const [browserOpening, setBrowserOpening] = useState(false);
   const [toolPanelMenuOpen, setToolPanelMenuOpen] = useState(false);
+  const [toolPanelAddMenuOpen, setToolPanelAddMenuOpen] = useState(false);
+  const [browserMoreOpen, setBrowserMoreOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  // 已导入的浏览记录：地址栏输入联想
+  const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
@@ -2621,9 +3551,9 @@ export function App() {
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
-  const [workspacePreview, setWorkspacePreview] = useState<{ path: string; name: string; content: string } | null>(null);
-  const [workspacePreviewLoading, setWorkspacePreviewLoading] = useState(false);
-  const [workspacePreviewError, setWorkspacePreviewError] = useState("");
+  // 排队中的任务运行标识：同会话内串行执行，排队消息未执行前允许编辑或取消
+  const [queuedRunIds, setQueuedRunIds] = useState<Set<string>>(new Set());
+  const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
@@ -2640,7 +3570,6 @@ export function App() {
   const recordingChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
-  const workspacePreviewRequestRef = useRef(0);
   const newTaskGuardRef = useRef(false);
 
   // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
@@ -2708,7 +3637,7 @@ export function App() {
   }, []);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen;
+  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
@@ -2719,6 +3648,10 @@ export function App() {
       setModelMenuOpen(false);
       setApprovalMenuOpen(false);
       setToolPanelMenuOpen(false);
+      setToolPanelAddMenuOpen(false);
+      setBrowserMoreOpen(false);
+      setBranchMenuOpen(false);
+      setCommitPanelOpen(false);
     };
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-menu-root]")) return;
@@ -3014,6 +3947,122 @@ export function App() {
     return () => { cancelled = true; };
   }, [ready, composerWorkspacePath, showComposerContext]);
 
+  // 工作区 Git 状态：顶栏分支下拉与提交推送面板共用
+  const refreshGitInfo = async () => {
+    if (!ready || !window.dyworker?.gitBranches || !composerWorkspacePath) {
+      setGitInfo(null);
+      return;
+    }
+    try {
+      const info = await window.dyworker.gitBranches(composerWorkspacePath);
+      setGitInfo(info.isRepo ? info : null);
+    } catch {
+      setGitInfo(null);
+    }
+  };
+
+  useEffect(() => {
+    setBranchMenuOpen(false);
+    setCommitPanelOpen(false);
+    void refreshGitInfo();
+  }, [ready, composerWorkspacePath]);
+
+  const toggleBranchMenu = () => {
+    setCommitPanelOpen(false);
+    setBranchQuery("");
+    setCreatingBranch(false);
+    setBranchMenuOpen((value) => !value);
+    void refreshGitInfo();
+  };
+
+  const openCommitPanel = () => {
+    setBranchMenuOpen(false);
+    setCommitPanelOpen(true);
+    setDiffStats(null);
+    if (window.dyworker?.gitDiffStats && composerWorkspacePath) {
+      void window.dyworker.gitDiffStats(composerWorkspacePath).then(setDiffStats).catch(() => {});
+    }
+  };
+
+  const switchBranch = async (name: string) => {
+    if (!window.dyworker?.gitCheckout || gitBusy || name === gitInfo?.current) return;
+    setGitBusy("switch");
+    try {
+      const result = await window.dyworker.gitCheckout(composerWorkspacePath, name);
+      if (!result.ok) {
+        setError(result.error || "切换分支失败");
+        return;
+      }
+      setNotice(`已切换到分支 ${name}`);
+      setBranchMenuOpen(false);
+      await refreshGitInfo();
+    } finally {
+      setGitBusy("");
+    }
+  };
+
+  const createBranch = async () => {
+    const name = newBranchName.trim();
+    if (!window.dyworker?.gitCreateBranch || !name || gitBusy) return;
+    setGitBusy("switch");
+    try {
+      const result = await window.dyworker.gitCreateBranch(composerWorkspacePath, name);
+      if (!result.ok) {
+        setError(result.error || "创建分支失败");
+        return;
+      }
+      setNotice(`已创建并切换到分支 ${name}`);
+      setNewBranchName("");
+      setCreatingBranch(false);
+      setBranchMenuOpen(false);
+      await refreshGitInfo();
+    } finally {
+      setGitBusy("");
+    }
+  };
+
+  const runCommit = async (push: boolean) => {
+    if (!window.dyworker?.gitCommit || gitBusy) return;
+    setGitBusy(push ? "commit-push" : "commit");
+    try {
+      const commit = await window.dyworker.gitCommit({
+        workspacePath: composerWorkspacePath,
+        message: commitMessage,
+        includeUnstaged,
+      });
+      if (!commit.ok) {
+        setError(commit.error || "提交失败");
+        return;
+      }
+      if (push && window.dyworker.gitPush) {
+        const pushed = await window.dyworker.gitPush(composerWorkspacePath);
+        if (!pushed.ok) setError(`已提交（${commit.message}），但推送失败：${pushed.error}`);
+        else setNotice(`已提交并推送：${commit.message}`);
+      } else {
+        setNotice(`已提交：${commit.message}`);
+      }
+      setCommitMessage("");
+      setCommitPanelOpen(false);
+      await refreshGitInfo();
+    } finally {
+      setGitBusy("");
+    }
+  };
+
+  const runPushOnly = async () => {
+    if (!window.dyworker?.gitPush || gitBusy) return;
+    setGitBusy("push");
+    try {
+      const result = await window.dyworker.gitPush(composerWorkspacePath);
+      if (result.ok) setNotice("已推送到远程仓库");
+      else setError(result.error || "推送失败");
+      setCommitPanelOpen(false);
+      await refreshGitInfo();
+    } finally {
+      setGitBusy("");
+    }
+  };
+
   const conversationTurns = useMemo(() => {
     if (!activeSession) return [];
     return activeSession.messages.reduce<Array<{ messageIndex: number; preview: ReturnType<typeof conversationTurnPreview> }>>((turns, message, messageIndex) => {
@@ -3027,6 +4076,32 @@ export function App() {
     }, []);
   }, [activeSession]);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
+  const activeQueuedCount = activeSession?.id
+    ? (queuedRunsRef.current.get(activeSession.id)?.size ?? 0)
+    : 0;
+  const markQueued = (sessionId: string, runId: string) => {
+    const set = queuedRunsRef.current.get(sessionId) || new Set<string>();
+    set.add(runId);
+    queuedRunsRef.current.set(sessionId, set);
+    setQueuedRunIds((current) => {
+      const next = new Set(current);
+      next.add(runId);
+      return next;
+    });
+  };
+  const unmarkQueued = (sessionId: string, runId: string) => {
+    const set = queuedRunsRef.current.get(sessionId);
+    if (!set) return;
+    set.delete(runId);
+    if (!set.size) queuedRunsRef.current.delete(sessionId);
+    setQueuedRunIds((current) => {
+      if (!current.has(runId)) return current;
+      const next = new Set(current);
+      next.delete(runId);
+      return next;
+    });
+  };
+  const sessionHasQueued = (sessionId: string) => Boolean(queuedRunsRef.current.get(sessionId)?.size);
   const activePendingApproval = activeSession?.id ? pendingApprovals[activeSession.id] || null : null;
   const activePendingQuestion = activeSession?.id ? pendingQuestions[activeSession.id] || null : null;
   const activeLoopState = activeSession?.id ? loopStates[activeSession.id] || null : null;
@@ -3097,11 +4172,13 @@ export function App() {
     sessionNoticeTimersRef.current.set(sessionId, timeout);
   };
 
-  const resetWorkspacePreview = () => {
-    workspacePreviewRequestRef.current += 1;
-    setWorkspacePreview(null);
-    setWorkspacePreviewLoading(false);
-    setWorkspacePreviewError("");
+  // 切换会话/工作区时关掉旧工作区的审阅标签页（内容已过期）
+  const closeFilePanelTabs = () => {
+    if (!toolPanelTabs.some((tab) => tab.kind === "review")) return;
+    const kept = toolPanelTabs.filter((tab) => tab.kind !== "review");
+    setToolPanelTabs(kept);
+    if (!kept.some((tab) => tab.id === activeToolPanelTabId)) setActiveToolPanelTabId(kept[0]?.id || "");
+    if (kept.length === 0) setToolPanelMenuOpen(true);
   };
 
   const applyWorkspaceSelection = (targetWorkspacePath: string) => {
@@ -3148,7 +4225,7 @@ export function App() {
     setAttachments([]);
     setActiveSkills([]);
     setEditingMessage(null);
-    resetWorkspacePreview();
+    closeFilePanelTabs();
     setNotice("");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
@@ -3435,9 +4512,69 @@ export function App() {
     }
   };
 
+  // 右侧面板快捷键（Codex 风格）：macOS 显示 ⌘/⌥/⌃，Windows/Linux 用 Ctrl/Alt 组合
+  const isMacPlatform = platform === "darwin";
+  const shortcutLabel = (mac: string, other: string) => (isMacPlatform ? mac : other);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const modOnly = (isMacPlatform ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
+      if (modOnly && key === "t") {
+        event.preventDefault();
+        setRightPanelOpen(true);
+        openToolPanelTab("browser");
+      } else if (modOnly && key === "p") {
+        event.preventDefault();
+        setRightPanelOpen(true);
+        openToolPanelTab("files");
+      } else if (modOnly && key === "j") {
+        event.preventDefault();
+        setDebugOpen((value) => !value);
+      } else if (event.ctrlKey && event.shiftKey && key === "g" && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        setRightPanelOpen(true);
+        openToolPanelTab("review");
+      } else if (key === "s" && event.altKey && (isMacPlatform ? event.metaKey : event.ctrlKey)) {
+        event.preventDefault();
+        setNotice("侧边聊天将在当前会话中继续");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
   const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
+
+  // 菜单页可见性派生：没有任何标签页时始终显示菜单页（即使全局 closeAll 把菜单状态关掉，
+  // 比如拖动面板边框触发的外部点击关闭），避免出现空面板
+  const menuPageShown = toolPanelMenuOpen || toolPanelTabs.length === 0;
+  // 纯净菜单页:还没有任何标签页时,菜单页不显示标签栏和 + 按钮(对照 Codex)
+  const pristineMenuPage = toolPanelTabs.length === 0;
+
+  // 审阅面板数据:当前会话最近一轮的文件改动(对照 Codex 审阅页)
+  const reviewChanges = useMemo(() => {
+    const messages = activeSession?.messages || [];
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.role === "assistant" && message.changes?.length) return message.changes;
+    }
+    return [];
+  }, [activeSession]);
+
+  // 「查看更改」点开的具体那条消息的改动（非 Git 工作区时作为审阅面板的数据源）
+  const [reviewFocusChanges, setReviewFocusChanges] = useState<FileChange[] | null>(null);
+  useEffect(() => { setReviewFocusChanges(null); }, [activeId]);
+
   const activeBrowserUrl = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "";
+
+  // 加载已导入的浏览记录（地址栏联想）；导入成功后由对话框回调刷新
+  const refreshImportedHistory = () => {
+    if (!window.dyworker?.listImportedHistory) return;
+    void window.dyworker.listImportedHistory().then(setImportedHistory).catch(() => {});
+  };
+  useEffect(refreshImportedHistory, []);
 
   const updateToolPanelTab = (id: string, patch: Partial<ToolPanelTab>) => {
     setToolPanelTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...patch } : tab));
@@ -3460,7 +4597,7 @@ export function App() {
     const tab: ToolPanelTab = {
       id: `${kind}-${sequence}`,
       kind,
-      title: kind === "browser" ? "新标签页" : (workspacePath ? displayWorkspace(workspacePath) : "文件"),
+      title: kind === "browser" ? "新标签页" : kind === "review" ? "审阅" : "打开文件",
       ...(kind === "browser" ? { url: "" } : {}),
     };
     setToolPanelTabs((current) => [...current, tab]);
@@ -3469,59 +4606,18 @@ export function App() {
     return tab.id;
   };
 
-  const openWorkspaceFile = async (entry: WorkspaceEntry) => {
-    if (!isMarkdownFile(entry.path)) {
-      if (!window.dyworker?.openPath) {
-        setNotice("当前预览环境无法打开文件");
-        return;
-      }
-      try {
-        const result = await window.dyworker.openPath(entry.path);
-        if (!result.ok) setError(result.error || "无法打开文件");
-      } catch (openError) {
-        setError(`无法打开文件：${openError instanceof Error ? openError.message : String(openError)}`);
-      }
-      return;
-    }
-    setRightPanelOpen(true);
-    openToolPanelTab("files");
-    const requestId = workspacePreviewRequestRef.current + 1;
-    workspacePreviewRequestRef.current = requestId;
-    setWorkspacePreview({ path: entry.path, name: entry.name, content: "" });
-    setWorkspacePreviewLoading(true);
-    setWorkspacePreviewError("");
-    if (!window.dyworker?.readWorkspaceMarkdown) {
-      setWorkspacePreviewLoading(false);
-      setWorkspacePreviewError("当前预览环境无法读取 Markdown 文件");
-      return;
-    }
-    try {
-      const result = await window.dyworker.readWorkspaceMarkdown(workspacePath, entry.path);
-      if (workspacePreviewRequestRef.current !== requestId) return;
-      if (!result.ok) {
-        setWorkspacePreviewError(result.error || "Markdown 文件读取失败");
-        return;
-      }
-      setWorkspacePreview({ path: entry.path, name: entry.name, content: result.content || "" });
-    } catch (previewError) {
-      if (workspacePreviewRequestRef.current === requestId) {
-        setWorkspacePreviewError(`Markdown 文件读取失败：${previewError instanceof Error ? previewError.message : String(previewError)}`);
-      }
-    } finally {
-      if (workspacePreviewRequestRef.current === requestId) setWorkspacePreviewLoading(false);
-    }
-  };
-
   const closeToolPanelTab = (id: string) => {
-    if (toolPanelTabs.length === 1) {
-      updateToolPanelTab(id, { kind: "browser", title: "新标签页", url: "" });
-      setActiveToolPanelTabId(id);
+    const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
+    // 关掉最后一个标签页时回到菜单页，而不是再开一个空白浏览器（对照 Codex）
+    if (!nextTabs.length) {
+      setToolPanelTabs([]);
+      setActiveToolPanelTabId("");
+      setToolPanelMenuOpen(true);
       return;
     }
-    const index = toolPanelTabs.findIndex((tab) => tab.id === id);
-    const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
     setToolPanelTabs(nextTabs);
     if (id === activeToolPanelTabId) {
+      const index = toolPanelTabs.findIndex((tab) => tab.id === id);
       setActiveToolPanelTabId(nextTabs[Math.max(0, index - 1)]?.id || nextTabs[0].id);
     }
   };
@@ -3663,10 +4759,17 @@ export function App() {
       return;
     }
     let content = composer.trim();
-    if ((!content && !attachments.length && !activeSkills.length) || activeTaskRunning || !activeSession) return;
+    if ((!content && !attachments.length && !activeSkills.length) || !activeSession) return;
+    const queueSupported = Boolean(window.dyworker?.sendTask);
+    // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
+    if (activeTaskRunning && !queueSupported) return;
     const editingTarget = editingMessage?.sessionId === activeSession.id
       ? activeSession.messages[editingMessage.messageIndex]
       : null;
+    // 排队中的消息允许编辑：保留原 runId，主进程开始执行时按 runId 取会话里最新内容
+    const editingQueuedRunId = editingTarget?.runId && queuedRunIds.has(editingTarget.runId)
+      ? editingTarget.runId
+      : undefined;
     // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
     const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
     let goalDriven = false;
@@ -3698,7 +4801,12 @@ export function App() {
     const taskSessionId = activeSession.id;
     newTaskGuardRef.current = false;
     const taskRunId = crypto.randomUUID();
-    runningRunIdsRef.current.set(taskSessionId, taskRunId);
+    let queuedResponse = false;
+    const messageRunId = editingQueuedRunId || taskRunId;
+    const isQueuedEdit = Boolean(editingQueuedRunId);
+    const queuedNow = isQueuedEdit || (!editingTarget && activeTaskRunning && queueSupported);
+    // 桌面版当前正在执行的 runId 由主进程 queue-start 事件维护；预览模式无事件，这里直接记录
+    if (!queueSupported) runningRunIdsRef.current.set(taskSessionId, taskRunId);
     setSessionErrors((current) => {
       const next = { ...current };
       delete next[taskSessionId];
@@ -3714,7 +4822,7 @@ export function App() {
       next.add(taskSessionId);
       return next;
     });
-    setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
+    if (!isQueuedEdit) setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
     shouldScrollToBottomRef.current = taskSessionId;
     const skillsBlock = selectedSkills.length
       ? `请按照以下技能执行：\n${selectedSkills.map((skill) => {
@@ -3726,6 +4834,7 @@ export function App() {
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
+      runId: messageRunId,
       // content 带完整技能指令发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
       content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : "请处理这些附件。")),
       ...(selectedSkills.length ? {
@@ -3738,6 +4847,10 @@ export function App() {
     const baseMessages = editingTarget && editingMessage
       ? activeSession.messages.slice(0, editingMessage.messageIndex)
       : activeSession.messages;
+    // 编辑排队消息时保留原 assistant 占位（runId 不变），让已注册的事件监听器继续更新它
+    const editingQueuedAssistant = isQueuedEdit && editingTarget && editingMessage
+      ? activeSession.messages[editingMessage.messageIndex + 1]
+      : null;
     const updatedSession: SessionRecord = {
       ...activeSession,
       ...(goalDriven ? { goal: content } : {}),
@@ -3746,10 +4859,20 @@ export function App() {
       // 不能用空的全局值冲掉会话自己保存的工作目录（重启后全局值可能为空）
       workspacePath: workspacePath || activeSession.workspacePath || "",
       updatedAt: new Date().toISOString(),
-      messages: [...baseMessages, message],
+      messages: [
+        ...baseMessages,
+        message,
+        ...(editingQueuedAssistant?.role === "assistant" ? [editingQueuedAssistant] : []),
+      ],
     };
     setEditingMessage(null);
     setSessions((current) => current.map((session) => session.id === activeSession.id ? updatedSession : session));
+
+    // 编辑排队消息：不重新入队，只更新会话内容；主进程开始执行时会读到新内容
+    if (isQueuedEdit) {
+      setNotice("排队中的消息已更新，将在当前任务结束后按新内容执行");
+      return;
+    }
 
     try {
       if (window.dyworker?.sendTask) {
@@ -3770,6 +4893,8 @@ export function App() {
             content: "",
             createdAt: new Date().toISOString(),
             activities: [],
+            runId: messageRunId,
+            taskStatus: queuedNow ? "queued" : undefined,
           }],
         }));
         const applyAgentResult = (result: AgentResult) => {
@@ -3846,6 +4971,23 @@ export function App() {
               }
               return next;
             });
+          } else if (agentEvent.type === "queued") {
+            markQueued(taskSessionId, taskRunId);
+            setRunningSessionIds((current) => {
+              const next = new Set(current);
+              next.add(taskSessionId);
+              return next;
+            });
+          } else if (agentEvent.type === "queue-start") {
+            unmarkQueued(taskSessionId, taskRunId);
+            runningRunIdsRef.current.set(taskSessionId, taskRunId);
+            setRunningSessionIds((current) => {
+              const next = new Set(current);
+              next.add(taskSessionId);
+              return next;
+            });
+            setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
+            patchAssistant((current) => ({ ...current, taskStatus: undefined }));
           } else if (agentEvent.type === "memory-saved") {
             void refreshMemories();
             showSessionNotice(taskSessionId, "已保存一条长期记忆");
@@ -3879,6 +5021,37 @@ export function App() {
             finishedEventSeen = true;
             void refreshMemories();
             applyAgentResult(agentEvent.result);
+            if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+              runningRunIdsRef.current.delete(taskSessionId);
+            }
+            setRunningStartedAt((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingApprovals((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingQuestions((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            // 排队消息的监听器一直保留到真正执行完成，这里统一收尾
+            const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
+            agentUnsubscribeRefs.current.delete(taskRunId);
+            if (unsubscribe) window.setTimeout(unsubscribe, 1000);
+            // 会话是否继续显示运行状态由队列决定：还有排队消息则保持，全部完成才收起
+            if (!sessionHasQueued(taskSessionId)) {
+              setRunningSessionIds((current) => {
+                if (!current.has(taskSessionId)) return current;
+                const next = new Set(current);
+                next.delete(taskSessionId);
+                return next;
+              });
+            }
           }
         });
         agentUnsubscribeRefs.current.set(taskRunId, unsubscribeAgent);
@@ -3895,18 +5068,41 @@ export function App() {
             approvalMode,
             runId: taskRunId,
           });
-          if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
-          if (!finishedEventSeen) applyAgentResult(response.result);
+          if (response.queued) {
+            queuedResponse = true;
+            markQueued(taskSessionId, taskRunId);
+          } else {
+            if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
+            if (!finishedEventSeen) applyAgentResult(response.result);
+          }
         } finally {
-          // webContents.send 的尾部事件可能晚于 invoke 响应到达，延迟取消订阅避免丢事件
-          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
-          agentUnsubscribeRefs.current.delete(taskRunId);
-          if (unsubscribe) window.setTimeout(unsubscribe, 1000);
-          setLoopStates((current) => {
-            const next = { ...current };
-            delete next[taskSessionId];
-            return next;
-          });
+          if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+            runningRunIdsRef.current.delete(taskSessionId);
+          }
+          // 非排队消息的监听器在此收尾；排队消息由 agent-finished 统一收尾（任务可能尚未开始）
+          if (!queuedResponse) {
+            // webContents.send 的尾部事件可能晚于 invoke 响应到达，延迟取消订阅避免丢事件
+            const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
+            agentUnsubscribeRefs.current.delete(taskRunId);
+            if (unsubscribe) window.setTimeout(unsubscribe, 1000);
+          }
+          // 预览模式没有主进程队列事件，由这里收起运行状态；桌面版由 agent-finished 维护
+          if (!queueSupported) {
+            setRunningSessionIds((current) => {
+              if (!current.has(taskSessionId)) return current;
+              const next = new Set(current);
+              next.delete(taskSessionId);
+              return next;
+            });
+          }
+          // 排队消息尚未执行，不清理当前任务的循环状态（由 queue-start/agent-finished 维护）
+          if (!queuedResponse) {
+            setLoopStates((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+          }
         }
       } else {
         let response;
@@ -3946,26 +5142,32 @@ export function App() {
       if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
         runningRunIdsRef.current.delete(taskSessionId);
       }
-      setRunningSessionIds((current) => {
-        const next = new Set(current);
-        next.delete(taskSessionId);
-        return next;
-      });
-      setRunningStartedAt((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
-      setPendingApprovals((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
-      setPendingQuestions((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
+      // 桌面版运行状态由主进程队列事件维护；预览模式（无队列事件）在这里收起
+      if (!window.dyworker?.sendTask) {
+        setRunningSessionIds((current) => {
+          const next = new Set(current);
+          next.delete(taskSessionId);
+          return next;
+        });
+      }
+      // 排队消息尚未执行：不清理当前任务的运行态，防止误删正在执行任务的审批/计时
+      if (!queuedResponse) {
+        setRunningStartedAt((current) => {
+          const next = { ...current };
+          delete next[taskSessionId];
+          return next;
+        });
+        setPendingApprovals((current) => {
+          const next = { ...current };
+          delete next[taskSessionId];
+          return next;
+        });
+        setPendingQuestions((current) => {
+          const next = { ...current };
+          delete next[taskSessionId];
+          return next;
+        });
+      }
     }
   };
 
@@ -4126,7 +5328,12 @@ export function App() {
     settings.model,
     settings.endpoint,
   ]);
-  const canSend = Boolean((composer.trim() || attachments.length || activeSkills.length) && !activeTaskRunning && voiceState !== "transcribing");
+  // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
+  const canSend = Boolean(
+    (composer.trim() || attachments.length || activeSkills.length)
+    && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
+    && voiceState !== "transcribing",
+  );
   const recentExpanded = workspaceGroupOpen.__recent__ !== false;
   const fileManagerLabel = platform === "darwin"
     ? "在 Finder 中显示"
@@ -4138,7 +5345,7 @@ export function App() {
     setSessionMenuId(null);
     setActiveId(session.id);
     setEditingMessage(null);
-    resetWorkspacePreview();
+    closeFilePanelTabs();
     const path = String(session.workspacePath || "").trim();
     setWorkspacePath(path);
     if (!path) {
@@ -4159,7 +5366,7 @@ export function App() {
     if (!activeSession) return;
     setWorkspacePath("");
     setWorkspaceEntries([]);
-    resetWorkspacePreview();
+    closeFilePanelTabs();
     updateSession(activeSession.id, (session) => ({ ...session, workspacePath: "" }));
     setNotice("已移除这个会话的工作目录，会话归入最近");
   };
@@ -4170,7 +5377,9 @@ export function App() {
   };
 
   const startMessageEdit = (message: ChatMessage, messageIndex: number) => {
-    if (!activeSession || message.role !== "user" || activeTaskRunning) return;
+    if (!activeSession || message.role !== "user") return;
+    // 任务运行期间只允许编辑排队中、尚未开始执行的消息
+    if (activeTaskRunning && !(message.runId && queuedRunIds.has(message.runId))) return;
     setEditingMessage({ sessionId: activeSession.id, messageIndex, original: message });
     setComposer(messageVisibleText(message));
     setAttachments(message.attachments ? [...message.attachments] : []);
@@ -4187,6 +5396,36 @@ export function App() {
     setActiveSkills([]);
     setNotice("已取消编辑");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const cancelQueuedMessage = async () => {
+    if (!activeSession || !editingMessage) return;
+    const sessionId = activeSession.id;
+    const runId = editingMessage.original.runId;
+    if (!runId || !queuedRunIds.has(runId)) return;
+    if (window.dyworker?.removeQueuedTask) {
+      const result = await window.dyworker.removeQueuedTask({ sessionId, runId });
+      if (!result?.ok || result.removed === false) {
+        // 队列项可能已开始执行或应用重启后已不存在，仍从会话中移除这条消息
+      }
+    }
+    unmarkQueued(sessionId, runId);
+    const messageIndex = editingMessage.messageIndex;
+    updateSession(sessionId, (session) => {
+      const next = [...session.messages];
+      next.splice(messageIndex, 1);
+      // 同时移除紧随其后的空助手占位（排队消息尚未开始执行）
+      const following = next[messageIndex];
+      if (following?.role === "assistant" && following.runId === runId && !following.content) {
+        next.splice(messageIndex, 1);
+      }
+      return { ...session, messages: next };
+    });
+    setEditingMessage(null);
+    setComposer("");
+    setAttachments([]);
+    setActiveSkills([]);
+    setNotice("已取消这条排队消息");
   };
 
   const renderSessionItem = (session: SessionRecord) => (
@@ -4256,34 +5495,100 @@ export function App() {
     "--tool-panel-width": `${toolPanelWidth}px`,
   } as CSSProperties;
 
+  // 右侧面板菜单项（首页菜单页与 + 下拉菜单共用）。终端在底部打开，不改变面板内容，因此不关闭菜单页。
+  const toolPanelMenuItems = [
+    {
+      key: "review",
+      icon: <SquarePlus size={18} />,
+      label: "审阅",
+      shortcut: shortcutLabel("⌃⇧G", "Ctrl+Shift+G"),
+      active: activeToolPanelKind === "review",
+      visible: true,
+      onClick: () => { setRightPanelOpen(true); openToolPanelTab("review"); },
+    },
+    {
+      key: "terminal",
+      icon: <SquareTerminal size={18} />,
+      label: "终端",
+      shortcut: shortcutLabel("⌘J", "Ctrl+J"),
+      active: debugOpen,
+      visible: true,
+      onClick: () => { setDebugOpen((value) => !value); },
+    },
+    {
+      key: "browser",
+      icon: <Globe size={18} />,
+      label: "浏览器",
+      shortcut: shortcutLabel("⌘T", "Ctrl+T"),
+      active: activeToolPanelKind === "browser",
+      visible: true,
+      onClick: () => { setRightPanelOpen(true); openToolPanelTab("browser"); },
+    },
+    {
+      key: "files",
+      icon: <FolderOpen size={18} />,
+      label: "文件",
+      shortcut: shortcutLabel("⌘P", "Ctrl+P"),
+      active: activeToolPanelKind === "files",
+      visible: true,
+      onClick: () => { setRightPanelOpen(true); openToolPanelTab("files"); },
+    },
+    {
+      key: "side-chat",
+      icon: <MessageCircleQuestion size={18} />,
+      label: "侧边聊天",
+      shortcut: shortcutLabel("⌥⌘S", "Ctrl+Alt+S"),
+      active: false,
+      visible: true,
+      onClick: () => { setNotice("侧边聊天将在当前会话中继续"); },
+    },
+  ];
+
   const toolPanelMenu = (
     <div className="tool-panel-menu" role="menu">
-      <button role="menuitem" onClick={() => { setToolPanelMenuOpen(false); setInboxOpen(true); }}>
-        <SquarePlus size={18} />
-        <span>审阅</span>
-        {inboxPendingCount > 0 && <small className="tool-panel-count">{inboxPendingCount}</small>}
-        <span className="tool-panel-shortcut">⌃⇧G</span>
-      </button>
-      <button role="menuitem" className={debugOpen ? "active" : ""} onClick={() => { setToolPanelMenuOpen(false); setDebugOpen((value) => !value); }}>
-        <SquareTerminal size={18} />
-        <span>终端</span>
-        <span className="tool-panel-shortcut">⌘J</span>
-      </button>
-      <button role="menuitem" className={activeToolPanelKind === "browser" ? "active" : ""} onClick={() => openToolPanelTab("browser")}>
-        <Globe size={18} />
-        <span>浏览器</span>
-        <span className="tool-panel-shortcut">⌘T</span>
-      </button>
-      <button role="menuitem" className={activeToolPanelKind === "files" ? "active" : ""} onClick={() => openToolPanelTab("files")}>
-        <FolderOpen size={18} />
-        <span>文件</span>
-        <span className="tool-panel-shortcut">⌘P</span>
-      </button>
-      <button role="menuitem" onClick={() => { setToolPanelMenuOpen(false); setNotice("侧边聊天将在当前会话中继续"); }}>
-        <MessageCircleQuestion size={18} />
-        <span>侧边聊天</span>
-        <span className="tool-panel-shortcut">⌥⌘S</span>
-      </button>
+      {toolPanelMenuItems.filter((item) => item.visible).map((item) => (
+        <button
+          role="menuitem"
+          className={item.active ? "active" : ""}
+          key={item.key}
+          onClick={() => {
+            // 终端在底部展开，面板保持菜单页不动（对照 Codex：点击终端后界面无变化）
+            if (item.key !== "terminal") setToolPanelMenuOpen(false);
+            item.onClick();
+          }}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+          {item.key === "review" && reviewChanges.length > 0 && <small className="tool-panel-count">{reviewChanges.length}</small>}
+          <span className="tool-panel-shortcut">{item.shortcut}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端/侧边聊天始终可选）
+  const addMenuItems = toolPanelMenuItems.filter((item) => {
+    if (item.key === "terminal" || item.key === "side-chat") return true;
+    const kind = item.key === "review" ? "review" : item.key === "browser" ? "browser" : "files";
+    return !toolPanelTabs.some((tab) => tab.kind === kind);
+  });
+  const toolPanelAddMenu = toolPanelAddMenuOpen && (
+    <div className="session-menu tool-panel-add-menu" role="menu">
+      {addMenuItems.map((item) => (
+        <button
+          role="menuitem"
+          className={item.active ? "active" : ""}
+          key={item.key}
+          onClick={() => {
+            setToolPanelAddMenuOpen(false);
+            item.onClick();
+          }}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+          <span className="tool-panel-shortcut">{item.shortcut}</span>
+        </button>
+      ))}
     </div>
   );
 
@@ -4491,17 +5796,133 @@ export function App() {
             {taskMenu}
           </div>
           <div className="topbar-right no-drag">
-            <button
-              className={`icon-button subtle app-update-button ${appUpdate.state === "available" || appUpdate.state === "downloaded" ? "ready" : ""}`}
-              aria-label="检查应用更新"
-              title={appUpdate.state === "available" ? `发现新版本 ${appUpdate.version || ""}` : appUpdate.state === "downloaded" ? "更新已下载，点击安装" : "检查应用更新"}
-              onClick={openAppUpdateDialog}
-            >
-              {appUpdate.state === "checking" || appUpdate.state === "downloading"
-                ? <LoaderCircle size={17} className="spin" />
-                : <RefreshCw size={17} />}
-              {(appUpdate.state === "available" || appUpdate.state === "downloaded") && <span className="inbox-badge">!</span>}
-            </button>
+            {gitInfo && (
+              <div className="branch-menu-wrap" data-menu-root>
+                <button
+                  className={`branch-button ${branchMenuOpen || commitPanelOpen ? "active" : ""}`}
+                  aria-label="分支管理"
+                  title="分支管理与提交推送"
+                  onClick={toggleBranchMenu}
+                >
+                  <GitBranch size={15} />
+                  <span>{gitInfo.current}</span>
+                  <ChevronDown size={13} />
+                </button>
+                {branchMenuOpen && (
+                  <div className="branch-menu" role="menu" aria-label="分支管理">
+                    <button className="branch-menu-action" role="menuitem" onClick={openCommitPanel}>
+                      <GitCommitHorizontal size={16} />
+                      <span>提交或推送</span>
+                      {gitInfo.uncommitted > 0 && <small className="tool-panel-count">{gitInfo.uncommitted}</small>}
+                    </button>
+                    <div className="branch-search">
+                      <Search size={14} />
+                      <input
+                        aria-label="搜索分支"
+                        placeholder={`搜索 ${workspaceContext?.name || displayWorkspace(composerWorkspacePath)} 分支`}
+                        value={branchQuery}
+                        onChange={(event) => setBranchQuery(event.target.value)}
+                      />
+                    </div>
+                    <div className="branch-list">
+                      {gitInfo.branches
+                        .filter((name) => !branchQuery.trim() || name.toLowerCase().includes(branchQuery.trim().toLowerCase()))
+                        .map((name) => (
+                          <button
+                            className={`branch-item ${name === gitInfo.current ? "current" : ""}`}
+                            role="menuitemradio"
+                            aria-checked={name === gitInfo.current}
+                            key={name}
+                            disabled={gitBusy === "switch"}
+                            onClick={() => void switchBranch(name)}
+                          >
+                            <GitBranch size={14} />
+                            <span className="branch-item-name">{name}</span>
+                            {name === gitInfo.current && (
+                              <span className="branch-item-meta">未提交：{gitInfo.uncommitted} 个文件</span>
+                            )}
+                            {name === gitInfo.current && <Check size={15} />}
+                          </button>
+                        ))}
+                      {gitInfo.branches.filter((name) => !branchQuery.trim() || name.toLowerCase().includes(branchQuery.trim().toLowerCase())).length === 0 && (
+                        <div className="branch-empty">没有匹配的分支</div>
+                      )}
+                    </div>
+                    {creatingBranch ? (
+                      <div className="branch-create">
+                        <input
+                          autoFocus
+                          aria-label="新分支名称"
+                          placeholder="新分支名称，Enter 确认"
+                          value={newBranchName}
+                          onChange={(event) => setNewBranchName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void createBranch();
+                            if (event.key === "Escape") { setCreatingBranch(false); setNewBranchName(""); }
+                          }}
+                        />
+                        <button disabled={!newBranchName.trim() || gitBusy === "switch"} onClick={() => void createBranch()}>创建</button>
+                      </div>
+                    ) : (
+                      <button className="branch-create-toggle" role="menuitem" onClick={() => setCreatingBranch(true)}>
+                        <Plus size={14} />
+                        <span>创建并检出新分支…</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+                {commitPanelOpen && (
+                  <div className="commit-panel" role="dialog" aria-label="提交或推送">
+                    <div className="commit-panel-branch">
+                      <GitBranch size={15} />
+                      <span>{gitInfo.current}</span>
+                    </div>
+                    <textarea
+                      className="commit-message-input"
+                      aria-label="提交信息"
+                      placeholder="提交信息（留空将自动生成）"
+                      rows={3}
+                      value={commitMessage}
+                      onChange={(event) => setCommitMessage(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void runCommit(true);
+                      }}
+                    />
+                    <label className="commit-include-row">
+                      <span className="commit-include-label">
+                        <input
+                          type="checkbox"
+                          checked={includeUnstaged}
+                          onChange={(event) => setIncludeUnstaged(event.target.checked)}
+                        />
+                        <span>包含未暂存的更改</span>
+                      </span>
+                      {diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
+                        <span className="commit-diff-stats">
+                          <span className="diff-added">+{diffStats.added.toLocaleString()}</span>
+                          <span className="diff-removed">-{diffStats.removed.toLocaleString()}</span>
+                        </span>
+                      )}
+                    </label>
+                    <div className="commit-actions">
+                      <button disabled={Boolean(gitBusy)} onClick={() => void runCommit(false)}>
+                        <GitCommitHorizontal size={15} />
+                        <span>{gitBusy === "commit" ? "提交中…" : "提交"}</span>
+                      </button>
+                      <button className="commit-primary" disabled={Boolean(gitBusy)} onClick={() => void runCommit(true)}>
+                        <Upload size={15} />
+                        <span>{gitBusy === "commit-push" ? "提交并推送中…" : "提交并推送"}</span>
+                        <kbd>{platform === "darwin" ? "⌘↩" : "Ctrl+↩"}</kbd>
+                      </button>
+                      <button disabled={Boolean(gitBusy) || !gitInfo.hasRemote} title={gitInfo.hasRemote ? "推送当前分支到远程" : "当前仓库没有配置远程"} onClick={() => void runPushOnly()}>
+                        <Upload size={15} />
+                        <span>{gitBusy === "push" ? "推送中…" : "推送"}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="审批收件箱"
@@ -4535,7 +5956,11 @@ export function App() {
                 className="icon-button subtle tool-panel-toggle"
                 aria-label="展开右侧工具栏"
                 title="展开右侧工具栏"
-                onClick={() => setRightPanelOpen(true)}
+                onClick={() => {
+                  setRightPanelOpen(true);
+                  // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
+                  setToolPanelMenuOpen(toolPanelTabs.length === 0);
+                }}
               >
                 <PanelRightIcon size={18} />
               </button>
@@ -4602,6 +6027,7 @@ export function App() {
                   ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
                   : -1;
                 const isEditing = editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index;
+                const isQueuedMessage = Boolean(message.runId && queuedRunIds.has(message.runId));
                 const hideAssistantActions = message.role === "assistant"
                   && activeTaskRunning
                   && index === activeSession.messages.length - 1;
@@ -4632,6 +6058,12 @@ export function App() {
                           </span>
                         )}
                         <ClampedUserText text={messageVisibleText(message)} />
+                        {isQueuedMessage && (
+                          <span className="message-queued-badge" role="status" title="已进入消息队列，当前任务结束后自动执行">
+                            <LoaderCircle className="spin" size={12} />
+                            排队中
+                          </span>
+                        )}
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
@@ -4668,7 +6100,7 @@ export function App() {
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
                             <Copy size={16} />
                           </button>
-                          {!activeTaskRunning && (
+                          {(!activeTaskRunning || isQueuedMessage) && (
                             <button type="button" onClick={() => startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
                               <Pencil size={16} />
                             </button>
@@ -4722,7 +6154,24 @@ export function App() {
                           </>
                         );
                       })()}
-                      {Boolean(message.changes?.length) && <ChangesSummary changes={message.changes!} workspacePath={activeSession.workspacePath || workspacePath} />}
+                      {Boolean(message.changes?.length) && (
+                        <ChangesSummary
+                          changes={message.changes!}
+                          workspacePath={activeSession.workspacePath || workspacePath}
+                          onOpenReview={(changes) => {
+                            // 在右侧审阅窗口打开这条消息的文件改动（对照 Codex「查看更改」）
+                            setReviewFocusChanges(changes);
+                            setRightPanelOpen(true);
+                            openToolPanelTab("review");
+                          }}
+                        />
+                      )}
+                      {message.runId && queuedRunIds.has(message.runId) && (
+                        <div className="assistant-queued">
+                          <LoaderCircle className="spin" size={14} />
+                          <span>等待当前任务完成后自动执行…</span>
+                        </div>
+                      )}
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
@@ -4831,6 +6280,12 @@ export function App() {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
+            {activeTaskRunning && activeQueuedCount > 0 && (
+              <div className="queue-status-bar" role="status">
+                <History size={13} />
+                <span>还有 {activeQueuedCount} 条消息排队，将在当前任务结束后依次执行；排队中的消息可以编辑</span>
+              </div>
+            )}
             {showComposerContext && (
               <div className="composer-context" aria-label="当前工作上下文">
                 <div className="context-folder-wrap">
@@ -4888,6 +6343,9 @@ export function App() {
               <div className="message-editing-banner" role="status">
                 <Pencil size={13} />
                 <span>正在编辑：{shortTitle(messageVisibleText(editingMessage.original))}</span>
+                {editingMessage.original.runId && queuedRunIds.has(editingMessage.original.runId) && (
+                  <button type="button" className="danger" onClick={() => void cancelQueuedMessage()}>取消排队</button>
+                )}
                 <button type="button" onClick={cancelMessageEdit}>取消编辑</button>
               </div>
             )}
@@ -5095,7 +6553,7 @@ export function App() {
                 <button className="icon-button" onClick={() => void chooseAttachments()} aria-label="添加附件" title="添加附件">
                   <Paperclip size={18} />
                 </button>
-                {activeTaskRunning ? (
+                {activeTaskRunning && (
                   <button
                     className="send-button stop"
                     onClick={() => {
@@ -5103,22 +6561,21 @@ export function App() {
                       const runId = runningRunIdsRef.current.get(activeSession.id);
                       if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
                     }}
-                    aria-label="停止任务"
-                    title="停止任务"
+                    aria-label="停止当前任务"
+                    title="停止当前任务（排队中的消息仍会继续执行）"
                   >
                     <Square size={14} fill="currentColor" />
                   </button>
-                ) : (
-                  <button
-                    className="send-button"
-                    onClick={() => void sendMessage()}
-                    disabled={!canSend}
-                    aria-label={editingMessage ? "重新发送" : "发送"}
-                    title="Enter 发送"
-                  >
-                    <ArrowUp size={19} />
-                  </button>
                 )}
+                <button
+                  className="send-button"
+                  onClick={() => void sendMessage()}
+                  disabled={!canSend}
+                  aria-label={editingMessage ? "重新发送" : "发送"}
+                  title="Enter 发送"
+                >
+                  <ArrowUp size={19} />
+                </button>
               </div>
             </div>
           </div>
@@ -5142,7 +6599,7 @@ export function App() {
 
       <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label="右侧工具栏">
         <div className="tool-panel-tabs" role="tablist" aria-label="打开的文件和网页">
-          {toolPanelTabs.map((tab) => (
+          {!pristineMenuPage && toolPanelTabs.map((tab) => (
             <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} role="presentation">
               <button
                 className="tool-panel-tab-main"
@@ -5151,7 +6608,7 @@ export function App() {
                 onClick={() => focusToolPanelTab(tab.id)}
                 title={tab.title}
               >
-                {tab.kind === "browser" ? <Globe size={16} /> : <FileText size={16} />}
+                {tab.kind === "browser" ? <Globe size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : <FolderOpen size={16} />}
                 <span>{tab.title}</span>
               </button>
               <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
@@ -5159,23 +6616,21 @@ export function App() {
               </button>
             </div>
           ))}
-          <button
-            className={`tool-panel-new-tab ${toolPanelMenuOpen ? "active" : ""}`}
-            aria-label="打开侧边操作"
-            title="打开侧边操作"
-            onClick={() => setToolPanelMenuOpen((value) => !value)}
-          >
-            <Plus size={18} />
-          </button>
+          {!pristineMenuPage && (
+            <div className="tool-panel-add-wrap" data-menu-root>
+              <button
+                className={`tool-panel-new-tab ${toolPanelAddMenuOpen ? "active" : ""}`}
+                aria-label="打开侧边操作"
+                title="打开侧边操作"
+                aria-expanded={toolPanelAddMenuOpen}
+                onClick={() => setToolPanelAddMenuOpen((value) => !value)}
+              >
+                <Plus size={18} />
+              </button>
+              {toolPanelAddMenu}
+            </div>
+          )}
           <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
-            <button
-              className={`icon-button subtle ${toolPanelMenuOpen ? "active" : ""}`}
-              aria-label="打开侧边操作"
-              title="打开侧边操作"
-              onClick={() => setToolPanelMenuOpen((value) => !value)}
-            >
-              <MoreHorizontal size={18} />
-            </button>
             <button
               className="icon-button subtle"
               aria-label="收起右侧工具栏"
@@ -5186,9 +6641,9 @@ export function App() {
             </button>
           </div>
         </div>
-        {toolPanelMenuOpen && <div className="tool-panel-menu-host" data-menu-root>{toolPanelMenu}</div>}
-        <div className={`tool-panel-scroll ${activeToolPanelKind === "browser" ? "browser-scroll" : ""}`}>
-          {activeToolPanelKind === "browser" && (
+        <div className={`tool-panel-scroll ${activeToolPanelKind === "browser" && !menuPageShown ? "browser-scroll" : ""}`}>
+          {menuPageShown && <div className="tool-panel-menu-page" data-menu-root>{toolPanelMenu}</div>}
+          {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "browser" && (
             <section className="browser-panel">
               <div className="browser-toolbar">
                 <button className="browser-toolbar-button" aria-label="后退" onClick={() => browserWebviewRef.current?.goBack?.()} disabled={!activeToolPanelTab?.loadedUrl}>
@@ -5205,6 +6660,7 @@ export function App() {
                     className="browser-url-input"
                     placeholder="输入 URL"
                     aria-label="网页地址"
+                    list="browser-history-suggestions"
                     value={activeBrowserUrl}
                     onChange={(event) => activeToolPanelTab && updateToolPanelTab(activeToolPanelTab.id, { url: event.target.value })}
                     onKeyDown={(event) => {
@@ -5212,6 +6668,11 @@ export function App() {
                     }}
                     disabled={browserOpening}
                   />
+                  <datalist id="browser-history-suggestions">
+                    {importedHistory.slice(0, 500).map((entry) => (
+                      <option value={entry.url} key={entry.url}>{entry.title || entry.url}</option>
+                    ))}
+                  </datalist>
                   <button
                     className="browser-url-submit"
                     aria-label="打开网页"
@@ -5222,7 +6683,42 @@ export function App() {
                     <ArrowUpRight size={16} />
                   </button>
                 </div>
-                <button className="browser-toolbar-more" aria-label="浏览器更多操作" title="更多操作"><MoreVertical size={16} /></button>
+                <div className="browser-more-wrap" data-menu-root>
+                  <button
+                    className={`browser-toolbar-more ${browserMoreOpen ? "active" : ""}`}
+                    aria-label="浏览器更多操作"
+                    title="更多操作"
+                    aria-expanded={browserMoreOpen}
+                    onClick={() => setBrowserMoreOpen((value) => !value)}
+                  >
+                    <MoreVertical size={16} />
+                  </button>
+                  {browserMoreOpen && (
+                    <div className="session-menu browser-more-menu" role="menu">
+                      <button role="menuitem" disabled title="暂未实现">在页面中查找</button>
+                      <button role="menuitem" disabled title="暂未实现">打印</button>
+                      <div className="browser-more-sep" />
+                      <div className="browser-more-zoom" aria-label="缩放（暂未实现）">
+                        <span>缩放</span>
+                        <span className="browser-more-zoom-controls">
+                          <button disabled title="暂未实现">−</button>
+                          <span>100%</span>
+                          <button disabled title="暂未实现">＋</button>
+                        </span>
+                      </div>
+                      <button role="menuitem" disabled title="暂未实现">显示设备工具栏</button>
+                      <button role="menuitem" disabled title="暂未实现">截取屏幕截图</button>
+                      <div className="browser-more-sep" />
+                      <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setImportDialogOpen(true); }}>导入 Cookie 和密码…</button>
+                      <button role="menuitem" disabled title="暂未实现">密码和自动填充</button>
+                      <button role="menuitem" disabled title="暂未实现">下载</button>
+                      <button role="menuitem" disabled title="暂未实现">历史记录</button>
+                      <button role="menuitem" disabled title="暂未实现">清除浏览数据</button>
+                      <div className="browser-more-sep" />
+                      <button role="menuitem" disabled title="暂未实现">浏览器设置</button>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="browser-content">
                 {activeToolPanelTab?.loadedUrl ? (
@@ -5246,69 +6742,51 @@ export function App() {
             </section>
           )}
 
-          {activeToolPanelKind === "files" && (
-            <section className="tool-file-browser">
-              <div className="tool-file-browser-header">
-                <div className="tool-panel-content-heading">
-                  {workspacePreview ? (
-                    <button
-                      type="button"
-                      className="tool-file-browser-back"
-                      onClick={resetWorkspacePreview}
-                    >
-                      <ChevronRight className="tool-file-browser-back-icon" size={14} />
-                      <span>返回文件</span>
-                    </button>
-                  ) : (
-                    <>
-                      <FolderOpen size={16} />
-                      <span>文件</span>
-                    </>
-                  )}
-                </div>
-                <button className="icon-button subtle tiny" onClick={() => void refreshWorkspace()} aria-label="刷新文件列表" title="刷新文件列表">
-                  <RefreshCw size={13} />
-                </button>
-              </div>
-              {workspacePreview ? (
-                <div className="markdown-file-preview">
-                  <div className="markdown-file-preview-title">
-                    <FileText size={16} />
-                    <strong title={workspacePreview.path}>{workspacePreview.name}</strong>
-                  </div>
-                  {workspacePreviewLoading ? (
-                    <p className="panel-empty">正在读取 Markdown 文件…</p>
-                  ) : workspacePreviewError ? (
-                    <p className="panel-empty error-text">{workspacePreviewError}</p>
-                  ) : (
-                    <article className="markdown-content markdown-file-preview-content">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{workspacePreview.content}</ReactMarkdown>
-                    </article>
-                  )}
-                </div>
+          {!menuPageShown && activeToolPanelKind === "files" && (
+            <section className="tool-file-browser file-split-panel">
+              <FilesSplitPanel
+                workspacePath={workspacePath}
+                workspaceEntries={workspaceEntries}
+                workspaceOpen={workspaceOpen}
+                onRefresh={() => void refreshWorkspace()}
+                onClearWorkspace={clearWorkspace}
+                onError={setError}
+              />
+            </section>
+          )}
+
+          {!menuPageShown && activeToolPanelKind === "review" && (
+            <section className="review-panel">
+              {(activeSession?.workspacePath || workspacePath) ? (
+                <GitReviewPanel
+                  workspacePath={activeSession?.workspacePath || workspacePath}
+                  fallbackChanges={reviewFocusChanges || reviewChanges}
+                />
+              ) : (reviewFocusChanges || reviewChanges).length ? (
+                <ReviewPanel
+                  key={`${(reviewFocusChanges || reviewChanges).length}-${(reviewFocusChanges || reviewChanges)[0].path}`}
+                  changes={reviewFocusChanges || reviewChanges}
+                  workspacePath=""
+                />
               ) : (
-                <>
-                  <div className="tool-file-browser-title">
-                    <Folder size={16} />
-                    <span title={workspacePath}>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
-                  </div>
-                  {workspacePath && (
-                    <button className="tool-file-browser-clear" onClick={clearWorkspace}>移除这个会话的工作目录</button>
-                  )}
-                  {workspaceOpen && (workspaceEntries.length ? (
-                    <div className="workspace-tree">
-                      {workspaceEntries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} onOpenFile={openWorkspaceFile} />)}
-                    </div>
-                  ) : (
-                    <p className="panel-empty">这个文件夹是空的。</p>
-                  ))}
-                  {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
-                </>
+                <div className="browser-empty-state">
+                  <FileDiff size={46} />
+                  <strong>审阅改动</strong>
+                  <span>选择工作文件夹后，在这里按 Git 基线逐文件审阅改动</span>
+                </div>
               )}
             </section>
           )}
         </div>
       </aside>
+
+      {importDialogOpen && (
+        <BrowserImportDialog
+          onClose={() => setImportDialogOpen(false)}
+          onDone={(message) => { setNotice(message); refreshImportedHistory(); }}
+          onError={(message) => setError(message)}
+        />
+      )}
 
       {settingsOpen && (
         <SettingsDialog
@@ -5349,6 +6827,8 @@ export function App() {
           tab={settingsTab}
           onTabChange={setSettingsTab}
           planSeed={planSeed}
+          appUpdate={appUpdate}
+          onCheckUpdate={openAppUpdateDialog}
         />
       )}
       {appUpdateDialogOpen && (

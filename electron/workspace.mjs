@@ -62,10 +62,9 @@ export async function listWorkspace(root, depth = 0) {
   return result;
 }
 
-export async function readWorkspaceMarkdown(workspaceRoot, filePath) {
-  if (!workspaceRoot || !filePath || !/\.(?:md|markdown)$/i.test(String(filePath))) {
-    return { ok: false, error: "只支持读取工作目录内的 Markdown 文件" };
-  }
+// 通用工作区文本文件读取：限制在工作区内、≤2MB，并做二进制探测（供代码查看标签页）
+export async function readWorkspaceFile(workspaceRoot, filePath) {
+  if (!workspaceRoot || !filePath) return { ok: false, error: "缺少工作目录或文件路径" };
   try {
     const [root, target] = await Promise.all([
       fs.realpath(String(workspaceRoot)),
@@ -74,9 +73,22 @@ export async function readWorkspaceMarkdown(workspaceRoot, filePath) {
     if (!isInsideWorkspace(root, target)) return { ok: false, error: "文件不在当前工作目录内" };
     const stat = await fs.stat(target);
     if (!stat.isFile()) return { ok: false, error: "目标不是文件" };
-    if (stat.size > MAX_MARKDOWN_BYTES) return { ok: false, error: "Markdown 文件超过 2 MB，无法预览" };
-    return { ok: true, content: await fs.readFile(target, "utf8") };
+    if (stat.size > MAX_MARKDOWN_BYTES) return { ok: false, error: "文件超过 2 MB，无法预览" };
+    const buffer = await fs.readFile(target);
+    if (buffer.subarray(0, 8192).includes(0)) return { ok: false, binary: true, error: "二进制文件无法预览" };
+    return { ok: true, content: buffer.toString("utf8") };
   } catch {
-    return { ok: false, error: "Markdown 文件不存在或读取失败" };
+    return { ok: false, error: "文件不存在或读取失败" };
   }
+}
+
+export async function readWorkspaceMarkdown(workspaceRoot, filePath) {
+  if (!/\.(?:md|markdown)$/i.test(String(filePath))) {
+    return { ok: false, error: "只支持读取工作目录内的 Markdown 文件" };
+  }
+  const result = await readWorkspaceFile(workspaceRoot, filePath);
+  if (!result.ok && result.error === "文件超过 2 MB，无法预览") {
+    return { ok: false, error: "Markdown 文件超过 2 MB，无法预览" };
+  }
+  return result;
 }

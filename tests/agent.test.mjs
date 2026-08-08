@@ -3160,6 +3160,39 @@ test("compactConversation 摘要请求失败时熔断回退为直接省略，任
   assert.equal(messages[1].content, "原始任务");
 });
 
+test("runAgent 上下文逼近模型上限时，首次模型请求前自动压缩早前会话", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const conversation = [];
+  for (let index = 0; index < 12; index++) {
+    conversation.push({ role: "user", content: `第${index}条用户消息：起草季度总结 ${"材料内容".repeat(2500)}` });
+    conversation.push({ role: "assistant", content: `第${index}条助手消息 ${"处理进展".repeat(2000)}` });
+  }
+  const compactedEvents = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation,
+    contextLimit: 30000,
+    fetchImpl: mockFetch([
+      { role: "assistant", content: "1) 用户要起草季度总结 2) 已完成资料整理 3) 下一步写正文" },
+      { role: "assistant", content: "压缩后继续完成" },
+    ], calls),
+    emit: (agentEvent) => {
+      if (agentEvent.type === "context-compacted") compactedEvents.push(agentEvent);
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(compactedEvents.length, 1, "应发出一次上下文压缩事件");
+  assert.ok(calls.length >= 2, "应有压缩请求与正式请求");
+  const summaryCall = calls[0];
+  assert.equal("tools" in summaryCall, false, "压缩请求不带工具");
+  assert.match(JSON.stringify(summaryCall.messages), /上下文压缩器/);
+  const modelCall = calls[calls.length - 1];
+  assert.match(JSON.stringify(modelCall.messages), /上下文压缩/, "正式请求应使用压缩后的摘要继续");
+  assert.ok(!modelCall.messages.some((message) => String(message.content || "").includes("第1条用户消息")), "早前原始消息不再逐条发送（原始任务除外）");
+});
+
 test("老式 .doc 二进制文件经本机转换器读取（textutil/antiword/LibreOffice 探测链）", async (t) => {
   const root = await makeWorkspace({ "a.txt": "关于报送材料的通知\n\n请按时报送。" });
   const converted = await new Promise((resolve) => {
