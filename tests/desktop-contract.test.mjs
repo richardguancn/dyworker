@@ -17,6 +17,7 @@ const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-us
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const appUpdater = readSource(new URL("../electron/app-updater.mjs", import.meta.url));
 const releaseWorkflow = readSource(new URL("../.github/workflows/release.yml", import.meta.url));
+const afterPack = readSource(new URL("../build/afterPack.cjs", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
 const types = readSource(new URL("../src/types.ts", import.meta.url));
@@ -175,6 +176,16 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(app, /更新地址/);
   assert.match(app, /draft\.updateUrl/);
   assert.match(settingsStorage, /updateUrl/);
+  // macOS 无证书构建：afterPack 里 ad-hoc 重签名（Electron 自带 linker 签名过不了 ShipIt 深度校验），
+  // 并在构建期就做 codesign --verify，签名不合格直接失败
+  assert.match(packageJson, /"afterPack": "build\/afterPack\.cjs"/);
+  assert.match(afterPack, /--force/);
+  assert.match(afterPack, /--deep/);
+  assert.match(afterPack, /--sign", "-"/);
+  assert.match(afterPack, /--verify/);
+  assert.match(afterPack, /CSC_LINK/);
+  // 更新错误常带无空格的长 URL/路径，对话框文本必须允许任意位置断行，否则会撑出窗口
+  assert.match(styles, /\.app-update-copy[\s\S]*?overflow-wrap:\s*anywhere/);
 });
 
 test("opening a conversation starts at the latest message", () => {
