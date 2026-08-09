@@ -6112,10 +6112,18 @@ body.resizing-panels .app-shell {
   color: var(--muted);
   font-size: 12.5px;
   line-height: 1.6;
+  /* 错误信息常带无空格的长 URL/路径，必须允许任意位置断行，否则会撑出对话框 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .app-update-copy {
   margin-top: 10px;
+}
+
+.app-update-copy.error-text {
+  max-height: 132px;
+  overflow-y: auto;
 }
 
 .app-update-progress {
