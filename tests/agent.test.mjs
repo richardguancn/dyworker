@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -2899,6 +2899,83 @@ test("上下文逼近上限时较早的工具结果被裁剪为占位符，最�
   assert.match(messages[11].content, /长内容/, "最近一条工具结果保持完整");
   assert.equal(messages[2].role, "tool");
   assert.equal(messages[2].tool_call_id, "t1", "协议配对字段不变");
+});
+
+test("isContextOverflowError 识别各家服务商的上下文超限错误，排除鉴权与限流", () => {
+  const overflow = (status, detail) => {
+    const error = new Error(`模型请求失败（${status}）：${detail}`);
+    error.status = status;
+    return error;
+  };
+  assert.equal(isContextOverflowError(overflow(400, '{"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens. Please reduce the length of the messages."}}')), true);
+  assert.equal(isContextOverflowError(overflow(400, "Range of input length should be [1, 6000]")), true);
+  assert.equal(isContextOverflowError(overflow(413, "Prompt is too long")), true);
+  assert.equal(isContextOverflowError(overflow(400, "输入的上下文长度超出模型限制")), true);
+  assert.equal(isContextOverflowError(overflow(400, "请求的总 token 数量超过模型上限")), true);
+  // 鉴权、限流、内容审核不按上下文超限处理
+  assert.equal(isContextOverflowError(overflow(401, "context_length_exceeded（伪造文案）")), false);
+  assert.equal(isContextOverflowError(overflow(429, "too many tokens per minute")), false);
+  assert.equal(isContextOverflowError(overflow(400, "内容安全审核拒绝")), false);
+  assert.equal(isContextOverflowError(overflow(500, "internal server error")), false);
+  assert.equal(isContextOverflowError(new Error("网络中断")), false);
+});
+
+test("服务端判定上下文超限时强制压缩会话并重试，不再直接报错终止", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const conversation = [];
+  for (let index = 0; index < 12; index++) {
+    conversation.push({ role: "user", content: `第${index}条用户消息：整理材料 ${"资料".repeat(500)}` });
+    conversation.push({ role: "assistant", content: `第${index}条助手消息 ${"进展".repeat(400)}` });
+  }
+  let phase = 0;
+  const compactedEvents = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation,
+    // 本地估算远低于实际上限（模拟模型不在上下文表、默认 128k 估高的场景）：
+    // 估算没有触发阈值内的自动压缩，由服务端 400 兜底强制压缩
+    contextLimit: 10_000_000,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      if (phase === 0) {
+        // 流式与非流式两次尝试都超限（requestModel 对 400 会回退重试一次）
+        if (body.stream) return { ok: false, status: 400, text: async () => '{"error":{"code":"context_length_exceeded","message":"This model\'s maximum context length is 8192 tokens. Please reduce the length of the messages."}}' };
+        phase = 1;
+        return { ok: false, status: 400, text: async () => '{"error":{"code":"context_length_exceeded"}}' };
+      }
+      if (phase === 1) {
+        phase = 2;
+        return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "1) 用户要整理材料 2) 已完成初步梳理 3) 下一步汇总" } }] }) };
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "压缩后顺利完成" } }] }) };
+    },
+    emit: (agentEvent) => {
+      if (agentEvent.type === "context-compacted") compactedEvents.push(agentEvent);
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "压缩后顺利完成");
+  assert.equal(compactedEvents.length, 1, "强制压缩同样通知渲染端");
+  const finalCall = calls[calls.length - 1];
+  assert.match(JSON.stringify(finalCall.messages), /上下文压缩/, "重试请求使用压缩后的摘要");
+  assert.ok(!JSON.stringify(finalCall.messages).includes("第1条助手消息"), "早前消息不再逐条发送");
+});
+
+test("服务端上下文超限且会话结构无法压缩时，如实返回错误而不是死循环", async () => {
+  const root = await makeWorkspace();
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    // 消息太少，compactConversation 无法找到可省略的区段
+    conversation: [{ role: "user", content: `一条特别长的消息 ${"字".repeat(5000)}` }],
+    contextLimit: 10_000_000,
+    fetchImpl: async () => ({ ok: false, status: 400, text: async () => "maximum context length exceeded" }),
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /maximum context length/);
 });
 
 test("系统提示词按静态纪律在前、动态信息在尾组织", async () => {

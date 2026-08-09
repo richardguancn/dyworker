@@ -16,6 +16,7 @@ import {
   Circle,
   Cookie,
   Copy,
+  CornerUpLeft,
   FileCode2,
   FileDiff,
   File,
@@ -58,6 +59,7 @@ import {
   Terminal,
   Trash2,
   GitCommitHorizontal,
+  Undo2,
   Upload,
   UserRound,
   X,
@@ -260,6 +262,36 @@ function pathDirname(filePath: string) {
 function shortTitle(content: string) {
   const title = content.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim();
   return title.length > 28 ? `${title.slice(0, 28)}…` : title || "新任务";
+}
+
+// 任务完成提示音：两声短促的上行音（E5 → B5），用 WebAudio 合成，不依赖音频资源文件。
+// 浏览器要求用户交互后才能出声，首次交互前的 AudioContext 处于 suspended，这里尝试 resume。
+let completionAudioContext: AudioContext | null = null;
+function playCompletionSound() {
+  try {
+    const AudioCtor = window.AudioContext
+      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return;
+    completionAudioContext = completionAudioContext || new AudioCtor();
+    const ctx = completionAudioContext;
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    [659.25, 987.77].forEach((frequency, index) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      const start = now + index * 0.13;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.16, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.4);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(start);
+      oscillator.stop(start + 0.45);
+    });
+  } catch {
+    // 音频不可用时静默跳过，不影响任务结果
+  }
 }
 
 function plainConversationText(content: string) {
@@ -3649,6 +3681,8 @@ export function App() {
   const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
   // 排队中的任务运行标识：同会话内串行执行，排队消息未执行前允许编辑或取消
   const [queuedRunIds, setQueuedRunIds] = useState<Set<string>>(new Set());
+  // 队列卡片里 ⋯ 菜单当前挂在哪条排队消息上
+  const [queueMenuRunId, setQueueMenuRunId] = useState<string | null>(null);
   const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
@@ -3733,7 +3767,7 @@ export function App() {
   }, []);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen;
+  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen || queueMenuRunId !== null;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
@@ -3748,6 +3782,7 @@ export function App() {
       setBrowserMoreOpen(false);
       setBranchMenuOpen(false);
       setCommitPanelOpen(false);
+      setQueueMenuRunId(null);
     };
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-menu-root]")) return;
@@ -4172,9 +4207,24 @@ export function App() {
     }, []);
   }, [activeSession]);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
-  const activeQueuedCount = activeSession?.id
-    ? (queuedRunsRef.current.get(activeSession.id)?.size ?? 0)
-    : 0;
+  // 排队消息收在输入框上方的队列卡片里（对照 Codex），不插进对话流；
+  // 主进程开始执行（queue-start 出队）后才作为正式消息渲染
+  const activeQueuedMessages = useMemo(() => {
+    if (!activeSession) return [] as { message: ChatMessage; messageIndex: number }[];
+    return activeSession.messages
+      .map((message, messageIndex) => ({ message, messageIndex }))
+      .filter(({ message }) => message.role === "user" && Boolean(message.runId) && queuedRunIds.has(message.runId!));
+  }, [activeSession, queuedRunIds]);
+  // 仍在输出中的助手消息下标：没有终态 taskStatus 的最后一条助手消息。
+  // 不能简单取 messages 末尾——后面可能跟着排队占位消息
+  const streamingAssistantIndex = useMemo(() => {
+    if (!activeSession || !activeTaskRunning) return -1;
+    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
+      const item = activeSession.messages[index];
+      if (item.role === "assistant" && !item.taskStatus && !(item.runId && queuedRunIds.has(item.runId))) return index;
+    }
+    return -1;
+  }, [activeSession, activeTaskRunning, queuedRunIds]);
   const markQueued = (sessionId: string, runId: string) => {
     const set = queuedRunsRef.current.get(sessionId) || new Set<string>();
     set.add(runId);
@@ -5029,6 +5079,7 @@ export function App() {
             updateSession(taskSessionId, (session) => ({ ...session, unread: true }));
           }
           if (result.status === "done" && !result.demo) {
+            playCompletionSound();
             showSessionNotice(taskSessionId, "任务已完成");
           } else if (result.status === "sleeping" && result.wake) {
             showSessionNotice(taskSessionId, `已挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续`);
@@ -5495,10 +5546,10 @@ export function App() {
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
-  const cancelQueuedMessage = async () => {
-    if (!activeSession || !editingMessage) return;
+  // 从队列移除一条排队消息（同时移除它的空助手占位）
+  const removeQueuedMessage = async (runId: string, messageIndex: number, notice = "已删除这条排队消息") => {
+    if (!activeSession) return;
     const sessionId = activeSession.id;
-    const runId = editingMessage.original.runId;
     if (!runId || !queuedRunIds.has(runId)) return;
     if (window.dyworker?.removeQueuedTask) {
       const result = await window.dyworker.removeQueuedTask({ sessionId, runId });
@@ -5507,7 +5558,6 @@ export function App() {
       }
     }
     unmarkQueued(sessionId, runId);
-    const messageIndex = editingMessage.messageIndex;
     updateSession(sessionId, (session) => {
       const next = [...session.messages];
       next.splice(messageIndex, 1);
@@ -5518,11 +5568,26 @@ export function App() {
       }
       return { ...session, messages: next };
     });
+    setNotice(notice);
+  };
+
+  const cancelQueuedMessage = async () => {
+    if (!activeSession || !editingMessage) return;
+    const runId = editingMessage.original.runId || "";
+    await removeQueuedMessage(runId, editingMessage.messageIndex, "已取消这条排队消息");
     setEditingMessage(null);
     setComposer("");
     setAttachments([]);
     setActiveSkills([]);
-    setNotice("已取消这条排队消息");
+  };
+
+  // 调整方向：把排队消息取回输入框改写（从队列移除，重新发送后排到队尾）
+  const steerQueuedMessage = async (entry: { message: ChatMessage; messageIndex: number }) => {
+    const runId = entry.message.runId || "";
+    const text = entry.message.displayContent || entry.message.content;
+    await removeQueuedMessage(runId, entry.messageIndex, "已取回这条排队消息，修改后重新发送");
+    setComposer(text);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
   const renderSessionItem = (session: SessionRecord) => (
@@ -6124,10 +6189,15 @@ export function App() {
                   ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
                   : -1;
                 const isEditing = editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index;
+                // 排队中的消息（含其空助手占位）不渲染在对话流里，统一收在输入框上方的队列卡片（对照 Codex）
                 const isQueuedMessage = Boolean(message.runId && queuedRunIds.has(message.runId));
+                if (isQueuedMessage) return null;
+                // 仍在输出中的助手消息（没有终态 taskStatus）不显示时间/复制行；
+                // 不能按最后一条下标判断——后面可能跟着排队占位消息
                 const hideAssistantActions = message.role === "assistant"
                   && activeTaskRunning
-                  && index === activeSession.messages.length - 1;
+                  && !message.taskStatus
+                  && index === streamingAssistantIndex;
                 return (
                 <div
                   className={`message-row ${message.role}`}
@@ -6155,12 +6225,6 @@ export function App() {
                           </span>
                         )}
                         <ClampedUserText text={messageVisibleText(message)} />
-                        {isQueuedMessage && (
-                          <span className="message-queued-badge" role="status" title="已进入消息队列，当前任务结束后自动执行">
-                            <LoaderCircle className="spin" size={12} />
-                            排队中
-                          </span>
-                        )}
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
@@ -6197,7 +6261,7 @@ export function App() {
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
                             <Copy size={16} />
                           </button>
-                          {(!activeTaskRunning || isQueuedMessage) && (
+                          {!activeTaskRunning && (
                             <button type="button" onClick={() => startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
                               <Pencil size={16} />
                             </button>
@@ -6262,12 +6326,6 @@ export function App() {
                             openToolPanelTab("review");
                           }}
                         />
-                      )}
-                      {message.runId && queuedRunIds.has(message.runId) && (
-                        <div className="assistant-queued">
-                          <LoaderCircle className="spin" size={14} />
-                          <span>等待当前任务完成后自动执行…</span>
-                        </div>
                       )}
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
@@ -6377,10 +6435,71 @@ export function App() {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {activeTaskRunning && activeQueuedCount > 0 && (
-              <div className="queue-status-bar" role="status">
-                <History size={13} />
-                <span>还有 {activeQueuedCount} 条消息排队，将在当前任务结束后依次执行；排队中的消息可以编辑</span>
+            {activeTaskRunning && activeQueuedMessages.length > 0 && (
+              <div className="queue-card" role="status" aria-label="排队中的消息">
+                {activeQueuedMessages.map((entry) => (
+                  <div className="queue-card-row" key={entry.message.runId}>
+                    <CornerUpLeft size={14} className="queue-card-icon" />
+                    <span className="queue-card-text" title={messageVisibleText(entry.message)}>
+                      {messageVisibleText(entry.message)}
+                    </span>
+                    <span className="queue-card-actions">
+                      <button
+                        type="button"
+                        className="queue-card-steer"
+                        onClick={() => void steerQueuedMessage(entry)}
+                        title="取回输入框修改，重新发送后排到队尾"
+                      >
+                        <Undo2 size={13} />
+                        调整方向
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button subtle tiny"
+                        onClick={() => void removeQueuedMessage(entry.message.runId || "", entry.messageIndex)}
+                        aria-label="删除这条排队消息"
+                        title="删除这条排队消息"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <span className="queue-card-more-wrap" data-menu-root>
+                        <button
+                          type="button"
+                          className="icon-button subtle tiny"
+                          onClick={() => setQueueMenuRunId((current) => current === entry.message.runId ? null : entry.message.runId || null)}
+                          aria-label="排队消息更多操作"
+                          title="更多操作"
+                          aria-expanded={queueMenuRunId === entry.message.runId}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                        {queueMenuRunId === entry.message.runId && (
+                          <div className="session-menu queue-card-menu" role="menu">
+                            <button
+                              role="menuitem"
+                              onClick={() => {
+                                setQueueMenuRunId(null);
+                                // 原地编辑：保持排队位置，开始执行时按新内容运行
+                                startMessageEdit(entry.message, entry.messageIndex);
+                              }}
+                            >
+                              编辑内容（保持排队位置）
+                            </button>
+                            <button
+                              role="menuitem"
+                              onClick={() => {
+                                setQueueMenuRunId(null);
+                                void copyMessage(entry.message);
+                              }}
+                            >
+                              复制内容
+                            </button>
+                          </div>
+                        )}
+                      </span>
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
             {showComposerContext && (
@@ -6563,9 +6682,7 @@ export function App() {
                     }}
                     aria-expanded={modelMenuOpen}
                   >
-                    <Bot size={17} />
                     <span>{hasModel ? settings.model : "配置模型"}</span>
-                    <ChevronDown size={13} />
                   </button>
                   {modelMenuOpen && (
                     <div className="model-menu" role="menu">
@@ -6615,7 +6732,6 @@ export function App() {
                   >
                     <ActiveApprovalIcon size={15} />
                     <span>{activeApprovalMode.label}</span>
-                    <ChevronDown size={13} />
                   </button>
                   {approvalMenuOpen && (
                     <div className="approval-mode-menu" role="menu">
@@ -6647,10 +6763,9 @@ export function App() {
               </div>
               <div className="composer-actions">
                 <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
-                <button className="icon-button" onClick={() => void chooseAttachments()} aria-label="添加附件" title="添加附件">
-                  <Paperclip size={18} />
-                </button>
-                {activeTaskRunning && (
+                {/* 对照 Codex：运行中且没有可发送内容时，发送键变成停止键，只保留一个圆形按钮；
+                    输入框有内容时仍是发送键（点击后消息进入队列） */}
+                {activeTaskRunning && !canSend ? (
                   <button
                     className="send-button stop"
                     onClick={() => {
@@ -6663,16 +6778,17 @@ export function App() {
                   >
                     <Square size={14} fill="currentColor" />
                   </button>
+                ) : (
+                  <button
+                    className="send-button"
+                    onClick={() => void sendMessage()}
+                    disabled={!canSend}
+                    aria-label={editingMessage ? "重新发送" : "发送"}
+                    title="Enter 发送"
+                  >
+                    <ArrowUp size={19} />
+                  </button>
                 )}
-                <button
-                  className="send-button"
-                  onClick={() => void sendMessage()}
-                  disabled={!canSend}
-                  aria-label={editingMessage ? "重新发送" : "发送"}
-                  title="Enter 发送"
-                >
-                  <ArrowUp size={19} />
-                </button>
               </div>
             </div>
           </div>

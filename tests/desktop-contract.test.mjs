@@ -121,11 +121,17 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   assert.match(app, /取消排队/);
   assert.match(app, /removeQueuedTask\(/);
   assert.match(app, /排队中/);
-  assert.match(app, /等待当前任务完成后自动执行/);
-  assert.match(app, /还有 \{activeQueuedCount\} 条消息排队/);
-  assert.match(styles, /\.message-queued-badge/);
-  assert.match(styles, /\.assistant-queued/);
-  assert.match(styles, /\.queue-status-bar/);
+  // 排队消息不插进对话流渲染，统一收在输入框上方的队列卡片（对照 Codex）
+  assert.match(app, /activeQueuedMessages/);
+  assert.match(app, /不渲染在对话流里/);
+  assert.match(app, /queue-card/);
+  assert.match(app, /调整方向/);
+  assert.match(app, /steerQueuedMessage/);
+  assert.match(app, /removeQueuedMessage/);
+  assert.match(app, /queueMenuRunId/);
+  assert.match(app, /编辑内容（保持排队位置）/);
+  assert.match(styles, /\.queue-card/);
+  assert.match(styles, /\.queue-card-steer/);
   // 队列消息的监听器保留到真正执行完成，避免排队期间被提前取消
   assert.match(app, /排队消息的监听器一直保留到真正执行完成/);
   assert.match(app, /非排队消息的监听器在此收尾/);
@@ -198,7 +204,10 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(app, /className="message-actions user"/);
   assert.match(app, /className="message-actions assistant"/);
   assert.match(app, /hideAssistantActions/);
-  assert.match(app, /activeTaskRunning[\s\S]*index === activeSession\.messages\.length - 1/);
+  // 仍在输出中的助手消息（无终态 taskStatus）不显示时间/复制行；不能按末尾下标判断（后面可能有排队占位）
+  assert.match(app, /streamingAssistantIndex/);
+  assert.match(app, /!message\.taskStatus/);
+  assert.doesNotMatch(app, /index === activeSession\.messages\.length - 1/);
   assert.match(app, /startMessageEdit/);
   assert.match(app, /setEditingMessage\(null\)/);
   assert.match(app, /activeSession\.messages\.slice\(0, editingMessage\.messageIndex\)/);
@@ -439,6 +448,12 @@ test("composer uses the Codex permission menu and keeps secondary controls compa
   assert.doesNotMatch(app, /className="shortcut-hint"/);
   assert.doesNotMatch(app, /className="loop-toggle"/);
   assert.doesNotMatch(app, /className=\{`icon-button voice-button/);
+  // 对照 Codex：运行中发送键与停止键合并为一个圆形按钮（有内容时是发送，空输入时是停止）
+  assert.match(app, /activeTaskRunning && !canSend/);
+  assert.match(app, /发送键变成停止键/);
+  // 任务完成播放提示音（WebAudio 合成，不依赖资源文件）
+  assert.match(app, /playCompletionSound/);
+  assert.match(app, /AudioContext/);
 });
 
 test("开启完全访问权限前必须经过明确确认", () => {
@@ -750,6 +765,12 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(agent, /tools === false/);
   assert.match(agent, /context-compacted/);
   assert.match(app, /context-compacted/);
+  // 服务端判定上下文超限（本地估不准时）的兜底：强制压缩后重试，而不是直接终止任务
+  assert.match(agent, /isContextOverflowError/);
+  assert.match(agent, /context_length_exceeded|context\[_ \]\?length/);
+  assert.match(agent, /服务端判定上下文超限，强制压缩/);
+  assert.match(agent, /overflowRetries/);
+  assert.match(agent, /pruneOldToolResults\(messages, contextLimit, true\)/);
   // 老式 .doc 转换器探测链 + 内置 hooks（保护 hooks.json、拦灾难命令）
   assert.match(agent, /extractLegacyDoc/);
   assert.match(agent, /textutil/);

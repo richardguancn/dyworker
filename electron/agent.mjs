@@ -2659,11 +2659,12 @@ export function estimateMessagesTokens(messages) {
 
 // microcompact：上下文逼近上限时，把较早的工具结果替换成占位符，只留最近 6 条完整结果。
 // 需要旧内容时模型可重新调用工具；工具消息的结构（role/tool_call_id）保持不变，协议配对不受影响。
+// force：服务端已判定上下文超限时强制裁剪，不再看本地估算阈值（估算可能偏低）。
 const PRUNE_KEEP_RECENT_TOOL_RESULTS = 6;
 
-export function pruneOldToolResults(messages, contextLimit = 128000) {
+export function pruneOldToolResults(messages, contextLimit = 128000, force = false) {
   const threshold = Math.max(30000, Math.floor(contextLimit) - 20000);
-  if (estimateMessagesTokens(messages) <= threshold) return false;
+  if (!force && estimateMessagesTokens(messages) <= threshold) return false;
   const toolIndexes = messages.reduce((list, message, index) => (message?.role === "tool" ? [...list, index] : list), []);
   const stale = toolIndexes.slice(0, Math.max(0, toolIndexes.length - PRUNE_KEEP_RECENT_TOOL_RESULTS));
   let pruned = false;
@@ -2679,11 +2680,11 @@ export function pruneOldToolResults(messages, contextLimit = 128000) {
 
 // 自动 compact 摘要（借鉴 Claude Code autocompact）：microcompact 之后仍逼近上限时，
 // 用一次独立的无工具模型请求把早前对话压缩为结构化摘要。
-// 保留：messages[0] 系统提示、messages[1] 原始任务（用户红线逐字不动）、最近 12 条消息；
+// 保留：messages[0] 系统提示、messages[1] 原始任务（用户红线逐字不动）、最近 keepRecent 条消息；
 // 摘要请求失败时熔断回退为直接省略早前记录，任务绝不因压缩失败而中断。
-export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null }) {
-  if (messages.length < 20) return false;
-  let cut = messages.length - 12;
+export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null, keepRecent = 12 }) {
+  if (messages.length < keepRecent + 8) return false;
+  let cut = messages.length - keepRecent;
   // 保留区不能以 tool 消息开头，也不能把 assistant(tool_calls) 与它的工具结果对切开
   while (cut > 2 && (messages[cut]?.role === "tool" || (messages[cut - 1]?.role === "assistant" && messages[cut - 1]?.tool_calls?.length))) cut -= 1;
   if (cut <= 2) return false;
@@ -2713,6 +2714,19 @@ export async function compactConversation({ messages, settings, fetchImpl, signa
   messages.splice(2, cut - 2, { role: "user", content: `[上下文压缩] 以下是本次任务早前工作的摘要，请在此基础上继续：\n\n${summary}` });
   onSummary?.(summary);
   return true;
+}
+
+// 服务端判定上下文超限的识别：本地估算偏低、模型不在上下文表（默认 128k 估高）或中转网关
+// 截断时，端点会以 400/413 返回 context_length_exceeded 类错误。此时应强制压缩后重试，
+// 而不是直接把任务报错终止。各家服务商文案不同，覆盖中英文常见写法。
+const CONTEXT_OVERFLOW_PATTERN = /context[_ ]?length|maximum context|context window|too many tokens|prompt is too long|input (length|tokens)|reduce the length|length.*exceed|exceed.*(length|limit|token)|token.*(超限|超过|超出)|上下文.*(超限|过长|超出|超过)|长度.*(超限|超出|超过)|max.*tokens/i;
+
+export function isContextOverflowError(error) {
+  const status = Number(error?.status);
+  // 401/403/429 等是鉴权与限流，绝不按上下文超限处理
+  if ([401, 403, 404, 429].includes(status)) return false;
+  const text = error instanceof Error ? error.message : String(error || "");
+  return CONTEXT_OVERFLOW_PATTERN.test(text);
 }
 
 function messageText(message) {
@@ -2990,20 +3004,42 @@ export async function runAgent({
           },
         }));
       try {
-        try {
-          modelMessage = await requestCurrentModel();
-        } catch (error) {
-          const errorText = error instanceof Error ? error.message : String(error);
-          const canRetryWithoutImages = hasInterfaceImages(messages)
-            && (
-              [400, 413, 415, 422].includes(Number(error?.status))
-              || /image|vision|multimodal|base64|图片|图像|没有返回结果|payload.*large|request.*large/i.test(errorText)
-            );
-          if (!canRetryWithoutImages) throw error;
-          interfaceImagesSupported = false;
-          replaceInterfaceImagesWithText(messages);
-          debugLog("tool-result", "当前模型不支持界面截图", "已改用无障碍文字继续操作");
-          modelMessage = await requestCurrentModel();
+        // 服务端上下文超限时的强制压缩重试：本地估算与端点实际上限可能不一致，
+        // 超限 → 强制裁剪工具结果 + 压缩摘要 → 重试，一轮内最多 2 次，仍超限才报错
+        let overflowRetries = 0;
+        for (;;) {
+          try {
+            modelMessage = await requestCurrentModel();
+            break;
+          } catch (error) {
+            const errorText = error instanceof Error ? error.message : String(error);
+            if (isContextOverflowError(error) && overflowRetries < 2) {
+              overflowRetries += 1;
+              pruneOldToolResults(messages, contextLimit, true);
+              const compacted = await withModelTimeout((signal) => compactConversation({
+                messages,
+                settings,
+                fetchImpl,
+                signal,
+                keepRecent: 8,
+                onSummary: (summary) => {
+                  debugLog("tool-call", "服务端判定上下文超限，强制压缩（compact）", summary);
+                  emit({ type: "context-compacted" });
+                },
+              }));
+              if (compacted) continue;
+              // 消息结构已无法压缩（保留区之外没有可省略的内容），不再重试，落入错误分支
+            }
+            const canRetryWithoutImages = hasInterfaceImages(messages)
+              && (
+                [400, 413, 415, 422].includes(Number(error?.status))
+                || /image|vision|multimodal|base64|图片|图像|没有返回结果|payload.*large|request.*large/i.test(errorText)
+              );
+            if (!canRetryWithoutImages) throw error;
+            interfaceImagesSupported = false;
+            replaceInterfaceImagesWithText(messages);
+            debugLog("tool-result", "当前模型不支持界面截图", "已改用无障碍文字继续操作");
+          }
         }
       } catch (error) {
         finishActivity(thinkingId, "error", "");
