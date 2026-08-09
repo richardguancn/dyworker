@@ -93,4 +93,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
             --verify-tag \
             --title "DYWorker $GITHUB_REF_NAME" \
-            --generate-notes
+            --notes-file RELEASE_NOTES.md
