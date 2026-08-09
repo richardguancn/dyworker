@@ -443,7 +443,7 @@ function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
 
 type ToolPanelTab = {
   id: string;
-  kind: "browser" | "files" | "review";
+  kind: "browser" | "files" | "review" | "chat";
   title: string;
   url?: string;
   loadedUrl?: string;
@@ -1079,6 +1079,102 @@ function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: str
         </div>
       )}
     </div>
+  );
+}
+
+// ===== 侧边聊天：临时问答（不持久化，关闭应用后消失；对照 Codex 侧边聊天页） =====
+
+function SideChatPanel({ settings }: { settings: ProviderSettings }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = listRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages, sending]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    const next: ChatMessage[] = [...messages, { role: "user", content: text, createdAt: new Date().toISOString() }];
+    setMessages(next);
+    setDraft("");
+    setSending(true);
+    try {
+      if (!window.dyworker?.completeChat) {
+        setMessages([...next, { role: "assistant", content: "当前预览环境没有连接模型，这里只是界面演示。", createdAt: new Date().toISOString() }]);
+        return;
+      }
+      const result = await window.dyworker.completeChat({ settings, messages: next });
+      setMessages([...next, { role: "assistant", content: result.content || "（空回复）", createdAt: new Date().toISOString() }]);
+    } catch (sendError) {
+      setMessages([...next, { role: "assistant", content: `发送失败：${sendError instanceof Error ? sendError.message : String(sendError)}`, createdAt: new Date().toISOString() }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <section className="side-chat-panel">
+      <div className="side-chat-messages" ref={listRef}>
+        {!messages.length ? (
+          <div className="browser-empty-state side-chat-empty">
+            <MessageSquarePlus size={46} />
+            <strong>侧边聊天</strong>
+            <span>侧边聊天是临时聊天，关闭应用后会消失。</span>
+          </div>
+        ) : (
+          messages.map((message, index) => (
+            <div className={`side-chat-message ${message.role}`} key={index}>
+              {message.role === "user" ? (
+                <span className="side-chat-bubble">{message.content}</span>
+              ) : (
+                <InteractiveMessage content={message.content} />
+              )}
+            </div>
+          ))
+        )}
+        {sending && (
+          <div className="side-chat-message assistant">
+            <LoaderCircle className="spin" size={15} />
+          </div>
+        )}
+      </div>
+      <div className="side-chat-composer">
+        <textarea
+          placeholder="随心输入"
+          aria-label="侧边聊天输入"
+          rows={3}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <div className="side-chat-composer-bar">
+          <button className="icon-button subtle" disabled title="附件暂未支持" aria-label="添加附件（暂未支持）">
+            <Plus size={16} />
+          </button>
+          <span className="side-chat-model" title={settings.model ? `当前模型：${settings.model}` : "还没有配置模型"}>
+            {settings.model || "未配置模型"}
+          </span>
+          <button
+            className="side-chat-send"
+            onClick={() => void send()}
+            disabled={!draft.trim() || sending}
+            aria-label="发送"
+            title="发送"
+          >
+            <ArrowUp size={16} />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -4537,7 +4633,8 @@ export function App() {
         openToolPanelTab("review");
       } else if (key === "s" && event.altKey && (isMacPlatform ? event.metaKey : event.ctrlKey)) {
         event.preventDefault();
-        setNotice("侧边聊天将在当前会话中继续");
+        setRightPanelOpen(true);
+        openToolPanelTab("chat");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -4597,7 +4694,7 @@ export function App() {
     const tab: ToolPanelTab = {
       id: `${kind}-${sequence}`,
       kind,
-      title: kind === "browser" ? "新标签页" : kind === "review" ? "审阅" : "打开文件",
+      title: kind === "browser" ? "新标签页" : kind === "review" ? "审阅" : kind === "chat" ? "侧边聊天" : "打开文件",
       ...(kind === "browser" ? { url: "" } : {}),
     };
     setToolPanelTabs((current) => [...current, tab]);
@@ -5535,12 +5632,12 @@ export function App() {
     },
     {
       key: "side-chat",
-      icon: <MessageCircleQuestion size={18} />,
+      icon: <MessageSquarePlus size={18} />,
       label: "侧边聊天",
       shortcut: shortcutLabel("⌥⌘S", "Ctrl+Alt+S"),
-      active: false,
+      active: activeToolPanelKind === "chat",
       visible: true,
-      onClick: () => { setNotice("侧边聊天将在当前会话中继续"); },
+      onClick: () => { setRightPanelOpen(true); openToolPanelTab("chat"); },
     },
   ];
 
@@ -5566,10 +5663,10 @@ export function App() {
     </div>
   );
 
-  // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端/侧边聊天始终可选）
+  // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端始终可选）
   const addMenuItems = toolPanelMenuItems.filter((item) => {
-    if (item.key === "terminal" || item.key === "side-chat") return true;
-    const kind = item.key === "review" ? "review" : item.key === "browser" ? "browser" : "files";
+    if (item.key === "terminal") return true;
+    const kind = item.key === "side-chat" ? "chat" : item.key;
     return !toolPanelTabs.some((tab) => tab.kind === kind);
   });
   const toolPanelAddMenu = toolPanelAddMenuOpen && (
@@ -6608,7 +6705,7 @@ export function App() {
                 onClick={() => focusToolPanelTab(tab.id)}
                 title={tab.title}
               >
-                {tab.kind === "browser" ? <Globe size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : <FolderOpen size={16} />}
+                {tab.kind === "browser" ? <Globe size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
                 <span>{tab.title}</span>
               </button>
               <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
@@ -6753,6 +6850,10 @@ export function App() {
                 onError={setError}
               />
             </section>
+          )}
+
+          {!menuPageShown && activeToolPanelKind === "chat" && (
+            <SideChatPanel settings={settings} />
           )}
 
           {!menuPageShown && activeToolPanelKind === "review" && (
