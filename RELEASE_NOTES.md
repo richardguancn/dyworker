@@ -1,5 +1,12 @@
 # DYWorker 更新内容
 
+## 0.1.20 新增
+
+- **排队消息升级为队列卡片**：任务运行期间发送的消息统一收在输入框上方，可调整执行方向、编辑内容或移除，不再插进对话流
+- **发送/停止按钮合并**：任务运行中，输入框的发送键自动变成停止键，操作更直观
+- **任务完成提示音**：任务结束时播放轻提示音（本地合成，不联网）
+- **上下文超限自动兜底**：服务端判定上下文超限时，自动压缩后重试，不再直接中断任务
+
 ## 新功能
 
 - **侧边聊天**：右侧面板新增临时聊天窗口，随手提问不打扰主对话，关闭应用后不保留记录
@@ -22,6 +29,6 @@
 
 ## 安装包
 
-- Windows x64：dyworker-0.1.19-windows-x64-setup.exe
-- macOS（Apple 芯片）：DYWorker-0.1.19-arm64.dmg / .zip
-- Linux ARM64（麒麟等）：dyworker-0.1.19-arm64.deb / .AppImage
+- Windows x64：dyworker-0.1.20-windows-x64-setup.exe
+- macOS（Apple 芯片）：DYWorker-0.1.20-arm64.dmg / .zip
+- Linux ARM64（麒麟等）：dyworker-0.1.20-arm64.deb / .AppImage
