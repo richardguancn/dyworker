@@ -67,6 +67,7 @@
       "output": "output/electron",
       "buildResources": "build"
     },
+    "afterPack": "build/afterPack.cjs",
     "files": [
       "dist/client/**/*",
       "electron/**/*",
