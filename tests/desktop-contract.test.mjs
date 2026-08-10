@@ -177,13 +177,18 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(app, /draft\.updateUrl/);
   assert.match(settingsStorage, /updateUrl/);
   // macOS 无证书构建：afterPack 里 ad-hoc 重签名（Electron 自带 linker 签名过不了 ShipIt 深度校验），
+  // 指定要求锚定 bundle identifier（默认 cdhash 每次构建都变，更新校验必然失败），
   // 并在构建期就做 codesign --verify，签名不合格直接失败
   assert.match(packageJson, /"afterPack": "build\/afterPack\.cjs"/);
   assert.match(afterPack, /--force/);
   assert.match(afterPack, /--deep/);
   assert.match(afterPack, /--sign", "-"/);
+  assert.match(afterPack, /-r=designated => identifier/);
   assert.match(afterPack, /--verify/);
   assert.match(afterPack, /CSC_LINK/);
+  // 旧版本签名校验过旧无法自动升级时，给出可操作的指引而不是原始英文报错
+  assert.match(appUpdater, /did not pass validation/);
+  assert.match(appUpdater, /手动安装一次后，之后的版本即可正常自动更新/);
   // 更新错误常带无空格的长 URL/路径，对话框文本必须允许任意位置断行，否则会撑出窗口
   assert.match(styles, /\.app-update-copy[\s\S]*?overflow-wrap:\s*anywhere/);
 });

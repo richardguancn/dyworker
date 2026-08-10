@@ -13,7 +13,13 @@ export const UPDATE_STATES = new Set([
 ]);
 
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error || "更新失败");
+  const raw = error instanceof Error ? error.message : String(error || "更新失败");
+  // 0.1.19 及更早的 ad-hoc 签名把指定要求锚定在 cdhash（每次构建都不同），
+  // 这些旧版本永远无法通过新包的签名校验，只能手动安装一次；给出可操作的指引而不是原始英文报错
+  if (/did not pass validation|代码要求|code signature/i.test(raw)) {
+    return "当前安装版本的签名校验过旧，无法直接自动升级。请前往 GitHub 仓库 Releases 页面下载最新安装包，手动安装一次后，之后的版本即可正常自动更新。";
+  }
+  return raw;
 }
 
 function versionText(value) {
