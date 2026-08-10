@@ -1444,7 +1444,14 @@ function isPseudoPathWord(word) {
 
 function commandPathCandidates(command, workspace) {
   return shellWords(command)
-    .map((word) => word.includes("=") ? word.slice(word.indexOf("=") + 1) : word)
+    // 环境赋值取等号右侧；PATH=a:b:c 这类值按分隔符拆开逐项判断，
+    // 否则 `$HOME/.nvm/bin:$PATH` 会粘成一个候选被误判为工作区外路径
+    // （Windows 路径分隔符是分号且盘符含冒号，不拆）
+    .flatMap((word) => {
+      if (!word.includes("=")) return [word];
+      const value = word.slice(word.indexOf("=") + 1);
+      return process.platform === "win32" ? [value] : value.split(":");
+    })
     .map((word) => {
       if (/^~(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice(1));
       if (/^\$HOME(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice("$HOME".length));
@@ -1453,7 +1460,8 @@ function commandPathCandidates(command, workspace) {
       if (/^\$\{PWD\}(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("${PWD}".length));
       return word;
     })
-    .filter((word) => word && !isPseudoPathWord(word));
+    // 拆开后残留的 $PATH 等未展开变量不是真实路径
+    .filter((word) => word && !word.startsWith("$") && !isPseudoPathWord(word));
 }
 
 export function externalPathsForTool(workspace, name, args = {}) {
@@ -2520,21 +2528,26 @@ function parseArguments(toolCall) {
 }
 
 // ---- 审核助手（借鉴 Codex Auto-review：规则定边界、模型做判断）----
-// 审核助手只在“本来要问用户”的边界请求上运行；工作区外路径、本机界面操作、
+// 审核助手只在“本来要问用户”的边界请求上运行；本机界面操作、
 // 用户钩子强制审批、系统破坏性命令一律绕过审核、直接交给用户。
+// 工作区外路径也交给审核助手判断（见 REVIEWER_POLICY 第 5 条）——
+// 工具链目录的枚举规则永远加不完，而模型能按上下文区分开发环境与私人数据。
 export const REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的职责：在用户不盯着的任务里，判断一次本来需要人工确认的操作是否可以放行。
 审核纪律：
 1. 只输出放行、拒绝、转人工三种结果，不执行操作，不改写用户要求。
 2. 必须拒绝（deny）：向外发送私密数据、密钥或凭据；探测或读取凭据、令牌、Cookie 等敏感材料；削弱系统或应用安全配置；明显不可逆且高破坏性的操作；绕过用户明确规则的操作。
-3. 必须转人工（ask）：操作意图不明确或上下文不足；涉及工作区外的个人隐私或单位敏感数据；影响系统账户、权限、安装、删除等重大且难以回退的变更；把本机数据发往陌生网络目标；无法自信地判断安全性。
+3. 必须转人工（ask）：操作意图不明确或上下文不足；涉及工作区外的个人隐私或单位敏感数据（文档、照片、聊天记录、密钥目录等）；影响系统账户、权限、安装、删除等重大且难以回退的变更；把本机数据发往陌生网络目标；无法自信地判断安全性。
 4. 普通工作区内的查看、测试、构建、格式检查，以及用户明确要求的文件整理，默认放行；不要因为操作会写入工作区或会读取公开网页就机械转人工。
-5. 只有涉及外发数据、凭据、系统权限、不可逆破坏、外部路径、代码发布，或确实无法判断意图时才转人工（ask）。
-6. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
+5. 操作涉及工作区外路径时按路径性质判断，不要一律转人工：读取或执行本机开发工具链与系统程序目录（如 /usr、/bin、/opt、~/.nvm、~/.pyenv 等版本管理器目录，which/node/npm 等开发工具）属于正常开发操作，可以放行；只有触及个人或单位的私有数据、凭据，或要对系统目录做变更时才转人工。
+6. 只有涉及外发数据、凭据、系统权限、不可逆破坏、代码发布，或确实无法判断意图时才转人工（ask）。
+7. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
 
 const REVIEWER_HARD_BLOCK_GIT = new Set(["reset", "clean", "rebase", "gc"]);
 
-export function isReviewerEligible({ name = "", args = {}, externalPaths = false, hookRequiresApproval = false, approvalMode = "" } = {}) {
-  if (approvalMode !== "reviewer" || externalPaths || hookRequiresApproval) return false;
+// 外部路径不再直接取消审核资格：路径的敏感性由审核助手按上下文判断（见 REVIEWER_POLICY 第 5 条），
+// 避免规则白名单永远追不完各种工具链目录。只有用户钩子强制审批与系统破坏性命令仍绕过审核。
+export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval = false, approvalMode = "" } = {}) {
+  if (approvalMode !== "reviewer" || hookRequiresApproval) return false;
   if (isComputerUseTool(name)) return false;
   if (name === "run_command") {
     const words = shellWords(String(args.command || ""));
@@ -3174,7 +3187,6 @@ export async function runAgent({
             const reviewable = isReviewerEligible({
               name,
               args: displayArgs,
-              externalPaths: externalPaths.length > 0,
               hookRequiresApproval: decisionInput.hookRequiresApproval,
               approvalMode,
             });
