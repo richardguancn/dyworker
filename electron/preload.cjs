@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),
   removeQueuedTask: (payload) => ipcRenderer.invoke("agent:remove-queued", payload),
+  runQueuedTaskNow: (payload) => ipcRenderer.invoke("agent:run-queued-now", payload),
   resolveApproval: (sessionId, actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { sessionId, actionId, approved }),
   cancelTask: (sessionId, runId) => ipcRenderer.invoke("agent:cancel", { sessionId, runId }),
   onAgentEvent: (callback) => {

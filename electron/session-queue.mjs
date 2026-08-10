@@ -54,6 +54,21 @@ export class SessionQueue {
     return true;
   }
 
+  // 把指定排队项提到队首（“立即执行”用）：配合取消当前任务，
+  // 当前任务收尾时会自动从队首取出该项执行
+  promote(sessionId, runId) {
+    const sessionIdKey = String(sessionId);
+    const list = this.queues.get(sessionIdKey);
+    if (!list?.length) return false;
+    const index = list.findIndex((entry) => String(entry.runId) === String(runId));
+    if (index < 0) return false;
+    if (index > 0) {
+      const [entry] = list.splice(index, 1);
+      list.unshift(entry);
+    }
+    return true;
+  }
+
   clear() {
     this.queues.clear();
   }
