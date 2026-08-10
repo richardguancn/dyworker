@@ -28,6 +28,24 @@ const linuxTest = (name, fn) => test(
   isLinux ? fn : { skip: `Linux 专项测试仅在 Linux 平台运行（当前平台 ${process.platform}）` },
 );
 
+async function writeMockScripts(root, scripts) {
+  for (const [name, source] of Object.entries(scripts)) {
+    const file = path.join(root, name);
+    await fs.writeFile(file, source);
+    await fs.chmod(file, 0o755);
+  }
+  // 部分文件系统（容器挂载盘/网络盘）写入后不能立即被子进程读到，
+  // 强制同步目录并稍等，避免子进程读到不完整的模拟脚本导致偶发失败。
+  try {
+    const dirHandle = await fs.open(root, "r");
+    await dirHandle.sync();
+    await dirHandle.close();
+  } catch {
+    // 目录同步失败不影响测试继续，延迟兜底
+  }
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+
 linuxTest("解析麒麟 X11 窗口并保留应用名称与标题", () => {
   const windows = parseWmctrlOutput([
     "0x03e00007  0 host-name wps.wps        项目汇报.docx - WPS Office",
@@ -281,11 +299,7 @@ linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检
       "esac",
     ].join("\n"),
   };
-  for (const [name, source] of Object.entries(scripts)) {
-    const file = path.join(root, name);
-    await fs.writeFile(file, source);
-    await fs.chmod(file, 0o755);
-  }
+  await writeMockScripts(root, scripts);
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
   const client = new McpClient({
     command: process.execPath,
@@ -360,11 +374,7 @@ linuxTest("关闭聊天后系统后台安装继续，重新连接可以检查结
       "esac",
     ].join("\n"),
   };
-  for (const [name, source] of Object.entries(scripts)) {
-    const file = path.join(root, name);
-    await fs.writeFile(file, source);
-    await fs.chmod(file, 0o755);
-  }
+  await writeMockScripts(root, scripts);
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
   const env = {
     ...process.env,
@@ -450,11 +460,7 @@ linuxTest("管理员级安装计划发生变化时停止安装", async (t) => {
       "esac",
     ].join("\n"),
   };
-  for (const [name, source] of Object.entries(scripts)) {
-    const file = path.join(root, name);
-    await fs.writeFile(file, source);
-    await fs.chmod(file, 0o755);
-  }
+  await writeMockScripts(root, scripts);
   const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
   const client = new McpClient({
     command: process.execPath,
