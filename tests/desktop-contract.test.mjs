@@ -109,9 +109,14 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   assert.match(main, /queuedPayloadFromSession/, "执行前从会话存档取排队消息的最新内容");
   assert.match(main, /messages\.slice\(0, queuedIndex \+ 1\)/, "只截取到本条排队消息，不提前带入后面的排队消息");
   assert.match(main, /ipcMain\.handle\("agent:remove-queued"/);
+  // 立即执行：提到队首 + 取消当前任务，复用既有出队链路
+  assert.match(main, /ipcMain\.handle\("agent:run-queued-now"/);
+  assert.match(main, /sessionQueue\.promote\(sessionId, runId\)/);
   // 预加载桥接
   assert.match(preload, /removeQueuedTask/);
   assert.match(preload, /agent:remove-queued/);
+  assert.match(preload, /runQueuedTaskNow/);
+  assert.match(preload, /agent:run-queued-now/);
   // 渲染端：运行中允许发送、排队状态与编辑/取消入口
   assert.match(app, /queuedRunIds/);
   assert.match(app, /agentEvent\.type === "queued"/);
@@ -126,8 +131,9 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   assert.match(app, /activeQueuedMessages/);
   assert.match(app, /不渲染在对话流里/);
   assert.match(app, /queue-card/);
-  assert.match(app, /调整方向/);
-  assert.match(app, /steerQueuedMessage/);
+  assert.match(app, /立即执行/);
+  assert.match(app, /runQueuedMessageNow/);
+  assert.match(app, /runQueuedTaskNow\(/);
   assert.match(app, /removeQueuedMessage/);
   assert.match(app, /queueMenuRunId/);
   assert.match(app, /编辑内容（保持排队位置）/);

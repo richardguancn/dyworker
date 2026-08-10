@@ -1696,6 +1696,28 @@ ipcMain.handle("agent:remove-queued", (_event, payload) => {
   return { ok: true, removed };
 });
 
+// “立即执行”排队消息：提到队首并取消当前任务，
+// 当前任务收尾时 drainSessionQueue 会自动从队首启动它，
+// 复用既有出队链路（queue-start 事件、从存档取最新内容等）保持一致行为
+ipcMain.handle("agent:run-queued-now", async (_event, payload) => {
+  const sessionId = String(payload?.sessionId || "").trim();
+  const runId = String(payload?.runId || "").trim();
+  if (!sessionId || !runId) return { ok: false, error: "任务标识无效" };
+  if (!sessionQueue.promote(sessionId, runId)) return { ok: false, error: "这条消息已不在队列中" };
+  const agentState = activeAgents.get(sessionId);
+  if (!agentState) {
+    // 当前任务恰好已结束，队列不会自动推进，这里直接启动队首
+    drainSessionQueue(sessionId);
+    return { ok: true };
+  }
+  agentState.cancelled = true;
+  agentState.abortController.abort();
+  for (const resolve of agentState.pending.values()) resolve(false);
+  agentState.pending.clear();
+  await cancelWakesForSession(sessionId);
+  return { ok: true };
+});
+
 ipcMain.handle("agent:resolve-approval", (_event, payload) => {
   const agentState = activeAgents.get(String(payload?.sessionId || ""));
   const resolve = agentState?.pending.get(String(payload?.actionId || ""));

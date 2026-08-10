@@ -45,6 +45,7 @@ import {
   Paperclip,
   Pencil,
   Pin,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -59,7 +60,6 @@ import {
   Terminal,
   Trash2,
   GitCommitHorizontal,
-  Undo2,
   Upload,
   UserRound,
   X,
@@ -5581,13 +5581,18 @@ export function App() {
     setActiveSkills([]);
   };
 
-  // 调整方向：把排队消息取回输入框改写（从队列移除，重新发送后排到队尾）
-  const steerQueuedMessage = async (entry: { message: ChatMessage; messageIndex: number }) => {
+  // 立即执行：停下当前任务，这条排队消息插到队首马上运行
+  // （主进程把它提到队首并取消当前任务，当前任务收尾时自动出队启动）
+  const runQueuedMessageNow = async (entry: { message: ChatMessage; messageIndex: number }) => {
+    if (!activeSession) return;
     const runId = entry.message.runId || "";
-    const text = entry.message.displayContent || entry.message.content;
-    await removeQueuedMessage(runId, entry.messageIndex, "已取回这条排队消息，修改后重新发送");
-    setComposer(text);
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    if (!runId || !queuedRunIds.has(runId)) return;
+    const result = await window.dyworker?.runQueuedTaskNow({ sessionId: activeSession.id, runId });
+    if (result?.ok) {
+      setNotice("已停下当前任务，立即执行这条消息");
+    } else {
+      setNotice(result?.error || "这条消息已不在队列中");
+    }
   };
 
   const renderSessionItem = (session: SessionRecord) => (
@@ -6447,11 +6452,11 @@ export function App() {
                       <button
                         type="button"
                         className="queue-card-steer"
-                        onClick={() => void steerQueuedMessage(entry)}
-                        title="取回输入框修改，重新发送后排到队尾"
+                        onClick={() => void runQueuedMessageNow(entry)}
+                        title="停下当前任务，立即执行这条消息"
                       >
-                        <Undo2 size={13} />
-                        调整方向
+                        <Play size={13} />
+                        立即执行
                       </button>
                       <button
                         type="button"

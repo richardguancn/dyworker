@@ -499,6 +499,7 @@ export interface DyworkerBridge {
     runId?: string;
   }): Promise<{ ok: boolean; result?: AgentResult; queued?: boolean; runId?: string; error?: string }>;
   removeQueuedTask(payload: { sessionId: string; runId: string }): Promise<{ ok: boolean; removed?: boolean }>;
+  runQueuedTaskNow(payload: { sessionId: string; runId: string }): Promise<{ ok: boolean; error?: string }>;
   resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
   cancelTask(sessionId: string, runId: string): Promise<{ ok: boolean }>;
   onAgentEvent(callback: (event: SessionAgentEvent) => void): () => void;
