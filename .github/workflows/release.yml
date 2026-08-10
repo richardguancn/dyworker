@@ -90,6 +90,8 @@ jobs:
         shell: bash
         run: |
           mapfile -d '' assets < <(find release-assets -type f -print0)
+          # 重发同一版本时先清掉旧 Release（保留标签），避免 gh release create 冲突
+          gh release delete "$GITHUB_REF_NAME" --yes 2>/dev/null || true
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
             --verify-tag \
             --title "DYWorker $GITHUB_REF_NAME" \
