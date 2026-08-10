@@ -655,7 +655,7 @@ test("替我审批:审核助手拿不准时转人工审批", async () => {
   assert.equal(userApprovals, 1, "审核助手转人工后应弹出审批");
 });
 
-test("自动审核模式:工作区外路径仍直接问用户,不经过审核助手", async () => {
+test("替我审批:工作区外路径交给审核助手判断,放行时不弹人工审批", async () => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "a.txt": "a" });
   const calls = [];
@@ -669,12 +669,39 @@ test("自动审核模式:工作区外路径仍直接问用户,不经过审核助
     requestApproval: async () => { userApprovals += 1; return true; },
     fetchImpl: mockFetch([
       { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"读取的是工具链配置文件，属正常开发操作"}' },
       { role: "assistant", content: "读取完成。" },
     ], calls),
   });
   assert.equal(result.status, "done");
-  assert.equal(calls.length, 2, "审核助手不应被调用");
-  assert.equal(userApprovals, 1, "外部路径仍应弹人工审批");
+  assert.equal(calls.length, 3, "外部路径应先经过审核助手");
+  assert.equal(userApprovals, 0, "审核助手放行后不应弹人工审批");
+  // 审核助手能看到具体的外部路径
+  const reviewerPrompt = calls[1].messages.at(-1).content;
+  assert.match(reviewerPrompt, /工作区外路径/);
+  assert.match(reviewerPrompt, new RegExp(outside.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("替我审批:审核助手对外部路径拿不准时仍转人工", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "a" });
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "读外部文件" }],
+    requestApproval: async (action) => { approvals.push(action.details); return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: '{"decision":"ask","reason":"无法确认是否涉及私人数据"}' },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1, "审核助手转人工后应弹出审批");
+  assert.match(approvals[0], /工作区外路径/);
 });
 
 test("自动审核模式:读取系统临时目录不再弹审批", async () => {
@@ -930,6 +957,26 @@ test("命令替换里的 /dev/null 不再被当作工作区外路径", async (t)
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "echo $(cat /etc/hostname)" }),
     ["/etc/hostname"],
+  );
+});
+
+test("PATH 风格赋值按冒号拆开判断,不再拼成假路径", async (t) => {
+  if (process.platform === "win32") return t.skip("仅 POSIX 语义");
+  const root = await makeWorkspace();
+  const workspace = new Workspace(root, { trustTempDirs: false });
+  // `$HOME/.nvm/...:$PATH` 曾整词粘成一个候选；拆开后是干净的单路径，$PATH 残留被丢弃
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: `export PATH="$HOME/.nvm/versions/node/v24.10.0/bin:$PATH" && cd ${root} && node --test tests/` }),
+    [path.join(os.homedir(), ".nvm/versions/node/v24.10.0/bin")],
+  );
+  // 外部路径仍照常上报（是否放行由审批模式/审核助手判断，不做路径白名单）
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "which nodejs npm; ls /usr/local/bin | grep -i node; ls ~/.nvm/versions/node 2>/dev/null" }),
+    ["/usr/local/bin", path.join(os.homedir(), ".nvm/versions/node")],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "cat ~/.ssh/id_rsa" }),
+    [path.join(os.homedir(), ".ssh/id_rsa")],
   );
 });
 
@@ -1283,13 +1330,14 @@ test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败�
   assert.match(broken.reason, /审核助手不可用/);
 });
 
-test("isReviewerEligible 只接管可审核的越界请求,系统破坏/外部路径/本机界面/钩子一律转人工", () => {
+test("isReviewerEligible 只接管可审核的越界请求,系统破坏/本机界面/钩子一律转人工", () => {
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "npm install" } }), true);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "git push origin main" } }), true);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "fetch_web_page", args: { url: "https://example.com" } }), true);
+  // 工作区外路径不再取消审核资格：路径敏感性由审核助手按上下文判断
+  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "read_file", args: { path: "/tmp/x" } }), true);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "sudo rm -rf x" } }), false);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: "git reset --hard HEAD" } }), false);
-  assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "read_file", args: { path: "/tmp/x" }, externalPaths: true }), false);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "write_file", hookRequiresApproval: true }), false);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "mcp__computer-use__click" }), false);
   assert.equal(isReviewerEligible({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), false);
