@@ -2049,6 +2049,24 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
   return response;
 }
 
+// 模型类接口统一响应解析：中转网关/WAF 有时用 200 状态返回 HTML 错误页
+// （拦截页、限流页、欠费页），response.json() 会抛出 "Unexpected token '<' ..."
+// 这种看不懂的报错；这里翻译成可读提示，并允许点名是哪个服务/地址出错。
+// label 形如「模型服务」「视觉服务」「语音转写服务」，detail 通常填端点地址。
+export async function parseModelJson(response, label = "模型服务", detail = "") {
+  try {
+    return await response.json();
+  } catch (parseError) {
+    const contentType = response.headers?.get?.("content-type") || "";
+    const where = detail ? `（${detail}）` : "";
+    throw new Error(
+      `${label}返回的不是 JSON${where}（HTTP ${response.status}，${contentType || "未知类型"}）。`
+      + "这通常是中转网关/代理返回了 HTML 错误页（限流、欠费、WAF 拦截或地址配置错误），而不是模型本身的回复。"
+      + `原始解析错误：${parseError instanceof Error ? parseError.message : String(parseError)}`,
+    );
+  }
+}
+
 // DeepSeek 官方 Responses API 的 base_url 是 https://api.deepseek.com（不带路径），
 // 实际请求地址是 https://api.deepseek.com/responses；用户按文档只填根地址时自动补齐。
 export function normalizeModelEndpoint(endpoint) {
@@ -2166,7 +2184,8 @@ async function describeImageForTextModel({ settings, endpoint, model, imageUrl, 
       stream: false,
     },
   });
-  const result = await visionResponse.json();
+  // 视觉服务同样可能被网关/WAF 用 HTML 页回应，解析失败时点名是哪个地址出错
+  const result = await parseModelJson(visionResponse, "视觉服务", endpoint);
   const content = result?.choices?.[0]?.message?.content;
   const description = typeof content === "string"
     ? content.trim()
@@ -2439,18 +2458,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   const contentType = response.headers?.get?.("content-type") || "";
   if (!contentType.includes("text/event-stream") || !response.body?.getReader) {
     onTransport?.("json");
-    // 中转网关/WAF 有时用 200 状态返回 HTML 错误页（拦截页、限流页、欠费页），
-    // response.json() 会抛出 "Unexpected token '<' ..." 这种看不懂的报错，翻译成可读的提示
-    let result;
-    try {
-      result = await response.json();
-    } catch (parseError) {
-      throw new Error(
-        `模型服务返回的不是 JSON（HTTP ${response.status}，${contentType || "未知类型"}）。`
-        + "这通常是中转网关/代理返回了 HTML 错误页（限流、欠费、WAF 拦截或地址配置错误），而不是模型本身的回复。"
-        + `原始解析错误：${parseError instanceof Error ? parseError.message : String(parseError)}`,
-      );
-    }
+    const result = await parseModelJson(response, "模型服务");
     if (responsesApi) {
       if (result?.usage) onUsage?.(normalizedUsage(result.usage, true));
       return messageFromResponses(result);

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { builtinHooks, isSafePublicUrl, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { builtinHooks, isSafePublicUrl, parseModelJson, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -1071,7 +1071,7 @@ ipcMain.handle("voice:transcribe", async (_event, payload) => {
     const detail = (await response.text()).slice(0, 1000);
     throw new Error(`语音转写失败（${response.status}）：${detail}`);
   }
-  const result = await response.json();
+  const result = await parseModelJson(response, "语音转写服务", endpoint);
   const text = result?.text || result?.data?.text;
   if (typeof text !== "string" || !text.trim()) throw new Error("语音服务没有返回文字");
   return { text: text.trim() };
