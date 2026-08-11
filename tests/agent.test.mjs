@@ -410,6 +410,49 @@ test("DeepSeek V4 Flash 未配置视觉服务时不把图片直接发给模型",
   assert.equal(requested, false);
 });
 
+test("DeepSeek V4 Flash 视觉服务返回 HTML 页时给出可读提示并点名服务地址", async () => {
+  const root = await makeWorkspace();
+  const visionEndpoint = "https://vision.example/v1/chat/completions";
+  let visionRequested = false;
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/responses",
+      model: "deepseek-v4-flash",
+      apiKey: "k",
+      visionEndpoint,
+      visionModel: "vision-model",
+      visionApiKey: "vision-k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张 HTML 拦截图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,HTMLBLOCKED01" } },
+      ],
+    }],
+    fetchImpl: async (url) => {
+      if (url === visionEndpoint) {
+        visionRequested = true;
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => "text/html; charset=utf-8" },
+          json: async () => { throw new SyntaxError(`Unexpected token '<', "<!DOCTYPE "... is not valid JSON`); },
+        };
+      }
+      throw new Error("不应走到主模型请求");
+    },
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /视觉服务返回的不是 JSON/);
+  assert.match(result.reason, /vision\.example/);
+  assert.match(result.reason, /中转网关/);
+  assert.match(result.reason, /DOCTYPE/);
+  assert.equal(visionRequested, true);
+});
+
 test("Responses API 输出被截断或流提前结束时不会误报成功", async (t) => {
   const root = await makeWorkspace();
   await t.test("response.incomplete", async () => {
