@@ -238,6 +238,24 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(styles, /\.message-actions/);
 });
 
+test("消息和输入框支持右键菜单编辑", () => {
+  assert.match(main, /webContents\.on\("context-menu"/);
+  assert.match(main, /params\.selectionText/);
+  assert.match(main, /params\.isEditable/);
+  assert.match(main, /contextMenuTargets\.get\(event\.sender\)/);
+  assert.match(main, /contextTarget === "composer" && isEditable/);
+  assert.match(main, /contextTarget === "message" && !isEditable && selectionText\.length > 0/);
+  assert.match(preload, /context-menu-target/);
+  assert.match(preload, /closest\("\.composer-card"\)/);
+  assert.match(preload, /closest\("\.message-row"\)/);
+  assert.match(main, /label: "复制"/);
+  assert.match(main, /label: "剪切"/);
+  assert.match(main, /label: "粘贴"/);
+  assert.match(main, /role: "copy"/);
+  assert.match(main, /role: "cut"/);
+  assert.match(main, /role: "paste"/);
+});
+
 test("文件面板为左右分栏，Markdown 在内联预览（Codex 风格）", () => {
   assert.match(app, /isMarkdownFile/);
   assert.match(app, /previewKind === "markdown" \? window\.dyworker\?\.readWorkspaceMarkdown : window\.dyworker\?\.readWorkspaceFile/);

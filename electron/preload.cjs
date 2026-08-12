@@ -1,5 +1,18 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// 主进程的 context-menu 事件只能知道“这是可编辑区域”，不知道具体是哪一个输入框。
+// 这里同步标记右键目标，让主进程只给消息输入框和消息正文挂自定义菜单。
+window.addEventListener("contextmenu", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const editable = target?.closest("textarea, input, [contenteditable=\"true\"]");
+  const contextTarget = editable?.closest(".composer-card")
+    ? "composer"
+    : target?.closest(".message-row")
+      ? "message"
+      : "other";
+  ipcRenderer.sendSync("context-menu-target", contextTarget);
+}, true);
+
 contextBridge.exposeInMainWorld("dyworker", {
   getInitialState: () => ipcRenderer.invoke("app:initial-state"),
   saveSessions: (sessions) => ipcRenderer.invoke("sessions:save", sessions),

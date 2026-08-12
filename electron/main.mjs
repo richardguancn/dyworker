@@ -59,6 +59,11 @@ let embeddedBrowserContents = null;
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
+const contextMenuTargets = new WeakMap();
+
+ipcMain.on("context-menu-target", (event, target) => {
+  contextMenuTargets.set(event.sender, target === "composer" || target === "message" ? target : "other");
+});
 
 function isTrustedRendererUrl(rawUrl) {
   try {
@@ -502,6 +507,32 @@ function createWindow({ solidFallback = false } = {}) {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
+  mainWindow.webContents.on("context-menu", (event, params) => {
+    const selectionText = String(params.selectionText || "");
+    const isEditable = Boolean(params.isEditable);
+    const editFlags = params.editFlags || {};
+    const contextTarget = contextMenuTargets.get(event.sender);
+
+    // 只给主消息输入框提供三项编辑操作，消息正文只在选中文本后提供复制。
+    // 其他设置、搜索等输入框保持原有行为，不被本功能接管。
+    if (contextTarget === "composer" && isEditable) {
+      event.preventDefault();
+    } else if (contextTarget === "message" && !isEditable && selectionText.length > 0) {
+      event.preventDefault();
+    } else {
+      return;
+    }
+
+    const menuItems = contextTarget === "composer"
+      ? [
+          { label: "复制", role: "copy", enabled: Boolean(editFlags.canCopy || selectionText) },
+          { label: "剪切", role: "cut", enabled: Boolean(editFlags.canCut) },
+          { label: "粘贴", role: "paste", enabled: Boolean(editFlags.canPaste) },
+        ]
+      : [{ label: "复制", role: "copy", enabled: true }];
+
+    Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+  });
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-changed", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-changed", false));
   // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
