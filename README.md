@@ -42,9 +42,9 @@ DYWorker 是一款本地运行的 AI 工作助手。选择一个文件夹作为�
 
 ### 🔌 开放模型接入
 
-兼容常见的 **OpenAI Chat Completions 和 Responses API**，已内置 DeepSeek V4 Flash，支持多套模型配置自由切换——DeepSeek、通义、智谱，或是单位内网自建的模型服务，填上地址和密钥就能用。密钥通过**系统安全存储加密保存**，绝不明文落盘。
+兼容常见的 **OpenAI Chat Completions 和 Responses API**，已内置 DeepSeek V4 Flash 和 V4 Pro，支持多套模型配置自由切换——DeepSeek、通义、智谱，或是单位内网自建的模型服务，填上地址和密钥就能用。密钥通过**系统安全存储加密保存**，绝不明文落盘。
 
-DeepSeek V4 Flash 选择后也可以处理图片：在模型设置中填写一个支持图片的 OpenAI 兼容视觉服务地址、模型名称和密钥。DYWorker 会先让视觉服务把图片转换成描述，再交给 DeepSeek V4 Flash 继续分析；原图不会直接发送给纯文字接口。
+DeepSeek V4 Flash 或 V4 Pro 选择后也可以处理图片：在模型设置中填写一个支持图片的 OpenAI 兼容视觉服务地址、模型名称和密钥。DYWorker 会先让视觉服务把图片转换成描述，再交给 DeepSeek 继续分析；原图不会直接发送给纯文字接口。
 
 ![多套模型配置](docs/screenshots/09-model-config.png)
 
