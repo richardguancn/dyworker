@@ -6,8 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { chunkText } from "./qq-bot.mjs";
-import { MAX_MEDIA_BYTES } from "./manager.mjs";
+import { MAX_MEDIA_BYTES, chunkText, sniffImageExtension } from "./shared.mjs";
 import qrcode from "qrcode";
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -18,16 +17,8 @@ const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 
 export class WechatChannelError extends Error {}
 
-// 按文件头魔数识别图片扩展名（纯函数，供渠道适配器与测试复用）：
-// FFD8→jpg、8950→png、4749→gif、RIFF→webp；识别不出返回 null
-export function sniffImageExtension(buffer) {
-  if (!buffer || buffer.length < 4) return null;
-  if (buffer[0] === 0xff && buffer[1] === 0xd8) return ".jpg";
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return ".png";
-  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return ".gif";
-  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) return ".webp";
-  return null;
-}
+// sniffImageExtension 已移至 shared.mjs（消除与 qq-bot.mjs 的循环依赖），此处 re-export 保持对外 API
+export { sniffImageExtension };
 
 // 微信收到的 image/video 落盘扩展名：image 按魔数识别，识别不出用消息自带信息回退
 function extensionForKind(kind, buffer, fileName) {

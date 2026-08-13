@@ -7,7 +7,7 @@ import { builtinHooks, isSafePublicUrl, parseModelJson, requestModel, runAgent, 
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
-import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "./channels/media-tools.mjs";
+import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, verifyChannelMediaPath } from "./channels/media-tools.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
@@ -2102,7 +2102,27 @@ let runningScheduledTask = false;
 
 async function readSchedules() {
   const items = await readJson(dataFile("schedules.json"), []);
-  return Array.isArray(items) ? items : [];
+  const list = Array.isArray(items) ? items : [];
+  // 兼容旧版（DYWork 时代）定时计划字段：workspace → workspacePath、schedule.type → recurrence；
+  // 缺失 allowWorkspaceWrites 时按只读处理（不擅自授予写权限）。检测到旧字段自动归一化并回写，
+  // 避免升级后计划因拿不到工作目录而每次执行失败。
+  let changed = false;
+  for (const item of list) {
+    if (!item.workspacePath && item.workspace) {
+      item.workspacePath = String(item.workspace);
+      changed = true;
+    }
+    if (!item.recurrence && item.schedule?.type) {
+      item.recurrence = String(item.schedule.type);
+      changed = true;
+    }
+    if (item.allowWorkspaceWrites === undefined) {
+      item.allowWorkspaceWrites = false;
+      changed = true;
+    }
+  }
+  if (changed) await writeJson(dataFile("schedules.json"), list);
+  return list;
 }
 
 async function writeSchedules(items) {
@@ -2642,7 +2662,7 @@ async function buildChannelAttachments(media) {
 // （决策记录第 9 节：出站媒体不额外加审批，但严格限工作区、白名单与大小）
 async function handleChannelSendMedia(args, { workspacePath, pendingMedia }) {
   const rawPath = String(args?.path || "").trim();
-  const resolved = resolveChannelMediaPath(workspacePath, rawPath);
+  const resolved = await verifyChannelMediaPath(workspacePath, rawPath);
   if (!resolved.ok) return { ok: false, result: resolved.error };
   const stat = await fs.stat(resolved.path).catch(() => null);
   if (!stat || !stat.isFile()) return { ok: false, result: `文件不存在：${rawPath}` };
