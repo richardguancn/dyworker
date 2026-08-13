@@ -14,6 +14,7 @@ import {
   ChevronsUpDown,
   ChevronUp,
   Circle,
+  ClipboardPaste,
   Cookie,
   Copy,
   CornerUpLeft,
@@ -50,6 +51,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Scissors,
   ShieldAlert,
   SquarePlus,
   SquarePen,
@@ -65,11 +67,11 @@ import {
   X,
 } from "lucide-react";
 import hljs from "highlight.js/lib/common";
-import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
-import { matchProvider, modelContextLimit, providerPresets } from "./providers";
+import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
@@ -168,7 +170,7 @@ const defaultSettings: ProviderSettings = {
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
   mcpServers: [],
-  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "reviewer" },
+  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "auto" },
   skillLibraries: [{
     id: "skillhub",
     name: "SkillHub",
@@ -417,6 +419,14 @@ function isMarkdownFile(filePath: string) {
 
 async function copyTextToClipboard(content: string) {
   if (!content) return false;
+  try {
+    if (window.dyworker?.writeClipboardText) {
+      const result = await window.dyworker.writeClipboardText(content);
+      if (result.ok) return true;
+    }
+  } catch {
+    // 主进程剪贴板不可用时继续尝试渲染端方案。
+  }
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(content);
@@ -1389,14 +1399,16 @@ function BrowserBrandMark({ id, name }: { id: string; name: string }) {
   return <span className="browser-brand-mark" style={{ background: color }} aria-hidden="true">{initial}</span>;
 }
 
-// 从浏览器导入（对照 Codex）：选择来源浏览器 + 分类开关（密码/Cookie/浏览记录）
+// 从浏览器导入（对照 Codex）：选择来源浏览器 + 用户画像 + 分类开关（密码/Cookie/浏览记录）
 function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void; onDone: (message: string) => void; onError: (message: string) => void }) {
   const [sources, setSources] = useState<BrowserImportSource[] | null>(null);
   const [selectedKey, setSelectedKey] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [profileId, setProfileId] = useState("");
   const [kinds, setKinds] = useState<BrowserImportKinds>({ passwords: true, cookies: true, history: true });
   const [busy, setBusy] = useState(false);
   const [resultText, setResultText] = useState("");
+  const [resultCounts, setResultCounts] = useState<Record<keyof BrowserImportKinds, number> | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
 
   useEffect(() => {
@@ -1417,6 +1429,10 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
   }, []);
 
   const selected = sources?.find((item) => `${item.id}|${item.userDataDir}` === selectedKey) || null;
+  // 切换浏览器后画像选择回到该浏览器的第一个画像
+  const effectiveProfileId = selected?.profiles.some((profile) => profile.id === profileId)
+    ? profileId
+    : selected?.profiles[0]?.id || "Default";
   const anyKindOn = kinds.passwords || kinds.cookies || kinds.history;
 
   const runImport = async () => {
@@ -1424,12 +1440,13 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
     if (busy) return;
     setBusy(true);
     setResultText("");
+    setResultCounts(null);
     setWarnings([]);
     try {
       const result = await window.dyworker.importBrowserData({
         id: selected.id,
         userDataDir: selected.userDataDir,
-        profileId: selected.profiles[0]?.id || "Default",
+        profileId: effectiveProfileId,
         kinds,
       });
       if (!result.ok) {
@@ -1445,6 +1462,11 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
         + (result.weakProtection ? "（当前系统没有密钥链，密码以弱保护方式存储）" : "");
       setWarnings(result.warnings || []);
       setResultText(summary);
+      setResultCounts({
+        passwords: Number(result.passwords ?? 0),
+        cookies: Number(result.cookies ?? 0),
+        history: Number(result.history ?? 0),
+      });
       onDone(summary);
     } catch (importError) {
       onError(`导入失败：${importError instanceof Error ? importError.message : String(importError)}`);
@@ -1454,10 +1476,10 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
     }
   };
 
-  const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound }[] = [
-    { key: "passwords", label: "已保存的密码", icon: KeyRound },
-    { key: "cookies", label: "Cookie", icon: Cookie },
-    { key: "history", label: "浏览记录", icon: History },
+  const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound; unit: string }[] = [
+    { key: "passwords", label: "已保存的密码", icon: KeyRound, unit: "个" },
+    { key: "cookies", label: "Cookie", icon: Cookie, unit: "条" },
+    { key: "history", label: "浏览记录", icon: History, unit: "条" },
   ];
 
   return (
@@ -1510,20 +1532,42 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
                 )}
               </div>
             </div>
+            {selected && selected.profiles.length > 1 && (
+              <div className="browser-import-from">
+                <span className="browser-import-from-label">画像</span>
+                <select
+                  className="browser-import-profile-select"
+                  value={effectiveProfileId}
+                  onChange={(event) => setProfileId(event.target.value)}
+                  aria-label="选择用户画像"
+                >
+                  {selected.profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             {selected && <p className="browser-import-hint">导入前，请完全关闭 {selected.name}</p>}
             <div className="browser-import-kinds">
               {kindRows.map((row) => {
                 const Icon = row.icon;
                 const on = kinds[row.key];
+                const imported = resultCounts && on ? resultCounts[row.key] : null;
                 return (
                   <div className="browser-import-kind-row" key={row.key}>
                     <Icon size={18} />
                     <span>{row.label}</span>
+                    {imported !== null && (
+                      <em className="browser-import-kind-count">
+                        <Check size={13} />已导入 {imported} {row.unit}
+                      </em>
+                    )}
                     <button
                       className={`browser-import-switch ${on ? "on" : ""}`}
                       role="switch"
                       aria-checked={on}
                       aria-label={row.label}
+                      disabled={busy}
                       onClick={() => setKinds((current) => ({ ...current, [row.key]: !current[row.key] }))}
                     >
                       <span className="browser-import-switch-thumb" />
@@ -1532,8 +1576,9 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
                 );
               })}
             </div>
-            {resultText && <p className="browser-import-result" role="status">{resultText}</p>}
-            {warnings.map((warning) => <p className="browser-import-warning" key={warning}>{warning}</p>)}
+            {warnings.map((warning) => (
+              <p className="browser-import-warning" key={warning}><AlertTriangle size={13} aria-hidden="true" />{warning}</p>
+            ))}
             <div className="browser-import-actions">
               {resultText ? (
                 <button className="button-primary" onClick={onClose}>完成</button>
@@ -2290,11 +2335,13 @@ interface ScheduleDraft {
   recurrence: ScheduleRecord["recurrence"];
   nextRun: string;
   allowWorkspaceWrites: boolean;
+  workspacePath?: string;
 }
 
 function PlansPanel({
   items,
   workspaceReady,
+  currentWorkspacePath,
   onSave,
   onToggle,
   onDelete,
@@ -2303,6 +2350,7 @@ function PlansPanel({
 }: {
   items: ScheduleRecord[];
   workspaceReady: boolean;
+  currentWorkspacePath?: string;
   onSave: (draft: ScheduleDraft) => Promise<boolean>;
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
@@ -2311,7 +2359,7 @@ function PlansPanel({
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<ScheduleDraft>({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false });
+  const [draft, setDraft] = useState<ScheduleDraft>({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "" });
 
   useEffect(() => {
     if (!seed) return;
@@ -2325,7 +2373,7 @@ function PlansPanel({
     setSaving(false);
     if (ok) {
       setFormOpen(false);
-      setDraft({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false });
+      setDraft({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "" });
     }
   };
 
@@ -2347,6 +2395,14 @@ function PlansPanel({
               <option value="weekly">每周</option>
             </select>
             <input type="datetime-local" value={draft.nextRun} onChange={(event) => setDraft({ ...draft, nextRun: event.target.value })} />
+          </div>
+          <div className="plan-form-row plan-form-workspace">
+            <input
+              value={draft.workspacePath || ""}
+              placeholder={currentWorkspacePath ? `工作文件夹（留空使用：${currentWorkspacePath}）` : "工作文件夹（请选择工作文件夹）"}
+              onChange={(event) => setDraft({ ...draft, workspacePath: event.target.value })}
+              title="计划执行时使用的工作文件夹；留空则使用当前工作区"
+            />
           </div>
           <label className={`plan-form-check ${draft.allowWorkspaceWrites ? "checked" : ""}`}>
             <input type="checkbox" checked={draft.allowWorkspaceWrites} onChange={(event) => setDraft({ ...draft, allowWorkspaceWrites: event.target.checked })} />
@@ -2931,7 +2987,7 @@ function ChannelsPanel({ value, onSave }: {
       <div className="mcp-server-row">
         <span className="mcp-server-name">
           <strong>审批严格度</strong>
-          <small>替我审批会放行低风险操作，只把越界、外发和高风险操作送入收件箱</small>
+          <small>自动执行会放行工作区内读写、低风险命令与联网查询，只有越界路径、危险命令等仍需确认</small>
         </span>
         <select
           className="channel-model-select"
@@ -2939,6 +2995,7 @@ function ChannelsPanel({ value, onSave }: {
           disabled={saving}
           onChange={(event) => void saveChannels({ ...channels, approvalMode: event.target.value as ChannelsConfig["approvalMode"] }, "审批严格度已更新")}
         >
+          <option value="auto">自动执行（少打扰，推荐）</option>
           <option value="reviewer">替我审批（低风险操作自动放行）</option>
           <option value="interactive">严格（联网与重要操作逐次确认）</option>
         </select>
@@ -3030,6 +3087,7 @@ function SettingsDialog({
   onOpenSkill,
   schedules,
   workspaceReady,
+  currentWorkspacePath,
   onSaveSchedule,
   onToggleSchedule,
   onDeleteSchedule,
@@ -3054,6 +3112,7 @@ function SettingsDialog({
   onOpenSkill: (skill: SkillRecord) => void;
   schedules: ScheduleRecord[];
   workspaceReady: boolean;
+  currentWorkspacePath?: string;
   onSaveSchedule: (draft: ScheduleDraft) => Promise<boolean>;
   onToggleSchedule: (id: string, enabled: boolean) => void;
   onDeleteSchedule: (id: string) => void;
@@ -3295,6 +3354,13 @@ function SettingsDialog({
             onChange={(event) => applyEndpoint(event.target.value)}
           />
         </label>
+        <p className="dialog-note">
+          {draft.endpoint.trim()
+            ? (usesResponsesApi(draft.endpoint)
+                ? "该地址将自动使用 Responses API 请求。"
+                : "该地址将自动使用 OpenAI Chat Completions 请求。")
+            : "系统会根据服务地址自动判断使用 Responses API 或 Chat Completions；DeepSeek 官方根地址会自动补全为 /responses。"}
+        </p>
         <label>
           模型名称
           <input
@@ -3316,9 +3382,9 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
         </label>
-        {draft.model.trim().toLowerCase() === "deepseek-v4-flash" && (<>
-        <div className="dialog-section-title">图片识别（DeepSeek V4 Flash）</div>
-        <p className="dialog-note">DeepSeek V4 Flash 本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。</p>
+        {["deepseek-v4-flash", "deepseek-v4-pro"].includes(draft.model.trim().toLowerCase()) && (<>
+        <div className="dialog-section-title">图片识别（DeepSeek V4 Flash / Pro）</div>
+        <p className="dialog-note">DeepSeek V4 系列模型本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。</p>
         <label>
           视觉服务地址
           <input
@@ -3566,6 +3632,7 @@ function SettingsDialog({
           <PlansPanel
             items={schedules}
             workspaceReady={workspaceReady}
+            currentWorkspacePath={currentWorkspacePath}
             onSave={onSaveSchedule}
             onToggle={onToggleSchedule}
             onDelete={onDeleteSchedule}
@@ -3654,7 +3721,25 @@ export function App() {
     const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
     return Math.min(520, Math.max(340, Math.round(viewportWidth * 0.28)));
   });
+  // 视口宽度跟随窗口变化：面板宽度只在拖动时按当时窗口夹取，窗口之后缩小
+  // （如从高分屏搬到低分屏/笔记本屏）时必须重新夹取，否则固定像素宽度会吞掉整个主区域
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === "undefined" ? 1280 : window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  // 夹取的是“生效宽度”而不是存储值：回到大窗口时用户拖出的宽度偏好自动恢复
+  const appliedToolPanelWidth = Math.min(
+    toolPanelWidth,
+    Math.max(360, viewportWidth - (sidebarOpen ? sidebarWidth : 0) - 420),
+  );
+  const appliedSidebarWidth = Math.min(
+    sidebarWidth,
+    Math.max(260, viewportWidth - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420),
+  );
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
   const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
   const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("");
@@ -3712,6 +3797,8 @@ export function App() {
   const [queuedRunIds, setQueuedRunIds] = useState<Set<string>>(new Set());
   // 队列卡片里 ⋯ 菜单当前挂在哪条排队消息上
   const [queueMenuRunId, setQueueMenuRunId] = useState<string | null>(null);
+  // 右键菜单：消息文本选中复制、输入框复制/剪切/粘贴
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
@@ -3833,11 +3920,11 @@ export function App() {
       const resize = panelResizeRef.current;
       if (!resize) return;
       if (resize.edge === "left") {
-        const maxWidth = Math.max(260, window.innerWidth - (rightPanelOpen ? toolPanelWidth : 0) - 420);
+        const maxWidth = Math.max(260, window.innerWidth - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420);
         setSidebarWidth(Math.min(Math.max(event.clientX, 220), Math.min(520, maxWidth)));
       } else {
         const nextWidth = window.innerWidth - event.clientX;
-        const maxWidth = Math.max(360, window.innerWidth - (sidebarOpen ? sidebarWidth : 0) - 420);
+        const maxWidth = Math.max(360, window.innerWidth - (sidebarOpen ? appliedSidebarWidth : 0) - 420);
         setToolPanelWidth(Math.min(Math.max(nextWidth, 320), maxWidth));
       }
     };
@@ -3851,7 +3938,7 @@ export function App() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [rightPanelOpen, sidebarOpen, sidebarWidth, toolPanelWidth]);
+  }, [rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4567,6 +4654,132 @@ export function App() {
     } catch (pasteError) {
       setError(`无法添加剪贴板图片：${pasteError instanceof Error ? pasteError.message : String(pasteError)}`);
     }
+  };
+
+  const openContextMenu = (x: number, y: number, items: ContextMenuItem[]) => {
+    setContextMenu({ x, y, items });
+  };
+
+  const closeContextMenu = () => setContextMenu(null);
+
+  // 消息文本上右键：始终提供「复制」。有选中文本时复制选中内容，
+  // 未选中时复制整条消息正文（跳过操作按钮、时间等非正文区域）。
+  const handleMessageContextMenu = (event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    const selection = window.getSelection();
+    const selected = selection?.toString().trim() ?? "";
+    const anchor = selection?.anchorNode;
+    const inside = Boolean(anchor && event.currentTarget.contains(anchor));
+    const hasSelected = inside && selected.length > 0;
+    const bodyEl = event.currentTarget.querySelector(".message-content, .user-message-text");
+    const text = hasSelected ? selected : (bodyEl?.textContent ?? event.currentTarget.textContent ?? "").trim();
+    if (!text) return;
+    openContextMenu(event.clientX, event.clientY, [
+      {
+        key: "copy-selection",
+        label: hasSelected ? "复制" : "复制消息",
+        icon: <Copy size={15} />,
+        onSelect: () => {
+          void copyTextToClipboard(text).then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
+        },
+      },
+    ]);
+  };
+
+  // 输入框右键：复制 / 剪切 / 粘贴
+  const handleComposerContextMenu = (event: MouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const hasSelection = end > start;
+    const selected = composer.slice(start, end);
+    openContextMenu(event.clientX, event.clientY, [
+      {
+        key: "copy",
+        label: "复制",
+        icon: <Copy size={15} />,
+        disabled: !hasSelection,
+        onSelect: () => {
+          if (!hasSelection) return;
+          void copyTextToClipboard(selected).then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
+          window.setTimeout(() => textareaRef.current?.focus(), 0);
+        },
+      },
+      {
+        key: "cut",
+        label: "剪切",
+        icon: <Scissors size={15} />,
+        disabled: !hasSelection,
+        onSelect: () => {
+          if (!hasSelection) return;
+          setComposer(composer.slice(0, start) + composer.slice(end));
+          setMentionMenu(null);
+          void copyTextToClipboard(selected).then((copied) => setNotice(copied ? "已剪切" : "剪切内容已删除，但复制到剪贴板失败"));
+          window.setTimeout(() => {
+            const target = textareaRef.current;
+            if (target) {
+              target.focus();
+              target.setSelectionRange(start, start);
+            }
+          }, 0);
+        },
+      },
+      {
+        key: "paste",
+        label: "粘贴",
+        icon: <ClipboardPaste size={15} />,
+        onSelect: () => {
+          void pasteComposerText(start, end);
+        },
+      },
+    ]);
+  };
+
+  // 向输入框光标处粘贴剪贴板文本；优先用异步剪贴板 API，被拦截时回退到 execCommand
+  const pasteComposerText = async (start: number, end: number) => {
+    const textarea = textareaRef.current;
+    let text = "";
+    // 主进程剪贴板读取不依赖渲染端权限，最可靠，优先使用
+    try {
+      if (window.dyworker?.readClipboardText) {
+        text = await window.dyworker.readClipboardText();
+      }
+    } catch {
+      text = "";
+    }
+    if (!text) {
+      try {
+        if (navigator.clipboard?.readText) {
+          text = await navigator.clipboard.readText();
+        }
+      } catch {
+        text = "";
+      }
+    }
+    if (!text) {
+      textarea?.focus();
+      if (document.execCommand("paste")) {
+        window.setTimeout(() => {
+          const target = textareaRef.current;
+          if (target && target.value !== composer) setComposer(target.value);
+          setMentionMenu(null);
+        }, 0);
+      } else {
+        setNotice("粘贴失败，请检查剪贴板权限");
+      }
+      return;
+    }
+    setComposer(composer.slice(0, start) + text + composer.slice(end));
+    setMentionMenu(null);
+    window.setTimeout(() => {
+      const target = textareaRef.current;
+      if (target) {
+        target.focus();
+        target.setSelectionRange(start + text.length, start + text.length);
+      }
+    }, 0);
   };
 
   const mentionItems = useMemo((): { id: string; title: string; detail: string; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string }[] => {
@@ -5450,7 +5663,8 @@ export function App() {
   };
 
   const saveSchedule = async (draft: ScheduleDraft) => {
-    const result = await window.dyworker?.saveSchedule({ ...draft, workspacePath });
+    const planWorkspacePath = (draft.workspacePath || "").trim() || workspacePath;
+    const result = await window.dyworker?.saveSchedule({ ...draft, workspacePath: planWorkspacePath });
     if (!result?.ok) {
       setError(result?.error || "保存计划失败");
       return false;
@@ -5615,12 +5829,22 @@ export function App() {
   const runQueuedMessageNow = async (entry: { message: ChatMessage; messageIndex: number }) => {
     if (!activeSession) return;
     const runId = entry.message.runId || "";
-    if (!runId || !queuedRunIds.has(runId)) return;
-    const result = await window.dyworker?.runQueuedTaskNow({ sessionId: activeSession.id, runId });
-    if (result?.ok) {
-      setNotice("已停下当前任务，立即执行这条消息");
-    } else {
-      setNotice(result?.error || "这条消息已不在队列中");
+    // 用 ref 取最新排队状态，避免陈旧闭包导致点击被静默忽略
+    if (!runId || !queuedRunsRef.current.get(activeSession.id)?.has(runId)) {
+      setNotice("这条消息已不在排队中，无法立即执行");
+      return;
+    }
+    // 先给即时反馈，避免主进程切换任务期间看起来像“没反应”
+    setNotice("正在停下当前任务，马上执行这条消息…");
+    try {
+      const result = await window.dyworker?.runQueuedTaskNow({ sessionId: activeSession.id, runId });
+      if (result?.ok) {
+        setNotice("已停下当前任务，立即执行这条消息");
+      } else {
+        setNotice(result?.error || "这条消息已不在队列中");
+      }
+    } catch (error) {
+      setNotice(`立即执行失败：${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -5687,8 +5911,8 @@ export function App() {
   };
 
   const panelStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
-    "--tool-panel-width": `${toolPanelWidth}px`,
+    "--sidebar-width": `${appliedSidebarWidth}px`,
+    "--tool-panel-width": `${appliedToolPanelWidth}px`,
   } as CSSProperties;
 
   // 右侧面板菜单项（首页菜单页与 + 下拉菜单共用）。终端在底部打开，不改变面板内容，因此不关闭菜单页。
@@ -6241,7 +6465,10 @@ export function App() {
                   {message.role === "system" ? null : message.role === "user" ? (
                     <>
                       <div className="user-message-stack">
-                        <div className={`user-bubble${isEditing ? " editing" : ""}`}>
+                        <div
+                          className={`user-bubble${isEditing ? " editing" : ""}`}
+                          onContextMenu={handleMessageContextMenu}
+                        >
                         {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage)) && (
                           <span className="message-inline-refs">
                             {message.skillsUsed?.map((name) => (
@@ -6304,7 +6531,7 @@ export function App() {
                       </div>
                     </>
                   ) : (
-                    <div className="assistant-message">
+                    <div className="assistant-message" onContextMenu={handleMessageContextMenu}>
                       {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
                       {(() => {
                         const visibleActivities = (message.activities || []).filter((activity) => activity.kind !== "thinking");
@@ -6460,7 +6687,7 @@ export function App() {
 
         <div className="composer-dock" ref={composerDockRef}>
           {(error || activeSessionError) && <div className="status-toast error" role="alert">{error || activeSessionError}</div>}
-          {!error && !activeSessionError && (notice || activeSessionNotice) && (
+          {(notice || activeSessionNotice) && (
             <div className="status-toast" role="status">{notice || activeSessionNotice}</div>
           )}
           <div
@@ -6669,6 +6896,7 @@ export function App() {
                 value={composer}
                 onChange={(event) => updateComposer(event.target.value)}
                 onPaste={(event) => void handleComposerPaste(event)}
+                onContextMenu={handleComposerContextMenu}
                 onKeyDown={onComposerKeyDown}
                 onCompositionStart={() => { composingRef.current = true; }}
                 onCompositionEnd={() => { composingRef.current = false; }}
@@ -7066,6 +7294,7 @@ export function App() {
           }}
           schedules={schedules}
           workspaceReady={Boolean(workspacePath)}
+          currentWorkspacePath={workspacePath}
           onSaveSchedule={saveSchedule}
           onToggleSchedule={toggleSchedule}
           onDeleteSchedule={deleteSchedule}
@@ -7108,6 +7337,78 @@ export function App() {
         />
       )}
       {identitySetupOpen && <IdentitySetupDialog onChoose={chooseIdentity} />}
+      {contextMenu && <ContextMenuPopup menu={contextMenu} onClose={closeContextMenu} />}
+    </div>
+  );
+}
+
+type ContextMenuItem = {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  disabled?: boolean;
+  onSelect: () => void;
+};
+
+// 全局右键菜单：点击外部、滚动、失焦或按 Esc 时关闭，位置自动贴边
+function ContextMenuPopup({
+  menu,
+  onClose,
+}: {
+  menu: { x: number; y: number; items: ContextMenuItem[] };
+  onClose: () => void;
+}) {
+  const popupRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (popupRef.current && !popupRef.current.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const onDismiss = () => onClose();
+    window.addEventListener("wheel", onDismiss, { passive: true });
+    window.addEventListener("blur", onDismiss);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("wheel", onDismiss);
+      window.removeEventListener("blur", onDismiss);
+    };
+  }, [onClose]);
+
+  const MENU_WIDTH = 176;
+  const left = Math.max(8, Math.min(menu.x, window.innerWidth - MENU_WIDTH - 8));
+  const estimatedHeight = 40 + menu.items.length * 34;
+  const top = Math.max(8, Math.min(menu.y, window.innerHeight - estimatedHeight - 8));
+
+  return (
+    <div
+      ref={popupRef}
+      className="context-menu"
+      role="menu"
+      style={{ left, top }}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {menu.items.map((item) => (
+        <button
+          type="button"
+          key={item.key}
+          role="menuitem"
+          className="context-menu-item"
+          disabled={item.disabled}
+          onClick={() => {
+            onClose();
+            item.onSelect();
+          }}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+        </button>
+      ))}
     </div>
   );
 }

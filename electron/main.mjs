@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
@@ -60,12 +60,6 @@ let embeddedBrowserContents = null;
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
-const contextMenuTargets = new WeakMap();
-
-ipcMain.on("context-menu-target", (event, target) => {
-  contextMenuTargets.set(event.sender, target === "composer" || target === "message" ? target : "other");
-});
-
 function isTrustedRendererUrl(rawUrl) {
   try {
     const actual = new URL(String(rawUrl || ""));
@@ -508,32 +502,6 @@ function createWindow({ solidFallback = false } = {}) {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
-  mainWindow.webContents.on("context-menu", (event, params) => {
-    const selectionText = String(params.selectionText || "");
-    const isEditable = Boolean(params.isEditable);
-    const editFlags = params.editFlags || {};
-    const contextTarget = contextMenuTargets.get(event.sender);
-
-    // 只给主消息输入框提供三项编辑操作，消息正文只在选中文本后提供复制。
-    // 其他设置、搜索等输入框保持原有行为，不被本功能接管。
-    if (contextTarget === "composer" && isEditable) {
-      event.preventDefault();
-    } else if (contextTarget === "message" && !isEditable && selectionText.length > 0) {
-      event.preventDefault();
-    } else {
-      return;
-    }
-
-    const menuItems = contextTarget === "composer"
-      ? [
-          { label: "复制", role: "copy", enabled: Boolean(editFlags.canCopy || selectionText) },
-          { label: "剪切", role: "cut", enabled: Boolean(editFlags.canCut) },
-          { label: "粘贴", role: "paste", enabled: Boolean(editFlags.canPaste) },
-        ]
-      : [{ label: "复制", role: "copy", enabled: true }];
-
-    Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
-  });
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-changed", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-changed", false));
   // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
@@ -909,6 +877,21 @@ ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+});
+
+ipcMain.handle("clipboard:read-text", (event) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return "";
+  try {
+    return clipboard.readText();
+  } catch {
+    return "";
+  }
+});
+
+ipcMain.handle("clipboard:write-text", (event, text) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false };
+  clipboard.writeText(String(text ?? ""));
+  return { ok: true };
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
@@ -1962,6 +1945,33 @@ async function settleInboxItem(id, status, resolution) {
   return item;
 }
 
+// 挂起条目的等待必须有界：无人处理时任务（及其身后的渠道队列/全局守卫）会永久悬死。
+// 渠道交互等待 10 分钟；无人值守的定时/唤醒续跑放宽到 2 小时。
+const CHANNEL_PENDING_TIMEOUT_MS = 10 * 60 * 1000;
+const UNATTENDED_PENDING_TIMEOUT_MS = 2 * 3600 * 1000;
+
+// 立即以失效处理挂起条目：解决等待中的 promise（ok:false）并落盘留痕
+function expireInboxItemNow(id, reason) {
+  const resolve = inboxPending.get(id);
+  inboxPending.delete(id);
+  if (resolve) resolve({ ok: false, reason });
+  void settleInboxItem(id, "expired", reason);
+}
+
+// await 挂起条目并附加上限；超时按拒绝/未回答处理，任务据此正常收尾
+function awaitInboxWithTimeout(pending, reason, timeoutMs = CHANNEL_PENDING_TIMEOUT_MS) {
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      expireInboxItemNow(pending.itemId, reason);
+      resolve({ ok: false, reason, timedOut: true });
+    }, timeoutMs);
+    // 不让计时器拖住进程退出
+    if (typeof timer.unref === "function") timer.unref();
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 // 应用退出：所有挂起条目以拒绝解决（任务循环正常收尾），条目标记已失效
 async function expireAllPendingInbox(reason) {
   const items = await readInbox();
@@ -2291,9 +2301,9 @@ async function resumeWake(wake) {
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(wake.sessionId),
-      // 续跑同样无人值守：审批与提问进收件箱挂起等待
+      // 续跑同样无人值守：审批与提问进收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action) => {
-        const resolution = await createInboxItem({
+        const pending = createInboxItem({
           kind: "approval",
           sessionId: wake.sessionId,
           scheduleId: wake.scheduleId,
@@ -2301,16 +2311,20 @@ async function resumeWake(wake) {
           title: `续跑任务申请：${action.title || action.kind}`,
           details: action.details,
         });
+        const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
         return Boolean(resolution?.ok);
       },
-      requestUserInput: (request) => createInboxItem({
-        kind: "question",
-        sessionId: wake.sessionId,
-        scheduleId: wake.scheduleId,
-        question: request.question,
-        options: request.options,
-        title: "续跑任务提问",
-      }),
+      requestUserInput: (request) => {
+        const pending = createInboxItem({
+          kind: "question",
+          sessionId: wake.sessionId,
+          scheduleId: wake.scheduleId,
+          question: request.question,
+          options: request.options,
+          title: "续跑任务提问",
+        });
+        return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+      },
       emit: (agentEvent) => {
         collector.handle(agentEvent);
         if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
@@ -2447,9 +2461,9 @@ async function runScheduledTask(record) {
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(scheduleSessionId),
-      // 无人值守：需要确认的操作与提问不再静默失败，改为进审批收件箱，任务挂起等待处理
+      // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action) => {
-        const resolution = await createInboxItem({
+        const pending = createInboxItem({
           kind: "approval",
           sessionId: scheduleSessionId,
           scheduleId: record.id,
@@ -2457,16 +2471,20 @@ async function runScheduledTask(record) {
           title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
           details: action.details,
         });
+        const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
         return Boolean(resolution?.ok);
       },
-      requestUserInput: (request) => createInboxItem({
-        kind: "question",
-        sessionId: scheduleSessionId,
-        scheduleId: record.id,
-        question: request.question,
-        options: request.options,
-        title: `定时任务「${record.name || "未命名"}」提问`,
-      }),
+      requestUserInput: (request) => {
+        const pending = createInboxItem({
+          kind: "question",
+          sessionId: scheduleSessionId,
+          scheduleId: record.id,
+          question: request.question,
+          options: request.options,
+          title: `定时任务「${record.name || "未命名"}」提问`,
+        });
+        return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+      },
       emit: (agentEvent) => {
         collector.handle(agentEvent);
         if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
@@ -2549,6 +2567,9 @@ function startScheduler() {
 // ---- IM 消息渠道(QQ 官方机器人 / 微信 ClawBot)----
 // IM 消息 → 渠道任务(与定时任务同构):串行队列 + 全局忙碌守卫,审批/提问同时进收件箱与 IM。
 let runningChannelTask = false;
+// 渠道任务的按聊天中止:「停止」指令把 chatKey 放进 aborts,等待全局空闲的循环与 runAgent 的 isCancelled 都认它
+const channelTaskKeys = new Set(); // 等待全局空闲中 + 执行中的渠道任务 chatKey
+const channelTaskAborts = new Set(); // 收到「停止」的 chatKey
 
 async function readChannelChats() {
   const stored = await readJson(dataFile("channel-chats.json"), {});
@@ -2585,7 +2606,10 @@ function broadcastChannelsStatus(statusMap) {
 // 渠道会话的工作区推导:与 app:initial-state 同款,取最近一个带工作区的会话
 async function defaultChannelWorkspace() {
   const sessions = await readJson(dataFile("sessions.json"), []);
-  return (Array.isArray(sessions) ? sessions : []).find((session) => session?.workspacePath)?.workspacePath || "";
+  // 只接受非空字符串,避免把历史脏数据(对象/占位字符串)再次当作工作区
+  return (Array.isArray(sessions) ? sessions : []).find((session) =>
+    typeof session?.workspacePath === "string" && session.workspacePath.trim()
+  )?.workspacePath || "";
 }
 
 // 入站媒体暂存目录:userData/channel-media（决策记录第 9 节：不写进工作区，只当数据读取）。
@@ -2594,10 +2618,17 @@ function channelMediaDir() {
   return path.join(app.getPath("userData"), "channel-media");
 }
 
+// 微信 ClawBot SDK 的本地状态目录：打包后的应用从访达/程序坞启动时 process.cwd() 是 /，
+// SDK 默认拼出 /.weixin-clawbot 会导致 mkdir ENOENT；固定放到 userData 下规避。
+function channelWechatStateRoot() {
+  return path.join(app.getPath("userData"), "wechat-state");
+}
+
 const channelManager = createChannelManager({
   readChats: readChannelChats,
   writeChats: (chats) => writeJson(dataFile("channel-chats.json"), chats),
   mediaDir: channelMediaDir(),
+  wechatStateRoot: channelWechatStateRoot(),
   onStatus: broadcastChannelsStatus,
   onRunTask: runChannelTask,
   onResolvePending: async ({ channel, pending, replyText }) => {
@@ -2621,6 +2652,23 @@ const channelManager = createChannelManager({
   },
   onSaveWechatCredentials: writeWechatCredentials,
   defaultWorkspace: defaultChannelWorkspace,
+  // 「停止」:中止该聊天执行中/等待全局空闲的任务,并把挂起的审批/提问按取消决议
+  onStopChat: async ({ channel, key, pending }) => {
+    if (pending?.itemId) {
+      const via = CHANNEL_LABELS[channel] || channel;
+      expireInboxItemNow(pending.itemId, `用户通过${via}停止了任务`);
+    }
+    if (!channelTaskKeys.has(key)) return false;
+    channelTaskAborts.add(key);
+    return true;
+  },
+  // 排队提示附带当前阻塞原因,让用户知道在等什么
+  queueWaitHint: () => {
+    if (activeAgents.size) return "电脑端有任务正在执行";
+    if (runningScheduledTask) return "有定时/挂起任务正在执行";
+    if (runningChannelTask) return "上一个渠道任务还在执行（可能在等待审批）";
+    return "";
+  },
 });
 
 async function reconcileChannels() {
@@ -2687,7 +2735,7 @@ async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, se
   const rawPath = String(args?.path || "").trim();
   if (!text) return { ok: false, result: "text_to_speech 缺少 text 参数" };
   if (!rawPath) return { ok: false, result: "text_to_speech 缺少保存路径（工作区相对路径，.silk 结尾）" };
-  const resolved = resolveChannelMediaPath(workspacePath, rawPath);
+  const resolved = await verifyChannelMediaPath(workspacePath, rawPath, { mustExist: false });
   if (!resolved.ok) return { ok: false, result: resolved.error };
   if (path.extname(resolved.path).toLowerCase() !== ".silk") {
     return { ok: false, result: "语音文件必须以 .silk 结尾（平台要求 silk 格式）" };
@@ -2734,18 +2782,27 @@ async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, se
 }
 
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
-async function runChannelTask({ channel, chat, text, media, chatRecord, isNewChat, reply, replyMedia, registerPending, clearPending }) {
-  // 渠道消息不可丢弃:桌面交互任务/定时任务执行期间,排队等待全局空闲
-  while (!mcpShuttingDown && (activeAgents.size || runningScheduledTask || runningChannelTask)) {
+async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord, isNewChat, reply, replyMedia, sendTyping, registerPending, clearPending }) {
+  const myKey = String(chatKey || `${channel}:${chat?.chatId || ""}`);
+  channelTaskKeys.add(myKey);
+  // 渠道消息不可丢弃:桌面交互任务/定时任务执行期间,排队等待全局空闲；
+  // 等待期间也要响应「停止」,否则会堵在守卫里无法中止
+  while (!mcpShuttingDown && !channelTaskAborts.has(myKey) && (activeAgents.size || runningScheduledTask || runningChannelTask)) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  if (mcpShuttingDown) return;
+  if (mcpShuttingDown || channelTaskAborts.has(myKey)) {
+    channelTaskKeys.delete(myKey);
+    channelTaskAborts.delete(myKey);
+    return;
+  }
   runningChannelTask = true;
   trackTaskStart();
   let routeExtraTool = null;
   const channelLabel = CHANNEL_LABELS[channel] || channel;
   const sessionId = chatRecord.sessionId;
-  const workspacePath = String(chatRecord.workspacePath || "");
+  // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
+  const storedWorkspace = typeof chatRecord.workspacePath === "string" ? chatRecord.workspacePath.trim() : "";
+  const workspacePath = storedWorkspace || await defaultChannelWorkspace();
   // 出站媒体登记（send_media / text_to_speech 工具写入，任务结束随最终回复发回）
   const pendingMedia = [];
   // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加。
@@ -2808,8 +2865,9 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
       ...(attachments.length ? { attachments } : {}),
     };
     sendUserMessage();
-    // 渠道审批严格度：默认自动审核，安全操作自动继续，风险操作进入收件箱。
-    const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "reviewer";
+    // 渠道审批严格度：auto 自动执行(少打扰)/interactive 严格逐次确认，其余回退 reviewer。
+    const channelMode = settings.channels?.approvalMode;
+    const approvalMode = channelMode === "auto" || channelMode === "interactive" ? channelMode : "reviewer";
     const baseRouter = createExtraToolRouter(taskSettings, workspacePath);
     // send_media / text_to_speech 先由渠道媒体处理器接管，其余交给现有 MCP/浏览器路由
     routeExtraTool = async (name, args) => {
@@ -2823,7 +2881,8 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
     const workingContext = await workingContextForSession(sessionId);
     // 模型可见内容：文本 + 图片块（复用桌面端 providerMessageContent）
     const contentForModel = await providerMessageContent({ content: userText, attachments });
-    await reply("收到,正在处理…").catch(() => { });
+    // 用「正在输入」状态提示处理中，不再以文字消息形式打扰
+    await sendTyping().catch(() => { });
     const result = await runAgent({
       settings: taskSettings,
       workspacePath,
@@ -2839,9 +2898,10 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
       audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode, channel }),
       extraTools: [...agentExtraTools(await mcpExtraTools(taskSettings)), ...channelMediaToolDefinitions()],
       onExtraTool: routeExtraTool,
-      isCancelled: () => mcpShuttingDown,
+      isCancelled: () => mcpShuttingDown || channelTaskAborts.has(myKey),
       sleepGuard: () => hasPendingWakeForSession(sessionId),
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
+      // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
       requestApproval: async (action) => {
         const pending = createInboxItem({
           kind: "approval",
@@ -2852,10 +2912,13 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
         });
         registerPending({ itemId: pending.itemId, kind: "approval" });
         await reply(
-          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}\n\n回复「允许」执行,回复「拒绝」取消。`.trim(),
+          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}\n\n回复「允许」执行,回复「拒绝」取消。10 分钟未回复将自动取消。回复「停止」可中止整个任务。`.trim(),
         ).catch(() => { });
-        const resolution = await pending;
+        const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消");
         clearPending();
+        if (resolution?.timedOut) {
+          await reply("审批等待超时，已自动取消这次操作。").catch(() => { });
+        }
         return Boolean(resolution?.ok);
       },
       requestUserInput: async (request) => {
@@ -2868,8 +2931,8 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
         });
         registerPending({ itemId: pending.itemId, kind: "question", options: request.options || [] });
         const optionsText = (request.options || []).map((option, index) => `${index + 1}. ${option}`).join("\n");
-        await reply(`❓ ${request.question}${optionsText ? `\n\n${optionsText}\n回复序号或直接回答。` : ""}`).catch(() => { });
-        const resolution = await pending;
+        await reply(`❓ ${request.question}${optionsText ? `\n\n${optionsText}\n回复序号或直接回答。` : ""}\n10 分钟未回复将按已有信息继续。`.trim()).catch(() => { });
+        const resolution = await awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续");
         clearPending();
         return resolution;
       },
@@ -2880,6 +2943,11 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
       },
     });
     for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath);
+    if (channelTaskAborts.has(myKey) || result.status === "cancelled") {
+      // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果
+      sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, "（用户通过渠道消息停止了任务）").slice(1));
+      return;
+    }
     if (result.status === "sleeping" && result.wake) {
       // 主动挂起:沿用 self-wake 机制,到点由 checkDueWakes 续跑(审批走收件箱)
       await registerWake({
@@ -2910,17 +2978,26 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
         })),
       ];
       let sendFailed = false;
+      let sendFailureNote = "";
       try {
         await replyMedia(parts);
       } catch (error) {
         sendFailed = true;
+        const reason = error instanceof Error ? error.message : String(error);
+        // 与任务级错误提示同口径：去掉原始 JSON/堆栈，截断后只留简明原因
+        const friendly = (reason.replace(/\s*[{[].*$/s, "") || reason).slice(0, 160);
+        sendFailureNote = `（发送失败：${friendly}）`;
         for (const part of parts) {
           if (part.type !== "media") continue;
-          await reply(`[已生成 ${part.fileName || "文件"}，但发送失败]`).catch(() => { });
+          await reply(`[已生成 ${part.fileName || "文件"}，但发送失败：${friendly}]`).catch(() => { });
         }
       }
-      const sentNote = sendFailed ? "" : `（已发送 ${pendingMedia.length} 个文件）`;
-      sendAssistantMessages(collector.buildMessages(userText, result, `${finalText}${sentNote}`).slice(1));
+      const sentNote = sendFailed ? sendFailureNote : `（已发送 ${pendingMedia.length} 个文件）`;
+      // 出站媒体同步进桌面会话：和入站一样走 Attachment 描述，让图片/文件在对话里可见
+      const outboundAttachments = await buildChannelAttachments(pendingMedia);
+      const built = collector.buildMessages(userText, result, `${finalText}${sentNote}`);
+      if (outboundAttachments.length) built[1].attachments = outboundAttachments;
+      sendAssistantMessages(built.slice(1));
     } else {
       await reply(finalText).catch(() => { });
       sendAssistantMessages(collector.buildMessages(userText, result).slice(1));
@@ -2936,6 +3013,8 @@ async function runChannelTask({ channel, chat, text, media, chatRecord, isNewCha
     clearPending();
     trackTaskEnd();
     runningChannelTask = false;
+    channelTaskKeys.delete(myKey);
+    channelTaskAborts.delete(myKey);
   }
 }
 

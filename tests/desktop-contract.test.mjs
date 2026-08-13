@@ -25,12 +25,14 @@ const styles = readSource(new URL("../src/styles.css", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
 test("desktop controls are connected across renderer, preload, and main process", () => {
-  for (const action of ["chooseAttachments", "saveClipboardImage", "transcribeAudio"]) {
+  for (const action of ["chooseAttachments", "saveClipboardImage", "readClipboardText", "writeClipboardText", "transcribeAudio"]) {
     assert.match(app, new RegExp(`dyworker\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
   assert.match(main, /ipcMain\.handle\("attachments:choose"/);
   assert.match(main, /ipcMain\.handle\("attachments:save-clipboard-image"/);
+  assert.match(main, /ipcMain\.handle\("clipboard:read-text"/);
+  assert.match(main, /ipcMain\.handle\("clipboard:write-text"/);
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
 });
 
@@ -135,6 +137,12 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   assert.match(app, /runQueuedMessageNow/);
   assert.match(app, /runQueuedTaskNow\(/);
   assert.match(app, /removeQueuedMessage/);
+  // 立即执行不允许静默失败：点击即给反馈，invoke 异常显示可见错误而不是无反应
+  assert.match(app, /正在停下当前任务，马上执行这条消息…/);
+  assert.match(app, /这条消息已不在排队中，无法立即执行/);
+  assert.match(app, /立即执行失败：/);
+  // 提示条不被错误提示遮挡：error 存在时 notice 也要能显示出来
+  assert.doesNotMatch(app, /!error && !activeSessionError && \(notice/);
   assert.match(app, /queueMenuRunId/);
   assert.match(app, /编辑内容（保持排队位置）/);
   assert.match(styles, /\.queue-card/);
@@ -236,24 +244,6 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(app, /重新发送/);
   assert.match(preload, /readWorkspaceMarkdown/);
   assert.match(styles, /\.message-actions/);
-});
-
-test("消息和输入框支持右键菜单编辑", () => {
-  assert.match(main, /webContents\.on\("context-menu"/);
-  assert.match(main, /params\.selectionText/);
-  assert.match(main, /params\.isEditable/);
-  assert.match(main, /contextMenuTargets\.get\(event\.sender\)/);
-  assert.match(main, /contextTarget === "composer" && isEditable/);
-  assert.match(main, /contextTarget === "message" && !isEditable && selectionText\.length > 0/);
-  assert.match(preload, /context-menu-target/);
-  assert.match(preload, /closest\("\.composer-card"\)/);
-  assert.match(preload, /closest\("\.message-row"\)/);
-  assert.match(main, /label: "复制"/);
-  assert.match(main, /label: "剪切"/);
-  assert.match(main, /label: "粘贴"/);
-  assert.match(main, /role: "copy"/);
-  assert.match(main, /role: "cut"/);
-  assert.match(main, /role: "paste"/);
 });
 
 test("文件面板为左右分栏，Markdown 在内联预览（Codex 风格）", () => {
@@ -361,6 +351,8 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(browserImport, /peanuts/);
   assert.match(browserImport, /find-generic-password/);
   assert.match(browserImport, /node:sqlite/);
+  // Chromium 时间戳（1601 纪元微秒，约 1.3e16）超出 2^53，必须按 BigInt 读取否则整个查询抛错
+  assert.match(browserImport, /readBigInts:\s*true/);
   // 对话框为 Codex 风格：标题 + 来源选择行 + 分类开关（密码/Cookie/浏览记录）
   assert.match(app, /从浏览器导入/);
   assert.match(app, /选择要导入到内置浏览器的数据/);
@@ -991,17 +983,20 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(qqBot, /export function parseApprovalReply/);
   assert.match(qqBot, /C2C_MESSAGE_CREATE/);
   assert.match(qqBot, /GROUP_AT_MESSAGE_CREATE/);
+  assert.match(qqBot, /input_notify/);
 
   // 2. 微信 ClawBot:扫码登录(官方 ilink 接口)+ weixin-clawbot 长轮询,凭据由 onLogin 回调落盘
   assert.match(wechat, /ilink\/bot\/get_bot_qrcode/);
   assert.match(wechat, /ilink\/bot\/get_qrcode_status/);
   assert.match(wechat, /await import\("weixin-clawbot"\)/);
   assert.match(wechat, /export function createWechatChannel/);
+  assert.match(wechat, /async sendTyping/);
 
   // 3. 管理层:reconcile 热切换、每聊天串行队列、待决路由(审批回复不进任务队列)
   assert.match(manager, /export function createChannelManager/);
   assert.match(manager, /pendingByChat/);
   assert.match(manager, /reconcile/);
+  assert.match(manager, /adapter\.sendTyping/);
 
   // 4. 主进程接线:渠道任务引擎、全局忙碌守卫、决议共用入口、状态广播、生命周期
   assert.match(main, /from "\.\/channels\/manager\.mjs"/);
@@ -1044,6 +1039,10 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(types, /channel\?: "qq" \| "wechat"/);
   assert.match(app, /session-channel-badge/);
   assert.match(app, /渠道任务模型/);
+  assert.match(main, /await sendTyping\(\)/);
+  assert.doesNotMatch(main, /收到,正在处理…/);
+  assert.match(main, /outboundAttachments = await buildChannelAttachments\(pendingMedia\)/);
+  assert.match(main, /built\[1\]\.attachments = outboundAttachments/);
   assert.match(styles, /\.session-channel-badge/);
 
   // 8. 渠道审批:createInboxItem 不能把内层 promise 包进 async 外层(会吞掉 .itemId,
@@ -1052,8 +1051,9 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /pending\.itemId = item\.id/);
   assert.match(main, /inboxPersistQueue/);
   assert.match(main, /settings\.channels\?\.approvalMode/);
-  assert.match(settingsStorage, /approvalMode: source\.approvalMode === "interactive"/);
+  assert.match(settingsStorage, /approvalMode = source\.approvalMode === "auto"/);
   assert.match(app, /审批严格度/);
+  assert.match(app, /value="auto"/);
   assert.match(app, /value="reviewer"/);
 });
 
@@ -1123,4 +1123,29 @@ test("应用更新入口在设置的应用更新页,而不是会话顶栏或侧�
   assert.match(app, /onCheckUpdate=\{openAppUpdateDialog\}/);
   assert.match(app, /当前版本 \{appUpdate\.currentVersion/);
   assert.match(styles, /\.settings-update-row/);
+});
+
+test("消息文本右键可复制选中内容,输入框右键支持复制/剪切/粘贴", () => {
+  // 消息文本：选中后右键出现「复制」，只复制选中的文本
+  assert.match(app, /handleMessageContextMenu/);
+  assert.match(app, /window\.getSelection\(\)/);
+  assert.match(app, /event\.currentTarget\.contains\(anchor\)/);
+  assert.match(app, /copy-selection/);
+  // 输入框：右键菜单含复制/剪切/粘贴，未选中时禁用复制与剪切
+  assert.match(app, /handleComposerContextMenu/);
+  assert.match(app, /selectionStart/);
+  assert.match(app, /disabled: !hasSelection/);
+  assert.match(app, /execCommand\("paste"\)/);
+  assert.match(app, /navigator\.clipboard\?\.readText/);
+  assert.match(app, /readClipboardText/);
+  assert.match(app, /writeClipboardText/);
+  assert.match(preload, /readClipboardText: \(\) =>/);
+  assert.match(preload, /writeClipboardText: \(text\) =>/);
+  assert.match(app, /已剪切/);
+  assert.match(app, /粘贴失败，请检查剪贴板权限/);
+  // 菜单关闭与贴边定位
+  assert.match(app, /pointerdown/);
+  assert.match(app, /context-menu/);
+  assert.match(styles, /\.context-menu-item/);
+  assert.match(styles, /\.context-menu\s*\{/);
 });
