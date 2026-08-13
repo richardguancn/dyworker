@@ -2204,7 +2204,12 @@ test("匹配的工作模板注入系统提示", async () => {
     fetchImpl: mockFetch([{ role: "assistant", content: "好的" }], calls),
   });
   const systemMessages = calls[0].messages.filter((message) => message.role === "system");
-  assert.ok(systemMessages.some((message) => message.content.includes("【周报】写工作周报")));
+  const skillsPrompt = systemMessages.map((message) => message.content).join("\n");
+  // 渐进披露：只注入名称+简介+编号，不注入完整执行要求
+  assert.match(skillsPrompt, /【周报】/);
+  assert.match(skillsPrompt, /写工作周报/);
+  assert.match(skillsPrompt, /编号 s1/);
+  assert.doesNotMatch(skillsPrompt, /步骤……/, "首轮不应注入模板完整执行要求");
 });
 
 test("gov_search 走中国政府网官方接口并给出文号来源", async () => {
@@ -4029,4 +4034,25 @@ test("工具参数不是合法 JSON 被拦截", async () => {
   });
   assert.equal(result.status, "done");
   assert.match(JSON.stringify(calls[1] || {}), /不是合法的 JSON/);
+});
+
+test("技能只注入名称与简介，模型用 load_skill 拉取全文", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "帮我写月报" }],
+    skills: [{ id: "s1", name: "月报模板", description: "生成月度工作报告", instructions: "SECRET全文要求第一步第二步", enabled: true }],
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "load_skill", { skill_id: "s1" })] },
+      { role: "assistant", content: "已按模板完成。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  const firstPayload = JSON.stringify(calls[0] || {});
+  assert.match(firstPayload, /月报模板/);
+  assert.match(firstPayload, /生成月度工作报告/);
+  assert.doesNotMatch(firstPayload, /SECRET全文要求/, "首轮请求不应包含模板全文");
+  assert.match(JSON.stringify(calls[1] || {}), /SECRET全文要求/, "load_skill 结果应把全文回填给模型");
 });

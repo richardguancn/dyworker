@@ -2882,18 +2882,13 @@ export async function runAgent({
     messages.push({ role: "system", content: `工作区根目录的 AGENTS.md 给出了这个工作区的长期约定，执行本任务时应遵循；若与用户当前要求冲突，以用户当前要求为准：\n${projectInstructions}` });
   }
   const enabledSkills = skills.filter((skill) => skill && skill.enabled !== false);
-  const queryText = messageText({ content: latestQuery }).toLowerCase();
-  const relevantSkills = enabledSkills
-    .filter((skill) => {
-      const name = String(skill.name || "").toLowerCase();
-      const description = String(skill.description || "").toLowerCase();
-      return name && (queryText.includes(name) || name.split(/\s+/).some((token) => token.length > 1 && queryText.includes(token))
-        || description.split(/[\s，。,.、；;]+/).some((token) => token.length > 3 && queryText.includes(token)));
-    })
-    .slice(0, 3);
-  if (relevantSkills.length) {
-    const blocks = relevantSkills.map((skill) => `【${skill.name}】${skill.description}\n执行要求：${skill.instructions}`).join("\n\n");
-    messages.push({ role: "system", content: `当前任务已匹配以下启用的技能。按需使用；若与用户当前要求冲突，以当前要求为准：\n${blocks}` });
+  // 技能渐进披露（对齐 Pi skills）：只注入名称+简介+编号，模型命中后用 load_skill 拉完整执行要求，
+  // 避免多份长模板占用每轮上下文；列表保持稳定顺序，利于前缀缓存
+  if (enabledSkills.length) {
+    const lines = enabledSkills.slice(0, 20).map((skill) =>
+      `- 【${skill.name}】（编号 ${skill.id || "无"}）：${clipped(String(skill.description || ""), 120)}`
+    ).join("\n");
+    messages.push({ role: "system", content: `以下工作模板可在需要时使用。任务与某个模板相关时，先用 load_skill 读取其完整执行要求再照做；若与用户当前要求冲突，以当前要求为准：\n${lines}` });
   }
   const lastUserIndex = conversation.reduce((index, message, currentIndex) => message?.role === "user" ? currentIndex : index, -1);
   for (const [index, message] of conversation.entries()) {
@@ -2909,7 +2904,6 @@ export async function runAgent({
       messages.push({ role: message.role, content: Array.isArray(message.content) ? message.content : messageText(message) });
     }
   }
-  void latestQuery;
 
   let activityCounter = 0;
   const startActivity = (kind, title, detail = "") => {
