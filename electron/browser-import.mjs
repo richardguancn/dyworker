@@ -262,7 +262,10 @@ async function copyForRead(directory, fileNames, stagingDir) {
 
 function openDatabaseCopy(stagingDir, baseName) {
   const file = path.join(stagingDir, baseName);
-  return pathExists(file).then((exists) => exists ? new DatabaseSync(file) : null);
+  // readBigInts: Chromium 的时间戳是 1601 纪元微秒（约 1.3e16），超出 2^53，
+  // node:sqlite 默认遇到表示不下的 INTEGER 直接抛错（整个查询失败），按 BigInt 读后再转 Number。
+  // 下游所有取值都经 Number()/String()/Boolean() 归一化，BigInt 不会泄漏进 IPC 载荷。
+  return pathExists(file).then((exists) => exists ? new DatabaseSync(file, { readBigInts: true }) : null);
 }
 
 function chromeTimeToUnix(microseconds) {
