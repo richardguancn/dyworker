@@ -158,6 +158,9 @@ const defaultSettings: ProviderSettings = {
   visionApiKey: "",
   transcriptionEndpoint: "",
   transcriptionModel: "whisper-1",
+  ttsEndpoint: "",
+  ttsModel: "",
+  ttsApiKey: "",
   searxngEndpoint: "",
   bochaApiKey: "",
   domesticSearchOnly: false,
@@ -3498,6 +3501,32 @@ function SettingsDialog({
             value={draft.transcriptionModel}
             placeholder="whisper-1"
             onChange={(event) => setDraft({ ...draft, transcriptionModel: event.target.value })}
+          />
+        </label>
+        <div className="dialog-section-title" style={{ marginTop: 18 }}>语音合成（渠道语音发送）</div>
+        <label>
+          合成服务地址
+          <input
+            value={draft.ttsEndpoint}
+            placeholder="OpenAI 兼容的 /audio/speech 地址，留空则不提供语音发送"
+            onChange={(event) => setDraft({ ...draft, ttsEndpoint: event.target.value })}
+          />
+        </label>
+        <label>
+          合成模型
+          <input
+            value={draft.ttsModel}
+            placeholder="tts-1"
+            onChange={(event) => setDraft({ ...draft, ttsModel: event.target.value })}
+          />
+        </label>
+        <label>
+          合成密钥
+          <input
+            type="password"
+            value={draft.ttsApiKey}
+            placeholder="留空时使用主模型密钥"
+            onChange={(event) => setDraft({ ...draft, ttsApiKey: event.target.value })}
           />
         </label>
         <p className="dialog-note">切换服务商后只需核对模型名称并填入密钥。文本、图片附件和语音转写使用兼容 OpenAI 格式的服务。</p>

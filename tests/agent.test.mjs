@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -204,6 +205,59 @@ test("DeepSeek 官方 base_url 自动归一化为 /responses", async () => {
   assert.equal(normalizeModelEndpoint("https://api.deepseek.com/chat/completions"), "https://api.deepseek.com/chat/completions");
 });
 
+test("按 baseurl 自动判断是否使用 Responses API", () => {
+  assert.equal(isResponsesEndpoint("https://api.deepseek.com"), true);
+  assert.equal(isResponsesEndpoint("https://api.deepseek.com/"), true);
+  assert.equal(isResponsesEndpoint("https://api.deepseek.com/responses"), true);
+  assert.equal(isResponsesEndpoint("https://proxy.example.com/v1/responses"), true);
+  assert.equal(isResponsesEndpoint("https://api.deepseek.com/chat/completions"), false);
+  assert.equal(isResponsesEndpoint("https://proxy.example.com/v1/chat/completions"), false);
+});
+
+test("DeepSeek V4 Pro 通过 Responses API 请求并透传模型名", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-pro", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: mockResponsesFetch([{
+      id: "resp_pro",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "你好" }] }],
+      usage: { input_tokens: 20, output_tokens: 6, total_tokens: 26 },
+    }], calls),
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].url, "https://api.deepseek.com/responses");
+  assert.equal(calls[0].body.model, "deepseek-v4-pro");
+  assert.ok(Array.isArray(calls[0].body.input));
+});
+
+test("DeepSeek V4 Pro 使用 Chat Completions 地址时按 Chat 请求", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-pro", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "你好" } }] }),
+      };
+    },
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].url, "https://api.deepseek.com/chat/completions");
+  assert.equal(calls[0].body.model, "deepseek-v4-pro");
+  assert.ok(Array.isArray(calls[0].body.messages));
+  assert.equal(calls[0].body.input, undefined);
+});
+
 test("Responses API 工具调用结果按 input items 原样回传", async () => {
   const root = await makeWorkspace({ "报告.md": "# 季度总结\n内容" });
   const calls = [];
@@ -337,6 +391,79 @@ test("DeepSeek V4 Flash 通过视觉服务识别图片后再请求 Responses", a
     && item.content.some((part) => part.type === "input_text" && /登录窗口/.test(part.text))));
   assert.ok(!deepSeekInput.some((item) => Array.isArray(item.content)
     && item.content.some((part) => part.type === "input_image")));
+});
+
+test("DeepSeek V4 Pro 同样先经视觉服务识别图片再请求 Responses", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const visionEndpoint = "https://vision.example/v1/chat/completions";
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/responses",
+      model: "deepseek-v4-pro",
+      apiKey: "k",
+      visionEndpoint,
+      visionModel: "vision-model",
+      visionApiKey: "vision-k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
+      ],
+    }],
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      if (url === visionEndpoint) {
+        return {
+          ok: true,
+          headers: { get: () => "application/json" },
+          json: async () => ({ choices: [{ message: { content: "图中是一个登录窗口，能看到用户名和密码输入框。" } }] }),
+        };
+      }
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        json: async () => ({
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "已识别图片。" }] }],
+        }),
+      };
+    },
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].url, visionEndpoint);
+  assert.equal(calls[1].url, "https://api.deepseek.com/responses");
+  assert.equal(calls[1].body.model, "deepseek-v4-pro");
+  const deepSeekInput = calls[1].body.input;
+  assert.ok(deepSeekInput.some((item) => Array.isArray(item.content)
+    && item.content.some((part) => part.type === "input_text" && /登录窗口/.test(part.text))));
+  assert.ok(!deepSeekInput.some((item) => Array.isArray(item.content)
+    && item.content.some((part) => part.type === "input_image")));
+});
+
+test("DeepSeek V4 Pro 未配置视觉服务时不把图片直接发给模型", async () => {
+  const root = await makeWorkspace();
+  let requested = false;
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-pro", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ],
+    }],
+    fetchImpl: async () => { requested = true; throw new Error("不应发起请求"); },
+  });
+
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /视觉识别服务/);
+  assert.equal(requested, false);
 });
 
 test("DeepSeek V4 Flash 使用兼容聊天地址时也会先识别图片", async () => {
@@ -3708,4 +3835,75 @@ test("模型请求:网关用 200 返回 HTML 错误页时翻译成可读提示",
       return true;
     },
   );
+});
+
+// ---- 渠道媒体工具 send_media（设计文档第 4/6 节）----
+
+test("send_media 工具定义与参数形状", () => {
+  const definitions = channelMediaToolDefinitions();
+  const names = definitions.map((definition) => definition.function.name);
+  assert.ok(names.includes("send_media"));
+  assert.ok(names.includes("text_to_speech"));
+  const sendMedia = definitions.find((definition) => definition.function.name === "send_media");
+  assert.equal(sendMedia.type, "function");
+  assert.equal(sendMedia.function.parameters.required[0], "path");
+  assert.equal(typeof sendMedia.function.description, "string");
+  assert.match(sendMedia.function.description, /工作区/);
+  // 决策记录第 9 节：出站媒体与文本回复同权责，不额外加审批
+  assert.match(sendMedia.function.description, /不需额外审批/);
+});
+
+test("resolveChannelMediaPath 只接受工作区内相对路径", () => {
+  const workspace = "/tmp/dyworker-ws";
+  assert.equal(resolveChannelMediaPath(workspace, "output/图表.png").ok, true);
+  assert.equal(resolveChannelMediaPath(workspace, "报表.xlsx").ok, true);
+  assert.equal(resolveChannelMediaPath(workspace, "sub dir/a.pdf").ok, true);
+  const abs = resolveChannelMediaPath(workspace, "/etc/passwd");
+  assert.equal(abs.ok, false);
+  assert.match(abs.error, /绝对路径/);
+  const traverse = resolveChannelMediaPath(workspace, "../secret.txt");
+  assert.equal(traverse.ok, false);
+  assert.match(traverse.error, /越出工作区/);
+  assert.equal(resolveChannelMediaPath(workspace, "").ok, false);
+  assert.equal(resolveChannelMediaPath("", "a.png").ok, false, "没有工作区时拒绝");
+});
+
+test("CHANNEL_MEDIA_EXTENSIONS 白名单覆盖常用文档且不含可执行文件", () => {
+  for (const ext of [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".pdf", ".csv", ".xlsx", ".docx", ".zip", ".txt", ".md"]) {
+    assert.ok(CHANNEL_MEDIA_EXTENSIONS.has(ext), `白名单应包含 ${ext}`);
+  }
+  for (const ext of [".exe", ".sh", ".bat", ".js", ".mjs", ".dmg", ".pkg", ".msi"]) {
+    assert.ok(!CHANNEL_MEDIA_EXTENSIONS.has(ext), `白名单不应包含 ${ext}`);
+  }
+  assert.equal(MAX_MEDIA_BYTES, 50 * 1024 * 1024);
+});
+
+test("mediaKindForExtension 把图片扩展名映射为 image，其余为 file", () => {
+  assert.equal(mediaKindForExtension(".png"), "image");
+  assert.equal(mediaKindForExtension(".JPG"), "image");
+  assert.equal(mediaKindForExtension(".webp"), "image");
+  assert.equal(mediaKindForExtension(".pdf"), "file");
+  assert.equal(mediaKindForExtension(".xlsx"), "file");
+  assert.equal(mediaKindForExtension(""), "file");
+});
+
+test("send_media 工具经 onExtraTool 路由且不被审批拦截（与文本回复同权责）", async () => {
+  const root = await makeWorkspace({ "output/图表.png": "png-bytes" });
+  const routed = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "把图表发给用户" }],
+    extraTools: channelMediaToolDefinitions(),
+    onExtraTool: async (name, args) => {
+      routed.push([name, args]);
+      return { ok: true, result: "已登记发送：图表.png" };
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "send_media", { path: "output/图表.png", caption: "这是结果" })] },
+      { role: "assistant", content: "已发送。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.deepEqual(routed, [["send_media", { path: "output/图表.png", caption: "这是结果" }]]);
 });

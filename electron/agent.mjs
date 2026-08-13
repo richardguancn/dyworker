@@ -2905,6 +2905,8 @@ export async function runAgent({
   // 子代理不派发 dispatch_agent，防止无限递归；审批串行化，避免并行子任务同时弹多个确认
   const availableTools = toolDefinitionsWith(extraTools)
     .filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
+  // extraTools 中定义的工具名：工具执行时统一路由到 onExtraTool（见 default 分支）
+  const extraToolNames = new Set((extraTools || []).map((tool) => tool?.function?.name).filter(Boolean));
   let approvalChain = Promise.resolve();
   const queuedApproval = (action) => {
     const run = approvalChain.then(() => requestApproval(action));
@@ -3517,7 +3519,9 @@ export async function runAgent({
               break;
             }
             default:
-              if ((name.startsWith("mcp__") || name.startsWith("browser__")) && onExtraTool) {
+              // 所有在 extraTools 里定义的工具（mcp__/browser__/send_media/text_to_speech 等）
+              // 统一交给 onExtraTool 路由；不在 extraTools 里的名字才是未知工具
+              if (onExtraTool && extraToolNames.has(name)) {
                 const extra = await onExtraTool(name, args);
                 ok = extra.ok;
                 result = extra.result;

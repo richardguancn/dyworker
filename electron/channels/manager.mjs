@@ -10,6 +10,9 @@ import { createWechatChannel } from "./wechat.mjs";
 export const CHANNEL_IDS = ["qq", "wechat"];
 export const CHANNEL_LABELS = { qq: "QQ", wechat: "微信" };
 
+// 渠道媒体大小上限（入站下载与出站发送共用，见设计文档第 2/4/9 节）
+export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+
 export function chatKeyOf(channel, chatId) {
   return `${channel}:${chatId}`;
 }
@@ -25,6 +28,7 @@ export function createChannelManager({
   onResolvePending = async () => { }, // ({ chatRecord, pending, replyText }) => Promise<boolean>  IM 决议,返回是否命中
   onSaveWechatCredentials = async () => { }, // 微信扫码成功后落盘凭据
   defaultWorkspace = () => "", // 推导新渠道会话的工作区
+  mediaDir = "", // 入站媒体暂存目录（userData/channel-media，由 main 注入）
   createQqClient = createQqBotClient,
   createWechat = createWechatChannel,
 } = {}) {
@@ -36,6 +40,7 @@ export function createChannelManager({
   const queues = new Map(); // chatKey → Promise(队尾)
   const queueLengths = new Map(); // chatKey → 排队中的消息数
   const pendingByChat = new Map(); // chatKey → { itemId, kind: "approval"|"question", options }
+  const lastInboundByKey = new Map(); // chatKey → 最近一条入站消息（replyMedia 出站用）
   let chats = null; // chatKey → { sessionId, workspacePath, title, createdAt, updatedAt }
 
   async function loadChats() {
@@ -97,6 +102,18 @@ export function createChannelManager({
     const adapter = adapters.get(message.channel);
     const reply = (text) => (adapter ? adapter.sendText(message, text) : Promise.resolve());
     const { key, record, created } = await chatRecordFor(message);
+    lastInboundByKey.set(key, message);
+    // 出站媒体：适配器支持 sendMedia 时原样发送；否则降级为逐条文字说明。
+    // 契约见设计文档第 2 节：parts = [{ type:"text", text } | { type:"media", kind, filePath, fileName? }]
+    const replyMedia = (parts) => {
+      if (!adapter) return Promise.resolve();
+      if (typeof adapter.sendMedia === "function") return adapter.sendMedia(message, parts);
+      const lines = (Array.isArray(parts) ? parts : []).map((part) => {
+        if (part && part.type === "text") return String(part.text || "");
+        return `[${part?.fileName || "媒体文件"}]`;
+      }).filter((line) => line.trim());
+      return adapter.sendText(message, lines.join("\n"));
+    };
     // 1. 命中待决议(审批/提问)→ 直接决议,不进任务队列
     const pending = pendingByChat.get(key);
     if (pending) {
@@ -124,9 +141,11 @@ export function createChannelManager({
         channel: message.channel,
         chat: message,
         text: message.text,
+        media: message.media,
         chatRecord: record,
         isNewChat: created,
         reply,
+        replyMedia,
         registerPending: (pending) => pendingByChat.set(key, pending),
         clearPending: () => pendingByChat.delete(key),
       });
@@ -141,6 +160,7 @@ export function createChannelManager({
       return createQqClient({
         appId: config.appId,
         appSecret: config.appSecret,
+        mediaDir: mediaDir ? `${mediaDir}/qq` : "",
         onMessage: (message) => void handleInbound(message).catch(() => { }),
         onStatus: handleAdapterStatus,
       });
@@ -150,6 +170,7 @@ export function createChannelManager({
         token: config.token,
         userId: config.userId,
         baseUrl: config.baseUrl,
+        mediaDir: mediaDir ? `${mediaDir}/wechat` : "",
         onMessage: (message) => void handleInbound(message).catch(() => { }),
         onStatus: handleAdapterStatus,
         onLogin: onSaveWechatCredentials,

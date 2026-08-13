@@ -2,6 +2,12 @@
 // 手写协议(参考 https://bot.q.qq.com/wiki/),零第三方依赖:Node 22 全局 fetch/WebSocket。
 // 本文件不依赖 electron,fetch/WebSocket 均可注入,方便用 node --test 直接测试。
 
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { MAX_MEDIA_BYTES } from "./manager.mjs";
+import { sniffImageExtension } from "./wechat.mjs";
+
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 const API_BASE = "https://api.sgroup.qq.com";
 // 私聊(C2C) + 群@消息 + 频道私信
@@ -40,15 +46,51 @@ export function parseApprovalReply(text) {
   return null;
 }
 
+// 单个 QQ 附件按 content_type 归一化（纯函数，供测试）：
+// content_type 形如 image/jpeg、image/png、video/mp4、voice、file
+export function normalizeQqMediaAttachment(attachment = {}) {
+  const url = String(attachment.url || "").trim();
+  if (!url) return null;
+  const contentType = String(attachment.content_type || "").trim().toLowerCase();
+  const fileName = String(attachment.filename || attachment.fileName || "").trim();
+  const size = Number(attachment.size) || 0;
+  let kind = "file";
+  if (contentType.startsWith("image/")) kind = "image";
+  else if (contentType.startsWith("video/")) kind = "video";
+  else if (contentType === "voice" || contentType.includes("voice") || contentType.includes("silk")) kind = "voice";
+  const mimeType = contentType || undefined;
+  return { kind, url, size, fileName, ...(mimeType ? { mimeType } : {}) };
+}
+
+// 占位文案：纯媒体消息在模型侧用文字描述，桌面会话配合附件展示
+function qqPlaceholderForMedia(media) {
+  const first = Array.isArray(media) ? media[0] : null;
+  if (!first) return "[附件]";
+  if (first.kind === "image") return "[图片]";
+  if (first.kind === "video") return "[视频]";
+  if (first.kind === "voice") return "[语音]";
+  return `[文件:${first.fileName || "附件"}]`;
+}
+
 // QQ WSS dispatch 事件 → 归一化渠道消息;不关心的返回 null
 export function normalizeQqEvent(event, botId = "") {
   if (!event || event.op !== 0) return null;
   const data = event.d || {};
   const text = String(data.content || "").trim();
-  if (!text) return null;
+  const media = Array.isArray(data.attachments)
+    ? data.attachments.map(normalizeQqMediaAttachment).filter(Boolean)
+    : [];
+  if (!text && !media.length) return null;
   const authorId = String(data.author?.id || data.author?.member_openid || data.author?.union_openid || "");
   if (botId && authorId && authorId === botId) return null;
-  const base = { channel: "qq", userId: authorId, userName: String(data.author?.username || ""), text, messageId: String(data.id || "") };
+  const base = {
+    channel: "qq",
+    userId: authorId,
+    userName: String(data.author?.username || ""),
+    text: text || qqPlaceholderForMedia(media),
+    messageId: String(data.id || ""),
+    ...(media.length ? { media } : {}),
+  };
   if (event.t === "C2C_MESSAGE_CREATE") {
     return { ...base, chatType: "dm", chatId: authorId };
   }
@@ -65,7 +107,7 @@ export function normalizeQqEvent(event, botId = "") {
 
 // ---- 客户端 ----
 
-export function createQqBotClient({ appId, appSecret, fetchImpl = fetch, webSocketImpl = globalThis.WebSocket, onMessage = () => { }, onStatus = () => { }, now = () => Date.now() } = {}) {
+export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl = fetch, webSocketImpl = globalThis.WebSocket, onMessage = () => { }, onStatus = () => { }, now = () => Date.now() } = {}) {
   if (!appId || !appSecret) throw new QqBotError("QQ 渠道缺少 appId 或 appSecret");
   let token = "";
   let tokenExpiresAt = 0;
@@ -78,6 +120,8 @@ export function createQqBotClient({ appId, appSecret, fetchImpl = fetch, webSock
   let stopped = false;
   let botId = "";
   const msgSeqByChat = new Map();
+  // 附件下载与消息上送串行化：保持事件到达顺序，避免后到的消息先上送
+  let emitChain = Promise.resolve();
 
   function setStatus(status, detail = "") {
     onStatus({ channel: "qq", status, detail });
@@ -179,7 +223,58 @@ export function createQqBotClient({ appId, appSecret, fetchImpl = fetch, webSock
       return;
     }
     const message = normalizeQqEvent(event, botId);
-    if (message) onMessage(message);
+    if (message) {
+      // 附件下载与上送串行化，保持事件顺序；下载失败只保留 url，不阻塞消息流转
+      emitChain = emitChain
+        .then(async () => {
+          const prepared = await prepareMessageMedia(message);
+          await onMessage(prepared);
+        })
+        .catch(() => { });
+    }
+  }
+
+  // 入站媒体：逐条下载附件落盘到暂存目录；失败保留 url（main 侧只展示文件名）
+  async function prepareMessageMedia(message) {
+    const media = Array.isArray(message.media) ? message.media : [];
+    if (!media.length) return message;
+    const prepared = [];
+    for (const item of media) {
+      if (!item?.url) {
+        prepared.push(item);
+        continue;
+      }
+      try {
+        const filePath = await downloadAttachment(item, mediaDir, message.messageId);
+        const { url, ...rest } = item;
+        prepared.push({ ...rest, filePath });
+      } catch {
+        prepared.push(item);
+      }
+    }
+    return { ...message, media: prepared };
+  }
+
+  // 下载 QQ 附件到 mediaDir/<messageId>-<rand><ext>；大小上限与图片魔数识别与其他渠道一致
+  async function downloadAttachment(media, dir, messageId) {
+    if (!media?.url) throw new QqBotError("附件没有下载地址");
+    const auth = await accessToken();
+    const response = await fetchImpl(String(media.url), {
+      headers: { Authorization: `QQBot ${auth}` },
+    });
+    if (!response.ok) throw new QqBotError(`QQ 附件下载失败：${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > MAX_MEDIA_BYTES) throw new QqBotError("文件超过 50 MB，暂不支持");
+    const mime = String(media.mimeType || "").toLowerCase();
+    const ext = sniffImageExtension(buffer)
+      || (mime.startsWith("video/") ? ".mp4" : "")
+      || (media.fileName ? path.extname(String(media.fileName)) : "")
+      || ".bin";
+    if (!dir) throw new QqBotError("媒体暂存目录未配置");
+    await fs.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, `${String(messageId || "msg")}-${randomUUID().slice(0, 8)}${ext}`);
+    await fs.writeFile(filePath, buffer);
+    return filePath;
   }
 
   async function connect() {
@@ -240,6 +335,55 @@ export function createQqBotClient({ appId, appSecret, fetchImpl = fetch, webSock
     }
   }
 
+  // 富媒体上传：先拿 file_info 再以 msg_type=7 发送（file_type: 1 图片 2 视频 3 语音 4 文件）
+  async function uploadFile(chat, filePath, fileType) {
+    const auth = await accessToken();
+    const buffer = await fs.readFile(filePath).catch(() => {
+      throw new QqBotError(`附件文件不存在：${filePath}`);
+    });
+    const form = new FormData();
+    form.append("file_type", String(fileType));
+    form.append("file", new Blob([buffer]), path.basename(filePath));
+    const uploadPath = chat.chatType === "group"
+      ? `/v2/groups/${encodeURIComponent(chat.chatId)}/files`
+      : `/v2/users/${encodeURIComponent(chat.chatId)}/files`;
+    const response = await fetchImpl(`${API_BASE}${uploadPath}`, {
+      method: "POST",
+      headers: { Authorization: `QQBot ${auth}` },
+      body: form,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new QqBotError(`QQ 文件上传失败：${payload.message || payload.code || response.status}`);
+    }
+    const fileInfo = String(payload.file_info || payload.file_uuid || "");
+    if (!fileInfo) throw new QqBotError("QQ 文件上传响应缺少 file_info");
+    return fileInfo;
+  }
+
+  const KIND_TO_FILE_TYPE = { image: 1, video: 2, voice: 3, file: 4 };
+
+  // 出站媒体：parts = [{ type:"text", text } | { type:"media", kind, filePath, fileName? }]
+  async function sendMedia(chat, parts) {
+    for (const part of parts || []) {
+      if (!part) continue;
+      if (part.type === "text") {
+        await sendText(chat, String(part.text || ""));
+        continue;
+      }
+      const kind = ["image", "video", "voice", "file"].includes(part.kind) ? part.kind : "file";
+      const fileInfo = await uploadFile(chat, part.filePath, KIND_TO_FILE_TYPE[kind]);
+      const seq = (msgSeqByChat.get(chat.chatId) || 0) + 1;
+      msgSeqByChat.set(chat.chatId, seq);
+      const body = { content: " ", msg_type: 7, msg_seq: seq, media: { file_info: fileInfo } };
+      if (chat.messageId) body.msg_id = chat.messageId;
+      const messagePath = chat.chatType === "group"
+        ? `/v2/groups/${encodeURIComponent(chat.chatId)}/messages`
+        : `/v2/users/${encodeURIComponent(chat.chatId)}/messages`;
+      await api(messagePath, { method: "POST", body });
+    }
+  }
+
   return {
     id: "qq",
     async start() {
@@ -255,6 +399,8 @@ export function createQqBotClient({ appId, appSecret, fetchImpl = fetch, webSock
       setStatus("disabled");
     },
     sendText,
+    sendMedia,
+    downloadAttachment,
     // 测试钩子:直接注入一帧 WSS 数据
     _handleEvent: handleEvent,
   };
