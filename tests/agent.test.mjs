@@ -23,6 +23,22 @@ test("Codex 三档权限按文件边界、联网和风险操作作出决定", ()
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: "write_file" }), "deny");
 });
 
+test("渠道自动执行模式：低风险与联网读取放行，危险命令与越界仍确认", () => {
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "web_search" }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "fetch_web_page" }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "write_file" }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "export_word_document" }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "npm install" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "python3 build.py" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "git status" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "rm -rf build" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "curl https://example.com" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "read_file", hasExternalPaths: true }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "browser__open" }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "mcp__computer-use__click" }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "write_file", hookRequiresApproval: true }), "ask");
+});
+
 test("Computer Use 只读查看直接执行，界面操作遵守当前权限档位", () => {
   const stateTool = "mcp__computer-use__get_app_state";
   const checkTool = "mcp__computer-use__check_dependencies";

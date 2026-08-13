@@ -36,7 +36,7 @@ export function computerUseActionNeedsApproval(name, platform = process.platform
 
 // 联网信息获取（搜索/读网页正文）不改变外部世界，只读语义：
 // 互动模式下仍会逐次询问（internetApprovalTools），但只读模式（deny-changes）放行。
-const internetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
+export const internetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
 
 // 把一次工具调用归入四级风险之一。返回：
 //   risk                 RISK 之一

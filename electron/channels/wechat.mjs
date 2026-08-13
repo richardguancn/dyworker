@@ -226,8 +226,10 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
     bot.on("end", () => {
       if (!stopped) setStatus("connecting", "连接已断开");
     });
-    bot.start();
+    // 先置连接中再启动:SDK 的 start() 会同步派发 start 事件置为已连接,
+    // 顺序颠倒会把「已连接」覆盖成「连接中」。
     setStatus("connecting");
+    bot.start();
   }
 
   async function startLogin() {

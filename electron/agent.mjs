@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mjs";
 import { selectRelevantMemories } from "./memory.mjs";
-import { classify, internetApprovalTools, workspaceWriteTools } from "./risk.mjs";
+import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mjs";
 
 // 风险分级单源在 risk.mjs；这里 re-export 保持既有导入方兼容。
 export { RISK, classify, computerUseActionNeedsApproval, isConsequential } from "./risk.mjs";
@@ -1690,6 +1690,18 @@ export function evaluateApproval({
       || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))
     )) return "allow";
     return "ask";
+  }
+
+  // 渠道「自动执行」：工作区内读写、低风险命令与联网读取直接放行，
+  // 只有越界路径、本机界面变更、危险命令与外发操作仍需人工确认。
+  if (approvalMode === "auto") {
+    if (hasExternalPaths || computerUseMutation) return "ask";
+    if (name === "run_command") {
+      return (isAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)) ? "allow" : "ask";
+    }
+    if (internetReadTools.has(name)) return "allow";
+    if (workspaceWriteTools.has(name)) return "allow";
+    return normallyNeedsApproval ? "ask" : "allow";
   }
 
   if (approvalMode === "allow-writes") {
