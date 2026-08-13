@@ -11,7 +11,7 @@ export const CHANNEL_IDS = ["qq", "wechat"];
 export const CHANNEL_LABELS = { qq: "QQ", wechat: "微信" };
 
 // 渠道媒体大小上限（入站下载与出站发送共用，见设计文档第 2/4/9 节）
-export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+export { MAX_MEDIA_BYTES } from "./shared.mjs";
 
 export function chatKeyOf(channel, chatId) {
   return `${channel}:${chatId}`;

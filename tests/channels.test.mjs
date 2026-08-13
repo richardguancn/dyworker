@@ -7,6 +7,7 @@ import test from "node:test";
 import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachment, parseApprovalReply } from "../electron/channels/qq-bot.mjs";
 import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mjs";
 import { chatKeyOf, createChannelManager, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
+import { verifyChannelMediaPath } from "../electron/channels/media-tools.mjs";
 
 // ---- chunkText ----
 
@@ -693,4 +694,109 @@ test("manager:replyMedia 在适配器不支持时降级为文字说明", async (
   ]);
   // 测试 harness 的 adapter 没有 sendMedia → 降级为 sendText 文字说明
   assert.ok(harness.sentTexts.some((entry) => entry.text.includes("文件如下") && entry.text.includes("[a.xlsx]")));
+});
+
+// ---- 渠道公共模块（shared.mjs）：消除适配器互导，re-export 保持对外 API ----
+
+test("shared 模块统一承载渠道公共纯函数,适配器不再互相依赖", async () => {
+  const shared = await import("../electron/channels/shared.mjs");
+  assert.equal(typeof shared.chunkText, "function");
+  assert.equal(typeof shared.sniffImageExtension, "function");
+  assert.equal(shared.MAX_MEDIA_BYTES, 50 * 1024 * 1024);
+  assert.deepEqual(shared.chunkText("abc"), ["abc"]);
+  assert.equal(shared.sniffImageExtension(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), ".jpg");
+});
+
+test("QQ 客户端:sendMedia 的 msg_id 过期时去掉引用重发一次", async () => {
+  const messageBodies = [];
+  const fetchImpl = async (url, options = {}) => {
+    if (url.includes("getAppAccessToken")) {
+      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
+    }
+    if (url.endsWith("/gateway")) {
+      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
+    }
+    if (url.includes("/files")) {
+      return { ok: true, json: async () => ({ file_info: "fi-1" }) };
+    }
+    if (url.includes("/v2/users/u1/messages")) {
+      messageBodies.push(JSON.parse(options.body));
+      if (messageBodies.length === 1) {
+        return { ok: false, status: 400, json: async () => ({ message: "msg_id 不存在" }) };
+      }
+      return { ok: true, json: async () => ({ id: "out-2" }) };
+    }
+    return { ok: true, json: async () => ({ id: "out-1" }) };
+  };
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
+  try {
+    await client.start();
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-qq-media-"));
+    const filePath = path.join(tmp, "a.png");
+    await fs.writeFile(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await client.sendMedia({ chatType: "dm", chatId: "u1", messageId: "m1" }, [
+      { type: "media", kind: "image", filePath },
+    ]);
+    assert.equal(messageBodies.length, 2, "第一次失败后应去掉 msg_id 重发一次");
+    assert.equal(messageBodies[0].msg_id, "m1");
+    assert.equal(messageBodies[1].msg_id, undefined, "重试应去掉过期的消息引用");
+    assert.equal(messageBodies[1].msg_seq, 2, "重试的 msg_seq 递增");
+    assert.deepEqual(messageBodies[1].media, { file_info: "fi-1" }, "重试仍携带媒体 file_info");
+  } finally {
+    await client.stop();
+  }
+});
+
+test("verifyChannelMediaPath 拒绝指向工作区外的快捷链接,正常文件放行", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-ws-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-outside-"));
+  const secret = path.join(outside, "secret.txt");
+  await fs.writeFile(secret, "top secret");
+  // 软链接：工作区内的名字指向工作区外文件 → 应被拒绝
+  const link = path.join(root, "leak.txt");
+  try {
+    await fs.symlink(secret, link);
+  } catch {
+    assert.ok(true, "跳过:当前环境不支持软链接");
+    return;
+  }
+  const denied = await verifyChannelMediaPath(root, "leak.txt");
+  assert.equal(denied.ok, false, "快捷链接应被拒绝");
+  assert.match(denied.error, /工作区外/);
+  // 正常文件放行
+  const normal = path.join(root, "正常.txt");
+  await fs.writeFile(normal, "ok");
+  const allowed = await verifyChannelMediaPath(root, "正常.txt");
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.path, normal);
+  // 目录穿越仍然被拒（字符串层校验）
+  const traverse = await verifyChannelMediaPath(root, "../outside/secret.txt");
+  assert.equal(traverse.ok, false);
+  // 绝对路径仍然被拒
+  const absolute = await verifyChannelMediaPath(root, secret);
+  assert.equal(absolute.ok, false);
+});
+
+test("verifyChannelMediaPath 待写入路径(mustExist=false)只校验已存在祖先", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-ws-"));
+  // 新文件尚不存在：其祖先在工作区内 → 放行
+  const pending = await verifyChannelMediaPath(root, "output/语音.silk", { mustExist: false });
+  assert.equal(pending.ok, true);
+  // 已存在文件在 mustExist=false 下同样通过
+  const existing = path.join(root, "已存在.txt");
+  await fs.writeFile(existing, "x");
+  const ok = await verifyChannelMediaPath(root, "已存在.txt", { mustExist: false });
+  assert.equal(ok.ok, true);
+  // 祖先本身是软链接指向工作区外 → 拒绝
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-outside-"));
+  const aliasDir = path.join(root, "alias");
+  try {
+    await fs.symlink(outside, aliasDir);
+  } catch {
+    assert.ok(true, "跳过:当前环境不支持软链接");
+    return;
+  }
+  const denied = await verifyChannelMediaPath(root, "alias/语音.silk", { mustExist: false });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error, /工作区外/);
 });

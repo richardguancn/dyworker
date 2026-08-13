@@ -986,7 +986,8 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(qqBot, /api\.sgroup\.qq\.com/);
   assert.match(qqBot, /export function createQqBotClient/);
   assert.match(qqBot, /export function normalizeQqEvent/);
-  assert.match(qqBot, /export function chunkText/);
+  // chunkText 已移至 shared.mjs，qq-bot 保留 re-export（对外导出形态不变）
+  assert.match(qqBot, /export \{ chunkText \}/);
   assert.match(qqBot, /export function parseApprovalReply/);
   assert.match(qqBot, /C2C_MESSAGE_CREATE/);
   assert.match(qqBot, /GROUP_AT_MESSAGE_CREATE/);

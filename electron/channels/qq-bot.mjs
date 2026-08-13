@@ -5,8 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { MAX_MEDIA_BYTES } from "./manager.mjs";
-import { sniffImageExtension } from "./wechat.mjs";
+import { MAX_MEDIA_BYTES, chunkText, sniffImageExtension } from "./shared.mjs";
 
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 const API_BASE = "https://api.sgroup.qq.com";
@@ -14,29 +13,13 @@ const API_BASE = "https://api.sgroup.qq.com";
 const INTENTS = (1 << 25) | (1 << 12) | (1 << 30);
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000;
-const QQ_TEXT_CHUNK = 1500;
 
 export class QqBotError extends Error {}
 
 // ---- 纯函数(协议归一化,供单测与 manager 复用)----
 
-// 长文本按 IM 限制切片;优先在换行/句号处断开
-export function chunkText(text, limit = QQ_TEXT_CHUNK) {
-  const source = String(text || "");
-  if (source.length <= limit) return source ? [source] : [];
-  const chunks = [];
-  let rest = source;
-  while (rest.length > limit) {
-    let cut = rest.lastIndexOf("\n", limit);
-    if (cut < limit * 0.5) cut = rest.lastIndexOf("。", limit);
-    if (cut < limit * 0.5) cut = limit;
-    else cut += 1;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut);
-  }
-  if (rest) chunks.push(rest);
-  return chunks;
-}
+// chunkText 已移至 shared.mjs（消除与 wechat.mjs 的循环依赖），此处 re-export 保持对外 API
+export { chunkText };
 
 // IM 审批回复解析:true=允许,false=拒绝,null=不是审批回复
 export function parseApprovalReply(text) {
@@ -380,7 +363,20 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       const messagePath = chat.chatType === "group"
         ? `/v2/groups/${encodeURIComponent(chat.chatId)}/messages`
         : `/v2/users/${encodeURIComponent(chat.chatId)}/messages`;
-      await api(messagePath, { method: "POST", body });
+      try {
+        await api(messagePath, { method: "POST", body });
+      } catch (error) {
+        // msg_id 过期(用户太久没发消息)时被动回复会失败 → 去掉消息引用重发一次（与 sendText 一致）
+        if (chat.messageId) {
+          const retryBody = { ...body, msg_seq: seq + 1 };
+          delete retryBody.msg_id;
+          await api(messagePath, { method: "POST", body: retryBody }).catch(() => {
+            throw error;
+          });
+        } else {
+          throw error;
+        }
+      }
     }
   }
 

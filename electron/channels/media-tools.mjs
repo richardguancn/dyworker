@@ -2,7 +2,8 @@
 // 放在 channels/ 下不依赖 electron，方便用 node --test 直接测试；main.mjs 负责把处理器接到
 // runChannelTask 的 extraTools 路由上（设计文档第 4.1 / 5 节）。
 import path from "node:path";
-import { MAX_MEDIA_BYTES } from "./manager.mjs";
+import { promises as fs } from "node:fs";
+import { MAX_MEDIA_BYTES } from "./shared.mjs";
 
 // 出站发送白名单：只能发图片或常见文档，禁止可执行文件（.exe/.sh/.bat/.js 等）
 export const CHANNEL_MEDIA_EXTENSIONS = new Set([
@@ -58,6 +59,44 @@ export function channelMediaToolDefinitions() {
       ["text", "path"],
     ),
   ];
+}
+
+// 出站路径校验 + 防符号链接逃逸：路径解析必须落在工作区真实路径内。
+// 与 workspace.mjs 的 realpath 检查一致：resolveChannelMediaPath 只做字符串层
+// 校验，这里再对文件系统真实路径核对，拦截「工作区里指向外部的快捷链接」。
+// mustExist=false 用于 text_to_speech 的待写入路径：文件还不存在时，对其最深
+// 的已存在祖先做 realpath 校验（剩余路径段由写入方新建，无法逃逸）。
+async function realpathOfExistingAncestor(absPath) {
+  let cursor = path.resolve(absPath);
+  for (;;) {
+    try {
+      return await fs.realpath(cursor);
+    } catch {
+      // 逐级向上找已存在的祖先
+    }
+    const parent = path.dirname(cursor);
+    if (parent === cursor) return null;
+    cursor = parent;
+  }
+}
+
+export async function verifyChannelMediaPath(workspacePath, rawPath, { mustExist = true } = {}) {
+  const resolved = resolveChannelMediaPath(workspacePath, rawPath);
+  if (!resolved.ok) return resolved;
+  try {
+    const root = await fs.realpath(String(workspacePath));
+    const target = mustExist
+      ? await fs.realpath(resolved.path)
+      : await realpathOfExistingAncestor(resolved.path);
+    if (!target) return { ok: false, error: "文件不存在或无法解析" };
+    const relative = path.relative(root, target);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return { ok: false, error: "路径通过快捷链接指向工作区外，已拒绝" };
+    }
+    return { ok: true, path: resolved.path, relative: resolved.relative };
+  } catch {
+    return { ok: false, error: "文件不存在或无法解析" };
+  }
 }
 
 export { MAX_MEDIA_BYTES };
