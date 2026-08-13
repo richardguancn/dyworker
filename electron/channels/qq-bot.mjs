@@ -2,7 +2,7 @@
 // 手写协议(参考 https://bot.q.qq.com/wiki/),零第三方依赖:Node 22 全局 fetch/WebSocket。
 // 本文件不依赖 electron,fetch/WebSocket 均可注入,方便用 node --test 直接测试。
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { MAX_MEDIA_BYTES, chunkText, sniffImageExtension } from "./shared.mjs";
@@ -13,6 +13,8 @@ const API_BASE = "https://api.sgroup.qq.com";
 const INTENTS = (1 << 25) | (1 << 12) | (1 << 30);
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000;
+// upload_prepare 的 md5_10m 取文件前 10002432 字节（约 10 MB）
+const MD5_10M_SIZE = 10002432;
 
 export class QqBotError extends Error {}
 
@@ -318,28 +320,96 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
     }
   }
 
-  // 富媒体上传：先拿 file_info 再以 msg_type=7 发送（file_type: 1 图片 2 视频 3 语音 4 文件）
+  // 正在输入状态（官方仅 C2C 私聊有效，群聊不支持直接忽略）：
+  // msg_type=6 + input_notify 展示输入中提示，到秒后自动消失；失败不影响任务。
+  async function sendTyping(chat) {
+    if (chat.chatType !== "dm") return;
+    const seq = (msgSeqByChat.get(chat.chatId) || 0) + 1;
+    msgSeqByChat.set(chat.chatId, seq);
+    await api(`/v2/users/${encodeURIComponent(chat.chatId)}/messages`, {
+      method: "POST",
+      body: {
+        msg_type: 6,
+        input_notify: { input_type: 1, input_second: 60 },
+        msg_seq: seq,
+      },
+    }).catch(() => { });
+  }
+
+  // 富媒体上传：官方 multipart/本地文件直传暂未支持，走分片上传协议拿到 file_info
+  // （file_type: 1 图片 2 视频 3 语音 4 文件）
+  // 流程：upload_prepare 拿 upload_id 与分片预签名地址 → 逐片 PUT + upload_part_finish → /files 合并
   async function uploadFile(chat, filePath, fileType) {
-    const auth = await accessToken();
     const buffer = await fs.readFile(filePath).catch(() => {
       throw new QqBotError(`附件文件不存在：${filePath}`);
     });
-    const form = new FormData();
-    form.append("file_type", String(fileType));
-    form.append("file", new Blob([buffer]), path.basename(filePath));
-    const uploadPath = chat.chatType === "group"
-      ? `/v2/groups/${encodeURIComponent(chat.chatId)}/files`
-      : `/v2/users/${encodeURIComponent(chat.chatId)}/files`;
-    const response = await fetchImpl(`${API_BASE}${uploadPath}`, {
+    const fileName = path.basename(filePath);
+    const fileSize = buffer.byteLength;
+    const fullMd5 = createHash("md5").update(buffer).digest("hex");
+    const basePath = chat.chatType === "group"
+      ? `/v2/groups/${encodeURIComponent(chat.chatId)}`
+      : `/v2/users/${encodeURIComponent(chat.chatId)}`;
+    const prepare = await api(`${basePath}/upload_prepare`, {
       method: "POST",
-      headers: { Authorization: `QQBot ${auth}` },
-      body: form,
+      body: {
+        file_type: fileType,
+        file_size: String(fileSize),
+        file_name: fileName,
+        md5: fullMd5,
+        sha1: createHash("sha1").update(buffer).digest("hex"),
+        md5_10m: fileSize > MD5_10M_SIZE
+          ? createHash("md5").update(buffer.subarray(0, MD5_10M_SIZE)).digest("hex")
+          : fullMd5,
+      },
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new QqBotError(`QQ 文件上传失败：${payload.message || payload.code || response.status}`);
+    const uploadId = String(prepare.upload_id || "");
+    const blockSize = Number(prepare.block_size) || 0;
+    if (!uploadId || !blockSize) {
+      throw new QqBotError("QQ 上传预检响应缺少 upload_id 或 block_size");
     }
-    const fileInfo = String(payload.file_info || payload.file_uuid || "");
+    // 兼容 0 起始与 1 起始的分片序号（官方文档示例为 0，部分线上响应为 1）
+    const parts = (Array.isArray(prepare.parts) ? prepare.parts : [])
+      .map((part) => ({
+        index: Number(part?.index ?? part?.part_index),
+        presignedUrl: String(part?.presigned_url || ""),
+        blockSize: Number(part?.block_size) || 0,
+      }))
+      .filter((part) => Number.isFinite(part.index) && part.presignedUrl);
+    if (!parts.length) throw new QqBotError("QQ 上传预检响应缺少分片列表");
+    const minIndex = Math.min(...parts.map((part) => part.index));
+    for (const part of parts) {
+      const offset = (part.index - minIndex) * blockSize;
+      const length = Math.min(part.blockSize || blockSize, Math.max(0, fileSize - offset));
+      if (length <= 0) break;
+      const chunk = buffer.subarray(offset, offset + length);
+      const putResponse = await fetchImpl(part.presignedUrl, {
+        method: "PUT",
+        body: chunk,
+      });
+      if (!putResponse.ok) {
+        const detail = await putResponse.text().catch(() => "");
+        throw new QqBotError(`QQ 分片上传失败：HTTP ${putResponse.status} ${String(detail).slice(0, 120)}`);
+      }
+      await api(`${basePath}/upload_part_finish`, {
+        method: "POST",
+        body: {
+          upload_id: uploadId,
+          part_index: part.index,
+          block_size: String(chunk.byteLength),
+          md5: createHash("md5").update(chunk).digest("hex"),
+        },
+      });
+    }
+    const merged = await api(`${basePath}/files`, {
+      method: "POST",
+      body: {
+        file_type: fileType,
+        srv_send_msg: false,
+        file_name: fileName,
+        upload_id: uploadId,
+      },
+    });
+    const fileInfo = String(merged.file_info || merged.file_uuid || "");
     if (!fileInfo) throw new QqBotError("QQ 文件上传响应缺少 file_info");
     return fileInfo;
   }
@@ -395,6 +465,7 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       setStatus("disabled");
     },
     sendText,
+    sendTyping,
     sendMedia,
     downloadAttachment,
     // 测试钩子:直接注入一帧 WSS 数据

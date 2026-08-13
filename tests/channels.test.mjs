@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -99,6 +100,56 @@ function qqFetchHarness() {
     return { ok: true, json: async () => ({ id: "out-1" }) };
   };
   return { calls, fetchImpl, setExpiresIn: (value) => { tokenExpiresIn = value; } };
+}
+
+// QQ 富媒体分片上传链路 mock：upload_prepare → 预签名 PUT → upload_part_finish → /files 合并
+function qqMediaUploadHarness({ failUploadPrepare = null, failFirstMessage = false } = {}) {
+  const calls = [];
+  let messageAttempts = 0;
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("getAppAccessToken")) {
+      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
+    }
+    if (url.endsWith("/gateway")) {
+      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
+    }
+    if (url.startsWith("https://cos.test/")) {
+      return { ok: true, text: async () => "", json: async () => ({}) };
+    }
+    if (url.includes("/upload_prepare")) {
+      if (failUploadPrepare) {
+        return { ok: false, status: 403, json: async () => ({ message: failUploadPrepare }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          upload_id: "up-1",
+          block_size: "4",
+          parts: [
+            { index: 0, presigned_url: "https://cos.test/part0", block_size: "4" },
+            { index: 1, presigned_url: "https://cos.test/part1", block_size: "4" },
+          ],
+          upload_config: {},
+        }),
+      };
+    }
+    if (url.includes("/upload_part_finish")) {
+      return { ok: true, json: async () => ({}) };
+    }
+    if (url.includes("/files")) {
+      return { ok: true, json: async () => ({ file_info: "fi-1" }) };
+    }
+    if (url.includes("/messages")) {
+      messageAttempts += 1;
+      if (failFirstMessage && messageAttempts === 1) {
+        return { ok: false, status: 400, json: async () => ({ message: "msg_id 不存在" }) };
+      }
+      return { ok: true, json: async () => ({ id: "out-1" }) };
+    }
+    return { ok: true, json: async () => ({ id: "out-1" }) };
+  };
+  return { calls, fetchImpl };
 }
 
 test("QQ 客户端:identify→READY→收发消息,token 缓存复用", async () => {
@@ -225,6 +276,19 @@ test("微信渠道:baseUrl 为空字符串时回落到默认通道地址", async
   await channel.stop();
 });
 
+test("微信渠道:Bot 启动完成后状态为已连接,不被启动时的连接中覆盖", async () => {
+  const { factory } = fakeBotClass();
+  const statuses = [];
+  const channel = createWechatChannel({
+    token: "bt-1", userId: "wxu-1",
+    createBotImpl: factory,
+    onStatus: (entry) => statuses.push(entry),
+  });
+  await channel.start();
+  assert.equal(statuses.at(-1).status, "online", "启动完成后的最后状态应为已连接");
+  await channel.stop();
+});
+
 function fakeBotClass(handlers = {}) {
   const instances = [];
   return {
@@ -296,6 +360,7 @@ test("微信渠道:文本/语音转写归一化,其余类型回提示;回复按�
 
 function managerHarness(overrides = {}) {
   const sentTexts = [];
+  const typingCalls = [];
   const tasks = [];
   const resolves = [];
   const chatsFile = { value: {} };
@@ -309,6 +374,7 @@ function managerHarness(overrides = {}) {
     },
     stop: async () => { adapter.started = false; },
     sendText: async (chat, text) => { sentTexts.push({ chatId: chat.chatId, text }); },
+    sendTyping: async (chat) => { typingCalls.push(chat.chatId); },
   };
   const manager = createChannelManager({
     readChats: async () => chatsFile.value,
@@ -322,7 +388,7 @@ function managerHarness(overrides = {}) {
     defaultWorkspace: () => "/tmp/ws",
     ...overrides,
   });
-  return { manager, adapter, sentTexts, tasks, resolves, chatsFile };
+  return { manager, adapter, sentTexts, typingCalls, tasks, resolves, chatsFile };
 }
 
 const qqMessage = (text, chatId = "u1") => ({
@@ -357,6 +423,38 @@ test("manager:新聊天建会话映射,同一聊天复用 sessionId", async () =
   const record = chatsFile.value[chatKeyOf("qq", "u1")];
   assert.equal(record.workspacePath, "/tmp/ws");
   assert.ok(record.title.startsWith("QQ·"));
+});
+
+test("manager:异步 defaultWorkspace 被等待,新建聊天不把 Promise 落盘", async () => {
+  const { manager, chatsFile } = managerHarness({ defaultWorkspace: async () => "/async-ws" });
+  await manager._handleInbound(qqMessage("你好", "u-new"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const record = chatsFile.value[chatKeyOf("qq", "u-new")];
+  assert.equal(typeof record.workspacePath, "string");
+  assert.equal(record.workspacePath, "/async-ws");
+});
+
+test("manager:历史脏 workspacePath(对象/空值)在下一条消息时自动补全", async () => {
+  const chatsFile = {
+    value: {
+      [chatKeyOf("qq", "u1")]: {
+        sessionId: "s-dirty",
+        workspacePath: {},
+        title: "QQ·张三",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+      },
+    },
+  };
+  const { manager, tasks } = managerHarness({
+    readChats: async () => chatsFile.value,
+    writeChats: async (chats) => { chatsFile.value = chats; },
+    defaultWorkspace: async () => "/healed-ws",
+  });
+  await manager._handleInbound(qqMessage("继续", "u1"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(chatsFile.value[chatKeyOf("qq", "u1")].workspacePath, "/healed-ws");
+  assert.equal(tasks[0].chatRecord.workspacePath, "/healed-ws");
 });
 
 test("manager:同一聊天串行排队并提示,不同聊天各自成行", async () => {
@@ -396,6 +494,75 @@ test("manager:待决期间,有效决议直接处理不进任务;无效回复被�
   assert.equal(tasks.length, 0, "无效回复不能变成新任务");
   assert.equal(manager._pendingByChat.size, 1, "仍保持待决");
   assert.ok(sentTexts.some((entry) => entry.text.includes("允许」或「拒绝")));
+});
+
+test("manager:「停止」清空排队消息并通知 main 中止执行中任务", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const started = [];
+  const stops = [];
+  const { manager, sentTexts } = managerHarness({
+    onRunTask: async (task) => { started.push(task.text); if (task.text === "任务A") await gate; },
+    onStopChat: async ({ key, pending }) => { stops.push({ key, pending }); return true; },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager._handleInbound(qqMessage("任务A"));
+  await manager._handleInbound(qqMessage("任务B"));
+  await manager._handleInbound(qqMessage("任务C"));
+  await new Promise((resolve) => setImmediate(resolve));
+  await manager._handleInbound(qqMessage("停止"));
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0].key, chatKeyOf("qq", "u1"));
+  assert.equal(stops[0].pending, null);
+  assert.ok(sentTexts.some((entry) => entry.text.includes("已中止正在执行的任务") && entry.text.includes("已清空 2 条排队消息")));
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(started, ["任务A"], "B/C 已被停止清空,轮到时应直接跳过");
+  // 停止之后新消息照常入队执行（队列代数只作废旧消息）
+  await manager._handleInbound(qqMessage("任务D"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(started, ["任务A", "任务D"]);
+});
+
+test("manager:待决期间「停止」优先于审批决议,取消待决并中止任务", async () => {
+  const stops = [];
+  const { manager, resolves, sentTexts } = managerHarness({
+    onStopChat: async ({ pending }) => { stops.push(pending); return true; },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  manager._pendingByChat.set(chatKeyOf("qq", "u1"), { itemId: "inbox-9", kind: "approval" });
+  await manager._handleInbound(qqMessage("停止"));
+  assert.deepEqual(resolves, [], "停止不能被当成审批决议文本");
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0]?.itemId, "inbox-9");
+  assert.equal(manager._pendingByChat.size, 0, "停止同时清掉待决状态");
+  assert.ok(sentTexts.some((entry) => entry.text.includes("已取消待处理的审批/提问")));
+});
+
+test("manager:没有任务时「停止」如实反馈", async () => {
+  const { manager, sentTexts } = managerHarness();
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager._handleInbound(qqMessage("停止"));
+  assert.ok(sentTexts.some((entry) => entry.text.includes("没有执行中或排队")));
+});
+
+test("manager:排队提示附带阻塞原因与停止说明", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { manager, sentTexts } = managerHarness({
+    onRunTask: async (task) => { if (task.text === "任务A") await gate; },
+    queueWaitHint: () => "电脑端有任务正在执行",
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager._handleInbound(qqMessage("任务A"));
+  await manager._handleInbound(qqMessage("任务B"));
+  await new Promise((resolve) => setImmediate(resolve));
+  const notice = sentTexts.find((entry) => entry.text.includes("排队中"));
+  assert.ok(notice, "应当发出排队提示");
+  assert.ok(notice.text.includes("电脑端有任务正在执行"), "提示里要说明在等什么");
+  assert.ok(notice.text.includes("停止"), "提示里要告知脱身方式");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 10));
 });
 
 // ---- 渠道媒体：入站下载 / 归一化 / 出站发送（设计文档第 3/4/6 节）----
@@ -466,34 +633,52 @@ test("normalizeQqEvent 纯媒体消息带占位文案与 media 数组", () => {
   assert.equal(mixed.media.length, 1, "无 url 的附件应被过滤");
 });
 
-test("QQ 客户端:sendMedia 先上传拿 file_info 再以 msg_type=7 发送", async () => {
-  const calls = [];
-  const fetchImpl = async (url, options = {}) => {
-    calls.push({ url, options });
-    if (url.includes("getAppAccessToken")) {
-      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
-    }
-    if (url.endsWith("/gateway")) {
-      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
-    }
-    if (url.includes("/files")) {
-      return { ok: true, json: async () => ({ file_info: "fi-1" }) };
-    }
-    return { ok: true, json: async () => ({ id: "out-1" }) };
-  };
+test("QQ 客户端:sendMedia 先分片上传拿 file_info 再以 msg_type=7 发送", async () => {
+  const { calls, fetchImpl } = qqMediaUploadHarness();
   const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
   try {
     await client.start();
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-qq-media-"));
     const filePath = path.join(tmp, "图.png");
-    await fs.writeFile(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const content = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await fs.writeFile(filePath, content);
     await client.sendMedia({ chatType: "dm", chatId: "u1", messageId: "m1" }, [
       { type: "media", kind: "image", filePath, fileName: "图.png" },
     ]);
-    const upload = calls.find((call) => call.url.includes("/v2/users/u1/files"));
-    assert.ok(upload, "应先调用文件上传接口");
-    assert.ok(upload.options.body instanceof FormData, "上传应使用 multipart 表单");
-    assert.equal(upload.options.body.get("file_type"), "1", "图片对应 file_type=1");
+    const prepare = calls.find((call) => call.url.includes("/v2/users/u1/upload_prepare"));
+    assert.ok(prepare, "应先调用预上传接口");
+    const prepareBody = JSON.parse(prepare.options.body);
+    assert.equal(prepareBody.file_type, 1, "图片对应 file_type=1");
+    assert.equal(prepareBody.file_size, "8", "file_size 应为字符串字节数");
+    assert.equal(prepareBody.file_name, "图.png");
+    assert.match(prepareBody.md5, /^[0-9a-f]{32}$/);
+    assert.match(prepareBody.sha1, /^[0-9a-f]{40}$/);
+    assert.equal(prepareBody.md5_10m, prepareBody.md5, "小于 10MB 时 md5_10m 与全文件 md5 一致");
+
+    const puts = calls.filter((call) => call.url.startsWith("https://cos.test/") && call.options.method === "PUT");
+    assert.equal(puts.length, 2, "应按两个分片分别 PUT 预签名地址");
+    assert.deepEqual([...puts[0].options.body], [...content.subarray(0, 4)]);
+    assert.deepEqual([...puts[1].options.body], [...content.subarray(4)]);
+
+    const finishes = calls.filter((call) => call.url.includes("/upload_part_finish"));
+    assert.equal(finishes.length, 2, "每个分片完成后都应通知服务端");
+    const finish0 = JSON.parse(finishes[0].options.body);
+    assert.equal(finish0.upload_id, "up-1");
+    assert.equal(finish0.part_index, 0);
+    assert.equal(finish0.block_size, "4");
+    assert.equal(finish0.md5, createHash("md5").update(content.subarray(0, 4)).digest("hex"));
+    const finish1 = JSON.parse(finishes[1].options.body);
+    assert.equal(finish1.part_index, 1);
+    assert.equal(finish1.md5, createHash("md5").update(content.subarray(4)).digest("hex"));
+
+    const merged = calls.find((call) => call.url.includes("/v2/users/u1/files"));
+    assert.ok(merged, "分片完成后应调用 files 接口合并");
+    const mergedBody = JSON.parse(merged.options.body);
+    assert.equal(mergedBody.file_type, 1);
+    assert.equal(mergedBody.srv_send_msg, false, "合并只拿 file_info,不占用主动消息频次");
+    assert.equal(mergedBody.upload_id, "up-1");
+    assert.equal(mergedBody.file_name, "图.png");
+
     const post = calls.find((call) => call.url.includes("/v2/users/u1/messages"));
     assert.ok(post, "上传后应发送富媒体消息");
     const body = JSON.parse(post.options.body);
@@ -508,20 +693,7 @@ test("QQ 客户端:sendMedia 先上传拿 file_info 再以 msg_type=7 发送", a
 });
 
 test("QQ 客户端:sendMedia 群聊走 groups 接口且 file_type 按 kind 映射", async () => {
-  const calls = [];
-  const fetchImpl = async (url, options = {}) => {
-    calls.push({ url, options });
-    if (url.includes("getAppAccessToken")) {
-      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
-    }
-    if (url.endsWith("/gateway")) {
-      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
-    }
-    if (url.includes("/files")) {
-      return { ok: true, json: async () => ({ file_info: "fi-g" }) };
-    }
-    return { ok: true, json: async () => ({ id: "out-1" }) };
-  };
+  const { calls, fetchImpl } = qqMediaUploadHarness();
   const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
   try {
     await client.start();
@@ -531,9 +703,12 @@ test("QQ 客户端:sendMedia 群聊走 groups 接口且 file_type 按 kind 映�
     await client.sendMedia({ chatType: "group", chatId: "g1", messageId: "m9" }, [
       { type: "media", kind: "file", filePath, fileName: "doc.pdf" },
     ]);
-    const upload = calls.find((call) => call.url.includes("/v2/groups/g1/files"));
-    assert.ok(upload, "群聊上传应走 groups 接口");
-    assert.equal(upload.options.body.get("file_type"), "4", "文件对应 file_type=4");
+    const prepare = calls.find((call) => call.url.includes("/v2/groups/g1/upload_prepare"));
+    assert.ok(prepare, "群聊预上传应走 groups 接口");
+    assert.equal(JSON.parse(prepare.options.body).file_type, 4, "文件对应 file_type=4");
+    assert.ok(calls.some((call) => call.url.includes("/v2/groups/g1/upload_part_finish")), "群聊分片完成应走 groups 接口");
+    const merged = calls.find((call) => call.url.includes("/v2/groups/g1/files"));
+    assert.ok(merged, "群聊合并应走 groups 接口");
     const post = calls.find((call) => call.url.includes("/v2/groups/g1/messages"));
     assert.equal(JSON.parse(post.options.body).msg_type, 7);
   } finally {
@@ -541,19 +716,8 @@ test("QQ 客户端:sendMedia 群聊走 groups 接口且 file_type 按 kind 映�
   }
 });
 
-test("QQ 客户端:sendMedia 上传 4xx 时抛错", async () => {
-  const fetchImpl = async (url, options = {}) => {
-    if (url.includes("getAppAccessToken")) {
-      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
-    }
-    if (url.endsWith("/gateway")) {
-      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
-    }
-    if (url.includes("/files")) {
-      return { ok: false, status: 403, json: async () => ({ message: "file_type 未开放" }) };
-    }
-    return { ok: true, json: async () => ({ id: "out-1" }) };
-  };
+test("QQ 客户端:sendMedia 上传 4xx 时抛错并带服务端原因", async () => {
+  const { fetchImpl } = qqMediaUploadHarness({ failUploadPrepare: "file_type 未开放" });
   const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
   try {
     await client.start();
@@ -562,7 +726,7 @@ test("QQ 客户端:sendMedia 上传 4xx 时抛错", async () => {
     await fs.writeFile(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await assert.rejects(
       () => client.sendMedia({ chatType: "dm", chatId: "u1" }, [{ type: "media", kind: "file", filePath }]),
-      /上传失败/,
+      /file_type 未开放/,
     );
   } finally {
     await client.stop();
@@ -666,6 +830,23 @@ test("微信渠道:sendMedia 按 parts 逐条发送 text 与媒体", async () =>
   );
 });
 
+test("微信渠道:sendTyping 把输入状态转发给最近会话", async () => {
+  const { instances, factory } = fakeBotClass();
+  const channel = createWechatChannel({ token: "bt-1", userId: "wxu-1", createBotImpl: factory });
+  await channel.start();
+  const bot = instances.at(-1);
+  let typingCalls = 0;
+  bot.handlers.message({
+    fromUserId: "wx-friend-1",
+    message: { kind: "text", text: "hi", id: "mm1" },
+    reply: async () => ({}),
+    sendTyping: async () => { typingCalls += 1; },
+  });
+  await channel.sendTyping({ chatId: "wx-friend-1" });
+  assert.equal(typingCalls, 1, "应向最近会话发送正在输入状态");
+  await channel.stop();
+});
+
 test("manager:handleInbound 把 media 透传给 onRunTask", async () => {
   const { manager, tasks } = managerHarness();
   await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
@@ -696,6 +877,41 @@ test("manager:replyMedia 在适配器不支持时降级为文字说明", async (
   assert.ok(harness.sentTexts.some((entry) => entry.text.includes("文件如下") && entry.text.includes("[a.xlsx]")));
 });
 
+test("manager:任务执行器收到 sendTyping 并转发给适配器", async () => {
+  let capturedTyping = null;
+  const { manager, typingCalls } = managerHarness({
+    onRunTask: async (task) => {
+      capturedTyping = task.sendTyping;
+    },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager._handleInbound(qqMessage("开始干活"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(typeof capturedTyping, "function", "任务执行器应收到 sendTyping");
+  await capturedTyping();
+  assert.deepEqual(typingCalls, ["u1"], "sendTyping 应转发到当前会话适配器");
+});
+
+test("manager:微信适配器收到注入的 stateRoot,避免 SDK 落到系统根目录", async () => {
+  let captured = null;
+  const wechatAdapter = {
+    start: async () => { },
+    stop: async () => { },
+    sendText: async () => { },
+  };
+  const { manager } = managerHarness({
+    wechatStateRoot: "/tmp/dyworker-wx-state",
+    createWechat: (opts) => {
+      captured = opts;
+      return wechatAdapter;
+    },
+  });
+  await manager.reconcile({ wechat: { enabled: true, token: "t", userId: "u" } });
+  assert.ok(captured, "微信启用时应创建适配器");
+  assert.equal(captured.stateRoot, "/tmp/dyworker-wx-state", "状态目录应透传 SDK 而不是用当前工作目录");
+  await manager.reconcile({});
+});
+
 // ---- 渠道公共模块（shared.mjs）：消除适配器互导，re-export 保持对外 API ----
 
 test("shared 模块统一承载渠道公共纯函数,适配器不再互相依赖", async () => {
@@ -708,26 +924,7 @@ test("shared 模块统一承载渠道公共纯函数,适配器不再互相依赖
 });
 
 test("QQ 客户端:sendMedia 的 msg_id 过期时去掉引用重发一次", async () => {
-  const messageBodies = [];
-  const fetchImpl = async (url, options = {}) => {
-    if (url.includes("getAppAccessToken")) {
-      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
-    }
-    if (url.endsWith("/gateway")) {
-      return { ok: true, json: async () => ({ url: "wss://sandbox.qq/ws" }) };
-    }
-    if (url.includes("/files")) {
-      return { ok: true, json: async () => ({ file_info: "fi-1" }) };
-    }
-    if (url.includes("/v2/users/u1/messages")) {
-      messageBodies.push(JSON.parse(options.body));
-      if (messageBodies.length === 1) {
-        return { ok: false, status: 400, json: async () => ({ message: "msg_id 不存在" }) };
-      }
-      return { ok: true, json: async () => ({ id: "out-2" }) };
-    }
-    return { ok: true, json: async () => ({ id: "out-1" }) };
-  };
+  const { calls, fetchImpl } = qqMediaUploadHarness({ failFirstMessage: true });
   const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
   try {
     await client.start();
@@ -737,11 +934,34 @@ test("QQ 客户端:sendMedia 的 msg_id 过期时去掉引用重发一次", asyn
     await client.sendMedia({ chatType: "dm", chatId: "u1", messageId: "m1" }, [
       { type: "media", kind: "image", filePath },
     ]);
+    const messageBodies = calls
+      .filter((call) => call.url.includes("/v2/users/u1/messages"))
+      .map((call) => JSON.parse(call.options.body));
     assert.equal(messageBodies.length, 2, "第一次失败后应去掉 msg_id 重发一次");
     assert.equal(messageBodies[0].msg_id, "m1");
     assert.equal(messageBodies[1].msg_id, undefined, "重试应去掉过期的消息引用");
     assert.equal(messageBodies[1].msg_seq, 2, "重试的 msg_seq 递增");
     assert.deepEqual(messageBodies[1].media, { file_info: "fi-1" }, "重试仍携带媒体 file_info");
+  } finally {
+    await client.stop();
+  }
+});
+
+test("QQ 客户端:sendTyping 私聊发输入状态,群聊静默跳过", async () => {
+  const { calls, fetchImpl } = qqFetchHarness();
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
+  try {
+    await client.start();
+    await client.sendTyping({ chatType: "dm", chatId: "u1" });
+    const typing = calls.find((call) => call.url.includes("/v2/users/u1/messages"));
+    assert.ok(typing, "私聊应调用消息接口发输入状态");
+    const body = JSON.parse(typing.options.body);
+    assert.equal(body.msg_type, 6);
+    assert.deepEqual(body.input_notify, { input_type: 1, input_second: 60 });
+
+    const before = calls.length;
+    await client.sendTyping({ chatType: "group", chatId: "g1" });
+    assert.equal(calls.length, before, "群聊不支持输入状态,应静默跳过");
   } finally {
     await client.stop();
   }
