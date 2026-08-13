@@ -57,7 +57,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "local.dyworker.app",
+    "appId": "com.maquesoft.dyworker.app",
     "productName": "DYWorker",
     "asar": true,
     "asarUnpack": [

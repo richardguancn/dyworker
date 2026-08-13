@@ -1556,6 +1556,10 @@ body.resizing-panels .app-shell {
   gap: 8px;
 }
 
+.plan-form-row.plan-form-workspace {
+  grid-template-columns: 1fr;
+}
+
 .settings-dialog label.plan-form-check {
   display: flex;
   flex-direction: row;
@@ -8522,6 +8526,10 @@ html.window-shadow.window-maximized .modal-backdrop {
   font-size: 13px;
 }
 
+.browser-import-from + .browser-import-from {
+  margin-top: 8px;
+}
+
 .browser-import-picker {
   position: relative;
   flex: 1;
@@ -8639,9 +8647,24 @@ html.window-shadow.window-maximized .modal-backdrop {
   width: 38px;
   height: 22px;
   flex: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  appearance: none;
+  cursor: pointer;
   border-radius: 999px;
   background: rgba(69, 71, 66, 0.22);
   transition: background 0.15s ease;
+}
+
+.browser-import-switch:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.browser-import-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .browser-import-switch.on {
@@ -8664,16 +8687,38 @@ html.window-shadow.window-maximized .modal-backdrop {
   transform: translateX(16px);
 }
 
-.browser-import-result {
-  margin: 10px 0 0;
+.browser-import-kind-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-style: normal;
+  font-size: 12px;
   color: #4f7a00;
-  font-size: 12.5px;
+}
+
+.browser-import-profile-select {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
 }
 
 .browser-import-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 6px 0 0;
   color: #b1574e;
   font-size: 12px;
+}
+
+.browser-import-warning > svg {
+  flex: none;
+  margin-top: 1px;
 }
 
 .browser-import-actions {
@@ -8805,4 +8850,42 @@ html.window-shadow.window-maximized .modal-backdrop {
   .queue-card-steer:hover {
     background: rgba(255, 255, 255, 0.09);
   }
+}
+
+/* 右键菜单（消息文本选中复制、输入框复制/剪切/粘贴） */
+.context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  user-select: none;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

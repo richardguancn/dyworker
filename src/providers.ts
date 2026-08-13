@@ -82,6 +82,20 @@ export function matchProvider(endpoint: string): string {
   return preset?.id || "custom";
 }
 
+// 按 baseurl 判断是否走 Responses API：路径以 /responses 结尾即按 Responses 请求，
+// DeepSeek 官方根地址（不带路径）自动视为 Responses；其余按 OpenAI Chat Completions。
+export function usesResponsesApi(endpoint: string): boolean {
+  const value = String(endpoint || "").trim();
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    if (url.hostname === "api.deepseek.com" && (url.pathname === "" || url.pathname === "/")) return true;
+    return /\/responses\/?$/.test(url.pathname);
+  } catch {
+    return /\/responses\/?(?:[?#].*)?$/.test(value);
+  }
+}
+
 // 模型上下文上限（用于用量圆环；为公开资料的近似值，仅作参考）
 export function modelContextLimit(model: string, endpoint: string): number {
   const name = String(model || "").trim().toLowerCase();

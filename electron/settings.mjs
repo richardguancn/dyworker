@@ -82,6 +82,10 @@ function normalizeChannels(channels, secretStorage, direction) {
   const source = channels && typeof channels === "object" ? channels : {};
   const qq = source.qq && typeof source.qq === "object" ? source.qq : {};
   const wechat = source.wechat && typeof source.wechat === "object" ? source.wechat : {};
+  // 渠道审批严格度：auto(自动执行,少打扰)/interactive(严格逐次确认)/其余回退 reviewer
+  const approvalMode = source.approvalMode === "auto" || source.approvalMode === "interactive"
+    ? source.approvalMode
+    : "reviewer";
   if (direction === "serialize") {
     const secret = encryptSecret(qq.appSecret, secretStorage);
     return {
@@ -92,7 +96,7 @@ function normalizeChannels(channels, secretStorage, direction) {
         appSecretEncrypted: secret.encrypted,
       },
       wechat: { enabled: wechat.enabled === true },
-      approvalMode: source.approvalMode === "interactive" ? "interactive" : "reviewer",
+      approvalMode,
       modelProfileId: String(source.modelProfileId || ""),
     };
   }
@@ -103,7 +107,7 @@ function normalizeChannels(channels, secretStorage, direction) {
       appSecret: decryptSecret(qq.appSecret, qq.appSecretEncrypted === true, secretStorage),
     },
     wechat: { enabled: wechat.enabled === true },
-    approvalMode: source.approvalMode === "interactive" ? "interactive" : "reviewer",
+    approvalMode,
     modelProfileId: String(source.modelProfileId || ""),
   };
 }
