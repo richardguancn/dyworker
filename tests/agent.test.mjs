@@ -601,9 +601,10 @@ test("Responses API 输出被截断或流提前结束时不会误报成功", asy
         },
       ]),
     });
-    assert.equal(result.status, "error");
-    assert.equal(result.finalText, "未完成内容");
-    assert.match(result.reason, /未完成|截断/);
+    // 长度截断（max_output_tokens）不再报错终止：内容正常结束，但在最终文本后附截断提示
+    assert.equal(result.status, "done");
+    assert.match(result.finalText, /未完成内容/);
+    assert.match(result.finalText, /长度上限/, "截断时应附提示，避免静默当作完整成功");
   });
 
   await t.test("缺少终止事件", async () => {
@@ -3907,3 +3908,73 @@ test("send_media 工具经 onExtraTool 路由且不被审批拦截（与文本�
   assert.equal(result.status, "done");
   assert.deepEqual(routed, [["send_media", { path: "output/图表.png", caption: "这是结果" }]]);
 });
+
+test("Chat 输出被长度截断时工具调用不执行，回填失败让模型重发", async () => {
+  const root = await makeWorkspace();
+  let requestCount = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写一个文件" }],
+    approvalMode: "full-access",
+    fetchImpl: async (_url, options) => {
+      requestCount += 1;
+      const first = requestCount === 1;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: first
+              ? { role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "a.txt", content: "半截内容" })] }
+              : { role: "assistant", content: "已收到提示，改用更小步骤完成。" },
+            finish_reason: first ? "length" : "stop",
+          }],
+        }),
+      };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(requestCount, 2);
+  const written = await fs.stat(path.join(root, "a.txt")).then(() => true, () => false);
+  assert.equal(written, false, "截断的 write_file 不应被执行");
+});
+
+test("Responses 长度截断拦截工具调用且任务不终止", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写一个文件" }],
+    approvalMode: "full-access",
+    fetchImpl: mockResponsesFetch([
+      {
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [{ type: "function_call", call_id: "c1", name: "write_file", arguments: JSON.stringify({ path: "a.txt", content: "x" }) }],
+      },
+      {
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "好的，我分步来写。" }] }],
+      },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  const written = await fs.stat(path.join(root, "a.txt")).then(() => true, () => false);
+  assert.equal(written, false);
+  assert.match(JSON.stringify(calls[1]?.body || {}), /长度上限截断/, "第二轮请求应携带截断失败的工具结果");
+});
+
+test("Responses 非长度原因的 incomplete 仍然报错终止", async () => {
+  const root = await makeWorkspace();
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: mockResponsesFetch([
+      { status: "incomplete", incomplete_details: { reason: "content_filter" }, output: [] },
+    ]),
+  });
+  assert.equal(result.status, "error");
+});
+

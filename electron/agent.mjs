@@ -2308,9 +2308,10 @@ function messageFromResponses(result) {
   if (result?.status === "failed") throw new Error("模型生成失败");
   if (result?.status === "incomplete") {
     const reason = result.incomplete_details?.reason;
-    throw new Error(reason === "max_output_tokens"
-      ? "模型输出达到长度上限，内容未完成，请缩短任务或分段处理"
-      : `模型输出未完成${reason ? `（${reason}）` : ""}`);
+    // 长度截断不再终止任务：解析已收到的内容并打 truncated 标记，由 runAgent 决定拦截工具调用
+    if (reason !== "max_output_tokens") {
+      throw new Error(`模型输出未完成${reason ? `（${reason}）` : ""}`);
+    }
   }
   let content = "";
   const toolCalls = [];
@@ -2331,6 +2332,9 @@ function messageFromResponses(result) {
   }
   const message = { role: "assistant", content: content || null };
   if (toolCalls.length) message.tool_calls = toolCalls;
+  if (result?.status === "incomplete" && result?.incomplete_details?.reason === "max_output_tokens") {
+    message.truncated = true;
+  }
   return message;
 }
 
@@ -2466,6 +2470,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     const message = result?.choices?.[0]?.message;
     if (!message || typeof message !== "object") throw new Error("模型服务没有返回结果");
     if (result?.usage) onUsage?.(result.usage);
+    if (result?.choices?.[0]?.finish_reason === "length") message.truncated = true;
     return message;
   }
 
@@ -2476,6 +2481,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   let buffer = "";
   let content = "";
   let usage = null;
+  let finishReason = null;
   const toolCalls = new Map();
 
   const applyDelta = (delta) => {
@@ -2509,7 +2515,9 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
         try {
           const chunk = JSON.parse(data);
           if (chunk?.usage) usage = chunk.usage;
-          applyDelta(chunk?.choices?.[0]?.delta);
+          const choice = chunk?.choices?.[0];
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          applyDelta(choice?.delta);
         } catch {
           // 忽略不完整的分片，下一包会补齐
         }
@@ -2521,6 +2529,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   const message = { role: "assistant", content: content || null };
   const calls = [...toolCalls.values()].filter((call) => call.function.name);
   if (calls.length) message.tool_calls = calls;
+  if (finishReason === "length") message.truncated = true;
   return message;
 }
 
@@ -3095,7 +3104,12 @@ export async function runAgent({
       });
 
       const toolCalls = Array.isArray(modelMessage.tool_calls) ? modelMessage.tool_calls : [];
-      if (!toolCalls.length) return withChanges({ status: "done", finalText, memory: savedMemory });
+      if (!toolCalls.length) {
+        if (modelMessage.truncated) {
+          finalText = `${finalText || text}\n\n（模型输出达到长度上限，以上内容可能不完整；如需继续请说「继续」）`.trim();
+        }
+        return withChanges({ status: "done", finalText, memory: savedMemory });
+      }
 
       // 连续多轮发起完全相同的工具调用（名称+参数一致）视为原地打转，提前暂停而不是干等到兜底上限
       const roundSignature = toolCalls.map((call) => `${call?.function?.name || ""}(${String(call?.function?.arguments || "")})`).join("|");
@@ -3107,6 +3121,20 @@ export async function runAgent({
       } else {
         repeatRounds = 0;
         lastRoundSignature = roundSignature;
+      }
+
+      // 输出被长度上限截断：工具参数可能「合法但残缺」（对齐 Pi：stopReason=="length" 本批全部判失败）。
+      // 不执行，逐条回填失败结果让模型缩小范围后重发，防止半截参数写坏文件。
+      if (modelMessage.truncated) {
+        debugLog("tool-result", "模型输出被长度上限截断", `已拦截 ${toolCalls.length} 个工具调用，未执行`);
+        for (const call of toolCalls) {
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: "失败\n模型输出被长度上限截断，本次调用的参数可能不完整，未执行。请缩小本轮产出范围（每次少写一些、拆成更多步），然后重新发起该操作。",
+          });
+        }
+        continue;
       }
 
       // 执行单个工具调用；返回 { finished } 表示交付，{ message } 表示要回传给模型的工具结果
