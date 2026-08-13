@@ -2544,6 +2544,43 @@ function parseArguments(toolCall) {
   }
 }
 
+// 工具参数校验（对齐 Pi validateToolArguments）：按工具声明的 JSON Schema 做轻量校验，
+// 在审批与执行之前拦截类型错误/缺参，给模型稳定的错误文案。
+// 只校验顶层字段；无 schema 的工具（未知/MCP 工具缺声明时）跳过校验。
+function validateToolArguments(schema, args) {
+  if (!schema || typeof schema !== "object") return [];
+  const problems = [];
+  const properties = schema.properties || {};
+  for (const key of Array.isArray(schema.required) ? schema.required : []) {
+    if (args[key] === undefined || args[key] === null) problems.push(`缺少必填参数 ${key}`);
+  }
+  const typeCheckers = {
+    string: (v) => typeof v === "string",
+    integer: (v) => Number.isInteger(v),
+    number: (v) => typeof v === "number" && Number.isFinite(v),
+    boolean: (v) => typeof v === "boolean",
+    array: (v) => Array.isArray(v),
+    object: (v) => v !== null && typeof v === "object" && !Array.isArray(v),
+  };
+  for (const [key, value] of Object.entries(args)) {
+    const spec = properties[key];
+    if (!spec || value === undefined || value === null) continue;
+    const typeOk = typeCheckers[spec.type];
+    if (typeOk && !typeOk(value)) {
+      problems.push(`参数 ${key} 应为 ${spec.type}，实际收到 ${Array.isArray(value) ? "array" : typeof value}`);
+      continue;
+    }
+    if (Array.isArray(spec.enum) && !spec.enum.includes(value)) {
+      problems.push(`参数 ${key} 只能是 ${spec.enum.join(" / ")}`);
+    }
+    if (typeof value === "number") {
+      if (spec.minimum !== undefined && value < spec.minimum) problems.push(`参数 ${key} 不能小于 ${spec.minimum}`);
+      if (spec.maximum !== undefined && value > spec.maximum) problems.push(`参数 ${key} 不能大于 ${spec.maximum}`);
+    }
+  }
+  return problems;
+}
+
 // ---- 审核助手（借鉴 Codex Auto-review：规则定边界、模型做判断）----
 // 审核助手只在“本来要问用户”的边界请求上运行；本机界面操作、
 // 用户钩子强制审批、系统破坏性命令一律绕过审核、直接交给用户。
@@ -2914,6 +2951,12 @@ export async function runAgent({
   // 子代理不派发 dispatch_agent，防止无限递归；审批串行化，避免并行子任务同时弹多个确认
   const availableTools = toolDefinitionsWith(extraTools)
     .filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
+  // 工具参数 schema 索引：availableTools 已含内置工具与 extraTools（MCP 等），校验按名查找，查不到则跳过
+  const toolSchemas = new Map(
+    (availableTools || [])
+      .map((tool) => [tool?.function?.name, tool?.function?.parameters])
+      .filter(([name]) => Boolean(name)),
+  );
   // extraTools 中定义的工具名：工具执行时统一路由到 onExtraTool（见 default 分支）
   const extraToolNames = new Set((extraTools || []).map((tool) => tool?.function?.name).filter(Boolean));
   let approvalChain = Promise.resolve();
@@ -3141,6 +3184,33 @@ export async function runAgent({
       const executeToolCall = async (toolCall) => {
         const name = String(toolCall?.function?.name || "");
         const args = parseArguments(toolCall);
+        // 参数前置校验：非法 JSON 与 schema 不符都在审批、执行之前拦截，文案固定，避免模型原地打转
+        const rawArguments = String(toolCall?.function?.arguments || "").trim();
+        if (rawArguments && rawArguments !== "{}" && rawArguments !== "null") {
+          try {
+            JSON.parse(rawArguments);
+          } catch {
+            debugLog("tool-result", `工具 ${name} 参数不是合法 JSON`, rawArguments.slice(0, 200));
+            return {
+              message: {
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: "失败\n工具参数不是合法的 JSON，未执行。请重新生成参数（注意引号配对、换行转义和括号闭合），不要原样重试。",
+              },
+            };
+          }
+        }
+        const schemaProblems = validateToolArguments(toolSchemas.get(name), args);
+        if (schemaProblems.length) {
+          debugLog("tool-result", `工具 ${name} 参数校验未通过`, schemaProblems.join("；"));
+          return {
+            message: {
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: `失败\n参数不符合要求：${schemaProblems.join("；")}。请修正后重新调用，不要原样重试。`,
+            },
+          };
+        }
         const appKey = String(args.app || "").trim().toLocaleLowerCase();
         const windowKey = String(args.window_id || "").trim().toLocaleLowerCase();
         const elementKey = String(args.element_index || "").trim().toLocaleLowerCase();

@@ -3978,3 +3978,55 @@ test("Responses 非长度原因的 incomplete 仍然报错终止", async () => {
   assert.equal(result.status, "error");
 });
 
+
+test("工具缺少必填参数时在执行前拦截并给出稳定错误", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写一个文件" }],
+    approvalMode: "full-access",
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "a.txt" })] }, // 缺 content
+      { role: "assistant", content: "参数已修正。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  const written = await fs.stat(path.join(root, "a.txt")).then(() => true, () => false);
+  assert.equal(written, false);
+  assert.match(JSON.stringify(calls[1] || {}), /缺少必填参数 content/);
+});
+
+test("工具参数类型不符被拦截", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "算一下 5 个工作日后的日期" }],
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "calculate_workdays", { days: "5" })] }, // days 应为 integer
+      { role: "assistant", content: "已改用数字参数。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.match(JSON.stringify(calls[1] || {}), /参数 days 应为 integer/);
+});
+
+test("工具参数不是合法 JSON 被拦截", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写一个文件" }],
+    approvalMode: "full-access",
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "write_file", arguments: "{broken json" } }] },
+      { role: "assistant", content: "已重新生成参数。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.match(JSON.stringify(calls[1] || {}), /不是合法的 JSON/);
+});
