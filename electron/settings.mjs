@@ -52,6 +52,7 @@ export function needsSecretMigration(stored) {
   const source = stored && typeof stored === "object" ? stored : {};
   if (source.apiKey && source.encrypted !== true) return true;
   if (source.visionApiKey && source.visionApiKeyEncrypted !== true) return true;
+  if (source.ttsApiKey && source.ttsApiKeyEncrypted !== true) return true;
   return (Array.isArray(source.profiles) ? source.profiles : [])
     .some((profile) => profile?.apiKey && profile?.encrypted !== true);
 }
@@ -66,6 +67,7 @@ export function countUndecryptableSecrets(stored, secretStorage) {
   let count = 0;
   if (stuck(source.apiKey, source.encrypted)) count += 1;
   if (stuck(source.visionApiKey, source.visionApiKeyEncrypted)) count += 1;
+  if (stuck(source.ttsApiKey, source.ttsApiKeyEncrypted)) count += 1;
   for (const profile of Array.isArray(source.profiles) ? source.profiles : []) {
     if (stuck(profile?.apiKey, profile?.encrypted)) count += 1;
   }
@@ -171,6 +173,9 @@ export function deserializeSettings(stored, secretStorage) {
     profiles,
     transcriptionEndpoint: String(source.transcriptionEndpoint || ""),
     transcriptionModel: String(source.transcriptionModel || "whisper-1"),
+    ttsEndpoint: String(source.ttsEndpoint || ""),
+    ttsModel: String(source.ttsModel || ""),
+    ttsApiKey: decryptSecret(source.ttsApiKey, source.ttsApiKeyEncrypted === true, secretStorage),
     searxngEndpoint: String(source.searxngEndpoint || ""),
     bochaApiKey: String(source.bochaApiKey || ""),
     domesticSearchOnly: source.domesticSearchOnly === true,
@@ -196,6 +201,9 @@ export function serializeSettings(settings, secretStorage) {
     profiles: normalizedProfiles,
     transcriptionEndpoint: String(settings?.transcriptionEndpoint || "").trim(),
     transcriptionModel: String(settings?.transcriptionModel || "whisper-1").trim(),
+    ttsEndpoint: String(settings?.ttsEndpoint || "").trim(),
+    ttsModel: String(settings?.ttsModel || "").trim(),
+    ttsApiKey: String(settings?.ttsApiKey || "").trim(),
     searxngEndpoint: String(settings?.searxngEndpoint || "").trim(),
     bochaApiKey: String(settings?.bochaApiKey || "").trim(),
     domesticSearchOnly: settings?.domesticSearchOnly === true,
@@ -215,6 +223,7 @@ export function serializeSettings(settings, secretStorage) {
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
+  const ttsSecret = encryptSecret(normalized.ttsApiKey, secretStorage);
   return {
     identity: normalized.identity,
     endpoint: normalized.endpoint,
@@ -225,6 +234,10 @@ export function serializeSettings(settings, secretStorage) {
     visionApiKeyEncrypted: visionSecret.encrypted,
     transcriptionEndpoint: normalized.transcriptionEndpoint,
     transcriptionModel: normalized.transcriptionModel,
+    ttsEndpoint: normalized.ttsEndpoint,
+    ttsModel: normalized.ttsModel,
+    ttsApiKey: ttsSecret.value,
+    ttsApiKeyEncrypted: ttsSecret.encrypted,
     searxngEndpoint: normalized.searxngEndpoint,
     bochaApiKey: normalized.bochaApiKey,
     domesticSearchOnly: normalized.domesticSearchOnly,

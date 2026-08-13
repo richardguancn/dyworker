@@ -3,7 +3,11 @@
 // 消息通道复用 weixin-clawbot SDK(Bot 长轮询),懒加载,渠道未启用时不引入。
 // 本文件不依赖 electron,fetch / Bot 工厂均可注入,方便用 node --test 直接测试。
 
+import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { chunkText } from "./qq-bot.mjs";
+import { MAX_MEDIA_BYTES } from "./manager.mjs";
 import qrcode from "qrcode";
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
@@ -13,6 +17,33 @@ const MAX_QR_REFRESH_COUNT = 3;
 const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 
 export class WechatChannelError extends Error {}
+
+// 按文件头魔数识别图片扩展名（纯函数，供渠道适配器与测试复用）：
+// FFD8→jpg、8950→png、4749→gif、RIFF→webp；识别不出返回 null
+export function sniffImageExtension(buffer) {
+  if (!buffer || buffer.length < 4) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return ".jpg";
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return ".png";
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return ".gif";
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) return ".webp";
+  return null;
+}
+
+// 微信收到的 image/video 落盘扩展名：image 按魔数识别，识别不出用消息自带信息回退
+function extensionForKind(kind, buffer, fileName) {
+  if (kind === "image") return sniffImageExtension(buffer) || ".jpg";
+  if (kind === "video") return ".mp4";
+  const fallback = fileName ? path.extname(String(fileName)) : "";
+  return fallback || sniffImageExtension(buffer) || ".bin";
+}
+
+// 占位文案：纯媒体消息在模型侧用文字描述，桌面会话配合附件展示
+function placeholderTextForKind(kind, fileName) {
+  if (kind === "image") return "[图片]";
+  if (kind === "video") return "[视频]";
+  if (kind === "voice") return "[语音]";
+  return `[文件:${fileName || "附件"}]`;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -101,7 +132,7 @@ async function defaultCreateBot(options) {
   return new Bot(options);
 }
 
-export function createWechatChannel({ token = "", userId = "", baseUrl = "", stateRoot = "", fetchImpl = fetch, createBotImpl = defaultCreateBot, onMessage = () => { }, onStatus = () => { }, onLogin = async () => { } } = {}) {
+export function createWechatChannel({ token = "", userId = "", baseUrl = "", stateRoot = "", mediaDir = "", fetchImpl = fetch, createBotImpl = defaultCreateBot, onMessage = () => { }, onStatus = () => { }, onLogin = async () => { } } = {}) {
   // 空字符串不算配置:凭据缺失时也要落到默认通道地址
   const effectiveBaseUrl = String(baseUrl || "").trim() || DEFAULT_BASE_URL;
   let bot = null;
@@ -122,34 +153,79 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
     });
     bot.on("message", (ctx) => {
       const message = ctx?.message || {};
+      const chatId = String(ctx.fromUserId);
+      lastContextByChat.set(chatId, ctx);
       if (message.kind === "text" && String(message.text || "").trim()) {
-        lastContextByChat.set(String(ctx.fromUserId), ctx);
         onMessage({
           channel: "wechat",
           chatType: "dm",
-          chatId: String(ctx.fromUserId),
-          userId: String(ctx.fromUserId),
+          chatId,
+          userId: chatId,
           userName: "",
           text: String(message.text).trim(),
           messageId: String(message.id || ""),
         });
         return;
       }
-      if (message.kind === "voice" && message.transcript) {
-        lastContextByChat.set(String(ctx.fromUserId), ctx);
+      if (message.kind === "voice") {
+        // 语音自带平台转写；有 transcript 直接当文本，否则按占位文案进任务
+        const transcript = String(message.transcript || "").trim();
         onMessage({
           channel: "wechat",
           chatType: "dm",
-          chatId: String(ctx.fromUserId),
-          userId: String(ctx.fromUserId),
+          chatId,
+          userId: chatId,
           userName: "",
-          text: String(message.transcript).trim(),
+          text: transcript || placeholderTextForKind("voice"),
           messageId: String(message.id || ""),
+          ...(transcript ? {} : { media: [{ kind: "voice", transcript: "", size: Number(message.sizeBytes) || 0 }] }),
         });
         return;
       }
-      // v1 只处理文本/语音转写,其余类型回一句提示
-      lastContextByChat.set(String(ctx.fromUserId), ctx);
+      if (message.kind === "image" || message.kind === "file" || message.kind === "video") {
+        // 下载并解密收到的媒体，写进暂存目录（userData/channel-media/wechat）
+        void (async () => {
+          try {
+            if (Number(message.sizeBytes) > MAX_MEDIA_BYTES) {
+              await ctx.reply("文件超过 50 MB，暂不支持。").catch(() => { });
+              return;
+            }
+            const buffer = await ctx.downloadMedia();
+            if (!buffer || !buffer.length) throw new WechatChannelError("媒体内容为空");
+            if (buffer.byteLength > MAX_MEDIA_BYTES) {
+              await ctx.reply("文件超过 50 MB，暂不支持。").catch(() => { });
+              return;
+            }
+            const fileName = String(message.fileName || "");
+            const extension = extensionForKind(message.kind, buffer, fileName);
+            const messageId = String(message.id || crypto.randomUUID());
+            const dir = mediaDir || "";
+            if (!dir) throw new WechatChannelError("媒体暂存目录未配置");
+            await fs.mkdir(dir, { recursive: true });
+            const filePath = path.join(dir, `${messageId}${extension}`);
+            await fs.writeFile(filePath, buffer);
+            onMessage({
+              channel: "wechat",
+              chatType: "dm",
+              chatId,
+              userId: chatId,
+              userName: "",
+              text: placeholderTextForKind(message.kind, fileName),
+              messageId,
+              media: [{
+                kind: message.kind,
+                filePath,
+                fileName: fileName || `消息${extension}`,
+                size: buffer.byteLength,
+              }],
+            });
+          } catch (error) {
+            await ctx.reply("这个文件暂时读不了，请换个方式发给我。").catch(() => { });
+          }
+        })();
+        return;
+      }
+      // 未知类型回一句提示
       void ctx.reply("目前只支持文字消息,请用文字描述您的需求。").catch(() => { });
     });
     bot.on("error", (error) => {
@@ -204,6 +280,27 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
       if (!ctx) throw new WechatChannelError("没有可回复的微信会话,请对方先发一条消息");
       for (const chunk of chunkText(text)) {
         await ctx.reply(chunk);
+      }
+    },
+    // 出站媒体：parts = [{ type:"text", text } | { type:"media", kind, filePath, fileName?, caption? }]
+    async sendMedia(chat, parts) {
+      const ctx = lastContextByChat.get(String(chat.chatId));
+      if (!ctx) throw new WechatChannelError("请对方先发一条消息再让助手发文件");
+      for (const part of parts || []) {
+        if (!part) continue;
+        if (part.type === "text") {
+          for (const chunk of chunkText(String(part.text || ""))) {
+            await ctx.reply(chunk);
+          }
+          continue;
+        }
+        const kind = part.kind === "video" ? "video" : part.kind === "voice" ? "voice" : part.kind === "file" ? "file" : "image";
+        await ctx.reply({
+          kind,
+          filePath: String(part.filePath || ""),
+          ...(part.fileName ? { fileName: String(part.fileName) } : {}),
+          ...(part.caption ? { text: String(part.caption) } : {}),
+        });
       }
     },
     async sendTyping(chat) {

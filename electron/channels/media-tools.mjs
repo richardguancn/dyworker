@@ -1,0 +1,63 @@
+// 渠道媒体工具（send_media / text_to_speech）：工具定义与路径/大小校验的纯函数部分。
+// 放在 channels/ 下不依赖 electron，方便用 node --test 直接测试；main.mjs 负责把处理器接到
+// runChannelTask 的 extraTools 路由上（设计文档第 4.1 / 5 节）。
+import path from "node:path";
+import { MAX_MEDIA_BYTES } from "./manager.mjs";
+
+// 出站发送白名单：只能发图片或常见文档，禁止可执行文件（.exe/.sh/.bat/.js 等）
+export const CHANNEL_MEDIA_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+  ".pdf", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+  ".zip", ".txt", ".md",
+]);
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
+
+// 扩展名 → 平台媒体 kind
+export function mediaKindForExtension(extension) {
+  return IMAGE_EXTENSIONS.has(String(extension || "").toLowerCase()) ? "image" : "file";
+}
+
+// 校验出站路径：必须落在工作区内、非目录穿越
+export function resolveChannelMediaPath(workspacePath, rawPath) {
+  const value = String(rawPath || "").trim();
+  if (!value) return { ok: false, error: "缺少文件路径" };
+  if (path.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value)) {
+    return { ok: false, error: "只能发送工作区里的文件，不支持绝对路径" };
+  }
+  const parts = value.split(/[\\/]+/);
+  if (parts.some((part) => part === "..")) {
+    return { ok: false, error: "路径不能越出工作区" };
+  }
+  if (!workspacePath) return { ok: false, error: "还没有选择工作区，无法发送文件" };
+  const absolute = path.resolve(workspacePath, value);
+  const root = path.resolve(workspacePath) + path.sep;
+  if (!absolute.startsWith(root)) return { ok: false, error: "路径越出了工作区，已拒绝" };
+  return { ok: true, path: absolute, relative: value };
+}
+
+const stringArg = (description) => ({ type: "string", description });
+
+// 工具定义形状与 electron/browser.mjs 的 browserToolDefinitions 一致
+export function channelMediaToolDefinitions() {
+  const tool = (name, description, properties, required) => ({
+    type: "function",
+    function: { name, description, parameters: { type: "object", properties, required } },
+  });
+  return [
+    tool(
+      "send_media",
+      "把工作区里生成的文件作为结果发回当前 IM 渠道（QQ/微信）。只能发送图片或常见文档（png/jpg/jpeg/gif/webp/bmp/pdf/csv/xlsx/xls/docx/doc/pptx/ppt/zip/txt/md），不能发送可执行文件；路径必须是工作区相对路径；单个文件不超过 50 MB。发送动作与文字回复同权责，不需额外审批。",
+      { path: stringArg("工作区相对路径，如 output/图表.png"), caption: stringArg("可选：随文件附带的说明文字") },
+      ["path"],
+    ),
+    tool(
+      "text_to_speech",
+      "把一段话合成语音并发回当前 IM 渠道（需要先在电脑端设置中配置语音合成服务）。语音按平台要求编码为 silk 格式。",
+      { text: stringArg("要朗读的内容"), path: stringArg("语音文件保存到工作区的相对路径，必须以 .silk 结尾") },
+      ["text", "path"],
+    ),
+  ];
+}
+
+export { MAX_MEDIA_BYTES };

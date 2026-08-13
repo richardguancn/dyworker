@@ -41,6 +41,7 @@
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "silk-wasm": "^3.7.1",
     "weixin-clawbot": "^1.0.0"
   },
   "devDependencies": {

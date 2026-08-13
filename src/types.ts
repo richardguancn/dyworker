@@ -366,6 +366,10 @@ export interface ProviderSettings {
   profiles: ModelProfile[];
   transcriptionEndpoint: string;
   transcriptionModel: string;
+  // 语音合成（渠道语音出站，OpenAI 兼容 /audio/speech；ttsApiKey 为空时回退主模型 apiKey）
+  ttsEndpoint: string;
+  ttsModel: string;
+  ttsApiKey: string;
   searxngEndpoint: string;
   bochaApiKey: string;
   domesticSearchOnly: boolean;

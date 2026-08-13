@@ -7,6 +7,7 @@ import { builtinHooks, isSafePublicUrl, parseModelJson, requestModel, runAgent, 
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
+import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "./channels/media-tools.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
@@ -1081,17 +1082,17 @@ ipcMain.handle("chat:complete", async (_event, payload) => {
   return { content };
 });
 
-ipcMain.handle("voice:transcribe", async (_event, payload) => {
-  const settings = payload?.settings || {};
+// 语音转写：OpenAI 兼容 /audio/transcriptions；桌面录音与 QQ 语音（silk 解码后）共用
+async function transcribeAudio(audioBytes, mimeType, settings) {
   const endpoint = transcriptionEndpoint(settings);
   if (!endpoint || !settings.apiKey) throw new Error("请先在设置中配置语音转写地址和 API 密钥");
-  const audio = Uint8Array.from(Array.isArray(payload?.audio) ? payload.audio : []);
+  const audio = Uint8Array.from(audioBytes || []);
   if (!audio.length) throw new Error("没有收到录音内容");
   if (audio.byteLength > 25 * 1024 * 1024) throw new Error("录音超过 25 MB，请缩短后重试");
-  const mimeType = String(payload?.mimeType || "audio/webm");
-  const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm";
+  const type = String(mimeType || "audio/webm");
+  const extension = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : type.includes("wav") ? "wav" : "webm";
   const body = new FormData();
-  body.append("file", new Blob([audio], { type: mimeType }), `dyworker-recording.${extension}`);
+  body.append("file", new Blob([audio], { type }), `dyworker-recording.${extension}`);
   body.append("model", String(settings.transcriptionModel || "whisper-1"));
   const response = await fetch(endpoint, {
     method: "POST",
@@ -1106,6 +1107,47 @@ ipcMain.handle("voice:transcribe", async (_event, payload) => {
   const text = result?.text || result?.data?.text;
   if (typeof text !== "string" || !text.trim()) throw new Error("语音服务没有返回文字");
   return { text: text.trim() };
+}
+
+// QQ 语音附件是 silk 编码：silk → PCM → 补 WAV 头 → 走现有转写服务
+async function transcribeQqVoice(filePath, settings) {
+  const { decode } = await import("silk-wasm");
+  const silk = await fs.readFile(filePath);
+  const pcm = await decode(silk, 24000);
+  const wav = buildWavFromPcm(Buffer.from(pcm.data), 24000);
+  const result = await transcribeAudio(wav, "audio/wav", settings);
+  return result?.text || "";
+}
+
+// PCM(s16le) + 采样率 → 标准 WAV（44 字节头），供转写服务读取
+function buildWavFromPcm(pcm, sampleRate) {
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+  const dataSize = pcm.byteLength;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+ipcMain.handle("voice:transcribe", async (_event, payload) => {
+  const settings = payload?.settings || {};
+  const audio = Uint8Array.from(Array.isArray(payload?.audio) ? payload.audio : []);
+  const mimeType = String(payload?.mimeType || "audio/webm");
+  return transcribeAudio(audio, mimeType, settings);
 });
 
 // ---- 本地代理 ----
@@ -2526,9 +2568,16 @@ async function defaultChannelWorkspace() {
   return (Array.isArray(sessions) ? sessions : []).find((session) => session?.workspacePath)?.workspacePath || "";
 }
 
+// 入站媒体暂存目录:userData/channel-media（决策记录第 9 节：不写进工作区，只当数据读取）。
+// 目录本身由各适配器下载时递归创建，这里只提供同步路径供 createChannelManager 注入。
+function channelMediaDir() {
+  return path.join(app.getPath("userData"), "channel-media");
+}
+
 const channelManager = createChannelManager({
   readChats: readChannelChats,
   writeChats: (chats) => writeJson(dataFile("channel-chats.json"), chats),
+  mediaDir: channelMediaDir(),
   onStatus: broadcastChannelsStatus,
   onRunTask: runChannelTask,
   onResolvePending: async ({ channel, pending, replyText }) => {
@@ -2563,8 +2612,109 @@ async function reconcileChannels() {
   });
 }
 
+// 入站媒体 → 桌面会话 Attachment[]：有落盘文件的走 describeAttachment（拿缩略图/元数据），
+// 没落盘（如仅转写的语音）构造最小描述，保证桌面消息能渲染附件区
+async function buildChannelAttachments(media) {
+  const result = [];
+  for (const item of Array.isArray(media) ? media : []) {
+    if (!item || typeof item !== "object") continue;
+    const fallback = {
+      name: item.fileName || (item.kind === "voice" ? "语音" : "附件"),
+      path: item.filePath || "",
+      size: Number(item.size) || 0,
+      mimeType: item.mimeType || "application/octet-stream",
+      isImage: item.kind === "image",
+    };
+    if (!item.filePath) {
+      result.push(fallback);
+      continue;
+    }
+    try {
+      result.push(await describeAttachment(item.filePath));
+    } catch {
+      result.push(fallback);
+    }
+  }
+  return result;
+}
+
+// send_media 工具处理器：校验工作区路径、白名单扩展名与 50 MB 上限，登记到 pendingMedia
+// （决策记录第 9 节：出站媒体不额外加审批，但严格限工作区、白名单与大小）
+async function handleChannelSendMedia(args, { workspacePath, pendingMedia }) {
+  const rawPath = String(args?.path || "").trim();
+  const resolved = resolveChannelMediaPath(workspacePath, rawPath);
+  if (!resolved.ok) return { ok: false, result: resolved.error };
+  const stat = await fs.stat(resolved.path).catch(() => null);
+  if (!stat || !stat.isFile()) return { ok: false, result: `文件不存在：${rawPath}` };
+  const extension = path.extname(resolved.path).toLowerCase();
+  if (!CHANNEL_MEDIA_EXTENSIONS.has(extension)) {
+    return { ok: false, result: `不支持发送 ${extension || "无扩展名"} 文件，只能发图片或常见文档` };
+  }
+  if (stat.size > MAX_MEDIA_BYTES) return { ok: false, result: "文件超过 50 MB，不能发送" };
+  const name = path.basename(resolved.path);
+  pendingMedia.push({
+    kind: mediaKindForExtension(extension),
+    filePath: resolved.path,
+    fileName: name,
+    ...(String(args?.caption || "").trim() ? { caption: String(args.caption).trim() } : {}),
+  });
+  return { ok: true, result: `已登记发送：${name}` };
+}
+
+// text_to_speech 工具处理器：TTS 合成（OpenAI 兼容 /audio/speech）→ silk 编码 → 登记到 pendingMedia
+async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings }) {
+  const text = String(args?.text || "").trim();
+  const rawPath = String(args?.path || "").trim();
+  if (!text) return { ok: false, result: "text_to_speech 缺少 text 参数" };
+  if (!rawPath) return { ok: false, result: "text_to_speech 缺少保存路径（工作区相对路径，.silk 结尾）" };
+  const resolved = resolveChannelMediaPath(workspacePath, rawPath);
+  if (!resolved.ok) return { ok: false, result: resolved.error };
+  if (path.extname(resolved.path).toLowerCase() !== ".silk") {
+    return { ok: false, result: "语音文件必须以 .silk 结尾（平台要求 silk 格式）" };
+  }
+  const ttsEndpoint = String(settings?.ttsEndpoint || "").trim();
+  if (!ttsEndpoint) {
+    return { ok: false, result: "语音合成服务还没有配置：请在电脑端设置中填写合成服务地址" };
+  }
+  const apiKey = String(settings?.ttsApiKey || settings?.apiKey || "").trim();
+  const ttsUrl = ttsEndpoint.endsWith("/audio/speech")
+    ? ttsEndpoint
+    : `${ttsEndpoint.replace(/\/+$/, "")}/audio/speech`;
+  let response;
+  try {
+    response = await fetch(ttsUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+      body: JSON.stringify({
+        model: String(settings?.ttsModel || "tts-1"),
+        input: text.slice(0, 2000),
+        voice: "alloy",
+        response_format: "wav",
+      }),
+    });
+  } catch (error) {
+    return { ok: false, result: `语音合成服务连接失败：${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (!response.ok) return { ok: false, result: `语音合成失败（${response.status}），请检查服务配置` };
+  const wav = Buffer.from(await response.arrayBuffer());
+  const { encode, isWav } = await import("silk-wasm");
+  if (!isWav(wav)) {
+    return { ok: false, result: "语音合成服务没有返回 WAV 音频，请确认服务支持 response_format=wav" };
+  }
+  try {
+    const silk = await encode(wav, 0);
+    await fs.mkdir(path.dirname(resolved.path), { recursive: true });
+    await fs.writeFile(resolved.path, Buffer.from(silk.data));
+  } catch (error) {
+    return { ok: false, result: `语音编码失败：${error instanceof Error ? error.message : String(error)}` };
+  }
+  const name = path.basename(resolved.path);
+  pendingMedia.push({ kind: "voice", filePath: resolved.path, fileName: name });
+  return { ok: true, result: `已合成语音并登记发送：${name}` };
+}
+
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
-async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, reply, registerPending, clearPending }) {
+async function runChannelTask({ channel, chat, text, media, chatRecord, isNewChat, reply, replyMedia, registerPending, clearPending }) {
   // 渠道消息不可丢弃:桌面交互任务/定时任务执行期间,排队等待全局空闲
   while (!mcpShuttingDown && (activeAgents.size || runningScheduledTask || runningChannelTask)) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -2576,9 +2726,12 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
   const channelLabel = CHANNEL_LABELS[channel] || channel;
   const sessionId = chatRecord.sessionId;
   const workspacePath = String(chatRecord.workspacePath || "");
-  const userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${text}`;
-  // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加
-  const userMessage = { role: "user", content: userText, createdAt: new Date().toISOString() };
+  // 出站媒体登记（send_media / text_to_speech 工具写入，任务结束随最终回复发回）
+  const pendingMedia = [];
+  // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加。
+  // userMessage 构造需要等待附件信息，放在 try 内完成（语音转写也改变文本内容）。
+  let userText = "";
+  let userMessage = null;
   const sendUserMessage = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (isNewChat) {
@@ -2601,7 +2754,6 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, messages });
   };
   try {
-    sendUserMessage();
     const settings = await readSettings();
     // 渠道任务模型:默认跟随当前模型,可在渠道设置里固定为某个模型档案
     const profileId = String(settings.channels?.modelProfileId || "");
@@ -2615,19 +2767,49 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
     if (!workspacePath) {
       throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
     }
+    // QQ 语音附件是 silk：解码 → WAV → 现有转写服务；失败/未配置时按占位文案进任务并提示
+    let effectiveText = text;
+    const voiceItem = (Array.isArray(media) ? media : []).find((item) => item?.kind === "voice" && item?.filePath);
+    if (channel === "qq" && voiceItem) {
+      try {
+        const transcribed = await transcribeQqVoice(voiceItem.filePath, taskSettings);
+        if (transcribed) effectiveText = `[语音转写] ${transcribed}`;
+      } catch {
+        await reply("收到语音，但语音识别服务还没有配置好。").catch(() => { });
+      }
+    }
+    // 入站媒体 → 桌面附件（缩略图/文件名）；模型可见内容由 providerMessageContent 展开
+    const attachments = await buildChannelAttachments(media);
+    userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${effectiveText}`;
+    userMessage = {
+      role: "user",
+      content: userText,
+      createdAt: new Date().toISOString(),
+      ...(attachments.length ? { attachments } : {}),
+    };
+    sendUserMessage();
     // 渠道审批严格度：默认自动审核，安全操作自动继续，风险操作进入收件箱。
     const approvalMode = settings.channels?.approvalMode === "interactive" ? "interactive" : "reviewer";
-    routeExtraTool = createExtraToolRouter(taskSettings, workspacePath);
+    const baseRouter = createExtraToolRouter(taskSettings, workspacePath);
+    // send_media / text_to_speech 先由渠道媒体处理器接管，其余交给现有 MCP/浏览器路由
+    routeExtraTool = async (name, args) => {
+      if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
+      if (name === "text_to_speech") return handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings: taskSettings });
+      return baseRouter(name, args);
+    };
+    routeExtraTool.dispose = () => baseRouter.dispose();
     const collector = createTranscriptCollector();
     const prior = await visibleConversationForSession(sessionId, "", "");
     const workingContext = await workingContextForSession(sessionId);
+    // 模型可见内容：文本 + 图片块（复用桌面端 providerMessageContent）
+    const contentForModel = await providerMessageContent({ content: userText, attachments });
     await reply("收到,正在处理…").catch(() => { });
     const result = await runAgent({
       settings: taskSettings,
       workspacePath,
       hooks: await readHooks(workspacePath),
       workingContext,
-      conversation: [...prior, { role: "user", content: userText }],
+      conversation: [...prior, { role: "user", content: contentForModel }],
       memories: await readMemories(),
       memoryReviewDue: true,
       skills: await readSkills(workspacePath),
@@ -2635,7 +2817,7 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
       approvalMode,
       standingRules: await readStandingRules(),
       audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode, channel }),
-      extraTools: agentExtraTools(await mcpExtraTools(taskSettings)),
+      extraTools: [...agentExtraTools(await mcpExtraTools(taskSettings)), ...channelMediaToolDefinitions()],
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(sessionId),
@@ -2694,8 +2876,35 @@ async function runChannelTask({ channel, chat, text, chatRecord, isNewChat, repl
       return;
     }
     const finalText = result.finalText || result.reason || "没有产出结果";
-    await reply(finalText).catch(() => { });
-    sendAssistantMessages(collector.buildMessages(userText, result).slice(1));
+    if (pendingMedia.length) {
+      // 出站媒体：finalText 作为第一条 text part，随后每个媒体一条 media part；
+      // 发送失败逐条降级为文字说明（决策记录第 9 节：与文本回复同权责）
+      const parts = [
+        { type: "text", text: finalText },
+        ...pendingMedia.map((item) => ({
+          type: "media",
+          kind: item.kind,
+          filePath: item.filePath,
+          fileName: item.fileName,
+          ...(item.caption ? { caption: item.caption } : {}),
+        })),
+      ];
+      let sendFailed = false;
+      try {
+        await replyMedia(parts);
+      } catch (error) {
+        sendFailed = true;
+        for (const part of parts) {
+          if (part.type !== "media") continue;
+          await reply(`[已生成 ${part.fileName || "文件"}，但发送失败]`).catch(() => { });
+        }
+      }
+      const sentNote = sendFailed ? "" : `（已发送 ${pendingMedia.length} 个文件）`;
+      sendAssistantMessages(collector.buildMessages(userText, result, `${finalText}${sentNote}`).slice(1));
+    } else {
+      await reply(finalText).catch(() => { });
+      sendAssistantMessages(collector.buildMessages(userText, result).slice(1));
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // IM 侧给简明原因(截掉原始 JSON/堆栈),完整信息留在桌面会话里
