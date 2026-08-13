@@ -118,7 +118,7 @@ const chapters = [
     id: 'models',
     icon: '🔌',
     title: '模型接入配置',
-    intro: '兼容 OpenAI Chat Completions 与 Responses API，内置 DeepSeek V4 Flash，支持多套配置自由切换。',
+    intro: '兼容 OpenAI Chat Completions 与 Responses API，内置 DeepSeek V4 Flash / Pro，支持多套配置自由切换。',
     sections: [
       {
         title: '5.1 添加与切换模型',
