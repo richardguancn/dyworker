@@ -2117,8 +2117,9 @@ function messagesHaveImages(messages) {
 const VISION_CACHE_LIMIT = 128;
 const visionDescriptionCache = new Map();
 
-function isDeepSeekV4Flash(settings) {
-  return String(settings?.model || "").trim().toLowerCase() === "deepseek-v4-flash";
+function isDeepSeekV4TextModel(settings) {
+  const model = String(settings?.model || "").trim().toLowerCase();
+  return model === "deepseek-v4-flash" || model === "deepseek-v4-pro";
 }
 
 function imageUrlFromPart(part) {
@@ -2199,12 +2200,12 @@ async function describeImageForTextModel({ settings, endpoint, model, imageUrl, 
 }
 
 async function rewriteImagesForTextModel({ settings, messages, fetchImpl, signal }) {
-  if (!isDeepSeekV4Flash(settings) || !messagesHaveImages(messages)) return messages;
+  if (!isDeepSeekV4TextModel(settings) || !messagesHaveImages(messages)) return messages;
   const endpoint = String(settings.visionEndpoint || "").trim();
   const model = String(settings.visionModel || "").trim();
   const apiKey = String(settings.visionApiKey || "").trim();
   if (!endpoint || !model || !apiKey) {
-    throw new Error("DeepSeek V4 Flash 需要先配置视觉识别服务（地址、模型和密钥）才能识别图片");
+    throw new Error("DeepSeek V4（Flash / Pro）需要先配置视觉识别服务（地址、模型和密钥）才能识别图片");
   }
 
   const jobs = [];

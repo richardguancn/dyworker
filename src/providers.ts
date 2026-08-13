@@ -14,10 +14,10 @@ export const providerPresets: ProviderPreset[] = [
     id: "deepseek",
     name: "DeepSeek（深度求索）",
     endpoint: "https://api.deepseek.com/responses",
-    models: ["deepseek-v4-flash"],
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
     defaultModel: "deepseek-v4-flash",
     keyHint: "platform.deepseek.com 申请",
-    contextLimits: { "deepseek-v4-flash": 1048576 },
+    contextLimits: { "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576 },
     defaultContextLimit: 1048576,
   },
   {
