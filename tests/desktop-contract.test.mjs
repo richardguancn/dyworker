@@ -13,6 +13,7 @@ const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mjs", import.meta.url));
+const localstorageImport = readSource(new URL("../electron/localstorage-import.mjs", import.meta.url));
 const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
 const appUpdater = readSource(new URL("../electron/app-updater.mjs", import.meta.url));
@@ -345,6 +346,8 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(main, /ipcMain\.handle\("browser-import:list"/);
   assert.match(main, /ipcMain\.handle\("browser-import:import"/);
   assert.match(main, /persist:dyworker-browser/);
+  // 会话级 Cookie（登录态多为这种）导入时必须补有效期，否则持久分区重启即丢
+  assert.match(main, /400 \* 86400/);
   assert.match(main, /imported-passwords\.json/);
   assert.match(browserImport, /browser360/);
   assert.match(browserImport, /qaxbrowser/);
@@ -353,6 +356,21 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(browserImport, /node:sqlite/);
   // Chromium 时间戳（1601 纪元微秒，约 1.3e16）超出 2^53，必须按 BigInt 读取否则整个查询抛错
   assert.match(browserImport, /readBigInts:\s*true/);
+  // localStorage 导入：SPA 站点（如 kimi）登录态在 localStorage，只导 Cookie 无法迁移
+  assert.match(browserImport, /readLocalStorageLeveldb/);
+  assert.match(main, /imported-localstorage\.json/);
+  assert.match(main, /browser-import:localstorage-entries/);
+  assert.match(main, /browser-import:localstorage-done/);
+  assert.match(preload, /getImportedLocalStorage/);
+  assert.match(preload, /markImportedLocalStorageDone/);
+  assert.match(app, /站点数据/);
+  // 只勾选站点数据时导入按钮也应可用
+  assert.match(app, /anyKindOn = kinds\.passwords \|\| kinds\.cookies \|\| kinds\.history \|\| kinds\.localstorage/);
+  // localStorage 值自带 1 字节编码标签（0x01=Latin-1/0x00=UTF-16LE），不剥掉令牌首字符会被污染
+  assert.match(localstorageImport, /record\.value\[0\] === 1/);
+  assert.match(localstorageImport, /record\.value\.subarray\(1\)/);
+  assert.match(app, /getImportedLocalStorage/);
+  assert.match(app, /markImportedLocalStorageDone/);
   // 对话框为 Codex 风格：标题 + 来源选择行 + 分类开关（密码/Cookie/浏览记录）
   assert.match(app, /从浏览器导入/);
   assert.match(app, /选择要导入到内置浏览器的数据/);
@@ -851,6 +869,10 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.ok(agentSend.indexOf("const explicitMemories") < agentSend.indexOf("if (!settings.endpoint"));
   assert.match(agent, /externalPathsForTool/);
   assert.match(agent, /withModelTimeout/);
+  // 工作区外路径:用户批准的目录授权在本次任务内覆盖子路径,审核助手放行仍单次
+  assert.match(agent, /isAuthorized\(relativePath\)/);
+  assert.match(agent, /批准后本次任务内有效；批准的是目录时，其子路径同样有效/);
+  assert.match(agent, /persistExternalAuthorization/);
 });
 
 test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱/自我唤醒/留痕/审计)", () => {
@@ -971,6 +993,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   const qqBot = readSource(new URL("../electron/channels/qq-bot.mjs", import.meta.url));
   const wechat = readSource(new URL("../electron/channels/wechat.mjs", import.meta.url));
   const manager = readSource(new URL("../electron/channels/manager.mjs", import.meta.url));
+  const workspaceCmd = readSource(new URL("../electron/channels/workspace.mjs", import.meta.url));
   const types = readSource(new URL("../src/types.ts", import.meta.url));
 
   // 1. QQ 官方机器人:手写协议(appSecret→token、gateway、WSS identify/心跳/resume)、归一化与出站切片
@@ -1011,6 +1034,15 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   // 设置保存与启动时热生效
   assert.match(main, /await reconcileChannels\(\)/);
   assert.match(main, /void reconcileChannels\(\)\.catch/);
+  // 渠道内可整条发送「更换工作目录至…」切换该聊天操作目录,并回写 channel-chats.json
+  assert.match(workspaceCmd, /export function parseWorkspaceSwitch/);
+  assert.match(workspaceCmd, /export async function resolveWorkspaceSwitch/);
+  assert.match(workspaceCmd, /export function looksLikePathDirective/);
+  assert.match(main, /from "\.\/channels\/workspace\.mjs"/);
+  assert.match(main, /parseWorkspaceSwitch\(text\)/);
+  assert.match(main, /resolveWorkspaceSwitch\(workspaceTarget, workspacePath\)/);
+  assert.match(main, /looksLikePathDirective\(workspaceTarget\)/);
+  assert.match(main, /工作目录已更换为/);
 
   // 5. 设置存储:channels 序列化、QQ appSecret 加密、微信凭据独立加密落盘
   assert.match(settingsStorage, /normalizeChannels/);
@@ -1039,6 +1071,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(types, /channel\?: "qq" \| "wechat"/);
   assert.match(app, /session-channel-badge/);
   assert.match(app, /渠道任务模型/);
+  assert.match(app, /workspacePath: payload\.workspacePath \|\| session\.workspacePath/);
   assert.match(main, /await sendTyping\(\)/);
   assert.doesNotMatch(main, /收到,正在处理…/);
   assert.match(main, /outboundAttachments = await buildChannelAttachments\(pendingMedia\)/);

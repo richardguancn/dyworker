@@ -9,6 +9,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readLocalStorageLeveldb } from "./localstorage-import.mjs";
 
 const CHROME_EPOCH_OFFSET_SECONDS = 11644473600; // 1601-01-01 → Unix epoch
 
@@ -274,11 +275,12 @@ function chromeTimeToUnix(microseconds) {
   return Math.floor(value / 1e6) - CHROME_EPOCH_OFFSET_SECONDS;
 }
 
-// 读取并解密指定画像的 Cookie 与密码；浏览记录无需解密。kinds 控制导入哪些类别
+// 读取并解密指定画像的 Cookie 与密码；浏览记录与 localStorage 无需解密。kinds 控制导入哪些类别
 export async function importBrowserData(source, profileId = "Default", kinds = {}) {
   const wantCookies = kinds.cookies !== false;
   const wantPasswords = kinds.passwords !== false;
   const wantHistory = kinds.history !== false;
+  const wantLocalStorage = kinds.localstorage !== false;
   const browsers = await listImportableBrowsers();
   const browser = browsers.find((item) => item.id === source.id && item.userDataDir === source.userDataDir)
     || browsers.find((item) => item.id === source.id);
@@ -301,6 +303,7 @@ export async function importBrowserData(source, profileId = "Default", kinds = {
   const cookies = [];
   const passwords = [];
   const history = [];
+  let localStorageData = {};
   const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-browser-import-"));
   try {
     // Cookie 数据库新版在 Network/Cookies，旧版在画像根目录；连 WAL 一起复制避免浏览器运行中读到半截
@@ -405,6 +408,27 @@ export async function importBrowserData(source, profileId = "Default", kinds = {
         }
       }
     }
+
+    // localStorage：SPA 站点（如 kimi）把登录令牌存在这里，只导 Cookie 无法迁移登录态。
+    // LevelDB 目录整体复制后离线解析（浏览器运行中复制可能带半截文件，解析器已按容错设计）
+    if (wantLocalStorage) {
+      try {
+        const leveldbSource = path.join(profileDir, "Local Storage", "leveldb");
+        const leveldbCopy = path.join(stagingDir, "leveldb");
+        await fs.mkdir(leveldbCopy, { recursive: true });
+        let fileCount = 0;
+        for (const name of await fs.readdir(leveldbSource).catch(() => [])) {
+          if (!/\.(log|ldb|sst)$/i.test(name)) continue;
+          await fs.copyFile(path.join(leveldbSource, name), path.join(leveldbCopy, name)).catch(() => {});
+          fileCount += 1;
+        }
+        if (fileCount) {
+          localStorageData = await readLocalStorageLeveldb(leveldbCopy);
+        }
+      } catch (error) {
+        warnings.push(`读取 localStorage 失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -415,6 +439,7 @@ export async function importBrowserData(source, profileId = "Default", kinds = {
     cookies,
     passwords,
     history,
+    localStorage: localStorageData,
     warnings,
   };
 }

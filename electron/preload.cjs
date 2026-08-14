@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   listImportableBrowsers: () => ipcRenderer.invoke("browser-import:list"),
   importBrowserData: (payload) => ipcRenderer.invoke("browser-import:import", payload),
   listImportedHistory: () => ipcRenderer.invoke("browser-import:history"),
+  getImportedLocalStorage: (origin) => ipcRenderer.invoke("browser-import:localstorage-entries", origin),
+  markImportedLocalStorageDone: (origin) => ipcRenderer.invoke("browser-import:localstorage-done", origin),
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
   onBrowserPanelRequest: (callback) => {

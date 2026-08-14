@@ -16,6 +16,7 @@ import {
   Circle,
   ClipboardPaste,
   Cookie,
+  Database,
   Copy,
   CornerUpLeft,
   FileCode2,
@@ -498,6 +499,8 @@ type BrowserWebviewElement = HTMLElement & {
   goBack?: () => void;
   goForward?: () => void;
   reload?: () => void;
+  getURL?: () => string;
+  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
 };
 
 function WorkspaceNode({ entry, depth = 0, onOpenFile, forceExpand = false }: { entry: WorkspaceEntry; depth?: number; onOpenFile: (entry: WorkspaceEntry) => void; forceExpand?: boolean }) {
@@ -1405,7 +1408,7 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
   const [selectedKey, setSelectedKey] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [profileId, setProfileId] = useState("");
-  const [kinds, setKinds] = useState<BrowserImportKinds>({ passwords: true, cookies: true, history: true });
+  const [kinds, setKinds] = useState<BrowserImportKinds>({ passwords: true, cookies: true, history: true, localstorage: true });
   const [busy, setBusy] = useState(false);
   const [resultText, setResultText] = useState("");
   const [resultCounts, setResultCounts] = useState<Record<keyof BrowserImportKinds, number> | null>(null);
@@ -1433,7 +1436,7 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
   const effectiveProfileId = selected?.profiles.some((profile) => profile.id === profileId)
     ? profileId
     : selected?.profiles[0]?.id || "Default";
-  const anyKindOn = kinds.passwords || kinds.cookies || kinds.history;
+  const anyKindOn = kinds.passwords || kinds.cookies || kinds.history || kinds.localstorage;
 
   const runImport = async () => {
     if (!selected || !window.dyworker?.importBrowserData) return;
@@ -1458,6 +1461,7 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
       if (kinds.passwords) parts.push(`${result.passwords ?? 0} 个密码`);
       if (kinds.cookies) parts.push(`${result.cookies ?? 0} 条 Cookie`);
       if (kinds.history) parts.push(`${result.history ?? 0} 条浏览记录`);
+      if (kinds.localstorage) parts.push(`${result.localStorageOrigins ?? 0} 个站点的本地数据`);
       const summary = `已从${result.browser}导入 ${parts.join("、")}`
         + (result.weakProtection ? "（当前系统没有密钥链，密码以弱保护方式存储）" : "");
       setWarnings(result.warnings || []);
@@ -1466,6 +1470,7 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
         passwords: Number(result.passwords ?? 0),
         cookies: Number(result.cookies ?? 0),
         history: Number(result.history ?? 0),
+        localstorage: Number(result.localStorageKeys ?? 0),
       });
       onDone(summary);
     } catch (importError) {
@@ -1476,10 +1481,11 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
     }
   };
 
-  const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound; unit: string }[] = [
+  const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound; unit: string; note?: string }[] = [
     { key: "passwords", label: "已保存的密码", icon: KeyRound, unit: "个" },
     { key: "cookies", label: "Cookie", icon: Cookie, unit: "条" },
     { key: "history", label: "浏览记录", icon: History, unit: "条" },
+    { key: "localstorage", label: "站点数据", icon: Database, unit: "项", note: "localStorage，kimi 等新站点的登录态在这里" },
   ];
 
   return (
@@ -1556,7 +1562,10 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
                 return (
                   <div className="browser-import-kind-row" key={row.key}>
                     <Icon size={18} />
-                    <span>{row.label}</span>
+                    <span>
+                      {row.label}
+                      {row.note && <small>{row.note}</small>}
+                    </span>
                     {imported !== null && (
                       <em className="browser-import-kind-count">
                         <Check size={13} />已导入 {imported} {row.unit}
@@ -3070,6 +3079,9 @@ function ChannelsPanel({ value, onSave }: {
       <p className="dialog-note">
         渠道消息会在左侧生成独立会话并完整留痕;需要确认的操作会同时发到 IM 和审批收件箱,回复「允许/拒绝」或在收件箱处理都可以。同一时间只执行一个任务,其余消息排队处理。
       </p>
+      <p className="dialog-note">
+        在 IM 里直接发送「更换工作目录至 /某个/路径」可切换这个聊天的操作目录,相对路径基于当前目录;发送「停止」可中止正在执行或排队的任务。
+      </p>
     </>
   );
 }
@@ -4100,6 +4112,8 @@ export function App() {
           return current.map((session) => session.id === payload.sessionId
             ? {
                 ...session,
+                // 渠道里用「更换工作目录至…」切换后，主进程随下一条消息带回新路径
+                workspacePath: payload.workspacePath || session.workspacePath,
                 ...(workingContext !== undefined ? { workingContext } : {}),
                 ...(appendUnread ? { unread: true } : {}),
                 messages: [...session.messages, ...payload.messages],
@@ -4935,6 +4949,44 @@ export function App() {
 
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
   const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
+
+  // 导入的 localStorage 注入：内置浏览器首次访问对应站点时，把暂存的键值写入页面 localStorage 并刷新一次。
+  // SPA 站点（如 kimi）的登录令牌在 localStorage 里，刷新后页面带着令牌重新启动即恢复登录。
+  useEffect(() => {
+    const webview = browserWebviewRef.current;
+    if (!webview || activeToolPanelKind !== "browser" || !activeToolPanelTab?.loadedUrl) return;
+    let disposed = false;
+    const handledUrls = new Set<string>(); // 每个 URL 只处理一次，注入后刷新不会死循环
+    const onDomReady = () => {
+      const url = webview.getURL?.() || "";
+      if (disposed || !/^https?:\/\//i.test(url) || handledUrls.has(url)) return;
+      handledUrls.add(url);
+      let origin = "";
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        return;
+      }
+      void (async () => {
+        try {
+          const entries = await window.dyworker?.getImportedLocalStorage?.(origin);
+          if (!entries || disposed) return;
+          await webview.executeJavaScript?.(
+            `(() => { const data = ${JSON.stringify(entries)}; for (const [k, v] of Object.entries(data)) { try { localStorage.setItem(k, v); } catch { /* 单键失败不阻塞其余 */ } } })()`,
+          );
+          await window.dyworker?.markImportedLocalStorageDone?.(origin);
+          if (!disposed) webview.reload?.();
+        } catch {
+          // 注入失败：保留暂存数据，下次访问该站点时重试
+        }
+      })();
+    };
+    webview.addEventListener("dom-ready", onDomReady);
+    return () => {
+      disposed = true;
+      webview.removeEventListener("dom-ready", onDomReady);
+    };
+  }, [activeToolPanelTab?.id, activeToolPanelTab?.loadedUrl, activeToolPanelKind]);
 
   // 菜单页可见性派生：没有任何标签页时始终显示菜单页（即使全局 closeAll 把菜单状态关掉，
   // 比如拖动面板边框触发的外部点击关闭），避免出现空面板
@@ -7170,7 +7222,7 @@ export function App() {
                   </button>
                   {browserMoreOpen && (
                     <div className="session-menu browser-more-menu" role="menu">
-                      <button role="menuitem" disabled title="暂未实现">在页面中查找</button>
+                      {/* <button role="menuitem" disabled title="暂未实现">在页面中查找</button>
                       <button role="menuitem" disabled title="暂未实现">打印</button>
                       <div className="browser-more-sep" />
                       <div className="browser-more-zoom" aria-label="缩放（暂未实现）">
@@ -7183,14 +7235,14 @@ export function App() {
                       </div>
                       <button role="menuitem" disabled title="暂未实现">显示设备工具栏</button>
                       <button role="menuitem" disabled title="暂未实现">截取屏幕截图</button>
-                      <div className="browser-more-sep" />
+                      <div className="browser-more-sep" /> */}
                       <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setImportDialogOpen(true); }}>导入 Cookie 和密码…</button>
-                      <button role="menuitem" disabled title="暂未实现">密码和自动填充</button>
+                      {/* <button role="menuitem" disabled title="暂未实现">密码和自动填充</button>
                       <button role="menuitem" disabled title="暂未实现">下载</button>
                       <button role="menuitem" disabled title="暂未实现">历史记录</button>
                       <button role="menuitem" disabled title="暂未实现">清除浏览数据</button>
                       <div className="browser-more-sep" />
-                      <button role="menuitem" disabled title="暂未实现">浏览器设置</button>
+                      <button role="menuitem" disabled title="暂未实现">浏览器设置</button> */}
                     </div>
                   )}
                 </div>
@@ -7262,7 +7314,12 @@ export function App() {
       {importDialogOpen && (
         <BrowserImportDialog
           onClose={() => setImportDialogOpen(false)}
-          onDone={(message) => { setNotice(message); refreshImportedHistory(); }}
+          onDone={(message) => {
+            setNotice(message);
+            refreshImportedHistory();
+            // 已打开的页面仍带着旧（未登录）状态，导入后刷新一次让新 Cookie 生效
+            browserWebviewRef.current?.reload?.();
+          }}
           onError={(message) => setError(message)}
         />
       )}
