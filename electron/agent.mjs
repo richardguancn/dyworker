@@ -20,6 +20,10 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 // 同一批工具调用（名称+参数完全相同）连续出现这么多个轮次，判定为原地打转，提前暂停
 const REPEAT_ROUND_LIMIT = 3;
 const MODEL_TIMEOUT_MS = 180_000;
+// 网络层抖动自动重试：fetch 本身连接失败（fetch failed 等）时短暂等待后重试，最多 3 次；
+// 服务端已返回的状态码不重试，交由既有状态码/压缩回退逻辑处理。取消与中止不重试。
+const MODEL_NETWORK_RETRY_LIMIT = 3;
+const MODEL_NETWORK_RETRY_DELAY_MS = 1000;
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_OUTPUT_LIMIT = 20 * 1024;
 const READ_LIMIT = 300 * 1024;
@@ -2032,15 +2036,26 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
 }
 
 async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey }) {
-  const response = await fetchImpl(endpoint || settings.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  let response;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await fetchImpl(endpoint || settings.endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      break;
+    } catch (error) {
+      // 只有连接层失败才重试；已取消/超时中止或重试次数用完时直接抛出。
+      if (signal?.aborted || error?.name === "AbortError" || attempt >= MODEL_NETWORK_RETRY_LIMIT) throw error;
+      await new Promise((resolve) => setTimeout(resolve, MODEL_NETWORK_RETRY_DELAY_MS));
+      if (signal?.aborted) throw error;
+    }
+  }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 1200);
     // 服务商内容安全拦截（阿里云百炼等的 content_filter）：拒的是整段上下文而非新消息，

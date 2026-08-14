@@ -4072,3 +4072,58 @@ test("技能只注入名称与简介，模型用 load_skill 拉取全文", async
   assert.doesNotMatch(firstPayload, /SECRET全文要求/, "首轮请求不应包含模板全文");
   assert.match(JSON.stringify(calls[1] || {}), /SECRET全文要求/, "load_skill 结果应把全文回填给模型");
 });
+
+test("模型请求网络失败自动重试，连上后任务正常完成", async () => {
+  const root = await makeWorkspace();
+  let attempts = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts <= 2) throw new TypeError("fetch failed");
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "重试后成功。" } }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(attempts, 3, "两次连接失败后第三次应成功");
+});
+
+test("网络失败重试 3 次仍连不上时报错终止", async () => {
+  const root = await makeWorkspace();
+  let attempts = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      attempts += 1;
+      throw new TypeError("fetch failed");
+    },
+  });
+  assert.equal(result.status, "error");
+  assert.match(String(result.reason || ""), /fetch failed/);
+  assert.equal(attempts, 4, "首次请求加 3 次重试共 4 次尝试");
+});
+
+test("任务取消时网络重试立即中止，不再等待重试", async () => {
+  const root = await makeWorkspace();
+  let attempts = 0;
+  const controller = new AbortController();
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    signal: controller.signal,
+    isCancelled: () => controller.signal.aborted,
+    fetchImpl: async (_url, options) => {
+      attempts += 1;
+      // 第一次连接失败后立刻请求取消：应直接抛出，不再进入 1 秒等待与第二次请求
+      controller.abort();
+      throw new TypeError("fetch failed");
+    },
+  });
+  assert.equal(result.status, "cancelled");
+  assert.equal(attempts, 1, "取消后不应再重试");
+});
