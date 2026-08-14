@@ -280,13 +280,25 @@ export class Workspace {
     return !this.trustedTempRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep));
   }
 
-  authorizeExternalPaths(values) {
+  // 用户已批准过的工作区外路径（含其子路径）在本次任务内视为已授权。
+  // 用户直接批准（或在完全访问模式下）的授权延续到任务结束；
+  // 审核助手放行、临时放行等场景仍用单次授权，调用方通过 persist 控制。
+  isAuthorized(relativePath) {
+    if (!this.isOutside(relativePath)) return true;
+    const canonical = this.canonicalPath(relativePath);
+    return [...this.externalAuthorizations.keys()].some((allowed) => (
+      canonical === allowed || canonical.startsWith(allowed + path.sep)
+    ));
+  }
+
+  authorizeExternalPaths(values, { persist = false } = {}) {
     const authorized = [...new Set((Array.isArray(values) ? values : [values])
       .map((value) => this.canonicalPath(value))
       .filter((value) => value && value !== this.root && !value.startsWith(this.root + path.sep)))];
     for (const value of authorized) {
       this.externalAuthorizations.set(value, (this.externalAuthorizations.get(value) || 0) + 1);
     }
+    if (persist) return () => { };
     return () => {
       for (const value of authorized) {
         const remaining = (this.externalAuthorizations.get(value) || 0) - 1;
@@ -303,11 +315,7 @@ export class Workspace {
     const value = String(relativePath || "").trim();
     const absolute = path.resolve(this.root, value);
     if (!this.isOutside(value)) return absolute;
-    const canonical = this.canonicalPath(value);
-    const authorized = [...this.externalAuthorizations.keys()].some((allowed) => (
-      canonical === allowed || canonical.startsWith(allowed + path.sep)
-    ));
-    if (!authorized) {
+    if (!this.isAuthorized(value)) {
       throw new Error(`路径在工作区之外，必须先获得用户授权：${value}`);
     }
     return absolute;
@@ -1475,7 +1483,7 @@ export function externalPathsForTool(workspace, name, args = {}) {
   if (name === "run_command") candidates.push(...commandPathCandidates(args.command, workspace));
   return [...new Set(candidates
     .map((value) => String(value || "").trim())
-    .filter((value) => value && workspace.isOutside(value)))];
+    .filter((value) => value && workspace.isOutside(value) && !workspace.isAuthorized(value)))];
 }
 
 // 受信只读程序与复合命令拆分：
@@ -2878,7 +2886,8 @@ export async function runAgent({
   const workspace = new Workspace(workspacePath, { trustTempDirs });
   const priorWorkingContext = limitWorkingContext(String(workingContext || "").trim());
   // 本次任务内的自动放行规则：用户点一次「允许执行」后，同一任务里同类操作不再反复询问；
-  // 只在本轮任务内存活、不落盘；涉及工作区外路径的授权仍保持单次，不进入这里。
+  // 只在本轮任务内存活、不落盘。用户批准的工作区外路径同样只在本次任务内记在
+  // Workspace 里（目录含其子路径），不进入这里的会话规则，也不会跨任务或落盘。
   const sessionRules = [];
   // 审核助手状态：连续拒绝 3 次后熔断，后续审批直接转人工
   const reviewerState = { active: true, consecutiveDenials: 0, total: 0 };
@@ -3292,16 +3301,17 @@ export async function runAgent({
             decision: ruleAllowed ? "rule-allowed" : "auto-allowed",
           });
         }
+        // 是否由用户本人直接批准（而不是审核助手放行或规则放行），决定工作区外路径授权是否延续到任务结束
+        let approvedByUser = false;
         if (decision !== "allow") {
           let approved = decision !== "deny";
           let approvalSource = "user";
           let reviewerReason = "";
-          let approvedByUser = false;
           if (decision === "ask") {
             const details = approvalDetails(name, displayArgs);
             const suggestedRule = suggestStandingRule(name, displayArgs) || undefined;
             const detailText = externalPaths.length
-              ? `工作区外路径（仅本次操作授权）：\n${externalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
+              ? `工作区外路径（批准后本次任务内有效；批准的是目录时，其子路径同样有效）：\n${externalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
               : details;
             const askApproval = async () => {
               const userDecision = await queuedApproval({
@@ -3401,8 +3411,11 @@ export async function runAgent({
         let result;
         let ok = true;
         let supplementalMessages = [];
+        // 用户直接批准或完全访问模式下，授权延续到本次任务结束；
+        // 审核助手放行的外部路径仍按单次授权，之后每次重新评估。
+        const persistExternalAuthorization = approvedByUser || approvalMode === "full-access";
         const releaseExternalAuthorization = externalPaths.length
-          ? workspace.authorizeExternalPaths(externalPaths)
+          ? workspace.authorizeExternalPaths(externalPaths, { persist: persistExternalAuthorization })
           : () => { };
         try {
           switch (name) {
