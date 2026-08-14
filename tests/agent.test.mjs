@@ -759,7 +759,7 @@ test("允许执行后,本次任务内同类命令自动放行(会话级规则不
   assert.equal(approvals, 1, "同类命令第二次应自动放行,不再弹审批");
 });
 
-test("工作区外路径授权不进入会话规则:每次读取仍单独询问", async () => {
+test("工作区外路径授权不进入会话规则:不同外部文件仍分别询问", async () => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
   const approvals = [];
@@ -780,7 +780,59 @@ test("工作区外路径授权不进入会话规则:每次读取仍单独询问"
     ]),
   });
   assert.equal(result.status, "done");
-  assert.equal(approvals.length, 2, "外部路径每次仍需明确授权,不能被会话规则放行");
+  assert.equal(approvals.length, 2, "不同外部文件仍需分别明确授权,不能被会话规则放行");
+});
+
+test("用户批准的工作区外目录授权在本次任务内覆盖子路径", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "allow-writes",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "读取外部目录里的两个文件" }],
+    requestApproval: async (action) => {
+      approvals.push(action.kind);
+      return true;
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "list_files", { path: outside })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c3", "read_file", { path: path.join(outside, "b.txt") })] },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1, "批准目录后,其子路径在本次任务内不应再次询问");
+});
+
+test("替我审批放行的外部路径仍按单次授权,后续操作重新评估", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
+  const calls = [];
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "读两个外部文件" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"读取的是工具链文件"}' },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "read_file", { path: path.join(outside, "b.txt") })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"读取的是工具链文件"}' },
+      { role: "assistant", content: "读取完成。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 0, "审核助手放行不应弹人工审批");
+  const reviewerRounds = calls.filter((call) =>
+    String(call.messages?.at(-1)?.content || "").includes("待审核操作")).length;
+  assert.equal(reviewerRounds, 2, "审核助手放行的外部路径不延续,每次仍需重新评估");
 });
 
 test("替我审批:审核助手放行时不再弹人工审批", async () => {
@@ -1044,6 +1096,25 @@ test("Workspace 的工作区外授权只在单次操作期间有效", async () =
   assert.equal(await workspace.readFile(target), "一次授权");
   release();
   await assert.rejects(workspace.readFile(target), /必须先获得用户授权/);
+});
+
+test("Workspace:persist 授权目录后子路径延续有效,单次授权释放后失效", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "sub/note.txt": "子路径内容" });
+  const target = path.join(outside, "sub", "note.txt");
+  const workspace = new Workspace(root, { trustTempDirs: false });
+  await assert.rejects(workspace.readFile(target), /必须先获得用户授权/);
+  const release = workspace.authorizeExternalPaths([outside], { persist: true });
+  assert.equal(await workspace.readFile(target), "子路径内容");
+  release();
+  assert.equal(await workspace.readFile(target), "子路径内容", "persist 授权在任务内延续,release 为空操作");
+  assert.deepEqual(externalPathsForTool(workspace, "read_file", { path: target }), [], "已授权目录下的路径不再上报为待审批");
+
+  const single = new Workspace(root, { trustTempDirs: false });
+  const singleRelease = single.authorizeExternalPaths([outside]);
+  assert.equal(await single.readFile(target), "子路径内容");
+  singleRelease();
+  await assert.rejects(single.readFile(target), /必须先获得用户授权/);
 });
 
 test("系统临时目录视为工作区内,不再触发审批", async () => {
