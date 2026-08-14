@@ -9,6 +9,7 @@ import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachm
 import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mjs";
 import { chatKeyOf, createChannelManager, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
 import { verifyChannelMediaPath } from "../electron/channels/media-tools.mjs";
+import { looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mjs";
 
 // ---- chunkText ----
 
@@ -39,6 +40,49 @@ test("parseApprovalReply:允许/拒绝/无效 三态", () => {
   for (const text of ["允许执行这个", "好吧", "", "12", "允许吧"]) {
     assert.equal(parseApprovalReply(text), null, text);
   }
+});
+
+// ---- parseWorkspaceSwitch / resolveWorkspaceSwitch ----
+
+test("parseWorkspaceSwitch:识别整条更换工作目录指令,忽略无关消息", () => {
+  for (const text of [
+    "请更换工作目录至xxx/xxx/xx/",
+    "更换工作目录至/Users/me/project",
+    "切换工作目录到 ./frontend",
+    "把工作目录改为/opt/app",
+    "设置工作目录为 \"My Docs/Project\"",
+    "工作目录：/workspace/next",
+  ]) {
+    assert.ok(parseWorkspaceSwitch(text), text);
+  }
+  assert.equal(parseWorkspaceSwitch("请更换工作目录至xxx/xxx/xx/"), "xxx/xxx/xx/");
+  assert.equal(parseWorkspaceSwitch("设置工作目录为 \"My Docs/Project\""), "My Docs/Project");
+  assert.equal(looksLikePathDirective("xxx/xxx/xx/"), true);
+  assert.equal(looksLikePathDirective("./frontend"), true);
+  assert.equal(looksLikePathDirective("frontend"), false);
+  for (const text of ["把项目的工作目录改成 frontend 后再构建", "随便聊聊工作目录", ""]) {
+    assert.equal(parseWorkspaceSwitch(text), null, text);
+  }
+});
+
+test("resolveWorkspaceSwitch:绝对/相对/~/不存在目录", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-channel-ws-"));
+  const target = path.join(root, "sub");
+  await fs.mkdir(target);
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  // macOS 上 /var 是 /private/var 的软链接，realpath 后路径会带 /private 前缀
+  const realRoot = await fs.realpath(root);
+  const realTarget = path.join(realRoot, "sub");
+  assert.equal((await resolveWorkspaceSwitch(root, "")).path, realRoot);
+  assert.equal((await resolveWorkspaceSwitch("sub", root)).path, realTarget);
+  assert.equal((await resolveWorkspaceSwitch("./sub/", root)).path, realTarget);
+  const notFound = await resolveWorkspaceSwitch(path.join(root, "missing"), root);
+  assert.equal(notFound.ok, false);
+  assert.match(notFound.error, /没有找到这个文件夹/);
+  const relativeWithoutBase = await resolveWorkspaceSwitch("sub", "");
+  assert.equal(relativeWithoutBase.ok, false);
+  assert.match(relativeWithoutBase.error, /绝对路径/);
 });
 
 // ---- normalizeQqEvent ----
