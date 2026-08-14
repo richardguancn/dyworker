@@ -9,6 +9,7 @@ import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, verifyChannelMediaPath } from "./channels/media-tools.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
+import { looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "./channels/workspace.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
@@ -929,6 +930,7 @@ ipcMain.handle("browser-import:import", async (event, payload) => {
       cookies: payload?.kinds?.cookies !== false,
       passwords: payload?.kinds?.passwords !== false,
       history: payload?.kinds?.history !== false,
+      localstorage: payload?.kinds?.localstorage !== false,
     };
     const result = await importBrowserData(
       { id: String(payload?.id || ""), userDataDir: String(payload?.userDataDir || "") },
@@ -943,6 +945,10 @@ ipcMain.handle("browser-import:import", async (event, payload) => {
       if (!cookie.host || !cookie.name) continue;
       try {
         const sameSite = cookie.sameSite === 0 ? "no_restriction" : cookie.sameSite === 1 ? "lax" : cookie.sameSite === 2 ? "strict" : "unspecified";
+        // 会话级 Cookie（源浏览器里无有效期）写入持久分区后重启即被 Chromium 丢弃——
+        // 登录态大多靠这种 Cookie，表现为“导入了但还是要登录”。
+        // 导入时给一个 Chromium 上限（400 天）的有效期，让登录态跨重启保留。
+        const expirationDate = cookie.expires > 0 ? cookie.expires : Math.floor(Date.now() / 1000) + 400 * 86400;
         await targetSession.cookies.set({
           url: `http${cookie.secure ? "s" : ""}://${cookie.host.replace(/^\./, "")}${cookie.path || "/"}`,
           name: cookie.name,
@@ -952,7 +958,7 @@ ipcMain.handle("browser-import:import", async (event, payload) => {
           secure: cookie.secure,
           httpOnly: cookie.httpOnly,
           sameSite,
-          ...(cookie.expires ? { expirationDate: cookie.expires } : {}),
+          expirationDate,
         });
         cookieCount += 1;
       } catch {
@@ -996,12 +1002,34 @@ ipcMain.handle("browser-import:import", async (event, payload) => {
       const merged = [...byUrl.values()].sort((a, b) => Number(b.lastVisit || 0) - Number(a.lastVisit || 0)).slice(0, 5000);
       await writeJson(storePath, merged);
     }
+    // localStorage 暂存 userData：SPA 站点（如 kimi）的登录令牌在这里。
+    // 渲染端在内置浏览器首次访问对应站点时取出注入，注入成功后清除（见 browser-import:localstorage-*）
+    let localStorageOriginCount = 0;
+    let localStorageKeyCount = 0;
+    if (result.localStorage && typeof result.localStorage === "object") {
+      const storePath = path.join(app.getPath("userData"), "imported-localstorage.json");
+      const existing = await readJson(storePath, {});
+      const store = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
+      for (const [origin, entries] of Object.entries(result.localStorage)) {
+        if (!/^https?:\/\//i.test(origin) || !entries || typeof entries !== "object") continue;
+        const target = { ...(store[origin] || {}) };
+        for (const [key, value] of Object.entries(entries)) {
+          target[String(key)] = String(value);
+          localStorageKeyCount += 1;
+        }
+        store[origin] = target;
+        localStorageOriginCount += 1;
+      }
+      if (localStorageOriginCount) await writeJson(storePath, store);
+    }
     return {
       ok: true,
       browser: result.browser,
       cookies: cookieCount,
       passwords: passwordCount,
       history: historyCount,
+      localStorageOrigins: localStorageOriginCount,
+      localStorageKeys: localStorageKeyCount,
       warnings: result.warnings,
       weakProtection: !safeStorage.isEncryptionAvailable() && passwordCount > 0,
     };
@@ -1015,6 +1043,27 @@ ipcMain.handle("browser-import:history", async (event) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return [];
   const storePath = path.join(app.getPath("userData"), "imported-history.json");
   return readJson(storePath, []);
+});
+
+// 待注入的 localStorage：webview 首访对应站点时取出注入，成功后确认删除
+ipcMain.handle("browser-import:localstorage-entries", async (event, origin) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return null;
+  const storePath = path.join(app.getPath("userData"), "imported-localstorage.json");
+  const store = await readJson(storePath, {});
+  if (!store || typeof store !== "object" || Array.isArray(store)) return null;
+  const entries = store[String(origin || "")];
+  return entries && typeof entries === "object" ? entries : null;
+});
+
+ipcMain.handle("browser-import:localstorage-done", async (event, origin) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false };
+  const storePath = path.join(app.getPath("userData"), "imported-localstorage.json");
+  const store = await readJson(storePath, {});
+  if (store && typeof store === "object" && !Array.isArray(store) && store[String(origin || "")]) {
+    delete store[String(origin || "")];
+    await writeJson(storePath, store);
+  }
+  return { ok: true };
 });
 ipcMain.handle("workspace:read-markdown", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
@@ -2802,7 +2851,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   const sessionId = chatRecord.sessionId;
   // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
   const storedWorkspace = typeof chatRecord.workspacePath === "string" ? chatRecord.workspacePath.trim() : "";
-  const workspacePath = storedWorkspace || await defaultChannelWorkspace();
+  let workspacePath = storedWorkspace || await defaultChannelWorkspace();
   // 出站媒体登记（send_media / text_to_speech 工具写入，任务结束随最终回复发回）
   const pendingMedia = [];
   // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加。
@@ -2831,6 +2880,43 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, messages });
   };
   try {
+    // 整条消息是「更换工作目录至…」时直接切换该聊天的操作目录，不经过模型。
+    // 目录本身由用户点名的指令确认，等同在电脑端选择工作文件夹，无需再单独审批。
+    const workspaceTarget = parseWorkspaceSwitch(text);
+    if (workspaceTarget) {
+      const switchResult = await resolveWorkspaceSwitch(workspaceTarget, workspacePath);
+      // 明显是路径指令（成功解析，或带分隔符/盘符但目录不存在）才在这里直接答复；
+      // 单 token 又不存在时更像任务正文里的说法，交给模型按普通消息处理。
+      if (switchResult.ok || looksLikePathDirective(workspaceTarget)) {
+        const switchText = switchResult.ok
+          ? `工作目录已更换为：${switchResult.path}。之后的任务都会在这个目录里操作。`
+          : switchResult.error;
+        if (switchResult.ok) {
+          workspacePath = switchResult.path;
+          chatRecord.workspacePath = workspacePath;
+          chatRecord.updatedAt = new Date().toISOString();
+          const chats = await readChannelChats();
+          if (chats[chatKey]) {
+            chats[chatKey].workspacePath = workspacePath;
+            chats[chatKey].updatedAt = chatRecord.updatedAt;
+            await writeJson(dataFile("channel-chats.json"), chats);
+          }
+        }
+        const attachments = await buildChannelAttachments(media);
+        userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${text}`;
+        userMessage = {
+          role: "user",
+          content: userText,
+          createdAt: new Date().toISOString(),
+          ...(attachments.length ? { attachments } : {}),
+        };
+        const switchMessage = { role: "assistant", content: switchText, createdAt: new Date().toISOString() };
+        sendUserMessage();
+        sendAssistantMessages([switchMessage]);
+        await reply(switchText).catch(() => { });
+        return;
+      }
+    }
     const settings = await readSettings();
     // 渠道任务模型:默认跟随当前模型,可在渠道设置里固定为某个模型档案
     const profileId = String(settings.channels?.modelProfileId || "");

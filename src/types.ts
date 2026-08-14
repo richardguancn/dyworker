@@ -277,6 +277,7 @@ export interface BrowserImportKinds {
   cookies: boolean;
   passwords: boolean;
   history: boolean;
+  localstorage: boolean;
 }
 
 export interface BrowserImportResult {
@@ -285,6 +286,8 @@ export interface BrowserImportResult {
   cookies?: number;
   passwords?: number;
   history?: number;
+  localStorageOrigins?: number;
+  localStorageKeys?: number;
   warnings?: string[];
   weakProtection?: boolean;
   error?: string;
@@ -477,6 +480,8 @@ export interface DyworkerBridge {
   listImportableBrowsers(): Promise<BrowserImportSource[]>;
   importBrowserData(payload: { id: string; userDataDir: string; profileId: string; kinds: BrowserImportKinds }): Promise<BrowserImportResult>;
   listImportedHistory(): Promise<ImportedHistoryEntry[]>;
+  getImportedLocalStorage(origin: string): Promise<Record<string, string> | null>;
+  markImportedLocalStorageDone(origin: string): Promise<{ ok: boolean }>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   readWorkspaceFile(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; binary?: boolean; error?: string }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;

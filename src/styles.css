@@ -8642,6 +8642,13 @@ html.window-shadow.window-maximized .modal-backdrop {
   flex: 1;
 }
 
+.browser-import-kind-row > span > small {
+  display: block;
+  margin-top: 2px;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
 .browser-import-switch {
   position: relative;
   width: 38px;
