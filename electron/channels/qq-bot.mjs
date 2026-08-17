@@ -92,7 +92,7 @@ export function normalizeQqEvent(event, botId = "") {
 
 // ---- 客户端 ----
 
-export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl = fetch, webSocketImpl = globalThis.WebSocket, onMessage = () => { }, onStatus = () => { }, now = () => Date.now() } = {}) {
+export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl = fetch, webSocketImpl = globalThis.WebSocket, onMessage = () => { }, onStatus = () => { }, now = () => Date.now(), timeoutMs = 30_000 } = {}) {
   if (!appId || !appSecret) throw new QqBotError("QQ 渠道缺少 appId 或 appSecret");
   let token = "";
   let tokenExpiresAt = 0;
@@ -108,17 +108,68 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
   // 附件下载与消息上送串行化：保持事件到达顺序，避免后到的消息先上送
   let emitChain = Promise.resolve();
 
+  // 所有出站 HTTP 都带上限：QQ 网关/文件分片偶发挂起时，不能让任务永久卡住，
+  // 否则该聊天的后续消息会一直排队且排队数只增不减（渠道任务必须最终收尾）。
+  function withTimeout(url, options = {}) {
+    const controller = new AbortController();
+    const merged = { ...options, signal: controller.signal };
+    let timer = null;
+    return Promise.race([
+      Promise.resolve().then(() => fetchImpl(url, merged)),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          const error = new Error("timeout");
+          error.name = "TimeoutError";
+          reject(error);
+        }, Math.max(1, Number(timeoutMs) || 30_000));
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  async function api(path, { method = "GET", body } = {}) {
+    const auth = await accessToken();
+    let response;
+    try {
+      response = await withTimeout(`${API_BASE}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `QQBot ${auth}` },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (error) {
+      if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+        throw new QqBotError(`QQ API ${method} ${path} 请求超时（${timeoutMs / 1000} 秒无响应）`);
+      }
+      throw error;
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new QqBotError(`QQ API ${method} ${path} 失败:${payload.message || payload.code || response.status}`);
+    }
+    return payload;
+  }
+
   function setStatus(status, detail = "") {
     onStatus({ channel: "qq", status, detail });
   }
 
   async function accessToken() {
     if (token && now() < tokenExpiresAt - TOKEN_REFRESH_MARGIN_MS) return token;
-    const response = await fetchImpl(TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ appId: String(appId), clientSecret: String(appSecret) }),
-    });
+    let response;
+    try {
+      response = await withTimeout(TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ appId: String(appId), clientSecret: String(appSecret) }),
+      });
+    } catch (error) {
+      if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+        throw new QqBotError(`QQ access_token 获取超时（${timeoutMs / 1000} 秒无响应）`);
+      }
+      throw error;
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.access_token) {
       throw new QqBotError(`QQ access_token 获取失败:${payload.message || payload.code || response.status}`);
@@ -126,20 +177,6 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
     token = String(payload.access_token);
     tokenExpiresAt = now() + Number(payload.expires_in || 7200) * 1000;
     return token;
-  }
-
-  async function api(path, { method = "GET", body } = {}) {
-    const auth = await accessToken();
-    const response = await fetchImpl(`${API_BASE}${path}`, {
-      method,
-      headers: { "Content-Type": "application/json", Authorization: `QQBot ${auth}` },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new QqBotError(`QQ API ${method} ${path} 失败:${payload.message || payload.code || response.status}`);
-    }
-    return payload;
   }
 
   function clearTimers() {
@@ -244,9 +281,17 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
   async function downloadAttachment(media, dir, messageId) {
     if (!media?.url) throw new QqBotError("附件没有下载地址");
     const auth = await accessToken();
-    const response = await fetchImpl(String(media.url), {
-      headers: { Authorization: `QQBot ${auth}` },
-    });
+    let response;
+    try {
+      response = await withTimeout(String(media.url), {
+        headers: { Authorization: `QQBot ${auth}` },
+      });
+    } catch (error) {
+      if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+        throw new QqBotError(`QQ 附件下载超时（${timeoutMs / 1000} 秒无响应）`);
+      }
+      throw error;
+    }
     if (!response.ok) throw new QqBotError(`QQ 附件下载失败：${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.byteLength > MAX_MEDIA_BYTES) throw new QqBotError("文件超过 50 MB，暂不支持");
@@ -382,10 +427,18 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       const length = Math.min(part.blockSize || blockSize, Math.max(0, fileSize - offset));
       if (length <= 0) break;
       const chunk = buffer.subarray(offset, offset + length);
-      const putResponse = await fetchImpl(part.presignedUrl, {
-        method: "PUT",
-        body: chunk,
-      });
+      let putResponse;
+      try {
+        putResponse = await withTimeout(part.presignedUrl, {
+          method: "PUT",
+          body: chunk,
+        });
+      } catch (error) {
+        if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+          throw new QqBotError(`QQ 分片上传超时（${timeoutMs / 1000} 秒无响应）`);
+        }
+        throw error;
+      }
       if (!putResponse.ok) {
         const detail = await putResponse.text().catch(() => "");
         throw new QqBotError(`QQ 分片上传失败：HTTP ${putResponse.status} ${String(detail).slice(0, 120)}`);

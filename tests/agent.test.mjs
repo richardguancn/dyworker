@@ -1743,13 +1743,16 @@ test("update_plan 发出计划事件并随结果返回", async () => {
     ]),
   });
   assert.equal(result.status, "done");
+  // PlanStep 现在带稳定 id（process-chain 用于挂活动），标题与状态保持不变
   assert.deepEqual(result.plan, [
-    { title: "查看工作区", status: "in_progress" },
-    { title: "汇总要点", status: "pending" },
+    { title: "查看工作区", status: "in_progress", id: result.plan[0].id },
+    { title: "汇总要点", status: "pending", id: result.plan[1].id },
   ]);
+  assert.ok(result.plan[0].id && result.plan[0].id !== result.plan[1].id, "步骤 id 应稳定且互不相同");
   const planEvent = events.find((event) => event.type === "plan-update");
   assert.ok(planEvent, "应发出 plan-update 事件");
   assert.equal(planEvent.steps.length, 2);
+  assert.ok(planEvent.steps.every((step) => typeof step.id === "string" && step.id), "plan-update 的步骤应带 id");
 });
 
 test("update_plan 拒绝多个进行中的步骤", async () => {
@@ -4197,4 +4200,194 @@ test("任务取消时网络重试立即中止，不再等待重试", async () =>
   });
   assert.equal(result.status, "cancelled");
   assert.equal(attempts, 1, "取消后不应再重试");
+});
+
+// ===== 统一轨迹事件流（trace-console / process-chain 事件层回归）=====
+
+// 收集 trace 事件，验证：seq 连续、turn/step 层级、tool-call 与 tool-result 的 parentSeq 关联、
+// model-request 与 model-response 关联、token-usage 挂到响应下、活动带 phase/stepId 标签。
+test("trace 事件流：连续序号、轮次/步骤、父子关联、token 用量挂接", async () => {
+  const root = await makeWorkspace();
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查看工作区并写一份说明" }],
+    emit: (event) => events.push(event),
+    fetchImpl: mockFetch([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          toolCall("c1", "list_files", { path: "" }),
+          toolCall("c2", "get_datetime", {}),
+        ],
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("c3", "write_file", { path: "notes.md", content: "说明" })],
+      },
+      { role: "assistant", content: "已完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+
+  const traces = events.filter((event) => event.type === "trace").map((event) => event.trace);
+  assert.ok(traces.length >= 10, `应产生足够多的 trace 记录，实际 ${traces.length}`);
+  // 1. seq 连续且不重复
+  const seqs = traces.map((trace) => trace.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "seq 应单调递增");
+  assert.equal(new Set(seqs).size, seqs.length, "seq 不应重复");
+  // 2. 每个 trace 都有基础字段
+  for (const trace of traces) {
+    assert.equal(typeof trace.time, "string", "trace 应有时间戳");
+    // turn=0 表示任务准备阶段（任务开始前的 thinking 活动），正常
+    assert.ok(Number.isInteger(trace.turn) && trace.turn >= 0, "trace 应有轮次");
+    assert.ok(["model-request", "model-response", "tool-call", "tool-result", "token-usage", "activity", "activity-update", "plan-update", "file-change", "agent-finished"].includes(trace.kind), `未知 trace kind：${trace.kind}`);
+    assert.ok(["in", "out"].includes(trace.direction), "trace 应有方向");
+  }
+  // 3. 轮次/步骤：第一轮 tool-call 的 turn 应为 1，第二轮为 2
+  const firstTurnCalls = traces.filter((trace) => trace.kind === "tool-call" && trace.turn === 1);
+  const secondTurnCalls = traces.filter((trace) => trace.kind === "tool-call" && trace.turn === 2);
+  assert.equal(firstTurnCalls.length, 2, "第一轮应有两个工具调用");
+  assert.equal(secondTurnCalls.length, 1, "第二轮应有一个工具调用");
+  // 4. tool-result 通过 parentSeq 关联到 tool-call（标题不同，按 seq 关联）
+  const toolCalls = traces.filter((trace) => trace.kind === "tool-call");
+  const toolResults = traces.filter((trace) => trace.kind === "tool-result");
+  assert.equal(toolCalls.length, 3, "应有 3 个工具调用记录");
+  assert.equal(toolResults.length, 3, "应有 3 个工具结果记录");
+  const resultParents = new Set(toolResults.map((trace) => trace.parentSeq));
+  assert.equal(resultParents.size, 3, "每个工具结果应关联唯一的调用");
+  for (const callTrace of toolCalls) {
+    assert.ok(resultParents.has(callTrace.seq), `工具调用 ${callTrace.title} 应有对应结果`);
+  }
+  // 5. model-response 关联到 model-request；token-usage 关联到响应或请求
+  const requestTraces = traces.filter((trace) => trace.kind === "model-request");
+  const responseTraces = traces.filter((trace) => trace.kind === "model-response");
+  assert.ok(requestTraces.length >= 3 && responseTraces.length >= 3, "每轮都应有请求与响应");
+  for (let index = 0; index < responseTraces.length; index++) {
+    assert.equal(responseTraces[index].parentSeq, requestTraces[index].seq, "model-response 应关联到本轮 model-request");
+  }
+  const usageTraces = traces.filter((trace) => trace.kind === "token-usage");
+  if (usageTraces.length) {
+    for (const usage of usageTraces) {
+      assert.equal(typeof usage.usage?.prompt, "number", "token-usage 应带 usage 字段");
+    }
+  }
+});
+
+// 活动事件带 phase / stepId 标签：update_plan 为 plan 相位、写文件为 execute、
+// 验证类命令为 verify；活动挂到进行中的计划步骤下
+test("活动事件：plan 相位、步骤挂接与 fix 重试标记", async () => {
+  const root = await makeWorkspace();
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "制定计划并执行" }],
+    emit: (event) => events.push(event),
+    fetchImpl: mockFetch([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("p1", "update_plan", {
+          steps: [
+            { title: "查看文件", status: "in_progress" },
+            { title: "修改文件", status: "pending" },
+          ],
+        })],
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("p2", "list_files", { path: "" })],
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("p3", "write_file", { path: "a.txt", content: "1" })],
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("p4", "run_command", { command: "npm run verify" })],
+      },
+      { role: "assistant", content: "完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  const activities = events.filter((event) => event.type === "activity").map((event) => event.activity);
+  const byKind = new Map(activities.map((activity) => [activity.kind, activity]));
+  assert.equal(byKind.get("update_plan")?.phase, "plan");
+  assert.equal(byKind.get("list_files")?.phase, "execute");
+  assert.equal(byKind.get("write_file")?.phase, "execute");
+  assert.equal(byKind.get("run_command")?.phase, "verify", "测试/构建命令应打 verify 相位");
+  // 活动挂到进行中的步骤 id
+  const planEvent = events.find((event) => event.type === "plan-update");
+  const firstStepId = planEvent.steps[0].id;
+  const secondStepId = planEvent.steps[1].id;
+  assert.equal(byKind.get("list_files")?.stepId, firstStepId, "list_files 应挂在进行中的步骤下");
+  assert.equal(byKind.get("write_file")?.stepId, firstStepId, "写文件活动应带步骤 id");
+  // 失败后同目标重试打 fix 相位
+  const root2 = await makeWorkspace();
+  const events2 = [];
+  await runAgent({
+    settings,
+    workspacePath: root2,
+    approvalMode: "full-access",
+    conversation: [{ role: "user", content: "执行并修复" }],
+    emit: (event) => events2.push(event),
+    fetchImpl: mockFetch([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("f1", "run_command", { command: "npm run verify" })],
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("f2", "run_command", { command: "npm run verify" })],
+      },
+      { role: "assistant", content: "通过。" },
+    ]),
+  });
+  const verifyActivities = events2.filter((event) => event.type === "activity" && event.activity.kind === "run_command").map((event) => event.activity);
+  assert.ok(verifyActivities.length >= 2, "应有两次验证活动");
+  assert.equal(verifyActivities[0].phase, "verify", "首次执行为 verify");
+  assert.equal(verifyActivities[1].phase, "fix", "失败后同目标重试应为 fix");
+});
+
+// 子代理事件走独立分支通道：活动带 branch 标记转发（渲染端不混入主活动流），
+// trace 的 depth 加深（轨迹控制台可画出嵌套分支）
+test("子代理事件走分支通道：活动带 branch 标记、trace depth 加深", async () => {
+  const root = await makeWorkspace();
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "派子任务" }],
+    emit: (event) => events.push(event),
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { task: "子任务甲" })] },
+      { role: "assistant", content: "子任务甲完成。" },
+      { role: "assistant", content: "全部完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  const branchActivities = events.filter((event) => event.type === "activity" && event.activity?.branch);
+  assert.ok(branchActivities.length >= 1, "应收到子代理活动（带 branch）");
+  const branch = branchActivities[0].activity.branch;
+  assert.equal(branch.depth, 1, "子代理分支深度为 1");
+  assert.equal(typeof branch.title, "string", "分支应带标题");
+  // 子代理的 trace depth 应为 2（子代理内部 depth=1 + 转发加深 1）
+  const deepTraces = events.filter((event) => event.type === "trace" && event.trace.depth >= 2);
+  assert.ok(deepTraces.length >= 1, "应收到子代理的 trace（depth 加深）");
+  // activity 投影带 activityKind 与 branch（后台任务拓扑页的类型徽标与分支树依赖）
+  const activityTraces = events.filter((event) => event.type === "trace" && event.trace.kind === "activity");
+  assert.ok(activityTraces.some((event) => typeof event.trace.activityKind === "string"), "activity trace 应带 activityKind");
+  const deepActivityTraces = deepTraces.filter((event) => event.trace.kind === "activity");
+  assert.ok(deepActivityTraces.some((event) => event.trace.branch && typeof event.trace.branch.parentId === "string"), "子代理 activity trace 应带 branch.parentId");
+  // 主活动流仍有不带 branch 的活动（如 thinking），未被分支事件污染
+  assert.ok(events.some((event) => event.type === "activity" && !event.activity?.branch), "主活动流应保留无分支活动");
 });

@@ -8896,3 +8896,1432 @@ html.window-shadow.window-maximized .modal-backdrop {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ===== 过程链路视图（process-chain：需求 → 计划 → 执行 → 验证 → 修复 → 交付）===== */
+
+.process-trace-wrap {
+  margin-top: 8px;
+}
+
+.process-trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.process-trace-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+
+.process-trace-toggle.open {
+  border-color: rgba(47, 111, 237, 0.4);
+  color: var(--accent);
+}
+
+.process-trace-meta {
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.process-timeline {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  font-size: 12.5px;
+}
+
+.pt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.pt-header strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.pt-header svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.pt-header-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-header-spacer {
+  flex: 1;
+}
+
+.pt-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.pt-badge-run {
+  background: rgba(47, 111, 237, 0.12);
+  color: var(--accent);
+}
+
+.pt-badge-done {
+  background: rgba(63, 178, 127, 0.16);
+  color: #2e7d4f;
+}
+
+.pt-badge-fail {
+  background: rgba(224, 91, 155, 0.13);
+  color: #c2426f;
+}
+
+.pt-body {
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pt-node {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pt-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+}
+
+.pt-node-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(47, 111, 237, 0.1);
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.pt-node-title {
+  font-weight: 600;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pt-node-title.clickable:hover {
+  color: var(--accent);
+}
+
+.pt-node-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-node-toggle {
+  display: inline-flex;
+  color: var(--quiet);
+  flex: 0 0 auto;
+}
+
+.pt-node-body {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pt-empty {
+  padding: 6px 2px;
+  color: var(--quiet);
+  font-size: 11.5px;
+}
+
+.pt-step.pending .pt-node-icon {
+  background: rgba(140, 144, 136, 0.12);
+  color: var(--quiet);
+}
+
+.pt-step.completed .pt-node-icon {
+  background: rgba(63, 178, 127, 0.15);
+  color: #2e7d4f;
+}
+
+.pt-request-icon {
+  background: rgba(224, 147, 12, 0.14);
+  color: #b06d07;
+}
+
+.pt-deliver-icon {
+  background: rgba(46, 125, 79, 0.15);
+  color: #2e7d4f;
+}
+
+.pt-activity {
+  display: flex;
+  align-items: flex-start;
+}
+
+.pt-activity-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pt-activity-main:hover {
+  background: var(--sidebar-hover);
+}
+
+.pt-activity-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.pt-activity-toggle {
+  display: inline-flex;
+  color: var(--quiet);
+  flex: 0 0 auto;
+}
+
+.pt-activity-detail {
+  margin: 2px 6px 4px 30px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.pt-ok {
+  color: #3fa878;
+  flex: 0 0 auto;
+}
+
+.pt-fail {
+  color: #d65a7c;
+  flex: 0 0 auto;
+}
+
+.pt-spin {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.pt-phase {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.pt-phase-plan {
+  background: rgba(47, 111, 237, 0.12);
+  color: var(--accent);
+}
+
+.pt-phase-execute {
+  background: rgba(224, 147, 12, 0.14);
+  color: #b06d07;
+}
+
+.pt-phase-verify {
+  background: rgba(160, 110, 224, 0.14);
+  color: #7b4fbd;
+}
+
+.pt-phase-fix {
+  background: rgba(224, 91, 155, 0.13);
+  color: #c2426f;
+}
+
+.pt-phase-deliver {
+  background: rgba(63, 178, 127, 0.16);
+  color: #2e7d4f;
+}
+
+.pt-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.pt-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pt-change:hover {
+  background: var(--sidebar-hover);
+}
+
+.pt-change.noop {
+  cursor: default;
+}
+
+.pt-change-path {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-change-nums {
+  display: inline-flex;
+  gap: 5px;
+  font-size: 10.5px;
+  flex: 0 0 auto;
+}
+
+.pt-add {
+  color: #3fa878;
+}
+
+.pt-del {
+  color: #d65a7c;
+}
+
+.pt-meta-count {
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-meta-fail {
+  color: #d65a7c;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-meta-retry {
+  color: #b06d07;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-retries {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 6px;
+}
+
+.pt-retry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.pt-retry-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.pt-retry-fail {
+  background: rgba(224, 91, 155, 0.13);
+  color: #c2426f;
+}
+
+.pt-retry-fix {
+  background: rgba(224, 147, 12, 0.14);
+  color: #b06d07;
+}
+
+.pt-retry-ok {
+  background: rgba(63, 178, 127, 0.16);
+  color: #2e7d4f;
+}
+
+.pt-retry-arrow {
+  color: var(--quiet);
+  flex: 0 0 auto;
+}
+
+.pt-retry-detail {
+  color: var(--quiet);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pt-branch {
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.pt-branch-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.pt-branch-icon {
+  color: #7b4fbd;
+  flex: 0 0 auto;
+}
+
+.pt-branch-title {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pt-branch-title:hover {
+  color: var(--accent);
+}
+
+.pt-branch-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pt-branch-depth {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(160, 110, 224, 0.14);
+  color: #7b4fbd;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.pt-branch-body {
+  padding: 0 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pt-branch-more {
+  padding: 3px 6px;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.pt-branch-result {
+  margin-top: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.pt-deliver-text {
+  padding: 4px 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* ===== 轨迹控制台（trace-console：Overview 时间条 + 明细列表 + 检查器）===== */
+
+.trace-console {
+  position: absolute;
+  z-index: 20;
+  inset: auto 0 0;
+  height: 460px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-strong);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.14);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.trace-console-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.trace-console-header strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.trace-console-header .icon-button {
+  color: var(--muted);
+}
+
+.trace-console-header .icon-button:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.trace-view-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 10px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bubble);
+  flex: 0 0 auto;
+}
+
+.trace-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.trace-view-tab.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs);
+}
+
+.trace-tab-count {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--sidebar-hover);
+  font-size: 10px;
+}
+
+/* 泳道时间线：输入/模型/工具 三条 lane，条长 = 真实耗时（parentSeq 配对推导） */
+.trace-timeline {
+  flex: 0 0 auto;
+  margin: 6px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.trace-lane {
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+}
+
+.trace-lane + .trace-lane {
+  border-top: 1px solid var(--border);
+}
+
+.trace-lane-label {
+  flex: 0 0 auto;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  color: var(--quiet);
+  font-size: 10px;
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+
+.trace-lane-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.trace-lane-bar {
+  position: absolute;
+  top: 6px;
+  height: 12px;
+  min-width: 3px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.trace-lane-tick {
+  position: absolute;
+  top: 5px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  border: 0;
+  border-radius: 1px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.trace-lane-bar:hover,
+.trace-lane-tick:hover {
+  opacity: 1;
+  transform: scaleY(1.18);
+}
+
+.trace-lane-bar.selected,
+.trace-lane-tick.selected {
+  opacity: 1;
+  box-shadow: 0 0 0 1.5px var(--card), 0 0 0 3px var(--accent);
+}
+
+.trace-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 0;
+  flex: 0 0 auto;
+}
+
+/* 时间线模式切换（耗时/轮次/调用）：分段控件，与视图 tabs 同族 */
+.trace-mode-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bubble);
+  flex: 0 0 auto;
+}
+
+.trace-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.trace-mode-tab.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs);
+}
+
+.trace-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 220px;
+  min-width: 120px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--quiet);
+}
+
+.trace-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.trace-search input::placeholder {
+  color: var(--quiet);
+}
+
+.trace-toolbar select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-family: inherit;
+}
+
+.trace-toolbar-count {
+  color: var(--quiet);
+  font-size: 11px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* 主体：左列表 + 右检查器 */
+.trace-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.trace-list {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.trace-list-body {
+  position: relative;
+}
+
+.trace-turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--quiet);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding-left: 4px;
+  user-select: none;
+  font-family: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, ui-sans-serif, sans-serif;
+}
+
+.trace-turn-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.trace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.trace-row:hover {
+  background: var(--sidebar-hover);
+}
+
+.trace-row.selected {
+  background: rgba(47, 111, 237, 0.1);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.trace-indent {
+  flex: 0 0 auto;
+}
+
+.trace-child-mark {
+  color: var(--quiet);
+  flex: 0 0 auto;
+}
+
+.trace-kind-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.kind-model-request { background: rgba(79, 142, 247, 0.16); color: #4f8ef7; }
+.kind-model-response { background: rgba(139, 92, 246, 0.16); color: #8b5cf6; }
+.kind-tool-call { background: rgba(232, 147, 12, 0.16); color: #c97c05; }
+.kind-tool-result { background: rgba(232, 147, 12, 0.1); color: #c97c05; }
+.kind-token-usage { background: rgba(154, 164, 178, 0.22); color: #6f7783; }
+.kind-activity { background: rgba(47, 181, 201, 0.16); color: #1f9fb2; }
+.kind-activity-update { background: rgba(121, 207, 223, 0.2); color: #2fa8bd; }
+.kind-plan-update { background: rgba(212, 177, 6, 0.18); color: #a98f04; }
+.kind-file-change { background: rgba(224, 91, 155, 0.16); color: #c94d84; }
+.kind-agent-finished { background: rgba(46, 125, 79, 0.18); color: #2e7d4f; }
+
+.trace-direction {
+  flex: 0 0 auto;
+  color: var(--quiet);
+  font-size: 10.5px;
+}
+
+.trace-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, ui-sans-serif, sans-serif;
+}
+
+/* 工具调用行内联的配对结果预览（→ 结果，参考 trace UI 的单行摘要） */
+.trace-row-preview {
+  flex: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.trace-row-time {
+  flex: 0 0 auto;
+  color: var(--quiet);
+  font-size: 10.5px;
+}
+
+.trace-empty-row {
+  padding: 12px 8px;
+  color: var(--quiet);
+  font-size: 11.5px;
+}
+
+/* 右侧检查器：徽标头 + 摘要/预览/原始 标签页 */
+.trace-side {
+  flex: 0 0 auto;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  font-family: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, ui-sans-serif, sans-serif;
+}
+
+.trace-side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.trace-side-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.trace-side-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.trace-side-tab {
+  padding: 6px 8px 5px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.trace-side-tab:hover {
+  color: var(--ink);
+}
+
+.trace-side-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.trace-side-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 10px;
+  scrollbar-width: thin;
+}
+
+.trace-side-title {
+  margin: 2px 0 8px;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.trace-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trace-field {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2.5px 0;
+  font-size: 11.5px;
+}
+
+.trace-field-label {
+  flex: 0 0 auto;
+  width: 40px;
+  color: var(--quiet);
+}
+
+.trace-field-value {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.trace-side-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trace-empty {
+  color: var(--quiet);
+  font-size: 11.5px;
+}
+
+/* TraceConsole 的「日志」视图：浅色面板（--card）内复用为深色控制台设计的 .debug-entry 会灰底灰字看不清，单独适配 */
+.trace-console .debug-console-body {
+  color: var(--ink);
+  scrollbar-color: var(--border-strong) transparent;
+}
+.trace-console .debug-console-empty {
+  color: var(--quiet);
+}
+.trace-console .debug-entry summary::before {
+  color: var(--quiet);
+}
+.trace-console .debug-entry summary:hover {
+  background: var(--sidebar-hover);
+}
+.trace-console .debug-entry-time {
+  color: var(--quiet);
+}
+.trace-console .debug-entry-title {
+  color: var(--ink);
+}
+.trace-console .debug-entry pre {
+  background: var(--bubble);
+  color: var(--muted);
+  border-left-color: var(--border);
+}
+.trace-console .debug-model-request .debug-entry-kind { color: #3d6bd6; }
+.trace-console .debug-model-response .debug-entry-kind { color: #3f8a3f; }
+.trace-console .debug-tool-call .debug-entry-kind { color: #b06a00; }
+.trace-console .debug-tool-result .debug-entry-kind { color: #6f5aa8; }
+
+/* ===== 工作台 Phase 1：文件引用 / 编辑保存 / Git 写操作 / 布局 ===== */
+
+/* 文件树行尾「@引用」按钮（悬停显示） */
+.tree-node {
+  position: relative;
+}
+
+.tree-row {
+  padding-right: 26px;
+}
+
+.tree-ref-button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--sidebar-hover);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease, color 100ms ease;
+  padding: 0;
+}
+
+.tree-node:hover .tree-ref-button,
+.tree-ref-button:focus-visible {
+  opacity: 1;
+}
+
+.tree-ref-button:hover {
+  color: var(--accent);
+}
+
+/* 文件预览：未保存草稿徽标、编辑按钮、编辑器 */
+.file-draft-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(224, 147, 12, 0.14);
+  color: #b06d07;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.file-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  outline: none;
+  background: var(--card);
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  tab-size: 2;
+}
+
+.file-editor:focus {
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 237, 0.5);
+}
+
+/* 审阅面板：文件级暂存/放弃、提交/推送 */
+.review-diff-filebar-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.review-diff-filebar-wrap .review-diff-filebar {
+  position: static;
+  border-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.review-file-section.collapsed .review-diff-filebar-wrap {
+  border-bottom-color: transparent;
+}
+
+.review-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  flex: 0 0 auto;
+}
+
+.review-file-actions .icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.review-commit-toggle,
+.review-push-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.review-commit-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.review-commit-box input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.review-commit-box input:focus {
+  border-color: rgba(47, 111, 237, 0.5);
+}
+
+.review-commit-go {
+  flex: none;
+  padding: 5px 14px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.review-commit-go:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.review-commit-go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ===== 后台任务拓扑页（workbench Phase 2）===== */
+
+.tool-panel-tasks {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.background-tasks {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+.bt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.bt-header strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.bt-header-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--quiet);
+  font-size: 11.5px;
+}
+
+.bt-header-spacer {
+  flex: 1;
+}
+
+.bt-meta {
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bt-meta-run {
+  color: var(--accent);
+}
+
+.bt-meta-fail {
+  color: #d65a7c;
+}
+
+.bt-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.bt-cancel-armed {
+  border-color: rgba(224, 91, 155, 0.5);
+  color: #c2426f;
+  background: rgba(224, 91, 155, 0.1);
+}
+
+.bt-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  color: var(--quiet);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.bt-empty svg {
+  color: var(--quiet);
+  opacity: 0.6;
+}
+
+.bt-empty strong {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bt-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.bt-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.bt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bt-row:hover {
+  background: var(--sidebar-hover);
+}
+
+.bt-chevron {
+  width: 13px;
+  flex: 0 0 13px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--quiet);
+}
+
+.bt-chevron-spacer {
+  display: inline-block;
+}
+
+.bt-branch-icon {
+  color: #7b4fbd;
+  flex: 0 0 auto;
+}
+
+.bt-ok {
+  color: #3fa878;
+  flex: 0 0 auto;
+}
+
+.bt-fail {
+  color: #d65a7c;
+  flex: 0 0 auto;
+}
+
+.bt-spin {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.bt-kind-badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+  background: rgba(47, 111, 237, 0.12);
+  color: var(--accent);
+}
+
+.bt-kind-badge.success {
+  background: rgba(63, 178, 127, 0.15);
+  color: #2e7d4f;
+}
+
+.bt-kind-badge.error {
+  background: rgba(224, 91, 155, 0.13);
+  color: #c2426f;
+}
+
+.bt-branch-title {
+  flex: 0 1 auto;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(160, 110, 224, 0.12);
+  color: #7b4fbd;
+  font-size: 10.5px;
+}
+
+.bt-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bt-phase {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--sidebar-hover);
+  color: var(--muted);
+}
+
+.bt-count {
+  flex: 0 0 auto;
+  color: var(--quiet);
+  font-size: 10.5px;
+}
+
+.bt-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.bt-detail {
+  margin: 0 8px 6px 40px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+  scrollbar-width: thin;
+}

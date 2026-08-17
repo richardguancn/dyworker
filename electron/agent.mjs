@@ -2943,30 +2943,222 @@ export async function runAgent({
   }
 
   let activityCounter = 0;
-  const startActivity = (kind, title, detail = "") => {
+  let currentPlanStepId = ""; // 最近一次 plan-update 中 in_progress 步骤的 id，用于给活动挂步骤
+  // 失败→修复重试：同一目标（工具名+参数签名）失败后再次执行，活动打 phase=fix（链路视图画重试环）
+  const failedTargets = new Map();
+  const targetKeyFor = (kind, args) => {
+    const signature = String(args === undefined ? "" : JSON.stringify(args || {})).slice(0, 300);
+    return `${kind}:${signature}`;
+  };
+  // 活动阶段（process-chain）：plan / execute / verify / fix / deliver
+  const phaseForActivity = (kind, args) => {
+    if (kind === "update_plan") return "plan";
+    if (kind === "finish") return "deliver";
+    if (kind === "run_command") {
+      const command = String(args?.command || "").toLowerCase();
+      if (/(^|[\s;&|])(npm run (verify|build|test)|npm test|node --test|pnpm test|yarn test|pytest|go test|make test|tsc(\s|$)|npx tsc|vitest|jest)([\s;&|]|$)/.test(command)) return "verify";
+    }
+    if (["check_official_document", "scan_sensitive_info", "calculate_workdays"].includes(kind)) return "verify";
+    return "execute";
+  };
+  const startActivity = (kind, title, detail = "", meta = {}) => {
     const id = `act-${Date.now()}-${++activityCounter}`;
-    emit({ type: "activity", activity: { id, kind, title, detail, status: "running" } });
+    const phase = meta.phase || phaseForActivity(kind, meta.args);
+    const targetKey = targetKeyFor(kind, meta.args);
+    let finalPhase = phase;
+    if (failedTargets.has(targetKey)) {
+      finalPhase = "fix";
+      failedTargets.delete(targetKey);
+    }
+    const activity = {
+      id,
+      kind,
+      title,
+      detail,
+      status: "running",
+      ...(meta.stepId || currentPlanStepId ? { stepId: meta.stepId || currentPlanStepId } : {}),
+      ...(finalPhase ? { phase: finalPhase } : {}),
+      ...(meta.branch ? { branch: meta.branch } : {}),
+    };
+    activityTargets.set(id, { kind, key: targetKey });
+    traceEmit({ type: "activity", activity });
     return id;
   };
   const finishActivity = (id, status, detail) => {
-    emit({ type: "activity-update", id, status, detail });
+    // 活动结束时如果失败，记录失败目标，供后续同目标执行时打 fix 相位
+    if (status === "error") {
+      const record = activityTargets.get(id);
+      if (record) failedTargets.set(record.key, true);
+    }
+    traceEmit({ type: "activity-update", id, status, detail });
   };
+  // 活动 id → { kind, key }，供 finishActivity 失败时登记重试目标
+  const activityTargets = new Map();
 
   // 控制台调试事件：把模型请求/响应、工具调用/结果推给渲染端的控制台窗口
   let debugCounter = 0;
   let interfaceImagesSupported = true;
   const computerUseControls = new Map();
-  const debugLog = (kind, title, content) => {
-    emit({
-      type: "debug-log",
-      entry: {
-        id: `dbg-${Date.now()}-${++debugCounter}`,
-        time: new Date().toISOString(),
-        kind,
-        title,
-        content: clipped(typeof content === "string" ? content : JSON.stringify(content, null, 2), 12000),
-      },
-    });
+  const debugLog = (kind, title, content, options = {}) => {
+    const entry = {
+      id: `dbg-${Date.now()}-${++debugCounter}`,
+      time: new Date().toISOString(),
+      kind,
+      title,
+      content: clipped(typeof content === "string" ? content : JSON.stringify(content, null, 2), 12000),
+      ...(options.traceKey ? { traceKey: options.traceKey } : {}),
+    };
+    traceEmit({ type: "debug-log", entry });
+  };
+
+  // ===== 统一轨迹事件流（trace-console 底层，与 process-chain 共用）=====
+  // 一切模型看到的内容都进同一条 append-only 事件流，保留原有 debug-log / activity
+  // 等事件不动（向后兼容），trace 是其上的结构化投影，供轨迹控制台与链路视图回放。
+  // 字段：seq(连续序号) / time / turn(轮次) / step(轮内步骤) / kind / direction(in|out) /
+  //       target(model|tool|system) / parentSeq(父子关联) / title / content / timing / usage / depth
+  let traceSeq = 0;
+  let traceTurn = 0;
+  let traceStep = 0;
+  // 子代理（depth>0）从自身深度起算，转发时再加深，轨迹控制台据此画出嵌套分支
+  let traceDepth = depth;
+  let lastModelRequestSeq = 0;
+  let lastModelResponseSeq = 0;
+  let lastModelResponseUsage = null;
+  const traceRefSeqs = new Map(); // traceKey（工具调用 id）→ tool-call 的 seq，用于 tool-result 关联
+  const makeTrace = (partial) => {
+    traceSeq += 1;
+    return {
+      seq: traceSeq,
+      time: new Date().toISOString(),
+      turn: traceTurn,
+      step: traceStep,
+      depth: traceDepth,
+      ...partial,
+    };
+  };
+  // 包装 emit：先投影出 trace 事件（新通道），再原样转发原事件（旧通道），两不相扰
+  const traceEmit = (agentEvent) => {
+    try {
+      let trace = null;
+      switch (agentEvent?.type) {
+        case "debug-log": {
+          const entry = agentEvent.entry || {};
+          const title = String(entry.title || "");
+          const content = String(entry.content ?? "");
+          const key = entry.traceKey;
+          if (entry.kind === "model-request") {
+            traceTurn += 1;
+            traceStep = 0;
+            lastModelRequestSeq = traceSeq + 1;
+            lastModelResponseSeq = 0;
+            lastModelResponseUsage = null;
+            trace = makeTrace({ kind: "model-request", direction: "in", target: "model", title, content });
+          } else if (entry.kind === "model-response") {
+            traceStep += 1;
+            lastModelResponseSeq = traceSeq + 1;
+            trace = makeTrace({
+              kind: "model-response",
+              direction: "out",
+              target: "model",
+              title,
+              content,
+              parentSeq: lastModelRequestSeq || undefined,
+              ...(lastModelResponseUsage ? { usage: lastModelResponseUsage } : {}),
+            });
+            lastModelResponseUsage = null;
+          } else if (entry.kind === "tool-call") {
+            traceStep += 1;
+            trace = makeTrace({ kind: "tool-call", direction: "in", target: "tool", title, content });
+            if (key) traceRefSeqs.set(key, trace.seq);
+          } else if (entry.kind === "tool-result") {
+            traceStep += 1;
+            const parentSeq = key ? traceRefSeqs.get(key) : undefined;
+            if (key) traceRefSeqs.delete(key);
+            trace = makeTrace({ kind: "tool-result", direction: "out", target: "tool", title, content, ...(parentSeq ? { parentSeq } : {}) });
+          }
+          break;
+        }
+        case "token-usage": {
+          lastModelResponseUsage = { prompt: agentEvent.prompt, completion: agentEvent.completion, estimated: Boolean(agentEvent.estimated) };
+          trace = makeTrace({
+            kind: "token-usage",
+            direction: "out",
+            target: "model",
+            title: "token 用量",
+            content: "",
+            parentSeq: lastModelResponseSeq || lastModelRequestSeq || undefined,
+            usage: { prompt: agentEvent.prompt, completion: agentEvent.completion, estimated: Boolean(agentEvent.estimated) },
+          });
+          break;
+        }
+        case "activity": {
+          const activity = agentEvent.activity || {};
+          trace = makeTrace({
+            kind: "activity",
+            direction: "in",
+            target: "system",
+            title: String(activity.title || ""),
+            content: String(activity.detail || ""),
+            activityId: activity.id,
+            ...(activity.kind ? { activityKind: activity.kind } : {}),
+            ...(activity.phase ? { phase: activity.phase } : {}),
+            ...(activity.stepId ? { stepId: activity.stepId } : {}),
+            ...(activity.branch ? { branch: activity.branch } : {}),
+          });
+          break;
+        }
+        case "activity-update": {
+          trace = makeTrace({
+            kind: "activity-update",
+            direction: "out",
+            target: "system",
+            title: String(agentEvent.id || ""),
+            // 状态与最终详情一起入内容（如命令输出），供时间线展开查看
+            content: JSON.stringify({ status: String(agentEvent.status || ""), detail: String(agentEvent.detail || "") }),
+            activityId: String(agentEvent.id || ""),
+            status: String(agentEvent.status || ""),
+            ...(agentEvent.branch ? { branch: agentEvent.branch } : {}),
+          });
+          break;
+        }
+        case "plan-update": {
+          trace = makeTrace({
+            kind: "plan-update",
+            direction: "out",
+            target: "system",
+            title: "计划更新",
+            content: JSON.stringify(agentEvent.steps || []),
+          });
+          break;
+        }
+        case "file-change": {
+          trace = makeTrace({
+            kind: "file-change",
+            direction: "out",
+            target: "system",
+            title: "文件变更",
+            content: JSON.stringify(agentEvent.changes || []),
+          });
+          break;
+        }
+        case "agent-finished": {
+          trace = makeTrace({
+            kind: "agent-finished",
+            direction: "out",
+            target: "system",
+            title: "任务结束",
+            content: JSON.stringify(agentEvent.result || {}),
+          });
+          break;
+        }
+        default:
+          break;
+      }
+      if (trace) emit({ type: "trace", trace });
+    } catch {
+      // trace 只是投影，任何异常都不影响原事件流
+    }
+    emit(agentEvent);
   };
 
   // 审计日志（借鉴 openworker audit）：有副作用的工具调用，审批决策与执行结果落盘。
@@ -3029,7 +3221,7 @@ export async function runAgent({
     } else {
       fileChanges.push({ path: changePath, added, removed, ...(diff ? { diff } : {}) });
     }
-    emit({ type: "file-change", changes: fileChanges.map((item) => ({ ...item })) });
+    traceEmit({ type: "file-change", changes: fileChanges.map((item) => ({ ...item })) });
   };
   let planSteps = null;
   const withChanges = (result) => {
@@ -3063,12 +3255,12 @@ export async function runAgent({
           signal,
           onSummary: (summary) => {
             debugLog("tool-call", "上下文自动压缩（compact）", summary);
-            emit({ type: "context-compacted" });
+            traceEmit({ type: "context-compacted" });
           },
           onUsage: (usage) => {
             const used = Number(usage?.prompt_tokens);
             if (Number.isFinite(used) && used > 0) {
-              emit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
+              traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
             }
           },
         }));
@@ -3100,13 +3292,13 @@ export async function runAgent({
               usageSeen = true;
               const completion = Number(usage?.completion_tokens) || 0;
               const total = Number(usage?.total_tokens) || used + completion;
-              emit({ type: "context-usage", used, completion, total, estimated: false });
-              emit({ type: "token-usage", model: settings.model, prompt: used, completion, estimated: false });
+              traceEmit({ type: "context-usage", used, completion, total, estimated: false });
+              traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion, estimated: false });
             }
           },
           onText: (streamed) => {
             finalText = streamed;
-            emit({ type: "assistant-text", text: streamed });
+            traceEmit({ type: "assistant-text", text: streamed });
           },
         }));
       try {
@@ -3130,7 +3322,7 @@ export async function runAgent({
                 keepRecent: 8,
                 onSummary: (summary) => {
                   debugLog("tool-call", "服务端判定上下文超限，强制压缩（compact）", summary);
-                  emit({ type: "context-compacted" });
+                  traceEmit({ type: "context-compacted" });
                 },
               }));
               if (compacted) continue;
@@ -3160,8 +3352,8 @@ export async function runAgent({
         const prompt = estimateMessagesTokens(messages);
         const completion = estimateTextTokens(messageText(modelMessage))
           + (modelMessage.tool_calls || []).reduce((sum, call) => sum + estimateTextTokens(call?.function?.arguments), 0);
-        emit({ type: "context-usage", used: prompt, completion, total: prompt + completion, estimated: true });
-        emit({ type: "token-usage", model: settings.model, prompt, completion, estimated: true });
+        traceEmit({ type: "context-usage", used: prompt, completion, total: prompt + completion, estimated: true });
+        traceEmit({ type: "token-usage", model: settings.model, prompt, completion, estimated: true });
       }
       finishActivity(thinkingId, "success", "");
       debugLog("model-response", `模型响应（${transport === "sse" ? "SSE 流式" : "普通 JSON"}）`, modelMessage);
@@ -3169,7 +3361,7 @@ export async function runAgent({
       const text = messageText(modelMessage).trim();
       if (text) {
         finalText = text;
-        emit({ type: "assistant-text", text });
+        traceEmit({ type: "assistant-text", text });
       }
       messages.push({
         role: "assistant",
@@ -3266,7 +3458,7 @@ export async function runAgent({
         if (hookVerdict?.action === "block") {
           const reason = hookVerdict.message || "该操作被用户或工作区配置的钩子规则禁止";
           auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "blocked", detail: reason });
-          const activityId = startActivity(name, summary, reason);
+          const activityId = startActivity(name, summary, reason, { args });
           finishActivity(activityId, "error", "已被钩子规则阻止");
           debugLog("tool-result", `工具 ${name} 被钩子阻止`, reason);
           return {
@@ -3340,7 +3532,7 @@ export async function runAgent({
                 onUsage: (usage) => {
                   const used = Number(usage?.prompt_tokens);
                   if (Number.isFinite(used) && used > 0) {
-                    emit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
+                    traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
                   }
                 },
               }));
@@ -3387,7 +3579,7 @@ export async function runAgent({
               ? "当前任务以只读方式运行，不允许修改文件或运行命令"
               : "用户拒绝了这次操作";
             auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "denied", detail: denyReason });
-            const activityId = startActivity(name, summary, denyReason);
+            const activityId = startActivity(name, summary, denyReason, { args });
             finishActivity(activityId, "error", "未执行");
             return {
               message: {
@@ -3406,8 +3598,8 @@ export async function runAgent({
           }
         }
 
-        const activityId = startActivity(name, summary);
-        debugLog("tool-call", `调用工具 ${name}`, args);
+        const activityId = startActivity(name, summary, "", { args });
+        debugLog("tool-call", `调用工具 ${name}`, args, { traceKey: `tc-${toolCall.id}` });
         let result;
         let ok = true;
         let supplementalMessages = [];
@@ -3429,10 +3621,16 @@ export async function runAgent({
               if (steps.filter((step) => step.status === "in_progress").length > 1) {
                 throw new Error("同一时间只能有一个进行中的步骤");
               }
-              planSteps = steps;
-              emit({ type: "plan-update", steps: steps.map((step) => ({ ...step })) });
-              const completed = steps.filter((step) => step.status === "completed").length;
-              result = `计划已更新（${completed}/${steps.length} 步已完成）`;
+              // 稳定步骤 id（process-chain）：与上轮同位置的同名步骤保持同一 id，用于把活动挂到具体步骤下
+              planSteps = steps.map((step, index) => {
+                const previous = planSteps?.[index];
+                if (previous && previous.title === step.title && previous.id) return { ...step, id: previous.id };
+                return { ...step, id: `plan-${Date.now().toString(36)}-${index + 1}` };
+              });
+              currentPlanStepId = planSteps.find((step) => step.status === "in_progress")?.id || currentPlanStepId;
+              traceEmit({ type: "plan-update", steps: planSteps.map((step) => ({ ...step })) });
+              const completed = planSteps.filter((step) => step.status === "completed").length;
+              result = `计划已更新（${completed}/${planSteps.length} 步已完成）`;
               break;
             }
             case "list_files": result = await workspace.listFiles(args.path); break;
@@ -3528,7 +3726,7 @@ export async function runAgent({
                 relatedMemoryId: String(args.related_memory_id || ""),
               };
               savedMemories.push(savedMemory);
-              emit({ type: "memory-saved", item: savedMemory });
+              traceEmit({ type: "memory-saved", item: savedMemory });
               result = "记忆已保存";
               break;
             }
@@ -3562,7 +3760,7 @@ export async function runAgent({
                 instructions: String(args.instructions || "").trim(),
               };
               if (!savedSkill.name || !savedSkill.instructions) throw new Error("模板名称和执行要求不能为空");
-              emit({ type: "skill-saved", item: savedSkill });
+              traceEmit({ type: "skill-saved", item: savedSkill });
               result = `工作模板「${savedSkill.name}」已保存，以后的任务可以复用`;
               break;
             }
@@ -3578,7 +3776,7 @@ export async function runAgent({
                 description: String(args.description || "").trim() || skill.description,
                 instructions,
               };
-              emit({ type: "skill-updated", item: updated });
+              traceEmit({ type: "skill-updated", item: updated });
               result = `工作模板「${skill.name}」已更新，下次使用将按改进后的要求执行`;
               break;
             }
@@ -3615,6 +3813,7 @@ export async function runAgent({
               if (depth >= 1) throw new Error("子代理不能再派发子代理");
               const task = clipped(String(args.task || ""), 4000).trim();
               if (!task) throw new Error("子任务描述不能为空");
+              const taskTitle = clipped(task.replace(/\s+/g, " "), 80);
               const sub = await runAgent({
                 settings,
                 workspacePath,
@@ -3631,9 +3830,40 @@ export async function runAgent({
                 extraTools,
                 onExtraTool,
                 emit: (event) => {
-                  // 子代理的活动不进主界面活动流，但调试事件转发到控制台（标题加 ↳ 前缀区分）
+                  // 子代理事件走独立分支通道（process-chain）：活动/活动更新带 branch 标记
+                  // 直接转发（旧事件通道），渲染端据此不混入主活动流、归入子代理分支；
+                  // 控制台 trace 由子代理内部已生成，这里只加深 depth 转发（避免父级重复投影）；
+                  // 调试事件转发（标题加 ↳ 前缀）；token-usage 等重复计数类事件不转发。
+                  if (event?.type === "activity" && event.activity) {
+                    emit({
+                      ...event,
+                      activity: {
+                        ...event.activity,
+                        branch: { parentId: activityId, title: taskTitle, depth: depth + 1 },
+                      },
+                    });
+                    return;
+                  }
+                  if (event?.type === "activity-update") {
+                    emit({ ...event, branch: { parentId: activityId, depth: depth + 1 } });
+                    return;
+                  }
                   if (event?.type === "debug-log" && event.entry) {
                     emit({ ...event, entry: { ...event.entry, title: `↳ ${event.entry.title}` } });
+                    return;
+                  }
+                  if (event?.type === "trace" && event.trace) {
+                    // 子代理的 trace 也带 branch 标记（parentId 指向派发它的活动），
+                    // 后台任务拓扑页据此把子代理活动嵌套挂到父活动下
+                    emit({
+                      ...event,
+                      trace: {
+                        ...event.trace,
+                        depth: (event.trace.depth || 0) + 1,
+                        branch: { parentId: activityId, title: taskTitle, depth: depth + 1 },
+                      },
+                    });
+                    return;
                   }
                 },
                 requestApproval: queuedApproval,
@@ -3720,7 +3950,7 @@ export async function runAgent({
             detail: ok ? "" : String(result),
           });
         }
-        debugLog("tool-result", `工具 ${name} ${ok ? "成功" : "失败"}`, String(result));
+        debugLog("tool-result", `工具 ${name} ${ok ? "成功" : "失败"}`, String(result), { traceKey: `tc-${toolCall.id}` });
         return {
           message: {
             role: "tool",

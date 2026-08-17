@@ -80,7 +80,7 @@
       "target": [
         "dir"
       ],
-      "icon": "build/dyworker.svg"
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
@@ -91,7 +91,7 @@
           ]
         }
       ],
-      "icon": "build/dyworker.svg",
+      "icon": "build/icon.png",
       "artifactName": "dyworker-${version}-windows-${arch}-setup.${ext}"
     },
     "nsis": {
@@ -104,7 +104,7 @@
       "target": [
         "deb"
       ],
-      "icon": "build/dyworker.svg",
+      "icon": "build/icon.png",
       "maintainer": "DYWorker Team <support@dyworker.local>",
       "syncDesktopName": true
     },
