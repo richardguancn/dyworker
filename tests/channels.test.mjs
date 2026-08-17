@@ -333,6 +333,44 @@ test("微信渠道:Bot 启动完成后状态为已连接,不被启动时的连�
   await channel.stop();
 });
 
+test("微信渠道:会话过期(errcode -14)自动清凭据并重新扫码登录", async () => {
+  const { instances, factory } = fakeBotClass();
+  const statuses = [];
+  const saved = [];
+  let cleared = 0;
+  const channel = createWechatChannel({
+    token: "bt-old", userId: "wxu-1",
+    createBotImpl: factory,
+    onStatus: (entry) => statuses.push(entry),
+    onLogin: async (credentials) => { saved.push(credentials); },
+    onSessionExpired: async () => { cleared += 1; },
+    fetchImpl: async (url) => {
+      if (url.includes("get_bot_qrcode")) {
+        return { ok: true, json: async () => ({ qrcode: "qr-2", qrcode_img_content: "https://qr.img/2.png" }) };
+      }
+      return { ok: true, json: async () => ({ status: "confirmed", bot_token: "bt-new", ilink_user_id: "wxu-1" }) };
+    },
+  });
+  await channel.start();
+  assert.equal(instances.length, 1);
+  const first = instances[0];
+  first.handlers.error(new Error("session expired (errcode -14), paused for 60 min"));
+  // 暂停期内的重复错误事件不应叠出第二个扫码流程
+  first.handlers.error(new Error("session expired (errcode -14), paused for 60 min"));
+  // 等自动重登完成:清凭据 → 二维码 → confirmed → 新 Bot
+  for (let i = 0; i < 100 && instances.length < 2; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(cleared, 1, "失效凭据只清一次");
+  assert.deepEqual(saved.map((item) => item.token), ["bt-new"], "重登成功后落盘新凭据");
+  assert.equal(instances.length, 2, "重登后创建新 Bot");
+  assert.equal(instances[1].options.token, "bt-new");
+  assert.ok(statuses.some((entry) => entry.status === "awaiting-scan" && entry.detail.includes("已过期")), "状态提示重新扫码");
+  assert.ok(!statuses.some((entry) => entry.status === "error" && entry.detail.includes("errcode")), "不再把 SDK 原始报错写进状态栏");
+  assert.equal(statuses.at(-1).status, "online");
+  await channel.stop();
+});
+
 function fakeBotClass(handlers = {}) {
   const instances = [];
   return {
@@ -523,15 +561,67 @@ test("manager:同一聊天串行排队并提示,不同聊天各自成行", async
   assert.deepEqual(started, ["任务A", "任务B"]);
 });
 
+test("manager:同一 messageId 的事件重复到达时只处理一次", async () => {
+  const { manager, tasks } = managerHarness();
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  const message = qqMessage("网关补发测试", "u1");
+  await manager._handleInbound(message);
+  // 模拟断线重连后网关补发同一条事件
+  await manager._handleInbound({ ...message });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(tasks.length, 1, "重复事件不应再次入队执行");
+});
+
+test("manager:头部任务卡住时排队数递增,头部结束后队列按序清空", async () => {
+  let releaseA;
+  const gateA = new Promise((resolve) => { releaseA = resolve; });
+  let releaseB;
+  const gateB = new Promise((resolve) => { releaseB = resolve; });
+  const started = [];
+  const { manager, sentTexts } = managerHarness({
+    onRunTask: async (task) => {
+      started.push(task.text);
+      if (task.text === "A") await gateA;
+      if (task.text === "B") await gateB;
+    },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager._handleInbound(qqMessage("A"));
+  await manager._handleInbound(qqMessage("B"));
+  await manager._handleInbound(qqMessage("C"));
+  await new Promise((resolve) => setImmediate(resolve));
+  // 头部 A 未结束时,B/C 收到排队提示且数字递增(这正是用户看到的现象)
+  assert.deepEqual(started, ["A"]);
+  const notices = sentTexts.filter((entry) => entry.text.includes("排队中")).map((entry) => entry.text);
+  assert.equal(notices.length, 2);
+  assert.match(notices[0], /前面还有 1 个任务/);
+  assert.match(notices[1], /前面还有 2 个任务/);
+  // 头部结束后,队列按序消化,不再永久堆积
+  releaseA();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["A", "B"]);
+  releaseB();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, ["A", "B", "C"]);
+  // 队列清空后,再发消息不再收到排队提示
+  sentTexts.length = 0;
+  await manager._handleInbound(qqMessage("D"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(started, ["A", "B", "C", "D"]);
+  assert.ok(!sentTexts.some((entry) => entry.text.includes("排队中")));
+});
+
 test("manager:待决期间,有效决议直接处理不进任务;无效回复被拦截提示", async () => {
-  const { manager, tasks, resolves, sentTexts } = managerHarness();
+  const { manager, tasks, resolves, sentTexts, typingCalls } = managerHarness();
   await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
   manager._pendingByChat.set(chatKeyOf("qq", "u1"), { itemId: "inbox-1", kind: "approval" });
   await manager._handleInbound(qqMessage("允许"));
   assert.deepEqual(resolves, ["允许"]);
   assert.equal(tasks.length, 0);
   assert.equal(manager._pendingByChat.size, 0);
-  assert.ok(sentTexts.some((entry) => entry.text.includes("继续执行")));
+  // 决议后不再回文字确认,改用「正在输入」提示
+  assert.ok(!sentTexts.some((entry) => entry.text.includes("继续执行")));
+  assert.deepEqual(typingCalls, ["u1"]);
 
   manager._pendingByChat.set(chatKeyOf("qq", "u1"), { itemId: "inbox-2", kind: "approval" });
   await manager._handleInbound(qqMessage("随便说点别的"));
@@ -989,6 +1079,38 @@ test("QQ 客户端:sendMedia 的 msg_id 过期时去掉引用重发一次", asyn
   } finally {
     await client.stop();
   }
+});
+
+test("QQ 客户端:API 请求挂起时按超时中止,不会永久卡住任务", async () => {
+  // 发送接口挂起:不返回响应,只有 signal abort 才 reject(模拟 QQ 网关偶发无响应)
+  const fetchImpl = async (url, options = {}) => {
+    if (url.includes("getAppAccessToken")) {
+      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
+    }
+    return new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener?.("abort", () => {
+        const error = new Error("Aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+  };
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket, timeoutMs: 60 });
+  await assert.rejects(
+    client.sendText({ chatId: "u1", chatType: "dm", messageId: "m1" }, "你好"),
+    (error) => error instanceof Error && /超时/.test(error.message),
+  );
+  await client.stop();
+});
+
+test("QQ 客户端:access_token 请求挂起时按超时中止", async () => {
+  const fetchImpl = async () => new Promise(() => { });
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket, timeoutMs: 40 });
+  await assert.rejects(
+    client.sendText({ chatId: "u1", chatType: "dm" }, "你好"),
+    (error) => error instanceof Error && /access_token 获取超时/.test(error.message),
+  );
+  await client.stop();
 });
 
 test("QQ 客户端:sendTyping 私聊发输入状态,群聊静默跳过", async () => {

@@ -40,6 +40,12 @@ export interface ActivityRecord {
   title: string;
   detail?: string;
   status: "running" | "success" | "error";
+  // process-chain：活动挂到的计划步骤 id（plan-update 时补稳定 id）
+  stepId?: string;
+  // process-chain：活动阶段（plan/execute/verify/fix/deliver），失败后同目标重试打 fix
+  phase?: "plan" | "execute" | "verify" | "fix" | "deliver";
+  // process-chain：子代理分支标记，带 branch 的活动不混入主活动流
+  branch?: { parentId: string; title?: string; depth: number };
 }
 
 export interface ApprovalAction {
@@ -88,6 +94,8 @@ export interface QuestionRequest {
 }
 
 export interface PlanStep {
+  // 稳定 id（plan-update 时生成，同位置同名步骤保持同一 id），用于把活动挂到具体步骤下
+  id?: string;
   title: string;
   status: "pending" | "in_progress" | "completed";
 }
@@ -119,6 +127,44 @@ export interface DebugLogEntry {
   content: string;
 }
 
+// 统一轨迹事件（trace-console 底层，与 process-chain 共用同一条事件流）：
+// 一切模型看到的内容都进这条 append-only 事件流，会话级落盘（userData/traces/<sessionId>.jsonl）可回放
+export interface TraceEvent {
+  seq: number;
+  // 所属任务运行 id：跨 run 时 seq 会重置，控制台用 runId+seq 区分；历史回放合并依赖该字段
+  runId?: string;
+  time: string;
+  turn: number;
+  step: number;
+  kind:
+    | "model-request"
+    | "model-response"
+    | "tool-call"
+    | "tool-result"
+    | "token-usage"
+    | "activity"
+    | "activity-update"
+    | "plan-update"
+    | "file-change"
+    | "agent-finished";
+  direction: "in" | "out";
+  target: "model" | "tool" | "system";
+  // tool-result → tool-call、model-response → model-request、token-usage → 本轮请求/响应
+  parentSeq?: number;
+  title: string;
+  content: string;
+  usage?: { prompt: number; completion: number; estimated: boolean };
+  // 子代理嵌套深度（0=主代理，转发时加深）
+  depth?: number;
+  activityId?: string;
+  // 活动类型（activity 投影带出，供后台任务拓扑页显示类型徽标）
+  activityKind?: string;
+  status?: string;
+  phase?: string;
+  stepId?: string;
+  branch?: { parentId: string; title?: string; depth: number };
+}
+
 // 工具钩子规则(见 electron/agent.mjs evaluateHooks)
 export interface HookRule {
   event?: string;
@@ -144,7 +190,7 @@ export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-a
 
 export type AgentEvent =
   | { type: "activity"; activity: ActivityRecord }
-  | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string }
+  | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string; branch?: { parentId: string; title?: string; depth: number } }
   | { type: "assistant-text"; text: string }
   | { type: "approval-request"; action: ApprovalAction }
   | { type: "ask-user"; request: QuestionRequest }
@@ -160,7 +206,9 @@ export type AgentEvent =
   | { type: "skill-saved"; item: { name: string; description: string; instructions: string } }
   | { type: "skill-updated"; item: { id: string; name: string; description: string; instructions: string } }
   | { type: "loop-state"; active: boolean; iteration: number; maximum: number; status: string }
-  | { type: "agent-finished"; result: AgentResult };
+  | { type: "agent-finished"; result: AgentResult }
+  // 统一轨迹事件流（trace-console）：结构化投影，与 debug-log 等旧事件并行发出
+  | { type: "trace"; trace: TraceEvent };
 
 export interface SessionAgentEvent {
   sessionId: string;
@@ -484,6 +532,11 @@ export interface DyworkerBridge {
   markImportedLocalStorageDone(origin: string): Promise<{ ok: boolean }>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   readWorkspaceFile(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; binary?: boolean; error?: string }>;
+  writeWorkspaceFile(workspacePath: string, filePath: string, content: string): Promise<{ ok: boolean; path?: string; bytes?: number; error?: string }>;
+  gitStage(workspacePath: string, paths: string[]): Promise<{ ok: boolean; error?: string }>;
+  gitDiscard(workspacePath: string, paths: string[]): Promise<{ ok: boolean; error?: string }>;
+  listTraces(sessionId: string): Promise<{ ok: boolean; count: number; size: number; updatedAt: string }>;
+  readTraces(payload: { sessionId: string; offset?: number; limit?: number }): Promise<{ ok: boolean; records: TraceEvent[]; total: number; offset: number }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;

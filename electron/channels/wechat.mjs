@@ -17,6 +17,10 @@ const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 
 export class WechatChannelError extends Error {}
 
+// SDK 轮询遇到 errcode -14(会话过期)会干等 60 分钟再重试,期间渠道完全瘫痪;
+// 这类错误无法自愈,识别后走自动重新扫码,而不是把 SDK 的原始报错晾在状态栏
+const SESSION_EXPIRED_PATTERN = /session expired \(errcode -14\)/;
+
 // sniffImageExtension 已移至 shared.mjs（消除与 qq-bot.mjs 的循环依赖），此处 re-export 保持对外 API
 export { sniffImageExtension };
 
@@ -123,12 +127,14 @@ async function defaultCreateBot(options) {
   return new Bot(options);
 }
 
-export function createWechatChannel({ token = "", userId = "", baseUrl = "", stateRoot = "", mediaDir = "", fetchImpl = fetch, createBotImpl = defaultCreateBot, onMessage = () => { }, onStatus = () => { }, onLogin = async () => { } } = {}) {
+export function createWechatChannel({ token = "", userId = "", baseUrl = "", stateRoot = "", mediaDir = "", fetchImpl = fetch, createBotImpl = defaultCreateBot, onMessage = () => { }, onStatus = () => { }, onLogin = async () => { }, onSessionExpired = async () => { } } = {}) {
   // 空字符串不算配置:凭据缺失时也要落到默认通道地址
   const effectiveBaseUrl = String(baseUrl || "").trim() || DEFAULT_BASE_URL;
   let bot = null;
   let stopped = false;
   let loginTask = null;
+  let reloginTask = null;
+  let generation = 0; // start/stop 代数:渠道关停或重启后,旧的扫码/重登流程自动作废
   const lastContextByChat = new Map();
 
   function setStatus(status, detail = "", extra = {}) {
@@ -220,7 +226,12 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
       void ctx.reply("目前只支持文字消息,请用文字描述您的需求。").catch(() => { });
     });
     bot.on("error", (error) => {
-      setStatus("error", error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (SESSION_EXPIRED_PATTERN.test(message)) {
+        handleSessionExpired();
+        return;
+      }
+      setStatus("error", message);
     });
     bot.on("start", () => setStatus("online"));
     bot.on("end", () => {
@@ -232,20 +243,38 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
     bot.start();
   }
 
-  async function startLogin() {
-    setStatus("awaiting-scan");
+  // 凭据被服务端判定过期(errcode -14):停掉旧连接、清掉落盘凭据,自动弹出二维码重新登录。
+  // reloginTask 去重:暂停期内的重复 error 事件不会叠出多个扫码流程
+  function handleSessionExpired() {
+    if (stopped || reloginTask) return;
+    try { bot?.end(); } catch { /* 忽略 */ }
+    bot = null;
+    lastContextByChat.clear();
+    reloginTask = (async () => {
+      // 先清落盘凭据,否则应用重启后会拿同一个死 token 再撞一次 errcode -14
+      await onSessionExpired().catch(() => { });
+      await startLogin("微信登录已过期，请重新扫码");
+    })().finally(() => { reloginTask = null; });
+  }
+
+  async function startLogin(detail = "") {
+    const gen = generation;
+    const cancelled = () => stopped || gen !== generation;
+    setStatus("awaiting-scan", detail);
     try {
       const credentials = await runWechatQrLogin({
         baseUrl: effectiveBaseUrl,
         fetchImpl,
-        isCancelled: () => stopped,
-        onQr: (qrUrl) => setStatus("awaiting-scan", "请用微信扫码登录", { qrUrl }),
+        isCancelled: cancelled,
+        onQr: (qrUrl) => setStatus("awaiting-scan", detail || "请用微信扫码登录", { qrUrl }),
         onScan: () => setStatus("awaiting-scan", "已扫码,请在微信中确认"),
       });
+      if (cancelled()) return;
       await onLogin(credentials);
+      if (cancelled()) return;
       await startWithCredentials(credentials);
     } catch (error) {
-      if (!stopped) setStatus("error", error instanceof Error ? error.message : String(error));
+      if (!cancelled()) setStatus("error", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -254,6 +283,7 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
     hasCredentials: Boolean(token && userId),
     async start() {
       stopped = false;
+      generation += 1; // 作废上一次生命周期遗留的扫码/重登流程,避免重复登录
       if (token && userId) {
         await startWithCredentials({ token, userId, baseUrl });
         return;
@@ -263,6 +293,7 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
     },
     async stop() {
       stopped = true;
+      generation += 1;
       try { bot?.end(); } catch { /* 忽略 */ }
       bot = null;
       lastContextByChat.clear();

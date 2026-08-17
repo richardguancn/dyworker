@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, serializeSettings } from "../electron/settings.mjs";
+import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings } from "../electron/settings.mjs";
 import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mjs";
 
 const secretStorage = {
@@ -227,4 +227,54 @@ test("某条密钥无法解密时不影响其他配置恢复", () => {
 
   assert.equal(restored.profiles[0].apiKey, "");
   assert.equal(restored.profiles[1].apiKey, "plain-key");
+});
+
+// 签名身份变化（换 bundle id / ad-hoc 重打包）后 safeStorage 暂时解不开旧密文：
+// 此时迁移写盘或保存设置都不能把空值写回去覆盖密文，否则密钥永久丢失。
+const undecryptableStorage = {
+  isEncryptionAvailable: () => true,
+  encryptString: (value) => Buffer.from(`encrypted:${value}`, "utf8"),
+  decryptString: () => {
+    throw new Error("无法解密");
+  },
+};
+
+test("解不开旧密文时序列化结果保留旧密钥密文", () => {
+  const stored = serializeSettings({
+    apiKey: "old-key",
+    visionApiKey: "old-vision",
+    ttsApiKey: "old-tts",
+    profiles: [{ id: "p1", name: "模型一", endpoint: "https://one.example/v1", model: "model-one", apiKey: "old-profile-key" }],
+    channels: { qq: { enabled: true, appId: "app-id", appSecret: "old-qq" } },
+  }, secretStorage);
+  // 渲染端拿到的是解不开后的空值，保存时旧密文应全部保留
+  const emptyView = deserializeSettings(stored, undecryptableStorage);
+  assert.equal(emptyView.apiKey, "");
+  const serialized = serializeSettings(emptyView, undecryptableStorage);
+  const preserved = preserveUndecryptableSecrets(serialized, stored, undecryptableStorage);
+  assert.equal(preserved.apiKey, stored.apiKey);
+  assert.equal(preserved.encrypted, true);
+  assert.equal(preserved.visionApiKey, stored.visionApiKey);
+  assert.equal(preserved.ttsApiKey, stored.ttsApiKey);
+  assert.equal(preserved.profiles[0].apiKey, stored.profiles[0].apiKey);
+  assert.equal(preserved.channels.qq.appSecret, stored.channels.qq.appSecret);
+  // 换能解开的存储后密钥恢复可读
+  const restored = deserializeSettings(preserved, secretStorage);
+  assert.equal(restored.apiKey, "old-key");
+  assert.equal(restored.profiles[0].apiKey, "old-profile-key");
+  assert.equal(restored.channels.qq.appSecret, "old-qq");
+});
+
+test("旧密文能解开时用户主动清空密钥尊重清空", () => {
+  const stored = serializeSettings({ apiKey: "old-key", profiles: [] }, secretStorage);
+  const serialized = serializeSettings({ apiKey: "", profiles: [] }, secretStorage);
+  const preserved = preserveUndecryptableSecrets(serialized, stored, secretStorage);
+  assert.equal(preserved.apiKey, "");
+});
+
+test("填入新密钥时新值优先，不被旧密文覆盖", () => {
+  const stored = serializeSettings({ apiKey: "old-key", profiles: [] }, secretStorage);
+  const serialized = serializeSettings({ apiKey: "new-key", profiles: [] }, secretStorage);
+  const preserved = preserveUndecryptableSecrets(serialized, stored, undecryptableStorage);
+  assert.equal(deserializeSettings(preserved, secretStorage).apiKey, "new-key");
 });

@@ -56,6 +56,9 @@ test("首次启动必须选择身份,并可在设置中重新选择", () => {
   assert.match(styles, /\.identity-dialog/);
   assert.match(settingsStorage, /normalizeIdentity/);
   assert.match(settingsStorage, /identity: normalized\.identity/);
+  // 签名身份变化导致密钥暂时解不开时，迁移/保存都必须保留旧密文而非写空值（否则密钥永久丢失）
+  assert.match(settingsStorage, /preserveUndecryptableSecrets/);
+  assert.match(main, /preserveUndecryptableSecrets\(serializeSettings/);
 });
 
 test("身份会切换代理的默认工作语境", () => {
@@ -1024,7 +1027,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   // 4. 主进程接线:渠道任务引擎、全局忙碌守卫、决议共用入口、状态广播、生命周期
   assert.match(main, /from "\.\/channels\/manager\.mjs"/);
   assert.match(main, /async function runChannelTask/);
-  assert.match(main, /runningChannelTask \|\| activeAgents\.size/);
+  assert.match(main, /activeAgents\.size \|\| runningScheduledTask \|\| runningChannelTaskCount > 0/);
   assert.match(main, /resolveInboxInternal/);
   assert.match(main, /ipcMain\.handle\("channels:get-status"/);
   assert.match(main, /broadcastChannelsStatus/);

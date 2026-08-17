@@ -76,6 +76,45 @@ export function countUndecryptableSecrets(stored, secretStorage) {
   return count;
 }
 
+// 签名身份变化（换 bundle id、自签名/ad-hoc 重打包）会让 safeStorage 暂时解不开旧密文。
+// 此时若把"解不开 → 空串"的结果落盘，旧密文就被永久覆盖，密钥再也找不回来。
+// 在序列化结果上把"传入为空、旧密文存在且当前解不开"的字段还原成旧密文：
+// 等签名身份恢复稳定（或用户在钥匙串弹窗允许访问）后，密钥仍然能解开。
+// 注意：旧密文能解开时用户主动清空是允许的——只有"解不开"才触发保留。
+export function preserveUndecryptableSecrets(serialized, stored, secretStorage) {
+  if (!serialized || typeof serialized !== "object" || !stored || typeof stored !== "object") return serialized;
+  const shouldKeep = (incoming, oldValue, oldEncrypted) =>
+    !incoming && Boolean(oldValue) && oldEncrypted === true && !decryptSecret(oldValue, true, secretStorage);
+  if (shouldKeep(serialized.apiKey, stored.apiKey, stored.encrypted)) {
+    serialized.apiKey = String(stored.apiKey);
+    serialized.encrypted = true;
+  }
+  if (shouldKeep(serialized.visionApiKey, stored.visionApiKey, stored.visionApiKeyEncrypted)) {
+    serialized.visionApiKey = String(stored.visionApiKey);
+    serialized.visionApiKeyEncrypted = true;
+  }
+  if (shouldKeep(serialized.ttsApiKey, stored.ttsApiKey, stored.ttsApiKeyEncrypted)) {
+    serialized.ttsApiKey = String(stored.ttsApiKey);
+    serialized.ttsApiKeyEncrypted = true;
+  }
+  const storedProfiles = Array.isArray(stored.profiles) ? stored.profiles : [];
+  serialized.profiles = (Array.isArray(serialized.profiles) ? serialized.profiles : []).map((profile) => {
+    const old = storedProfiles.find((item) => item?.id && item.id === profile?.id);
+    if (old && shouldKeep(profile?.apiKey, old.apiKey, old.encrypted)) {
+      return { ...profile, apiKey: String(old.apiKey), encrypted: true };
+    }
+    return profile;
+  });
+  const storedQq = stored.channels?.qq && typeof stored.channels.qq === "object" ? stored.channels.qq : {};
+  if (serialized.channels?.qq && shouldKeep(serialized.channels.qq.appSecret, storedQq.appSecret, storedQq.appSecretEncrypted)) {
+    serialized.channels = {
+      ...serialized.channels,
+      qq: { ...serialized.channels.qq, appSecret: String(storedQq.appSecret), appSecretEncrypted: true },
+    };
+  }
+  return serialized;
+}
+
 // IM 消息渠道配置(QQ 官方机器人 / 微信 ClawBot);QQ appSecret 与 apiKey 同款加密。
 // 微信登录凭据(bot_token)不进设置文件,由主进程单独存 channel-credentials.json,避免渲染端陈旧覆盖。
 function normalizeChannels(channels, secretStorage, direction) {

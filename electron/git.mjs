@@ -132,6 +132,37 @@ export async function gitCommit(root, { message = "", includeUnstaged = true } =
   return { ok: true, message: finalMessage };
 }
 
+// 暂存：git add 指定文件（审阅面板「暂存」入口）
+export async function gitStage(root, paths) {
+  if (!root || !(await isGitRepo(root))) return { ok: false, error: "当前工作目录不是 Git 仓库" };
+  const list = (Array.isArray(paths) ? paths : [paths]).map((item) => String(item || "").trim()).filter(Boolean);
+  if (!list.length) return { ok: false, error: "缺少要暂存的文件" };
+  const result = await runGit(root, ["add", "--", ...list], { timeout: 15000 });
+  return result.ok ? { ok: true } : { ok: false, error: result.message || "暂存失败" };
+}
+
+// 放弃改动（破坏性，渲染端需二次确认）：已跟踪文件恢复到 HEAD（暂存区与工作区一起还原），
+// 未跟踪文件（??）用 git clean -f 删除。
+export async function gitDiscard(root, paths) {
+  if (!root || !(await isGitRepo(root))) return { ok: false, error: "当前工作目录不是 Git 仓库" };
+  const list = (Array.isArray(paths) ? paths : [paths]).map((item) => String(item || "").trim()).filter(Boolean);
+  if (!list.length) return { ok: false, error: "缺少要放弃的文件" };
+  const porcelain = await readPorcelain(root);
+  const untracked = new Set(porcelain.filter((line) => line.startsWith("??")).map((line) => line.slice(3).trim()));
+  const tracked = list.filter((item) => !untracked.has(item));
+  const toDelete = list.filter((item) => untracked.has(item));
+  let lastError = "";
+  if (tracked.length) {
+    const result = await runGit(root, ["checkout", "HEAD", "--", ...tracked], { timeout: 15000 });
+    if (!result.ok) lastError = result.message || "放弃改动失败";
+  }
+  if (toDelete.length) {
+    const result = await runGit(root, ["clean", "-f", "--", ...toDelete], { timeout: 15000 });
+    if (!result.ok) lastError = result.message || "删除未跟踪文件失败";
+  }
+  return lastError ? { ok: false, error: lastError } : { ok: true };
+}
+
 export async function gitPush(root) {
   if (!root || !(await isGitRepo(root))) return { ok: false, error: "当前工作目录不是 Git 仓库" };
   const remote = await runGit(root, ["remote"]);

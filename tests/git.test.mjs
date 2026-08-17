@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitFileDiff, gitPush, gitReviewOverview, listGitBranches } from "../electron/git.mjs";
+import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "../electron/git.mjs";
 
 async function makeRepo() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-git-"));
@@ -153,4 +153,31 @@ test("单文件 diff：跟踪文件走基线对比，未跟踪文件与 /dev/nul
   assert.match(notBinary.diff, /GIT binary patch/);
   const rejected = await gitFileDiff(root, "HEAD", "../outside.txt", false);
   assert.equal(rejected.ok, false, "路径穿越必须拒绝");
+});
+
+test("暂存：git add 指定文件后进入暂存区", async () => {
+  const root = await makeRepo();
+  await fs.writeFile(path.join(root, "a.txt"), "hello\nworld\n", "utf8");
+  await fs.writeFile(path.join(root, "new.txt"), "n\n", "utf8");
+  const result = await gitStage(root, ["a.txt", "new.txt"]);
+  assert.equal(result.ok, true, result.error || "");
+  const porcelain = execFileSync("git", ["-C", root, "status", "--porcelain"], { encoding: "utf8" });
+  assert.match(porcelain, /^M  a\.txt/m, "a.txt 应已暂存");
+  assert.match(porcelain, /^A  new\.txt/m, "new.txt 应已暂存");
+});
+
+test("放弃：已跟踪文件恢复到 HEAD，未跟踪文件被删除", async () => {
+  const root = await makeRepo();
+  await fs.writeFile(path.join(root, "a.txt"), "hello\nchanged\n", "utf8");
+  await fs.writeFile(path.join(root, "new.txt"), "n\n", "utf8");
+  const result = await gitDiscard(root, ["a.txt", "new.txt"]);
+  assert.equal(result.ok, true, result.error || "");
+  assert.equal(await fs.readFile(path.join(root, "a.txt"), "utf8"), "hello\n", "已跟踪文件应恢复到提交内容");
+  await assert.rejects(fs.stat(path.join(root, "new.txt")), "未跟踪文件应被删除");
+});
+
+test("放弃：非 git 目录优雅降级", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-notgit-"));
+  const result = await gitDiscard(root, ["a.txt"]);
+  assert.equal(result.ok, false);
 });

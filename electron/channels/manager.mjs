@@ -29,7 +29,9 @@ export function createChannelManager({
   onStopChat = async () => false, // ({ channel, chat, chatRecord, key, pending }) => Promise<boolean>  中止该聊天执行中/等待中的任务,返回是否存在
   queueWaitHint = () => "", // () => string  排队提示里附带的全局阻塞原因（电脑端任务/定时任务执行中等）
   onSaveWechatCredentials = async () => { }, // 微信扫码成功后落盘凭据
+  onWechatSessionExpired = async () => { }, // 微信凭据被服务端判定过期(errcode -14),外层清除落盘凭据
   defaultWorkspace = () => "", // 推导新渠道会话的工作区
+  onDebug = () => { }, // (payload) => void  渠道入站/排队诊断（由 main 侧落盘日志）
   mediaDir = "", // 入站媒体暂存目录（userData/channel-media，由 main 注入）
   wechatStateRoot = "", // 微信 ClawBot SDK 本地状态目录（userData/wechat-state，由 main 注入）
   createQqClient = createQqBotClient,
@@ -45,7 +47,27 @@ export function createChannelManager({
   const queueEpochs = new Map(); // chatKey → 队列代数,「停止」时 +1 使已排队消息失效
   const pendingByChat = new Map(); // chatKey → { itemId, kind: "approval"|"question", options }
   const lastInboundByKey = new Map(); // chatKey → 最近一条入站消息（replyMedia 出站用）
+  // 入站去重：QQ/微信网关断线重连或事件补发时同一 messageId 可能到达多次，
+  // 不查重会把同一条消息重复入队，用户会看到任务数莫名 +1、同一任务被反复执行。
+  const seenMessages = new Map(); // `${channel}:${chatId}:${messageId}` → 过期时间
+  const MESSAGE_DEDUP_WINDOW_MS = 60_000;
   let chats = null; // chatKey → { sessionId, workspacePath, title, createdAt, updatedAt }
+
+  function isDuplicateMessage(message) {
+    const id = String(message.messageId || "").trim();
+    if (!id) return false;
+    const key = `${message.channel}:${message.chatId}:${id}`;
+    const now = Date.now();
+    if ((seenMessages.get(key) || 0) > now) return true;
+    seenMessages.set(key, now + MESSAGE_DEDUP_WINDOW_MS);
+    // 顺带清理过期条目，避免 Map 无限增长
+    if (seenMessages.size > 2000) {
+      for (const [k, expiresAt] of seenMessages) {
+        if (expiresAt <= now) seenMessages.delete(k);
+      }
+    }
+    return false;
+  }
 
   async function loadChats() {
     if (!chats) {
@@ -120,6 +142,8 @@ export function createChannelManager({
   }
 
   async function handleInbound(message) {
+    // 网关断线重连后可能补发已处理过的事件，按平台消息 ID 去重
+    if (isDuplicateMessage(message)) return;
     const adapter = adapters.get(message.channel);
     const reply = (text) => (adapter ? adapter.sendText(message, text) : Promise.resolve());
     // 正在输入状态：适配器不支持时静默跳过（QQ 群聊没有输入提示，也走这里）
@@ -163,7 +187,8 @@ export function createChannelManager({
       const handled = await onResolvePending({ channel: message.channel, chatRecord: record, pending, replyText: message.text });
       if (handled) {
         pendingByChat.delete(key);
-        await reply(pending.kind === "approval" ? "收到,已按您的决定继续执行。" : "收到,继续处理。").catch(() => { });
+        // 不再回文字确认,沿用任务开始时的「正在输入」提示,避免确认消息刷屏
+        await sendTyping().catch(() => { });
         return;
       }
       // 不是有效决议回复 → 提示后仍按待决议等待(避免审批被新任务淹没)
@@ -190,9 +215,17 @@ export function createChannelManager({
         clearPending: () => pendingByChat.delete(key),
       });
     });
+    onDebug({
+      event: "入站入队",
+      channel: message.channel,
+      chatId: String(message.chatId || ""),
+      messageId: String(message.messageId || ""),
+      text: String(message.text || "").slice(0, 80),
+      position,
+    });
     if (position > 1) {
       const hint = String(queueWaitHint() || "").trim();
-      await reply(`排队中,前面还有 ${position - 1} 个任务。${hint ? `（${hint}）` : ""}回复「停止」可清空队列。`).catch(() => { });
+      await reply(`排队中,前面还有 ${position - 1} 个任务。当前任务结束后会自动继续执行,无需重新发送。${hint ? `（${hint}）` : ""}回复「停止」可清空队列。`).catch(() => { });
     }
   }
 
@@ -216,6 +249,7 @@ export function createChannelManager({
         onMessage: (message) => void handleInbound(message).catch(() => { }),
         onStatus: handleAdapterStatus,
         onLogin: onSaveWechatCredentials,
+        onSessionExpired: onWechatSessionExpired,
       });
     }
     return null;
