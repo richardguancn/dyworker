@@ -6,31 +6,58 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// 常见说法：更换/切换/修改/设置工作目录（至/到/为），以及“切换目录至 X”。
+// 常见说法：更换/切换/修改/设置工作目录（至/到/为），以及“切换目录至 X”、
+// “切换到 X 目录”（目标在“目录”前）、“把工作区切换到 X 目录”。
 // 目标必须紧跟指令且是消息的结尾，避免把任务正文里的“把工作目录改成 X 后再构建”误拦截。
-const WORKSPACE_SWITCH_PATTERN = new RegExp(
-  [
-    "^(?:请|麻烦|麻烦你)?(?:帮我|为我|替我)?(?:把|将)?(?:当前)?",
-    "(?:",
-    "工作(?:目录|文件夹|区)(?:切换|更换|修改|设置|改为|改成)",
-    "|(?:切换|更换|修改|设置)工作(?:目录|文件夹|区)",
-    "|(?:切换|更换)(?:工作)?目录",
-    "|工作(?:目录|文件夹|区)(?:至|到|为|:|：)",
-    ")",
-    "(?:至|到|为|:|：)?",
-    '\\s*("([^"]+)"|\'([^\']+)\'|“([^”]+)”|‘([^’]+)’|(\\S+))',
-    "\\s*[。.!！]?$",
-  ].join(""),
-);
+const TARGET_PATTERN = '("([^"]+)"|\'([^\']+)\'|“([^”]+)”|‘([^’]+)’|(\\S+))';
+const WORKSPACE_NOUN = "(?:工作)?(?:目录|文件夹|区)";
+const SWITCH_VERB = "(?:切换|更换|修改|设置|改为|改成|换到|换为)";
+const CONNECTOR = "(?:至|到|为|:|：)?";
+
+const PREFIX = "^(?:请|麻烦|麻烦你)?(?:帮我|为我|替我)?(?:把|将)?(?:当前)?";
+const END = "\\s*[。.!！]?$";
+
+// 每种说法一条正则：目标捕获组位置固定（2..6），逐个尝试，避免多分支共享捕获组错位。
+const WORKSPACE_SWITCH_PATTERNS = [
+  // 工作目录切换至 X / 工作目录改为 X / 工作区换到 X
+  new RegExp(`${PREFIX}工作(?:目录|文件夹|区)${SWITCH_VERB}${CONNECTOR}\\s*${TARGET_PATTERN}${END}`),
+  // 切换工作目录至 X / 修改工作区到 X
+  new RegExp(`${PREFIX}(?:切换|更换|修改|设置)工作(?:目录|文件夹|区)${CONNECTOR}\\s*${TARGET_PATTERN}${END}`),
+  // 切换目录至 X
+  new RegExp(`${PREFIX}(?:切换|更换)(?:工作)?目录${CONNECTOR}\\s*${TARGET_PATTERN}${END}`),
+  // 工作目录：X / 工作目录至 X
+  new RegExp(`${PREFIX}工作(?:目录|文件夹|区)(?:至|到|为|:|：)\\s*${TARGET_PATTERN}${END}`),
+  // 切换到 X 目录 / 切换为 X 文件夹（目标在名词前）
+  new RegExp(`${PREFIX}(?:切换|更换|修改|设置)${CONNECTOR}\\s*${TARGET_PATTERN}\\s*${WORKSPACE_NOUN}${END}`),
+  // 切换到目录 X / 切换到工作目录 X（名词在前）
+  new RegExp(`${PREFIX}(?:切换|更换)(?:至|到|为|:|：)?(?:工作)?(?:目录|文件夹|区)${CONNECTOR}\\s*${TARGET_PATTERN}${END}`),
+  // 工作区切换到 X 目录 / 工作目录改成 X 文件夹
+  new RegExp(`${PREFIX}工作(?:目录|文件夹|区)(?:切换|更换|修改|设置)(?:至|到|为|:|：)?\\s*${TARGET_PATTERN}\\s*${WORKSPACE_NOUN}${END}`),
+];
+
+function extractTarget(match) {
+  const target = (match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
+  return target || null;
+}
 
 // 返回目标路径原文；不是这条指令时返回 null。
 export function parseWorkspaceSwitch(text) {
   const source = String(text || "").trim();
   if (!source) return null;
-  const match = source.match(WORKSPACE_SWITCH_PATTERN);
-  if (!match) return null;
-  const target = (match[2] || match[3] || match[4] || match[5] || match[6] || "").trim();
-  return target || null;
+  for (const pattern of WORKSPACE_SWITCH_PATTERNS) {
+    const match = source.match(pattern);
+    if (match) return extractTarget(match);
+  }
+  return null;
+}
+
+// 宽松判断“用户要求切换工作目录”：用于渠道 switch_workspace 工具的调用门槛，
+// 避免模型在用户没要求时擅自更换聊天的工作目录。
+export function isWorkspaceSwitchRequest(text) {
+  const source = String(text || "").trim();
+  if (!source) return false;
+  if (parseWorkspaceSwitch(source) !== null) return true;
+  return /(?:切换|更换|修改|设置).{0,24}(?:工作)?(?:目录|文件夹|区)/.test(source);
 }
 
 // 目标是否明显是路径（含分隔符、盘符、~ 或 ./ ../ 前缀）。

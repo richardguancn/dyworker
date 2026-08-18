@@ -433,6 +433,12 @@ export interface ProviderSettings {
   mcpServers: McpServerConfig[];
   channels: ChannelsConfig;
   skillLibraries: SkillLibraryConfig[];
+  // 厂商原生工具总开关（如 Kimi 开放平台官方 Formula 工具），默认开启
+  enableNativeTools: boolean;
+  // 默认关闭的原生工具（如 Kimi memory/excel 这类向服务端持久化或上传文件内容的工具）
+  nativeToolsDisabled: string[];
+  // 是否启用厂商内置联网搜索（如 Kimi 内置 $web_search），默认关闭
+  enableWebSearchBuiltin: boolean;
 }
 
 export interface MemoryItem {

@@ -228,6 +228,10 @@ export function deserializeSettings(stored, secretStorage) {
     mcpServers: Array.isArray(source.mcpServers) ? source.mcpServers : [],
     channels: normalizeChannels(source.channels, secretStorage, "deserialize"),
     skillLibraries: normalizeSkillLibraries(source.skillLibraries),
+    // 厂商原生工具开关：缺失字段按默认值补齐（enableNativeTools 默认开、$web_search 默认关）
+    enableNativeTools: source.enableNativeTools !== false,
+    nativeToolsDisabled: Array.isArray(source.nativeToolsDisabled) ? source.nativeToolsDisabled.map(String) : ["memory", "excel"],
+    enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
   };
 }
 
@@ -263,6 +267,9 @@ export function serializeSettings(settings, secretStorage) {
         enabled: server.enabled !== false,
       })),
     skillLibraries: normalizeSkillLibraries(settings?.skillLibraries),
+    enableNativeTools: settings?.enableNativeTools !== false,
+    nativeToolsDisabled: Array.isArray(settings?.nativeToolsDisabled) ? settings.nativeToolsDisabled.map(String) : ["memory", "excel"],
+    enableWebSearchBuiltin: settings?.enableWebSearchBuiltin === true,
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
@@ -290,6 +297,9 @@ export function serializeSettings(settings, secretStorage) {
     mcpServers: normalized.mcpServers,
     channels: normalizeChannels(settings?.channels, secretStorage, "serialize"),
     skillLibraries: normalized.skillLibraries,
+    enableNativeTools: normalized.enableNativeTools,
+    nativeToolsDisabled: normalized.nativeToolsDisabled,
+    enableWebSearchBuiltin: normalized.enableWebSearchBuiltin,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,
     profileStoreVersion: 1,

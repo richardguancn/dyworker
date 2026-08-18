@@ -58,6 +58,12 @@ export function channelMediaToolDefinitions() {
       { text: stringArg("要朗读的内容"), path: stringArg("语音文件保存到工作区的相对路径，必须以 .silk 结尾") },
       ["text", "path"],
     ),
+    tool(
+      "switch_workspace",
+      "把当前 IM 聊天的操作目录切换为指定文件夹（仅当用户明确要求切换工作目录时调用，例如用户说“切换到 ai-learning 目录”；目标必须是真实存在的目录）。切换后本聊天的后续消息都会在新目录里操作。",
+      { path: stringArg("目标目录的绝对路径，或相对当前工作目录的路径") },
+      ["path"],
+    ),
   ];
 }
 

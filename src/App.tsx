@@ -174,6 +174,9 @@ const defaultSettings: ProviderSettings = {
   searxngEndpoint: "",
   bochaApiKey: "",
   domesticSearchOnly: false,
+  enableNativeTools: true,
+  nativeToolsDisabled: ["memory", "excel"],
+  enableWebSearchBuiltin: false,
   approvalMode: "reviewer",
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
@@ -3458,7 +3461,7 @@ function ChannelsPanel({ value, onSave }: {
         渠道消息会在左侧生成独立会话并完整留痕;需要确认的操作会同时发到 IM 和审批收件箱,回复「允许/拒绝」或在收件箱处理都可以。同一时间只执行一个任务,其余消息排队处理。
       </p>
       <p className="dialog-note">
-        在 IM 里直接发送「更换工作目录至 /某个/路径」可切换这个聊天的操作目录,相对路径基于当前目录;发送「停止」可中止正在执行或排队的任务。
+        在 IM 里发送「更换工作目录至 /某个/路径」或「切换到 xxx 目录」可切换这个聊天的操作目录,相对路径基于当前目录;发送「停止」可中止正在执行或排队的任务。
       </p>
     </>
   );
@@ -3800,6 +3803,28 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })}
           />
         </label>
+        </>)}
+        {providerId === "kimi-open" && (<>
+        <div className="dialog-section-title">Kimi 原生工具（开放平台）</div>
+        <label className="dialog-check">
+          <input
+            type="checkbox"
+            checked={draft.enableNativeTools !== false}
+            onChange={(event) => setDraft({ ...draft, enableNativeTools: event.target.checked })}
+          />
+          启用 Kimi 官方工具（Formula API）
+        </label>
+        <label className="dialog-check">
+          <input
+            type="checkbox"
+            checked={draft.enableWebSearchBuiltin === true}
+            onChange={(event) => setDraft({ ...draft, enableWebSearchBuiltin: event.target.checked })}
+          />
+          启用内置联网搜索（$web_search，默认关闭）
+        </label>
+        <p className="dialog-note">
+          默认关闭会向服务端持久化数据或上传文件的工具：memory（记忆）、excel（表格分析）。Kimi 公式 web_search 与网页抓取仍走本地联网审批。官方工具本体限时免费，恢复收费后按次计费；官方提示内置联网搜索正在升级，可能不稳定。
+        </p>
         </>)}
         </>)}
         {tab === "power" && (<>

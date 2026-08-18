@@ -9491,44 +9491,80 @@ html.window-shadow.window-maximized .modal-backdrop {
   border-radius: 8px;
   background: var(--surface);
   overflow: hidden;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  position: relative;
 }
 
-.trace-lane {
+/* 左侧泳道标签列（对齐 DSH labels） */
+.trace-lane-labels {
   display: flex;
-  align-items: stretch;
-  height: 24px;
-}
-
-.trace-lane + .trace-lane {
-  border-top: 1px solid var(--border);
-}
-
-.trace-lane-label {
-  flex: 0 0 auto;
-  width: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding-right: 8px;
+  flex-direction: column;
+  justify-content: space-around;
+  border-right: 1px solid var(--border);
+  padding: 4px 0;
   color: var(--quiet);
   font-size: 10px;
-  border-right: 1px solid var(--border);
+  line-height: 1;
   user-select: none;
 }
 
-.trace-lane-track {
+.trace-lane-labels span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 14px;
+  padding-right: 6px;
+  text-align: right;
+}
+
+/* 右侧绘图区：拖选区间的触点，十字光标 */
+.trace-lane-plot {
   position: relative;
-  flex: 1;
-  min-width: 0;
+  height: 50px;
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.trace-lane-track-row {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.trace-lane-track-row .trace-lane-bar,
+.trace-lane-track-row .trace-lane-tick {
+  pointer-events: auto;
+}
+
+/* turn 边界竖线贯穿时间轴（对齐 DSH turnBoundary） */
+.trace-turn-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+/* 拖选的时间区间高亮 */
+.trace-range-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 1.5px 0 0 var(--accent), inset -1.5px 0 0 var(--accent);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .trace-lane-bar {
   position: absolute;
-  top: 6px;
-  height: 12px;
+  height: 8px;
   min-width: 3px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 0;
   cursor: pointer;
   opacity: 0.9;
@@ -9536,9 +9572,8 @@ html.window-shadow.window-maximized .modal-backdrop {
 
 .trace-lane-tick {
   position: absolute;
-  top: 5px;
   width: 2px;
-  height: 14px;
+  height: 10px;
   margin-left: -1px;
   border: 0;
   border-radius: 1px;
@@ -9550,13 +9585,38 @@ html.window-shadow.window-maximized .modal-backdrop {
 .trace-lane-bar:hover,
 .trace-lane-tick:hover {
   opacity: 1;
-  transform: scaleY(1.18);
+  transform: scaleY(1.2);
 }
 
 .trace-lane-bar.selected,
 .trace-lane-tick.selected {
   opacity: 1;
   box-shadow: 0 0 0 1.5px var(--card), 0 0 0 3px var(--accent);
+}
+
+/* 错误条块：描边强调（颜色由内联 background 染红） */
+.trace-lane-bar.is-error,
+.trace-lane-tick.is-error {
+  opacity: 1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #e04b4b 55%, transparent);
+}
+
+/* 搜索未命中：降透明度（对齐 DSH data-search-match=false） */
+.trace-lane-bar.dimmed,
+.trace-lane-tick.dimmed {
+  opacity: 0.14;
+}
+
+/* 工具栏「区间过滤中」清除按钮 */
+.trace-range-clear {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .trace-toolbar {
