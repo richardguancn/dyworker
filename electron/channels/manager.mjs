@@ -112,6 +112,24 @@ export function createChannelManager({
     }
   }
 
+  // 电脑端给渠道会话更换工作区后，把新目录同步到渠道聊天记录（含内存缓存）。
+  // 返回是否真的发生了变更（sessionId 不存在时为 false）。
+  async function updateChatWorkspaceBySession(sessionId, workspacePath) {
+    const all = await loadChats();
+    const key = Object.keys(all).find((chatKey) => {
+      const record = all[chatKey];
+      return record && String(record.sessionId || "") === String(sessionId || "");
+    });
+    if (!key) return false;
+    const next = String(workspacePath || "").trim();
+    if (String(all[key].workspacePath || "").trim() !== next) {
+      all[key].workspacePath = next;
+      all[key].updatedAt = new Date().toISOString();
+      await writeChats(all);
+    }
+    return true;
+  }
+
   function emitStatus() {
     onStatus(JSON.parse(JSON.stringify(statusMap)));
   }
@@ -301,6 +319,7 @@ export function createChannelManager({
 
     status: () => JSON.parse(JSON.stringify(statusMap)),
     pendingCount: () => pendingByChat.size,
+    updateChatWorkspaceBySession,
     // 测试/调试钩子
     _handleInbound: handleInbound,
     _pendingByChat: pendingByChat,

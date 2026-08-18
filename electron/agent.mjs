@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mjs";
 import { selectRelevantMemories } from "./memory.mjs";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mjs";
+import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, runKimiFormula } from "./providers.mjs";
 
 // 风险分级单源在 risk.mjs；这里 re-export 保持既有导入方兼容。
 export { RISK, classify, computerUseActionNeedsApproval, isConsequential } from "./risk.mjs";
@@ -1926,6 +1927,25 @@ export function toolSummary(name, args) {
         const target = args.url || args.path || (args.ref != null ? `元素 ${args.ref}` : "");
         return target ? `${label}：${String(target).slice(0, 60)}` : label;
       }
+      if (isKimiFormulaToolName(name)) {
+        const kimiLabels = {
+          convert: "Kimi 转换（单位/格式）",
+          web_search: "Kimi 联网搜索",
+          rethink: "Kimi 深度思考",
+          random_choice: "Kimi 随机选择",
+          mew: "Kimi 图像生成",
+          memory: "Kimi 记忆",
+          excel: "Kimi 表格分析",
+          date: "Kimi 日期工具",
+          base64: "Kimi Base64 编解码",
+          fetch: "Kimi 抓取网页",
+          quickjs: "Kimi 代码执行（QuickJS）",
+          code_runner: "Kimi 代码运行",
+        };
+        const label = kimiLabels[name] || `Kimi 官方工具 ${name}`;
+        const target = String(args.url || args.query || args.prompt || args.text || "");
+        return target ? `${label}：${target.slice(0, 60)}` : label;
+      }
       return name.startsWith("mcp__") ? `调用外部工具：${mcpToolLabel(name)}` : name;
   }
 }
@@ -2479,7 +2499,13 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   const selectedTools = tools || toolDefinitionsWith(extraTools);
   const basePayload = responsesApi
     ? responsesPayload({ model: settings.model, messages: modelMessages, tools: tools === false ? false : selectedTools, stream: false })
-    : { model: settings.model, messages: modelMessages };
+    : {
+        model: settings.model,
+        messages: modelMessages,
+        // Kimi K3 顶层 reasoning_effort 默认 max，推理 token 消耗大；开放平台固定 high 控费提速
+        // （K3 官方示例均以 kimi-k3 实测，low/high/max 均支持）
+        ...(detectProvider(settings.endpoint) === "kimi-open" ? { reasoning_effort: "high" } : {}),
+      };
   if (!responsesApi && tools !== false) {
     basePayload.tools = selectedTools;
     basePayload.tool_choice = "auto";
@@ -3174,9 +3200,50 @@ export async function runAgent({
   // 子代理不派发 dispatch_agent，防止无限递归；审批串行化，避免并行子任务同时弹多个确认
   const availableTools = toolDefinitionsWith(extraTools)
     .filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
-  // 工具参数 schema 索引：availableTools 已含内置工具与 extraTools（MCP 等），校验按名查找，查不到则跳过
+  // Kimi 开放平台原生工具（v1：12 个 Formula + 可选内置 $web_search）：
+  // 仅当 endpoint 命中 api.moonshot.cn / api.moonshot.ai 且原生工具总开关未关时启用。
+  // 公式工具声明运行时 GET /formulas/{uri}/tools 拉取（进程内缓存）；拉取失败降级为
+  // 不带公式工具继续（保留本地 web_search），绝不中断任务。本地 web_search 与公式
+  // web_search 重名（function.name 都是 web_search，同请求内重名会 400），kimi 开启时剔除本地那个。
+  const kimiOpen = detectProvider(settings.endpoint) === "kimi-open" && settings.enableNativeTools !== false;
+  const kimiFormulaNameToUri = new Map();
+  const kimiFormulaBase = kimiOpen ? kimiFormulaBaseUrl(settings.endpoint) : "";
+  let effectiveTools = availableTools;
+  if (kimiOpen) {
+    try {
+      const disabled = Array.isArray(settings.nativeToolsDisabled)
+        ? settings.nativeToolsDisabled.map(String)
+        : [...KIMI_DEFAULT_DISABLED_TOOLS];
+      const enabledUris = KIMI_FORMULA_URIS.filter((uri) => {
+        const slug = String(uri).split("/")[1]?.split(":")[0] || "";
+        return !disabled.includes(slug);
+      });
+      const formula = await fetchKimiFormulaDefinitions(fetchImpl, {
+        baseUrl: kimiFormulaBase,
+        apiKey: settings.apiKey,
+        enabledUris,
+      });
+      for (const [toolName, uri] of Object.entries(formula.nameToUri || {})) {
+        if (toolName) kimiFormulaNameToUri.set(toolName, uri);
+      }
+      effectiveTools = [
+        ...toolDefinitions().filter((tool) => tool?.function?.name !== "web_search"),
+        ...(formula.definitions || []),
+        // 内置 $web_search（builtin_function）由开关控制，v1 默认关闭（官方提示该功能正在升级）
+        ...(settings.enableWebSearchBuiltin === true ? [KIMI_WEB_SEARCH_DEFINITION] : []),
+        ...extraTools,
+      ].filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
+    } catch (error) {
+      // 定义拉取失败（网络/限流等）：降级为不带公式工具继续，本地工具集保持原样
+      kimiFormulaNameToUri.clear();
+      effectiveTools = availableTools;
+      debugLog("tool-call", "Kimi 官方工具定义拉取失败，已降级为本地工具集", error instanceof Error ? error.message : String(error));
+    }
+  }
+  // 工具参数 schema 索引：effectiveTools 已含内置工具、Kimi 公式工具与 extraTools（MCP 等），
+  // 校验按名查找，查不到则跳过
   const toolSchemas = new Map(
-    (availableTools || [])
+    (effectiveTools || [])
       .map((tool) => [tool?.function?.name, tool?.function?.parameters])
       .filter(([name]) => Boolean(name)),
   );
@@ -3241,7 +3308,7 @@ export async function runAgent({
         endpoint: settings.endpoint,
         model: settings.model,
         messages: messagesForDebug(messages),
-        tools: availableTools.map((tool) => tool?.function?.name).filter(Boolean),
+        tools: effectiveTools.map((tool) => tool?.function?.name).filter(Boolean),
       });
       // 借鉴 Claude Code microcompact：估算占用逼近上下文上限时，把较早的工具结果
       // 替换成占位符（只保留最近 6 条完整结果），避免无轮次上限的长任务撑爆上下文
@@ -3284,7 +3351,7 @@ export async function runAgent({
           fetchImpl,
           signal,
           extraTools,
-          tools: availableTools,
+          tools: effectiveTools,
           onTransport: (mode) => { transport = mode; },
           onUsage: (usage) => {
             const used = Number(usage?.prompt_tokens);
@@ -3407,6 +3474,12 @@ export async function runAgent({
       const executeToolCall = async (toolCall) => {
         const name = String(toolCall?.function?.name || "");
         const args = parseArguments(toolCall);
+        // Kimi 公式工具 / 内置 $web_search 的联网审批映射：kimi 的 web_search 复用本地 web_search、
+        // fetch 复用本地 fetch_web_page 的联网审批与审计口径；其余公式工具无本地副作用直接执行
+        const kimiFormulaUri = kimiOpen && kimiFormulaNameToUri.has(name) ? kimiFormulaNameToUri.get(name) : "";
+        const approvalToolName = (kimiFormulaUri || name === "$web_search")
+          ? (name === "$web_search" || name === "web_search" ? "web_search" : name === "fetch" ? "fetch_web_page" : name)
+          : name;
         // 参数前置校验：非法 JSON 与 schema 不符都在审批、执行之前拦截，文案固定，避免模型原地打转
         const rawArguments = String(toolCall?.function?.arguments || "").trim();
         if (rawArguments && rawArguments !== "{}" && rawArguments !== "null") {
@@ -3457,7 +3530,7 @@ export async function runAgent({
         const hookVerdict = evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], "before_tool", name, args);
         if (hookVerdict?.action === "block") {
           const reason = hookVerdict.message || "该操作被用户或工作区配置的钩子规则禁止";
-          auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "blocked", detail: reason });
+          auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "blocked", detail: reason });
           const activityId = startActivity(name, summary, reason, { args });
           finishActivity(activityId, "error", "已被钩子规则阻止");
           debugLog("tool-result", `工具 ${name} 被钩子阻止`, reason);
@@ -3472,7 +3545,7 @@ export async function runAgent({
 
         const decisionInput = {
           approvalMode,
-          name,
+          name: approvalToolName,
           args,
           hasExternalPaths: externalPaths.length > 0,
           hookRequiresApproval: hookVerdict?.action === "require_approval",
@@ -3486,10 +3559,10 @@ export async function runAgent({
         const autoApproved = readOnlyAutoApproved || (decision === "allow" && name === "run_command"
           && (isDevAutoApprovableCommand(args.command)
             || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))));
-        const consequential = needsApproval(name);
+        const consequential = needsApproval(approvalToolName);
         if (decision === "allow" && consequential) {
           auditRecord({
-            tool: name, summary, riskClass: classify(name).risk,
+            tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
             decision: ruleAllowed ? "rule-allowed" : "auto-allowed",
           });
         }
@@ -3500,8 +3573,8 @@ export async function runAgent({
           let approvalSource = "user";
           let reviewerReason = "";
           if (decision === "ask") {
-            const details = approvalDetails(name, displayArgs);
-            const suggestedRule = suggestStandingRule(name, displayArgs) || undefined;
+            const details = approvalDetails(approvalToolName, displayArgs);
+            const suggestedRule = suggestStandingRule(approvalToolName, displayArgs) || undefined;
             const detailText = externalPaths.length
               ? `工作区外路径（批准后本次任务内有效；批准的是目录时，其子路径同样有效）：\n${externalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
               : details;
@@ -3517,7 +3590,7 @@ export async function runAgent({
               return userDecision;
             };
             const reviewable = isReviewerEligible({
-              name,
+              name: approvalToolName,
               args: displayArgs,
               hookRequiresApproval: decisionInput.hookRequiresApproval,
               approvalMode,
@@ -3525,7 +3598,7 @@ export async function runAgent({
             if (reviewable && reviewerState.active) {
               const review = await withModelTimeout((signal) => reviewApproval({
                 settings,
-                action: { kind: name, title: summary, details: detailText },
+                action: { kind: approvalToolName, title: summary, details: detailText },
                 context: reviewerContext,
                 fetchImpl,
                 signal,
@@ -3549,7 +3622,7 @@ export async function runAgent({
                   reviewerState.active = false;
                   debugLog("tool-result", "审核助手：熔断", "连续拒绝 3 次，后续审批直接转人工");
                 }
-                auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "reviewer-denied", detail: review.reason });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason });
                 debugLog("tool-result", "审核助手：拒绝", `${summary}\n${review.reason}`);
                 return {
                   message: {
@@ -3560,7 +3633,7 @@ export async function runAgent({
                 };
               } else {
                 reviewerState.consecutiveDenials = 0;
-                auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "reviewer-escalated", detail: review.reason });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason });
                 debugLog("tool-result", "审核助手：转人工", `${summary}\n${review.reason}`);
                 approved = await askApproval();
               }
@@ -3578,7 +3651,7 @@ export async function runAgent({
             const denyReason = decision === "deny"
               ? "当前任务以只读方式运行，不允许修改文件或运行命令"
               : "用户拒绝了这次操作";
-            auditRecord({ tool: name, summary, riskClass: classify(name).risk, decision: "denied", detail: denyReason });
+            auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "denied", detail: denyReason });
             const activityId = startActivity(name, summary, denyReason, { args });
             finishActivity(activityId, "error", "未执行");
             return {
@@ -3591,7 +3664,7 @@ export async function runAgent({
           }
           if (consequential) {
             auditRecord({
-              tool: name, summary, riskClass: classify(name).risk,
+              tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
               decision: approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
               ...(approvalSource === "reviewer" ? { detail: reviewerReason } : {}),
             });
@@ -3609,6 +3682,47 @@ export async function runAgent({
         const releaseExternalAuthorization = externalPaths.length
           ? workspace.authorizeExternalPaths(externalPaths, { persist: persistExternalAuthorization })
           : () => { };
+
+        // Kimi 官方工具（Formula fiber / 内置 $web_search）：执行在 Kimi 服务端，
+        // 本地只透传参数并回填结果；失败回填「失败\n原因」但不中断任务。
+        // web_search / fetch 已在上方按联网口径过审批与审计（approvalToolName）。
+        if (kimiFormulaUri || name === "$web_search") {
+          let kimiResult;
+          let kimiOk = true;
+          if (name === "$web_search") {
+            // 内置搜索：把 arguments 原样回传（官方示例即反序列化后再序列化），
+            // 模型看到结果后自行执行搜索并给出最终回答，无需额外 HTTP 调用
+            kimiResult = JSON.stringify(args);
+          } else {
+            try {
+              kimiResult = await runKimiFormula(fetchImpl, {
+                baseUrl: kimiFormulaBase,
+                apiKey: settings.apiKey,
+                uri: kimiFormulaUri,
+                name,
+                arguments: String(toolCall?.function?.arguments || "{}"),
+              });
+            } catch (error) {
+              kimiOk = false;
+              kimiResult = `失败\n${error instanceof Error ? error.message : String(error)}`;
+            }
+          }
+          finishActivity(activityId, kimiOk ? "success" : "error", clipped(kimiResult, 500));
+          auditRecord({
+            tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
+            decision: kimiOk ? "executed" : "failed",
+            detail: kimiOk ? "" : String(kimiResult),
+          });
+          debugLog("tool-result", `工具 ${name} ${kimiOk ? "成功" : "失败"}`, String(kimiResult), { traceKey: `tc-${toolCall.id}` });
+          return {
+            message: {
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: kimiResult,
+            },
+          };
+        }
+
         try {
           switch (name) {
             case "update_plan": {
@@ -3945,7 +4059,7 @@ export async function runAgent({
         finishActivity(activityId, ok ? "success" : "error", clipped(autoNote ? `${autoNote}\n${result}` : result, 500));
         if (consequential) {
           auditRecord({
-            tool: name, summary, riskClass: classify(name).risk,
+            tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
             decision: ok ? "executed" : "failed",
             detail: ok ? "" : String(result),
           });

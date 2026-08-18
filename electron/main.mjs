@@ -9,7 +9,7 @@ import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, verifyChannelMediaPath } from "./channels/media-tools.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
-import { looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "./channels/workspace.mjs";
+import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "./channels/workspace.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
@@ -838,6 +838,25 @@ registerLocalImageIpc(ipcMain, {
   isTrustedSender: (event) => isTrustedRendererUrl(event.senderFrame?.url),
 });
 
+// 电脑端给渠道会话更换工作区的内存基线：sessionId -> workspacePath。
+// 只对比变化，避免每次 sessions:save 都全量重读 sessions.json。
+let lastChannelWorkspaceBySession = new Map();
+
+async function syncChannelSessionWorkspaces(incoming) {
+  for (const session of incoming) {
+    if (!session?.channel) continue;
+    const id = String(session.id || "");
+    const after = String(session.workspacePath || "").trim();
+    const before = lastChannelWorkspaceBySession.get(id);
+    lastChannelWorkspaceBySession.set(id, after);
+    // 首次见到且桌面端已有有效路径时也同步一次（兼容旧版本桌面已换、渠道未同步的数据）；
+    // 首次为空字符串只建立基线，避免用渲染端旧空值误清渠道记录。
+    if (before !== after && (before !== undefined || after)) {
+      await channelManager.updateChatWorkspaceBySession(id, after);
+    }
+  }
+}
+
 ipcMain.handle("app:initial-state", async () => {
   const sessions = await readJson(dataFile("sessions.json"), defaultSessions());
   const workspacePath = sessions.find((session) => session.workspacePath)?.workspacePath || "";
@@ -858,7 +877,12 @@ ipcMain.handle("app:initial-state", async () => {
 
 ipcMain.handle("sessions:save", async (_event, sessions) => {
   try {
-    await writeJson(dataFile("sessions.json"), Array.isArray(sessions) ? sessions : []);
+    const incoming = Array.isArray(sessions) ? sessions : [];
+    await writeJson(dataFile("sessions.json"), incoming);
+    // 电脑端给渠道会话（QQ/微信）更换工作区时，同步到渠道聊天记录；
+    // 否则下一条 IM 消息仍按旧目录执行（渠道记录与桌面会话各自持有一份工作区）。
+    // 用内存基线对比，避免每次保存都全量重读 sessions.json。
+    await syncChannelSessionWorkspaces(incoming);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -3018,6 +3042,30 @@ async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, se
   return { ok: true, result: `已合成语音并登记发送：${name}` };
 }
 
+// switch_workspace 工具处理器：模型在用户明确要求切换工作目录时调用，
+// 与「更换工作目录至…」指令同口径（用户点名的目录直接切换，无需再单独审批），
+// 落盘到 channel-chats.json 并同步内存记录，后续消息都在新目录里操作。
+async function handleChannelSwitchWorkspace(args, { chatRecord, chatKey, workspacePath, userText }) {
+  const rawPath = String(args?.path || "").trim();
+  if (!rawPath) return { ok: false, result: "缺少目标目录路径" };
+  if (!isWorkspaceSwitchRequest(userText)) {
+    return { ok: false, result: "用户没有要求切换工作目录，不能自行更换" };
+  }
+  const resolved = await resolveWorkspaceSwitch(rawPath, workspacePath);
+  if (!resolved.ok) return { ok: false, result: resolved.error };
+  const nextPath = resolved.path;
+  chatRecord.workspacePath = nextPath;
+  chatRecord.updatedAt = new Date().toISOString();
+  const chats = await readChannelChats();
+  if (chats[chatKey]) {
+    chats[chatKey].workspacePath = nextPath;
+    chats[chatKey].updatedAt = chatRecord.updatedAt;
+    await writeJson(dataFile("channel-chats.json"), chats);
+  }
+  channelDebug("渠道切换工作区(工具)", { chatKey, path: nextPath });
+  return { ok: true, path: nextPath, result: `工作目录已切换为：${nextPath}。之后的任务都会在这个目录里操作。` };
+}
+
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
 async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord, isNewChat, reply: rawReply, replyMedia, sendTyping, registerPending, clearPending }) {
   const myKey = String(chatKey || `${channel}:${chat?.chatId || ""}`);
@@ -3185,11 +3233,22 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     // 渠道审批严格度：auto 自动执行(少打扰)/interactive 严格逐次确认，其余回退 reviewer。
     const channelMode = settings.channels?.approvalMode;
     const approvalMode = channelMode === "auto" || channelMode === "interactive" ? channelMode : "reviewer";
-    const baseRouter = createExtraToolRouter(taskSettings, workspacePath);
-    // send_media / text_to_speech 先由渠道媒体处理器接管，其余交给现有 MCP/浏览器路由
+    let baseRouter = createExtraToolRouter(taskSettings, workspacePath);
+    // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
     routeExtraTool = async (name, args) => {
       if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
       if (name === "text_to_speech") return handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings: taskSettings });
+      if (name === "switch_workspace") {
+        const result = await handleChannelSwitchWorkspace(args, { chatRecord, chatKey: myKey, workspacePath, userText: text });
+        if (result.ok) {
+          // 后续工具与本次任务收尾都用新目录；浏览器/MCP 路由也切到新工作区
+          workspacePath = result.path;
+          baseRouter.dispose();
+          baseRouter = createExtraToolRouter(taskSettings, workspacePath);
+          routeExtraTool.dispose = () => baseRouter.dispose();
+        }
+        return result;
+      }
       return baseRouter(name, args);
     };
     routeExtraTool.dispose = () => baseRouter.dispose();

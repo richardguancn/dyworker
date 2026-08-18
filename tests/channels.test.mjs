@@ -9,7 +9,7 @@ import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachm
 import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mjs";
 import { chatKeyOf, createChannelManager, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
 import { verifyChannelMediaPath } from "../electron/channels/media-tools.mjs";
-import { looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mjs";
+import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mjs";
 
 // ---- chunkText ----
 
@@ -52,16 +52,45 @@ test("parseWorkspaceSwitch:识别整条更换工作目录指令,忽略无关消�
     "把工作目录改为/opt/app",
     "设置工作目录为 \"My Docs/Project\"",
     "工作目录：/workspace/next",
+    "切换到ai-learning目录",
+    "切换到 /Users/me/project 目录",
+    "把工作区切换到 ai-learning 目录",
+    "切换至 frontend 文件夹",
+    "切换到目录ai-learning",
+    "把工作目录换到/Users/me/project",
   ]) {
     assert.ok(parseWorkspaceSwitch(text), text);
   }
   assert.equal(parseWorkspaceSwitch("请更换工作目录至xxx/xxx/xx/"), "xxx/xxx/xx/");
   assert.equal(parseWorkspaceSwitch("设置工作目录为 \"My Docs/Project\""), "My Docs/Project");
+  assert.equal(parseWorkspaceSwitch("切换到ai-learning目录"), "ai-learning");
+  assert.equal(parseWorkspaceSwitch("切换到 /Users/me/project 目录"), "/Users/me/project");
+  assert.equal(parseWorkspaceSwitch("把工作区切换到 ai-learning 目录"), "ai-learning");
+  assert.equal(parseWorkspaceSwitch("切换至 frontend 文件夹"), "frontend");
+  assert.equal(parseWorkspaceSwitch("切换到目录ai-learning"), "ai-learning");
   assert.equal(looksLikePathDirective("xxx/xxx/xx/"), true);
   assert.equal(looksLikePathDirective("./frontend"), true);
   assert.equal(looksLikePathDirective("frontend"), false);
   for (const text of ["把项目的工作目录改成 frontend 后再构建", "随便聊聊工作目录", ""]) {
     assert.equal(parseWorkspaceSwitch(text), null, text);
+  }
+  // 任务正文里出现“切换”字样的普通消息不能被误拦截
+  for (const text of ["把文件从 A 目录切换到 B 目录保存", "帮我看看工作目录在哪里", "切换到安全模式试试"]) {
+    assert.equal(parseWorkspaceSwitch(text), null, text);
+  }
+});
+
+test("isWorkspaceSwitchRequest:识别用户要求切换工作目录的说法", () => {
+  for (const text of [
+    "切换到ai-learning目录",
+    "请帮我切换工作目录至 /Users/me/project",
+    "把工作目录改成frontend",
+    "帮我把工作区换到新项目",
+  ]) {
+    assert.equal(isWorkspaceSwitchRequest(text), true, text);
+  }
+  for (const text of ["今天天气怎么样", "把文件保存到 output 目录", ""]) {
+    assert.equal(isWorkspaceSwitchRequest(text), false, text);
   }
 });
 
@@ -83,6 +112,42 @@ test("resolveWorkspaceSwitch:绝对/相对/~/不存在目录", async (t) => {
   const relativeWithoutBase = await resolveWorkspaceSwitch("sub", "");
   assert.equal(relativeWithoutBase.ok, false);
   assert.match(relativeWithoutBase.error, /绝对路径/);
+});
+
+test("manager:updateChatWorkspaceBySession 同步电脑端更换的工作区", async () => {
+  const chatsFile = {
+    value: {
+      [chatKeyOf("qq", "u1")]: {
+        sessionId: "s-qq-1",
+        workspacePath: "/old/a",
+        title: "QQ·张三",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+      },
+      [chatKeyOf("qq", "u2")]: {
+        sessionId: "s-qq-2",
+        workspacePath: "/old/b",
+        title: "QQ·李四",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+      },
+    },
+  };
+  const manager = createChannelManager({
+    readChats: async () => chatsFile.value,
+    writeChats: async (chats) => { chatsFile.value = chats; },
+  });
+  const changed = await manager.updateChatWorkspaceBySession("s-qq-1", "/new/a");
+  assert.equal(changed, true);
+  assert.equal(chatsFile.value[chatKeyOf("qq", "u1")].workspacePath, "/new/a");
+  assert.equal(chatsFile.value[chatKeyOf("qq", "u2")].workspacePath, "/old/b", "其他会话不受影响");
+  // 找不到对应会话时返回 false 且不写盘
+  const missing = await manager.updateChatWorkspaceBySession("s-none", "/x");
+  assert.equal(missing, false);
+  assert.equal(chatsFile.value[chatKeyOf("qq", "u1")].workspacePath, "/new/a");
+  // 空路径 = 清除工作区（桌面端“移除工作目录”的语义）
+  await manager.updateChatWorkspaceBySession("s-qq-2", "");
+  assert.equal(chatsFile.value[chatKeyOf("qq", "u2")].workspacePath, "");
 });
 
 // ---- normalizeQqEvent ----

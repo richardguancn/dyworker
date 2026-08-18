@@ -22,7 +22,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     id: "kimi",
-    name: "Kimi（月之暗面）",
+    name: "Kimi（编程套餐）",
     endpoint: "https://api.kimi.com/coding/v1/chat/completions",
     models: ["k3", "kimi-k2-0905-preview"],
     defaultModel: "k3",
@@ -30,6 +30,20 @@ export const providerPresets: ProviderPreset[] = [
     contextLimits: {
       k3: 1048576,
       "kimi-k2-0905-preview": 262144,
+    },
+    defaultContextLimit: 1048576,
+  },
+  {
+    id: "kimi-open",
+    name: "Kimi（开放平台）",
+    endpoint: "https://api.moonshot.cn/v1/chat/completions",
+    models: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.6"],
+    defaultModel: "kimi-k3",
+    keyHint: "platform.moonshot.cn 申请（sk- 开头）",
+    contextLimits: {
+      "kimi-k3": 1048576,
+      "kimi-k2.7-code": 262144,
+      "kimi-k2.6": 262144,
     },
     defaultContextLimit: 1048576,
   },

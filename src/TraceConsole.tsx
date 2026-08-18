@@ -5,6 +5,7 @@
 // 进行中的未配对记录画成刻度线，不虚构时长。
 // 老会话降级：无轨迹数据时切换「日志」视图显示原有四类 debug-log 扁平列表。
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { Clock, Hash, History, Layers, Search, Terminal, Trash2, X } from "lucide-react";
 import type { DebugLogEntry, TraceEvent } from "./types";
 
@@ -38,8 +39,9 @@ const TRACE_KIND_LABEL: Record<TraceEvent["kind"], string> = {
   "agent-finished": "任务结束",
 };
 
-// 时间线条块配色：模型=紫、工具=橙（与列表徽标同族）
-const TIMELINE_LANE_COLOR = { model: "#8b5cf6", tool: "#e8930c", input: "#9aa4b2" } as const;
+// 泳道配色（对齐 DSH 语义：用户=主色、助手=品牌紫、工具=警示橙；上下文类记录归助手道）
+const TIMELINE_LANE_COLOR = { user: "#4f8ef7", assistant: "#8b5cf6", tool: "#e8930c" } as const;
+const TRACE_ERROR_COLOR = "#e04b4b";
 // 「轮次」模式下按轮次循环取色，直观看清每轮边界
 const TURN_PALETTE = ["#4f8ef7", "#8b5cf6", "#2fb5c9", "#e8930c", "#3fb27f", "#e05b9b", "#d4b106", "#79cfdf"];
 
@@ -90,41 +92,45 @@ const TIMELINE_MODES: { id: TimelineMode; label: string; icon: typeof Clock }[] 
 ];
 
 const TIMELINE_LANES: { id: TimelineItem["lane"]; label: string }[] = [
-  { id: "input", label: "输入" },
-  { id: "model", label: "模型" },
+  { id: "user", label: "用户" },
+  { id: "assistant", label: "助手" },
   { id: "tool", label: "工具" },
 ];
 
 interface TimelineItem {
   key: string;
-  lane: "input" | "model" | "tool";
+  lane: "user" | "assistant" | "tool";
   trace: TraceEvent;
   startMs: number;
   endMs?: number; // 有配对结束端才有；无配对画刻度线
   turn: number;
+  isError: boolean;
   tip: string;
+}
+
+// 记录是否出错：活动/工具结果的 status=error，或 agent-finished 的 error，或内容含错误标记
+function traceIsError(trace: TraceEvent): boolean {
+  if (trace.status === "error") return true;
+  if (trace.kind === "agent-finished" && /\berror\b|失败|出错/i.test(trace.content || "")) return true;
+  return false;
+}
+
+// 把记录归到泳道：用户输入→user；模型与系统记录→assistant；工具调用→tool
+function traceLane(trace: TraceEvent): TimelineItem["lane"] | null {
+  if (trace.kind === "tool-call") return "tool";
+  if (trace.kind === "model-request" || trace.kind === "model-response") return "assistant";
+  return null; // 其余记录不上时间轴，只进列表
 }
 
 function buildTimelineItems(traces: TraceEvent[], pairs: Map<string, TraceEvent>): TimelineItem[] {
   const items: TimelineItem[] = [];
-  let currentTurn = -1;
   for (const trace of traces) {
     const ms = Date.parse(trace.time);
-    if (trace.turn !== currentTurn) {
-      currentTurn = trace.turn;
-      items.push({
-        key: `turn:${traceKey(trace)}`,
-        lane: "input",
-        trace,
-        startMs: ms,
-        turn: trace.turn,
-        tip: `第 ${trace.turn} 轮开始 · ${traceTime(trace)}`,
-      });
-    }
-    const lane = trace.kind === "model-request" ? "model" : trace.kind === "tool-call" ? "tool" : null;
+    const lane = traceLane(trace);
     if (!lane) continue;
     const end = pairs.get(traceKey(trace));
     const endMs = end ? Date.parse(end.time) : undefined;
+    const isError = traceIsError(trace) || (end ? traceIsError(end) : false);
     const durationText = endMs !== undefined ? ` · 耗时 ${formatDuration(Math.max(0, endMs - ms))}` : " · 进行中";
     items.push({
       key: traceKey(trace),
@@ -133,31 +139,106 @@ function buildTimelineItems(traces: TraceEvent[], pairs: Map<string, TraceEvent>
       startMs: ms,
       endMs,
       turn: trace.turn,
-      tip: `${TRACE_KIND_LABEL[trace.kind]} · ${trace.title || "(无标题)"}${durationText}`,
+      isError,
+      tip: `${TRACE_KIND_LABEL[trace.kind]} · ${trace.title || "(无标题)"}${durationText}${isError ? " · 出错" : ""}`,
     });
   }
   return items;
 }
 
-function LaneTimeline({ items, mode, selectedKey, onPick }: {
+// 时间轴上的 turn 边界：每个新一轮的第一条记录位置画竖线贯穿（对齐 DSH turnBoundary）
+function buildTurnBoundaries(items: TimelineItem[]): { turn: number; startMs: number }[] {
+  const boundaries: { turn: number; startMs: number }[] = [];
+  let currentTurn = -1;
+  for (const item of items) {
+    if (item.trace.turn !== currentTurn) {
+      currentTurn = item.trace.turn;
+      boundaries.push({ turn: currentTurn, startMs: item.startMs });
+    }
+  }
+  return boundaries;
+}
+
+function LaneTimeline({ items, mode, selectedKey, searchMatchedKeys, onPick, onRangeSelect }: {
   items: TimelineItem[];
   mode: TimelineMode;
   selectedKey?: string;
+  /** 搜索命中的记录 key 集合；null 表示无搜索（全部正常显示） */
+  searchMatchedKeys: Set<string> | null;
   onPick: (trace: TraceEvent) => void;
+  /** 拖选时间区间（毫秒），传 null 清除 */
+  onRangeSelect: (range: { startMs: number; endMs: number } | null) => void;
 }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ startPct: number; endPct: number } | null>(null);
   if (!items.length) return null;
   const startMs = items[0].startMs;
   const endMs = items.reduce((max, item) => Math.max(max, item.endMs ?? item.startMs), startMs + 1);
   const span = endMs - startMs;
+  const turnBoundaries = buildTurnBoundaries(items);
   // 「调用」模式：忽略真实时间，按事件顺序等宽排布（x = 全局序号）
   const orderByKey = new Map(items.map((item, index) => [item.key, index]));
   const slotPct = 100 / Math.max(1, items.length);
+
+  const msFromPct = (pct: number) => startMs + (pct / 100) * span;
+  const pctFromClientX = (clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent) => {
+    // 只在空白轨道按下才开始拖选（点在条块上是选中记录）
+    if ((event.target as HTMLElement).closest(".trace-lane-bar, .trace-lane-tick")) return;
+    event.preventDefault();
+    const pct = pctFromClientX(event.clientX);
+    setDrag({ startPct: pct, endPct: pct });
+    const onMove = (moveEvent: PointerEvent) => {
+      setDrag({ startPct: pct, endPct: pctFromClientX(moveEvent.clientX) });
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const endPct = pctFromClientX(upEvent.clientX);
+      setDrag(null);
+      const lo = Math.min(pct, endPct);
+      const hi = Math.max(pct, endPct);
+      // 拖动距离太小视为单击 → 清除区间
+      if (hi - lo < 1.5) {
+        onRangeSelect(null);
+      } else {
+        onRangeSelect({ startMs: msFromPct(lo), endMs: msFromPct(hi) });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   return (
     <div className="trace-timeline" aria-label="轨迹时间线">
-      {TIMELINE_LANES.map((lane) => (
-        <div className="trace-lane" key={lane.id}>
-          <span className="trace-lane-label">{lane.label}</span>
-          <div className="trace-lane-track">
+      <div className="trace-lane-labels" aria-hidden="true">
+        {TIMELINE_LANES.map((lane) => <span key={lane.id}>{lane.label}</span>)}
+      </div>
+      <div className="trace-lane-plot" ref={trackRef} onPointerDown={handlePointerDown}>
+        {/* turn 边界竖线贯穿整个时间轴（对齐 DSH turnBoundary） */}
+        {mode !== "calls" && turnBoundaries.map((boundary) => (
+          <span
+            key={`tb-${boundary.turn}`}
+            className="trace-turn-boundary"
+            style={{ left: `${((boundary.startMs - startMs) / span) * 100}%` }}
+            title={`第 ${boundary.turn} 轮开始`}
+          />
+        ))}
+        {/* 拖选区间高亮 */}
+        {drag && (
+          <span
+            className="trace-range-selection"
+            style={{ left: `${Math.min(drag.startPct, drag.endPct)}%`, width: `${Math.abs(drag.endPct - drag.startPct)}%` }}
+          />
+        )}
+        {TIMELINE_LANES.map((lane, laneIndex) => (
+          <div className="trace-lane-track-row" key={lane.id}>
             {items.filter((item) => item.lane === lane.id).map((item) => {
               const isSpan = item.endMs !== undefined && item.endMs > item.startMs;
               let leftPct: number;
@@ -169,13 +250,16 @@ function LaneTimeline({ items, mode, selectedKey, onPick }: {
                 leftPct = ((item.startMs - startMs) / span) * 100;
                 widthPct = isSpan ? Math.max(0.35, ((item.endMs as number) - item.startMs) / span * 100) : undefined;
               }
-              const color = mode === "turns" ? TURN_PALETTE[item.turn % TURN_PALETTE.length] : TIMELINE_LANE_COLOR[item.lane];
+              const baseColor = mode === "turns" ? TURN_PALETTE[item.turn % TURN_PALETTE.length] : TIMELINE_LANE_COLOR[item.lane];
+              const color = item.isError ? TRACE_ERROR_COLOR : baseColor;
+              const key = traceKey(item.trace);
+              const dimmed = searchMatchedKeys !== null && !searchMatchedKeys.has(key);
               return (
                 <button
                   type="button"
                   key={item.key}
-                  className={`${isSpan ? "trace-lane-bar" : "trace-lane-tick"} ${selectedKey === traceKey(item.trace) ? "selected" : ""}`}
-                  style={{ left: `${leftPct}%`, width: widthPct !== undefined ? `${Math.min(100 - leftPct, widthPct)}%` : undefined, background: color }}
+                  className={`${isSpan ? "trace-lane-bar" : "trace-lane-tick"} ${selectedKey === key ? "selected" : ""} ${item.isError ? "is-error" : ""} ${dimmed ? "dimmed" : ""}`}
+                  style={{ left: `${leftPct}%`, top: `${laneIndex * 14 + 3}px`, width: widthPct !== undefined ? `${Math.min(100 - leftPct, widthPct)}%` : undefined, background: color }}
                   title={item.tip}
                   aria-label={item.tip}
                   onClick={() => onPick(item.trace)}
@@ -183,8 +267,8 @@ function LaneTimeline({ items, mode, selectedKey, onPick }: {
               );
             })}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -327,6 +411,8 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   const [filter, setFilter] = useState<TraceFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string | undefined>();
   const [loadingHistory, setLoadingHistory] = useState(false);
+  // 时间轴拖选的时间区间（毫秒），用于过滤明细列表；null 表示不过滤
+  const [range, setRange] = useState<{ startMs: number; endMs: number } | null>(null);
   const listBodyRef = useRef<HTMLDivElement>(null);
   // 最新 traces 镜像：loadHistory 分页递归时用 ref 去重，避免闭包捕获过期的 props
   const tracesRef = useRef(traces);
@@ -338,14 +424,32 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   const byKey = useMemo(() => new Map(traces.map((trace) => [traceKey(trace), trace])), [traces]);
   const timelineItems = useMemo(() => buildTimelineItems(traces, pairs), [traces, pairs]);
 
+  // 搜索命中的记录 key 集合：联动时间轴高亮（未命中降透明度）；null 表示无搜索
+  const searchMatchedKeys = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return null;
+    const matched = new Set<string>();
+    for (const trace of traces) {
+      if ((trace.title || "").toLowerCase().includes(query) || (trace.content || "").toLowerCase().includes(query)) {
+        matched.add(traceKey(trace));
+      }
+    }
+    return matched;
+  }, [traces, search]);
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return traces.filter((trace) => {
       if (filter !== "all" && trace.target !== filter) return false;
+      // 时间轴拖选区间过滤
+      if (range) {
+        const ms = Date.parse(trace.time);
+        if (ms < range.startMs || ms > range.endMs) return false;
+      }
       if (!query) return true;
       return (trace.title || "").toLowerCase().includes(query) || (trace.content || "").toLowerCase().includes(query);
     });
-  }, [traces, search, filter]);
+  }, [traces, search, filter, range]);
 
   const rows = useMemo(() => flattenRows(filtered), [filtered]);
   const rowOffsets = useMemo(() => {
@@ -491,6 +595,11 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                   })}
                 </div>
                 <span className="trace-toolbar-count">{filtered.length} / {traces.length} 条</span>
+                {range && (
+                  <button type="button" className="trace-range-clear" onClick={() => setRange(null)} title="清除时间轴拖选的时间区间过滤">
+                    区间过滤中 ×
+                  </button>
+                )}
                 <select value={filter} onChange={(event) => setFilter(event.target.value as TraceFilter)} aria-label="按目标筛选">
                   <option value="all">全部</option>
                   <option value="model">模型</option>
@@ -508,7 +617,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                   />
                 </div>
               </div>
-              <LaneTimeline items={timelineItems} mode={mode} selectedKey={selectedKey} onPick={pickRecord} />
+              <LaneTimeline items={timelineItems} mode={mode} selectedKey={selectedKey} searchMatchedKeys={searchMatchedKeys} onPick={pickRecord} onRangeSelect={setRange} />
               <div className="trace-body">
                 <div
                   className="trace-list"
