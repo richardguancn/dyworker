@@ -3150,6 +3150,9 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   }
   runningChannelTaskCount += 1;
   trackTaskStart();
+  // 本次渠道任务的运行 id：实时转发的 agent:event 信封与收尾 sessions:append 都带它，
+  // 渲染端据此区分渠道运行与桌面运行（防重复气泡），并把收尾消息替换进流式占位气泡。
+  const channelRunId = crypto.randomUUID();
   if (Date.now() - taskStartedAt > 2000) {
     channelDebug("渠道任务开始执行", {
       chatKey: myKey,
@@ -3188,10 +3191,11 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, messages: [userMessage] });
     }
   };
-  // 完成/挂起时只追加助手消息(buildMessages 的 [user, assistant] 里 user 已经上过屏)
+  // 完成/挂起时只追加助手消息(buildMessages 的 [user, assistant] 里 user 已经上过屏)。
+  // 带 runId：渲染端若已有本 run 的流式占位气泡则原位替换，而不是追加第二条。
   const sendAssistantMessages = (messages) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, messages });
+    mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, runId: channelRunId, messages });
   };
   try {
     // 整条消息是「更换工作目录至…」时直接切换该聊天的操作目录，不经过模型。
@@ -3292,11 +3296,12 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     // 让渠道会话像桌面任务一样边跑边显示，而不是等全部结束才一次性 append。
     // 只挑影响 UI 的轻量事件；trace/token-usage 等仍只进本地留痕。事件体再包一层 sessionId/runId，
     // 与桌面端 onAgentEvent 的负载形状一致，渲染端可用同一套归约逻辑处理。
-    const channelRunId = crypto.randomUUID();
+    // channelRun: true 是渠道运行的标记：桌面端在同一渠道会话里发起的任务也发 agent:event，
+    // 没有这个标记渲染端无法区分，会把同一条回复渲染成两个气泡。
     const forwardChannelEvent = (agentEvent) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       if (!CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type)) return;
-      mainWindow.webContents.send("agent:event", { sessionId, runId: channelRunId, event: agentEvent });
+      mainWindow.webContents.send("agent:event", { sessionId, runId: channelRunId, channelRun: true, event: agentEvent });
     };
     const prior = await visibleConversationForSession(sessionId, "", "");
     const workingContext = await workingContextForSession(sessionId);
@@ -3366,8 +3371,16 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     });
     for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath);
     if (channelTaskAborts.has(myKey) || result.status === "cancelled") {
-      // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果
-      sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, "（用户通过渠道消息停止了任务）").slice(1));
+      // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果。
+      // 半截正文保留在留痕里（与桌面端"已按你的要求停止"同口径），用户不至于丢失已生成的内容。
+      const partial = String(result.finalText || "").trim();
+      const cancelledContent = partial ? `${partial}\n\n（用户通过渠道消息停止了任务）` : "（用户通过渠道消息停止了任务）";
+      sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, cancelledContent).slice(1));
+      // 收尾事件：渲染端据此清掉运行标记（正常完成路径在 reply 之后同样会发）
+      forwardChannelEvent({
+        type: "agent-finished",
+        result: { status: "cancelled", finalText: result.finalText || "", durationMs: Date.now() - taskStartedAt },
+      });
       return;
     }
     if (result.status === "sleeping" && result.wake) {
@@ -3383,6 +3396,11 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       const note = `已主动挂起,将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动继续(原因:${result.wake.reason})。`;
       await reply(note).catch(() => { });
       sendAssistantMessages(collector.buildMessages(userText, result, `${result.finalText || ""}\n\n${note}`.trim()).slice(1));
+      // 挂起同样是本轮收尾：渲染端清掉运行标记,到点续跑由调度路径另行起会话
+      forwardChannelEvent({
+        type: "agent-finished",
+        result: { status: "sleeping", finalText: result.finalText || "", wake: result.wake, durationMs: Date.now() - taskStartedAt },
+      });
       return;
     }
     const finalText = result.finalText || result.reason || "没有产出结果";

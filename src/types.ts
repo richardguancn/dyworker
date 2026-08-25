@@ -213,6 +213,9 @@ export type AgentEvent =
 export interface SessionAgentEvent {
   sessionId: string;
   runId: string;
+  // 渠道（QQ/微信）任务转发的事件带 true；桌面端 runTask 的事件没有此字段，
+  // 渠道流式归约器凭它区分来源，避免同一运行被渲染成两个气泡
+  channelRun?: boolean;
   event: AgentEvent;
 }
 
@@ -603,7 +606,7 @@ export interface DyworkerBridge {
   triggerSchedule(id: string): Promise<{ ok: boolean; error?: string }>;
   onSchedulesChanged(callback: () => void): () => void;
   onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
-  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; messages: ChatMessage[] }) => void): () => void;
+  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[] }) => void): () => void;
   cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
   getChannelsStatus(): Promise<ChannelsStatusMap>;
   onChannelsStatus(callback: (statusMap: ChannelsStatusMap) => void): () => void;

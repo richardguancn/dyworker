@@ -78,6 +78,8 @@ import { ProcessTimeline } from "./ProcessTimeline";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { buildTaskTrace, traceEventsToAgentEvents } from "./taskTrace";
+import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
+import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TraceEvent, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
@@ -4308,6 +4310,11 @@ export function App() {
     sessionsRef.current = sessions;
   }, [sessions]);
 
+  // 渠道流式气泡登记（跨两个长期存活的监听器共享）：
+  // sessionId → 占位消息 id（实时事件归约用）；runId → 占位位置（收尾 append 原位替换用）
+  const channelStreamIdsRef = useRef<Map<string, string>>(new Map());
+  const channelStreamRunsRef: { current: ChannelStreamRuns } = useRef(new Map<string, ChannelStreamRef>());
+
   // 工作台布局持久化：面板 Tab、分栏比例按会话保存到 localStorage，切换会话恢复、重启不丢。
   // 恢复先于保存执行，避免启动时用空状态覆盖已保存布局；没有自定义过布局（无 Tab）的会话不落盘。
   const PANEL_LAYOUT_PREFIX = "dyworker:panel-layout:v1:";
@@ -4635,10 +4642,21 @@ export function App() {
     });
     const offAppend = window.dyworker?.onSessionAppend?.((payload) => {
       const appendUnread = payload.sessionId !== activeIdRef.current;
+      // 渠道任务收尾的落库消息与运行期间的流式占位气泡是同一条回复：凭 runId 找到占位气泡
+      // 原位替换，否则会出现两条重复消息。takeStreamMessage 是 delete-on-read（替换只发生一次），
+      // 必须在 setSessions updater 外调用——updater 在 StrictMode 下会被双调，里面要保持纯净。
+      const streamRef = takeStreamMessage(channelStreamRunsRef.current, String(payload.runId || ""));
+      const placeholderMessageId = streamRef && streamRef.sessionId === payload.sessionId ? streamRef.messageId : null;
       setSessions((current) => {
         const existing = current.find((session) => session.id === payload.sessionId);
         const workingContext = latestWorkingContext(payload.messages);
         if (existing) {
+          const { messages: mergedMessages, replacedMessageId } = reconcileChannelAppend(existing.messages, placeholderMessageId, payload.messages);
+          if (replacedMessageId) {
+            // 占位气泡已被最终消息接管：随后的 agent-finished 补丁不得再覆盖它
+            // （补丁只会写裸 finalText，会丢「已发送 N 个文件」等收尾注记）。delete 幂等，双调安全。
+            channelStreamIdsRef.current.delete(payload.sessionId);
+          }
           return current.map((session) => session.id === payload.sessionId
             ? {
                 ...session,
@@ -4646,7 +4664,7 @@ export function App() {
                 workspacePath: payload.workspacePath || session.workspacePath,
                 ...(workingContext !== undefined ? { workingContext } : {}),
                 ...(appendUnread ? { unread: true } : {}),
-                messages: [...session.messages, ...payload.messages],
+                messages: mergedMessages,
                 updatedAt: new Date().toISOString(),
               }
             : session);
@@ -4681,14 +4699,16 @@ export function App() {
   }, []);
 
   // 渠道（QQ/微信）会话实时进度：主进程在渠道任务运行期间把关键 agent 事件
-  // （活动流、正文流式、计划、循环状态、任务结束）通过 agent:event 转发过来，
-  // 这里归约进对应会话的消息，让渠道回复像桌面任务一样边跑边显示，
+  // （活动流、正文流式、计划、循环状态、任务结束）通过 agent:event 转发过来（信封带
+  // channelRun: true），这里归约进对应会话的消息，让渠道回复像桌面任务一样边跑边显示，
   // 而不是等全部结束才一次性 append。与 runTask 内的监听器互不干扰：
-  // 它只处理 taskSessionId+taskRunId，不碰渠道会话。
+  // 它只处理 taskSessionId+taskRunId，不碰渠道会话；这里只认 channelRun 标记的信封，
+  // 桌面端在渠道会话里发起的运行（无标记）不会被重复渲染成第二个气泡。
   useEffect(() => {
     if (!window.dyworker?.onAgentEvent) return;
     // 每个渠道会话当前正在流式更新的 assistant 占位消息 id（按 sessionId 记录）
-    const channelStreamIds = new Map<string, string>();
+    const channelStreamIds = channelStreamIdsRef.current;
+    const streamRuns = channelStreamRunsRef.current;
     const patchChannelAssistant = (sessionId: string, updater: (current: ChatMessage) => ChatMessage) => {
       const targetId = channelStreamIds.get(sessionId);
       if (!targetId) return;
@@ -4697,11 +4717,13 @@ export function App() {
         messages: session.messages.map((message) => (message.id === targetId ? updater(message) : message)),
       }));
     };
-    const ensureChannelAssistant = (sessionId: string): string => {
+    const ensureChannelAssistant = (sessionId: string, runId: string): string => {
       const existing = channelStreamIds.get(sessionId);
       if (existing) return existing;
       const id = crypto.randomUUID();
       channelStreamIds.set(sessionId, id);
+      // 登记 runId → 占位位置：收尾 sessions:append 凭它原位替换占位气泡，而不是追加第二条
+      registerStreamMessage(streamRuns, runId, { sessionId, messageId: id });
       updateSession(sessionId, (session) => ({
         ...session,
         messages: [...session.messages, {
@@ -4715,17 +4737,19 @@ export function App() {
       return id;
     };
     const unsubscribe = window.dyworker.onAgentEvent((sessionAgentEvent) => {
-      const { sessionId, event } = sessionAgentEvent;
-      // 只处理渠道会话；桌面会话由 runTask 内注册的专属监听器处理
+      const { sessionId, runId, event } = sessionAgentEvent;
+      // 只处理渠道运行转发的事件：桌面会话由 runTask 内注册的专属监听器处理，
+      // 桌面端在渠道会话里发起的运行（信封无 channelRun 标记）也归它，这里必须跳过
+      if (!isChannelRunEnvelope(sessionAgentEvent)) return;
       const target = sessionsRef.current.find((session) => session.id === sessionId);
       if (!target || !target.channel) return;
       if (event.type === "queue-start") {
-        ensureChannelAssistant(sessionId);
+        ensureChannelAssistant(sessionId, runId);
         setRunningSessionIds((current) => new Set(current).add(sessionId));
         setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
       } else if (event.type === "activity") {
         if (!event.activity.branch) {
-          ensureChannelAssistant(sessionId);
+          ensureChannelAssistant(sessionId, runId);
           patchChannelAssistant(sessionId, (current) => ({ ...current, activities: [...(current.activities || []), event.activity] }));
         }
       } else if (event.type === "activity-update") {
@@ -4737,10 +4761,10 @@ export function App() {
               : activity),
         }));
       } else if (event.type === "assistant-text") {
-        ensureChannelAssistant(sessionId);
+        ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, content: event.text }));
       } else if (event.type === "plan-update") {
-        ensureChannelAssistant(sessionId);
+        ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, plan: event.steps }));
       } else if (event.type === "file-change") {
         patchChannelAssistant(sessionId, (current) => ({ ...current, changes: event.changes }));
@@ -4755,7 +4779,9 @@ export function App() {
           return next;
         });
       } else if (event.type === "agent-finished") {
-        // 收尾：用结果体把流式气泡收口为最终形态，并清掉运行标记
+        // 收尾：用结果体把流式气泡收口为最终形态，并清掉运行标记。
+        // 若收尾 append 已原位替换占位气泡，channelStreamIds 条目已被清掉，这里的补丁自然落空，
+        // 不会用裸 finalText 覆盖落库消息。
         const result = event.result;
         patchChannelAssistant(sessionId, (current) => {
           const plan = result.plan?.length ? result.plan : current.plan;
@@ -4772,6 +4798,7 @@ export function App() {
           };
         });
         channelStreamIds.delete(sessionId);
+        forgetStreamMessage(streamRuns, runId);
         setRunningSessionIds((current) => {
           const next = new Set(current);
           next.delete(sessionId);

@@ -21,10 +21,12 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 // 同一批工具调用（名称+参数完全相同）连续出现这么多个轮次，判定为原地打转，提前暂停
 const REPEAT_ROUND_LIMIT = 3;
 const MODEL_TIMEOUT_MS = 180_000;
-// 网络层抖动自动重试：fetch 本身连接失败（fetch failed 等）时短暂等待后重试，最多 3 次；
+// 网络层抖动自动重试：fetch 本身连接失败（fetch failed 等）时按指数退避重试。
+// 实际观测到本地推理服务的断流窗口可达 30 秒级，3 次×1s 的固定间隔 span 太短，
+// 改为 1s/2s/4s/8s/16s 共 5 次重试（总等待约 31 秒），覆盖典型抖动窗口。
 // 服务端已返回的状态码不重试，交由既有状态码/压缩回退逻辑处理。取消与中止不重试。
-const MODEL_NETWORK_RETRY_LIMIT = 3;
-const MODEL_NETWORK_RETRY_DELAY_MS = 1000;
+const MODEL_NETWORK_RETRY_LIMIT = 5;
+const MODEL_NETWORK_RETRY_BASE_DELAY_MS = 1000;
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_OUTPUT_LIMIT = 20 * 1024;
 const READ_LIMIT = 300 * 1024;
@@ -2190,7 +2192,23 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
   return [...staticSections, ...dynamicSections].join("\n\n");
 }
 
-async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey }) {
+// undici 把连接层失败统一报成 "fetch failed"，真正的错因（ECONNREFUSED/ECONNRESET/ETIMEDOUT 等）
+// 在 error.cause 上。拼进消息方便用户与日志定位，同时保证上层按消息识别网络错误的正则
+// （providers.mjs runKimiFormula 等）继续命中。
+function decorateNetworkError(error, endpoint) {
+  if (!(error instanceof Error)) return error;
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return error;
+  const target = cause.address ? `${cause.address}${cause.port ? `:${cause.port}` : ""}` : String(endpoint || "");
+  const detail = [cause.code, cause.syscall, target].filter(Boolean).join(" ");
+  if (!detail || error.message.includes(cause.code || "__none__")) return error;
+  const wrapped = new Error(`${error.message}（${detail}）`);
+  wrapped.cause = cause;
+  if (error.status) wrapped.status = error.status;
+  return wrapped;
+}
+
+async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
   let response;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -2207,8 +2225,10 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
       break;
     } catch (error) {
       // 只有连接层失败才重试；已取消/超时中止或重试次数用完时直接抛出。
-      if (signal?.aborted || error?.name === "AbortError" || attempt >= MODEL_NETWORK_RETRY_LIMIT) throw error;
-      await new Promise((resolve) => setTimeout(resolve, MODEL_NETWORK_RETRY_DELAY_MS));
+      if (signal?.aborted || error?.name === "AbortError" || attempt >= MODEL_NETWORK_RETRY_LIMIT) {
+        throw decorateNetworkError(error, endpoint || settings.endpoint);
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryBaseDelayMs * 2 ** attempt));
       if (signal?.aborted) throw error;
     }
   }
@@ -2673,7 +2693,7 @@ async function readResponsesStream(response, { onText, onUsage }) {
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null }) {
+export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
@@ -2700,10 +2720,10 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     const streamPayload = responsesApi
       ? { ...basePayload, stream: true }
       : { ...basePayload, stream: true, stream_options: { include_usage: true } };
-    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint });
+    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs });
   } catch (error) {
     if (error?.status !== 400 && error?.status !== 404 && error?.status !== 422) throw error;
-    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint });
+    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs });
   }
 
   const contentType = response.headers?.get?.("content-type") || "";
@@ -3087,6 +3107,8 @@ export async function runAgent({
   depth = 0,
   contextLimit = 128000,
   modelTimeoutMs = MODEL_TIMEOUT_MS,
+  // 网络重试退避基数（毫秒）：默认 1s/2s/4s/8s/16s；测试可注入小值避免真实等待
+  networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS,
   hooks = [],
   goal = "",
   standingRules = [],
@@ -3539,6 +3561,7 @@ export async function runAgent({
           fetchImpl,
           signal,
           extraTools,
+          retryBaseDelayMs: networkRetryBaseDelayMs,
           tools: effectiveTools,
           onTransport: (mode) => { transport = mode; },
           onUsage: (usage) => {

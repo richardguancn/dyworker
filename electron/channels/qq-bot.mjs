@@ -141,8 +141,13 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       });
     } catch (error) {
       if (error?.name === "AbortError" || error?.name === "TimeoutError") {
-        throw new QqBotError(`QQ API ${method} ${path} 请求超时（${timeoutMs / 1000} 秒无响应）`);
+        const wrapped = new QqBotError(`QQ API ${method} ${path} 请求超时（${timeoutMs / 1000} 秒无响应）`);
+        // 超时是状态未知错误：服务端可能已收下并投递，盲目重试会让同一条消息在 QQ 里显示两遍
+        wrapped.unsafeToRetry = true;
+        throw wrapped;
       }
+      // 网络层错误（连接中断等）同样状态未知，禁止业务层重发
+      try { error.unsafeToRetry = true; } catch { /* 忽略不可写错误对象 */ }
       throw error;
     }
     const payload = await response.json().catch(() => ({}));
@@ -354,11 +359,15 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       try {
         await api(path, { method: "POST", body });
       } catch (error) {
-        // msg_id 过期(用户太久没发消息)时被动回复会失败,提示用户在 IM 里再说一句
-        if (chat.messageId) {
-          await api(path, { method: "POST", body: { content: chunk, msg_type: 0, msg_seq: seq + 1 } }).catch(() => {
-            throw error;
-          });
+        // msg_id 过期(用户太久没发消息)时被动回复会失败 → 去掉消息引用重发一次。
+        // 仅限拿到了明确业务拒绝（HTTP 错误响应）的情况；超时/网络错误状态未知，
+        // 重发会让同一段内容在 QQ 里重复显示，宁可报失败。
+        if (chat.messageId && !error?.unsafeToRetry) {
+          await api(path, { method: "POST", body: { content: chunk, msg_type: 0, msg_seq: seq + 1 } })
+            .then(() => { msgSeqByChat.set(chat.chatId, seq + 1); })
+            .catch(() => {
+              throw error;
+            });
         } else {
           throw error;
         }
@@ -490,13 +499,16 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
       try {
         await api(messagePath, { method: "POST", body });
       } catch (error) {
-        // msg_id 过期(用户太久没发消息)时被动回复会失败 → 去掉消息引用重发一次（与 sendText 一致）
-        if (chat.messageId) {
+        // msg_id 过期(用户太久没发消息)时被动回复会失败 → 去掉消息引用重发一次（与 sendText 一致）。
+        // 超时/网络错误状态未知（媒体可能已投递），绝不重发。
+        if (chat.messageId && !error?.unsafeToRetry) {
           const retryBody = { ...body, msg_seq: seq + 1 };
           delete retryBody.msg_id;
-          await api(messagePath, { method: "POST", body: retryBody }).catch(() => {
-            throw error;
-          });
+          await api(messagePath, { method: "POST", body: retryBody })
+            .then(() => { msgSeqByChat.set(chat.chatId, seq + 1); })
+            .catch(() => {
+              throw error;
+            });
         } else {
           throw error;
         }
