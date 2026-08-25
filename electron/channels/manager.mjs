@@ -182,8 +182,12 @@ export function createChannelManager({
       }).filter((line) => line.trim());
       return adapter.sendText(message, lines.join("\n"));
     };
-    // 1. 特殊指令:停止优先于待决议——审批/提问等待中也能用它脱身
-    if (STOP_WORDS.has(message.text.trim().toLowerCase())) {
+    // 1. 特殊指令:停止优先于待决议——审批/提问等待中也能用它脱身。
+    // 审批待决时「2」也表示停止(数字方案 1允许/0拒绝/2停止);提问待决或无待决时
+    // 「2」仍是正常输入(可能是选项序号或任务文本),不拦截。
+    const isStopCommand = STOP_WORDS.has(message.text.trim().toLowerCase())
+      || (message.text.trim() === "2" && pendingByChat.get(key)?.kind === "approval");
+    if (isStopCommand) {
       const queued = queueLengths.get(key) || 0;
       // 代数 +1:已排队但未开始的消息轮到时会直接跳过
       queueEpochs.set(key, (queueEpochs.get(key) || 0) + 1);
@@ -211,7 +215,7 @@ export function createChannelManager({
       }
       // 不是有效决议回复 → 提示后仍按待决议等待(避免审批被新任务淹没)
       await reply(pending.kind === "approval"
-        ? "请先回复「允许」或「拒绝」处理上面的审批;也可以到电脑端的审批收件箱处理,或回复「停止」中止任务。"
+        ? "请先回复 1（允许）或 0（拒绝）处理上面的审批；也可以到电脑端的审批收件箱处理，或回复 2 中止任务。"
         : "请先回复上面的问题(可回复选项序号),或到电脑端处理,或回复「停止」中止任务。").catch(() => { });
       return;
     }

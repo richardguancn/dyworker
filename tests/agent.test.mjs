@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
@@ -272,6 +272,117 @@ test("DeepSeek V4 Pro 使用 Chat Completions 地址时按 Chat 请求", async (
   assert.equal(calls[0].body.model, "deepseek-v4-pro");
   assert.ok(Array.isArray(calls[0].body.messages));
   assert.equal(calls[0].body.input, undefined);
+});
+
+test("DeepSeek 视觉模型原生处理图片：图片直通 DeepSeek 且不进视觉服务", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/responses",
+      model: "deepseek-v4-flash-vision-exp",
+      apiKey: "k",
+      // 即便配置了视觉服务，官方视觉模型也应原样直通，不经视觉服务转写
+      visionEndpoint: "https://vision.example/v1/chat/completions",
+      visionModel: "vision-model",
+      visionApiKey: "vision-k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "这张图片里有什么？" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA", detail: "low" } },
+      ],
+    }],
+    fetchImpl: mockResponsesFetch([{
+      id: "resp_vision",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "图中是一个登录窗口。" }] }],
+      usage: { input_tokens: 30, output_tokens: 10, total_tokens: 40 },
+    }], calls),
+  });
+
+  assert.equal(result.status, "done");
+  // 只应请求一次：直接打 DeepSeek，不再调用视觉服务
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.deepseek.com/responses");
+  assert.equal(calls[0].body.model, "deepseek-v4-flash-vision-exp");
+  // input 中图片以 input_image 内容块存在，且保留 detail
+  const userItem = calls[0].body.input.find((item) => item.role === "user");
+  const imagePart = userItem.content.find((part) => part.type === "input_image");
+  assert.ok(imagePart);
+  assert.equal(imagePart.image_url, "data:image/png;base64,AAAA");
+  assert.equal(imagePart.detail, "low");
+});
+
+test("DeepSeek 视觉模型在 chat/completions 地址时图片以 image_url 直通", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash-vision-exp",
+      apiKey: "k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: [
+        { type: "text", text: "看看这张图" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
+      ],
+    }],
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "已看到图片。" } }] }),
+      };
+    },
+  });
+
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].url, "https://api.deepseek.com/chat/completions");
+  assert.equal(calls[0].body.model, "deepseek-v4-flash-vision-exp");
+  const userMsg = calls[0].body.messages.find((msg) => msg.role === "user");
+  assert.ok(userMsg.content.some((part) => part.type === "image_url"));
+});
+
+test("DeepSeek 视觉模型过滤 assistant 消息中的图片（不发送给模型）", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const result = await runAgent({
+    settings: {
+      endpoint: "https://api.deepseek.com/responses",
+      model: "deepseek-v4-flash-vision-exp",
+      apiKey: "k",
+    },
+    workspacePath: root,
+    conversation: [{
+      role: "user",
+      content: "请描述之前的截图",
+    }, {
+      // 官方文档：assistant 消息中的图片会被服务端拒绝（400），本地应先行剥离，不随请求发出
+      role: "assistant",
+      content: [{ type: "text", text: "这是截图" }, { type: "image_url", image_url: { url: "data:image/png;base64,CCCC" } }],
+    }],
+    fetchImpl: mockResponsesFetch([
+      {
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "已描述截图。" }] }],
+        usage: { input_tokens: 20, output_tokens: 8, total_tokens: 28 },
+      },
+    ], calls),
+  });
+
+  assert.equal(result.status, "done");
+  // 请求里 assistant 消息的 content 应不含图片块（被剥离为纯文本）
+  const textMsg = calls[0].body.input.find((msg) => msg.role === "assistant");
+  assert.ok(textMsg, "应存在 assistant 消息");
+  const hasImage = Array.isArray(textMsg.content)
+    ? textMsg.content.some((part) => part?.type === "input_image" || part?.type === "image_url")
+    : false;
+  assert.equal(hasImage, false, "assistant 消息不应携带图片块");
 });
 
 test("Responses API 工具调用结果按 input items 原样回传", async () => {
@@ -759,6 +870,29 @@ test("允许执行后,本次任务内同类命令自动放行(会话级规则不
   assert.equal(approvals, 1, "同类命令第二次应自动放行,不再弹审批");
 });
 
+test("带绝对路径解释器的命令:批准后本次任务内同类自动放行", async (t) => {
+  if (process.platform === "win32") return t.skip("仅 POSIX 语义");
+  const root = await makeWorkspace();
+  let approvals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "跑两次脚本" }],
+    requestApproval: async () => {
+      approvals += 1;
+      return true;
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "/opt/homebrew/bin/bun scripts/x.ts" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "run_command", { command: "/opt/homebrew/bin/bun scripts/x.ts" })] },
+      { role: "assistant", content: "两条命令都执行了。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  // 解释器路径不再误报为工作区外 → 批准后生成会话规则,第二次不再问
+  assert.equal(approvals, 1, "解释器路径不应触发外部路径审批,同类命令第二次自动放行");
+});
+
 test("工作区外路径授权不进入会话规则:不同外部文件仍分别询问", async () => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
@@ -1235,6 +1369,60 @@ test("PATH 风格赋值按冒号拆开判断,不再拼成假路径", async (t) =
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat ~/.ssh/id_rsa" }),
     [path.join(os.homedir(), ".ssh/id_rsa")],
+  );
+});
+
+test("解释器与技能脚本路径不再算工作区外路径", async (t) => {
+  if (process.platform === "win32") return t.skip("仅 POSIX 语义");
+  const root = await makeWorkspace();
+  const workspace = new Workspace(root, { trustTempDirs: false });
+  // argv[0] 位于可执行根目录:运行工具不是访问数据
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "/opt/homebrew/bin/bun scripts/fetch.ts --date 2026-08-24" }),
+    [],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "/usr/bin/python3 scripts/x.py" }),
+    [],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: `${os.homedir()}/.nvm/versions/node/v24.10.0/bin/node scripts/x.js` }),
+    [],
+  );
+  // nohup/setsid 等包装命令后的程序也按 argv[0] 识别;环境赋值前缀同理
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: `cd ${root} && nohup /opt/homebrew/bin/bun scripts/fetch.ts > out.log 2>&1 & echo started` }),
+    [],
+  );
+  // 解释器执行 ~/.agents 技能脚本属于既定工作流
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "/opt/homebrew/bin/bun ~/.agents/skills/foo/wechat-api.ts post/a.md --theme grace" }),
+    [],
+  );
+  // 负例:把工具/技能文件当数据读仍上报;未知根目录的二进制仍上报;普通数据路径仍上报
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "cat /etc/passwd" }),
+    ["/etc/passwd"],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "cat /usr/bin/less" }),
+    ["/usr/bin/less"],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "~/bin/evil run" }),
+    [path.join(os.homedir(), "bin/evil")],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "python3 ~/Documents/x.py" }),
+    [path.join(os.homedir(), "Documents/x.py")],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "cat ~/.agents/skills/foo/wechat-api.ts" }),
+    [path.join(os.homedir(), ".agents/skills/foo/wechat-api.ts")],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "cd /other/dir && ls" }),
+    ["/other/dir"],
   );
 });
 
@@ -3872,6 +4060,48 @@ test("command-prefix 规则:argv 前缀匹配,拒绝管道与复合命令", asyn
   assert.equal(matchStandingRule(rule, "write_file", { command: "ls" }), false);
 });
 
+test("工具定义符合 OpenAI/JSON Schema 严格格式要求", () => {
+  // 元校验：严格校验的推理服务（vLLM/LM Studio 等）会按 JSON Schema 规范校验 tools，
+  // 常见拒绝点——空的 required 数组（规范要求至少一个元素）、数组缺少 items、
+  // 顶层缺 type/properties、工具名含非法字符。这里把这些钉死，防止回归。
+  const checkSchema = (schema, trail) => {
+    assert.equal(typeof schema, "object", `${trail}: schema 应为对象`);
+    if (schema.required !== undefined) {
+      assert.ok(Array.isArray(schema.required) && schema.required.length > 0, `${trail}: required 不能为空数组`);
+      for (const key of schema.required) {
+        assert.ok(schema.properties && Object.hasOwn(schema.properties, key), `${trail}: required 的 ${key} 必须在 properties 中`);
+      }
+    }
+    if (schema.type === "array") {
+      assert.ok(schema.items && typeof schema.items === "object", `${trail}: array 必须声明 items`);
+    }
+    if (schema.type === "object" && schema.properties !== undefined) {
+      assert.equal(typeof schema.properties, "object", `${trail}: properties 应为对象`);
+    }
+    for (const [key, sub] of Object.entries(schema.properties || {})) {
+      checkSchema(sub, `${trail}.${key}`);
+    }
+    if (schema.items && typeof schema.items === "object" && !Array.isArray(schema.items)) {
+      checkSchema(schema.items, `${trail}.items`);
+    }
+  };
+  const tools = toolDefinitions();
+  assert.ok(tools.length > 20, "工具数量异常");
+  const names = new Set();
+  for (const tool of tools) {
+    assert.equal(tool.type, "function", `${tool?.function?.name}: type 应为 function`);
+    assert.match(tool.function.name, /^[a-zA-Z0-9_-]{1,64}$/, `工具名 ${tool.function.name} 含非法字符`);
+    assert.ok(!names.has(tool.function.name), `工具名 ${tool.function.name} 重复`);
+    names.add(tool.function.name);
+    assert.equal(typeof tool.function.description, "string", `${tool.function.name}: 缺少描述`);
+    assert.ok(tool.function.description.length > 0, `${tool.function.name}: 描述为空`);
+    const parameters = tool.function.parameters;
+    assert.equal(parameters.type, "object", `${tool.function.name}: parameters.type 应为 object`);
+    assert.equal(typeof parameters.properties, "object", `${tool.function.name}: 缺少 properties`);
+    checkSchema(parameters, `${tool.function.name}.parameters`);
+  }
+});
+
 test("suggestStandingRule 的 command-prefix:受信只读与常用开发命令可规则化,系统破坏命令不可", async () => {
   const lsRule = suggestStandingRule("run_command", { command: "ls /Users/example/.claude/skills/" });
   assert.deepEqual(lsRule?.kind, "command-prefix");
@@ -3885,6 +4115,10 @@ test("suggestStandingRule 的 command-prefix:受信只读与常用开发命令�
   assert.deepEqual(suggestStandingRule("run_command", { command: "git push origin main" })?.pattern, "git push");
   // 未分类的简单命令记住完整命令(精确前缀)
   assert.deepEqual(suggestStandingRule("run_command", { command: "docker compose ps" })?.pattern, "docker compose ps");
+  // 带绝对路径的程序按 basename 归类,pattern 保留原始词
+  assert.deepEqual(suggestStandingRule("run_command", { command: "/opt/homebrew/bin/bun scripts/fetch.ts --limit 6" })?.pattern, "/opt/homebrew/bin/bun scripts/fetch.ts");
+  assert.deepEqual(suggestStandingRule("run_command", { command: "/usr/bin/git log --oneline" })?.pattern, "/usr/bin/git log");
+  assert.equal(suggestStandingRule("run_command", { command: "/usr/bin/rm -rf /tmp/x" }), null);
   // 系统破坏命令、危险子命令、管道/复合、空命令都不可规则化
   assert.equal(suggestStandingRule("run_command", { command: "rm -rf /tmp/x" }), null);
   assert.equal(suggestStandingRule("run_command", { command: "sudo rm -rf /tmp/x" }), null);

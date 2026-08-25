@@ -34,10 +34,11 @@ test("parseApprovalReply:允许/拒绝/无效 三态", () => {
   for (const text of ["允许", "同意", "1", "y", " yes ", "OK", "确认"]) {
     assert.equal(parseApprovalReply(text), true, text);
   }
-  for (const text of ["拒绝", "不同意", "取消", "2", "n", "No"]) {
+  for (const text of ["拒绝", "不同意", "取消", "0", "n", "No"]) {
     assert.equal(parseApprovalReply(text), false, text);
   }
-  for (const text of ["允许执行这个", "好吧", "", "12", "允许吧"]) {
+  // "2" 表示停止,由 manager 在待决审批时拦截,解析层返回 null
+  for (const text of ["允许执行这个", "好吧", "", "12", "允许吧", "2"]) {
     assert.equal(parseApprovalReply(text), null, text);
   }
 });
@@ -692,7 +693,7 @@ test("manager:待决期间,有效决议直接处理不进任务;无效回复被�
   await manager._handleInbound(qqMessage("随便说点别的"));
   assert.equal(tasks.length, 0, "无效回复不能变成新任务");
   assert.equal(manager._pendingByChat.size, 1, "仍保持待决");
-  assert.ok(sentTexts.some((entry) => entry.text.includes("允许」或「拒绝")));
+  assert.ok(sentTexts.some((entry) => entry.text.includes("1（允许）或 0（拒绝）")));
 });
 
 test("manager:「停止」清空排队消息并通知 main 中止执行中任务", async () => {
@@ -736,6 +737,42 @@ test("manager:待决期间「停止」优先于审批决议,取消待决并中�
   assert.equal(stops[0]?.itemId, "inbox-9");
   assert.equal(manager._pendingByChat.size, 0, "停止同时清掉待决状态");
   assert.ok(sentTexts.some((entry) => entry.text.includes("已取消待处理的审批/提问")));
+});
+
+test("manager:审批待决时「2」等同停止,取消待决并中止任务", async () => {
+  const stops = [];
+  const { manager, resolves, tasks } = managerHarness({
+    onStopChat: async ({ pending }) => { stops.push(pending); return true; },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  manager._pendingByChat.set(chatKeyOf("qq", "u1"), { itemId: "inbox-10", kind: "approval" });
+  await manager._handleInbound(qqMessage("2"));
+  assert.deepEqual(resolves, [], "「2」不能进入审批决议解析");
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0]?.itemId, "inbox-10");
+  assert.equal(manager._pendingByChat.size, 0);
+  assert.equal(tasks.length, 0);
+});
+
+test("manager:提问待决时「2」仍是选项回复,无待决时是正常任务输入", async () => {
+  const stops = [];
+  const { manager, resolves, tasks } = managerHarness({
+    onStopChat: async () => { stops.push(true); return true; },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  // 提问待决:「2」交给决议处理(选项序号),不触发停止
+  manager._pendingByChat.set(chatKeyOf("qq", "u1"), { itemId: "q-1", kind: "question" });
+  await manager._handleInbound(qqMessage("2"));
+  assert.deepEqual(resolves, ["2"]);
+  assert.equal(stops.length, 0);
+  // 模拟提问被决议后清掉待决(真实接线里 main 的 onResolvePending 会返回 true)
+  manager._pendingByChat.delete(chatKeyOf("qq", "u1"));
+  // 无任何待决:「2」是正常任务输入(换一个消息 ID,避免与上面那条去重)
+  await manager._handleInbound({ ...qqMessage("2"), messageId: "m-2-second" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].text, "2");
+  assert.equal(stops.length, 0);
 });
 
 test("manager:没有任务时「停止」如实反馈", async () => {

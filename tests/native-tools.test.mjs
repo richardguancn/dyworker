@@ -7,7 +7,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { detectProvider, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, runKimiFormula } from "../electron/providers.mjs";
+import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchQwenNative } from "../electron/providers.mjs";
 import { requestModel, runAgent } from "../electron/agent.mjs";
 
 const KIMI_ENDPOINT = "https://api.moonshot.cn/v1/chat/completions";
@@ -100,7 +100,11 @@ test("detectProvider：Kimi 开放平台主机名识别，其余返回 null", ()
   assert.equal(detectProvider("https://api.moonshot.cn/v1"), "kimi-open");
   assert.equal(detectProvider("https://api.kimi.com/coding/v1/chat/completions"), null);
   assert.equal(detectProvider("https://api.openai.com/v1/chat/completions"), null);
-  assert.equal(detectProvider("https://api.deepseek.com/responses"), null);
+  assert.equal(detectProvider("https://api.deepseek.com/responses"), "deepseek");
+  assert.equal(detectProvider("https://api.deepseek.com/v1/chat/completions"), "deepseek");
+  assert.equal(detectProvider("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"), "qwen");
+  assert.equal(detectProvider("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"), "qwen");
+  assert.equal(detectProvider("http://192.16.6.138:8000/v1/chat/completions"), null, "本地 vLLM 部署不路由到云端原生搜索");
   assert.equal(detectProvider(""), null);
   assert.equal(detectProvider("不是地址"), null);
 });
@@ -287,6 +291,30 @@ test("runAgent：enableNativeTools=false 时关闭公式工具与 $web_search，
   assert.equal(first.body.reasoning_effort, "high");
 });
 
+test("runAgent：公式 web-search 被禁用时保留本地 web_search（回退到厂商路由后端）", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const fetchImpl = kimiFetch({
+    scriptedMessages: [{ role: "assistant", content: "你好" }],
+    calls,
+  });
+  const result = await runAgent({
+    settings: {
+      endpoint: KIMI_ENDPOINT, model: "kimi-k3", apiKey: "sk-test",
+      nativeToolsDisabled: ["memory", "excel", "web-search"],
+    },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl,
+  });
+  assert.equal(result.status, "done");
+  const first = calls.find((call) => call.method === "POST" && call.url.endsWith("/chat/completions"));
+  const tools = first.body.tools;
+  assert.equal(countTool(tools, "web_search"), 1, "web_search 应存在且唯一");
+  assert.equal(findTool(tools, "web_search").function.description.includes("Kimi"), false, "保留的应是本地 web_search");
+  assert.ok(findTool(tools, "convert"), "其余公式工具仍注入");
+});
+
 test("runAgent：enableWebSearchBuiltin=true 时注入内置 $web_search（builtin_function）", async () => {
   const root = await makeWorkspace();
   const calls = [];
@@ -448,6 +476,273 @@ test("runAgent 回归：非 kimi 端点行为不变（本地 web_search 保留�
   assert.equal(findTool(tools, "$web_search"), undefined);
   assert.equal(first.body.reasoning_effort, undefined);
   assert.equal(calls.some((call) => call.url.includes("/formulas/")), false, "非 kimi 端点不应请求 Formula 接口");
+});
+
+// ---- 10. DeepSeek 原生搜索（Anthropic Messages + web_search_20250305）----
+test("deepseekAnthropicBaseUrl：由聊天端点推导 Anthropic 兼容 base", () => {
+  assert.equal(deepseekAnthropicBaseUrl("https://api.deepseek.com/responses"), "https://api.deepseek.com/anthropic/v1");
+  assert.equal(deepseekAnthropicBaseUrl("https://api.deepseek.com/v1/chat/completions"), "https://api.deepseek.com/anthropic/v1");
+  assert.equal(deepseekAnthropicBaseUrl("不是地址"), "https://api.deepseek.com/anthropic/v1");
+});
+
+function deepseekSearchPayload() {
+  return {
+    content: [
+      {
+        type: "web_search_tool_result",
+        content: [
+          { type: "web_search_result", url: "https://a.com/x", title: "结果 A", page_age: "2026-08-01" },
+          { type: "web_search_result", url: "https://b.com/y", title: "结果 B" },
+          { type: "web_search_result", url: "https://a.com/x", title: "结果 A 重复" },
+        ],
+      },
+      { type: "text", text: "找到两条结果", citations: [{ url: "https://a.com/x", cited_text: "A 的引用摘要" }] },
+    ],
+  };
+}
+
+test("searchDeepseekNative：请求形状正确，citations 拼回摘要、按 URL 去重", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
+    return jsonResponse(deepseekSearchPayload());
+  };
+  const items = await searchDeepseekNative(fetchImpl, { apiKey: "sk-ds", query: "某企业联系电话", maxResults: 10 });
+  assert.equal(calls[0].url, "https://api.deepseek.com/anthropic/v1/messages");
+  assert.equal(calls[0].headers["x-api-key"], "sk-ds");
+  assert.equal(calls[0].headers.Authorization, "Bearer sk-ds");
+  assert.equal(calls[0].body.tools[0].type, "web_search_20250305");
+  assert.equal(calls[0].body.tools[0].name, "web_search");
+  assert.equal(items.length, 2, "同一 URL 应去重");
+  assert.deepEqual(items[0], { url: "https://a.com/x", title: "结果 A", snippet: "A 的引用摘要", publishedAt: "2026-08-01" });
+  assert.deepEqual(items[1], { url: "https://b.com/y", title: "结果 B", snippet: "", publishedAt: "" });
+});
+
+test("searchDeepseekNative：maxResults 截断、无结果块与 HTTP 错误都抛错", async () => {
+  const fetchImpl = async () => jsonResponse(deepseekSearchPayload());
+  const items = await searchDeepseekNative(fetchImpl, { apiKey: "k", query: "q", maxResults: 1 });
+  assert.equal(items.length, 1);
+  await assert.rejects(
+    () => searchDeepseekNative(async () => jsonResponse({ content: [{ type: "text", text: "没搜" }] }), { apiKey: "k", query: "q" }),
+    /未返回搜索结果/,
+  );
+  await assert.rejects(
+    () => searchDeepseekNative(async () => jsonResponse({}, 401), { apiKey: "k", query: "q" }),
+    /HTTP 401/,
+  );
+});
+
+// ---- Qwen 原生联网搜索 ----
+
+function qwenSearchPayload() {
+  return {
+    output: [
+      { type: "web_search_call", action: { type: "search", query: "某企业电话", sources: [{ url: "https://s.com/only-source" }] } },
+      {
+        type: "message",
+        content: [
+          {
+            type: "output_text",
+            text: "找到两条结果。",
+            annotations: [
+              { type: "url_citation", url: "https://a.com/x", title: "结果 A" },
+              { type: "url_citation", url: "https://b.com/y", title: "结果 B" },
+              { type: "url_citation", url: "https://a.com/x", title: "结果 A 重复" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test("qwenResponsesUrl：由聊天端点推导 Responses URL", () => {
+  assert.equal(
+    qwenResponsesUrl("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/responses",
+  );
+  assert.equal(
+    qwenResponsesUrl("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"),
+    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+  );
+  assert.equal(qwenResponsesUrl("不是地址"), "https://dashscope.aliyuncs.com/compatible-mode/v1/responses");
+});
+
+test("searchQwenNative：请求形状正确，annotations 与 sources 合并去重", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
+    return jsonResponse(qwenSearchPayload());
+  };
+  const { answer, items } = await searchQwenNative(fetchImpl, {
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/responses",
+    apiKey: "sk-qw", model: "qwen-plus", query: "某企业电话", maxResults: 10,
+  });
+  assert.equal(calls[0].body.tools[0].type, "web_search");
+  assert.equal(calls[0].body.model, "qwen-plus");
+  assert.equal(calls[0].headers.Authorization, "Bearer sk-qw");
+  assert.equal(answer, "找到两条结果。");
+  assert.deepEqual(items.map((item) => item.url), ["https://s.com/only-source", "https://a.com/x", "https://b.com/y"]);
+  assert.equal(items[1].title, "结果 A");
+});
+
+test("searchQwenNative：model 缺省回退、无来源与 HTTP 错误都抛错", async () => {
+  const calls = [];
+  await searchQwenNative(async (url, options) => {
+    calls.push(JSON.parse(options.body));
+    return jsonResponse(qwenSearchPayload());
+  }, { apiKey: "k", query: "q" });
+  assert.equal(calls[0].model, "qwen-plus", "未传 model 时应回退 qwen-plus");
+  await assert.rejects(
+    () => searchQwenNative(async () => jsonResponse({ output: [{ type: "message", content: [{ type: "output_text", text: "没搜" }] }] }), { apiKey: "k", query: "q" }),
+    /未返回搜索结果/,
+  );
+  await assert.rejects(
+    () => searchQwenNative(async () => jsonResponse({}, 401), { apiKey: "k", query: "q" }),
+    /HTTP 401/,
+  );
+  await assert.rejects(
+    () => searchQwenNative(async () => jsonResponse({ error: { message: "bad key" } }), { apiKey: "k", query: "q" }),
+    /bad key/,
+  );
+});
+
+test("runAgent：Qwen 云端端点下 web_search 走 Qwen 原生搜索并复用会话密钥", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const messages = [
+    { role: "assistant", content: "", tool_calls: [toolCall("call_qw", "web_search", { query: "某企业电话" })] },
+    { role: "assistant", content: "找到了，电话见结果 A。" },
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    const target = String(url);
+    calls.push({ url: target, headers: options.headers || {}, body: options.body ? JSON.parse(options.body) : null });
+    if (target.endsWith("/responses")) return jsonResponse(qwenSearchPayload());
+    if (target.endsWith("/chat/completions")) {
+      const message = messages.length > 1 ? messages.shift() : messages[0];
+      return jsonResponse({ choices: [{ message }] });
+    }
+    throw new Error(`未预期的请求：${target}`);
+  };
+  const result = await runAgent({
+    settings: { endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", model: "qwen-plus", apiKey: "sk-qwen-session" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查企业电话" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  const searchCall = calls.find((call) => call.url.endsWith("/responses"));
+  assert.ok(searchCall, "应发起 Qwen 原生搜索请求");
+  assert.equal(searchCall.url, "https://dashscope.aliyuncs.com/compatible-mode/v1/responses");
+  assert.equal(searchCall.headers.Authorization, "Bearer sk-qwen-session", "Qwen 端点应复用会话密钥");
+  const chatCalls = calls.filter((call) => call.url.endsWith("/chat/completions"));
+  const toolMessage = chatCalls[1].body.messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /搜索来源：Qwen 联网搜索（服务端）/);
+  assert.match(toolMessage.content, /综合答复：找到两条结果。/);
+  assert.match(toolMessage.content, /\d+\. 结果 A\nhttps:\/\/a\.com\/x/);
+});
+
+// 搜索路由 mock：chat/completions 按脚本返回，/anthropic/v1/messages 返回 DeepSeek 搜索，博查返回固定结果
+function routingFetch({ scriptedMessages, calls, searchPayload = deepseekSearchPayload() }) {
+  const messages = [...scriptedMessages];
+  return async (url, options = {}) => {
+    const target = String(url);
+    calls.push({ url: target, method: options.method || "GET", headers: options.headers || {}, body: options.body ? JSON.parse(options.body) : null });
+    if (target.endsWith("/anthropic/v1/messages")) return jsonResponse(searchPayload);
+    if (target.endsWith("/chat/completions")) {
+      const message = messages.length > 1 ? messages.shift() : messages[0];
+      return jsonResponse({ choices: [{ message }] });
+    }
+    if (target.includes("bochaai.com")) {
+      return jsonResponse({ data: { webPages: { value: [{ url: "https://b.cn/p", name: "博查结果", snippet: "博查摘要" }] } } });
+    }
+    throw new Error(`未预期的请求：${target}`);
+  };
+}
+
+test("runAgent：DeepSeek 端点下 web_search 走 DeepSeek 原生搜索并复用会话密钥", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const fetchImpl = routingFetch({
+    scriptedMessages: [
+      { role: "assistant", content: "", tool_calls: [toolCall("call_ds", "web_search", { query: "某企业电话" })] },
+      { role: "assistant", content: "找到了，电话见结果 A。" },
+    ],
+    calls,
+  });
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-v4-flash", apiKey: "sk-session-ds" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查企业电话" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "找到了，电话见结果 A。");
+  const searchCall = calls.find((call) => call.url.endsWith("/anthropic/v1/messages"));
+  assert.ok(searchCall, "应发起 DeepSeek 原生搜索请求");
+  assert.equal(searchCall.url, "https://api.deepseek.com/anthropic/v1/messages");
+  assert.equal(searchCall.headers["x-api-key"], "sk-session-ds", "DeepSeek 端点应复用会话密钥");
+  const chatCalls = calls.filter((call) => call.url.endsWith("/chat/completions"));
+  const toolMessage = chatCalls[1].body.messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /搜索来源：DeepSeek 联网搜索（服务端）/);
+  assert.match(toolMessage.content, /1\. 结果 A（2026-08-01）\nhttps:\/\/a\.com\/x\n摘要：A 的引用摘要/);
+});
+
+test("runAgent：其他端点默认走 DeepSeek 搜索（用独立配置密钥，非会话密钥）", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const fetchImpl = routingFetch({
+    scriptedMessages: [
+      { role: "assistant", content: "", tool_calls: [toolCall("call_o", "web_search", { query: "某企业电话" })] },
+      { role: "assistant", content: "查好了。" },
+    ],
+    calls,
+  });
+  const result = await runAgent({
+    settings: {
+      endpoint: "http://mock.local/v1/chat/completions",
+      model: "mock-model",
+      apiKey: "sk-other-session",
+      deepseekSearchApiKey: "sk-ds-search",
+    },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查企业电话" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  const searchCall = calls.find((call) => call.url.endsWith("/anthropic/v1/messages"));
+  assert.ok(searchCall, "应发起 DeepSeek 原生搜索请求");
+  assert.equal(searchCall.headers["x-api-key"], "sk-ds-search", "其他端点应使用 deepseekSearchApiKey");
+  assert.equal(calls.some((call) => call.url.includes("bochaai.com")), false, "有 DeepSeek 密钥时不应走博查");
+});
+
+test("runAgent：未配置 DeepSeek 搜索密钥时回退博查", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const fetchImpl = routingFetch({
+    scriptedMessages: [
+      { role: "assistant", content: "", tool_calls: [toolCall("call_b", "web_search", { query: "某企业电话" })] },
+      { role: "assistant", content: "查好了。" },
+    ],
+    calls,
+  });
+  const result = await runAgent({
+    settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k", bochaApiKey: "bk" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查企业电话" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  assert.equal(calls.some((call) => call.url.endsWith("/anthropic/v1/messages")), false, "无 DeepSeek 密钥不应发起 DeepSeek 搜索");
+  assert.equal(calls.some((call) => call.url.includes("bochaai.com")), true, "应回退到博查");
+  const chatCalls = calls.filter((call) => call.url.endsWith("/chat/completions"));
+  const toolMessage = chatCalls[1].body.messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /搜索来源：博查 API/);
+  assert.match(toolMessage.content, /博查结果/);
 });
 
 // ---- 9. 流式 tool_calls 多 index 拼接（锁现有解析器行为）----

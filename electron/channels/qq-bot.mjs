@@ -24,10 +24,11 @@ export class QqBotError extends Error {}
 export { chunkText };
 
 // IM 审批回复解析:true=允许,false=拒绝,null=不是审批回复
+// 数字方案:1=允许,0=拒绝(2=停止由 manager 在待决审批时拦截,不走到这里)
 export function parseApprovalReply(text) {
   const normalized = String(text || "").trim().toLowerCase();
   if (/^(允许|同意|确认|执行|批准|1|y|yes|ok)$/.test(normalized)) return true;
-  if (/^(拒绝|不同意|取消|驳回|不准|2|n|no)$/.test(normalized)) return false;
+  if (/^(拒绝|不同意|取消|驳回|不准|0|n|no)$/.test(normalized)) return false;
   return null;
 }
 
