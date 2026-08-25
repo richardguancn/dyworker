@@ -1409,8 +1409,8 @@ test("解释器与技能脚本路径不再算工作区外路径", async (t) => {
     ["/usr/bin/less"],
   );
   assert.deepEqual(
-    externalPathsForTool(workspace, "run_command", { command: "~/bin/evil run" }),
-    [path.join(os.homedir(), "bin/evil")],
+    externalPathsForTool(workspace, "run_command", { command: "~/.worktools/evil run" }),
+    [path.join(os.homedir(), ".worktools/evil")],
   );
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "python3 ~/Documents/x.py" }),

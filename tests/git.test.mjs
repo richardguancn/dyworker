@@ -11,6 +11,9 @@ async function makeRepo() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-git-"));
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
   git("init", "-b", "main");
+  // Windows 上系统级 core.autocrlf 默认开启，会让 checkout 把 LF 换成 CRLF，
+  // 破坏「恢复到提交内容」这类字节级断言；临时仓库统一关闭保证跨平台一致。
+  git("config", "core.autocrlf", "false");
   git("config", "user.email", "test@dyworker.local");
   git("config", "user.name", "DYWorker Test");
   await fs.writeFile(path.join(root, "a.txt"), "hello\n", "utf8");
