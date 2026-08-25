@@ -50,7 +50,9 @@ export function createChannelManager({
   // 入站去重：QQ/微信网关断线重连或事件补发时同一 messageId 可能到达多次，
   // 不查重会把同一条消息重复入队，用户会看到任务数莫名 +1、同一任务被反复执行。
   const seenMessages = new Map(); // `${channel}:${chatId}:${messageId}` → 过期时间
-  const MESSAGE_DEDUP_WINDOW_MS = 60_000;
+  // 窗口要盖住电脑休眠/网关补发的典型时长：睡一晚上唤醒后 QQ 会补发休眠期间的事件，
+  // 60 秒窗口拦不住，同一条消息会再次入队、任务再跑一遍、回复再发一遍。
+  const MESSAGE_DEDUP_WINDOW_MS = 24 * 60 * 60_000;
   let chats = null; // chatKey → { sessionId, workspacePath, title, createdAt, updatedAt }
 
   function isDuplicateMessage(message) {

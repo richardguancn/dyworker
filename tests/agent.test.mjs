@@ -4388,6 +4388,7 @@ test("模型请求网络失败自动重试，连上后任务正常完成", async
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "你好" }],
+    networkRetryBaseDelayMs: 1,
     fetchImpl: async () => {
       attempts += 1;
       if (attempts <= 2) throw new TypeError("fetch failed");
@@ -4398,21 +4399,25 @@ test("模型请求网络失败自动重试，连上后任务正常完成", async
   assert.equal(attempts, 3, "两次连接失败后第三次应成功");
 });
 
-test("网络失败重试 3 次仍连不上时报错终止", async () => {
+test("网络失败按指数退避重试 5 次仍连不上时报错终止", async () => {
   const root = await makeWorkspace();
   let attempts = 0;
   const result = await runAgent({
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "你好" }],
+    networkRetryBaseDelayMs: 1,
     fetchImpl: async () => {
       attempts += 1;
-      throw new TypeError("fetch failed");
+      // undici 连接层失败：message 是笼统的 fetch failed，真实错因在 cause 上
+      const cause = Object.assign(new Error("connect ECONNRESET 10.0.0.1:8100"), { code: "ECONNRESET", syscall: "connect", address: "10.0.0.1", port: 8100 });
+      throw new TypeError("fetch failed", { cause });
     },
   });
   assert.equal(result.status, "error");
-  assert.match(String(result.reason || ""), /fetch failed/);
-  assert.equal(attempts, 4, "首次请求加 3 次重试共 4 次尝试");
+  assert.match(String(result.reason || ""), /fetch failed/, "保留原始错误描述");
+  assert.match(String(result.reason || ""), /ECONNRESET/, "错误消息应带出 cause 里的底层错误码，便于定位");
+  assert.equal(attempts, 6, "首次请求加 5 次重试共 6 次尝试");
 });
 
 test("任务取消时网络重试立即中止，不再等待重试", async () => {

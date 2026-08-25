@@ -1205,6 +1205,75 @@ test("QQ 客户端:API 请求挂起时按超时中止,不会永久卡住任务",
   await client.stop();
 });
 
+test("QQ 客户端:发送超时后绝不重发,避免同一内容在 QQ 里重复显示", async () => {
+  // 超时是状态未知错误:服务端可能已投递。旧逻辑对任何错误都重发一次,导致消息重复。
+  let messageCalls = 0;
+  const fetchImpl = async (url, options = {}) => {
+    if (url.includes("getAppAccessToken")) {
+      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
+    }
+    if (url.includes("/messages")) {
+      messageCalls += 1;
+    }
+    return new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener?.("abort", () => {
+        const error = new Error("Aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+  };
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket, timeoutMs: 60 });
+  await assert.rejects(
+    client.sendText({ chatId: "u1", chatType: "dm", messageId: "m1" }, "你好"),
+    (error) => error instanceof Error && /超时/.test(error.message),
+  );
+  assert.equal(messageCalls, 1, "超时后不应去掉 msg_id 重发第二次");
+  await client.stop();
+});
+
+test("QQ 客户端:网络层错误(连接中断)同样不重发", async () => {
+  let messageCalls = 0;
+  const fetchImpl = async (url) => {
+    if (url.includes("getAppAccessToken")) {
+      return { ok: true, json: async () => ({ access_token: "tok-1", expires_in: 7200 }) };
+    }
+    messageCalls += 1;
+    throw new TypeError("fetch failed");
+  };
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket });
+  await assert.rejects(client.sendText({ chatId: "u1", chatType: "dm", messageId: "m1" }, "你好"));
+  assert.equal(messageCalls, 1, "网络错误后不应重发第二次");
+  await client.stop();
+});
+
+test("QQ 客户端:sendText 的 msg_id 业务错误(明确拒绝)仍会去掉引用重发一次", async () => {
+  const { fetchImpl } = qqFetchHarness();
+  const messageBodies = [];
+  let failed = false;
+  const wrappedFetch = async (url, options) => {
+    if (url.includes("/messages")) {
+      messageBodies.push(JSON.parse(options.body));
+      if (!failed) {
+        failed = true;
+        return { ok: false, status: 400, json: async () => ({ message: "msg_id 不存在" }) };
+      }
+    }
+    return fetchImpl(url, options);
+  };
+  const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl: wrappedFetch, webSocketImpl: FakeWebSocket });
+  try {
+    await client.start();
+    await client.sendText({ chatId: "u1", chatType: "dm", messageId: "m1" }, "你好");
+    assert.equal(messageBodies.length, 2, "明确的业务拒绝才重发");
+    assert.equal(messageBodies[0].msg_id, "m1");
+    assert.equal(messageBodies[1].msg_id, undefined, "重试应去掉过期的消息引用");
+    assert.equal(messageBodies[1].msg_seq, 2, "重试的 msg_seq 递增");
+  } finally {
+    await client.stop();
+  }
+});
+
 test("QQ 客户端:access_token 请求挂起时按超时中止", async () => {
   const fetchImpl = async () => new Promise(() => { });
   const client = createQqBotClient({ appId: "a", appSecret: "s", fetchImpl, webSocketImpl: FakeWebSocket, timeoutMs: 40 });
