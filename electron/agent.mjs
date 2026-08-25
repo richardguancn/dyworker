@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mjs";
 import { selectRelevantMemories } from "./memory.mjs";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mjs";
-import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, runKimiFormula } from "./providers.mjs";
+import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchQwenNative } from "./providers.mjs";
 
 // 风险分级单源在 risk.mjs；这里 re-export 保持既有导入方兼容。
 export { RISK, classify, computerUseActionNeedsApproval, isConsequential } from "./risk.mjs";
@@ -1002,37 +1002,86 @@ async function searchBocha(fetchImpl, apiKey, query, limit = 10) {
   return parsed;
 }
 
-// 搜索优先级：博查 API → 自建 SearXNG → 免费抓取（必应国内版（带摘要）→ 360 → 搜狗）。
+// 搜索优先级：DeepSeek 原生搜索 → Qwen 原生搜索 → 博查 API → 自建 SearXNG → 免费抓取（必应国内版（带摘要）→ 360 → 搜狗）。
+// 原生搜索按模型厂商路由：DeepSeek 端点复用会话密钥（settings.apiKey），
+// 其他端点用独立配置的 deepseekSearchApiKey；Qwen 云端端点（DashScope）同样复用会话密钥。
+// 本地部署的 Qwen（vLLM 等）没有服务端搜索后端，detectProvider 返回 null，自动落到后面的后端。
+// Kimi 开放平台端点下本地 web_search 已被公式 web_search 替代（见 runAgent 工具装配），走不到这里。
 // domesticSearchOnly=true 时跳过必应（微软服务，敏感查询不宜出境），只用境内引擎。
 async function webSearch(fetchImpl, query, limit = 10, options = {}) {
   const trimmed = String(query || "").replace(/\s+/g, " ").trim();
+  // 结果首行标注搜索来源，方便用户与模型分辨实际走的后端（Kimi 公式搜索不走这里）
+  const withSource = (source, text) => `搜索来源：${source}\n\n${text}`;
+  const formatItems = (items) => items.map((item, index) => {
+    const snippet = String(item.snippet || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    const date = String(item.publishedAt || "").slice(0, 10);
+    const title = item.title || item.url;
+    return `${index + 1}. ${title}${date ? `（${date}）` : ""}\n${item.url}${snippet ? `\n摘要：${snippet}` : ""}`;
+  }).join("\n\n");
+  const isDeepseekEndpoint = detectProvider(options.endpoint) === "deepseek";
+  const deepseekKey = isDeepseekEndpoint
+    ? String(options.apiKey || "").trim()
+    : String(options.deepseekSearchApiKey || "").trim();
+  if (deepseekKey) {
+    try {
+      const items = await searchDeepseekNative(fetchImpl, {
+        baseUrl: isDeepseekEndpoint ? deepseekAnthropicBaseUrl(options.endpoint) : undefined,
+        apiKey: deepseekKey,
+        query: trimmed,
+        maxResults: limit,
+      });
+      if (items.length) {
+        return withSource("DeepSeek 联网搜索（服务端）", formatItems(items));
+      }
+    } catch {
+      // DeepSeek 搜索不可用时回退下一级
+    }
+  }
+  // Qwen 云端端点：Responses 内建 web_search（enable_search 的 ChatCompletions 协议不回搜索来源，不用）
+  if (detectProvider(options.endpoint) === "qwen" && String(options.apiKey || "").trim()) {
+    try {
+      const { answer, items } = await searchQwenNative(fetchImpl, {
+        baseUrl: qwenResponsesUrl(options.endpoint),
+        apiKey: options.apiKey,
+        model: options.model,
+        query: trimmed,
+        maxResults: limit,
+      });
+      if (items.length) {
+        const summary = answer ? `综合答复：${answer.replace(/\s+/g, " ").trim().slice(0, 500)}\n\n` : "";
+        return withSource("Qwen 联网搜索（服务端）", `${summary}${formatItems(items)}`);
+      }
+    } catch {
+      // Qwen 搜索不可用时回退下一级
+    }
+  }
   const bochaKey = String(options.bochaApiKey || "").trim();
   const searxngEndpoint = String(options.searxngEndpoint || "").trim();
   if (bochaKey) {
     try {
-      return await searchBocha(fetchImpl, bochaKey, trimmed, limit);
+      return withSource("博查 API", await searchBocha(fetchImpl, bochaKey, trimmed, limit));
     } catch {
       // 博查不可用时回退下一级
     }
   }
   if (searxngEndpoint) {
     try {
-      return await searchSearxng(fetchImpl, searxngEndpoint, trimmed, limit);
+      return withSource("SearXNG（自建）", await searchSearxng(fetchImpl, searxngEndpoint, trimmed, limit));
     } catch {
       // 自建搜索不可用时回退到国内引擎
     }
   }
   const attempts = [
-    ...(options.domesticSearchOnly ? [] : [{ url: `https://cn.bing.com/search?q=${encodeURIComponent(trimmed)}`, parse: parseBingResults }]),
-    { url: `https://www.so.com/s?q=${encodeURIComponent(trimmed)}`, parse: parseSoResults },
-    { url: `https://www.sogou.com/web?query=${encodeURIComponent(trimmed)}`, parse: parseSogouResults },
+    ...(options.domesticSearchOnly ? [] : [{ url: `https://cn.bing.com/search?q=${encodeURIComponent(trimmed)}`, parse: parseBingResults, label: "必应国内版" }]),
+    { url: `https://www.so.com/s?q=${encodeURIComponent(trimmed)}`, parse: parseSoResults, label: "360 搜索" },
+    { url: `https://www.sogou.com/web?query=${encodeURIComponent(trimmed)}`, parse: parseSogouResults, label: "搜狗" },
   ];
   let lastError = null;
   for (const attempt of attempts) {
     try {
       const { body } = await fetchPublicPage(fetchImpl, attempt.url, 3);
       const parsed = attempt.parse(body, limit);
-      if (parsed.trim()) return parsed;
+      if (parsed.trim()) return withSource(`公开网页抓取（${attempt.label}）`, parsed);
     } catch (error) {
       lastError = error;
     }
@@ -1146,13 +1195,13 @@ function integerProperty(description, minimum = 0, maximum = 10000) {
 }
 
 function functionTool(name, description, properties, required) {
+  // OpenAI 工具格式注意点：JSON Schema 规范要求 required 数组至少含一个元素，
+  // 严格校验的推理服务（vLLM/LM Studio 等）会拒绝 "required": []，因此为空时省略该字段
+  const parameters = { type: "object", properties };
+  if (Array.isArray(required) && required.length) parameters.required = required;
   return {
     type: "function",
-    function: {
-      name,
-      description,
-      parameters: { type: "object", properties, required },
-    },
+    function: { name, description, parameters },
   };
 }
 
@@ -1272,7 +1321,8 @@ export function toolDefinitions() {
             type: "object",
             properties: {
               name: { type: "string", description: "工作表名称" },
-              rows: { type: "array", description: "二维数组，每个元素是一行单元格", items: { type: "array" } },
+              // 单元格可以是字符串/数字/布尔；严格校验器要求数组必须声明 items
+              rows: { type: "array", description: "二维数组，每个元素是一行单元格；数字单元格直接写数字", items: { type: "array", items: { type: ["string", "number", "boolean", "null"] } } },
             },
             required: ["name", "rows"],
           },
@@ -1455,26 +1505,97 @@ function isPseudoPathWord(word) {
   return /[{}]/.test(word) || word.includes("\\");
 }
 
+// 可执行文件所在根目录：系统 bin、PATH 里的目录、常见版本管理器。
+// 命令里出现的解释器/工具路径（如 /opt/homebrew/bin/bun）是"正在运行的工具"，
+// 不是"被访问的数据"，不应触发"工作区外路径"审批。
+function collectExecutableRoots() {
+  const roots = [];
+  if (process.platform !== "win32") {
+    roots.push("/usr/bin", "/bin", "/usr/sbin", "/sbin",
+      "/usr/local/bin", "/usr/local/sbin",
+      "/opt/homebrew/bin", "/opt/homebrew/sbin", "/opt/local/bin");
+    const home = os.homedir();
+    for (const sub of [".nvm", ".pyenv", ".volta", ".bun", ".deno",
+      ".local/bin", "Library/pnpm", ".cargo/bin", ".go/bin"]) {
+      roots.push(path.join(home, sub));
+    }
+  }
+  for (const dir of String(process.env.PATH || "").split(process.platform === "win32" ? ";" : ":")) {
+    if (dir.trim()) roots.push(dir.trim());
+  }
+  return roots;
+}
+const executableRoots = collectExecutableRoots();
+
+export function isExecutableRooted(word) {
+  const normalized = path.resolve(String(word || ""));
+  if (!normalized || normalized === path.parse(normalized).root) return false;
+  return executableRoots.some((root) => {
+    const resolvedRoot = path.resolve(root);
+    return normalized === resolvedRoot || normalized.startsWith(resolvedRoot + path.sep);
+  });
+}
+
+// 每个复合段（&&/||/;/| 分隔）真正运行的程序词：跳过前导的包装命令
+// （nohup/env/time 等）与环境赋值（FOO=bar），取剩下的第一个词作为该段的 argv[0]
+const commandWrapperPrograms = new Set(["nohup", "setsid", "env", "time", "nice", "xargs", "command", "builtin"]);
+function commandSegmentHeads(command) {
+  const heads = new Set();
+  for (const segment of String(command || "").split(/&&|\|\||[;|]/)) {
+    const words = shellWords(segment);
+    let index = 0;
+    while (index < words.length) {
+      const word = words[index];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { index += 1; continue; }
+      if (commandWrapperPrograms.has(basenameOf(word))) { index += 1; continue; }
+      break;
+    }
+    if (index < words.length) heads.add(words[index]);
+  }
+  return heads;
+}
+
+function basenameOf(word) {
+  const text = String(word || "");
+  return text.includes("/") ? text.slice(text.lastIndexOf("/") + 1) : text;
+}
+
+// 解释器/脚本运行器直接执行的 ~/.agents 技能脚本属于既定工作流而非越界访问
+// （与应用自身加载技能的信任边界一致，见 skills.mjs）。scriptRunnerPrograms 在
+// interpreterPrograms 定义之后声明（见下方），此处仅放技能根目录常量。
+const agentSkillsRoot = path.join(os.homedir(), ".agents");
+
 function commandPathCandidates(command, workspace) {
-  return shellWords(command)
+  const words = shellWords(command);
+  const heads = commandSegmentHeads(command);
+  const candidates = [];
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index];
     // 环境赋值取等号右侧；PATH=a:b:c 这类值按分隔符拆开逐项判断，
     // 否则 `$HOME/.nvm/bin:$PATH` 会粘成一个候选被误判为工作区外路径
     // （Windows 路径分隔符是分号且盘符含冒号，不拆）
-    .flatMap((word) => {
-      if (!word.includes("=")) return [word];
-      const value = word.slice(word.indexOf("=") + 1);
-      return process.platform === "win32" ? [value] : value.split(":");
-    })
-    .map((word) => {
-      if (/^~(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice(1));
-      if (/^\$HOME(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice("$HOME".length));
-      if (/^\$\{HOME\}(?=[\\/]|$)/.test(word)) return path.join(os.homedir(), word.slice("${HOME}".length));
-      if (/^\$PWD(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("$PWD".length));
-      if (/^\$\{PWD\}(?=[\\/]|$)/.test(word)) return path.join(workspace.root, word.slice("${PWD}".length));
-      return word;
-    })
-    // 拆开后残留的 $PATH 等未展开变量不是真实路径
-    .filter((word) => word && !word.startsWith("$") && !isPseudoPathWord(word));
+    const pieces = word.includes("=")
+      ? (process.platform === "win32" ? [word.slice(word.indexOf("=") + 1)] : word.slice(word.indexOf("=") + 1).split(":"))
+      : [word];
+    for (const piece of pieces) {
+      let expanded = piece;
+      if (/^~(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice(1));
+      else if (/^\$HOME(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("$HOME".length));
+      else if (/^\$\{HOME\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("${HOME}".length));
+      else if (/^\$PWD(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("$PWD".length));
+      else if (/^\$\{PWD\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("${PWD}".length));
+      // 拆开后残留的 $PATH 等未展开变量不是真实路径
+      if (!expanded || expanded.startsWith("$") || isPseudoPathWord(expanded)) continue;
+      // 豁免 A：某段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
+      // 只豁免已知根（如 /usr/bin、PATH、版本管理器），~/bin/evil 这类未知二进制仍会上报
+      if (heads.has(piece) && isExecutableRooted(expanded)) continue;
+      // 豁免 B：解释器/脚本运行器直接执行的 ~/.agents 技能脚本
+      if (index > 0 && scriptRunnerPrograms.has(basenameOf(words[index - 1]))
+        && (expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep))) continue;
+      candidates.push(expanded);
+    }
+  }
+  return candidates;
 }
 
 export function externalPathsForTool(workspace, name, args = {}) {
@@ -1634,6 +1755,9 @@ const riskyGitSubcommands = new Set([
 const riskyGitFlags = /^(--force|--hard|--delete|-f$|-D$|-d$)/;
 const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
 const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
+// 解释器 + 脚本运行器：它们后面跟的脚本路径若是 ~/.agents 技能脚本，不算越界访问
+// （供上方 commandPathCandidates 的豁免规则 B 使用）
+const scriptRunnerPrograms = new Set([...interpreterPrograms, "bun", "bunx", "tsx", "ts-node"]);
 // sh -c "…" / bash -c "…" 同样是内联任意代码；-c 必须紧跟其后
 const shellWrapperPrograms = new Set(["sh", "bash", "zsh", "dash", "ash"]);
 
@@ -1808,17 +1932,20 @@ export function suggestStandingRule(name, args = {}) {
     const command = String(args.command || "").trim();
     const words = shellWords(command);
     const program = words[0] || "";
+    // 带路径的调用（/opt/homebrew/bin/bun）按 basename 匹配程序类别，
+    // 但 pattern 仍用原始词构建，保证前缀匹配精确
+    const programKey = basenameOf(program);
     // 只对简单命令（单行、无管道/复合）提供始终允许;系统级破坏性命令除外
     if (!command || /[\r\n]/.test(command) || commandChainingPattern.test(command)) return null;
-    if (ruleNeverAllowCommands.has(program)) return null;
+    if (ruleNeverAllowCommands.has(program) || ruleNeverAllowCommands.has(programKey)) return null;
     let pattern = "";
     if (ruleTrustedPrograms.test(program)) pattern = program;
-    else if (program === "git") {
+    else if (programKey === "git") {
       const subcommand = words[1] || "";
       if (!ruleGitCommands.has(subcommand)) return null;
-      pattern = `git ${subcommand}`;
-    } else if (ruleDevProgramWidths[program]) {
-      pattern = words.slice(0, ruleDevProgramWidths[program]).join(" ");
+      pattern = `${program} ${subcommand}`;
+    } else if (ruleDevProgramWidths[programKey]) {
+      pattern = words.slice(0, ruleDevProgramWidths[programKey]).join(" ");
     } else {
       pattern = words.join(" ");
     }
@@ -2071,7 +2198,8 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          // 本地推理服务（vLLM/Ollama/LM Studio）常无需 Key，空 Key 时不带 Authorization 头
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
         body: JSON.stringify(payload),
         signal,
@@ -2156,7 +2284,12 @@ function responsesContent(role, content) {
     if (part?.type === "text") {
       return { type: role === "assistant" ? "output_text" : "input_text", text: String(part.text || "") };
     }
-    if (part?.type === "image_url") {
+    if (part?.type === "image_url" || part?.type === "input_image") {
+      // DeepSeek 视觉模型（Responses API）只允许 user / developer 消息携带图片；
+      // assistant / system 消息里的图片块会被服务端拒绝（400），降级为文本占位，避免请求失败。
+      if (role === "assistant" || role === "system") {
+        return { type: role === "assistant" ? "output_text" : "input_text", text: "[图片已省略：该消息角色不支持携带图片]" };
+      }
       const imageUrl = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
       return { type: "input_image", image_url: String(imageUrl || ""), ...(part.image_url?.detail ? { detail: part.image_url.detail } : {}) };
     }
@@ -2169,12 +2302,54 @@ function messagesHaveImages(messages) {
     && message.content.some((part) => part?.type === "image_url" || part?.type === "input_image"));
 }
 
+// 官方视觉模型的图片位置限制与 DeepSeek 文档一致：仅 user / developer 消息允许图片；
+// tool 角色会被转换为 function_call_output，其 output 中也允许图片。
+// system / assistant 消息中的图片会被服务端拒绝（400），本地先拦下并给出明确提示。
+const DEEPSEEK_VISION_IMAGE_ROLES = new Set(["user", "developer", "tool"]);
+
+function imagePartFromContent(part) {
+  if (part?.type === "image_url") return true;
+  if (part?.type === "input_image") return true;
+  return false;
+}
+
+// 返回处理后的消息数组：把非白名单角色（assistant/system 等）消息里的图片块从模型输入中剥离，
+// 并给出提示。DeepSeek 视觉模型只允许 user / developer 消息携带图片，直接抛错会让整轮任务失败；
+// 这里改为「去掉图片块、保留文字」的温和处理，UI 上历史消息的图片仍正常显示，不发送给模型。
+function validateImagesForNativeVisionModel(messages) {
+  const result = [];
+  for (const message of messages || []) {
+    if (!Array.isArray(message?.content) || DEEPSEEK_VISION_IMAGE_ROLES.has(message.role)) {
+      result.push(message);
+      continue;
+    }
+    if (!message.content.some(imagePartFromContent)) {
+      result.push(message);
+      continue;
+    }
+    // 只保留文本；非文本但非图片的块（如 function 引用）也保留原样
+    const sanitized = message.content.filter((part) => !imagePartFromContent(part));
+    result.push({ ...message, content: sanitized });
+    console.warn(
+      `[vision] 已从 ${String(message.role || "未知角色")} 消息中移除 ${message.content.filter(imagePartFromContent).length} 个图片块：`
+      + `DeepSeek 视觉模型仅允许在 user / developer 消息中传入图片，assistant/system 消息中的图片会被服务端拒绝（400）。`,
+    );
+  }
+  return result;
+}
+
 const VISION_CACHE_LIMIT = 128;
 const visionDescriptionCache = new Map();
 
 function isDeepSeekV4TextModel(settings) {
   const model = String(settings?.model || "").trim().toLowerCase();
   return model === "deepseek-v4-flash" || model === "deepseek-v4-pro";
+}
+
+// DeepSeek 官方视觉模型（2026-08-21 上线）：原生处理 input_image / image_url 图片，
+// 无需再经外部视觉服务转文字，图片直接随请求发给 DeepSeek（含 Responses API 与 Chat Completions 两种格式）。
+export function isDeepSeekNativeVisionModel(settings) {
+  return String(settings?.model || "").trim().toLowerCase() === "deepseek-v4-flash-vision-exp";
 }
 
 function imageUrlFromPart(part) {
@@ -2255,6 +2430,8 @@ async function describeImageForTextModel({ settings, endpoint, model, imageUrl, 
 }
 
 async function rewriteImagesForTextModel({ settings, messages, fetchImpl, signal }) {
+  // 官方视觉模型原生处理图片，直接放行
+  if (isDeepSeekNativeVisionModel(settings)) return messages;
   if (!isDeepSeekV4TextModel(settings) || !messagesHaveImages(messages)) return messages;
   const endpoint = String(settings.visionEndpoint || "").trim();
   const model = String(settings.visionModel || "").trim();
@@ -2304,10 +2481,15 @@ export function responsesInput(messages) {
   const input = [];
   for (const message of messages || []) {
     if (message?.role === "tool") {
+      // function_call_output 的 output 支持字符串或内容块列表；
+      // 含图片时保留数组结构，与 DeepSeek 视觉模型的 Responses API 对齐。
+      const output = Array.isArray(message.content)
+        ? responsesContent("user", message.content)
+        : messageText(message);
       input.push({
         type: "function_call_output",
         call_id: String(message.tool_call_id || ""),
-        output: messageText(message),
+        output,
       });
       continue;
     }
@@ -2495,7 +2677,10 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
-  const modelMessages = await rewriteImagesForTextModel({ settings, messages, fetchImpl, signal });
+  const sanitizedMessages = isDeepSeekNativeVisionModel(settings)
+    ? validateImagesForNativeVisionModel(messages)
+    : messages;
+  const modelMessages = await rewriteImagesForTextModel({ settings, messages: sanitizedMessages, fetchImpl, signal });
   const selectedTools = tools || toolDefinitionsWith(extraTools);
   const basePayload = responsesApi
     ? responsesPayload({ model: settings.model, messages: modelMessages, tools: tools === false ? false : selectedTools, stream: false })
@@ -2653,7 +2838,7 @@ export const REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的�
 1. 只输出放行、拒绝、转人工三种结果，不执行操作，不改写用户要求。
 2. 必须拒绝（deny）：向外发送私密数据、密钥或凭据；探测或读取凭据、令牌、Cookie 等敏感材料；削弱系统或应用安全配置；明显不可逆且高破坏性的操作；绕过用户明确规则的操作。
 3. 必须转人工（ask）：操作意图不明确或上下文不足；涉及工作区外的个人隐私或单位敏感数据（文档、照片、聊天记录、密钥目录等）；影响系统账户、权限、安装、删除等重大且难以回退的变更；把本机数据发往陌生网络目标；无法自信地判断安全性。
-4. 普通工作区内的查看、测试、构建、格式检查，以及用户明确要求的文件整理，默认放行；不要因为操作会写入工作区或会读取公开网页就机械转人工。
+4. 普通工作区内的查看、测试、构建、格式检查，以及用户明确要求的文件整理，默认放行；不要因为操作会写入工作区或会读取公开网页就机械转人工。向工作区内下载公开网络内容（如 curl <url> -o <工作区内文件>、抓取公开图片/网页素材）也可以放行；只对已抓取数据做解析、统计、格式转换的内联解释器片段（如不读写本地隐私文件、不联网的 python3 -c / node -e）同样可以放行。前提是命令不读取本地私密文件、也不把本机数据发往外部。
 5. 操作涉及工作区外路径时按路径性质判断，不要一律转人工：读取或执行本机开发工具链与系统程序目录（如 /usr、/bin、/opt、~/.nvm、~/.pyenv 等版本管理器目录，which/node/npm 等开发工具）属于正常开发操作，可以放行；只有触及个人或单位的私有数据、凭据，或要对系统目录做变更时才转人工。
 6. 只有涉及外发数据、凭据、系统权限、不可逆破坏、代码发布，或确实无法判断意图时才转人工（ask）。
 7. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
@@ -3226,8 +3411,11 @@ export async function runAgent({
       for (const [toolName, uri] of Object.entries(formula.nameToUri || {})) {
         if (toolName) kimiFormulaNameToUri.set(toolName, uri);
       }
+      // 公式确实提供了 web_search 才剔除本地版（避免重名 400）；若用户在 nativeToolsDisabled
+      // 里禁用了 web-search，本地 web_search 保留并按厂商路由回退到 DeepSeek/博查等后端
+      const formulaHasWebSearch = kimiFormulaNameToUri.has("web_search");
       effectiveTools = [
-        ...toolDefinitions().filter((tool) => tool?.function?.name !== "web_search"),
+        ...toolDefinitions().filter((tool) => tool?.function?.name !== "web_search" || !formulaHasWebSearch),
         ...(formula.definitions || []),
         // 内置 $web_search（builtin_function）由开关控制，v1 默认关闭（官方提示该功能正在升级）
         ...(settings.enableWebSearchBuiltin === true ? [KIMI_WEB_SEARCH_DEFINITION] : []),

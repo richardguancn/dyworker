@@ -423,6 +423,9 @@ export interface ProviderSettings {
   ttsApiKey: string;
   searxngEndpoint: string;
   bochaApiKey: string;
+  // DeepSeek 原生搜索密钥：非 DeepSeek 端点下 web_search 默认走 DeepSeek 服务端搜索时用
+  // （DeepSeek 端点下直接复用会话 apiKey，无需配置此项）
+  deepseekSearchApiKey: string;
   domesticSearchOnly: boolean;
   // 桌面端审批模式(composer 下拉选择):记住上次选择,下次启动继续生效
   approvalMode: ApprovalMode;

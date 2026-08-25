@@ -782,6 +782,10 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(app, /contextTokens/);
   assert.match(app, /context-usage/);
   assert.match(providers, /k3:\s*1048576/);
+  assert.match(providers, /deepseek-v4-flash-vision-exp/);
+  assert.match(agent, /isDeepSeekNativeVisionModel/);
+  assert.match(agent, /validateImagesForNativeVisionModel/);
+  assert.match(agent, /DEEPSEEK_VISION_IMAGE_ROLES/);
   assert.match(app, /agentEvent\.used \+ agentEvent\.completion/);
   assert.match(app, /contextTokens:\s*total/);
   // 用量统计：token-usage 事件按模型落盘，渲染端表格汇总
@@ -1080,6 +1084,17 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /outboundAttachments = await buildChannelAttachments\(pendingMedia\)/);
   assert.match(main, /built\[1\]\.attachments = outboundAttachments/);
   assert.match(styles, /\.session-channel-badge/);
+
+  // 7b. 渠道会话实时进度：运行期间把关键 agent 事件流式转发渲染端，
+  //     不再等全部结束才一次性 append（否则用户只看到用户消息、AI 侧长时间无动静）
+  assert.match(main, /CHANNEL_STREAM_EVENT_TYPES/, "渠道实时事件白名单");
+  assert.match(main, /forwardChannelEvent/, "渠道任务运行期间转发事件");
+  assert.match(main, /forwardChannelEvent\(agentEvent\)/, "emit 时透传运行中事件");
+  assert.match(main, /type: "agent-finished"/, "渠道任务结束时发收尾事件");
+  assert.match(app, /const target = sessionsRef\.current\.find/, "渲染端按会话定位渠道任务");
+  assert.match(app, /!target\.channel/, "只处理渠道会话，不碰桌面会话");
+  assert.match(app, /ensureChannelAssistant/, "渠道会话流式 assistant 占位");
+  assert.match(app, /channelStreamIds/, "按会话跟踪流式消息 id");
 
   // 8. 渠道审批:createInboxItem 不能把内层 promise 包进 async 外层(会吞掉 .itemId,
   //    IM 回复「允许」路由不到挂起条目——regression);审批严格度可调,默认自动审核

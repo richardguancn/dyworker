@@ -14,10 +14,10 @@ export const providerPresets: ProviderPreset[] = [
     id: "deepseek",
     name: "DeepSeek（深度求索）",
     endpoint: "https://api.deepseek.com/responses",
-    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    models: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
     defaultModel: "deepseek-v4-flash",
     keyHint: "platform.deepseek.com 申请",
-    contextLimits: { "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576 },
+    contextLimits: { "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576 },
     defaultContextLimit: 1048576,
   },
   {
@@ -66,6 +66,18 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "bailian.console.aliyun.com 申请",
     contextLimits: { "qwen-max": 131072, "qwen-plus": 131072, "qwen-turbo": 1000000 },
     defaultContextLimit: 131072,
+  },
+  {
+    id: "qwen-local",
+    name: "Qwen（本地部署）",
+    // 默认 vLLM 端口；Ollama 为 11434、LM Studio 为 1234，按实际服务改地址即可
+    endpoint: "http://192.16.6.138:8000/v1/chat/completions",
+    models: ["Qwen3.8-27B"],
+    defaultModel: "Qwen3.8-27B",
+    keyHint: "本地服务通常无需真实 Key，随意填写即可",
+    // 官方标称 1M 上下文，但本地上限以 vLLM 启动参数 --max-model-len 为准（当前部署 32K）
+    contextLimits: { "Qwen3.8-27B": 32768 },
+    defaultContextLimit: 32768,
   },
   {
     id: "doubao",

@@ -173,6 +173,7 @@ const defaultSettings: ProviderSettings = {
   ttsApiKey: "",
   searxngEndpoint: "",
   bochaApiKey: "",
+  deepseekSearchApiKey: "",
   domesticSearchOnly: false,
   enableNativeTools: true,
   nativeToolsDisabled: ["memory", "excel"],
@@ -3775,7 +3776,11 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
         </label>
-        {["deepseek-v4-flash", "deepseek-v4-pro"].includes(draft.model.trim().toLowerCase()) && (<>
+        {["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].some((m) => draft.model.trim().toLowerCase() === m) && (<>
+        {draft.model.trim().toLowerCase() === "deepseek-v4-flash-vision-exp" ? (<>
+          <div className="dialog-section-title">图片（DeepSeek V4 Flash Vision-Exp）</div>
+          <p className="dialog-note">该模型原生支持图片输入（input_image / image_url），附件图片会原样随请求发送给 DeepSeek，无需再配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。</p>
+        </>) : (<>
         <div className="dialog-section-title">图片识别（DeepSeek V4 Flash / Pro）</div>
         <p className="dialog-note">DeepSeek V4 系列模型本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。</p>
         <label>
@@ -3803,6 +3808,7 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })}
           />
         </label>
+        </>)}
         </>)}
         {providerId === "kimi-open" && (<>
         <div className="dialog-section-title">Kimi 原生工具（开放平台）</div>
@@ -3872,6 +3878,15 @@ function SettingsDialog({
         {tab === "search" && (<>
         <div className="dialog-section-title">搜索（可选）</div>
         <label>
+          DeepSeek 搜索密钥
+          <input
+            value={draft.deepseekSearchApiKey}
+            type="password"
+            placeholder="platform.deepseek.com 申请；非 DeepSeek 模型时的默认搜索后端"
+            onChange={(event) => setDraft({ ...draft, deepseekSearchApiKey: event.target.value })}
+          />
+        </label>
+        <label>
           博查 API 密钥
           <input
             value={draft.bochaApiKey}
@@ -3896,7 +3911,7 @@ function SettingsDialog({
           />
           仅使用境内搜索（推荐敏感单位开启：跳过必应，查询不发送给外企服务）
         </label>
-        <p className="dialog-note">搜索优先级：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
+        <p className="dialog-note">搜索按模型厂商路由：Kimi 开放平台用 Kimi 官方搜索（公式 web_search，按次计费）；DeepSeek 模型用 DeepSeek 服务端搜索（复用会话密钥，每次搜索计一次模型调用）；其他模型默认也用 DeepSeek 搜索（需在此配置密钥）。以上都不可用时回退：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
         </>)}
         {tab === "mcp" && (<>
         <div className="dialog-section-title">MCP 工具服务器（可选）</div>
@@ -4259,11 +4274,39 @@ export function App() {
   const shouldScrollToBottomRef = useRef<string | null>(null);
   const newTaskGuardRef = useRef(false);
 
+  // 会话更新与通知工具：定义在状态之后、各 effect 之前，供渠道实时事件监听器与 runTask 共用
+  const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
+    setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
+  };
+
+  const showSessionNotice = (sessionId: string, message: string) => {
+    setSessionNotices((current) => ({ ...current, [sessionId]: message }));
+    const previous = sessionNoticeTimersRef.current.get(sessionId);
+    if (previous) window.clearTimeout(previous);
+    const timeout = window.setTimeout(() => {
+      setSessionNotices((current) => {
+        if (current[sessionId] !== message) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      sessionNoticeTimersRef.current.delete(sessionId);
+    }, 3200);
+    sessionNoticeTimersRef.current.set(sessionId, timeout);
+  };
+
   // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
   // 对话列表底部 padding 据此预留空间，避免最后一条消息被输入框遮挡。
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+
+  // 会话列表快照 ref：渠道实时事件监听器（注册一次、长期存活）需要读取最新会话，
+  // 用 ref 避免闭包捕获到旧的 sessions 状态
+  const sessionsRef = useRef(sessions);
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // 工作台布局持久化：面板 Tab、分栏比例按会话保存到 localStorage，切换会话恢复、重启不丢。
   // 恢复先于保存执行，避免启动时用空状态覆盖已保存布局；没有自定义过布局（无 Tab）的会话不落盘。
@@ -4637,6 +4680,119 @@ export function App() {
     };
   }, []);
 
+  // 渠道（QQ/微信）会话实时进度：主进程在渠道任务运行期间把关键 agent 事件
+  // （活动流、正文流式、计划、循环状态、任务结束）通过 agent:event 转发过来，
+  // 这里归约进对应会话的消息，让渠道回复像桌面任务一样边跑边显示，
+  // 而不是等全部结束才一次性 append。与 runTask 内的监听器互不干扰：
+  // 它只处理 taskSessionId+taskRunId，不碰渠道会话。
+  useEffect(() => {
+    if (!window.dyworker?.onAgentEvent) return;
+    // 每个渠道会话当前正在流式更新的 assistant 占位消息 id（按 sessionId 记录）
+    const channelStreamIds = new Map<string, string>();
+    const patchChannelAssistant = (sessionId: string, updater: (current: ChatMessage) => ChatMessage) => {
+      const targetId = channelStreamIds.get(sessionId);
+      if (!targetId) return;
+      updateSession(sessionId, (session) => ({
+        ...session,
+        messages: session.messages.map((message) => (message.id === targetId ? updater(message) : message)),
+      }));
+    };
+    const ensureChannelAssistant = (sessionId: string): string => {
+      const existing = channelStreamIds.get(sessionId);
+      if (existing) return existing;
+      const id = crypto.randomUUID();
+      channelStreamIds.set(sessionId, id);
+      updateSession(sessionId, (session) => ({
+        ...session,
+        messages: [...session.messages, {
+          id,
+          role: "assistant",
+          content: "",
+          createdAt: new Date().toISOString(),
+          activities: [],
+        }],
+      }));
+      return id;
+    };
+    const unsubscribe = window.dyworker.onAgentEvent((sessionAgentEvent) => {
+      const { sessionId, event } = sessionAgentEvent;
+      // 只处理渠道会话；桌面会话由 runTask 内注册的专属监听器处理
+      const target = sessionsRef.current.find((session) => session.id === sessionId);
+      if (!target || !target.channel) return;
+      if (event.type === "queue-start") {
+        ensureChannelAssistant(sessionId);
+        setRunningSessionIds((current) => new Set(current).add(sessionId));
+        setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
+      } else if (event.type === "activity") {
+        if (!event.activity.branch) {
+          ensureChannelAssistant(sessionId);
+          patchChannelAssistant(sessionId, (current) => ({ ...current, activities: [...(current.activities || []), event.activity] }));
+        }
+      } else if (event.type === "activity-update") {
+        patchChannelAssistant(sessionId, (current) => ({
+          ...current,
+          activities: (current.activities || []).map((activity) =>
+            activity.id === event.id
+              ? { ...activity, status: event.status, detail: event.detail ?? activity.detail }
+              : activity),
+        }));
+      } else if (event.type === "assistant-text") {
+        ensureChannelAssistant(sessionId);
+        patchChannelAssistant(sessionId, (current) => ({ ...current, content: event.text }));
+      } else if (event.type === "plan-update") {
+        ensureChannelAssistant(sessionId);
+        patchChannelAssistant(sessionId, (current) => ({ ...current, plan: event.steps }));
+      } else if (event.type === "file-change") {
+        patchChannelAssistant(sessionId, (current) => ({ ...current, changes: event.changes }));
+      } else if (event.type === "loop-state") {
+        setLoopStates((current) => {
+          const next = { ...current };
+          if (event.active) {
+            next[sessionId] = { iteration: event.iteration, maximum: event.maximum, status: event.status };
+          } else {
+            delete next[sessionId];
+          }
+          return next;
+        });
+      } else if (event.type === "agent-finished") {
+        // 收尾：用结果体把流式气泡收口为最终形态，并清掉运行标记
+        const result = event.result;
+        patchChannelAssistant(sessionId, (current) => {
+          const plan = result.plan?.length ? result.plan : current.plan;
+          const completedPlan = result.status === "done" && plan?.length
+            ? plan.map((step) => ({ ...step, status: "completed" as const }))
+            : plan;
+          return {
+            ...current,
+            content: result.finalText || current.content,
+            changes: result.changes?.length ? result.changes : current.changes,
+            plan: completedPlan,
+            durationMs: (result as { durationMs?: number }).durationMs,
+            taskStatus: result.status,
+          };
+        });
+        channelStreamIds.delete(sessionId);
+        setRunningSessionIds((current) => {
+          const next = new Set(current);
+          next.delete(sessionId);
+          return next;
+        });
+        setLoopStates((current) => {
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
+        if (result.status === "done" && !result.demo) {
+          playCompletionSound();
+          showSessionNotice(sessionId, "任务已完成");
+        }
+      }
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   const refreshMemories = async () => {
     if (window.dyworker?.listMemories) setMemories(await window.dyworker.listMemories());
   };
@@ -4944,26 +5100,6 @@ export function App() {
       recent: order(recent),
     };
   }, [pinnedWorkspacePaths, visibleSessions]);
-
-  const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
-    setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
-  };
-
-  const showSessionNotice = (sessionId: string, message: string) => {
-    setSessionNotices((current) => ({ ...current, [sessionId]: message }));
-    const previous = sessionNoticeTimersRef.current.get(sessionId);
-    if (previous) window.clearTimeout(previous);
-    const timeout = window.setTimeout(() => {
-      setSessionNotices((current) => {
-        if (current[sessionId] !== message) return current;
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
-      sessionNoticeTimersRef.current.delete(sessionId);
-    }, 3200);
-    sessionNoticeTimersRef.current.set(sessionId, timeout);
-  };
 
   // 切换会话/工作区时关掉旧工作区的审阅标签页（内容已过期）
   const closeFilePanelTabs = () => {

@@ -462,6 +462,10 @@ async function describeAttachment(filePath) {
 async function providerMessageContent(message) {
   let text = String(message?.content || "").trim();
   const imageBlocks = [];
+  // assistant 消息里的图片附件大多是展示/出站媒体（如渠道回复附带的截图），
+  // 不是需要回传给模型的输入；DeepSeek 视觉模型也拒绝 assistant 消息携带图片（400）。
+  // 因此对 assistant 角色只保留文本，不把图片展开成 image 块，避免模型输入被服务端拒绝。
+  if (message?.role === "assistant") return text || "请处理已选择的附件。";
   for (const attachment of Array.isArray(message?.attachments) ? message.attachments : []) {
     const filePath = String(attachment?.path || "");
     if (!filePath) continue;
@@ -1581,6 +1585,18 @@ async function getMcpClient(server) {
   }
 }
 
+// MCP 的 inputSchema 是通用 JSON Schema，可能带 $schema 声明或空的 required 数组，
+// 严格校验的 OpenAI 兼容服务（vLLM/LM Studio 等）会拒绝，这里统一清洗成标准工具参数格式
+function sanitizeMcpInputSchema(schema) {
+  if (!schema || typeof schema !== "object") return { type: "object", properties: {} };
+  const { $schema, ...rest } = schema;
+  const cleaned = { ...rest };
+  if (cleaned.type !== "object") cleaned.type = "object";
+  if (!cleaned.properties || typeof cleaned.properties !== "object") cleaned.properties = {};
+  if (Array.isArray(cleaned.required) && !cleaned.required.length) delete cleaned.required;
+  return cleaned;
+}
+
 async function mcpExtraTools(settings) {
   const extra = [];
   for (const server of mcpServersOf(settings)) {
@@ -1594,9 +1610,7 @@ async function mcpExtraTools(settings) {
             description: server.id === COMPUTER_USE_SERVER_ID
               ? `【本机应用操作】${tool.description || tool.name}`
               : `【MCP:${server.name}】${tool.description || tool.name}`,
-            parameters: tool.inputSchema && typeof tool.inputSchema === "object"
-              ? tool.inputSchema
-              : { type: "object", properties: {} },
+            parameters: sanitizeMcpInputSchema(tool.inputSchema),
           },
         });
       }
@@ -2649,6 +2663,9 @@ function createTranscriptCollector() {
         plan = agentEvent.steps;
       }
     },
+    // 供渠道任务收尾事件读取当前的文件变更与计划快照（只读，不改内部状态）
+    changes: () => changes,
+    plan: () => plan,
     buildMessages(userText, result, assistantContent) {
       const finalPlan = result?.status === "done" && plan?.length
         ? plan.map((step) => ({ ...step, status: "completed" }))
@@ -3066,6 +3083,24 @@ async function handleChannelSwitchWorkspace(args, { chatRecord, chatKey, workspa
   return { ok: true, path: nextPath, result: `工作目录已切换为：${nextPath}。之后的任务都会在这个目录里操作。` };
 }
 
+// 渠道任务实时透传给渲染端的事件白名单：只转发会改变 UI 的轻量事件
+// （活动流、正文流式、计划、循环状态、文件变更、审批/提问、上下文用量、任务开始/结束）。
+// trace / token-usage / skill-saved / memory-saved 等只进本地留痕与统计，不打扰界面。
+const CHANNEL_STREAM_EVENT_TYPES = new Set([
+  "queue-start",
+  "activity",
+  "activity-update",
+  "assistant-text",
+  "file-change",
+  "plan-update",
+  "loop-state",
+  "approval-request",
+  "ask-user",
+  "context-usage",
+  "context-compacted",
+  "agent-finished",
+]);
+
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
 async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord, isNewChat, reply: rawReply, replyMedia, sendTyping, registerPending, clearPending }) {
   const myKey = String(chatKey || `${channel}:${chat?.chatId || ""}`);
@@ -3253,6 +3288,16 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     };
     routeExtraTool.dispose = () => baseRouter.dispose();
     const collector = createTranscriptCollector();
+    // 渠道任务实时透传：把运行中的关键 agent 事件（活动/正文/计划/循环状态）转发到渲染端，
+    // 让渠道会话像桌面任务一样边跑边显示，而不是等全部结束才一次性 append。
+    // 只挑影响 UI 的轻量事件；trace/token-usage 等仍只进本地留痕。事件体再包一层 sessionId/runId，
+    // 与桌面端 onAgentEvent 的负载形状一致，渲染端可用同一套归约逻辑处理。
+    const channelRunId = crypto.randomUUID();
+    const forwardChannelEvent = (agentEvent) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type)) return;
+      mainWindow.webContents.send("agent:event", { sessionId, runId: channelRunId, event: agentEvent });
+    };
     const prior = await visibleConversationForSession(sessionId, "", "");
     const workingContext = await workingContextForSession(sessionId);
     // 模型可见内容：文本 + 图片块（复用桌面端 providerMessageContent）
@@ -3288,7 +3333,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         });
         registerPending({ itemId: pending.itemId, kind: "approval" });
         await reply(
-          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}\n\n回复「允许」执行,回复「拒绝」取消。10 分钟未回复将自动取消。回复「停止」可中止整个任务。`.trim(),
+          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}\n\n回复 1 允许 / 0 拒绝 / 2 停止整个任务。10 分钟未回复将自动取消。`.trim(),
         ).catch(() => { });
         const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消");
         clearPending();
@@ -3314,6 +3359,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       },
       emit: (agentEvent) => {
         collector.handle(agentEvent);
+        forwardChannelEvent(agentEvent);
         if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
         if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
       },
@@ -3378,12 +3424,30 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       await reply(finalText).catch(() => { });
       sendAssistantMessages(collector.buildMessages(userText, result).slice(1));
     }
+    // 通知渲染端本轮渠道任务已结束：渲染端据此给流式气泡打上最终状态、清掉运行标记。
+    // 结果体带 plan/changes/durationMs，渲染端用它把已实时展示的 assistant 消息收口为最终形态。
+    forwardChannelEvent({
+      type: "agent-finished",
+      result: {
+        status: result.status,
+        reason: result.reason,
+        finalText: result.finalText,
+        wake: result.wake,
+        changes: collector.changes?.(),
+        plan: collector.plan?.(),
+        durationMs: Date.now() - taskStartedAt,
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // IM 侧给简明原因(截掉原始 JSON/堆栈),完整信息留在桌面会话里
     const friendly = (message.replace(/\s*[{[].*$/s, "") || message).slice(0, 200);
     await reply(`出错了:${friendly}`).catch(() => { });
     sendAssistantMessages([{ role: "assistant", content: `出错了:${message}`, createdAt: new Date().toISOString() }]);
+    forwardChannelEvent({
+      type: "agent-finished",
+      result: { status: "error", reason: message, durationMs: Date.now() - taskStartedAt },
+    });
   } finally {
     routeExtraTool?.dispose();
     clearPending();
