@@ -1587,6 +1587,106 @@ test("等待用户授权不计入下一次模型连接超时", async () => {
   assert.equal(await fs.readFile(path.join(root, "a.txt"), "utf8"), "新内容");
 });
 
+test("模型请求超时后自动重试一次，重发成功则任务继续", async () => {
+  const root = await makeWorkspace();
+  let requestCount = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        throw error;
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "重试后成功。" } }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "重试后成功。");
+  assert.equal(requestCount, 2);
+});
+
+test("模型请求连续超时，自动重试一次后仍失败才报错", async () => {
+  const root = await makeWorkspace();
+  let requestCount = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      requestCount += 1;
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      throw error;
+    },
+  });
+  assert.equal(result.status, "error");
+  assert.equal(result.reason, "模型服务连接超时或中断");
+  assert.equal(requestCount, 2);
+});
+
+test("流式响应长时间没有数据时判定断流并中断", async () => {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'));
+      // 之后不再吐数据，模拟断流假死
+    },
+  });
+  await assert.rejects(
+    requestModel({
+      settings,
+      messages: [{ role: "user", content: "你好" }],
+      fetchImpl: async () => ({ ok: true, headers: { get: () => "text/event-stream" }, body }),
+      tools: false,
+      idleTimeoutMs: 20,
+    }),
+    (error) => error.name === "AbortError" && error.message.includes("没有返回任何数据"),
+  );
+});
+
+test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", async () => {
+  const root = await makeWorkspace();
+  let requestCount = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        const error = new Error("fetch failed");
+        error.cause = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+        throw error;
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "重连成功。" } }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "重连成功。");
+  assert.equal(requestCount, 2);
+});
+
+test("服务端返回状态码的错误不在传输层重试", async () => {
+  const root = await makeWorkspace();
+  let requestCount = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      requestCount += 1;
+      return { ok: false, status: 500, text: async () => "internal error" };
+    },
+  });
+  assert.equal(result.status, "error");
+  assert.match(result.reason, /500/);
+  assert.equal(requestCount, 1);
+});
+
 test("代理每次只收到当前任务最相关的五条记忆", async () => {
   const root = await makeWorkspace();
   const calls = [];
