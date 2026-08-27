@@ -1707,7 +1707,7 @@ test("推理模型长思考时活动详情节流更新，正文不含思考内�
   assert.ok(thinkingUpdates.length >= 1, "思考期间应有活动详情更新");
 });
 
-
+test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", async () => {
   const root = await makeWorkspace();
   let requestCount = 0;
   const result = await runAgent({
