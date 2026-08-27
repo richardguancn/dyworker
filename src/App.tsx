@@ -74,10 +74,8 @@ import hljs from "highlight.js/lib/common";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
-import { ProcessTimeline } from "./ProcessTimeline";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
-import { buildTaskTrace, traceEventsToAgentEvents } from "./taskTrace";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TraceEvent, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
@@ -582,63 +580,6 @@ const debugKindLabels: Record<DebugLogEntry["kind"], string> = {
   "tool-call": "工具调用",
   "tool-result": "工具结果",
 };
-
-// process-chain：助手消息上的「查看过程链路」开关（默认折叠）。
-// 有 trace 事件流数据（hasTrace）才渲染；老会话直接不出现，回退现有计划/活动卡片。
-function MessageProcessTrace({
-  events,
-  request,
-  durationMs,
-  onLocateMessage,
-  onOpenReview,
-  onLocateLog,
-}: {
-  events: TraceEvent[];
-  request: string;
-  durationMs?: number;
-  onLocateMessage: () => void;
-  onOpenReview: (changes: FileChange[]) => void;
-  onLocateLog: () => void;
-}) {
-  const trace = useMemo(() => {
-    const built = buildTaskTrace(traceEventsToAgentEvents(events), request);
-    if (built.deliver && typeof durationMs === "number" && durationMs > 0) {
-      built.deliver = { ...built.deliver, durationMs };
-    }
-    return built;
-  }, [events, request, durationMs]);
-  const [open, setOpen] = useState(false);
-  if (!trace.hasTrace) return null;
-  const doneSteps = trace.steps.filter((step) => step.status === "completed").length;
-  return (
-    <div className="process-trace-wrap">
-      <button
-        type="button"
-        className={`process-trace-toggle clickable ${open ? "open" : ""}`}
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-label="查看过程链路"
-      >
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>查看过程链路</span>
-        <span className="process-trace-meta">
-          {trace.steps.length > 0 && `${doneSteps}/${trace.steps.length} 步`}
-          {trace.branches.length > 0 && ` · ${trace.branches.length} 条子代理`}
-          {trace.changes.length > 0 && ` · ${trace.changes.length} 个文件`}
-          {trace.deliver ? " · 已交付" : " · 执行中"}
-        </span>
-      </button>
-      {open && (
-        <ProcessTimeline
-          trace={trace}
-          onLocateMessage={onLocateMessage}
-          onOpenReview={onOpenReview}
-          onLocateLog={onLocateLog}
-        />
-      )}
-    </div>
-  );
-}
 
 function DebugConsole({ logs, onClear, onClose }: { logs: DebugLogEntry[]; onClear: () => void; onClose: () => void }) {
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -7352,33 +7293,6 @@ export function App() {
                         />
                       )}
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
-                      {(() => {
-                        if (!message.runId) return null;
-                        let prevUserIndex = -1;
-                        for (let i = index - 1; i >= 0; i--) {
-                          if (activeSession.messages[i].role === "user") { prevUserIndex = i; break; }
-                        }
-                        const prevUser = prevUserIndex >= 0 ? activeSession.messages[prevUserIndex] : null;
-                        const runEvents = runTraceEventsRef.current.get(message.runId) || [];
-                        return (
-                          <MessageProcessTrace
-                            events={runEvents}
-                            request={prevUser?.displayContent || prevUser?.content || ""}
-                            durationMs={message.durationMs}
-                            onLocateMessage={() => {
-                              if (prevUserIndex < 0) return;
-                              const turn = conversationTurns.find((entry) => entry.messageIndex === prevUserIndex);
-                              if (turn) conversationTurnRefs.current[conversationTurns.indexOf(turn)]?.scrollIntoView({ behavior: "smooth", block: "start" });
-                            }}
-                            onOpenReview={(changes) => {
-                              setReviewFocusChanges(changes);
-                              setRightPanelOpen(true);
-                              openToolPanelTab("review");
-                            }}
-                            onLocateLog={() => setDebugOpen(true)}
-                          />
-                        );
-                      })()}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">

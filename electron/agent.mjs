@@ -20,7 +20,15 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 // 防失控只靠两道：下面的“连续重复操作检测”，以及用户可随时取消任务。
 // 同一批工具调用（名称+参数完全相同）连续出现这么多个轮次，判定为原地打转，提前暂停
 const REPEAT_ROUND_LIMIT = 3;
-const MODEL_TIMEOUT_MS = 180_000;
+// 单次模型请求的总时长上限（建连 + 流式读完的全程），只作防失控兜底；
+// 断流检测靠下面的流式空闲看门狗，长生成（推理模型长思考、长输出）不再被总时长误伤
+const MODEL_TIMEOUT_MS = 600_000;
+// 流式响应的空闲超时：超过该时长没有任何数据到达即判定连接假死（VPN 断流等），
+// 主动取消读取并交由上层自动重试。流式响应期间服务端持续吐 chunk，健康连接不会触发
+const MODEL_IDLE_TIMEOUT_MS = 90_000;
+// 超时/断流后的自动重试次数：模型请求在执行任何工具前是无副作用的，重发安全；
+// 用户主动取消（isCancelled / cancellationSignal）不重试
+const MODEL_TIMEOUT_RETRY_LIMIT = 1;
 // 网络层抖动自动重试：fetch 本身连接失败（fetch failed 等）时按指数退避重试。
 // 实际观测到本地推理服务的断流窗口可达 30 秒级，3 次×1s 的固定间隔 span 太短，
 // 改为 1s/2s/4s/8s/16s 共 5 次重试（总等待约 31 秒），覆盖典型抖动窗口。
@@ -2208,6 +2216,33 @@ function decorateNetworkError(error, endpoint) {
   return wrapped;
 }
 
+// 流式读取的空闲看门狗：连接假死（长时间没有任何字节到达，如 VPN 断流把断线伪装成远端挂起）
+// 时主动 cancel 读取，由 throwIfTripped 抛出 AbortError，走与超时一致的处理与自动重试路径。
+// 每读到一块数据必须 reset() 一次；读取结束（不论成败）必须 dispose() 清理计时器。
+function watchStreamIdle(reader, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS) {
+  let timer = null;
+  let tripped = false;
+  const arm = () => {
+    if (!(idleTimeoutMs > 0)) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      tripped = true;
+      reader.cancel().catch(() => { });
+    }, idleTimeoutMs);
+  };
+  arm();
+  return {
+    reset: arm,
+    dispose() { clearTimeout(timer); },
+    throwIfTripped() {
+      if (!tripped) return;
+      const error = new Error(`模型服务超过 ${Math.round(idleTimeoutMs / 1000)} 秒没有返回任何数据，连接已中断`);
+      error.name = "AbortError";
+      throw error;
+    },
+  };
+}
+
 async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
   let response;
   for (let attempt = 0; ; attempt += 1) {
@@ -2605,8 +2640,9 @@ function responsesPayload({ model, messages, tools, stream }) {
   return payload;
 }
 
-async function readResponsesStream(response, { onText, onUsage }) {
+async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
   const reader = response.body.getReader();
+  const idleWatch = watchStreamIdle(reader, idleTimeoutMs);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
@@ -2665,16 +2701,22 @@ async function readResponsesStream(response, { onText, onUsage }) {
     try { applyEvent(JSON.parse(data)); } catch { }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let match;
-    while ((match = /\r?\n\r?\n/.exec(buffer))) {
-      consumeBlock(buffer.slice(0, match.index));
-      buffer = buffer.slice(match.index + match[0].length);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      idleWatch.reset();
+      buffer += decoder.decode(value, { stream: true });
+      let match;
+      while ((match = /\r?\n\r?\n/.exec(buffer))) {
+        consumeBlock(buffer.slice(0, match.index));
+        buffer = buffer.slice(match.index + match[0].length);
+      }
     }
+  } finally {
+    idleWatch.dispose();
   }
+  idleWatch.throwIfTripped();
   buffer += decoder.decode();
   if (buffer.trim()) consumeBlock(buffer);
 
@@ -2693,7 +2735,7 @@ async function readResponsesStream(response, { onText, onUsage }) {
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
+export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
@@ -2742,8 +2784,9 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   }
 
   onTransport?.("sse");
-  if (responsesApi) return readResponsesStream(response, { onText, onUsage });
+  if (responsesApi) return readResponsesStream(response, { onText, onUsage, idleTimeoutMs });
   const reader = response.body.getReader();
+  const idleWatch = watchStreamIdle(reader, idleTimeoutMs);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
@@ -2767,30 +2810,36 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let boundary;
-    while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      for (const line of block.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const chunk = JSON.parse(data);
-          if (chunk?.usage) usage = chunk.usage;
-          const choice = chunk?.choices?.[0];
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
-          applyDelta(choice?.delta);
-        } catch {
-          // 忽略不完整的分片，下一包会补齐
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      idleWatch.reset();
+      buffer += decoder.decode(value, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(data);
+            if (chunk?.usage) usage = chunk.usage;
+            const choice = chunk?.choices?.[0];
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
+            applyDelta(choice?.delta);
+          } catch {
+            // 忽略不完整的分片，下一包会补齐
+          }
         }
       }
     }
+  } finally {
+    idleWatch.dispose();
   }
+  idleWatch.throwIfTripped();
 
   if (usage) onUsage?.(usage);
   const message = { role: "assistant", content: content || null };
@@ -3555,7 +3604,7 @@ export async function runAgent({
       let modelMessage;
       // 端点不回 usage 时退化为本地估算（estimated: true），统计与上下文环都保持可用
       let usageSeen = false;
-      const requestCurrentModel = () => withModelTimeout((signal) => requestModel({
+      const requestCurrentModelOnce = () => withModelTimeout((signal) => requestModel({
           settings,
           messages,
           fetchImpl,
@@ -3579,6 +3628,27 @@ export async function runAgent({
             traceEmit({ type: "assistant-text", text: streamed });
           },
         }));
+      // 传输层失败自动重发一次：超时/断流的 AbortError，以及连接被重置等网络错误
+      // （fetch failed/ECONNRESET 等，含 postChat 连接重试耗尽后与流式读取中途被重置）。
+      // 此时还没有执行任何工具，请求无副作用，重发安全；偶发断流对用户无感。
+      // 已拿到服务端响应的错误（带 status 的 4xx/5xx）与用户主动取消不重试。
+      const isRetryableTransportError = (error) => {
+        if (isCancelled() || cancellationSignal?.aborted) return false;
+        if (Number.isFinite(Number(error?.status))) return false;
+        if (error?.name === "AbortError") return true;
+        const text = `${error instanceof Error ? error.message : String(error)} ${error?.cause?.code || ""}`;
+        return /fetch failed|terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|socket hang up/i.test(text);
+      };
+      const requestCurrentModel = async () => {
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            return await requestCurrentModelOnce();
+          } catch (error) {
+            if (!isRetryableTransportError(error) || attempt >= MODEL_TIMEOUT_RETRY_LIMIT) throw error;
+            debugLog("tool-call", "模型服务连接超时或中断，自动重试一次", error instanceof Error ? error.message : String(error));
+          }
+        }
+      };
       try {
         // 服务端上下文超限时的强制压缩重试：本地估算与端点实际上限可能不一致，
         // 超限 → 强制裁剪工具结果 + 压缩摘要 → 重试，一轮内最多 2 次，仍超限才报错
