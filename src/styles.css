@@ -7105,6 +7105,25 @@ body.resizing-panels .app-shell {
     color: #72766e;
   }
 
+  .question-input-row input {
+    border-color: var(--border);
+    background: #20211e;
+    color: #e1e3dc;
+  }
+
+  .question-input-row input:focus {
+    border-color: rgba(120, 160, 255, 0.55);
+  }
+
+  .question-input-row input::placeholder {
+    color: #72766e;
+  }
+
+  .workspace-session-heading:hover,
+  .workspace-session-group.expanded .workspace-session-heading:hover {
+    color: #e1e3dc;
+  }
+
   .settings-dialog label.plan-form-check {
     color: #b7bbb1;
     background: #20211e;
