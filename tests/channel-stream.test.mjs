@@ -134,8 +134,19 @@ test("源码契约:思考流(assistant-reasoning)实时转发、归约展示并�
 test("源码契约:思考内容为固定高度滚动框,流式期间未上翻时自动跟随底部", () => {
   // 样式:固定高度 + 内部滚动,思考框不随内容无限撑高
   assert.match(styles, /\.reasoning-content\s*\{[^}]*\bheight:\s*[\d.]+px[^}]*overflow-y:\s*auto/s);
-  // 渲染端:内容更新时把滚动位置压到底部(显示最新内容),仅当用户仍在底部附近
+  // 渲染端:内容更新时把滚动位置压到底部(显示最新内容),仅当用户仍在底部附近且未在手动交互
   assert.match(app, /node\.scrollTop = node\.scrollHeight/);
   // 渲染端:onScroll 判定用户是否离开底部:上翻后停止跟随,滚回底部恢复跟随
   assert.match(app, /pinnedRef\.current = node\.scrollHeight - node\.scrollTop - node\.clientHeight <= 24/);
+  // 渲染端:用户滚轮向上(含触控板惯性)立即解除跟随,不等阈值,防止流式刷新把视口拉回底部
+  assert.match(app, /onWheel=\{\(event\) => \{[^}]*event\.deltaY < 0\) \{[^}]*pinnedRef\.current = false;[^}]*upGestureUntilRef\.current = performance\.now\(\) \+ 400;/s);
+  // 渲染端:上翻宽限期内 scroll 事件禁止恢复跟随——否则小幅上翻(距底部仍≤24px)会被
+  // "贴近底部视为跟随中"的判定立即改回 true,下一帧流式刷新又拉回底部(抢滚动条)
+  assert.match(app, /if \(performance\.now\(\) < upGestureUntilRef\.current\) return;/);
+  // 渲染端:向下滚动立即退出宽限期,滚回底部可正常恢复跟随
+  assert.match(app, /upGestureUntilRef\.current = 0;/);
+  // 渲染端:按住滚动条/选中文本期间挂起跟随,window 上收尾(pointerup/pointercancel)并按位置重判
+  assert.match(app, /onPointerDown=\{\(\) => \{\s*interactingRef\.current = true;/s);
+  assert.match(app, /addEventListener\("pointerup", endInteraction\)/);
+  assert.match(app, /addEventListener\("pointercancel", endInteraction\)/);
 });

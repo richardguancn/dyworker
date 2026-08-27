@@ -2142,20 +2142,62 @@ function activityDisplayTitle(activity: ActivityRecord) {
 function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean }) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
+  // 用户按住滚动条（或选中文本）期间挂起自动跟随，避免内容更新抢夺滚动位置
+  const interactingRef = useRef(false);
+  const dragStartTopRef = useRef(0);
+  // 上翻宽限期：小幅上翻/触控板惯性时距底部仍 ≤24px，期间的 scroll 事件若按"贴近底部"
+  // 恢复跟随，会立刻被下一次流式刷新拉回底部（表现为和用户抢滚动条）。窗口期内禁止恢复。
+  const upGestureUntilRef = useRef(0);
   useEffect(() => {
     const node = contentRef.current;
-    if (!node || !pinnedRef.current) return;
+    if (!node || !pinnedRef.current || interactingRef.current) return;
     node.scrollTop = node.scrollHeight;
   }, [text, streaming]);
+  useEffect(() => {
+    const endInteraction = () => {
+      if (!interactingRef.current) return;
+      interactingRef.current = false;
+      const node = contentRef.current;
+      if (!node) return;
+      if (node.scrollTop < dragStartTopRef.current) {
+        // 拖动滚动条上翻：与滚轮上翻同样处理，进入宽限期且不恢复跟随
+        pinnedRef.current = false;
+        upGestureUntilRef.current = performance.now() + 400;
+        return;
+      }
+      pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+    };
+    window.addEventListener("pointerup", endInteraction);
+    window.addEventListener("pointercancel", endInteraction);
+    return () => {
+      window.removeEventListener("pointerup", endInteraction);
+      window.removeEventListener("pointercancel", endInteraction);
+    };
+  }, []);
   return (
     <details className="reasoning-block" open={streaming}>
       <summary>{streaming ? "正在深度思考…" : "思考过程"}</summary>
       <div
         className="reasoning-content"
         ref={contentRef}
+        onPointerDown={() => {
+          interactingRef.current = true;
+          dragStartTopRef.current = contentRef.current?.scrollTop ?? 0;
+        }}
+        onWheel={(event) => {
+          if (event.deltaY < 0) {
+            // 用户向上滚动（含触控板惯性）立即停止跟随，并续期宽限期
+            pinnedRef.current = false;
+            upGestureUntilRef.current = performance.now() + 400;
+          } else if (event.deltaY > 0) {
+            // 向下滚动说明想回到底部：立即退出宽限期，滚到贴近底部即可恢复跟随
+            upGestureUntilRef.current = 0;
+          }
+        }}
         onScroll={() => {
           const node = contentRef.current;
-          if (!node) return;
+          if (!node || interactingRef.current) return;
+          if (performance.now() < upGestureUntilRef.current) return;
           // 贴近底部（24px 内）视为跟随中；程序性滚动到底也会触发本事件，天然保持 true
           pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
         }}
@@ -4833,10 +4875,13 @@ export function App() {
   const activeSession = sessions.find((session) => session.id === activeId) || sessions[0];
   // 输入区展示的工作目录以当前会话为准，全局值仅作兜底（老会话可能保存了自己的目录）
   const composerWorkspacePath = String(activeSession?.workspacePath || workspacePath || "").trim();
-  // 后台任务拓扑按当前会话隔离：只取本会话消息 runId 对应的轨迹，避免切换会话后串看别的会话
+  // 后台任务拓扑按当前会话隔离：只取本会话消息 runId 对应的轨迹，避免切换会话后串看别的会话。
+  // 会话消息没有 runId（空会话、纯问答等非任务消息）时本会话没有自己的轨迹，返回空，
+  // 不能回退到全量轨迹池——那是所有会话混合的数据，会造成轨迹串会话
   const activeSessionTraceEvents = useMemo(() => {
     const runIds = new Set((activeSession?.messages || []).map((message) => message.runId).filter((runId): runId is string => Boolean(runId)));
-    return runIds.size ? traceEvents.filter((entry) => Boolean(entry.runId) && runIds.has(entry.runId!)) : traceEvents;
+    if (!runIds.size) return [];
+    return traceEvents.filter((entry) => Boolean(entry.runId) && runIds.has(entry.runId!));
   }, [traceEvents, activeSession?.messages]);
 
   // 重启后内存轨迹为空：活动会话切换时自动从落盘 jsonl 补载本会话历史轨迹（分页读全），
@@ -7401,7 +7446,7 @@ export function App() {
 
         {debugOpen && (
           <TraceConsole
-            traces={traceEvents}
+            traces={activeSessionTraceEvents}
             logs={debugLogs}
             sessionId={activeSession?.id}
             onClear={() => {
