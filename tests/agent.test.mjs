@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
@@ -1648,7 +1648,66 @@ test("流式响应长时间没有数据时判定断流并中断", async () => {
   );
 });
 
-test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", async () => {
+test("流式思考内容（reasoning / reasoning_content 字段）经 onReasoning 透出且不混入正文", async () => {
+  const sse = [
+    'data: {"choices":[{"delta":{"reasoning":"先想"}}]}',
+    'data: {"choices":[{"delta":{"reasoning_content":"再想"}}]}',
+    'data: {"choices":[{"delta":{"content":"答案"}}]}',
+    "data: [DONE]",
+  ].join("\n\n") + "\n\n";
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(sse));
+      controller.close();
+    },
+  });
+  const reasonings = [];
+  const texts = [];
+  const message = await requestModel({
+    settings,
+    messages: [{ role: "user", content: "你好" }],
+    tools: false,
+    fetchImpl: async () => ({ ok: true, headers: { get: () => "text/event-stream" }, body }),
+    onReasoning: (text) => reasonings.push(text),
+    onText: (text) => texts.push(text),
+  });
+  assert.equal(message.content, "答案");
+  assert.deepEqual(reasonings, ["先想", "先想再想"], "两种思考字段都应累积透出");
+  assert.deepEqual(texts, ["答案"], "正文回调只含 content");
+});
+
+test("推理模型长思考时活动详情节流更新，正文不含思考内容", async () => {
+  const root = await makeWorkspace();
+  const sse = [
+    'data: {"choices":[{"delta":{"reasoning":"第一步推理"}}]}',
+    'data: {"choices":[{"delta":{"content":"想完了，答案是这个。"}}]}',
+    "data: [DONE]",
+  ].join("\n\n") + "\n\n";
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    emit: (event) => events.push(event),
+    fetchImpl: async () => ({
+      ok: true,
+      headers: { get: () => "text/event-stream" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(sse));
+          controller.close();
+        },
+      }),
+    }),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, "想完了，答案是这个。");
+  const thinkingUpdates = events.filter((event) =>
+    event.type === "activity-update" && /深度思考/.test(String(event.detail || "")));
+  assert.ok(thinkingUpdates.length >= 1, "思考期间应有活动详情更新");
+});
+
+
   const root = await makeWorkspace();
   let requestCount = 0;
   const result = await runAgent({
@@ -1685,6 +1744,41 @@ test("服务端返回状态码的错误不在传输层重试", async () => {
   assert.equal(result.status, "error");
   assert.match(result.reason, /500/);
   assert.equal(requestCount, 1);
+});
+
+test("探测服务器自报的上下文上限（max_model_len）并按端点+模型缓存", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      json: async () => ({ data: [{ id: "Qwen3.8-27B", max_model_len: 32768 }, { id: "other-model", max_model_len: 8192 }] }),
+    };
+  };
+  const server = { endpoint: "http://192.16.6.138:8000/v1/chat/completions", model: "Qwen3.8-27B", apiKey: "" };
+  const first = await probeServerContextLimit({ ...server, fetchImpl });
+  assert.equal(first, 32768);
+  assert.deepEqual(calls, ["http://192.16.6.138:8000/v1/models"]);
+  const again = await probeServerContextLimit({ ...server, fetchImpl });
+  assert.equal(again, 32768);
+  assert.equal(calls.length, 1, "第二次命中缓存，不再请求");
+  // 模型名不在列表里时返回 null
+  const missing = await probeServerContextLimit({ ...server, model: "unknown-model", fetchImpl });
+  assert.equal(missing, null);
+});
+
+test("上下文上限探测失败或不适用时静默回退 null", async () => {
+  const failed = await probeServerContextLimit({
+    endpoint: "http://probe-fail.local/v1/chat/completions", model: "m", apiKey: "",
+    fetchImpl: async () => { throw new Error("fetch failed"); },
+  });
+  assert.equal(failed, null);
+  // 非 chat/completions /responses 路径不发起探测
+  const skipped = await probeServerContextLimit({
+    endpoint: "http://probe-fail.local/custom/path", model: "m", apiKey: "",
+    fetchImpl: async () => { throw new Error("不应被调用"); },
+  });
+  assert.equal(skipped, null);
 });
 
 test("代理每次只收到当前任务最相关的五条记忆", async () => {
@@ -4499,7 +4593,7 @@ test("模型请求网络失败自动重试，连上后任务正常完成", async
   assert.equal(attempts, 3, "两次连接失败后第三次应成功");
 });
 
-test("网络失败按指数退避重试 5 次仍连不上时报错终止", async () => {
+test("网络失败按指数退避重试 5 次、任务级再重发一次，仍连不上时报错终止", async () => {
   const root = await makeWorkspace();
   let attempts = 0;
   const result = await runAgent({
@@ -4517,7 +4611,8 @@ test("网络失败按指数退避重试 5 次仍连不上时报错终止", async
   assert.equal(result.status, "error");
   assert.match(String(result.reason || ""), /fetch failed/, "保留原始错误描述");
   assert.match(String(result.reason || ""), /ECONNRESET/, "错误消息应带出 cause 里的底层错误码，便于定位");
-  assert.equal(attempts, 6, "首次请求加 5 次重试共 6 次尝试");
+  // 单次请求内 1+5 次连接重试，失败后再由任务级传输重试整体重发一次，共 12 次尝试
+  assert.equal(attempts, 12, "单次请求 6 次尝试，任务级传输重试一次，共 12 次");
 });
 
 test("任务取消时网络重试立即中止，不再等待重试", async () => {
