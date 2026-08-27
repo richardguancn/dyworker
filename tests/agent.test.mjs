@@ -4593,7 +4593,7 @@ test("模型请求网络失败自动重试，连上后任务正常完成", async
   assert.equal(attempts, 3, "两次连接失败后第三次应成功");
 });
 
-test("网络失败按指数退避重试 5 次、任务级再重发一次，仍连不上时报错终止", async () => {
+test("网络失败按指数退避重试 5 次仍连不上时报错终止", async () => {
   const root = await makeWorkspace();
   let attempts = 0;
   const result = await runAgent({
@@ -4611,8 +4611,8 @@ test("网络失败按指数退避重试 5 次、任务级再重发一次，仍�
   assert.equal(result.status, "error");
   assert.match(String(result.reason || ""), /fetch failed/, "保留原始错误描述");
   assert.match(String(result.reason || ""), /ECONNRESET/, "错误消息应带出 cause 里的底层错误码，便于定位");
-  // 单次请求内 1+5 次连接重试，失败后再由任务级传输重试整体重发一次，共 12 次尝试
-  assert.equal(attempts, 12, "单次请求 6 次尝试，任务级传输重试一次，共 12 次");
+  // 连接层重试已由 postChat 内部完成（networkRetried 标记），外层不再整体重发，共 6 次尝试
+  assert.equal(attempts, 6, "首次请求加 5 次重试共 6 次尝试");
 });
 
 test("任务取消时网络重试立即中止，不再等待重试", async () => {

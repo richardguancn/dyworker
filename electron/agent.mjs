@@ -2243,7 +2243,7 @@ function watchStreamIdle(reader, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS) {
   };
 }
 
-async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
+async function postChat({ settings, payload, fetchImpl, signal, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT }) {
   let response;
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -2260,8 +2260,15 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
       break;
     } catch (error) {
       // 只有连接层失败才重试；已取消/超时中止或重试次数用完时直接抛出。
-      if (signal?.aborted || error?.name === "AbortError" || attempt >= MODEL_NETWORK_RETRY_LIMIT) {
+      if (signal?.aborted || error?.name === "AbortError") {
+        // 超时/断流（AbortError）不在本层重试，抛给外层按传输层失败处理（外层会自动重发一次）
         throw decorateNetworkError(error, endpoint || settings.endpoint);
+      }
+      if (attempt >= retryLimit) {
+        // 连接层网络错误重试已耗尽：打标记，外层识别后不再整体重发一轮（否则 6 次×2 轮叠加）
+        const decorated = decorateNetworkError(error, endpoint || settings.endpoint);
+        if (decorated instanceof Error) decorated.networkRetried = true;
+        throw decorated;
       }
       await new Promise((resolve) => setTimeout(resolve, retryBaseDelayMs * 2 ** attempt));
       if (signal?.aborted) throw error;
@@ -2796,7 +2803,7 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-export async function requestModel({ settings, messages, fetchImpl, signal, onText, onReasoning = null, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
+export async function requestModel({ settings, messages, fetchImpl, signal, onText, onReasoning = null, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
@@ -2823,10 +2830,10 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     const streamPayload = responsesApi
       ? { ...basePayload, stream: true }
       : { ...basePayload, stream: true, stream_options: { include_usage: true } };
-    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs });
+    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit });
   } catch (error) {
     if (error?.status !== 400 && error?.status !== 404 && error?.status !== 422) throw error;
-    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs });
+    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit });
   }
 
   const contentType = response.headers?.get?.("content-type") || "";
@@ -3231,6 +3238,13 @@ export async function runAgent({
   modelTimeoutMs = MODEL_TIMEOUT_MS,
   // 网络重试退避基数（毫秒）：默认 1s/2s/4s/8s/16s；测试可注入小值避免真实等待
   networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS,
+  // 网络连接层重试次数（postChat 内指数退避）：默认 5；测试可注入小值。
+  // 与下面的 transportRetryLimit 配合：网络层重试交给 postChat，外层不再整体重发，
+  // 避免 6 次 × 2 轮 = 12 次尝试的叠加。
+  networkRetryLimit = MODEL_NETWORK_RETRY_LIMIT,
+  // 外层传输层重试次数（超时/断流等 postChat 之外的失败重发）：默认 1。
+  // 网络连接失败已由 postChat 在内部退避重试，外层不应再重复，默认把网络错误排除在外。
+  transportRetryLimit = MODEL_TIMEOUT_RETRY_LIMIT,
   hooks = [],
   goal = "",
   standingRules = [],
@@ -3687,6 +3701,7 @@ export async function runAgent({
           signal,
           extraTools,
           retryBaseDelayMs: networkRetryBaseDelayMs,
+          retryLimit: networkRetryLimit,
           tools: effectiveTools,
           onTransport: (mode) => { transport = mode; },
           onUsage: (usage) => {
@@ -3724,6 +3739,9 @@ export async function runAgent({
       const isRetryableTransportError = (error) => {
         if (isCancelled() || cancellationSignal?.aborted) return false;
         if (Number.isFinite(Number(error?.status))) return false;
+        // 连接层网络错误已由 postChat 在内部按指数退避重试耗尽（带 networkRetried 标记），
+        // 外层不再整体重发一轮，否则 6 次×2 轮会叠加成 12 次。
+        if (error?.networkRetried) return false;
         if (error?.name === "AbortError") return true;
         const text = `${error instanceof Error ? error.message : String(error)} ${error?.cause?.code || ""}`;
         return /fetch failed|terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|socket hang up/i.test(text);
@@ -3733,7 +3751,7 @@ export async function runAgent({
           try {
             return await requestCurrentModelOnce();
           } catch (error) {
-            if (!isRetryableTransportError(error) || attempt >= MODEL_TIMEOUT_RETRY_LIMIT) throw error;
+            if (!isRetryableTransportError(error) || attempt >= transportRetryLimit) throw error;
             debugLog("tool-call", "模型服务连接超时或中断，自动重试一次", error instanceof Error ? error.message : String(error));
           }
         }
