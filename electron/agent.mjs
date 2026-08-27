@@ -2333,6 +2333,61 @@ export function isResponsesEndpoint(endpoint) {
   }
 }
 
+// 服务器自报的上下文上限探测：OpenAI 兼容服务的 GET /models 通常带 max_model_len（vLLM 等）。
+// 本地/自建模型的实际上限往往远小于静态表的 128k 默认值（如 32k），按默认值累积上下文会把
+// 超出服务器能力的请求发出去——轻则 400，重则打垮引擎导致连接被批量重置（ECONNRESET）。
+// 按 endpoint+model 缓存（含失败结果），探测失败静默返回 null，调用方回退既有默认值。
+const serverContextLimitCache = new Map();
+const SERVER_CONTEXT_PROBE_TIMEOUT_MS = 5000;
+
+function modelsUrlFromEndpoint(endpoint) {
+  try {
+    const url = new URL(normalizeModelEndpoint(endpoint));
+    if (!/^https?:$/.test(url.protocol)) return "";
+    if (!/\/(chat\/completions|responses|completions)\/?$/.test(url.pathname)) return "";
+    url.pathname = url.pathname.replace(/\/(chat\/completions|responses|completions)\/?$/, "/models");
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+export async function probeServerContextLimit({ endpoint, model, apiKey = "", fetchImpl = fetch }) {
+  const url = modelsUrlFromEndpoint(endpoint);
+  const name = String(model || "").trim();
+  if (!url || !name) return null;
+  const key = `${url}\n${name}`;
+  if (serverContextLimitCache.has(key)) return serverContextLimitCache.get(key);
+  let limit = null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SERVER_CONTEXT_PROBE_TIMEOUT_MS);
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (response?.ok) {
+      const result = await response.json();
+      const item = (Array.isArray(result?.data) ? result.data : [])
+        .find((entry) => String(entry?.id || "") === name);
+      const value = Number(item?.max_model_len);
+      if (Number.isFinite(value) && value > 0) limit = Math.floor(value);
+    }
+  } catch {
+    // 探测失败（端点不支持 /models、网络异常等）：静默回退，不影响任务
+  }
+  if (serverContextLimitCache.size >= 50) serverContextLimitCache.delete(serverContextLimitCache.keys().next().value);
+  serverContextLimitCache.set(key, limit);
+  return limit;
+}
+
 function responsesContent(role, content) {
   if (!Array.isArray(content)) return content;
   return content.map((part) => {
@@ -2640,12 +2695,13 @@ function responsesPayload({ model, messages, tools, stream }) {
   return payload;
 }
 
-async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
+async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS, onReasoning = null }) {
   const reader = response.body.getReader();
   const idleWatch = watchStreamIdle(reader, idleTimeoutMs);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let reasoning = "";
   let terminalResponse = null;
   let failure = null;
   const toolCalls = new Map();
@@ -2675,6 +2731,11 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
       content += event.delta;
       onText?.(content);
+    } else if (/reasoning(_summary)?(_text)?\.delta$/.test(String(event.type || "")) && typeof event.delta === "string") {
+      // 推理模型的思考增量（response.reasoning_text.delta / reasoning_summary_text.delta）：
+      // 不进正文，单独透出做进度展示
+      reasoning += event.delta;
+      onReasoning?.(reasoning);
     } else if (event.type === "response.output_item.added") {
       storeTool(event, event.item);
     } else if (event.type === "response.output_item.done") {
@@ -2735,7 +2796,7 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-export async function requestModel({ settings, messages, fetchImpl, signal, onText, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
+export async function requestModel({ settings, messages, fetchImpl, signal, onText, onReasoning = null, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
@@ -2784,18 +2845,28 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   }
 
   onTransport?.("sse");
-  if (responsesApi) return readResponsesStream(response, { onText, onUsage, idleTimeoutMs });
+  if (responsesApi) return readResponsesStream(response, { onText, onUsage, idleTimeoutMs, onReasoning });
   const reader = response.body.getReader();
   const idleWatch = watchStreamIdle(reader, idleTimeoutMs);
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let reasoning = "";
   let usage = null;
   let finishReason = null;
   const toolCalls = new Map();
 
   const applyDelta = (delta) => {
     if (!delta) return;
+    // 推理模型的思考流：vLLM/DeepSeek 标准字段 reasoning_content，部分部署用 reasoning。
+    // 不进正文（否则会污染最终回复与后续上下文），单独经 onReasoning 透出做进度展示
+    const reasoningPiece = typeof delta.reasoning_content === "string" && delta.reasoning_content
+      ? delta.reasoning_content
+      : (typeof delta.reasoning === "string" ? delta.reasoning : "");
+    if (reasoningPiece) {
+      reasoning += reasoningPiece;
+      onReasoning?.(reasoning);
+    }
     if (typeof delta.content === "string" && delta.content) {
       content += delta.content;
       onText?.(content);
@@ -3046,7 +3117,9 @@ export function estimateMessagesTokens(messages) {
 const PRUNE_KEEP_RECENT_TOOL_RESULTS = 6;
 
 export function pruneOldToolResults(messages, contextLimit = 128000, force = false) {
-  const threshold = Math.max(30000, Math.floor(contextLimit) - 20000);
+  // 阈值取「上限的 55%」与「上限 -20k」的较大者：大上下文保持原行为（-20k），
+  // 小上下文服务器（如 vLLM max_model_len=32k）也能在超限前触发裁剪
+  const threshold = Math.max(Math.floor(contextLimit * 0.55), Math.floor(contextLimit) - 20000);
   if (!force && estimateMessagesTokens(messages) <= threshold) return false;
   const toolIndexes = messages.reduce((list, message, index) => (message?.role === "tool" ? [...list, index] : list), []);
   const stale = toolIndexes.slice(0, Math.max(0, toolIndexes.length - PRUNE_KEEP_RECENT_TOOL_RESULTS));
@@ -3572,8 +3645,9 @@ export async function runAgent({
       // 借鉴 Claude Code microcompact：估算占用逼近上下文上限时，把较早的工具结果
       // 替换成占位符（只保留最近 6 条完整结果），避免无轮次上限的长任务撑爆上下文
       pruneOldToolResults(messages, contextLimit);
-      // 自动 compact 摘要：裁剪后仍逼近上限时，用独立模型请求把早前对话压缩为结构化摘要
-      if (estimateMessagesTokens(messages) > Math.max(40000, contextLimit - 15000)) {
+      // 自动 compact 摘要：裁剪后仍逼近上限时，用独立模型请求把早前对话压缩为结构化摘要。
+      // 大上下文保持「上限 -15k」；小上下文服务器按比例（70%）提前触发，确保在服务端实际上限前压缩
+      if (estimateMessagesTokens(messages) > Math.max(Math.floor(contextLimit * 0.7), contextLimit - 15000)) {
         const compacted = await withModelTimeout((signal) => compactConversation({
           messages,
           settings,
@@ -3604,6 +3678,8 @@ export async function runAgent({
       let modelMessage;
       // 端点不回 usage 时退化为本地估算（estimated: true），统计与上下文环都保持可用
       let usageSeen = false;
+      // 推理模型思考流的节流展示：最多每秒更新一次活动详情，避免逐 chunk 刷事件
+      let lastReasoningNoteAt = 0;
       const requestCurrentModelOnce = () => withModelTimeout((signal) => requestModel({
           settings,
           messages,
@@ -3626,6 +3702,19 @@ export async function runAgent({
           onText: (streamed) => {
             finalText = streamed;
             traceEmit({ type: "assistant-text", text: streamed });
+          },
+          onReasoning: (thinking) => {
+            // 推理模型的思考流（vLLM reasoning_content / 部分部署的 reasoning 字段）不进正文；
+            // 长思考期间 UI 全无反馈会像「卡死」，节流更新活动详情让进度可见
+            const now = Date.now();
+            if (now - lastReasoningNoteAt < 1000) return;
+            lastReasoningNoteAt = now;
+            traceEmit({
+              type: "activity-update",
+              id: thinkingId,
+              status: "running",
+              detail: `正在深度思考（已产出约 ${thinking.length} 字）`,
+            });
           },
         }));
       // 传输层失败自动重发一次：超时/断流的 AbortError，以及连接被重置等网络错误

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { builtinHooks, isSafePublicUrl, parseModelJson, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { builtinHooks, isSafePublicUrl, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -1849,6 +1849,13 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       content: await providerMessageContent(message),
     })));
     const approvalMode = normalizeApprovalMode(payload?.approvalMode);
+    // 服务器自报的实际上限（vLLM 等在 /models 里带 max_model_len）：本地/自建模型常远小于
+    // 渲染端静态表的 128k 默认值，按默认值累积上下文会把超限请求发出去，甚至打垮引擎。
+    // 探测失败（端点不支持/网络异常）返回 null，回退为渲染端报上来的值。
+    const serverContextLimit = await probeServerContextLimit(settings);
+    if (serverContextLimit) {
+      console.log(`[agent] 服务器自报上下文上限 ${serverContextLimit}（${settings.model} @ ${settings.endpoint}），按此钳制`);
+    }
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
     routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal, renderer: sender });
     if (agentState.cancelled) return cancelledResponse();
@@ -1859,7 +1866,10 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       const result = await runAgent({
         settings,
         workspacePath,
-        contextLimit: Math.max(30000, Number(payload?.contextLimit) || 128000),
+        contextLimit: (() => {
+          const requested = Math.max(30000, Number(payload?.contextLimit) || 128000);
+          return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
+        })(),
         workingContext: String(payload?.workingContext || ""),
         hooks: await readHooks(workspacePath),
         goal: String(payload?.goal || "").trim().slice(0, 500),
