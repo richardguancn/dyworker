@@ -2655,6 +2655,8 @@ function createTranscriptCollector() {
   const activities = [];
   let changes = null;
   let plan = null;
+  // 推理模型的思考流：事件带的是本次请求内的累积文本，保留最后一次即可
+  let reasoning = null;
   const startedAt = Date.now();
   return {
     handle(agentEvent) {
@@ -2671,6 +2673,8 @@ function createTranscriptCollector() {
         changes = agentEvent.changes;
       } else if (agentEvent.type === "plan-update") {
         plan = agentEvent.steps;
+      } else if (agentEvent.type === "assistant-reasoning") {
+        reasoning = String(agentEvent.text || "");
       }
     },
     // 供渠道任务收尾事件读取当前的文件变更与计划快照（只读，不改内部状态）
@@ -2688,6 +2692,8 @@ function createTranscriptCollector() {
           createdAt: new Date().toISOString(),
           activities: activities.map((item) => ({ ...item })),
           durationMs: Date.now() - startedAt,
+          taskStatus: result?.status,
+          ...(reasoning ? { reasoning } : {}),
           ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
           ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
           ...(result?.workingContext ? { workingContext: result.workingContext } : {}),
@@ -3094,13 +3100,14 @@ async function handleChannelSwitchWorkspace(args, { chatRecord, chatKey, workspa
 }
 
 // 渠道任务实时透传给渲染端的事件白名单：只转发会改变 UI 的轻量事件
-// （活动流、正文流式、计划、循环状态、文件变更、审批/提问、上下文用量、任务开始/结束）。
+// （活动流、正文流式、思考流、计划、循环状态、文件变更、审批/提问、上下文用量、任务开始/结束）。
 // trace / token-usage / skill-saved / memory-saved 等只进本地留痕与统计，不打扰界面。
 const CHANNEL_STREAM_EVENT_TYPES = new Set([
   "queue-start",
   "activity",
   "activity-update",
   "assistant-text",
+  "assistant-reasoning",
   "file-change",
   "plan-update",
   "loop-state",

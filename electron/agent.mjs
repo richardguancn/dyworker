@@ -3692,8 +3692,6 @@ export async function runAgent({
       let modelMessage;
       // 端点不回 usage 时退化为本地估算（estimated: true），统计与上下文环都保持可用
       let usageSeen = false;
-      // 推理模型思考流的节流展示：最多每秒更新一次活动详情，避免逐 chunk 刷事件
-      let lastReasoningNoteAt = 0;
       const requestCurrentModelOnce = () => withModelTimeout((signal) => requestModel({
           settings,
           messages,
@@ -3720,16 +3718,8 @@ export async function runAgent({
           },
           onReasoning: (thinking) => {
             // 推理模型的思考流（vLLM reasoning_content / 部分部署的 reasoning 字段）不进正文；
-            // 长思考期间 UI 全无反馈会像「卡死」，节流更新活动详情让进度可见
-            const now = Date.now();
-            if (now - lastReasoningNoteAt < 1000) return;
-            lastReasoningNoteAt = now;
-            traceEmit({
-              type: "activity-update",
-              id: thinkingId,
-              status: "running",
-              detail: `正在深度思考（已产出约 ${thinking.length} 字）`,
-            });
+            // 单独成事件流式透给渲染端，在消息气泡里实时展示思考内容
+            traceEmit({ type: "assistant-reasoning", text: thinking });
           },
         }));
       // 传输层失败自动重发一次：超时/断流的 AbortError，以及连接被重置等网络错误

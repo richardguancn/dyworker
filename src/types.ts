@@ -192,6 +192,8 @@ export type AgentEvent =
   | { type: "activity"; activity: ActivityRecord }
   | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string; branch?: { parentId: string; title?: string; depth: number } }
   | { type: "assistant-text"; text: string }
+  // 推理模型的思考流（reasoning_content 累积文本）：不进正文，仅用于界面实时展示思考过程
+  | { type: "assistant-reasoning"; text: string }
   | { type: "approval-request"; action: ApprovalAction }
   | { type: "ask-user"; request: QuestionRequest }
   | { type: "debug-log"; entry: DebugLogEntry }
@@ -240,6 +242,8 @@ export interface ChatMessage {
   createdAt: string;
   attachments?: Attachment[];
   activities?: ActivityRecord[];
+  // 推理模型的思考过程（流式累积）：不进正文、不回传模型，仅用于界面展示
+  reasoning?: string;
   changes?: FileChange[];  plan?: PlanStep[];
   durationMs?: number;
   taskStatus?: AgentResult["status"] | "queued";
