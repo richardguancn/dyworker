@@ -1676,7 +1676,7 @@ test("流式思考内容（reasoning / reasoning_content 字段）经 onReasonin
   assert.deepEqual(texts, ["答案"], "正文回调只含 content");
 });
 
-test("推理模型长思考时活动详情节流更新，正文不含思考内容", async () => {
+test("推理模型长思考时思考内容流式透出，正文不含思考内容", async () => {
   const root = await makeWorkspace();
   const sse = [
     'data: {"choices":[{"delta":{"reasoning":"第一步推理"}}]}',
@@ -1702,9 +1702,9 @@ test("推理模型长思考时活动详情节流更新，正文不含思考内�
   });
   assert.equal(result.status, "done");
   assert.equal(result.finalText, "想完了，答案是这个。");
-  const thinkingUpdates = events.filter((event) =>
-    event.type === "activity-update" && /深度思考/.test(String(event.detail || "")));
-  assert.ok(thinkingUpdates.length >= 1, "思考期间应有活动详情更新");
+  const reasoningEvents = events.filter((event) => event.type === "assistant-reasoning");
+  assert.ok(reasoningEvents.length >= 1, "思考内容应流式透出");
+  assert.equal(reasoningEvents[reasoningEvents.length - 1].text, "第一步推理");
 });
 
 test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", async () => {

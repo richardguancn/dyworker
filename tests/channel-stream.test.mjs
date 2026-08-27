@@ -36,6 +36,8 @@ const {
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const app = readSource(new URL("../src/App.tsx", import.meta.url));
+const types = readSource(new URL("../src/types.ts", import.meta.url));
+const styles = readSource(new URL("../src/styles.css", import.meta.url));
 
 test("isChannelRunEnvelope:只有显式打标的渠道运行事件才消费", () => {
   assert.equal(isChannelRunEnvelope({ channelRun: true }), true);
@@ -111,4 +113,29 @@ test("源码契约:渠道事件信封打 channelRun 标记,收尾 append 带 run
   assert.match(app, /isChannelRunEnvelope/);
   // 渲染端:sessions:append 必须经过 reconcileChannelAppend 归约
   assert.match(app, /reconcileChannelAppend/);
+});
+
+test("源码契约:思考流(assistant-reasoning)实时转发、归约展示并随消息落库", () => {
+  // 主进程:思考流事件必须在渠道实时转发白名单里,渠道任务才能边跑边展示思考内容
+  assert.match(main, /CHANNEL_STREAM_EVENT_TYPES[\s\S]*?"assistant-reasoning"/);
+  // 主进程:transcript collector 收集思考流,收尾落库时随助手消息保存(回看不丢)
+  assert.match(main, /agentEvent\.type === "assistant-reasoning"[\s\S]*?reasoning = String\(agentEvent\.text \|\| ""\)/);
+  assert.match(main, /\.\.\.\(reasoning \? \{ reasoning \} : \{\}\)/);
+  // 主进程:落库消息带终态 taskStatus,渲染端据此把「正在深度思考…」收口为「思考过程」
+  assert.match(main, /taskStatus: result\?\.status/);
+  // 渲染端:渠道转发与桌面任务两条事件路径都要归约思考流
+  assert.match(app, /event\.type === "assistant-reasoning"/);
+  assert.match(app, /agentEvent\.type === "assistant-reasoning"/);
+  // 渲染端:消息体类型声明 reasoning 字段,思考块按任务终态决定展开/收起
+  assert.match(types, /reasoning\?: string/);
+  assert.match(app, /reasoning-block/);
+});
+
+test("源码契约:思考内容为固定高度滚动框,流式期间未上翻时自动跟随底部", () => {
+  // 样式:固定高度 + 内部滚动,思考框不随内容无限撑高
+  assert.match(styles, /\.reasoning-content\s*\{[^}]*\bheight:\s*[\d.]+px[^}]*overflow-y:\s*auto/s);
+  // 渲染端:内容更新时把滚动位置压到底部(显示最新内容),仅当用户仍在底部附近
+  assert.match(app, /node\.scrollTop = node\.scrollHeight/);
+  // 渲染端:onScroll 判定用户是否离开底部:上翻后停止跟随,滚回底部恢复跟随
+  assert.match(app, /pinnedRef\.current = node\.scrollHeight - node\.scrollTop - node\.clientHeight <= 24/);
 });

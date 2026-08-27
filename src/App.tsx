@@ -325,11 +325,18 @@ function plainConversationText(content: string) {
 function formatMessageTime(createdAt: string) {
   const timestamp = new Date(createdAt).getTime();
   if (!Number.isFinite(timestamp)) return "";
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  // 当天只显示时分；更早的消息带完整日期便于回溯
   return new Intl.DateTimeFormat("zh-CN", {
+    ...(sameDay ? {} : { year: "numeric", month: "2-digit", day: "2-digit" }),
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(timestamp));
+  }).format(date);
 }
 
 // 模型偶尔会把其他 agent 框架的控制标记（如 ::git-stage{cwd="..."}）原样输出到回复里，
@@ -2128,6 +2135,35 @@ function activityDisplayTitle(activity: ActivityRecord) {
   if (activity.status === "running") return `正在运行 ${command}`;
   if (activity.status === "error") return `运行失败 ${command}`;
   return `已运行 ${command}`;
+}
+
+// 推理模型的思考过程：固定高度滚动框，流式期间自动跟随到底部显示最新内容。
+// 用户主动上翻后停止跟随（避免打断阅读），滚回贴近底部时自动恢复跟随。
+function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean }) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const pinnedRef = useRef(true);
+  useEffect(() => {
+    const node = contentRef.current;
+    if (!node || !pinnedRef.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [text, streaming]);
+  return (
+    <details className="reasoning-block" open={streaming}>
+      <summary>{streaming ? "正在深度思考…" : "思考过程"}</summary>
+      <div
+        className="reasoning-content"
+        ref={contentRef}
+        onScroll={() => {
+          const node = contentRef.current;
+          if (!node) return;
+          // 贴近底部（24px 内）视为跟随中；程序性滚动到底也会触发本事件，天然保持 true
+          pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+        }}
+      >
+        {text}
+      </div>
+    </details>
+  );
 }
 
 function ActivityRow({ activity }: { activity: ActivityRecord }) {
@@ -4704,6 +4740,9 @@ export function App() {
       } else if (event.type === "assistant-text") {
         ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, content: event.text }));
+      } else if (event.type === "assistant-reasoning") {
+        ensureChannelAssistant(sessionId, runId);
+        patchChannelAssistant(sessionId, (current) => ({ ...current, reasoning: event.text }));
       } else if (event.type === "plan-update") {
         ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, plan: event.steps }));
@@ -4732,6 +4771,8 @@ export function App() {
           return {
             ...current,
             content: result.finalText || current.content,
+            // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
+            createdAt: new Date().toISOString(),
             changes: result.changes?.length ? result.changes : current.changes,
             plan: completedPlan,
             durationMs: (result as { durationMs?: number }).durationMs,
@@ -5979,6 +6020,8 @@ export function App() {
             return {
               ...current,
               content,
+              // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
+              createdAt: new Date().toISOString(),
               changes: result.changes?.length ? result.changes : current.changes,
               plan: completedPlan,
               durationMs: Date.now() - taskStartedAt,
@@ -6038,6 +6081,8 @@ export function App() {
             runTraceEventsRef.current.set(taskRunId, runNext.length > 5000 ? runNext.slice(-5000) : runNext);
           } else if (agentEvent.type === "assistant-text") {
             patchAssistant((current) => ({ ...current, content: agentEvent.text }));
+          } else if (agentEvent.type === "assistant-reasoning") {
+            patchAssistant((current) => ({ ...current, reasoning: agentEvent.text }));
           } else if (agentEvent.type === "file-change") {
             patchAssistant((current) => ({ ...current, changes: agentEvent.changes }));
           } else if (agentEvent.type === "plan-update") {
@@ -7292,6 +7337,7 @@ export function App() {
                           }}
                         />
                       )}
+                      {message.reasoning && <ReasoningBlock text={message.reasoning} streaming={!message.taskStatus} />}
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">

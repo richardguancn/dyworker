@@ -3125,6 +3125,33 @@ body.resizing-panels .app-shell {
   line-height: 1;
 }
 
+/* 推理模型的思考过程：流式期间展开，完成后折叠 */
+.reasoning-block {
+  margin: 6px 0;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  color: var(--quiet);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.reasoning-block summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.reasoning-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 6px;
+  height: 220px;
+  overflow-y: auto;
+  /* 滚动到底/顶时不把滚动传导给外层会话流 */
+  overscroll-behavior: contain;
+}
+
 .message-actions.assistant {
   justify-content: flex-start;
 }
