@@ -30,6 +30,8 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
   if (approvalMode === "interactive" || approvalMode === "reviewer") {
     if (hasExternalPaths || oracleInternetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
+    // 删除不可恢复：interactive/reviewer 不随工作区写操作直接放行
+    if (name === "delete_file") return "ask";
     if (oracleWorkspaceWriteTools.has(name)) return "allow";
     if (name === "run_command" && (
       isAutoApprovableCommand(args.command)
