@@ -18,6 +18,12 @@ test("Codex 三档权限按文件边界、联网和风险操作作出决定", ()
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "write_file" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "web_search" }), "ask");
   assert.equal(approvalDecision({ approvalMode: "interactive", name: "read_file", hasExternalPaths: true }), "ask");
+  // 删除不可恢复：interactive/reviewer 不随工作区写操作直接放行（弹卡/交审核助手）
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "delete_file" }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "delete_file" }), "ask");
+  // 已授权的工作区外路径同样不免除删除确认
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "delete_file", hasExternalPaths: true }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "delete_file" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), "allow");
   assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "web_search" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "full-access", name: "read_file", hasExternalPaths: true }), "allow");
@@ -3954,6 +3960,69 @@ test("delete_file 被用户拒绝时不删除，通过时才删除", async () =>
   });
   assert.equal(approved.status, "done");
   await assert.rejects(fs.stat(path.join(root, "废弃.txt")));
+});
+
+test("reviewer 模式下工作区内删除也必须过审核助手", async () => {
+  const root = await makeWorkspace({ "废弃.txt": "垃圾" });
+  let userApprovals = 0;
+  const auditEntries = [];
+  const requestBodies = [];
+  const respond = mockFetch([
+    { role: "assistant", content: null, tool_calls: [toolCall("c1", "delete_file", { path: "废弃.txt" })] },
+    { role: "assistant", content: '{"decision":"allow","reason":"删除工作区内文件，任务正常清理"}' },
+    { role: "assistant", content: "已删除。" },
+  ]);
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "删掉废弃.txt" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    audit: (entry) => auditEntries.push(entry),
+    fetchImpl: async (url, init) => {
+      if (init?.body) requestBodies.push(JSON.parse(String(init.body)));
+      return respond(url, init);
+    },
+  });
+  assert.equal(result.status, "done");
+  await assert.rejects(fs.stat(path.join(root, "废弃.txt")));
+  assert.equal(userApprovals, 0);
+  // 审核请求里带工作区边界事实，避免小模型误判路径内外
+  const reviewRequest = requestBodies.find((body) => JSON.stringify(body).includes("待审核操作"));
+  assert.ok(reviewRequest, "应发出审核请求");
+  assert.match(JSON.stringify(reviewRequest), /【工作区边界】/);
+  assert.match(JSON.stringify(reviewRequest), /均在工作区内/);
+  const allowed = auditEntries.find((entry) => entry.decision === "reviewer-allowed");
+  assert.ok(allowed, "审核助手放行应有审计记录");
+});
+
+test("reviewer 模式下工作区外删除：亮线规则直接弹卡，不经审核模型", async () => {
+  const root = await makeWorkspace();
+  const outsidePath = path.join(os.homedir(), `dyworker-test-outside-${Date.now()}.png`);
+  const auditEntries = [];
+  const requestBodies = [];
+  let userApprovals = 0;
+  const respond = mockFetch([
+    { role: "assistant", content: null, tool_calls: [toolCall("c1", "delete_file", { path: outsidePath })] },
+    { role: "assistant", content: "好的，已保留文件。" },
+  ]);
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: `删除 ${outsidePath}` }],
+    requestApproval: async () => { userApprovals += 1; return false; },
+    audit: (entry) => auditEntries.push(entry),
+    fetchImpl: async (url, init) => {
+      if (init?.body) requestBodies.push(JSON.parse(String(init.body)));
+      return respond(url, init);
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 1, "工作区外删除应直接弹卡");
+  assert.equal(requestBodies.some((body) => JSON.stringify(body).includes("待审核操作")), false, "不可逆的边界操作不赌审核模型");
+  const denied = auditEntries.find((entry) => entry.tool === "delete_file" && entry.decision === "denied");
+  assert.ok(denied, "用户拒绝后应有 denied 审计记录");
 });
 
 test("get_datetime 返回真实日期时间", async () => {

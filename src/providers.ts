@@ -75,9 +75,10 @@ export const providerPresets: ProviderPreset[] = [
     models: ["Qwen3.8-27B"],
     defaultModel: "Qwen3.8-27B",
     keyHint: "本地服务通常无需真实 Key，随意填写即可",
-    // 官方标称 1M 上下文，但本地上限以 vLLM 启动参数 --max-model-len 为准（当前部署 32K）
-    contextLimits: { "Qwen3.8-27B": 32768 },
-    defaultContextLimit: 32768,
+    // 官方原生 262,144（可扩展至 1M）；本地上限以 vLLM 启动参数 --max-model-len 为准，
+    // 主进程会探测 /models 的 max_model_len 并按较小值钳制
+    contextLimits: { "Qwen3.8-27B": 262144 },
+    defaultContextLimit: 262144,
   },
   {
     id: "doubao",

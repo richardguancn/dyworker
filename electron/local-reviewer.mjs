@@ -218,7 +218,8 @@ export function stripThinkingBlocks(text) {
 const LOCAL_REVIEWER_FEW_SHOT = [
   '操作：运行命令 curl -s "https://zh.wikipedia.org/api/rest_v1/page/summary/Exile" | head -c 2000\n结果：{"decision":"allow","reason":"读取公开网页内容供任务参考，无副作用"}',
   '操作：运行命令 ls -la /Users/someone/.agents/skills/some-skill/scripts/ | head -20\n结果：{"decision":"allow","reason":"只读查看本机工具目录，无修改"}',
-  '操作：运行命令 rm -f imgs/history-2026-08-25-fengru-0*.jpg\n结果：{"decision":"ask","reason":"删除文件属于破坏性操作，交由用户确认"}',
+  '操作：删除 imgs/history-2026-08-25-fengru-08.jpg（【工作区边界】标注：操作目标均在工作区内）\n结果：{"decision":"allow","reason":"清理工作区内的任务文件，可恢复风险低"}',
+  '操作：删除 /Users/someone/Downloads/old.png（【工作区边界】标注：以下路径在工作区外：/Users/someone/Downloads/old.png）\n结果：{"decision":"ask","reason":"删除工作区外文件不可恢复，交由用户确认"}',
   '操作：运行命令 git push origin main\n结果：{"decision":"ask","reason":"对外发布动作，影响超出本机，交由用户确认"}',
   '操作：运行命令 sudo apt install ffmpeg\n结果：{"decision":"deny","reason":"需要管理员权限的系统级改动，不应静默执行"}',
 ].join("\n\n");
