@@ -13,7 +13,7 @@ test("审计日志追加 JSONL，每行可解析", async () => {
   const dir = await tempDir();
   const filePath = path.join(dir, "audit.jsonl");
   const log = createAuditLog({ filePath });
-  await log.record({ tool: "write_file", summary: "写入 材料/总结.docx", riskClass: "write_local", decision: "approved", approvalMode: "interactive", sessionId: "s1" });
+  await log.record({ tool: "write_file", summary: "写入 材料/总结.docx", riskClass: "write_local", decision: "approved", approvalMode: "interactive", sessionId: "s1", model: "本地内置 Qwen3-0.6B" });
   await log.record({ tool: "run_command", summary: "运行命令：rm -rf x", riskClass: "exec", decision: "denied" });
   const lines = (await fs.readFile(filePath, "utf8")).trim().split("\n");
   assert.equal(lines.length, 2);
@@ -21,9 +21,11 @@ test("审计日志追加 JSONL，每行可解析", async () => {
   assert.equal(first.tool, "write_file");
   assert.equal(first.decision, "approved");
   assert.equal(first.sessionId, "s1");
+  assert.equal(first.model, "本地内置 Qwen3-0.6B");
   assert.ok(first.time);
   const second = JSON.parse(lines[1]);
   assert.equal(second.decision, "denied");
+  assert.equal(second.model, undefined);
 });
 
 test("summary/detail 超长截断", async () => {

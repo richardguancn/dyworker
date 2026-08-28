@@ -17,6 +17,10 @@ test("多套模型配置加密保存后可以完整恢复", () => {
     visionEndpoint: " https://vision.example/v1/chat/completions ",
     visionModel: " vision-model ",
     visionApiKey: " vision-key ",
+    reviewerEndpoint: " http://127.0.0.1:11434/v1/chat/completions ",
+    reviewerModel: " qwen3:4b ",
+    reviewerApiKey: " reviewer-key ",
+    reviewerBackend: "local",
     profiles: [
       {
         id: "one",
@@ -43,6 +47,7 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   const raw = JSON.stringify(stored);
   assert.equal(raw.includes("current-key"), false);
   assert.equal(raw.includes("vision-key"), false);
+  assert.equal(raw.includes("reviewer-key"), false);
   assert.equal(raw.includes("key-one"), false);
   assert.equal(raw.includes("key-two"), false);
   assert.equal(stored.profiles.every((profile) => profile.encrypted), true);
@@ -54,6 +59,13 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   assert.equal(restored.visionEndpoint, "https://vision.example/v1/chat/completions");
   assert.equal(restored.visionModel, "vision-model");
   assert.equal(restored.visionApiKey, "vision-key");
+  assert.equal(restored.reviewerEndpoint, "http://127.0.0.1:11434/v1/chat/completions");
+  assert.equal(restored.reviewerModel, "qwen3:4b");
+  assert.equal(restored.reviewerApiKey, "reviewer-key");
+  assert.equal(restored.reviewerBackend, "local");
+  // reviewerBackend 缺省时按是否填过自定义审核端点推断
+  assert.equal(serializeSettings({ reviewerEndpoint: "https://x.example/v1", reviewerModel: "m1" }, secretStorage).reviewerBackend, "custom");
+  assert.equal(serializeSettings({}, secretStorage).reviewerBackend, "main");
   assert.deepEqual(restored.profiles.map(({ id, apiKey }) => ({ id, apiKey })), [
     { id: "one", apiKey: "key-one" },
     { id: "two", apiKey: "key-two" },
@@ -244,6 +256,7 @@ test("解不开旧密文时序列化结果保留旧密钥密文", () => {
     apiKey: "old-key",
     visionApiKey: "old-vision",
     ttsApiKey: "old-tts",
+    reviewerApiKey: "old-reviewer",
     profiles: [{ id: "p1", name: "模型一", endpoint: "https://one.example/v1", model: "model-one", apiKey: "old-profile-key" }],
     channels: { qq: { enabled: true, appId: "app-id", appSecret: "old-qq" } },
   }, secretStorage);
@@ -256,6 +269,7 @@ test("解不开旧密文时序列化结果保留旧密钥密文", () => {
   assert.equal(preserved.encrypted, true);
   assert.equal(preserved.visionApiKey, stored.visionApiKey);
   assert.equal(preserved.ttsApiKey, stored.ttsApiKey);
+  assert.equal(preserved.reviewerApiKey, stored.reviewerApiKey);
   assert.equal(preserved.profiles[0].apiKey, stored.profiles[0].apiKey);
   assert.equal(preserved.channels.qq.appSecret, stored.channels.qq.appSecret);
   // 换能解开的存储后密钥恢复可读

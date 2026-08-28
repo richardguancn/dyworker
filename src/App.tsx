@@ -78,7 +78,7 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TraceEvent, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TraceEvent, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
@@ -171,6 +171,10 @@ const defaultSettings: ProviderSettings = {
   ttsEndpoint: "",
   ttsModel: "",
   ttsApiKey: "",
+  reviewerEndpoint: "",
+  reviewerModel: "",
+  reviewerApiKey: "",
+  reviewerBackend: "main",
   searxngEndpoint: "",
   bochaApiKey: "",
   deepseekSearchApiKey: "",
@@ -3553,6 +3557,35 @@ function SettingsDialog({
   const activeLabel = settingsNav.flatMap((group) => group.items).find((item) => item.id === tab)?.label || "设置";
   const preset = providerPresets.find((item) => item.id === providerId) || providerPresets[providerPresets.length - 1];
   const modelComplete = Boolean(draft.endpoint.trim() && draft.model.trim() && draft.apiKey.trim());
+  // 内置本地审核模型：状态与下载进度（模型 tab 打开时才拉取）
+  const [reviewerLocal, setReviewerLocal] = useState<ReviewerLocalStatus | null>(null);
+  const [reviewerDownloading, setReviewerDownloading] = useState(false);
+  const [reviewerDownloadError, setReviewerDownloadError] = useState("");
+
+  useEffect(() => {
+    if (tab !== "model") return;
+    const dyworker = window.dyworker;
+    if (!dyworker?.getReviewerLocalStatus) return;
+    dyworker.getReviewerLocalStatus().then((status) => setReviewerLocal(status)).catch(() => { });
+    return dyworker.onReviewerLocalDownloadProgress((progress) => {
+      setReviewerLocal((current) => (current ? { ...current, sizeBytes: progress.received, expectedBytes: progress.total } : current));
+    });
+  }, [tab]);
+
+  const startReviewerLocalDownload = async () => {
+    if (reviewerDownloading) return;
+    setReviewerDownloading(true);
+    setReviewerDownloadError("");
+    try {
+      const result = await window.dyworker?.downloadReviewerLocalModel();
+      if (result?.status) setReviewerLocal(result.status);
+      if (result?.ok === false) setReviewerDownloadError(result.error || "下载失败，请重试");
+    } catch (error) {
+      setReviewerDownloadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewerDownloading(false);
+    }
+  };
 
   const applyProvider = (id: string) => {
     setProviderId(id);
@@ -3853,6 +3886,63 @@ function SettingsDialog({
         <p className="dialog-note">
           默认关闭会向服务端持久化数据或上传文件的工具：memory（记忆）、excel（表格分析）。Kimi 公式 web_search 与网页抓取仍走本地联网审批。官方工具本体限时免费，恢复收费后按次计费；官方提示内置联网搜索正在升级，可能不稳定。
         </p>
+        </>)}
+        <div className="dialog-section-title">自动审批模型（可选）</div>
+        <p className="dialog-note">
+          审批严格度为“替我审批”时，本来要人工确认的操作会先交给审核助手判断是否放行。同一操作在本次任务内重复出现时直接复用已有判断，不再重复询问。
+        </p>
+        <label>
+          审核模型来源
+          <select
+            value={draft.reviewerBackend}
+            onChange={(event) => setDraft({ ...draft, reviewerBackend: event.target.value as ProviderSettings["reviewerBackend"] })}
+          >
+            <option value="main">跟随当前模型</option>
+            <option value="local">本地内置小模型（Qwen3-0.6B，离线可用）</option>
+            <option value="custom">自定义端点（OpenAI 兼容）</option>
+          </select>
+        </label>
+        {draft.reviewerBackend === "local" && (
+          <div className="dialog-note">
+            {reviewerLocal?.downloaded
+              ? "模型已就绪：Qwen3-0.6B（610 MB，已存本机）。任务运行时按需加载，空闲 5 分钟后自动释放。"
+              : "模型未下载：Qwen3-0.6B（约 610 MB），从 ModelScope 下载到本机，下载完成后离线可用。"}
+            {!reviewerLocal?.downloaded && (
+              <button type="button" className="settings-update-check" onClick={startReviewerLocalDownload} disabled={reviewerDownloading}>
+                {reviewerDownloading
+                  ? `下载中 ${reviewerLocal?.expectedBytes ? Math.min(99, Math.round((reviewerLocal.sizeBytes / reviewerLocal.expectedBytes) * 100)) : 0}%`
+                  : "下载模型"}
+              </button>
+            )}
+            {reviewerDownloadError && <p style={{ color: "#c0392b" }}>{reviewerDownloadError}</p>}
+          </div>
+        )}
+        {draft.reviewerBackend === "custom" && (<>
+        <label>
+          审核服务地址
+          <input
+            value={draft.reviewerEndpoint}
+            placeholder="http://127.0.0.1:11434/v1/chat/completions"
+            onChange={(event) => setDraft({ ...draft, reviewerEndpoint: event.target.value })}
+          />
+        </label>
+        <label>
+          审核模型名称
+          <input
+            value={draft.reviewerModel}
+            placeholder="qwen3:4b"
+            onChange={(event) => setDraft({ ...draft, reviewerModel: event.target.value })}
+          />
+        </label>
+        <label>
+          审核 API 密钥
+          <input
+            value={draft.reviewerApiKey}
+            type="password"
+            placeholder="本地服务通常留空"
+            onChange={(event) => setDraft({ ...draft, reviewerApiKey: event.target.value })}
+          />
+        </label>
         </>)}
         </>)}
         {tab === "power" && (<>

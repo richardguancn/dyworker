@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mjs";
+import { localReview } from "./local-reviewer.mjs";
 import { selectRelevantMemories } from "./memory.mjs";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mjs";
 import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchQwenNative } from "./providers.mjs";
@@ -3018,20 +3019,53 @@ export function parseReviewerDecision(text) {
   }
 }
 
-export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null } = {}) {
+export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null } = {}) {
+  const policy = REVIEWER_POLICY;
+  // 本地内置审核模型：Qwen3-0.6B 在本机 llama.cpp 上推理，零成本离线
+  if (settings?.reviewerBackend === "local") {
+    try {
+      const replyText = await (localReviewImpl || localReview)({ policy, action, context, signal });
+      return parseReviewerDecision(replyText);
+    } catch (error) {
+      return { decision: "ask", reason: `本地审核模型不可用：${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+  // 自定义审核端点（OpenAI 兼容）；旧数据没有 reviewerBackend 字段时按是否填过端点推断
+  const reviewerEndpoint = String(settings?.reviewerEndpoint || "").trim();
+  const reviewerModel = String(settings?.reviewerModel || "").trim();
+  const rawBackend = String(settings?.reviewerBackend || "").trim();
+  const backend = rawBackend === "local" || rawBackend === "main" || rawBackend === "custom"
+    ? rawBackend
+    : (reviewerEndpoint && reviewerModel ? "custom" : "main");
+  const effectiveSettings = backend === "custom" && reviewerEndpoint && reviewerModel
+    ? {
+        ...settings,
+        endpoint: reviewerEndpoint,
+        model: reviewerModel,
+        apiKey: String(settings?.reviewerApiKey || "").trim() || settings.apiKey,
+      }
+    : settings;
   const request = [
-    { role: "system", content: REVIEWER_POLICY },
+    { role: "system", content: policy },
     {
       role: "user",
       content: `当前任务上下文（节选）：\n${clipped(context, 4000)}\n\n待审核操作：\n工具：${String(action.kind || "")}\n说明：${String(action.title || "")}\n详情：\n${clipped(String(action.details || ""), 4000)}\n\n请只输出审核 JSON 结果。`,
     },
   ];
   try {
-    const message = await requestModel({ settings, messages: request, fetchImpl, signal, tools: false, onUsage });
+    const message = await requestModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage });
     return parseReviewerDecision(messageText(message));
   } catch (error) {
     return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+// 任务内审核决策缓存键：同一工具对同一操作内容只问一次模型。
+// 详情文本把空白折叠成单空格，吸收 shell 命令换行/缩进带来的差异。
+export function reviewerCacheKey(kind = "", details = "") {
+  const normalized = String(details || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return `${String(kind || "")}::${normalized}`;
 }
 
 // 端点不回 usage 时的 token 估算：中文/全角按 1 token，其余约 4 字符 1 token，每条消息加 4 个结构开销
@@ -3259,7 +3293,14 @@ export async function runAgent({
   // Workspace 里（目录含其子路径），不进入这里的会话规则，也不会跨任务或落盘。
   const sessionRules = [];
   // 审核助手状态：连续拒绝 3 次后熔断，后续审批直接转人工
-  const reviewerState = { active: true, consecutiveDenials: 0, total: 0 };
+  // 审核决策缓存：同一操作（工具+规范化详情）本次任务内只问一次模型，放行结果直接复用
+  const reviewerState = { active: true, consecutiveDenials: 0, total: 0, decisions: new Map() };
+  // 审核模型来源标签：出现在调试日志与审计记录里，便于确认每条决策是哪个模型做出的
+  const reviewerModelLabel = settings?.reviewerBackend === "local"
+    ? "本地内置 Qwen3-0.6B"
+    : String(settings?.reviewerBackend || "") === "custom"
+      ? `自定义审核端点(${String(settings?.reviewerModel || "").trim() || "未配置"})`
+      : `当前模型(${settings?.model || ""})`;
   const latestQuery = [...conversation].reverse().find((message) => message.role === "user")?.content || "";
   const reviewerContext = conversation.slice(-4)
     .map((message) => `${message?.role}: ${clipped(messageText({ content: message?.content }), 600)}`)
@@ -3974,34 +4015,42 @@ export async function runAgent({
               approvalMode,
             });
             if (reviewable && reviewerState.active) {
-              const review = await withModelTimeout((signal) => reviewApproval({
-                settings,
-                action: { kind: approvalToolName, title: summary, details: detailText },
-                context: reviewerContext,
-                fetchImpl,
-                signal,
-                onUsage: (usage) => {
-                  const used = Number(usage?.prompt_tokens);
-                  if (Number.isFinite(used) && used > 0) {
-                    traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
-                  }
-                },
-              }));
+              // 缓存命中：同一操作本次任务内已由审核助手放行过，跳过模型调用
+              const cacheKey = reviewerCacheKey(approvalToolName, detailText);
+              const review = cacheKey && reviewerState.decisions.has(cacheKey)
+                ? { decision: "allow", reason: "本次任务内同样的操作此前已放行（决策缓存）" }
+                : await withModelTimeout((signal) => reviewApproval({
+                    settings,
+                    action: { kind: approvalToolName, title: summary, details: detailText },
+                    context: reviewerContext,
+                    fetchImpl,
+                    signal,
+                    onUsage: (usage) => {
+                      const used = Number(usage?.prompt_tokens);
+                      if (Number.isFinite(used) && used > 0) {
+                        const reviewerConfigured = String(settings?.reviewerEndpoint || "").trim() && String(settings?.reviewerModel || "").trim();
+                        traceEmit({ type: "token-usage", model: reviewerConfigured ? String(settings.reviewerModel).trim() : settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
+                      }
+                    },
+                  }));
               reviewerState.total += 1;
               if (review.decision === "allow") {
                 reviewerState.consecutiveDenials = 0;
                 approved = true;
                 approvalSource = "reviewer";
                 reviewerReason = review.reason;
-                debugLog("tool-result", "审核助手：放行", `${summary}\n${review.reason}`);
+                if (cacheKey && !reviewerState.decisions.has(cacheKey) && reviewerState.decisions.size < 200) {
+                  reviewerState.decisions.set(cacheKey, true);
+                }
+                debugLog("tool-result", `审核助手（${reviewerModelLabel}）：放行`, `${summary}\n${review.reason}`);
               } else if (review.decision === "deny") {
                 reviewerState.consecutiveDenials += 1;
                 if (reviewerState.consecutiveDenials >= 3) {
                   reviewerState.active = false;
                   debugLog("tool-result", "审核助手：熔断", "连续拒绝 3 次，后续审批直接转人工");
                 }
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason });
-                debugLog("tool-result", "审核助手：拒绝", `${summary}\n${review.reason}`);
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel });
+                debugLog("tool-result", `审核助手（${reviewerModelLabel}）：拒绝`, `${summary}\n${review.reason}`);
                 return {
                   message: {
                     role: "tool",
@@ -4011,8 +4060,8 @@ export async function runAgent({
                 };
               } else {
                 reviewerState.consecutiveDenials = 0;
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason });
-                debugLog("tool-result", "审核助手：转人工", `${summary}\n${review.reason}`);
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel });
+                debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
                 approved = await askApproval();
               }
             } else {
@@ -4044,7 +4093,7 @@ export async function runAgent({
             auditRecord({
               tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
               decision: approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
-              ...(approvalSource === "reviewer" ? { detail: reviewerReason } : {}),
+              ...(approvalSource === "reviewer" ? { detail: reviewerReason, model: reviewerModelLabel } : {}),
             });
           }
         }

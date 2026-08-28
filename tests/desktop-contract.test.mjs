@@ -37,6 +37,17 @@ test("desktop controls are connected across renderer, preload, and main process"
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
 });
 
+test("内置本地审核模型的下载与进度链路贯穿三端", () => {
+  for (const action of ["getReviewerLocalStatus", "downloadReviewerLocalModel", "onReviewerLocalDownloadProgress"]) {
+    assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
+    assert.match(preload, new RegExp(`${action}:`));
+  }
+  assert.match(main, /ipcMain\.handle\("reviewer-local:status"/);
+  assert.match(main, /ipcMain\.handle\("reviewer-local:download"/);
+  assert.match(main, /reviewer-local:download-progress/);
+  assert.match(main, /configureLocalReviewer\(/);
+});
+
 test("消息框可以把剪贴板图片加入待发送附件", () => {
   assert.match(app, /onPaste=\{\(event\) => void handleComposerPaste\(event\)\}/);
   assert.match(app, /getAsFile\(\)/);
@@ -908,6 +919,10 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(agent, /export async function reviewApproval/);
   assert.match(agent, /export function isReviewerEligible/);
   assert.match(agent, /reviewer-allowed/);
+  // 审计与调试日志标明决策来源模型（本地内置/自定义端点/当前模型）
+  assert.match(agent, /本地内置 Qwen3-0\.6B/);
+  assert.match(agent, /model: reviewerModelLabel/);
+  assert.match(auditSource, /entry\?\.model/);
   assert.match(main, /"reviewer"/);
   assert.match(main, /standing-rules\.json/);
   assert.match(main, /ipcMain\.handle\("rules:list"/);

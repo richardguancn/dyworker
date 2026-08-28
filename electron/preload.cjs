@@ -40,6 +40,13 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("browser:panel-request", listener);
   },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  getReviewerLocalStatus: () => ipcRenderer.invoke("reviewer-local:status"),
+  downloadReviewerLocalModel: () => ipcRenderer.invoke("reviewer-local:download"),
+  onReviewerLocalDownloadProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("reviewer-local:download-progress", listener);
+    return () => ipcRenderer.removeListener("reviewer-local:download-progress", listener);
+  },
   getAppUpdateStatus: () => ipcRenderer.invoke("app-update:status"),
   checkForAppUpdate: () => ipcRenderer.invoke("app-update:check"),
   downloadAppUpdate: () => ipcRenderer.invoke("app-update:download"),
