@@ -25,6 +25,16 @@ export function normalizeIdentity(value) {
   return value === "general" || value === "government" ? value : null;
 }
 
+// 语音转写引擎：cloud 走 OpenAI 兼容 /audio/transcriptions，local 走内置 Qwen3-ASR + llama-server。
+export function normalizeTranscriptionEngine(value) {
+  return String(value || "") === "local" ? "local" : "cloud";
+}
+
+// 语音合成引擎：cloud 走 OpenAI 兼容 /audio/speech，local 走内置 Qwen3-TTS + llama-tts。
+export function normalizeTtsEngine(value) {
+  return String(value || "") === "local" ? "local" : "cloud";
+}
+
 function encryptionAvailable(secretStorage) {
   try {
     return Boolean(secretStorage?.isEncryptionAvailable?.());
@@ -230,8 +240,14 @@ export function deserializeSettings(stored, secretStorage) {
     profiles,
     transcriptionEndpoint: String(source.transcriptionEndpoint || ""),
     transcriptionModel: String(source.transcriptionModel || "whisper-1"),
+    transcriptionEngine: normalizeTranscriptionEngine(source.transcriptionEngine),
+    asrModelDir: String(source.asrModelDir || ""),
+    llamaServerPath: String(source.llamaServerPath || ""),
     ttsEndpoint: String(source.ttsEndpoint || ""),
     ttsModel: String(source.ttsModel || ""),
+    ttsEngine: normalizeTtsEngine(source.ttsEngine),
+    ttsModelDir: String(source.ttsModelDir || ""),
+    ttsVoicePath: String(source.ttsVoicePath || ""),
     ttsApiKey: decryptSecret(source.ttsApiKey, source.ttsApiKeyEncrypted === true, secretStorage),
     // 审核助手自定义端点（reviewerBackend 为 custom 时生效）；local 时用内置本地小模型
     reviewerEndpoint: String(source.reviewerEndpoint || ""),
@@ -270,8 +286,14 @@ export function serializeSettings(settings, secretStorage) {
     profiles: normalizedProfiles,
     transcriptionEndpoint: String(settings?.transcriptionEndpoint || "").trim(),
     transcriptionModel: String(settings?.transcriptionModel || "whisper-1").trim(),
+    transcriptionEngine: normalizeTranscriptionEngine(settings?.transcriptionEngine),
+    asrModelDir: String(settings?.asrModelDir || "").trim(),
+    llamaServerPath: String(settings?.llamaServerPath || "").trim(),
     ttsEndpoint: String(settings?.ttsEndpoint || "").trim(),
     ttsModel: String(settings?.ttsModel || "").trim(),
+    ttsEngine: normalizeTtsEngine(settings?.ttsEngine),
+    ttsModelDir: String(settings?.ttsModelDir || "").trim(),
+    ttsVoicePath: String(settings?.ttsVoicePath || "").trim(),
     ttsApiKey: String(settings?.ttsApiKey || "").trim(),
     reviewerEndpoint: String(settings?.reviewerEndpoint || "").trim(),
     reviewerModel: String(settings?.reviewerModel || "").trim(),
@@ -313,8 +335,14 @@ export function serializeSettings(settings, secretStorage) {
     visionApiKeyEncrypted: visionSecret.encrypted,
     transcriptionEndpoint: normalized.transcriptionEndpoint,
     transcriptionModel: normalized.transcriptionModel,
+    transcriptionEngine: normalized.transcriptionEngine,
+    asrModelDir: normalized.asrModelDir,
+    llamaServerPath: normalized.llamaServerPath,
     ttsEndpoint: normalized.ttsEndpoint,
     ttsModel: normalized.ttsModel,
+    ttsEngine: normalized.ttsEngine,
+    ttsModelDir: normalized.ttsModelDir,
+    ttsVoicePath: normalized.ttsVoicePath,
     ttsApiKey: ttsSecret.value,
     ttsApiKeyEncrypted: ttsSecret.encrypted,
     reviewerEndpoint: normalized.reviewerEndpoint,

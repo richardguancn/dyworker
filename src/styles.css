@@ -4276,10 +4276,52 @@ body.resizing-panels .app-shell {
   padding-bottom: 2px;
 }
 
-.attachment-strip textarea {
+.attachment-strip .composer-input-wrap {
   flex: 1 1 220px;
   min-width: 220px;
-  width: auto;
+}
+
+/* 输入框内联引用：镜像层垫在 textarea 之下，给 @文件 token 画高亮底色。
+   镜像层的字体/行高/内边距必须与 .composer-card textarea 完全一致才能对齐 */
+.composer-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.composer-input-wrap textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.composer-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 1px 5px;
+  color: transparent;
+  font-size: 14.25px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* @文件 token 的内联高亮（输入框镜像层与消息气泡共用） */
+.composer-mirror .file-token,
+.user-message-text .file-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .file-token {
+  background: rgba(47, 111, 237, 0.16);
+  box-shadow: 0 0 0 1px rgba(47, 111, 237, 0.22);
+}
+
+.user-message-text .file-token {
+  color: #2f6fed;
+  background: rgba(47, 111, 237, 0.1);
 }
 
 .attachment-chip {
@@ -5214,9 +5256,14 @@ body.resizing-panels .app-shell {
 }
 
 .approval-rule-hint {
-  margin: 8px 2px 0;
+  margin: 8px 14px 0;
   font-size: 11.5px;
+  line-height: 1.5;
   color: var(--muted, #76766d);
+}
+
+.approval-card .approval-rule-hint:last-child {
+  margin-bottom: 12px;
 }
 
 .approval-rule-hint.error {

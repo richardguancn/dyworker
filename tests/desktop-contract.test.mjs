@@ -51,6 +51,51 @@ test("内置本地审核模型的下载与进度链路贯穿三端", () => {
   assert.match(main, /resetLocalReviewerEngine\(\)/);
 });
 
+test("本地语音转写引擎（Qwen3-ASR）的下载、设置与转写链路贯穿三端", () => {
+  for (const action of ["getVoiceLocalStatus", "downloadVoiceLocalModel", "chooseVoiceLocalDir", "onVoiceLocalDownloadProgress"]) {
+    assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
+    assert.match(preload, new RegExp(`${action}:`));
+  }
+  assert.match(main, /ipcMain\.handle\("voice-local:status"/);
+  assert.match(main, /ipcMain\.handle\("voice-local:download"/);
+  assert.match(main, /ipcMain\.handle\("voice-local:choose-dir"/);
+  assert.match(main, /voice-local:download-progress/);
+  // 转写主链路：本地引擎分支走 transcribeWithLocalAsr，云引擎保持原路径
+  assert.match(main, /transcriptionEngine.*===.*"local"/);
+  assert.match(main, /transcribeWithLocalAsr\(/);
+  // 模型目录与审核模型同款策略：读取与保存设置时即时应用，下载前先落最新目录
+  assert.match(main, /applyAsrSettings\(settings\)/);
+  // 渲染端本地引擎把录音转成 16k 单声道 WAV；引擎选择与下载入口在设置里
+  assert.match(app, /blobToWav16kMono/);
+  assert.match(app, /transcriptionEngine === "local"/);
+  assert.match(app, /downloadVoiceLocalModel/);
+  assert.match(settingsStorage, /normalizeTranscriptionEngine/);
+  // 输入框里有语音输入开关，接通 toggleVoiceInput，并带录音/转写状态样式
+  assert.match(app, /onClick=\{\(\) => void toggleVoiceInput\(\)\}/);
+  assert.match(app, /voice-button \$\{voiceState === "recording" \? "recording" : ""\}/);
+});
+
+test("本地语音合成引擎（Qwen3-TTS）的下载、设置与合成链路贯穿三端", () => {
+  for (const action of ["getTtsLocalStatus", "downloadTtsLocalModel", "chooseTtsLocalDir", "chooseTtsVoice", "onTtsLocalDownloadProgress"]) {
+    assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
+    assert.match(preload, new RegExp(`${action}:`));
+  }
+  assert.match(main, /ipcMain\.handle\("tts-local:status"/);
+  assert.match(main, /ipcMain\.handle\("tts-local:download"/);
+  assert.match(main, /ipcMain\.handle\("tts-local:choose-dir"/);
+  assert.match(main, /ipcMain\.handle\("tts-local:choose-voice"/);
+  assert.match(main, /tts-local:download-progress/);
+  // 合成主链路：本地引擎分支走 synthesizeWithLocalTts，云引擎保持原 /audio/speech 路径
+  assert.match(main, /normalizeTtsEngine/);
+  assert.match(main, /synthesizeWithLocalTts\(/);
+  assert.match(main, /applyTtsSettings\(settings\)/);
+  // 引擎二进制与 ASR 共用同一份 llama.cpp 运行时
+  assert.match(main, /downloadLocalAsrRuntime\(/);
+  assert.match(app, /ttsEngine === "local"/);
+  assert.match(app, /downloadTtsLocalModel/);
+  assert.match(settingsStorage, /normalizeTtsEngine/);
+});
+
 test("消息框可以把剪贴板图片加入待发送附件", () => {
   assert.match(app, /onPaste=\{\(event\) => void handleComposerPaste\(event\)\}/);
   assert.match(app, /getAsFile\(\)/);
@@ -243,7 +288,25 @@ test("workspace files can be dragged into the composer as references", () => {
   assert.match(app, /WORKSPACE_FILE_DRAG_TYPE/);
   assert.match(app, /draggable=\{!isDirectory\}/);
   assert.match(app, /onDrop=\{handleComposerDrop\}/);
-  assert.match(app, /addWorkspaceFile\(file\)/);
+  // 拖拽/@引用统一走内联 token 插入，不再堆成附件 chip
+  assert.match(app, /insertFileToken\(file\)/);
+  assert.match(app, /const insertFileToken = \(file: WorkspaceEntry\)/);
+});
+
+test("@ 引用文件按顺序内联展示，输入 / 可继续过滤路径", () => {
+  // @ 查询允许包含 /：输入路径分隔符不再中断候选菜单
+  assert.match(app, /@\(\[\^\\s@\]\*\)\$/);
+  // 候选菜单选中后在 @ 位置原地插入「@文件名 」token
+  assert.match(app, /const token = `@\$\{item\.file\.name\} `/);
+  assert.match(app, /mentionTokenPathsRef/);
+  // 发送时按出现顺序把 token 解析成内联引用附件
+  assert.match(app, /inlineRef: true/);
+  // 输入框镜像层给 token 画高亮底色；气泡正文同步内联高亮，不再重复渲染 chip
+  assert.match(app, /composer-mirror/);
+  assert.match(app, /renderFileTokenText/);
+  assert.match(app, /attachment\.inlineRef/);
+  assert.match(styles, /\.composer-mirror/);
+  assert.match(styles, /\.file-token/);
 });
 
 test("消息支持复制、时间显示和编辑后重新发送", () => {
@@ -514,7 +577,7 @@ test("composer uses the Codex permission menu and keeps secondary controls compa
   assert.match(app, /title="Enter 发送"/);
   assert.doesNotMatch(app, /className="shortcut-hint"/);
   assert.doesNotMatch(app, /className="loop-toggle"/);
-  assert.doesNotMatch(app, /className=\{`icon-button voice-button/);
+  // 语音输入开关已回到输入框（mic 按钮接通 toggleVoiceInput，见本地语音契约测试）
   // 对照 Codex：运行中发送键与停止键合并为一个圆形按钮（有内容时是发送，空输入时是停止）
   assert.match(app, /activeTaskRunning && !canSend/);
   assert.match(app, /发送键变成停止键/);

@@ -48,6 +48,23 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("reviewer-local:download-progress", listener);
     return () => ipcRenderer.removeListener("reviewer-local:download-progress", listener);
   },
+  getVoiceLocalStatus: () => ipcRenderer.invoke("voice-local:status"),
+  downloadVoiceLocalModel: () => ipcRenderer.invoke("voice-local:download"),
+  chooseVoiceLocalDir: () => ipcRenderer.invoke("voice-local:choose-dir"),
+  onVoiceLocalDownloadProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("voice-local:download-progress", listener);
+    return () => ipcRenderer.removeListener("voice-local:download-progress", listener);
+  },
+  getTtsLocalStatus: () => ipcRenderer.invoke("tts-local:status"),
+  downloadTtsLocalModel: () => ipcRenderer.invoke("tts-local:download"),
+  chooseTtsLocalDir: () => ipcRenderer.invoke("tts-local:choose-dir"),
+  chooseTtsVoice: () => ipcRenderer.invoke("tts-local:choose-voice"),
+  onTtsLocalDownloadProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("tts-local:download-progress", listener);
+    return () => ipcRenderer.removeListener("tts-local:download-progress", listener);
+  },
   getAppUpdateStatus: () => ipcRenderer.invoke("app-update:status"),
   checkForAppUpdate: () => ipcRenderer.invoke("app-update:check"),
   downloadAppUpdate: () => ipcRenderer.invoke("app-update:download"),

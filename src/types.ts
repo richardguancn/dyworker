@@ -228,6 +228,8 @@ export interface Attachment {
   mimeType: string;
   isImage?: boolean;
   previewUrl?: string;
+  // 来自输入框 @token 的内联引用：气泡里随正文按顺序展示，不再重复渲染成 chip
+  inlineRef?: boolean;
 }
 
 export interface ChatMessage {
@@ -422,6 +424,41 @@ export interface ReviewerLocalStatus {
   filePath?: string;
 }
 
+// 本地语音转写（Qwen3-ASR-0.6B + llama-server）状态
+export interface VoiceLocalFileStatus {
+  fileName: string;
+  role: string;
+  downloaded: boolean;
+  sizeBytes: number;
+  expectedBytes: number;
+  filePath: string;
+}
+
+export interface VoiceLocalStatus {
+  engine: "cloud" | "local";
+  model: {
+    configured: boolean;
+    files: VoiceLocalFileStatus[];
+    downloaded: boolean;
+    sizeBytes: number;
+    expectedBytes: number;
+  };
+  runtime: { available: boolean; path: string; source: string };
+}
+
+// 本地语音合成（Qwen3-TTS + llama-tts）状态；运行时与语音转写共用同一份 llama.cpp 包
+export interface TtsLocalStatus {
+  engine: "cloud" | "local";
+  model: {
+    configured: boolean;
+    files: VoiceLocalFileStatus[];
+    downloaded: boolean;
+    sizeBytes: number;
+    expectedBytes: number;
+  };
+  runtime: { available: boolean; path: string; binDir: string };
+}
+
 export interface ProviderSettings {
   identity: UserIdentity | null;
   endpoint: string;
@@ -433,9 +470,21 @@ export interface ProviderSettings {
   profiles: ModelProfile[];
   transcriptionEndpoint: string;
   transcriptionModel: string;
+  // 语音转写引擎：cloud 走 OpenAI 兼容 /audio/transcriptions，local 走内置 Qwen3-ASR + llama-server
+  transcriptionEngine: "cloud" | "local";
+  // 本地语音模型保存目录；留空存到应用数据目录 models/asr
+  asrModelDir: string;
+  // 自定义 llama-server 可执行文件路径；留空使用内置下载的引擎
+  llamaServerPath: string;
   // 语音合成（渠道语音出站，OpenAI 兼容 /audio/speech；ttsApiKey 为空时回退主模型 apiKey）
   ttsEndpoint: string;
   ttsModel: string;
+  // 语音合成引擎：cloud 走 OpenAI 兼容 /audio/speech，local 走内置 Qwen3-TTS + llama-tts
+  ttsEngine: "cloud" | "local";
+  // 本地语音合成模型保存目录；留空存到应用数据目录 models/tts
+  ttsModelDir: string;
+  // 本地合成参考音色音频路径（克隆音色）；留空用模型默认音色
+  ttsVoicePath: string;
   ttsApiKey: string;
   // 审核助手独立模型（reviewer 模式自动审批判断用）；留空跟随主模型，可指向本地小模型端点
   reviewerEndpoint: string;
@@ -578,6 +627,15 @@ export interface DyworkerBridge {
   downloadReviewerLocalModel(): Promise<{ ok: boolean; skipped?: boolean; error?: string; status?: ReviewerLocalStatus }>;
   chooseReviewerLocalDir(): Promise<{ canceled: boolean; path?: string }>;
   onReviewerLocalDownloadProgress(callback: (progress: { received: number; total: number; percent: number }) => void): () => void;
+  getVoiceLocalStatus(): Promise<VoiceLocalStatus>;
+  downloadVoiceLocalModel(): Promise<{ ok: boolean; error?: string; status?: VoiceLocalStatus }>;
+  chooseVoiceLocalDir(): Promise<{ canceled: boolean; path?: string }>;
+  onVoiceLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number }) => void): () => void;
+  getTtsLocalStatus(): Promise<TtsLocalStatus>;
+  downloadTtsLocalModel(): Promise<{ ok: boolean; error?: string; status?: TtsLocalStatus }>;
+  chooseTtsLocalDir(): Promise<{ canceled: boolean; path?: string }>;
+  chooseTtsVoice(): Promise<{ canceled: boolean; path?: string }>;
+  onTtsLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number }) => void): () => void;
   getAppUpdateStatus(): Promise<AppUpdateStatus>;
   checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;
   downloadAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;

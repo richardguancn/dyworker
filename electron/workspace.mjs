@@ -32,10 +32,11 @@ function isInsideWorkspace(root, target) {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
-// Keep the existing tree depth and safety limit while making the limit local to
-// each directory. A large child directory must not hide its siblings.
-export async function listWorkspace(root, depth = 0) {
-  if (!root || depth > 4) return [];
+// 不限制目录深度：深层目录（如 frontend/src/pages/xx/list）也要能看到文件。
+// 安全边界由每个目录的 MAX_ENTRIES_PER_DIRECTORY 与忽略名单保证，
+// Dirent 不跟随符号链接，软链循环不会导致无限递归。
+export async function listWorkspace(root) {
+  if (!root) return [];
   let directoryEntries;
   try {
     directoryEntries = await fs.readdir(root, { withFileTypes: true });
@@ -56,7 +57,7 @@ export async function listWorkspace(root, depth = 0) {
       path: fullPath,
       kind: entry.isDirectory() ? "directory" : "file",
     };
-    if (entry.isDirectory()) item.children = await listWorkspace(fullPath, depth + 1);
+    if (entry.isDirectory()) item.children = await listWorkspace(fullPath);
     result.push(item);
   }
   return result;
