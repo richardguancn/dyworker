@@ -2336,7 +2336,8 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
   const resolve = async (item: InboxItem, resolution: { approved?: boolean; answer?: string }) => {
     const result = await window.dyworker?.resolveInbox({ id: item.id, ...resolution });
     if (result && !result.ok) setErrors((current) => ({ ...current, [item.id]: result.error || "处理失败" }));
-    else onResolve(item, resolution);
+    // 无论成败都刷新：事项若已在别处处理/失效，卡片会随之移入“最近已处理”，不留钉子户
+    onResolve(item, resolution);
   };
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -7141,7 +7142,11 @@ export function App() {
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="审批收件箱"
               title="审批收件箱：无人值守任务的审批与提问在这里处理"
-              onClick={() => setInboxOpen(true)}
+              onClick={() => {
+                setInboxOpen(true);
+                // 打开时重新拉取：主进程会顺带把孤儿 pending 条目判为失效，过期卡片不再滞留待处理区
+                void window.dyworker?.listInbox?.().then(setInboxItems);
+              }}
             >
               <Bell size={17} />
               {inboxPendingCount > 0 && <span className="inbox-badge">{inboxPendingCount > 9 ? "9+" : inboxPendingCount}</span>}
