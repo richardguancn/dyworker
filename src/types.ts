@@ -443,6 +443,8 @@ export interface ProviderSettings {
   reviewerApiKey: string;
   // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义端点
   reviewerBackend: "main" | "local" | "custom";
+  // 内置本地审核模型的保存目录；留空存到应用数据目录 models/reviewer
+  reviewerModelDir: string;
   searxngEndpoint: string;
   bochaApiKey: string;
   // DeepSeek 原生搜索密钥：非 DeepSeek 端点下 web_search 默认走 DeepSeek 服务端搜索时用
@@ -574,6 +576,7 @@ export interface DyworkerBridge {
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   getReviewerLocalStatus(): Promise<ReviewerLocalStatus>;
   downloadReviewerLocalModel(): Promise<{ ok: boolean; skipped?: boolean; error?: string; status?: ReviewerLocalStatus }>;
+  chooseReviewerLocalDir(): Promise<{ canceled: boolean; path?: string }>;
   onReviewerLocalDownloadProgress(callback: (progress: { received: number; total: number; percent: number }) => void): () => void;
   getAppUpdateStatus(): Promise<AppUpdateStatus>;
   checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;

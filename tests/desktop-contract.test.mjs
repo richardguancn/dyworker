@@ -38,14 +38,17 @@ test("desktop controls are connected across renderer, preload, and main process"
 });
 
 test("内置本地审核模型的下载与进度链路贯穿三端", () => {
-  for (const action of ["getReviewerLocalStatus", "downloadReviewerLocalModel", "onReviewerLocalDownloadProgress"]) {
+  for (const action of ["getReviewerLocalStatus", "downloadReviewerLocalModel", "chooseReviewerLocalDir", "onReviewerLocalDownloadProgress"]) {
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
   assert.match(main, /ipcMain\.handle\("reviewer-local:status"/);
   assert.match(main, /ipcMain\.handle\("reviewer-local:download"/);
+  assert.match(main, /ipcMain\.handle\("reviewer-local:choose-dir"/);
   assert.match(main, /reviewer-local:download-progress/);
   assert.match(main, /configureLocalReviewer\(/);
+  assert.match(main, /applyReviewerModelDir\(/);
+  assert.match(main, /resetLocalReviewerEngine\(\)/);
 });
 
 test("消息框可以把剪贴板图片加入待发送附件", () => {
