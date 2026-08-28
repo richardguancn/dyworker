@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getReviewerLocalStatus: () => ipcRenderer.invoke("reviewer-local:status"),
   downloadReviewerLocalModel: () => ipcRenderer.invoke("reviewer-local:download"),
+  chooseReviewerLocalDir: () => ipcRenderer.invoke("reviewer-local:choose-dir"),
   onReviewerLocalDownloadProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("reviewer-local:download-progress", listener);

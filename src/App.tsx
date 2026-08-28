@@ -175,6 +175,7 @@ const defaultSettings: ProviderSettings = {
   reviewerModel: "",
   reviewerApiKey: "",
   reviewerBackend: "main",
+  reviewerModelDir: "",
   searxngEndpoint: "",
   bochaApiKey: "",
   deepseekSearchApiKey: "",
@@ -3906,7 +3907,7 @@ function SettingsDialog({
           <div className="dialog-note">
             {reviewerLocal?.downloaded
               ? "模型已就绪：Qwen3-0.6B（610 MB，已存本机）。任务运行时按需加载，空闲 5 分钟后自动释放。"
-              : "模型未下载：Qwen3-0.6B（约 610 MB），从 ModelScope 下载到本机，下载完成后离线可用。"}
+              : "模型未下载：Qwen3-0.6B（约 610 MB），从 ModelScope 下载到保存目录，下载完成后离线可用。"}
             {!reviewerLocal?.downloaded && (
               <button type="button" className="settings-update-check" onClick={startReviewerLocalDownload} disabled={reviewerDownloading}>
                 {reviewerDownloading
@@ -3915,6 +3916,27 @@ function SettingsDialog({
               </button>
             )}
             {reviewerDownloadError && <p style={{ color: "#c0392b" }}>{reviewerDownloadError}</p>}
+            <label>
+              保存路径（可选）
+              <span style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={draft.reviewerModelDir}
+                  placeholder="默认存到应用数据目录 models/reviewer"
+                  onChange={(event) => setDraft({ ...draft, reviewerModelDir: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="settings-update-check"
+                  onClick={async () => {
+                    const picked = await window.dyworker?.chooseReviewerLocalDir();
+                    if (picked?.path) setDraft({ ...draft, reviewerModelDir: picked.path });
+                  }}
+                >
+                  浏览…
+                </button>
+              </span>
+            </label>
+            <p>更改路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型”或把旧的 Qwen3-0.6B-Q8_0.gguf 手动移过去。</p>
           </div>
         )}
         {draft.reviewerBackend === "custom" && (<>

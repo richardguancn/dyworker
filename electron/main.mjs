@@ -20,7 +20,7 @@ import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
-import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus } from "./local-reviewer.mjs";
+import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus, resetLocalReviewerEngine } from "./local-reviewer.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mjs";
 import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
@@ -253,8 +253,20 @@ ipcMain.handle("app-update:install", () => appUpdater?.install() || {
 const auditLog = createAuditLog({ filePath: path.join(app.getPath("userData"), "audit.jsonl") });
 
 // ---- 内置本地审核模型（Qwen3-0.6B，llama.cpp 推理）----
-// 模型文件放 userData/models/reviewer/，设置里一键下载（ModelScope 优先）
-configureLocalReviewer({ dir: path.join(app.getPath("userData"), "models", "reviewer") });
+// 模型默认存 userData/models/reviewer/，设置里可自定义保存目录、一键下载（ModelScope 优先）
+const defaultReviewerModelDir = path.join(app.getPath("userData"), "models", "reviewer");
+let reviewerModelDirApplied = defaultReviewerModelDir;
+configureLocalReviewer({ dir: defaultReviewerModelDir });
+
+// 设置里的保存目录变更时切换并丢弃已加载引擎；重复调用幂等
+function applyReviewerModelDir(settingsValue) {
+  const custom = String(settingsValue?.reviewerModelDir || "").trim();
+  const dir = custom || defaultReviewerModelDir;
+  if (dir === reviewerModelDirApplied) return;
+  configureLocalReviewer({ dir });
+  resetLocalReviewerEngine();
+  reviewerModelDirApplied = dir;
+}
 
 ipcMain.handle("reviewer-local:status", () => localReviewerModelStatus());
 ipcMain.handle("reviewer-local:download", async () => {
@@ -270,6 +282,14 @@ ipcMain.handle("reviewer-local:download", async () => {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+});
+ipcMain.handle("reviewer-local:choose-dir", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择审核模型保存目录",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 // ---- 防止电脑休眠 ----
@@ -376,6 +396,7 @@ function defaultSessions() {
 async function readSettings() {
   const stored = await readJson(dataFile("settings.json"), {});
   const settings = deserializeSettings(stored, safeStorage);
+  applyReviewerModelDir(settings);
   const approvalModeMigrated = stored?.approvalMode !== settings.approvalMode
     || stored?.channels?.approvalMode === "allow-writes";
   const updateUrlMigrated = stored?.updateUrl !== settings.updateUrl;
@@ -1204,6 +1225,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
     const updateUrl = await saveSettings(settings);
     sleepBlockMode = normalizePreventSleep(settings?.preventSleep);
     updateSleepBlocker();
+    applyReviewerModelDir(settings);
     // 渠道配置热生效:按新设置 diff 启停 QQ/微信连接
     await reconcileChannels();
     return { ok: true, updateUrl };

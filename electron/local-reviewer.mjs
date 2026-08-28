@@ -157,6 +157,22 @@ function scheduleIdleUnload() {
   }, IDLE_UNLOAD_MS);
 }
 
+// 更改模型保存目录后调用：丢弃已加载的引擎，下次审核按新目录重新加载
+export async function resetLocalReviewerEngine() {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  const current = engine;
+  engine = null;
+  engineLoading = null;
+  try {
+    await Promise.resolve(current?.model.dispose?.());
+  } catch {
+    // 忽略销毁异常
+  }
+}
+
 async function getEngine() {
   if (engine) {
     scheduleIdleUnload();

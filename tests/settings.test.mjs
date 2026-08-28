@@ -21,6 +21,7 @@ test("多套模型配置加密保存后可以完整恢复", () => {
     reviewerModel: " qwen3:4b ",
     reviewerApiKey: " reviewer-key ",
     reviewerBackend: "local",
+    reviewerModelDir: " /Volumes/Models/dyworker-reviewer ",
     profiles: [
       {
         id: "one",
@@ -63,6 +64,7 @@ test("多套模型配置加密保存后可以完整恢复", () => {
   assert.equal(restored.reviewerModel, "qwen3:4b");
   assert.equal(restored.reviewerApiKey, "reviewer-key");
   assert.equal(restored.reviewerBackend, "local");
+  assert.equal(restored.reviewerModelDir, "/Volumes/Models/dyworker-reviewer");
   // reviewerBackend 缺省时按是否填过自定义审核端点推断
   assert.equal(serializeSettings({ reviewerEndpoint: "https://x.example/v1", reviewerModel: "m1" }, secretStorage).reviewerBackend, "custom");
   assert.equal(serializeSettings({}, secretStorage).reviewerBackend, "main");
