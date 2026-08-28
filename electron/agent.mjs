@@ -2344,6 +2344,14 @@ export function isResponsesEndpoint(endpoint) {
   }
 }
 
+// 模型名上下文覆盖语法：k3[1M]、Qwen3.8-27B[256K]、model[131072]（与渲染端 parseModelContextOverride 一致）。
+// 方括号后缀只用于本地上下文管理；发给服务端的请求一律剥离后缀，避免服务端识别不了模型名。
+export function bareModelName(model) {
+  const raw = String(model || "").trim();
+  const match = raw.match(/^(.*?)\s*\[([0-9]+(?:\.[0-9]+)?)\s*([kKmM])?\]$/);
+  return match ? match[1].trim() : raw;
+}
+
 // 服务器自报的上下文上限探测：OpenAI 兼容服务的 GET /models 通常带 max_model_len（vLLM 等）。
 // 本地/自建模型的实际上限往往远小于静态表的 128k 默认值（如 32k），按默认值累积上下文会把
 // 超出服务器能力的请求发出去——轻则 400，重则打垮引擎导致连接被批量重置（ECONNRESET）。
@@ -2367,7 +2375,7 @@ function modelsUrlFromEndpoint(endpoint) {
 
 export async function probeServerContextLimit({ endpoint, model, apiKey = "", fetchImpl = fetch }) {
   const url = modelsUrlFromEndpoint(endpoint);
-  const name = String(model || "").trim();
+  const name = bareModelName(model);
   if (!url || !name) return null;
   const key = `${url}\n${name}`;
   if (serverContextLimitCache.has(key)) return serverContextLimitCache.get(key);
@@ -2463,14 +2471,14 @@ const VISION_CACHE_LIMIT = 128;
 const visionDescriptionCache = new Map();
 
 function isDeepSeekV4TextModel(settings) {
-  const model = String(settings?.model || "").trim().toLowerCase();
+  const model = bareModelName(settings?.model).toLowerCase();
   return model === "deepseek-v4-flash" || model === "deepseek-v4-pro";
 }
 
 // DeepSeek 官方视觉模型（2026-08-21 上线）：原生处理 input_image / image_url 图片，
 // 无需再经外部视觉服务转文字，图片直接随请求发给 DeepSeek（含 Responses API 与 Chat Completions 两种格式）。
 export function isDeepSeekNativeVisionModel(settings) {
-  return String(settings?.model || "").trim().toLowerCase() === "deepseek-v4-flash-vision-exp";
+  return bareModelName(settings?.model).toLowerCase() === "deepseek-v4-flash-vision-exp";
 }
 
 function imageUrlFromPart(part) {
@@ -2816,10 +2824,12 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
     : messages;
   const modelMessages = await rewriteImagesForTextModel({ settings, messages: sanitizedMessages, fetchImpl, signal });
   const selectedTools = tools || toolDefinitionsWith(extraTools);
+  // 模型名可能带上下文覆盖后缀（如 k3[1M]），发给服务端前剥离
+  const apiModel = bareModelName(settings.model);
   const basePayload = responsesApi
-    ? responsesPayload({ model: settings.model, messages: modelMessages, tools: tools === false ? false : selectedTools, stream: false })
+    ? responsesPayload({ model: apiModel, messages: modelMessages, tools: tools === false ? false : selectedTools, stream: false })
     : {
-        model: settings.model,
+        model: apiModel,
         messages: modelMessages,
         // Kimi K3 顶层 reasoning_effort 默认 max，推理 token 消耗大；开放平台固定 high 控费提速
         // （K3 官方示例均以 kimi-k3 实测，low/high/max 均支持）

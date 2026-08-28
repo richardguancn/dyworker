@@ -7,7 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -1795,6 +1795,35 @@ test("上下文上限探测失败或不适用时静默回退 null", async () => 
     fetchImpl: async () => { throw new Error("不应被调用"); },
   });
   assert.equal(skipped, null);
+});
+
+test("模型名 [1M] 上下文覆盖后缀：解析、探测与请求都剥离为裸模型名", async () => {
+  // bareModelName 解析：K/M 单位、纯数字、空白
+  assert.equal(bareModelName("k3[1M]"), "k3");
+  assert.equal(bareModelName(" Qwen3.8-27B [256k] "), "Qwen3.8-27B");
+  assert.equal(bareModelName("model[131072]"), "model");
+  assert.equal(bareModelName("plain-model"), "plain-model");
+
+  // 探测：k3[1M] 按裸名 k3 匹配 /models 列表
+  const probed = await probeServerContextLimit({
+    endpoint: "http://suffix.local/v1/chat/completions",
+    model: "k3[1M]",
+    apiKey: "",
+    fetchImpl: async () => ({ ok: true, json: async () => ({ data: [{ id: "k3", max_model_len: 262144 }] }) }),
+  });
+  assert.equal(probed, 262144);
+
+  // 请求：Chat Completions 的 body.model 不带后缀
+  const calls = [];
+  const result = await runAgent({
+    settings: { endpoint: "http://suffix.local/v1/chat/completions", model: "k3[1M]", apiKey: "k" },
+    workspacePath: await makeWorkspace(),
+    conversation: [{ role: "user", content: "你好" }],
+    emit: () => {},
+    fetchImpl: mockFetch([{ role: "assistant", content: "在的" }], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(calls[0].model, "k3");
 });
 
 test("代理每次只收到当前任务最相关的五条记忆", async () => {
