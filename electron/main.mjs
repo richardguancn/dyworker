@@ -13,7 +13,7 @@ import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch,
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
 import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
 import { McpClient } from "./mcp.mjs";
-import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, preserveUndecryptableSecrets, serializeSettings } from "./settings.mjs";
+import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, preserveUndecryptableSecrets, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { SESSION_TOOL_NAMES, handleSessionTool, sessionToolDefinitions } from "./session-tools.mjs";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
@@ -21,6 +21,10 @@ import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus, resetLocalReviewerEngine } from "./local-reviewer.mjs";
+import { configureLocalAsr, downloadLocalAsrModel, downloadLocalAsrRuntime, localAsrModelStatus, localAsrRuntimeStatus } from "./local-asr.mjs";
+import { stopLocalAsrServer, transcribeWithLocalAsr } from "./local-asr-server.mjs";
+import { configureLocalTts, downloadLocalTtsModel, localTtsModelStatus, localTtsRuntimeStatus } from "./local-tts.mjs";
+import { synthesizeWithLocalTts } from "./local-tts-engine.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mjs";
 import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
@@ -292,6 +296,151 @@ ipcMain.handle("reviewer-local:choose-dir", async () => {
   return { canceled: false, path: result.filePaths[0] };
 });
 
+// ---- 本地语音转写（Qwen3-ASR-0.6B + llama-server）----
+// 模型默认存 userData/models/asr/，引擎二进制存 userData/bin/llama.cpp/，设置里可自定义。
+const defaultAsrModelDir = path.join(app.getPath("userData"), "models", "asr");
+const defaultAsrBinDir = path.join(app.getPath("userData"), "bin", "llama.cpp");
+let asrModelDirApplied = "";
+let asrServerPathApplied = "";
+configureLocalAsr({ modelDir: defaultAsrModelDir, binDir: defaultAsrBinDir });
+asrModelDirApplied = defaultAsrModelDir;
+
+function asrSettingsFrom(saved) {
+  return {
+    engine: String(saved?.transcriptionEngine || "") === "local" ? "local" : "cloud",
+    modelDir: String(saved?.asrModelDir || "").trim(),
+    serverPath: String(saved?.llamaServerPath || "").trim(),
+  };
+}
+
+function applyAsrSettings(saved) {
+  const { modelDir, serverPath } = asrSettingsFrom(saved);
+  const modelDirResolved = modelDir || defaultAsrModelDir;
+  const changed = modelDirResolved !== asrModelDirApplied;
+  configureLocalAsr({ modelDir: modelDirResolved, binDir: defaultAsrBinDir });
+  if (changed) {
+    // 模型目录变更后旧进程还指着旧文件：停掉，下次转写按新目录重启
+    stopLocalAsrServer();
+    asrModelDirApplied = modelDirResolved;
+  }
+  asrServerPathApplied = serverPath;
+}
+
+ipcMain.handle("voice-local:status", async () => {
+  const saved = await readSettings();
+  applyAsrSettings(saved);
+  return {
+    engine: asrSettingsFrom(saved).engine,
+    model: localAsrModelStatus(),
+    runtime: localAsrRuntimeStatus(asrServerPathApplied),
+  };
+});
+
+ipcMain.handle("voice-local:download", async () => {
+  try {
+    // 先应用磁盘上的最新设置：改了保存路径后无需重启，下载直接落到新目录
+    await readSettings();
+    // 再拉引擎二进制（十几 MB），最后拉模型两个文件（约 1GB），进度统一推送
+    await downloadLocalAsrRuntime({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("voice-local:download-progress", progress);
+        }
+      },
+    });
+    await downloadLocalAsrModel({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("voice-local:download-progress", progress);
+        }
+      },
+    });
+    return { ok: true, status: { model: localAsrModelStatus(), runtime: localAsrRuntimeStatus(asrServerPathApplied) } };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("voice-local:choose-dir", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择语音模型保存目录",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+// ---- 本地语音合成（Qwen3-TTS-1.7B + llama-tts）----
+// 与 ASR 共用同一个 llama.cpp 运行时包；模型默认存 userData/models/tts/。
+const defaultTtsModelDir = path.join(app.getPath("userData"), "models", "tts");
+let ttsModelDirApplied = "";
+configureLocalTts({ modelDir: defaultTtsModelDir });
+ttsModelDirApplied = defaultTtsModelDir;
+
+function applyTtsSettings(saved) {
+  const modelDir = String(saved?.ttsModelDir || "").trim() || defaultTtsModelDir;
+  // 模型目录只在变更时重配；llama-tts 每次合成都是新进程，无需像 ASR 一样停旧进程
+  if (modelDir !== ttsModelDirApplied) {
+    configureLocalTts({ modelDir });
+    ttsModelDirApplied = modelDir;
+  }
+}
+
+ipcMain.handle("tts-local:status", async () => {
+  const saved = await readSettings();
+  applyTtsSettings(saved);
+  return {
+    engine: normalizeTtsEngine(saved.ttsEngine),
+    model: localTtsModelStatus(),
+    runtime: localTtsRuntimeStatus(),
+  };
+});
+
+ipcMain.handle("tts-local:download", async () => {
+  try {
+    // 先应用磁盘上的最新设置：改了保存路径后无需重启，下载直接落到新目录
+    await readSettings();
+    // 引擎二进制与 ASR 共用（llama-tts 在同一压缩包里），没有就先拉运行时，再拉模型（约 2.3GB）
+    await downloadLocalAsrRuntime({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("tts-local:download-progress", { ...progress, phase: `runtime:${progress.phase}` });
+        }
+      },
+    });
+    await downloadLocalTtsModel({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("tts-local:download-progress", progress);
+        }
+      },
+    });
+    return { ok: true, status: { model: localTtsModelStatus(), runtime: localTtsRuntimeStatus() } };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("tts-local:choose-dir", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择语音合成模型保存目录",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+// 选择参考音色音频（本地 TTS 克隆音色用；wav/mp3 等 llama.cpp mtmd 支持的格式）
+ipcMain.handle("tts-local:choose-voice", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择参考音色音频",
+    properties: ["openFile"],
+    filters: [{ name: "音频", extensions: ["wav", "mp3", "flac", "ogg", "m4a"] }],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
+});
+
 // ---- 防止电脑休眠 ----
 // 安全设计:只用 prevent-app-suspension(阻止系统挂起),不用 prevent-display-sleep——
 // 屏幕照常关闭、照常锁屏,长任务继续跑而物理安全(锁屏)不受影响。
@@ -397,6 +546,9 @@ async function readSettings() {
   const stored = await readJson(dataFile("settings.json"), {});
   const settings = deserializeSettings(stored, safeStorage);
   applyReviewerModelDir(settings);
+  // 语音模型目录与审核模型同款策略：每次读设置都应用最新目录，改路径保存后立即生效
+  applyAsrSettings(settings);
+  applyTtsSettings(settings);
   const approvalModeMigrated = stored?.approvalMode !== settings.approvalMode
     || stored?.channels?.approvalMode === "allow-writes";
   const updateUrlMigrated = stored?.updateUrl !== settings.updateUrl;
@@ -1226,6 +1378,8 @@ ipcMain.handle("settings:save", async (_event, settings) => {
     sleepBlockMode = normalizePreventSleep(settings?.preventSleep);
     updateSleepBlocker();
     applyReviewerModelDir(settings);
+    applyAsrSettings(settings);
+    applyTtsSettings(settings);
     // 渠道配置热生效:按新设置 diff 启停 QQ/微信连接
     await reconcileChannels();
     return { ok: true, updateUrl };
@@ -1252,12 +1406,21 @@ ipcMain.handle("chat:complete", async (_event, payload) => {
   return { content };
 });
 
-// 语音转写：OpenAI 兼容 /audio/transcriptions；桌面录音与 QQ 语音（silk 解码后）共用
+// 语音转写：本地引擎（Qwen3-ASR-0.6B + llama-server）或 OpenAI 兼容 /audio/transcriptions；
+// 桌面录音与 QQ 语音（silk 解码后）共用
 async function transcribeAudio(audioBytes, mimeType, settings) {
-  const endpoint = transcriptionEndpoint(settings);
-  if (!endpoint || !settings.apiKey) throw new Error("请先在设置中配置语音转写地址和 API 密钥");
   const audio = Uint8Array.from(audioBytes || []);
   if (!audio.length) throw new Error("没有收到录音内容");
+  if (normalizeTranscriptionEngine(settings?.transcriptionEngine) === "local") {
+    // 模型目录已在 readSettings 里按最新设置应用；引擎路径变更同样即时生效
+    const text = await transcribeWithLocalAsr({
+      wav: audio,
+      customServerPath: String(settings?.llamaServerPath || "").trim(),
+    });
+    return { text };
+  }
+  const endpoint = transcriptionEndpoint(settings);
+  if (!endpoint || !settings.apiKey) throw new Error("请先在设置中配置语音转写地址和 API 密钥");
   if (audio.byteLength > 25 * 1024 * 1024) throw new Error("录音超过 25 MB，请缩短后重试");
   const type = String(mimeType || "audio/webm");
   const extension = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : type.includes("wav") ? "wav" : "webm";
@@ -1328,7 +1491,16 @@ function buildWavFromPcm(pcm, sampleRate) {
 }
 
 ipcMain.handle("voice:transcribe", async (_event, payload) => {
-  const settings = payload?.settings || {};
+  const payloadSettings = payload?.settings || {};
+  // 引擎选择与本地模型路径以磁盘最新设置为准（改路径保存后立即生效）；
+  // 云引擎沿用渲染端传来的地址与密钥
+  const saved = await readSettings();
+  const settings = {
+    ...payloadSettings,
+    transcriptionEngine: saved.transcriptionEngine,
+    asrModelDir: saved.asrModelDir,
+    llamaServerPath: saved.llamaServerPath,
+  };
   const audio = Uint8Array.from(Array.isArray(payload?.audio) ? payload.audio : []);
   const mimeType = String(payload?.mimeType || "audio/webm");
   return transcribeAudio(audio, mimeType, settings);
@@ -3107,7 +3279,7 @@ async function handleChannelSendMedia(args, { workspacePath, pendingMedia }) {
   return { ok: true, result: `已登记发送：${name}` };
 }
 
-// text_to_speech 工具处理器：TTS 合成（OpenAI 兼容 /audio/speech）→ silk 编码 → 登记到 pendingMedia
+// text_to_speech 工具处理器：TTS 合成（本地 Qwen3-TTS 或 OpenAI 兼容 /audio/speech）→ silk 编码 → 登记到 pendingMedia
 async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings }) {
   const text = String(args?.text || "").trim();
   const rawPath = String(args?.path || "").trim();
@@ -3118,31 +3290,46 @@ async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, se
   if (path.extname(resolved.path).toLowerCase() !== ".silk") {
     return { ok: false, result: "语音文件必须以 .silk 结尾（平台要求 silk 格式）" };
   }
-  const ttsEndpoint = String(settings?.ttsEndpoint || "").trim();
-  if (!ttsEndpoint) {
-    return { ok: false, result: "语音合成服务还没有配置：请在电脑端设置中填写合成服务地址" };
+  // 引擎与本地模型路径以磁盘最新设置为准（改路径保存后立即生效）
+  const saved = await readSettings();
+  let wav;
+  if (normalizeTtsEngine(settings?.ttsEngine || saved.ttsEngine) === "local") {
+    try {
+      const { wav: localWav } = await synthesizeWithLocalTts({
+        text: text.slice(0, 2000),
+        voicePath: String(saved.ttsVoicePath || "").trim(),
+      });
+      wav = Buffer.from(localWav);
+    } catch (error) {
+      return { ok: false, result: error instanceof Error ? error.message : String(error) };
+    }
+  } else {
+    const ttsEndpoint = String(settings?.ttsEndpoint || "").trim();
+    if (!ttsEndpoint) {
+      return { ok: false, result: "语音合成服务还没有配置：请在电脑端设置中填写合成服务地址" };
+    }
+    const apiKey = String(settings?.ttsApiKey || settings?.apiKey || "").trim();
+    const ttsUrl = ttsEndpoint.endsWith("/audio/speech")
+      ? ttsEndpoint
+      : `${ttsEndpoint.replace(/\/+$/, "")}/audio/speech`;
+    let response;
+    try {
+      response = await fetch(ttsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+        body: JSON.stringify({
+          model: String(settings?.ttsModel || "tts-1"),
+          input: text.slice(0, 2000),
+          voice: "alloy",
+          response_format: "wav",
+        }),
+      });
+    } catch (error) {
+      return { ok: false, result: `语音合成服务连接失败：${error instanceof Error ? error.message : String(error)}` };
+    }
+    if (!response.ok) return { ok: false, result: `语音合成失败（${response.status}），请检查服务配置` };
+    wav = Buffer.from(await response.arrayBuffer());
   }
-  const apiKey = String(settings?.ttsApiKey || settings?.apiKey || "").trim();
-  const ttsUrl = ttsEndpoint.endsWith("/audio/speech")
-    ? ttsEndpoint
-    : `${ttsEndpoint.replace(/\/+$/, "")}/audio/speech`;
-  let response;
-  try {
-    response = await fetch(ttsUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      body: JSON.stringify({
-        model: String(settings?.ttsModel || "tts-1"),
-        input: text.slice(0, 2000),
-        voice: "alloy",
-        response_format: "wav",
-      }),
-    });
-  } catch (error) {
-    return { ok: false, result: `语音合成服务连接失败：${error instanceof Error ? error.message : String(error)}` };
-  }
-  if (!response.ok) return { ok: false, result: `语音合成失败（${response.status}），请检查服务配置` };
-  const wav = Buffer.from(await response.arrayBuffer());
   const { encode, isWav } = await import("silk-wasm");
   if (!isWav(wav)) {
     return { ok: false, result: "语音合成服务没有返回 WAV 音频，请确认服务支持 response_format=wav" };

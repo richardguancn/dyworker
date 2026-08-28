@@ -31,6 +31,29 @@ test("工作区根目录不会因子目录过多而漏掉后面的项目", async
   assert.ok(!names.includes(".DS_Store"));
 });
 
+test("深层目录（超过 4 级）的文件也会完整列出", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-deep-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const deep = path.join(root, "frontend", "src", "pages", "inspection", "list");
+  await fs.mkdir(deep, { recursive: true });
+  await fs.writeFile(path.join(deep, "index.tsx"), "export default () => null;");
+
+  const find = (entries, name) => {
+    for (const entry of entries) {
+      if (entry.name === name) return entry;
+      const hit = entry.children ? find(entry.children, name) : null;
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const entries = await listWorkspace(root);
+  const listDir = find(entries, "list");
+
+  assert.ok(listDir, "深层 list 目录缺失");
+  assert.deepEqual(listDir.children?.map((entry) => entry.name), ["index.tsx"], "深层目录下的文件未显示");
+});
+
 test("Markdown 预览只读取工作目录内的 Markdown 文件", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-"));
   const markdownPath = path.join(root, "README.md");

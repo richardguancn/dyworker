@@ -36,7 +36,6 @@
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
-    "node-llama-cpp": "^3.20.0",
     "qrcode": "^1.5.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",
@@ -44,6 +43,9 @@
     "remark-gfm": "^4.0.1",
     "silk-wasm": "^3.7.1",
     "weixin-clawbot": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
@@ -64,6 +66,7 @@
     "appId": "com.maquesoft.dyworker.app",
     "productName": "DYWorker",
     "asar": true,
+    "npmRebuild": false,
     "asarUnpack": [
       "electron/scripts/linux_computer_use.py",
       "electron/scripts/macos_computer_use.js",

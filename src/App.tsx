@@ -78,7 +78,7 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TraceEvent, UsageRecord, UserIdentity, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
@@ -158,6 +158,56 @@ const previewWorkspace: WorkspaceEntry[] = [
   { name: "tests", path: "/dyworker/tests", kind: "directory", children: [] },
 ];
 
+// 本地语音引擎（llama-server）只认 WAV：录音 blob → 解码 → 重采样 16k 单声道 → 16bit PCM WAV。
+// MediaRecorder 产出的是 webm/opus，云端服务能直接读，本地引擎必须先转码。
+async function blobToWav16kMono(blob: Blob): Promise<Uint8Array> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const decodeCtx = new AudioCtx();
+  let decoded: AudioBuffer;
+  try {
+    decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    void decodeCtx.close();
+  }
+  const frames = Math.max(1, Math.ceil(decoded.duration * 16000));
+  const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
+  const offline = new OfflineCtx(1, frames, 16000);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  const channel = rendered.getChannelData(0);
+  const pcm = new DataView(new ArrayBuffer(frames * 2));
+  for (let i = 0; i < frames; i += 1) {
+    const sample = Math.max(-1, Math.min(1, channel[i] || 0));
+    pcm.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + frames * 2, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 16000 * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, frames * 2, true);
+  const out = new Uint8Array(44 + frames * 2);
+  out.set(new Uint8Array(header), 0);
+  out.set(new Uint8Array(pcm.buffer), 44);
+  return out;
+}
+
 const defaultSettings: ProviderSettings = {
   identity: null,
   endpoint: "",
@@ -168,8 +218,14 @@ const defaultSettings: ProviderSettings = {
   visionApiKey: "",
   transcriptionEndpoint: "",
   transcriptionModel: "whisper-1",
+  transcriptionEngine: "cloud",
+  asrModelDir: "",
+  llamaServerPath: "",
   ttsEndpoint: "",
   ttsModel: "",
+  ttsEngine: "cloud",
+  ttsModelDir: "",
+  ttsVoicePath: "",
   ttsApiKey: "",
   reviewerEndpoint: "",
   reviewerModel: "",
@@ -419,7 +475,7 @@ function ShowMoreToggle({ expanded, onToggle }: { expanded: boolean; onToggle: (
   );
 }
 
-function ClampedUserText({ text }: { text: string }) {
+function ClampedUserText({ text, tokenNames }: { text: string; tokenNames?: Set<string> }) {
   const active = text.length > LONG_TEXT_GATE;
   const { ref, overflowing, expanded, setExpanded } = useClampToggle<HTMLSpanElement>(active);
   return (
@@ -428,7 +484,7 @@ function ClampedUserText({ text }: { text: string }) {
         ref={ref}
         className={`user-message-text${active && !expanded ? " clamped" : ""}${expanded ? " expanded" : ""}`}
       >
-        {text}
+        {renderFileTokenText(text, tokenNames ?? new Set<string>(), "bubble")}
       </span>
       {overflowing && (
         <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
@@ -508,6 +564,30 @@ function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
     mimeType: isImage ? "image/*" : "text/plain",
     isImage,
   };
+}
+
+// 把文本中的 @文件名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
+// 引用文件按输入顺序随正文展示，而不是单独堆成一排 chip
+const FILE_TOKEN_REGEX = /@([^\s@]+)/g;
+
+function renderFileTokenText(text: string, names: Set<string>, keyPrefix = ""): ReactNode {
+  if (!text) return null;
+  if (!names.size) return text;
+  const parts: ReactNode[] = [];
+  let last = 0;
+  let index = 0;
+  FILE_TOKEN_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FILE_TOKEN_REGEX.exec(text))) {
+    if (!names.has(match[1])) continue;
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(
+      <span className="file-token" key={`${keyPrefix}-${index++}`}>@{match[1]}</span>,
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
 }
 
 type ToolPanelTab = {
@@ -3588,6 +3668,75 @@ function SettingsDialog({
     }
   };
 
+  // 内置本地语音转写（Qwen3-ASR-0.6B + llama-server）：状态与下载进度（voice tab 打开时才拉取）
+  const [voiceLocal, setVoiceLocal] = useState<VoiceLocalStatus | null>(null);
+  const [voiceDownloading, setVoiceDownloading] = useState(false);
+  const [voiceDownloadError, setVoiceDownloadError] = useState("");
+
+  useEffect(() => {
+    if (tab !== "voice") return;
+    const dyworker = window.dyworker;
+    if (!dyworker?.getVoiceLocalStatus) return;
+    dyworker.getVoiceLocalStatus().then((status) => setVoiceLocal(status)).catch(() => { });
+    return dyworker.onVoiceLocalDownloadProgress((progress) => {
+      setVoiceLocal((current) => (current
+        ? { ...current, model: { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total } }
+        : current));
+    });
+  }, [tab]);
+
+  const startVoiceLocalDownload = async () => {
+    if (voiceDownloading) return;
+    setVoiceDownloading(true);
+    setVoiceDownloadError("");
+    try {
+      const result = await window.dyworker?.downloadVoiceLocalModel();
+      if (result?.status) setVoiceLocal(result.status);
+      if (result?.ok === false) setVoiceDownloadError(result.error || "下载失败，请重试");
+    } catch (error) {
+      setVoiceDownloadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVoiceDownloading(false);
+    }
+  };
+
+  // 内置本地语音合成（Qwen3-TTS + llama-tts）：状态与下载进度（voice tab 打开时才拉取）
+  const [ttsLocal, setTtsLocal] = useState<TtsLocalStatus | null>(null);
+  const [ttsDownloading, setTtsDownloading] = useState(false);
+  const [ttsDownloadPhase, setTtsDownloadPhase] = useState("");
+  const [ttsDownloadError, setTtsDownloadError] = useState("");
+
+  useEffect(() => {
+    if (tab !== "voice") return;
+    const dyworker = window.dyworker;
+    if (!dyworker?.getTtsLocalStatus) return;
+    dyworker.getTtsLocalStatus().then((status) => setTtsLocal(status)).catch(() => { });
+    return dyworker.onTtsLocalDownloadProgress((progress) => {
+      // 引擎（与转写共用）与模型两阶段字节口径不同：引擎阶段只展示状态，模型阶段更新整体进度
+      setTtsDownloadPhase(String(progress.phase || ""));
+      if (String(progress.phase || "").startsWith("runtime:")) return;
+      setTtsLocal((current) => (current
+        ? { ...current, model: { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total } }
+        : current));
+    });
+  }, [tab]);
+
+  const startTtsLocalDownload = async () => {
+    if (ttsDownloading) return;
+    setTtsDownloading(true);
+    setTtsDownloadError("");
+    try {
+      const result = await window.dyworker?.downloadTtsLocalModel();
+      if (result?.status) setTtsLocal(result.status);
+      if (result?.ok === false) setTtsDownloadError(result.error || "下载失败，请重试");
+    } catch (error) {
+      setTtsDownloadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTtsDownloading(false);
+      setTtsDownloadPhase("");
+    }
+  };
+
   const applyProvider = (id: string) => {
     setProviderId(id);
     const next = providerPresets.find((item) => item.id === id);
@@ -4121,6 +4270,61 @@ function SettingsDialog({
         {tab === "voice" && (<>
         <div className="dialog-section-title">语音转写</div>
         <label>
+          转写引擎
+          <select
+            value={draft.transcriptionEngine}
+            onChange={(event) => setDraft({ ...draft, transcriptionEngine: event.target.value as ProviderSettings["transcriptionEngine"] })}
+          >
+            <option value="cloud">云端服务（OpenAI 兼容 /audio/transcriptions）</option>
+            <option value="local">本地引擎（Qwen3-ASR-0.6B，离线可用）</option>
+          </select>
+        </label>
+        {draft.transcriptionEngine === "local" && (
+          <div className="dialog-note">
+            {voiceLocal?.model.downloaded
+              ? "本地语音模型已就绪：Qwen3-ASR-0.6B（约 1GB，已存本机）。首次转写按需启动引擎（约 2-5 秒），空闲 3 分钟后自动退出释放内存。"
+              : "本地语音模型未下载：Qwen3-ASR-0.6B（模型约 1GB + 引擎约 20MB），下载完成后无需联网即可把语音转成文字。"}
+            {!voiceLocal?.model.downloaded && (
+              <button type="button" className="settings-update-check" onClick={startVoiceLocalDownload} disabled={voiceDownloading}>
+                {voiceDownloading
+                  ? `下载中 ${voiceLocal?.model.expectedBytes ? Math.min(99, Math.round((voiceLocal.model.sizeBytes / voiceLocal.model.expectedBytes) * 100)) : 0}%`
+                  : "下载模型与引擎"}
+              </button>
+            )}
+            {voiceDownloadError && <p style={{ color: "#c0392b" }}>{voiceDownloadError}</p>}
+            <label>
+              模型保存路径（可选）
+              <span style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={draft.asrModelDir}
+                  placeholder="默认存到应用数据目录 models/asr"
+                  onChange={(event) => setDraft({ ...draft, asrModelDir: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="settings-update-check"
+                  onClick={async () => {
+                    const picked = await window.dyworker?.chooseVoiceLocalDir();
+                    if (picked?.path) setDraft({ ...draft, asrModelDir: picked.path });
+                  }}
+                >
+                  浏览…
+                </button>
+              </span>
+            </label>
+            <label>
+              自定义 llama-server 路径（可选）
+              <input
+                value={draft.llamaServerPath}
+                placeholder="留空使用内置下载的语音引擎"
+                onChange={(event) => setDraft({ ...draft, llamaServerPath: event.target.value })}
+              />
+            </label>
+            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。</p>
+          </div>
+        )}
+        {draft.transcriptionEngine !== "local" && (<>
+        <label>
           转写服务地址
           <input
             value={draft.transcriptionEndpoint}
@@ -4136,7 +4340,77 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, transcriptionModel: event.target.value })}
           />
         </label>
+        </>)}
         <div className="dialog-section-title" style={{ marginTop: 18 }}>语音合成（渠道语音发送）</div>
+        <label>
+          合成引擎
+          <select
+            value={draft.ttsEngine}
+            onChange={(event) => setDraft({ ...draft, ttsEngine: event.target.value as ProviderSettings["ttsEngine"] })}
+          >
+            <option value="cloud">云端服务（OpenAI 兼容 /audio/speech）</option>
+            <option value="local">本地引擎（Qwen3-TTS，离线可用）</option>
+          </select>
+        </label>
+        {draft.ttsEngine === "local" && (
+          <div className="dialog-note">
+            {ttsLocal?.model.downloaded
+              ? "本地语音合成模型已就绪：Qwen3-TTS-1.7B（约 2.3GB，已存本机）。合成时按需启动引擎，无需联网。"
+              : "本地语音合成模型未下载：Qwen3-TTS-1.7B（模型约 2.3GB + 引擎与语音转写共用），下载完成后无需联网即可把文字合成语音。"}
+            {!ttsLocal?.model.downloaded && (
+              <button type="button" className="settings-update-check" onClick={startTtsLocalDownload} disabled={ttsDownloading}>
+                {ttsDownloading
+                  ? (ttsDownloadPhase.startsWith("runtime:")
+                    ? "下载引擎中…"
+                    : `下载中 ${ttsLocal?.model.expectedBytes ? Math.min(99, Math.round((ttsLocal.model.sizeBytes / ttsLocal.model.expectedBytes) * 100)) : 0}%`)
+                  : "下载模型与引擎"}
+              </button>
+            )}
+            {ttsDownloadError && <p style={{ color: "#c0392b" }}>{ttsDownloadError}</p>}
+            <label>
+              模型保存路径（可选）
+              <span style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={draft.ttsModelDir}
+                  placeholder="默认存到应用数据目录 models/tts"
+                  onChange={(event) => setDraft({ ...draft, ttsModelDir: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="settings-update-check"
+                  onClick={async () => {
+                    const picked = await window.dyworker?.chooseTtsLocalDir();
+                    if (picked?.path) setDraft({ ...draft, ttsModelDir: picked.path });
+                  }}
+                >
+                  浏览…
+                </button>
+              </span>
+            </label>
+            <label>
+              参考音色音频（可选）
+              <span style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={draft.ttsVoicePath}
+                  placeholder="留空用模型默认音色；选一段 6-15 秒的人声可克隆音色"
+                  onChange={(event) => setDraft({ ...draft, ttsVoicePath: event.target.value })}
+                />
+                <button
+                  type="button"
+                  className="settings-update-check"
+                  onClick={async () => {
+                    const picked = await window.dyworker?.chooseTtsVoice();
+                    if (picked?.path) setDraft({ ...draft, ttsVoicePath: picked.path });
+                  }}
+                >
+                  浏览…
+                </button>
+              </span>
+            </label>
+            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。</p>
+          </div>
+        )}
+        {draft.ttsEngine !== "local" && (<>
         <label>
           合成服务地址
           <input
@@ -4162,6 +4436,7 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, ttsApiKey: event.target.value })}
           />
         </label>
+        </>)}
         <p className="dialog-note">切换服务商后只需核对模型名称并填入密钥。文本、图片附件和语音转写使用兼容 OpenAI 格式的服务。</p>
         </>)}
         <div className="dialog-actions">
@@ -4401,6 +4676,10 @@ export function App() {
   const activeIdRef = useRef(activeId);
   const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // @引用高亮镜像层：与 textarea 同步滚动，保持 token 背景对齐
+  const composerMirrorRef = useRef<HTMLDivElement>(null);
+  // @token → 实际选择的文件路径：同名文件时以用户候选菜单里点选的那个为准
+  const mentionTokenPathsRef = useRef<Map<string, string>>(new Map());
   const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
   const toolPanelTabSequenceRef = useRef(1);
@@ -5420,14 +5699,47 @@ export function App() {
     return out;
   }, [workspaceEntries]);
 
-  const addWorkspaceFile = (file: WorkspaceEntry) => {
-    const attachment = workspaceFileAttachment(file);
-    setAttachments((current) => current.some((entry) => entry.path === attachment.path)
-      ? current
-      : [...current, attachment].slice(0, 12));
+  // 把文件解析成 @token 引用：优先用用户在候选菜单里点选的路径，同名文件退回按名字匹配
+  const resolveTokenFile = (name: string): WorkspaceEntry | undefined => {
+    const recorded = mentionTokenPathsRef.current.get(name);
+    if (recorded) {
+      const exact = workspaceFiles.find((file) => file.path === recorded);
+      if (exact) return exact;
+    }
+    return workspaceFiles.find((file) => file.name === name);
+  };
+
+  // 输入框正文里能解析成文件引用的 @token：镜像层只为这些 token 画高亮
+  const activeTokenNames = useMemo(() => {
+    const names = new Set<string>();
+    if (!composer) return names;
+    FILE_TOKEN_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = FILE_TOKEN_REGEX.exec(composer))) {
+      if (!names.has(match[1]) && resolveTokenFile(match[1])) names.add(match[1]);
+    }
+    return names;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composer, workspaceFiles]);
+
+  // 在光标处插入「@文件名 」内联 token：引用随正文按顺序展示（对齐 Codex 的 @ 引用体验）
+  const insertFileToken = (file: WorkspaceEntry) => {
+    const token = `@${file.name} `;
+    const textarea = textareaRef.current;
+    const start = textarea ? textarea.selectionStart : composer.length;
+    const end = textarea ? textarea.selectionEnd : composer.length;
+    mentionTokenPathsRef.current.set(file.name, file.path);
+    setComposer(composer.slice(0, start) + token + composer.slice(end));
     setMentionMenu(null);
     setNotice(`已引用文件：${file.name}`);
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    window.setTimeout(() => {
+      const target = textareaRef.current;
+      if (target) {
+        const pos = start + token.length;
+        target.focus();
+        target.setSelectionRange(pos, pos);
+      }
+    }, 0);
   };
 
   const handleComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -5448,7 +5760,7 @@ export function App() {
     event.preventDefault();
     setComposerDragActive(false);
     const file = workspaceFiles.find((entry) => entry.path === filePath);
-    if (file) addWorkspaceFile(file);
+    if (file) insertFileToken(file);
   };
 
   const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -5646,7 +5958,8 @@ export function App() {
   const updateComposer = (value: string) => {
     setComposer(value);
     const slashMatch = value.match(/^\s*\/([^\s@/]*)$/);
-    const atMatch = value.match(/(?:^|\s)@([^\s@/]*)$/);
+    // @ 引用允许在路径中出现 /（如 @src/pages/list），输入 / 不再中断候选菜单
+    const atMatch = value.match(/(?:^|\s)@([^\s@]*)$/);
     const matched = slashMatch
       ? { kind: "slash" as const, query: slashMatch[1] }
       : atMatch
@@ -5672,17 +5985,30 @@ export function App() {
     if (mentionMenu.kind === "slash" && item.prompt) {
       // 内置命令（如 /init）：把预设指令填入输入框，由用户确认后发送
       setComposer(item.prompt);
+    } else if (mentionMenu.kind === "at" && item.file) {
+      // 文件引用：在 @ 位置原地插入内联 token，引用按输入顺序留在正文里
+      const token = `@${item.file.name} `;
+      const start = mentionMenu.start;
+      const end = start + mentionMenu.query.length + 1;
+      mentionTokenPathsRef.current.set(item.file.name, item.file.path);
+      setComposer(composer.slice(0, start) + token + composer.slice(end));
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + token.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
     } else {
       setComposer(composer.slice(0, mentionMenu.start));
       if (mentionMenu.kind === "slash" && item.skill) {
         const skill = item.skill;
         setActiveSkills((current) => current.some((entry) => entry.id === skill.id) ? current : [...current, skill]);
-      } else if (mentionMenu.kind === "at" && item.file) {
-        addWorkspaceFile(item.file);
       }
     }
     setMentionMenu(null);
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    if (mentionMenu.kind === "slash") window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
   const chooseWorkspace = async () => {
@@ -5943,11 +6269,15 @@ export function App() {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
         setComposer((current) => `${current}${current ? "\n" : ""}请根据当前工作文件夹整理一份工作摘要。`);
       } else {
-        const buffer = await blob.arrayBuffer();
+        // 本地引擎只认 WAV：webm 录音先解码重采样成 16k 单声道；云端直接发原始格式
+        const engineLocal = settings.transcriptionEngine === "local";
+        const audio = engineLocal
+          ? await blobToWav16kMono(blob)
+          : new Uint8Array(await blob.arrayBuffer());
         const result = await window.dyworker.transcribeAudio({
           settings,
-          audio: Array.from(new Uint8Array(buffer)),
-          mimeType: blob.type || "audio/webm",
+          audio: Array.from(audio),
+          mimeType: engineLocal ? "audio/wav" : blob.type || "audio/webm",
         });
         setComposer((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${result.text}`);
       }
@@ -5977,7 +6307,9 @@ export function App() {
       setNotice("语音已转换为文字");
       return;
     }
-    if (!settings.apiKey || (!settings.transcriptionEndpoint && !settings.endpoint)) {
+    // 本地引擎不需要云端密钥与转写地址；模型没下载时由主进程转写报错提示
+    if (settings.transcriptionEngine !== "local"
+      && (!settings.apiKey || (!settings.transcriptionEndpoint && !settings.endpoint))) {
       setError("请先在设置中配置模型密钥和语音转写服务");
       setSettingsOpen(true);
       return;
@@ -6057,7 +6389,23 @@ export function App() {
     }
     setError("");
     setComposer("");
-    const selectedAttachments = attachments;
+    // 正文里的 @文件名 token 按出现顺序解析成附件（内联引用），后面跟上手动添加的附件
+    const tokenAttachments: Attachment[] = [];
+    const seenTokenPaths = new Set<string>();
+    FILE_TOKEN_REGEX.lastIndex = 0;
+    let tokenMatch: RegExpExecArray | null;
+    while ((tokenMatch = FILE_TOKEN_REGEX.exec(content))) {
+      const file = resolveTokenFile(tokenMatch[1]);
+      if (file && !seenTokenPaths.has(file.path)) {
+        seenTokenPaths.add(file.path);
+        tokenAttachments.push({ ...workspaceFileAttachment(file), inlineRef: true });
+      }
+    }
+    mentionTokenPathsRef.current.clear();
+    const selectedAttachments = [
+      ...tokenAttachments,
+      ...attachments.filter((attachment) => !seenTokenPaths.has(attachment.path)),
+    ];
     const selectedSkills = activeSkills;
     setAttachments([]);
     setActiveSkills([]);
@@ -7383,7 +7731,7 @@ export function App() {
                           className={`user-bubble${isEditing ? " editing" : ""}`}
                           onContextMenu={handleMessageContextMenu}
                         >
-                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage)) && (
+                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef)) && (
                           <span className="message-inline-refs">
                             {message.skillsUsed?.map((name) => (
                               <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
@@ -7391,7 +7739,8 @@ export function App() {
                                 <span>{name}</span>
                               </span>
                             ))}
-                            {message.attachments?.filter((attachment) => !attachment.isImage).map((attachment) => (
+                            {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
+                            {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef).map((attachment) => (
                               <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
                                 {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
                                 <span>{attachment.name}</span>
@@ -7399,7 +7748,10 @@ export function App() {
                             ))}
                           </span>
                         )}
-                        <ClampedUserText text={messageVisibleText(message)} />
+                        <ClampedUserText
+                          text={messageVisibleText(message)}
+                          tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
+                        />
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
@@ -7818,22 +8170,31 @@ export function App() {
                   </button>
                 </span>
               ))}
-              <textarea
-                ref={textareaRef}
-                value={composer}
-                onChange={(event) => updateComposer(event.target.value)}
-                onPaste={(event) => void handleComposerPaste(event)}
-                onContextMenu={handleComposerContextMenu}
-                onKeyDown={onComposerKeyDown}
-                onCompositionStart={() => { composingRef.current = true; }}
-                onCompositionEnd={() => { composingRef.current = false; }}
-                placeholder="描述要完成的工作"
-                lang="zh-CN"
-                inputMode="text"
-                autoComplete="off"
-                spellCheck={false}
-                rows={3}
-              />
+              <div className="composer-input-wrap">
+                {/* 镜像层：渲染在 textarea 之下，给正文里的 @文件 token 画内联高亮底色 */}
+                <div className="composer-mirror" ref={composerMirrorRef} aria-hidden>
+                  {renderFileTokenText(composer, activeTokenNames, "mirror")}
+                </div>
+                <textarea
+                  ref={textareaRef}
+                  value={composer}
+                  onChange={(event) => updateComposer(event.target.value)}
+                  onPaste={(event) => void handleComposerPaste(event)}
+                  onContextMenu={handleComposerContextMenu}
+                  onKeyDown={onComposerKeyDown}
+                  onScroll={(event) => {
+                    if (composerMirrorRef.current) composerMirrorRef.current.scrollTop = event.currentTarget.scrollTop;
+                  }}
+                  onCompositionStart={() => { composingRef.current = true; }}
+                  onCompositionEnd={() => { composingRef.current = false; }}
+                  placeholder="描述要完成的工作"
+                  lang="zh-CN"
+                  inputMode="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  rows={3}
+                />
+              </div>
             </div>
             <div className="composer-toolbar">
               <div className="composer-actions">
@@ -7949,6 +8310,17 @@ export function App() {
                     </div>
                   )}
                 </div>
+                {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
+                <button
+                  type="button"
+                  className={`icon-button voice-button ${voiceState === "recording" ? "recording" : ""} ${voiceState === "transcribing" ? "transcribing" : ""}`}
+                  onClick={() => void toggleVoiceInput()}
+                  disabled={voiceState === "transcribing"}
+                  aria-label={voiceState === "recording" ? "结束录音" : "语音输入"}
+                  title={voiceState === "recording" ? "正在录音，再次点击结束" : "语音输入"}
+                >
+                  {voiceState === "transcribing" ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} />}
+                </button>
               </div>
               <div className="composer-actions">
                 <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
@@ -8154,7 +8526,7 @@ export function App() {
                 onClearWorkspace={clearWorkspace}
                 onError={setError}
                 onNotice={setNotice}
-                onInsertFile={addWorkspaceFile}
+                onInsertFile={insertFileToken}
               />
             </section>
           )}
