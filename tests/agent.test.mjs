@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import fsSync from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
+import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
@@ -972,12 +975,14 @@ test("替我审批放行的外部路径仍按单次授权,后续操作重新评�
 test("替我审批:审核助手放行时不再弹人工审批", async () => {
   const root = await makeWorkspace();
   let userApprovals = 0;
+  const auditEntries = [];
   const result = await runAgent({
     settings,
     workspacePath: root,
     approvalMode: "reviewer",
     conversation: [{ role: "user", content: "推送当前分支" }],
     requestApproval: async () => { userApprovals += 1; return true; },
+    audit: (entry) => auditEntries.push(entry),
     fetchImpl: mockFetch([
       { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "git push origin main" })] },
       { role: "assistant", content: '{"decision":"allow","reason":"用户明确要求推送"}' },
@@ -986,6 +991,11 @@ test("替我审批:审核助手放行时不再弹人工审批", async () => {
   });
   assert.equal(result.status, "done");
   assert.equal(userApprovals, 0, "审核助手放行后不应弹人工审批");
+  // 审计记录标明决策来源模型，便于确认是哪个模型放行的
+  const allowed = auditEntries.find((entry) => entry.decision === "reviewer-allowed");
+  assert.ok(allowed, "审核助手放行应有审计记录");
+  assert.match(allowed.model, /当前模型/);
+  assert.match(allowed.detail, /用户明确要求推送/);
 });
 
 test("替我审批:审核助手拒绝后不执行并告知模型", async () => {
@@ -1968,6 +1978,153 @@ test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败�
   });
   assert.equal(broken.decision, "ask");
   assert.match(broken.reason, /审核助手不可用/);
+});
+
+test("审核助手可走独立本地小模型端点,密钥缺省回退主模型", async () => {
+  const seen = [];
+  const fetchImpl = async (url, options) => {
+    seen.push({ url: String(url), body: JSON.parse(options.body), auth: options.headers?.Authorization || "" });
+    return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: '{"decision":"allow","reason":"本地模型放行"}' } }] }) };
+  };
+  const reviewerSettings = {
+    ...settings,
+    reviewerEndpoint: "http://127.0.0.1:11434/v1/chat/completions",
+    reviewerModel: "qwen3:4b",
+  };
+  const result = await reviewApproval({
+    settings: reviewerSettings,
+    action: { kind: "run_command", title: "运行命令", details: "npm install" },
+    fetchImpl,
+  });
+  assert.deepEqual(result, { decision: "allow", reason: "本地模型放行" });
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].url, /127\.0\.0\.1:11434/);
+  assert.equal(seen[0].body.model, "qwen3:4b");
+  // 审核密钥未配置时回退主模型密钥
+  assert.equal(seen[0].auth, "Bearer k");
+  seen.length = 0;
+  await reviewApproval({
+    settings: { ...reviewerSettings, reviewerApiKey: "local-key" },
+    action: { kind: "run_command", title: "运行命令", details: "npm install" },
+    fetchImpl,
+  });
+  assert.equal(seen[0].auth, "Bearer local-key");
+  // 未配置审核模型时跟随主模型端点
+  seen.length = 0;
+  await reviewApproval({
+    settings,
+    action: { kind: "run_command", title: "运行命令", details: "npm install" },
+    fetchImpl,
+  });
+  assert.match(seen[0].url, /mock\.local/);
+  assert.equal(seen[0].body.model, "mock-model");
+});
+
+test("reviewerCacheKey 归一化空白差异,工具与内容参与键", () => {
+  assert.equal(reviewerCacheKey("run_command", "curl -s  http://x\n  | head"), reviewerCacheKey("run_command", "curl -s http://x | head"));
+  assert.notEqual(reviewerCacheKey("run_command", "ls /a"), reviewerCacheKey("run_command", "ls /b"));
+  assert.notEqual(reviewerCacheKey("run_command", "ls /a"), reviewerCacheKey("write_file", "ls /a"));
+  assert.equal(reviewerCacheKey("run_command", "   \n  "), "");
+});
+
+test("reviewApproval 走本地内置审核模型,异常时 fail-closed", async () => {
+  const calls = [];
+  const localImpl = async (input) => {
+    calls.push(input);
+    return '{"decision":"allow","reason":"本地模型放行"}';
+  };
+  const fetchGuard = async () => { throw new Error("不应发起 HTTP 请求"); };
+  const result = await reviewApproval({
+    settings: { ...settings, reviewerBackend: "local" },
+    action: { kind: "run_command", title: "运行命令", details: "ls /tmp" },
+    fetchImpl: fetchGuard,
+    localReviewImpl: localImpl,
+  });
+  assert.deepEqual(result, { decision: "allow", reason: "本地模型放行" });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].policy, /审核助手/);
+  assert.equal(calls[0].action.kind, "run_command");
+  // 本地模型抛错 → 转人工
+  const fallback = await reviewApproval({
+    settings: { ...settings, reviewerBackend: "local" },
+    action: { kind: "run_command", title: "运行命令", details: "ls /tmp" },
+    fetchImpl: fetchGuard,
+    localReviewImpl: async () => { throw new Error("GPU 内存不足"); },
+  });
+  assert.equal(fallback.decision, "ask");
+  assert.match(fallback.reason, /本地审核模型不可用/);
+  // 显式 main 时即使填过自定义端点也跟随主模型
+  const seen = [];
+  await reviewApproval({
+    settings: { ...settings, reviewerBackend: "main", reviewerEndpoint: "http://reviewer.local/v1/chat/completions", reviewerModel: "reviewer-model" },
+    action: { kind: "run_command", title: "运行命令", details: "ls /tmp" },
+    fetchImpl: async (url, options) => {
+      seen.push({ url: String(url), body: JSON.parse(options.body) });
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: '{"decision":"allow","reason":"ok"}' } }] }) };
+    },
+  });
+  assert.match(seen[0].url, /mock\.local/);
+  assert.equal(seen[0].body.model, "mock-model");
+});
+
+test("stripThinkingBlocks 与审核提示词构建", () => {
+  assert.equal(stripThinkingBlocks("<think>推理过程</think>{\"decision\":\"allow\"}"), '{"decision":"allow"}');
+  assert.equal(stripThinkingBlocks("<think>未闭合的思考"), "");
+  assert.equal(stripThinkingBlocks("  {\"decision\":\"deny\"}  "), '{"decision":"deny"}');
+  const prompt = buildLocalReviewPrompt({
+    action: { kind: "run_command", title: "运行命令", details: "ls -la" },
+    context: "上下文",
+  });
+  assert.match(prompt, /上下文/);
+  assert.match(prompt, /run_command/);
+  assert.match(prompt, /ls -la/);
+  // 超长详情被裁剪
+  const long = buildLocalReviewPrompt({ action: { kind: "k", title: "t", details: "x".repeat(5000) }, context: "c".repeat(5000) });
+  assert.ok(long.length < 10000);
+});
+
+test("本地审核模型状态与下载目录管理", () => {
+  // 未配置目录：不可用
+  configureLocalReviewer({ dir: null });
+  assert.deepEqual(localReviewerModelStatus(), { configured: false, downloaded: false, sizeBytes: 0, expectedBytes: LOCAL_REVIEWER_MODEL.bytes });
+  assert.equal(localReviewerModelPath(), null);
+  // 配置目录但模型未下载
+  const dir = fsSync.mkdtempSync(path.join(os.tmpdir(), "dyworker-reviewer-"));
+  try {
+    configureLocalReviewer({ dir });
+    assert.equal(localReviewerModelPath(), path.join(dir, LOCAL_REVIEWER_MODEL.fileName));
+    const status = localReviewerModelStatus();
+    assert.equal(status.configured, true);
+    assert.equal(status.downloaded, false);
+    assert.equal(status.expectedBytes, 639446688);
+  } finally {
+    configureLocalReviewer({ dir: null });
+  }
+});
+
+test("本地审核模型下载:未配置目录报错,字节不完整时报错且保留 .part 供续传", async () => {
+  await assert.rejects(() => downloadLocalReviewerModel({}), /目录未初始化/);
+  const dir = fsSync.mkdtempSync(path.join(os.tmpdir(), "dyworker-reviewer-dl-"));
+  configureLocalReviewer({ dir });
+  try {
+    let fetchCalls = 0;
+    await assert.rejects(
+      () => downloadLocalReviewerModel({
+        fetchImpl: async () => {
+          fetchCalls += 1;
+          return { ok: true, status: 200, body: Readable.toWeb(Readable.from(["partial"])) };
+        },
+      }),
+      /下载不完整/,
+    );
+    // 三个下载源都试过
+    assert.equal(fetchCalls, LOCAL_REVIEWER_MODEL.sources.length);
+    // .part 保留用于断点续传
+    assert.equal(fsSync.existsSync(path.join(dir, `${LOCAL_REVIEWER_MODEL.fileName}.part`)), true);
+  } finally {
+    configureLocalReviewer({ dir: null });
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("isReviewerEligible 只接管可审核的越界请求,系统破坏/本机界面/钩子一律转人工", () => {

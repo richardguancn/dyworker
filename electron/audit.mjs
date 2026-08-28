@@ -33,7 +33,7 @@ export function createAuditLog({ filePath, maxBytes = 5 * 1024 * 1024 } = {}) {
   }
 
   return {
-    // entry: { time?, sessionId?, tool, summary?, riskClass?, decision, approvalMode?, detail? }
+    // entry: { time?, sessionId?, tool, summary?, riskClass?, decision, approvalMode?, detail?, model? }
     // decision ∈ auto-allowed | rule-allowed | approved | denied | blocked | executed | failed
     record(entry) {
       const sanitized = {
@@ -43,6 +43,7 @@ export function createAuditLog({ filePath, maxBytes = 5 * 1024 * 1024 } = {}) {
         ...(entry?.riskClass ? { riskClass: String(entry.riskClass) } : {}),
         decision: String(entry?.decision || ""),
         ...(entry?.approvalMode ? { approvalMode: String(entry.approvalMode) } : {}),
+        ...(entry?.model ? { model: String(entry.model).slice(0, 120) } : {}),
         ...(entry?.summary ? { summary: clipText(entry.summary, MAX_SUMMARY) } : {}),
         ...(entry?.detail ? { detail: clipText(entry.detail, MAX_DETAIL) } : {}),
       };

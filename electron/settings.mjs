@@ -13,6 +13,14 @@ export function normalizeApprovalMode(value) {
   return ["interactive", "reviewer", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
 }
 
+// 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义 OpenAI 兼容端点。
+// 旧数据没这个字段时按是否填过自定义审核端点推断，避免升级后静默改变行为。
+export function normalizeReviewerBackend(value, source = {}) {
+  const v = String(value || "");
+  if (v === "main" || v === "local" || v === "custom") return v;
+  return String(source.reviewerEndpoint || "").trim() && String(source.reviewerModel || "").trim() ? "custom" : "main";
+}
+
 export function normalizeIdentity(value) {
   return value === "general" || value === "government" ? value : null;
 }
@@ -53,6 +61,7 @@ export function needsSecretMigration(stored) {
   if (source.apiKey && source.encrypted !== true) return true;
   if (source.visionApiKey && source.visionApiKeyEncrypted !== true) return true;
   if (source.ttsApiKey && source.ttsApiKeyEncrypted !== true) return true;
+  if (source.reviewerApiKey && source.reviewerApiKeyEncrypted !== true) return true;
   return (Array.isArray(source.profiles) ? source.profiles : [])
     .some((profile) => profile?.apiKey && profile?.encrypted !== true);
 }
@@ -68,6 +77,7 @@ export function countUndecryptableSecrets(stored, secretStorage) {
   if (stuck(source.apiKey, source.encrypted)) count += 1;
   if (stuck(source.visionApiKey, source.visionApiKeyEncrypted)) count += 1;
   if (stuck(source.ttsApiKey, source.ttsApiKeyEncrypted)) count += 1;
+  if (stuck(source.reviewerApiKey, source.reviewerApiKeyEncrypted)) count += 1;
   for (const profile of Array.isArray(source.profiles) ? source.profiles : []) {
     if (stuck(profile?.apiKey, profile?.encrypted)) count += 1;
   }
@@ -96,6 +106,10 @@ export function preserveUndecryptableSecrets(serialized, stored, secretStorage) 
   if (shouldKeep(serialized.ttsApiKey, stored.ttsApiKey, stored.ttsApiKeyEncrypted)) {
     serialized.ttsApiKey = String(stored.ttsApiKey);
     serialized.ttsApiKeyEncrypted = true;
+  }
+  if (shouldKeep(serialized.reviewerApiKey, stored.reviewerApiKey, stored.reviewerApiKeyEncrypted)) {
+    serialized.reviewerApiKey = String(stored.reviewerApiKey);
+    serialized.reviewerApiKeyEncrypted = true;
   }
   const storedProfiles = Array.isArray(stored.profiles) ? stored.profiles : [];
   serialized.profiles = (Array.isArray(serialized.profiles) ? serialized.profiles : []).map((profile) => {
@@ -219,6 +233,11 @@ export function deserializeSettings(stored, secretStorage) {
     ttsEndpoint: String(source.ttsEndpoint || ""),
     ttsModel: String(source.ttsModel || ""),
     ttsApiKey: decryptSecret(source.ttsApiKey, source.ttsApiKeyEncrypted === true, secretStorage),
+    // 审核助手自定义端点（reviewerBackend 为 custom 时生效）；local 时用内置本地小模型
+    reviewerEndpoint: String(source.reviewerEndpoint || ""),
+    reviewerModel: String(source.reviewerModel || ""),
+    reviewerApiKey: decryptSecret(source.reviewerApiKey, source.reviewerApiKeyEncrypted === true, secretStorage),
+    reviewerBackend: normalizeReviewerBackend(source.reviewerBackend, source),
     searxngEndpoint: String(source.searxngEndpoint || ""),
     bochaApiKey: String(source.bochaApiKey || ""),
     deepseekSearchApiKey: String(source.deepseekSearchApiKey || ""),
@@ -252,6 +271,10 @@ export function serializeSettings(settings, secretStorage) {
     ttsEndpoint: String(settings?.ttsEndpoint || "").trim(),
     ttsModel: String(settings?.ttsModel || "").trim(),
     ttsApiKey: String(settings?.ttsApiKey || "").trim(),
+    reviewerEndpoint: String(settings?.reviewerEndpoint || "").trim(),
+    reviewerModel: String(settings?.reviewerModel || "").trim(),
+    reviewerApiKey: String(settings?.reviewerApiKey || "").trim(),
+    reviewerBackend: normalizeReviewerBackend(settings?.reviewerBackend, settings || {}),
     searxngEndpoint: String(settings?.searxngEndpoint || "").trim(),
     bochaApiKey: String(settings?.bochaApiKey || "").trim(),
     deepseekSearchApiKey: String(settings?.deepseekSearchApiKey || "").trim(),
@@ -276,6 +299,7 @@ export function serializeSettings(settings, secretStorage) {
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
   const ttsSecret = encryptSecret(normalized.ttsApiKey, secretStorage);
+  const reviewerSecret = encryptSecret(normalized.reviewerApiKey, secretStorage);
   return {
     identity: normalized.identity,
     endpoint: normalized.endpoint,
@@ -290,6 +314,11 @@ export function serializeSettings(settings, secretStorage) {
     ttsModel: normalized.ttsModel,
     ttsApiKey: ttsSecret.value,
     ttsApiKeyEncrypted: ttsSecret.encrypted,
+    reviewerEndpoint: normalized.reviewerEndpoint,
+    reviewerModel: normalized.reviewerModel,
+    reviewerApiKey: reviewerSecret.value,
+    reviewerApiKeyEncrypted: reviewerSecret.encrypted,
+    reviewerBackend: normalized.reviewerBackend,
     searxngEndpoint: normalized.searxngEndpoint,
     bochaApiKey: normalized.bochaApiKey,
     deepseekSearchApiKey: normalized.deepseekSearchApiKey,

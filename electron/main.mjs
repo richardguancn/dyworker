@@ -20,6 +20,7 @@ import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
+import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus } from "./local-reviewer.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mjs";
 import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
@@ -250,6 +251,26 @@ ipcMain.handle("app-update:install", () => appUpdater?.install() || {
 
 // 审计日志（audit.jsonl）：有副作用的工具调用，审批决策与执行结果逐条落盘
 const auditLog = createAuditLog({ filePath: path.join(app.getPath("userData"), "audit.jsonl") });
+
+// ---- 内置本地审核模型（Qwen3-0.6B，llama.cpp 推理）----
+// 模型文件放 userData/models/reviewer/，设置里一键下载（ModelScope 优先）
+configureLocalReviewer({ dir: path.join(app.getPath("userData"), "models", "reviewer") });
+
+ipcMain.handle("reviewer-local:status", () => localReviewerModelStatus());
+ipcMain.handle("reviewer-local:download", async () => {
+  try {
+    const result = await downloadLocalReviewerModel({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("reviewer-local:download-progress", progress);
+        }
+      },
+    });
+    return { ok: true, ...result, status: localReviewerModelStatus() };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
 
 // ---- 防止电脑休眠 ----
 // 安全设计:只用 prevent-app-suspension(阻止系统挂起),不用 prevent-display-sleep——

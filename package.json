@@ -36,6 +36,7 @@
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
+    "node-llama-cpp": "^3.20.0",
     "qrcode": "^1.5.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",
@@ -56,13 +57,17 @@
     "vite": "6.4.2",
     "wait-on": "^8.0.1"
   },
+  "allowScripts": {
+    "node-llama-cpp": true
+  },
   "build": {
     "appId": "com.maquesoft.dyworker.app",
     "productName": "DYWorker",
     "asar": true,
     "asarUnpack": [
       "electron/scripts/linux_computer_use.py",
-      "electron/scripts/macos_computer_use.js"
+      "electron/scripts/macos_computer_use.js",
+      "node_modules/node-llama-cpp/**"
     ],
     "directories": {
       "output": "output/electron",

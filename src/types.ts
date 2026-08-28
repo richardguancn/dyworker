@@ -413,6 +413,15 @@ export interface AppUpdateStatus {
   error?: string;
 }
 
+// 内置本地审核模型（Qwen3-0.6B）下载状态
+export interface ReviewerLocalStatus {
+  configured: boolean;
+  downloaded: boolean;
+  sizeBytes: number;
+  expectedBytes: number;
+  filePath?: string;
+}
+
 export interface ProviderSettings {
   identity: UserIdentity | null;
   endpoint: string;
@@ -428,6 +437,12 @@ export interface ProviderSettings {
   ttsEndpoint: string;
   ttsModel: string;
   ttsApiKey: string;
+  // 审核助手独立模型（reviewer 模式自动审批判断用）；留空跟随主模型，可指向本地小模型端点
+  reviewerEndpoint: string;
+  reviewerModel: string;
+  reviewerApiKey: string;
+  // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义端点
+  reviewerBackend: "main" | "local" | "custom";
   searxngEndpoint: string;
   bochaApiKey: string;
   // DeepSeek 原生搜索密钥：非 DeepSeek 端点下 web_search 默认走 DeepSeek 服务端搜索时用
@@ -557,6 +572,9 @@ export interface DyworkerBridge {
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
+  getReviewerLocalStatus(): Promise<ReviewerLocalStatus>;
+  downloadReviewerLocalModel(): Promise<{ ok: boolean; skipped?: boolean; error?: string; status?: ReviewerLocalStatus }>;
+  onReviewerLocalDownloadProgress(callback: (progress: { received: number; total: number; percent: number }) => void): () => void;
   getAppUpdateStatus(): Promise<AppUpdateStatus>;
   checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;
   downloadAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;
