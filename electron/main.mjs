@@ -1917,7 +1917,9 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         settings,
         workspacePath,
         contextLimit: (() => {
-          const requested = Math.max(30000, Number(payload?.contextLimit) || 128000);
+          // 渲染端按模型静态表或 k3[1M] 式显式覆盖报上来的值，不再设 30000 下限——
+          // 显式写小上下文（如 model[16K]）是用户意图，需原样尊重；未上报时回退 128k。
+          const requested = Number(payload?.contextLimit) || 128000;
           return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
         })(),
         workingContext: String(payload?.workingContext || ""),

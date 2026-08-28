@@ -123,9 +123,23 @@ export function usesResponsesApi(endpoint: string): boolean {
   }
 }
 
+// 模型名上下文覆盖语法：k3[1M]、Qwen3.8-27B[256K]、model[131072]。
+// 方括号后缀只影响本地上下文管理（用量圆环、裁剪/压缩阈值）；
+// 实际请求由主进程剥离后缀再发给服务端，与 electron/agent.mjs 的 bareModelName 保持同一语法。
+export function parseModelContextOverride(model: string): { name: string; contextLimit: number | null } {
+  const raw = String(model || "").trim();
+  const match = raw.match(/^(.*?)\s*\[([0-9]+(?:\.[0-9]+)?)\s*([kKmM])?\]$/);
+  if (!match) return { name: raw, contextLimit: null };
+  const unit = match[3]?.toLowerCase();
+  const value = Number(match[2]) * (unit === "m" ? 1048576 : unit === "k" ? 1024 : 1);
+  return { name: match[1].trim(), contextLimit: Number.isFinite(value) && value > 0 ? Math.floor(value) : null };
+}
+
 // 模型上下文上限（用于用量圆环；为公开资料的近似值，仅作参考）
 export function modelContextLimit(model: string, endpoint: string): number {
-  const name = String(model || "").trim().toLowerCase();
+  const parsed = parseModelContextOverride(model);
+  if (parsed.contextLimit) return parsed.contextLimit;
+  const name = parsed.name.toLowerCase();
   const preset = providerPresets.find((item) => item.id === matchProvider(endpoint));
   if (!name) return preset?.defaultContextLimit || 131072;
   for (const item of providerPresets) {

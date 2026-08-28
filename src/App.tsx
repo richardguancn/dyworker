@@ -3823,6 +3823,9 @@ function SettingsDialog({
             {preset.models.map((model) => <option key={model} value={model} />)}
           </datalist>
         </label>
+        <p className="dialog-note">
+          可在模型名后加 [1M]、[256K] 或 [131072] 后缀指定上下文上限（如 k3[1M]），仅用于本地用量统计与裁剪；请求时自动剥离后缀。
+        </p>
         <label>
           API 密钥
           <input
