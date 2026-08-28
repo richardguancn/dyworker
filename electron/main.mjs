@@ -15,6 +15,7 @@ import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId
 import { McpClient } from "./mcp.mjs";
 import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, preserveUndecryptableSecrets, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
+import { SESSION_TOOL_NAMES, handleSessionTool, sessionToolDefinitions } from "./session-tools.mjs";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
 import { registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
@@ -1663,7 +1664,8 @@ async function closeAllMcpClients() {
 // ---- 浏览器协作（可见窗口，操作可审计） ----
 
 function agentExtraTools(mcpTools) {
-  return [...mcpTools, ...browserToolDefinitions()];
+  // 会话检索工具全路径开放（桌面/定时/续跑/渠道）：纯只读、数据源是本机会话存档，无审批风险
+  return [...mcpTools, ...browserToolDefinitions(), ...sessionToolDefinitions()];
 }
 
 function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {}) {
@@ -1673,7 +1675,12 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {
     getContents: () => embeddedBrowserContents,
   });
   browserAgent.setWorkspace(workspacePath);
-  const route = (name, args) => {
+  const route = async (name, args) => {
+    // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
+    if (SESSION_TOOL_NAMES.has(String(name))) {
+      const sessions = await readJson(dataFile("sessions.json"), []);
+      return handleSessionTool(name, args, { sessions });
+    }
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
     return callMcpTool(settings, name, args, { signal });
   };
@@ -2194,15 +2201,44 @@ function createInboxItem(partial) {
 }
 
 async function settleInboxItem(id, status, resolution) {
-  const items = await readInbox();
-  const item = items.find((entry) => String(entry.id) === String(id));
-  if (!item || item.status !== "pending") return null;
-  item.status = status;
-  if (resolution) item.resolution = resolution;
-  item.resolvedAt = new Date().toISOString();
-  await writeInbox(items);
-  broadcastInboxChanged();
-  return item;
+  // 与 createInboxItem 共用同一落盘队列：settle 是 read-modify-write，
+  // 不排队会与创建写入互相覆盖（条目丢失或复活成 pending 钉子户）
+  const run = inboxPersistQueue.then(async () => {
+    const items = await readInbox();
+    const item = items.find((entry) => String(entry.id) === String(id));
+    if (!item || item.status !== "pending") return null;
+    item.status = status;
+    if (resolution) item.resolution = resolution;
+    item.resolvedAt = new Date().toISOString();
+    await writeInbox(items);
+    broadcastInboxChanged();
+    return item;
+  });
+  inboxPersistQueue = run.catch(() => { });
+  return run;
+}
+
+// 兜底清“钉子户”：pending 条目的等待 promise 已不在 inboxPending 里（任务提前退出、
+// 计时器丢失等），界面会永远显示为待处理，点击只报“该事项已处理或已失效”且无法删除。
+// 每次读取列表前把这类孤儿条目自动落盘为已失效，卡片随之移入“最近已处理”，可手动移除。
+function sweepOrphanedInboxItems() {
+  const run = inboxPersistQueue.then(async () => {
+    const items = await readInbox();
+    let changed = false;
+    for (const item of items) {
+      if (item.status !== "pending" || inboxPending.has(item.id)) continue;
+      item.status = "expired";
+      item.resolution = "任务已结束，该事项自动失效";
+      item.resolvedAt = new Date().toISOString();
+      changed = true;
+    }
+    if (changed) {
+      await writeInbox(items);
+      broadcastInboxChanged();
+    }
+  });
+  inboxPersistQueue = run.catch(() => { });
+  return run;
 }
 
 // 挂起条目的等待必须有界：无人处理时任务（及其身后的渠道队列/全局守卫）会永久悬死。
@@ -2266,7 +2302,10 @@ async function expireOrphanedInboxItems() {
   if (changed) await writeInbox(items);
 }
 
-ipcMain.handle("inbox:list", () => readInbox());
+ipcMain.handle("inbox:list", async () => {
+  await sweepOrphanedInboxItems();
+  return readInbox();
+});
 
 // 决议挂起条目(收件箱 UI 与 IM 渠道共用);via 标注决议来源,留痕可审计
 async function resolveInboxInternal(id, { approved, answer, via = "desktop" } = {}) {

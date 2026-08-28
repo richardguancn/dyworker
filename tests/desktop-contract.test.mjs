@@ -941,6 +941,15 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(main, /ipcMain\.handle\("inbox:dismiss"/);
   assert.match(main, /expireOrphanedInboxItems/);
   assert.match(main, /expireAllPendingInbox/);
+  // 孤儿 pending 条目（等待 promise 已消失）在读取列表前自动判为失效，杜绝“已失效钉子户”卡片
+  assert.match(main, /sweepOrphanedInboxItems/);
+  assert.match(main, /await sweepOrphanedInboxItems\(\)/);
+  assert.match(main, /inboxPending\.has\(item\.id\)/);
+  // settle 与 create 共用落盘队列，避免 read-modify-write 互相覆盖
+  assert.match(main, /const run = inboxPersistQueue\.then/);
+  // 渲染层：决议失败也刷新列表（过期卡片移入“最近已处理”）；打开收件箱时重新拉取
+  assert.match(app, /无论成败都刷新/);
+  assert.match(app, /setInboxOpen\(true\);\s*\/\/ 打开时重新拉取/);
   assert.match(main, /ipcMain\.handle\("agent:resolve-question"/);
   assert.match(preload, /listInbox:/);
   assert.match(preload, /resolveInbox:/);
