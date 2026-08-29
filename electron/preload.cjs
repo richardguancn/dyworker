@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("reviewer-local:download-progress", listener);
   },
   getVoiceLocalStatus: () => ipcRenderer.invoke("voice-local:status"),
-  downloadVoiceLocalModel: () => ipcRenderer.invoke("voice-local:download"),
+  downloadVoiceLocalModel: (payload) => ipcRenderer.invoke("voice-local:download", payload),
   chooseVoiceLocalDir: () => ipcRenderer.invoke("voice-local:choose-dir"),
   onVoiceLocalDownloadProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
@@ -57,9 +57,12 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("voice-local:download-progress", listener);
   },
   getTtsLocalStatus: () => ipcRenderer.invoke("tts-local:status"),
-  downloadTtsLocalModel: () => ipcRenderer.invoke("tts-local:download"),
+  downloadTtsLocalModel: (payload) => ipcRenderer.invoke("tts-local:download", payload),
   chooseTtsLocalDir: () => ipcRenderer.invoke("tts-local:choose-dir"),
   chooseTtsVoice: () => ipcRenderer.invoke("tts-local:choose-voice"),
+  readTtsVoiceFile: (payload) => ipcRenderer.invoke("tts-local:read-voice", payload),
+  writeTtsVoiceFile: (payload) => ipcRenderer.invoke("tts-local:write-voice", payload),
+  speakText: (payload) => ipcRenderer.invoke("tts:speak", payload),
   onTtsLocalDownloadProgress: (callback) => {
     const listener = (_event, progress) => callback(progress);
     ipcRenderer.on("tts-local:download-progress", listener);

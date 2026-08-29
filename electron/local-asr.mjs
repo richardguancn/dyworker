@@ -1,4 +1,4 @@
-// 本地语音转写（ASR）：llama.cpp 官方预转换的 Qwen3-ASR-0.6B GGUF（text + mmproj 两件套），
+// 本地语音转写（ASR）：llama.cpp 官方预转换的语音 GGUF（text + mmproj 两件套，多模型可选），
 // 由 llama-server（mtmd 音频管线）提供 OpenAI 兼容推理。只负责模型与运行时的下载和状态，
 // 进程管理与转写请求在 local-asr-server.mjs。
 import crypto from "node:crypto";
@@ -9,31 +9,95 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 
-const MODEL_REPO = "ggml-org/Qwen3-ASR-0.6B-GGUF";
-
-// Q8_0 量化：0.6B 小模型量化损失可忽略，转写质量接近原版；text(解码器) + mmproj(音频编码器) 共约 1GB。
-// sha256 为 HuggingFace 官方 LFS oid，下载完成后本地校验。
-export const LOCAL_ASR_FILES = Object.freeze([
-  Object.freeze({
-    fileName: "Qwen3-ASR-0.6B-Q8_0.gguf",
-    bytes: 804749248,
-    sha256: "bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971",
+// 可选模型清单（全部为 ggml-org 官方转换，text 解码器 + mmproj 音频编码器两件套）。
+// Q8_0 量化（Voxtral 官方只有 Q4_K_M 文本模型）：量化损失可忽略，转写质量接近原版。
+// bytes/sha256 为 HuggingFace 官方 LFS 元数据，下载完成后本地校验。
+export const ASR_MODELS = Object.freeze({
+  "qwen3-asr-0.6b": Object.freeze({
+    id: "qwen3-asr-0.6b",
+    label: "Qwen3-ASR-0.6B",
+    repo: "ggml-org/Qwen3-ASR-0.6B-GGUF",
+    note: "约 1GB · 最快，中文优先",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Qwen3-ASR-0.6B-Q8_0.gguf",
+        bytes: 804749248,
+        sha256: "bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971",
+      }),
+      Object.freeze({
+        fileName: "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+        bytes: 214392480,
+        sha256: "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d",
+      }),
+    ]),
   }),
-  Object.freeze({
-    fileName: "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
-    bytes: 214392480,
-    sha256: "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d",
+  "qwen3-asr-1.7b": Object.freeze({
+    id: "qwen3-asr-1.7b",
+    label: "Qwen3-ASR-1.7B",
+    repo: "ggml-org/Qwen3-ASR-1.7B-GGUF",
+    note: "约 2.5GB · 更准确，中文优先",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Qwen3-ASR-1.7B-Q8_0.gguf",
+        bytes: 2165034944,
+        sha256: "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+      }),
+      Object.freeze({
+        fileName: "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+        bytes: 355709344,
+        sha256: "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+      }),
+    ]),
   }),
-]);
+  "ultravox-0.5-1b": Object.freeze({
+    id: "ultravox-0.5-1b",
+    label: "Ultravox-0.5-1B",
+    repo: "ggml-org/ultravox-v0_5-llama-3_2-1b-GGUF",
+    note: "约 2.7GB · 多语言",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Llama-3.2-1B-Instruct-Q8_0.gguf",
+        bytes: 1321083008,
+        sha256: "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+      }),
+      Object.freeze({
+        fileName: "mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf",
+        bytes: 1371123616,
+        sha256: "b34dde1835752949d6b960528269af93c92fec91c61ea0534fcc73f96c1ed8b2",
+      }),
+    ]),
+  }),
+  "voxtral-mini-3b": Object.freeze({
+    id: "voxtral-mini-3b",
+    label: "Voxtral-Mini-3B",
+    repo: "ggml-org/Voxtral-Mini-3B-2507-GGUF",
+    note: "约 3.2GB · 多语言",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Voxtral-Mini-3B-2507-Q4_K_M.gguf",
+        bytes: 2473001920,
+        sha256: "4705be8ec22ca23d12632f4b4a3691faa95917d90a06d3cf3c3ec0e91958f1a8",
+      }),
+      Object.freeze({
+        fileName: "mmproj-Voxtral-Mini-3B-2507-Q8_0.gguf",
+        bytes: 715714080,
+        sha256: "4f24c4ef3ce929d02ed9d1cfb050ae9a7365f057c0ddec0d489580982ebe0d02",
+      }),
+    ]),
+  }),
+});
 
-// sources 按序回退：ModelScope 国内直连最快（ggml-org 官方镜像，sha256 与 HF 一致），
-// hf-mirror 与 HuggingFace 供有代理的用户。与审核模型下载策略保持一致。
-function modelSources(fileName) {
-  return [
-    `https://modelscope.cn/models/${MODEL_REPO}/resolve/master/${fileName}`,
-    `https://hf-mirror.com/${MODEL_REPO}/resolve/main/${fileName}`,
-    `https://huggingface.co/${MODEL_REPO}/resolve/main/${fileName}`,
-  ];
+export const DEFAULT_ASR_MODEL_ID = "qwen3-asr-0.6b";
+
+export function normalizeAsrModelId(value) {
+  const id = String(value || "").trim();
+  return ASR_MODELS[id] ? id : DEFAULT_ASR_MODEL_ID;
+}
+
+// 只用 ModelScope：国内直连最快（ggml-org 官方镜像，sha256 与 HF 一致），不再回退 HuggingFace。
+// 与审核模型 / TTS 下载策略保持一致。
+function modelSources(repo, fileName) {
+  return [`https://modelscope.cn/models/${repo}/resolve/master/${fileName}`];
 }
 
 // llama.cpp 预编译二进制（含 llama-server）：锁定一个带 Qwen3-ASR 支持的 nightly tag，
@@ -66,7 +130,7 @@ export function currentPlatformKey() {
 
 let asrModelDir = null;
 let asrBinDir = null;
-let modelDownloadJob = null;
+const modelDownloadJobs = new Map(); // modelId -> 下载任务
 let runtimeDownloadJob = null;
 
 // main 启动时注入 userData/models/asr 与 userData/bin/llama.cpp；测试可注入临时目录
@@ -75,14 +139,17 @@ export function configureLocalAsr({ modelDir, binDir } = {}) {
   asrBinDir = binDir ? String(binDir) : null;
 }
 
-export function localAsrModelPaths() {
-  if (!asrModelDir) return LOCAL_ASR_FILES.map(() => null);
-  return LOCAL_ASR_FILES.map((file) => path.join(asrModelDir, file.fileName));
+export function localAsrModelPaths(modelId = DEFAULT_ASR_MODEL_ID) {
+  const definition = ASR_MODELS[normalizeAsrModelId(modelId)];
+  if (!asrModelDir) return definition.files.map(() => null);
+  return definition.files.map((file) => path.join(asrModelDir, file.fileName));
 }
 
-export function localAsrModelStatus() {
-  const paths = localAsrModelPaths();
-  const files = LOCAL_ASR_FILES.map((file, index) => {
+// 单个模型的下载状态（activeModelId 缺省取默认模型）
+export function localAsrModelStatus(modelId = DEFAULT_ASR_MODEL_ID) {
+  const definition = ASR_MODELS[normalizeAsrModelId(modelId)];
+  const paths = localAsrModelPaths(definition.id);
+  const files = definition.files.map((file, index) => {
     const filePath = paths[index];
     const exists = filePath ? existsSync(filePath) : false;
     const sizeBytes = exists ? statSync(filePath).size : 0;
@@ -96,12 +163,29 @@ export function localAsrModelStatus() {
     };
   });
   return {
+    id: definition.id,
+    label: definition.label,
     configured: Boolean(asrModelDir),
     files,
     downloaded: files.every((file) => file.downloaded),
     sizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
-    expectedBytes: LOCAL_ASR_FILES.reduce((sum, file) => sum + file.bytes, 0),
+    expectedBytes: definition.files.reduce((sum, file) => sum + file.bytes, 0),
   };
+}
+
+// 全部候选模型的概要状态（设置界面下拉列表用，按 ASR_MODELS 声明顺序）
+export function localAsrAllModelsStatus() {
+  return Object.values(ASR_MODELS).map((definition) => {
+    const status = localAsrModelStatus(definition.id);
+    return {
+      id: definition.id,
+      label: definition.label,
+      note: definition.note,
+      downloaded: status.downloaded,
+      sizeBytes: status.sizeBytes,
+      expectedBytes: status.expectedBytes,
+    };
+  });
 }
 
 function reportProgress(onProgress, phase, received, total) {
@@ -197,21 +281,24 @@ export async function downloadToFile({ sources, target, expectedBytes, expectedS
   await fs.rename(partial, target);
 }
 
-export async function downloadLocalAsrModel({ onProgress = null, fetchImpl = fetch, signal = null } = {}) {
+// 按模型 ID 下载（同一模型并发调用合并为同一个任务，不同模型可并行）
+export async function downloadLocalAsrModel({ modelId = DEFAULT_ASR_MODEL_ID, onProgress = null, fetchImpl = fetch, signal = null } = {}) {
   if (!asrModelDir) throw new Error("本地语音模型目录未初始化");
-  const status = localAsrModelStatus();
-  const pending = LOCAL_ASR_FILES.filter((file, index) => !status.files[index].downloaded);
+  const definition = ASR_MODELS[normalizeAsrModelId(modelId)];
+  const status = localAsrModelStatus(definition.id);
+  const pending = definition.files.filter((file, index) => !status.files[index].downloaded);
   if (!pending.length) {
     reportProgress(onProgress, "model", status.expectedBytes, status.expectedBytes);
     return { ok: true, skipped: true };
   }
-  if (modelDownloadJob) return modelDownloadJob;
-  modelDownloadJob = (async () => {
+  const existingJob = modelDownloadJobs.get(definition.id);
+  if (existingJob) return existingJob;
+  const job = (async () => {
     let completedBytes = status.sizeBytes;
     for (const file of pending) {
       const before = completedBytes;
       await downloadToFile({
-        sources: modelSources(file.fileName),
+        sources: modelSources(definition.repo, file.fileName),
         target: path.join(asrModelDir, file.fileName),
         expectedBytes: file.bytes,
         expectedSha256: file.sha256,
@@ -229,9 +316,10 @@ export async function downloadLocalAsrModel({ onProgress = null, fetchImpl = fet
     }
     return { ok: true };
   })().finally(() => {
-    modelDownloadJob = null;
+    modelDownloadJobs.delete(definition.id);
   });
-  return modelDownloadJob;
+  modelDownloadJobs.set(definition.id, job);
+  return job;
 }
 
 // ---- llama-server 运行时 ----

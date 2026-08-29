@@ -9,15 +9,14 @@ import path from "node:path";
 import { Readable } from "node:stream";
 
 // 官方 Qwen GGUF 的 Q8_0 量化：0.6B 小模型量化损失比 Q4 小得多，610MB 一次下载。
-// sources 按序回退：ModelScope 国内直连最快，hf-mirror 与 HuggingFace 供有代理的用户。
+// sources 按序回退：只用 ModelScope，国内直连最快，不再回退 HuggingFace。
+// 与 ASR / TTS 下载策略保持一致。
 export const LOCAL_REVIEWER_MODEL = Object.freeze({
   fileName: "Qwen3-0.6B-Q8_0.gguf",
   bytes: 639446688,
   sha256: "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
   sources: [
     "https://modelscope.cn/models/Qwen/Qwen3-0.6B-GGUF/resolve/master/Qwen3-0.6B-Q8_0.gguf",
-    "https://hf-mirror.com/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
-    "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
   ],
 });
 

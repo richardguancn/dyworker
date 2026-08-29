@@ -51,6 +51,12 @@ export async function synthesizeWithLocalTts({ text, voicePath = "", workDir } =
   ];
   const voice = String(voicePath || "").trim();
   if (voice && existsSync(voice)) {
+    // 引擎经 miniaudio 只认 wav/mp3/flac/ogg(vorbis)；m4a/aac 等要 ffprobe（一般不在 PATH）。
+    // 设置里选文件时会自动转码成 wav；这里兜底给可操作的提示。
+    const ext = path.extname(voice).toLowerCase();
+    if (![".wav", ".mp3", ".flac", ".ogg"].includes(ext)) {
+      throw new Error(`参考音频 ${path.basename(voice)} 是 ${ext || "未知"} 格式，本地引擎解不了：请在设置中重新选择该文件，应用会自动转换成 wav`);
+    }
     args.push("--tts-speaker-file", voice);
   }
 

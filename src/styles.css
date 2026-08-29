@@ -7294,6 +7294,22 @@ body.resizing-panels .app-shell {
     color: #8b9187;
   }
 
+  /* 基础图标按钮浅色硬编码（#676a63）在深色下对比度过低：语音输入等图标几乎不可见 */
+  .icon-button {
+    color: #9aa093;
+  }
+
+  .icon-button:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #d8dad3;
+  }
+
+  /* 录音态浅色底（#f8e9e6）换深色半透明红底，亮字保持警示感 */
+  .voice-button.recording {
+    color: #f1998f;
+    background: rgba(185, 75, 66, 0.28);
+  }
+
   .context-folder-clear {
     color: #a4a89f;
     background: #30312d;
