@@ -8,47 +8,82 @@ import { downloadToFile, localAsrBinDir, localTtsRuntimeBundledPath } from "./lo
 
 const MODEL_REPO = "ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF";
 
-// sources 按序回退：ModelScope 国内直连最快（ggml-org 官方镜像，sha256 与 HF 一致），
-// hf-mirror 与 HuggingFace 供有代理的用户。与审核模型 / ASR 下载策略保持一致。
+// 只用 ModelScope：国内直连最快（ggml-org 官方镜像，sha256 与 HF 一致），不再回退 HuggingFace。
+// 与审核模型 / ASR 下载策略保持一致。
 function modelSources(fileName) {
-  return [
-    `https://modelscope.cn/models/${MODEL_REPO}/resolve/master/${fileName}`,
-    `https://hf-mirror.com/${MODEL_REPO}/resolve/main/${fileName}`,
-    `https://huggingface.co/${MODEL_REPO}/resolve/main/${fileName}`,
-  ];
+  return [`https://modelscope.cn/models/${MODEL_REPO}/resolve/master/${fileName}`];
 }
 
-// Q8_0 量化：与 ASR 同策略（量化损失可忽略）；backbone(1.7B) + mmproj(speaker 编码器) 共约 2.3GB。
-// sha256 为 HuggingFace 官方 LFS oid，下载完成后本地校验。
-export const LOCAL_TTS_FILES = Object.freeze([
-  Object.freeze({
-    fileName: "Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
-    bytes: 1847874400,
-    sha256: "ac7931aeb2e7aad1a6ed6602d353a5679c9d096b18ce8204ac730a8408d572e1",
+// 可选模型清单：同一 backbone 的两个量化档位，共用同一个 speaker 编码器（mmproj Q8_0）。
+// sha256 为 HuggingFace 官方 LFS oid（ModelScope 镜像一致），下载完成后本地校验。
+export const TTS_MODELS = Object.freeze({
+  "qwen3-tts-1.7b-q4": Object.freeze({
+    id: "qwen3-tts-1.7b-q4",
+    label: "Qwen3-TTS-1.7B（Q4_K_M）",
+    repo: MODEL_REPO,
+    note: "约 1.5GB · 更小更快",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf",
+        bytes: 1035965280,
+        sha256: "8d18c94acb2addd042f97da63c98be144eafa76d0d9495177eab65130cf85129",
+      }),
+      Object.freeze({
+        fileName: "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
+        bytes: 446422912,
+        sha256: "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
+      }),
+    ]),
   }),
-  Object.freeze({
-    fileName: "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
-    bytes: 446422912,
-    sha256: "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
+  "qwen3-tts-1.7b-q8": Object.freeze({
+    id: "qwen3-tts-1.7b-q8",
+    label: "Qwen3-TTS-1.7B（Q8_0）",
+    repo: MODEL_REPO,
+    note: "约 2.3GB · 音质更好",
+    files: Object.freeze([
+      Object.freeze({
+        fileName: "Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
+        bytes: 1847874400,
+        sha256: "ac7931aeb2e7aad1a6ed6602d353a5679c9d096b18ce8204ac730a8408d572e1",
+      }),
+      Object.freeze({
+        fileName: "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf",
+        bytes: 446422912,
+        sha256: "6fd65188839bcd6ecc91b277ad471e22a0edfada4699a0fe82f1165c18cfcce2",
+      }),
+    ]),
   }),
-]);
+});
+
+export const DEFAULT_TTS_MODEL_ID = "qwen3-tts-1.7b-q8";
+
+// 非法值回落默认模型（与 normalizeAsrModelId 同策略）
+export function normalizeTtsModelId(value) {
+  const key = String(value || "").trim();
+  return TTS_MODELS[key] ? key : DEFAULT_TTS_MODEL_ID;
+}
 
 let ttsModelDir = null;
+let ttsModelId = DEFAULT_TTS_MODEL_ID;
 let ttsDownloadJob = null;
 
-// main 启动时注入 userData/models/tts；测试可注入临时目录
-export function configureLocalTts({ modelDir } = {}) {
+// main 启动时注入 userData/models/tts 与所选模型；测试可注入临时目录
+export function configureLocalTts({ modelDir, modelId } = {}) {
   ttsModelDir = modelDir ? String(modelDir) : null;
+  if (modelId !== undefined) ttsModelId = normalizeTtsModelId(modelId);
 }
 
-export function localTtsModelPaths() {
-  if (!ttsModelDir) return LOCAL_TTS_FILES.map(() => null);
-  return LOCAL_TTS_FILES.map((file) => path.join(ttsModelDir, file.fileName));
+export function localTtsModelPaths(requestedModelId) {
+  const files = TTS_MODELS[normalizeTtsModelId(requestedModelId ?? ttsModelId)].files;
+  if (!ttsModelDir) return files.map(() => null);
+  return files.map((file) => path.join(ttsModelDir, file.fileName));
 }
 
-export function localTtsModelStatus() {
-  const paths = localTtsModelPaths();
-  const files = LOCAL_TTS_FILES.map((file, index) => {
+export function localTtsModelStatus(requestedModelId) {
+  const modelId = normalizeTtsModelId(requestedModelId ?? ttsModelId);
+  const files = TTS_MODELS[modelId].files;
+  const paths = localTtsModelPaths(modelId);
+  const details = files.map((file, index) => {
     const filePath = paths[index];
     const exists = filePath ? existsSync(filePath) : false;
     const sizeBytes = exists ? statSync(filePath).size : 0;
@@ -62,18 +97,37 @@ export function localTtsModelStatus() {
     };
   });
   return {
+    id: modelId,
+    label: TTS_MODELS[modelId].label,
     configured: Boolean(ttsModelDir),
-    files,
-    downloaded: files.every((file) => file.downloaded),
-    sizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
-    expectedBytes: LOCAL_TTS_FILES.reduce((sum, file) => sum + file.bytes, 0),
+    files: details,
+    downloaded: details.every((file) => file.downloaded),
+    sizeBytes: details.reduce((sum, file) => sum + file.sizeBytes, 0),
+    expectedBytes: files.reduce((sum, file) => sum + file.bytes, 0),
   };
 }
 
-export async function downloadLocalTtsModel({ onProgress = null, fetchImpl = fetch, signal = null } = {}) {
+// 全部候选模型的概要（设置界面下拉列表用；mmproj 两档共用，已下载会同时体现在两个档位）
+export function localTtsAllModelsStatus() {
+  return Object.values(TTS_MODELS).map((model) => {
+    const status = localTtsModelStatus(model.id);
+    return {
+      id: model.id,
+      label: model.label,
+      note: model.note,
+      downloaded: status.downloaded,
+      sizeBytes: status.sizeBytes,
+      expectedBytes: status.expectedBytes,
+    };
+  });
+}
+
+export async function downloadLocalTtsModel({ modelId, onProgress = null, fetchImpl = fetch, signal = null } = {}) {
   if (!ttsModelDir) throw new Error("本地语音合成模型目录未初始化");
-  const status = localTtsModelStatus();
-  const pending = LOCAL_TTS_FILES.filter((file, index) => !status.files[index].downloaded);
+  const activeModelId = normalizeTtsModelId(modelId ?? ttsModelId);
+  const files = TTS_MODELS[activeModelId].files;
+  const status = localTtsModelStatus(activeModelId);
+  const pending = files.filter((file, index) => !status.files[index].downloaded);
   if (!pending.length) {
     onProgress?.({ phase: "model", received: status.expectedBytes, total: status.expectedBytes, percent: 100 });
     return { ok: true, skipped: true };

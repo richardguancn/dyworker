@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { configureLocalAsr, LOCAL_ASR_FILES, localAsrModelPaths, localAsrModelStatus, localAsrRuntimeStatus } from "../electron/local-asr.mjs";
+import { ASR_MODELS, DEFAULT_ASR_MODEL_ID, configureLocalAsr, localAsrAllModelsStatus, localAsrModelPaths, localAsrModelStatus, localAsrRuntimeStatus, normalizeAsrModelId } from "../electron/local-asr.mjs";
 import { stripAsrText } from "../electron/local-asr-server.mjs";
 import { deserializeSettings, normalizeTranscriptionEngine, serializeSettings } from "../electron/settings.mjs";
 
@@ -22,30 +22,65 @@ test("Qwen3-ASR 输出文本清理：剥掉 asr_text 标记、语言前缀与特
   assert.equal(stripAsrText("  "), "");
 });
 
+test("多模型注册表：候选模型元数据齐全，非法 ID 回落默认模型", () => {
+  const ids = Object.keys(ASR_MODELS);
+  assert.ok(ids.length >= 4, `至少提供 4 个候选模型，实际 ${ids.length}`);
+  for (const id of ids) {
+    const definition = ASR_MODELS[id];
+    assert.ok(definition.label, `${id} 缺少 label`);
+    assert.ok(definition.repo, `${id} 缺少 repo`);
+    assert.ok(definition.note, `${id} 缺少 note`);
+    // 每个模型都是 text 解码器 + mmproj 编码器两件套，且带大小与 sha256
+    assert.equal(definition.files.length, 2);
+    for (const file of definition.files) {
+      assert.ok(file.fileName.endsWith(".gguf"));
+      assert.ok(file.bytes > 0);
+      assert.match(file.sha256, /^[0-9a-f]{64}$/);
+    }
+  }
+  assert.equal(DEFAULT_ASR_MODEL_ID, "qwen3-asr-0.6b");
+  assert.equal(normalizeAsrModelId("qwen3-asr-1.7b"), "qwen3-asr-1.7b");
+  assert.equal(normalizeAsrModelId("不存在的模型"), DEFAULT_ASR_MODEL_ID);
+  assert.equal(normalizeAsrModelId(""), DEFAULT_ASR_MODEL_ID);
+  assert.equal(normalizeAsrModelId(undefined), DEFAULT_ASR_MODEL_ID);
+});
+
 test("模型状态：未配置目录时按未初始化处理，文件大小不符不算下载完成", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dyworker-asr-"));
   try {
     configureLocalAsr({ modelDir: tmp, binDir: path.join(tmp, "bin") });
-    const paths = localAsrModelPaths();
-    assert.equal(paths.length, LOCAL_ASR_FILES.length);
+    const paths = localAsrModelPaths(DEFAULT_ASR_MODEL_ID);
+    const defaultFiles = ASR_MODELS[DEFAULT_ASR_MODEL_ID].files;
+    assert.equal(paths.length, defaultFiles.length);
     assert.ok(paths.every((item) => item.startsWith(tmp)));
 
-    const empty = localAsrModelStatus();
+    const empty = localAsrModelStatus(DEFAULT_ASR_MODEL_ID);
     assert.equal(empty.configured, true);
     assert.equal(empty.downloaded, false);
     assert.equal(empty.files.every((file) => file.downloaded === false), true);
 
     // 大小不符的文件不算下载完成，避免半截文件被当成可用模型
     fs.writeFileSync(paths[0], Buffer.alloc(1024));
-    const partial = localAsrModelStatus();
+    const partial = localAsrModelStatus(DEFAULT_ASR_MODEL_ID);
     assert.equal(partial.files[0].downloaded, false);
     assert.equal(partial.files[0].sizeBytes, 1024);
     assert.equal(partial.downloaded, false);
 
+    // 不同模型的路径互不相同（各自独立下载与校验）
+    const otherId = Object.keys(ASR_MODELS).find((id) => id !== DEFAULT_ASR_MODEL_ID);
+    const otherPaths = localAsrModelPaths(otherId);
+    assert.equal(otherPaths.length, ASR_MODELS[otherId].files.length);
+    assert.ok(otherPaths.every((item) => !paths.includes(item)));
+
+    // 全量概要覆盖所有候选模型，供设置界面下拉列表使用
+    const all = localAsrAllModelsStatus();
+    assert.deepEqual(all.map((model) => model.id), Object.keys(ASR_MODELS));
+    assert.ok(all.every((model) => model.label && model.note && model.downloaded === false));
+
     // 未配置目录时路径与状态按空处理
     configureLocalAsr({});
-    assert.ok(localAsrModelPaths().every((item) => item === null));
-    assert.equal(localAsrModelStatus().configured, false);
+    assert.ok(localAsrModelPaths(DEFAULT_ASR_MODEL_ID).every((item) => item === null));
+    assert.equal(localAsrModelStatus(DEFAULT_ASR_MODEL_ID).configured, false);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -96,15 +131,22 @@ test("语音转写引擎字段：只认 local，其余一律回落 cloud，序�
   };
   const restored = deserializeSettings(serializeSettings({
     transcriptionEngine: "local",
+    asrModel: " qwen3-asr-1.7b ",
     asrModelDir: " /tmp/asr-models ",
     llamaServerPath: " /opt/llama-server ",
   }, secretStorage), secretStorage);
   assert.equal(restored.transcriptionEngine, "local");
+  assert.equal(restored.asrModel, "qwen3-asr-1.7b");
   assert.equal(restored.asrModelDir, "/tmp/asr-models");
   assert.equal(restored.llamaServerPath, "/opt/llama-server");
 
   const fallback = deserializeSettings({}, secretStorage);
   assert.equal(fallback.transcriptionEngine, "cloud");
+  assert.equal(fallback.asrModel, DEFAULT_ASR_MODEL_ID);
   assert.equal(fallback.asrModelDir, "");
   assert.equal(fallback.llamaServerPath, "");
+
+  // 非法模型 ID 序列化时回落默认模型，不会把脏值写进磁盘
+  const invalid = deserializeSettings(serializeSettings({ asrModel: "fake-model" }, secretStorage), secretStorage);
+  assert.equal(invalid.asrModel, DEFAULT_ASR_MODEL_ID);
 });

@@ -66,7 +66,7 @@ test("本地语音转写引擎（Qwen3-ASR）的下载、设置与转写链路�
   // 模型目录与审核模型同款策略：读取与保存设置时即时应用，下载前先落最新目录
   assert.match(main, /applyAsrSettings\(settings\)/);
   // 渲染端本地引擎把录音转成 16k 单声道 WAV；引擎选择与下载入口在设置里
-  assert.match(app, /blobToWav16kMono/);
+  assert.match(app, /blobToWavMono\(blob, 16000\)/);
   assert.match(app, /transcriptionEngine === "local"/);
   assert.match(app, /downloadVoiceLocalModel/);
   assert.match(settingsStorage, /normalizeTranscriptionEngine/);
@@ -76,7 +76,7 @@ test("本地语音转写引擎（Qwen3-ASR）的下载、设置与转写链路�
 });
 
 test("本地语音合成引擎（Qwen3-TTS）的下载、设置与合成链路贯穿三端", () => {
-  for (const action of ["getTtsLocalStatus", "downloadTtsLocalModel", "chooseTtsLocalDir", "chooseTtsVoice", "onTtsLocalDownloadProgress"]) {
+  for (const action of ["getTtsLocalStatus", "downloadTtsLocalModel", "chooseTtsLocalDir", "chooseTtsVoice", "readTtsVoiceFile", "writeTtsVoiceFile", "speakText", "onTtsLocalDownloadProgress"]) {
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
@@ -84,6 +84,9 @@ test("本地语音合成引擎（Qwen3-TTS）的下载、设置与合成链路�
   assert.match(main, /ipcMain\.handle\("tts-local:download"/);
   assert.match(main, /ipcMain\.handle\("tts-local:choose-dir"/);
   assert.match(main, /ipcMain\.handle\("tts-local:choose-voice"/);
+  assert.match(main, /ipcMain\.handle\("tts-local:read-voice"/);
+  assert.match(main, /ipcMain\.handle\("tts-local:write-voice"/);
+  assert.match(main, /ipcMain\.handle\("tts:speak"/);
   assert.match(main, /tts-local:download-progress/);
   // 合成主链路：本地引擎分支走 synthesizeWithLocalTts，云引擎保持原 /audio/speech 路径
   assert.match(main, /normalizeTtsEngine/);
@@ -160,6 +163,9 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(main, /if \(pendingConnection\) return pendingConnection/);
   assert.match(preload, /cancelTask: \(sessionId, runId\)/);
   assert.match(app, /shouldScrollToBottomRef\.current !== activeId/);
+  // 流式期间禁止反复触发"滚到底部"：patchAssistant 每个流式分片都会执行,
+  // 若在这里重置 shouldScrollToBottomRef,会让会话视口反复平滑拉回底部,跟用户抢滚动条
+  assert.doesNotMatch(app, /patchAssistant = \(updater[\s\S]{0,400}?shouldScrollToBottomRef/);
   assert.match(app, /sessionNotices\[activeSession\.id\]/);
   assert.match(app, /sessionErrors\[activeSession\.id\]/);
 });

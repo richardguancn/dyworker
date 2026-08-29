@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { DEFAULT_UPDATE_URL, normalizeUpdateUrl } from "./app-updater.mjs";
 import { normalizeSkillLibraries } from "./skill-libraries.mjs";
+import { normalizeAsrModelId } from "./local-asr.mjs";
+import { normalizeTtsModelId } from "./local-tts.mjs";
 
 export function normalizePreventSleep(value) {
   return ["off", "tasks", "always"].includes(value) ? value : "tasks";
@@ -241,11 +243,15 @@ export function deserializeSettings(stored, secretStorage) {
     transcriptionEndpoint: String(source.transcriptionEndpoint || ""),
     transcriptionModel: String(source.transcriptionModel || "whisper-1"),
     transcriptionEngine: normalizeTranscriptionEngine(source.transcriptionEngine),
+    // 本地转写模型（transcriptionEngine 为 local 时生效）；非法值回落默认模型
+    asrModel: normalizeAsrModelId(source.asrModel),
     asrModelDir: String(source.asrModelDir || ""),
     llamaServerPath: String(source.llamaServerPath || ""),
     ttsEndpoint: String(source.ttsEndpoint || ""),
     ttsModel: String(source.ttsModel || ""),
     ttsEngine: normalizeTtsEngine(source.ttsEngine),
+    // 本地合成模型（ttsEngine 为 local 时生效）；非法值回落默认模型
+    ttsLocalModel: normalizeTtsModelId(source.ttsLocalModel),
     ttsModelDir: String(source.ttsModelDir || ""),
     ttsVoicePath: String(source.ttsVoicePath || ""),
     ttsApiKey: decryptSecret(source.ttsApiKey, source.ttsApiKeyEncrypted === true, secretStorage),
@@ -287,11 +293,13 @@ export function serializeSettings(settings, secretStorage) {
     transcriptionEndpoint: String(settings?.transcriptionEndpoint || "").trim(),
     transcriptionModel: String(settings?.transcriptionModel || "whisper-1").trim(),
     transcriptionEngine: normalizeTranscriptionEngine(settings?.transcriptionEngine),
+    asrModel: normalizeAsrModelId(settings?.asrModel),
     asrModelDir: String(settings?.asrModelDir || "").trim(),
     llamaServerPath: String(settings?.llamaServerPath || "").trim(),
     ttsEndpoint: String(settings?.ttsEndpoint || "").trim(),
     ttsModel: String(settings?.ttsModel || "").trim(),
     ttsEngine: normalizeTtsEngine(settings?.ttsEngine),
+    ttsLocalModel: normalizeTtsModelId(settings?.ttsLocalModel),
     ttsModelDir: String(settings?.ttsModelDir || "").trim(),
     ttsVoicePath: String(settings?.ttsVoicePath || "").trim(),
     ttsApiKey: String(settings?.ttsApiKey || "").trim(),
@@ -336,11 +344,13 @@ export function serializeSettings(settings, secretStorage) {
     transcriptionEndpoint: normalized.transcriptionEndpoint,
     transcriptionModel: normalized.transcriptionModel,
     transcriptionEngine: normalized.transcriptionEngine,
+    asrModel: normalized.asrModel,
     asrModelDir: normalized.asrModelDir,
     llamaServerPath: normalized.llamaServerPath,
     ttsEndpoint: normalized.ttsEndpoint,
     ttsModel: normalized.ttsModel,
     ttsEngine: normalized.ttsEngine,
+    ttsLocalModel: normalized.ttsLocalModel,
     ttsModelDir: normalized.ttsModelDir,
     ttsVoicePath: normalized.ttsVoicePath,
     ttsApiKey: ttsSecret.value,

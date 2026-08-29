@@ -424,7 +424,7 @@ export interface ReviewerLocalStatus {
   filePath?: string;
 }
 
-// 本地语音转写（Qwen3-ASR-0.6B + llama-server）状态
+// 本地语音转写（可选模型 + llama-server）状态
 export interface VoiceLocalFileStatus {
   fileName: string;
   role: string;
@@ -434,15 +434,29 @@ export interface VoiceLocalFileStatus {
   filePath: string;
 }
 
+// 候选本地转写模型概要（设置界面下拉列表用）
+export interface VoiceLocalModelSummary {
+  id: string;
+  label: string;
+  note: string;
+  downloaded: boolean;
+  sizeBytes: number;
+  expectedBytes: number;
+}
+
 export interface VoiceLocalStatus {
   engine: "cloud" | "local";
   model: {
+    id: string;
+    label: string;
     configured: boolean;
     files: VoiceLocalFileStatus[];
     downloaded: boolean;
     sizeBytes: number;
     expectedBytes: number;
   };
+  // 全部候选模型的概要（model 为当前保存的模型）
+  models: VoiceLocalModelSummary[];
   runtime: { available: boolean; path: string; source: string };
 }
 
@@ -450,12 +464,16 @@ export interface VoiceLocalStatus {
 export interface TtsLocalStatus {
   engine: "cloud" | "local";
   model: {
+    id: string;
+    label: string;
     configured: boolean;
     files: VoiceLocalFileStatus[];
     downloaded: boolean;
     sizeBytes: number;
     expectedBytes: number;
   };
+  // 全部候选模型的概要（model 为当前保存的模型）
+  models: VoiceLocalModelSummary[];
   runtime: { available: boolean; path: string; binDir: string };
 }
 
@@ -472,6 +490,8 @@ export interface ProviderSettings {
   transcriptionModel: string;
   // 语音转写引擎：cloud 走 OpenAI 兼容 /audio/transcriptions，local 走内置 Qwen3-ASR + llama-server
   transcriptionEngine: "cloud" | "local";
+  // 本地转写模型 ID（transcriptionEngine 为 local 时生效）
+  asrModel: string;
   // 本地语音模型保存目录；留空存到应用数据目录 models/asr
   asrModelDir: string;
   // 自定义 llama-server 可执行文件路径；留空使用内置下载的引擎
@@ -481,6 +501,8 @@ export interface ProviderSettings {
   ttsModel: string;
   // 语音合成引擎：cloud 走 OpenAI 兼容 /audio/speech，local 走内置 Qwen3-TTS + llama-tts
   ttsEngine: "cloud" | "local";
+  // 本地合成模型（ttsEngine 为 local 时生效，与主进程 TTS_MODELS 对应）
+  ttsLocalModel: string;
   // 本地语音合成模型保存目录；留空存到应用数据目录 models/tts
   ttsModelDir: string;
   // 本地合成参考音色音频路径（克隆音色）；留空用模型默认音色
@@ -628,14 +650,19 @@ export interface DyworkerBridge {
   chooseReviewerLocalDir(): Promise<{ canceled: boolean; path?: string }>;
   onReviewerLocalDownloadProgress(callback: (progress: { received: number; total: number; percent: number }) => void): () => void;
   getVoiceLocalStatus(): Promise<VoiceLocalStatus>;
-  downloadVoiceLocalModel(): Promise<{ ok: boolean; error?: string; status?: VoiceLocalStatus }>;
+  downloadVoiceLocalModel(payload?: { modelId?: string }): Promise<{ ok: boolean; error?: string; status?: VoiceLocalStatus }>;
   chooseVoiceLocalDir(): Promise<{ canceled: boolean; path?: string }>;
-  onVoiceLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number }) => void): () => void;
+  onVoiceLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number; modelId?: string }) => void): () => void;
   getTtsLocalStatus(): Promise<TtsLocalStatus>;
-  downloadTtsLocalModel(): Promise<{ ok: boolean; error?: string; status?: TtsLocalStatus }>;
+  downloadTtsLocalModel(payload?: { modelId?: string }): Promise<{ ok: boolean; error?: string; status?: TtsLocalStatus }>;
   chooseTtsLocalDir(): Promise<{ canceled: boolean; path?: string }>;
   chooseTtsVoice(): Promise<{ canceled: boolean; path?: string }>;
-  onTtsLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number }) => void): () => void;
+  // 参考音色转码：读原始字节给渲染层 Web Audio 解码，再把转换出的 wav 写回主进程
+  readTtsVoiceFile(payload: { path: string }): Promise<{ ok: boolean; error?: string; bytes?: Uint8Array }>;
+  writeTtsVoiceFile(payload: { bytes: Uint8Array }): Promise<{ ok: boolean; error?: string; path?: string }>;
+  // 会话内朗读：合成文本并返回 wav（渲染层用 Blob 播放）
+  speakText(payload: { text: string }): Promise<{ ok: boolean; error?: string; wav?: Uint8Array }>;
+  onTtsLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number; modelId?: string }) => void): () => void;
   getAppUpdateStatus(): Promise<AppUpdateStatus>;
   checkForAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState; version?: string; error?: string }>;
   downloadAppUpdate(): Promise<{ ok: boolean; state: AppUpdateState | "installing"; error?: string }>;

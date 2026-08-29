@@ -68,6 +68,7 @@ import {
   GitCommitHorizontal,
   Upload,
   UserRound,
+  Volume2,
   X,
 } from "lucide-react";
 import hljs from "highlight.js/lib/common";
@@ -158,9 +159,9 @@ const previewWorkspace: WorkspaceEntry[] = [
   { name: "tests", path: "/dyworker/tests", kind: "directory", children: [] },
 ];
 
-// 本地语音引擎（llama-server）只认 WAV：录音 blob → 解码 → 重采样 16k 单声道 → 16bit PCM WAV。
-// MediaRecorder 产出的是 webm/opus，云端服务能直接读，本地引擎必须先转码。
-async function blobToWav16kMono(blob: Blob): Promise<Uint8Array> {
+// 音频 → 指定采样率的单声道 16bit PCM WAV（Web Audio 解码，支持 webm/opus、m4a/aac 等浏览器认识的格式）。
+// 本地语音引擎只认 WAV：录音转写用 16k；TTS 参考音色用 24k（Qwen3-TTS 原生采样率）。
+async function blobToWavMono(blob: Blob, targetRate: number): Promise<Uint8Array> {
   const arrayBuffer = await blob.arrayBuffer();
   const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
   const decodeCtx = new AudioCtx();
@@ -170,9 +171,9 @@ async function blobToWav16kMono(blob: Blob): Promise<Uint8Array> {
   } finally {
     void decodeCtx.close();
   }
-  const frames = Math.max(1, Math.ceil(decoded.duration * 16000));
+  const frames = Math.max(1, Math.ceil(decoded.duration * targetRate));
   const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
-  const offline = new OfflineCtx(1, frames, 16000);
+  const offline = new OfflineCtx(1, frames, targetRate);
   const source = offline.createBufferSource();
   source.buffer = decoded;
   source.connect(offline.destination);
@@ -196,8 +197,8 @@ async function blobToWav16kMono(blob: Blob): Promise<Uint8Array> {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  view.setUint32(24, 16000, true);
-  view.setUint32(28, 16000 * 2, true);
+  view.setUint32(24, targetRate, true);
+  view.setUint32(28, targetRate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   writeAscii(36, "data");
@@ -219,11 +220,13 @@ const defaultSettings: ProviderSettings = {
   transcriptionEndpoint: "",
   transcriptionModel: "whisper-1",
   transcriptionEngine: "cloud",
+  asrModel: "qwen3-asr-0.6b",
   asrModelDir: "",
   llamaServerPath: "",
   ttsEndpoint: "",
   ttsModel: "",
   ttsEngine: "cloud",
+  ttsLocalModel: "qwen3-tts-1.7b-q8",
   ttsModelDir: "",
   ttsVoicePath: "",
   ttsApiKey: "",
@@ -265,6 +268,20 @@ function settingsWithProfile(settings: ProviderSettings, profile: ModelProfile):
     transcriptionModel: profile.transcriptionModel || settings.transcriptionModel,
   };
 }
+
+// 本地转写模型候选清单（与主进程 ASR_MODELS 的展示信息保持一致；下载状态从 voiceLocal.models 合并）
+const localAsrModelOptions = [
+  { id: "qwen3-asr-0.6b", label: "Qwen3-ASR-0.6B", note: "约 1GB · 最快，中文优先" },
+  { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", note: "约 2.5GB · 更准确，中文优先" },
+  { id: "ultravox-0.5-1b", label: "Ultravox-0.5-1B", note: "约 2.7GB · 多语言" },
+  { id: "voxtral-mini-3b", label: "Voxtral-Mini-3B", note: "约 3.2GB · 多语言" },
+];
+
+// 本地合成模型候选清单（与主进程 TTS_MODELS 的展示信息保持一致；下载状态从 ttsLocal.models 合并）
+const localTtsModelOptions = [
+  { id: "qwen3-tts-1.7b-q4", label: "Qwen3-TTS-1.7B（Q4_K_M）", note: "约 1.5GB · 更小更快" },
+  { id: "qwen3-tts-1.7b-q8", label: "Qwen3-TTS-1.7B（Q8_0）", note: "约 2.3GB · 音质更好" },
+];
 
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
@@ -3668,7 +3685,7 @@ function SettingsDialog({
     }
   };
 
-  // 内置本地语音转写（Qwen3-ASR-0.6B + llama-server）：状态与下载进度（voice tab 打开时才拉取）
+  // 内置本地语音转写（可选模型 + llama-server）：状态与下载进度（voice tab 打开时才拉取）
   const [voiceLocal, setVoiceLocal] = useState<VoiceLocalStatus | null>(null);
   const [voiceDownloading, setVoiceDownloading] = useState(false);
   const [voiceDownloadError, setVoiceDownloadError] = useState("");
@@ -3679,18 +3696,28 @@ function SettingsDialog({
     if (!dyworker?.getVoiceLocalStatus) return;
     dyworker.getVoiceLocalStatus().then((status) => setVoiceLocal(status)).catch(() => { });
     return dyworker.onVoiceLocalDownloadProgress((progress) => {
-      setVoiceLocal((current) => (current
-        ? { ...current, model: { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total } }
-        : current));
+      setVoiceLocal((current) => {
+        if (!current) return current;
+        // 进度按 modelId 归到对应模型：更新 models 列表与当前保存的 model 概要
+        const models = current.models.map((model) => (
+          model.id === progress.modelId
+            ? { ...model, sizeBytes: progress.received, expectedBytes: progress.total }
+            : model
+        ));
+        const model = current.model.id === progress.modelId
+          ? { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total }
+          : current.model;
+        return { ...current, model, models };
+      });
     });
   }, [tab]);
 
-  const startVoiceLocalDownload = async () => {
+  const startVoiceLocalDownload = async (modelId?: string) => {
     if (voiceDownloading) return;
     setVoiceDownloading(true);
     setVoiceDownloadError("");
     try {
-      const result = await window.dyworker?.downloadVoiceLocalModel();
+      const result = await window.dyworker?.downloadVoiceLocalModel(modelId ? { modelId } : undefined);
       if (result?.status) setVoiceLocal(result.status);
       if (result?.ok === false) setVoiceDownloadError(result.error || "下载失败，请重试");
     } catch (error) {
@@ -3715,18 +3742,28 @@ function SettingsDialog({
       // 引擎（与转写共用）与模型两阶段字节口径不同：引擎阶段只展示状态，模型阶段更新整体进度
       setTtsDownloadPhase(String(progress.phase || ""));
       if (String(progress.phase || "").startsWith("runtime:")) return;
-      setTtsLocal((current) => (current
-        ? { ...current, model: { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total } }
-        : current));
+      // 进度按 modelId 归到对应模型：更新 models 列表与当前保存的 model 概要
+      setTtsLocal((current) => {
+        if (!current) return current;
+        const models = current.models.map((model) => (
+          model.id === progress.modelId
+            ? { ...model, sizeBytes: progress.received, expectedBytes: progress.total }
+            : model
+        ));
+        const model = current.model.id === progress.modelId
+          ? { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total }
+          : current.model;
+        return { ...current, model, models };
+      });
     });
   }, [tab]);
 
-  const startTtsLocalDownload = async () => {
+  const startTtsLocalDownload = async (modelId?: string) => {
     if (ttsDownloading) return;
     setTtsDownloading(true);
     setTtsDownloadError("");
     try {
-      const result = await window.dyworker?.downloadTtsLocalModel();
+      const result = await window.dyworker?.downloadTtsLocalModel(modelId ? { modelId } : undefined);
       if (result?.status) setTtsLocal(result.status);
       if (result?.ok === false) setTtsDownloadError(result.error || "下载失败，请重试");
     } catch (error) {
@@ -3734,6 +3771,39 @@ function SettingsDialog({
     } finally {
       setTtsDownloading(false);
       setTtsDownloadPhase("");
+    }
+  };
+
+  // 本地引擎（miniaudio）只认 wav/mp3/flac/ogg(vorbis)；m4a/aac/opus 等压缩格式要系统装 ffprobe 才能解。
+  // 选完文件后在渲染层用 Web Audio 解码，统一转成 24kHz 单声道 wav（Qwen3-TTS 原生采样率）再交给引擎。
+  const [ttsVoiceConverting, setTtsVoiceConverting] = useState(false);
+  const [ttsVoiceConvertHint, setTtsVoiceConvertHint] = useState("");
+
+  const pickAndPrepareTtsVoice = async () => {
+    const picked = await window.dyworker?.chooseTtsVoice();
+    if (!picked?.path) return;
+    const ext = (picked.path.split(".").pop() || "").toLowerCase();
+    if (["wav", "mp3", "flac"].includes(ext)) {
+      setDraft((current) => ({ ...current, ttsVoicePath: picked.path! }));
+      setTtsVoiceConvertHint("");
+      return;
+    }
+    setTtsVoiceConverting(true);
+    setTtsVoiceConvertHint(`正在把 ${ext ? `.${ext}` : "音频"} 转换成 wav…`);
+    try {
+      const read = await window.dyworker?.readTtsVoiceFile({ path: picked.path });
+      if (!read?.ok || !read.bytes?.length) throw new Error(read?.error || "读取音频失败");
+      // IPC 结构化克隆拿到的是 Uint8Array<ArrayBufferLike>：拷贝成独立 ArrayBuffer 再建 Blob
+      const sourceBuffer = read.bytes.buffer.slice(read.bytes.byteOffset, read.bytes.byteOffset + read.bytes.byteLength) as ArrayBuffer;
+      const wav = await blobToWavMono(new Blob([sourceBuffer]), 24000);
+      const write = await window.dyworker?.writeTtsVoiceFile({ bytes: wav });
+      if (!write?.ok || !write.path) throw new Error(write?.error || "保存转换结果失败");
+      setDraft((current) => ({ ...current, ttsVoicePath: write.path! }));
+      setTtsVoiceConvertHint(`已把 ${ext ? `.${ext}` : "音频"} 转换成 wav，保存设置后生效`);
+    } catch (error) {
+      setTtsVoiceConvertHint(`转换失败：${error instanceof Error ? error.message : String(error)}，请改用 wav/mp3/flac 格式`);
+    } finally {
+      setTtsVoiceConverting(false);
     }
   };
 
@@ -4276,18 +4346,36 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, transcriptionEngine: event.target.value as ProviderSettings["transcriptionEngine"] })}
           >
             <option value="cloud">云端服务（OpenAI 兼容 /audio/transcriptions）</option>
-            <option value="local">本地引擎（Qwen3-ASR-0.6B，离线可用）</option>
+            <option value="local">本地引擎（离线可用，多模型可选）</option>
           </select>
         </label>
-        {draft.transcriptionEngine === "local" && (
+        {draft.transcriptionEngine === "local" && (() => {
+          const selectedId = draft.asrModel || "qwen3-asr-0.6b";
+          const statusById = new Map((voiceLocal?.models || []).map((model) => [model.id, model]));
+          const selected = statusById.get(selectedId);
+          const selectedOption = localAsrModelOptions.find((model) => model.id === selectedId) || localAsrModelOptions[0];
+          return (
           <div className="dialog-note">
-            {voiceLocal?.model.downloaded
-              ? "本地语音模型已就绪：Qwen3-ASR-0.6B（约 1GB，已存本机）。首次转写按需启动引擎（约 2-5 秒），空闲 3 分钟后自动退出释放内存。"
-              : "本地语音模型未下载：Qwen3-ASR-0.6B（模型约 1GB + 引擎约 20MB），下载完成后无需联网即可把语音转成文字。"}
-            {!voiceLocal?.model.downloaded && (
-              <button type="button" className="settings-update-check" onClick={startVoiceLocalDownload} disabled={voiceDownloading}>
+            <label>
+              本地模型
+              <select
+                value={selectedId}
+                onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })}
+              >
+                {localAsrModelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}（{model.note}{statusById.get(model.id)?.downloaded ? "，已下载" : ""}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selected?.downloaded
+              ? `本地语音模型已就绪：${selectedOption.label}（已存本机）。首次转写按需启动引擎（约 2-5 秒），空闲 3 分钟后自动退出释放内存。`
+              : `本地语音模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎约 20MB），下载完成后无需联网即可把语音转成文字。`}
+            {!selected?.downloaded && (
+              <button type="button" className="settings-update-check" onClick={() => void startVoiceLocalDownload(selectedId)} disabled={voiceDownloading}>
                 {voiceDownloading
-                  ? `下载中 ${voiceLocal?.model.expectedBytes ? Math.min(99, Math.round((voiceLocal.model.sizeBytes / voiceLocal.model.expectedBytes) * 100)) : 0}%`
+                  ? `下载中 ${selected?.expectedBytes ? Math.min(99, Math.round((selected.sizeBytes / selected.expectedBytes) * 100)) : 0}%`
                   : "下载模型与引擎"}
               </button>
             )}
@@ -4320,9 +4408,10 @@ function SettingsDialog({
                 onChange={(event) => setDraft({ ...draft, llamaServerPath: event.target.value })}
               />
             </label>
-            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。</p>
+            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。切换模型后首次转写会重新加载引擎。</p>
           </div>
-        )}
+          );
+        })()}
         {draft.transcriptionEngine !== "local" && (<>
         <label>
           转写服务地址
@@ -4352,17 +4441,35 @@ function SettingsDialog({
             <option value="local">本地引擎（Qwen3-TTS，离线可用）</option>
           </select>
         </label>
-        {draft.ttsEngine === "local" && (
+        {draft.ttsEngine === "local" && (() => {
+          const selectedId = draft.ttsLocalModel || "qwen3-tts-1.7b-q8";
+          const statusById = new Map((ttsLocal?.models || []).map((model) => [model.id, model]));
+          const selected = statusById.get(selectedId);
+          const selectedOption = localTtsModelOptions.find((model) => model.id === selectedId) || localTtsModelOptions[1];
+          return (
           <div className="dialog-note">
-            {ttsLocal?.model.downloaded
-              ? "本地语音合成模型已就绪：Qwen3-TTS-1.7B（约 2.3GB，已存本机）。合成时按需启动引擎，无需联网。"
-              : "本地语音合成模型未下载：Qwen3-TTS-1.7B（模型约 2.3GB + 引擎与语音转写共用），下载完成后无需联网即可把文字合成语音。"}
-            {!ttsLocal?.model.downloaded && (
-              <button type="button" className="settings-update-check" onClick={startTtsLocalDownload} disabled={ttsDownloading}>
+            <label>
+              本地模型
+              <select
+                value={selectedId}
+                onChange={(event) => setDraft({ ...draft, ttsLocalModel: event.target.value })}
+              >
+                {localTtsModelOptions.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}（{model.note}{statusById.get(model.id)?.downloaded ? "，已下载" : ""}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selected?.downloaded
+              ? `本地语音合成模型已就绪：${selectedOption.label}（已存本机）。合成时按需启动引擎，无需联网。`
+              : `本地语音合成模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎与语音转写共用），下载完成后无需联网即可把文字合成语音。`}
+            {!selected?.downloaded && (
+              <button type="button" className="settings-update-check" onClick={() => void startTtsLocalDownload(selectedId)} disabled={ttsDownloading}>
                 {ttsDownloading
                   ? (ttsDownloadPhase.startsWith("runtime:")
                     ? "下载引擎中…"
-                    : `下载中 ${ttsLocal?.model.expectedBytes ? Math.min(99, Math.round((ttsLocal.model.sizeBytes / ttsLocal.model.expectedBytes) * 100)) : 0}%`)
+                    : `下载中 ${selected?.expectedBytes ? Math.min(99, Math.round((selected.sizeBytes / selected.expectedBytes) * 100)) : 0}%`)
                   : "下载模型与引擎"}
               </button>
             )}
@@ -4398,18 +4505,18 @@ function SettingsDialog({
                 <button
                   type="button"
                   className="settings-update-check"
-                  onClick={async () => {
-                    const picked = await window.dyworker?.chooseTtsVoice();
-                    if (picked?.path) setDraft({ ...draft, ttsVoicePath: picked.path });
-                  }}
+                  onClick={() => void pickAndPrepareTtsVoice()}
+                  disabled={ttsVoiceConverting}
                 >
-                  浏览…
+                  {ttsVoiceConverting ? "转换中…" : "浏览…"}
                 </button>
               </span>
             </label>
-            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。</p>
+            {ttsVoiceConvertHint && <p style={{ marginTop: 6 }}>{ttsVoiceConvertHint}</p>}
+            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。切换模型后首次合成会使用新模型。</p>
           </div>
-        )}
+          );
+        })()}
         {draft.ttsEngine !== "local" && (<>
         <label>
           合成服务地址
@@ -4600,6 +4707,9 @@ export function App() {
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // 会话内朗读（助手回复转语音播放）：与渠道语音发送共用同一套 TTS 设置
+  const [speakingMessageKey, setSpeakingMessageKey] = useState<string | null>(null);
+  const [speakingLoadingKey, setSpeakingLoadingKey] = useState<string | null>(null);
   const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
   const [sessionNotices, setSessionNotices] = useState<Record<string, string>>({});
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalAction>>({});
@@ -6272,7 +6382,7 @@ export function App() {
         // 本地引擎只认 WAV：webm 录音先解码重采样成 16k 单声道；云端直接发原始格式
         const engineLocal = settings.transcriptionEngine === "local";
         const audio = engineLocal
-          ? await blobToWav16kMono(blob)
+          ? await blobToWavMono(blob, 16000)
           : new Uint8Array(await blob.arrayBuffer());
         const result = await window.dyworker.transcribeAudio({
           settings,
@@ -6491,7 +6601,8 @@ export function App() {
         const assistantId = crypto.randomUUID();
         const taskStartedAt = Date.now();
         const patchAssistant = (updater: (current: ChatMessage) => ChatMessage) => {
-          shouldScrollToBottomRef.current = taskSessionId;
+          // 注意：这里不能重置滚动锚点标记——流式期间每个分片都会走到这里，
+          // 会让会话视口反复平滑滚回底部，跟用户抢滚动条；提交时的滚动由上方一次性触发。
           updateSession(activeSession.id, (session) => ({
             ...session,
             messages: session.messages.map((current) => current.id === assistantId ? updater(current) : current),
@@ -7014,6 +7125,69 @@ export function App() {
   const copyMessage = async (message: ChatMessage) => {
     const copied = await copyTextToClipboard(messageVisibleText(message));
     setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
+  };
+
+  // 朗读助手回复：主进程合成 wav → 渲染层 Blob 播放；再点一次停止。token 防止停止后旧合成结果继续播放
+  const speakAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speakObjectUrlRef = useRef("");
+  const speakTokenRef = useRef(0);
+
+  const stopSpeakingMessage = () => {
+    speakTokenRef.current += 1;
+    if (speakAudioRef.current) {
+      speakAudioRef.current.pause();
+      speakAudioRef.current = null;
+    }
+    if (speakObjectUrlRef.current) {
+      URL.revokeObjectURL(speakObjectUrlRef.current);
+      speakObjectUrlRef.current = "";
+    }
+    setSpeakingMessageKey(null);
+    setSpeakingLoadingKey(null);
+  };
+
+  const speakMessageKey = (message: ChatMessage) => message.id || `${message.role}:${message.createdAt}`;
+
+  const toggleSpeakMessage = async (message: ChatMessage) => {
+    const key = speakMessageKey(message);
+    if (speakingMessageKey === key || speakingLoadingKey === key) {
+      stopSpeakingMessage();
+      return;
+    }
+    // 已有合成进行中：先停掉，避免两条音频叠加
+    stopSpeakingMessage();
+    const text = messageVisibleText(message).trim();
+    if (!text) {
+      setNotice("这条消息没有可朗读的文本");
+      return;
+    }
+    const token = speakTokenRef.current;
+    setSpeakingLoadingKey(key);
+    try {
+      const result = await window.dyworker?.speakText({ text: text.slice(0, 2000) });
+      if (token !== speakTokenRef.current) return;
+      if (!result?.ok || !result.wav?.length) {
+        setNotice(result?.error || "语音合成失败，请重试");
+        return;
+      }
+      // IPC 结构化克隆拿到的是 Uint8Array<ArrayBufferLike>：拷贝成独立 ArrayBuffer 再建 Blob
+      const wavBuffer = result.wav.buffer.slice(result.wav.byteOffset, result.wav.byteOffset + result.wav.byteLength) as ArrayBuffer;
+      const url = URL.createObjectURL(new Blob([wavBuffer], { type: "audio/wav" }));
+      const audio = new Audio(url);
+      speakObjectUrlRef.current = url;
+      speakAudioRef.current = audio;
+      audio.onended = () => stopSpeakingMessage();
+      audio.onerror = () => {
+        setNotice("语音播放失败");
+        stopSpeakingMessage();
+      };
+      setSpeakingMessageKey(key);
+      await audio.play();
+    } catch (error) {
+      if (token === speakTokenRef.current) setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (token === speakTokenRef.current) setSpeakingLoadingKey(null);
+    }
   };
 
   const startMessageEdit = (message: ChatMessage, messageIndex: number) => {
@@ -7858,6 +8032,20 @@ export function App() {
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
+                          {Boolean(messageVisibleText(message).trim()) && (
+                            <button
+                              type="button"
+                              onClick={() => void toggleSpeakMessage(message)}
+                              aria-label={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
+                              title={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
+                            >
+                              {speakingLoadingKey === speakMessageKey(message)
+                                ? <LoaderCircle className="spin" size={16} />
+                                : speakingMessageKey === speakMessageKey(message)
+                                  ? <Square size={16} />
+                                  : <Volume2 size={16} />}
+                            </button>
+                          )}
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
                             <Copy size={16} />
                           </button>
@@ -8310,6 +8498,9 @@ export function App() {
                     </div>
                   )}
                 </div>
+                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
+              </div>
+              <div className="composer-actions">
                 {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
                 <button
                   type="button"
@@ -8321,9 +8512,6 @@ export function App() {
                 >
                   {voiceState === "transcribing" ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} />}
                 </button>
-              </div>
-              <div className="composer-actions">
-                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
                 {/* 对照 Codex：运行中且没有可发送内容时，发送键变成停止键，只保留一个圆形按钮；
                     输入框有内容时仍是发送键（点击后消息进入队列） */}
                 {activeTaskRunning && !canSend ? (

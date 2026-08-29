@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import net from "node:net";
-import { LOCAL_ASR_FILES, localAsrModelPaths, localAsrRuntimeStatus } from "./local-asr.mjs";
+import { ASR_MODELS, normalizeAsrModelId, localAsrModelPaths, localAsrRuntimeStatus } from "./local-asr.mjs";
 
 const IDLE_STOP_MS = 3 * 60_000;
 const START_TIMEOUT_MS = 120_000;
@@ -13,7 +13,7 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 // Qwen3-ASR 音频约 13 token/秒，2048 上下文可容纳约 2.5 分钟语音
 const CONTEXT_SIZE = 2048;
 
-let server = null; // { child, port, startedAt, stderrTail }
+let server = null; // { child, port, modelId, startedAt, stderrTail }
 let startingPromise = null;
 let idleTimer = null;
 
@@ -86,21 +86,28 @@ async function waitForHealth(port, state) {
   throw new Error("语音引擎启动超时（120 秒），请重试");
 }
 
-// 就绪返回 { port }；未就绪时抛出带用户可读信息的错误
-export async function ensureLocalAsrServer({ customServerPath = "" } = {}) {
+// 就绪返回 { port }；未就绪时抛出带用户可读信息的错误。
+// modelId 指定要加载的本地模型；运行中的模型不一致时自动重启换模型。
+export async function ensureLocalAsrServer({ customServerPath = "", modelId = "" } = {}) {
+  const requestedModel = normalizeAsrModelId(modelId);
   scheduleIdleStop();
-  if (server && server.child.exitCode === null) return { port: server.port };
-  stopLocalAsrServer();
+  if (server && server.child.exitCode === null && server.modelId === requestedModel) {
+    return { port: server.port };
+  }
+  // 未运行或加载的是别的模型：停掉旧进程按需重启（并发调用合并到同一个启动任务，
+  // 注意 stopLocalAsrServer 会清空 startingPromise，必须先判断再停止）
   if (startingPromise) return startingPromise;
+  stopLocalAsrServer();
   startingPromise = (async () => {
     const runtime = localAsrRuntimeStatus(customServerPath);
     if (!runtime.available) throw new Error("语音引擎（llama-server）还没有下载，请在设置中下载或手动指定路径");
-    const modelPaths = localAsrModelPaths();
-    if (modelPaths.some((modelPath) => !modelPath) || modelPaths.length !== LOCAL_ASR_FILES.length) {
+    const definition = ASR_MODELS[requestedModel];
+    const modelPaths = localAsrModelPaths(requestedModel);
+    if (modelPaths.some((modelPath) => !modelPath) || modelPaths.length !== definition.files.length) {
       throw new Error("本地语音模型目录未初始化");
     }
     if (modelPaths.some((modelPath) => !existsSync(modelPath))) {
-      throw new Error("本地语音模型还没有下载，请在设置中下载");
+      throw new Error(`本地语音模型（${definition.label}）还没有下载，请在设置中下载`);
     }
     const port = await pickFreePort();
     const child = spawn(runtime.path, [
@@ -122,6 +129,7 @@ export async function ensureLocalAsrServer({ customServerPath = "" } = {}) {
     server = {
       child,
       port,
+      modelId: requestedModel,
       startedAt: Date.now(),
       stderrTail,
       get stderrTailText() { return stderrTail; },
@@ -163,9 +171,9 @@ export function stripAsrText(raw) {
 }
 
 // WAV 字节 → 本地引擎转写文本。抛错由调用方统一提示。
-export async function transcribeWithLocalAsr({ wav, customServerPath = "" } = {}) {
+export async function transcribeWithLocalAsr({ wav, customServerPath = "", modelId = "" } = {}) {
   if (!wav || (wav instanceof Uint8Array && !wav.length)) throw new Error("没有收到录音内容");
-  const { port } = await ensureLocalAsrServer({ customServerPath });
+  const { port } = await ensureLocalAsrServer({ customServerPath, modelId });
   const body = {
     messages: [{
       role: "user",
