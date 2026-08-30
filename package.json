@@ -35,12 +35,16 @@
   "dependencies": {
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
+    "katex": "^0.18.4",
     "lucide-react": "^0.468.0",
+    "mermaid": "^11.17.2",
     "qrcode": "^1.5.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "silk-wasm": "^3.7.1",
     "weixin-clawbot": "^1.0.0"
   },

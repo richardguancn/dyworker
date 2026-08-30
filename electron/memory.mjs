@@ -1,7 +1,7 @@
 import path from "node:path";
 
 export const memoryKinds = ["preference", "rule", "taboo", "fact", "experience"];
-export const memoryScopes = ["global", "workspace"];
+export const memoryScopes = ["global", "workspace", "session"];
 export const memoryRelations = ["extends", "refines", "supersedes"];
 
 // 随应用发布的只读认知，不写入用户的 memory.json。涉及会变化的模型资料时注明核对日期，
@@ -142,14 +142,22 @@ export function normalizeMemoryItem(item) {
   if (!content) return null;
   const requestedScope = memoryScopes.includes(item.scope) ? item.scope : "global";
   const workspacePath = requestedScope === "workspace" ? normalizeWorkspacePath(item.workspacePath) : "";
-  const scope = requestedScope === "workspace" && workspacePath ? "workspace" : "global";
+  // 会话记忆：绑定到某个任务会话（sessionId 非空才有效），不进入全局知识库
+  const scope = requestedScope === "session" && clean(item.sessionId)
+    ? "session"
+    : requestedScope === "workspace" && workspacePath
+      ? "workspace"
+      : "global";
   return {
     id: clean(item.id),
+    // 命名记忆：给记忆起一个简短名字，用户以后可以按名字引用（如「按报销流程那条记忆办」）
+    name: clean(item.name).slice(0, 30),
     category: clean(item.category) || "常用信息",
     content,
     kind: memoryKinds.includes(item.kind) ? item.kind : inferKind(item),
     scope,
     workspacePath: scope === "workspace" ? workspacePath : "",
+    ...(scope === "session" ? { sessionId: clean(item.sessionId) } : {}),
     relation: memoryRelations.includes(item.relation) ? item.relation : "extends",
     relatedMemoryId: clean(item.relatedMemoryId),
     createdAt: clean(item.createdAt),
@@ -179,13 +187,16 @@ export function mergeBuiltinMemories(items) {
   return [...builtins, ...saved];
 }
 
-export function buildMemoryRecord(item, { id, workspacePath, now } = {}) {
-  const scope = item?.scope === "workspace" && clean(workspacePath) ? "workspace" : "global";
+export function buildMemoryRecord(item, { id, workspacePath, sessionId, now } = {}) {
+  const scope = item?.scope === "session" && clean(sessionId)
+    ? "session"
+    : item?.scope === "workspace" && clean(workspacePath) ? "workspace" : "global";
   return normalizeMemoryItem({
     ...item,
     id: clean(id),
     scope,
     workspacePath: scope === "workspace" ? workspacePath : "",
+    ...(scope === "session" ? { sessionId } : {}),
     createdAt: clean(now) || new Date().toISOString(),
   });
 }

@@ -212,6 +212,7 @@ test("新记录根据作用范围绑定当前工作区", () => {
 
   assert.deepEqual(record, {
     id: "new-id",
+    name: "",
     category: "项目规则",
     content: "发布前必须完成测试",
     kind: "rule",
@@ -221,6 +222,40 @@ test("新记录根据作用范围绑定当前工作区", () => {
     relatedMemoryId: "",
     createdAt: "2026-07-27T00:00:00.000Z",
   });
+});
+
+test("会话记忆：带 sessionId 才有效，且不携带工作区路径", () => {
+  const [bound] = normalizeMemories([{
+    id: "s1",
+    category: "临时约定",
+    content: "本周统一用表格汇报",
+    kind: "rule",
+    scope: "session",
+    sessionId: "sess-1",
+  }]);
+  assert.equal(bound.scope, "session");
+  assert.equal(bound.sessionId, "sess-1");
+  assert.equal(bound.workspacePath, "");
+
+  // 缺 sessionId 的 session 记忆回落为全局，避免变成无主记忆
+  const [fallback] = normalizeMemories([{
+    id: "s2",
+    category: "临时约定",
+    content: "缺会话编号",
+    kind: "rule",
+    scope: "session",
+  }]);
+  assert.equal(fallback.scope, "global");
+
+  // buildMemoryRecord：session 记忆由调用方传入 sessionId 绑定
+  const record = buildMemoryRecord({
+    category: "临时约定",
+    content: "先起草再讨论",
+    kind: "rule",
+    scope: "session",
+  }, { id: "s3", sessionId: "sess-9" });
+  assert.equal(record.scope, "session");
+  assert.equal(record.sessionId, "sess-9");
 });
 
 test("根目录工作区不会被误降级为全局记忆", () => {

@@ -28,6 +28,7 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitFork,
   Globe,
   ListTree,
   Hand,
@@ -79,7 +80,7 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MemoryItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
@@ -213,6 +214,8 @@ const defaultSettings: ProviderSettings = {
   identity: null,
   endpoint: "",
   model: "",
+  reasoningEffort: "",
+  subAgentProfileId: "",
   apiKey: "",
   visionEndpoint: "",
   visionModel: "",
@@ -264,6 +267,7 @@ function settingsWithProfile(settings: ProviderSettings, profile: ModelProfile):
     endpoint: profile.endpoint,
     model: profile.model,
     apiKey: profile.apiKey,
+    reasoningEffort: profile.reasoningEffort ?? "",
     transcriptionEndpoint: profile.transcriptionEndpoint ?? settings.transcriptionEndpoint,
     transcriptionModel: profile.transcriptionModel || settings.transcriptionModel,
   };
@@ -282,6 +286,19 @@ const localTtsModelOptions = [
   { id: "qwen3-tts-1.7b-q4", label: "Qwen3-TTS-1.7B（Q4_K_M）", note: "约 1.5GB · 更小更快" },
   { id: "qwen3-tts-1.7b-q8", label: "Qwen3-TTS-1.7B（Q8_0）", note: "约 2.3GB · 音质更好" },
 ];
+
+// 推理强度档位的界面文案（取值与 providers.ts 各厂商 reasoningEfforts 对应，依据官方 API 文档）
+const reasoningEffortLabels: Record<string, string> = {
+  off: "关闭思考",
+  on: "开启思考",
+  auto: "自动（模型自行决定）",
+  low: "低",
+  medium: "中",
+  high: "高",
+  max: "最高",
+  xhigh: "超高",
+  adaptive: "自适应（模型自行决定）",
+};
 
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
@@ -582,6 +599,14 @@ function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
     isImage,
   };
 }
+
+// 输入框长粘贴折叠块：超过阈值的大段粘贴文本不直接灌进输入框，
+// 折叠成块随消息一起发送（对照 Codex 的长粘贴折叠呈现）
+interface ComposerPasteBlock {
+  id: string;
+  text: string;
+}
+const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
 // 把文本中的 @文件名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
 // 引用文件按输入顺序随正文展示，而不是单独堆成一排 chip
@@ -1204,6 +1229,26 @@ function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: str
     }
   };
 
+  // AI 生成提交信息（独立按钮触发，写入输入框供用户确认或修改）
+  const generateCommitMessage = async () => {
+    if (gitBusy) return;
+    setGitBusy("generate");
+    setActionError("");
+    try {
+      if (!window.dyworker?.gitSuggestCommitMessage) {
+        setActionError("当前环境没有连接 Git 通道");
+        return;
+      }
+      const result = await window.dyworker.gitSuggestCommitMessage(workspacePath);
+      if (!result.ok || !result.message) setActionError(result.error || "生成提交信息失败");
+      else setCommitMessage(result.message);
+    } catch {
+      setActionError("生成提交信息失败");
+    } finally {
+      setGitBusy("");
+    }
+  };
+
   const commitAll = async () => {
     if (gitBusy) return;
     setGitBusy("commit");
@@ -1341,9 +1386,13 @@ function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: str
             value={commitMessage}
             onChange={(event) => setCommitMessage(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") void commitAll(); }}
-            placeholder="提交信息（留空自动生成）"
+            placeholder="提交信息（留空按文件名自动生成）"
             aria-label="提交信息"
           />
+          <button className="button-secondary review-commit-go" onClick={() => void generateCommitMessage()} disabled={Boolean(gitBusy)} title="用当前模型按改动生成提交信息">
+            <Sparkles size={13} />
+            {gitBusy === "generate" ? "生成中…" : "AI 生成"}
+          </button>
           <button className="button-secondary review-commit-go" onClick={() => void commitAll()} disabled={gitBusy === "commit"} title="Ctrl/Cmd+Enter 提交">
             {gitBusy === "commit" ? "提交中…" : "提交"}
           </button>
@@ -2518,36 +2567,91 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
   );
 }
 
-function MemoriesPanel({ items, onDelete }: { items: MemoryItem[]; onDelete: (id: string) => void }) {
-  const kindLabels: Record<MemoryItem["kind"], string> = {
+function MemoriesPanel({ pages, onDelete, onLint, linting, lintMessage }: {
+  pages: WikiMemoryPage[];
+  onDelete: (id: string) => void;
+  onLint: () => void;
+  linting: boolean;
+  lintMessage: string;
+}) {
+  const kindLabels: Record<string, string> = {
     preference: "偏好",
     rule: "规则",
     taboo: "禁忌",
     fact: "事实",
     experience: "经验",
   };
-  if (!items.length) {
-    return <p className="panel-empty">助手在任务中发现长期有用的偏好和事实时，会自动保存在这里。</p>;
-  }
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+  const total = pages.reduce((sum, page) => sum + page.rows.length, 0);
+  // 看板过滤：按关键词（名字/内容/分类）与记忆类型筛选，空结果保留卡片框架
+  const queryText = memoryQuery.trim().toLowerCase();
+  const filteredPages = useMemo(() => pages.map((page) => ({
+    ...page,
+    rows: page.rows.filter((row) => {
+      if (kindFilter && row.kind !== kindFilter) return false;
+      if (!queryText) return true;
+      return [row.name, row.content, row.category].some((value) => String(value || "").toLowerCase().includes(queryText));
+    }),
+  })).filter((page) => page.rows.length), [pages, kindFilter, queryText]);
   return (
     <div className="panel-list">
-      {items.map((item) => (
-        <div className="memory-item" key={item.id}>
+      <div className="memory-wiki-toolbar">
+        <span className="panel-hint">个人记忆知识库：{pages.length} 个页面 · {total} 条记忆。助手保存的新记忆会在任务结束后自动合并进页面。</span>
+        <button type="button" className="button-secondary tiny" onClick={onLint} disabled={linting}>
+          {linting ? <LoaderCircle className="spin" size={13} /> : null}
+          {linting ? "整理中…" : "整理记忆"}
+        </button>
+      </div>
+      {total > 0 && (
+        <div className="memory-filter-bar">
+          <div className="memory-filter-search">
+            <Search size={13} />
+            <input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder="搜索名字、内容或分类" />
+          </div>
+          <div className="memory-filter-kinds" role="group" aria-label="按记忆类型过滤">
+            <button type="button" className={`memory-filter-chip${kindFilter === "" ? " active" : ""}`} onClick={() => setKindFilter("")}>全部</button>
+            {Object.entries(kindLabels).map(([kind, label]) => (
+              <button
+                type="button"
+                key={kind}
+                className={`memory-filter-chip${kindFilter === kind ? " active" : ""}`}
+                onClick={() => setKindFilter(kindFilter === kind ? "" : kind)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {lintMessage ? <p className="dialog-note">{lintMessage}</p> : null}
+      {!pages.length ? (
+        <p className="panel-empty">助手在任务中发现长期有用的偏好和事实时，会自动保存在这里。</p>
+      ) : !filteredPages.length ? (
+        <p className="panel-empty">没有匹配的记忆，换个关键词或清除类型过滤试试。</p>
+      ) : filteredPages.map((page) => (
+        <div className="memory-item" key={page.relPath}>
           <div className="memory-item-head">
             <div className="memory-meta">
-              <span className="memory-category">{item.category}</span>
-              <span className="memory-badge">{kindLabels[item.kind] || "事实"}</span>
-              <span className="memory-badge">{item.scope === "workspace" ? "当前工作区" : "全部工作区"}</span>
-              {item.builtIn ? <span className="memory-badge accent">内置</span> : null}
-              {item.relation === "supersedes" ? <span className="memory-badge accent">已更新旧记忆</span> : null}
+              <span className="memory-category">{page.title}</span>
+              <span className="memory-badge">{page.relPath === "pages/session.md" ? "按任务会话绑定" : page.scope === "workspace" ? "当前工作区" : "全部工作区"}</span>
+              <span className="memory-badge">{page.rows.length} 条</span>
             </div>
-            {!item.builtIn ? (
-              <button className="icon-button subtle tiny" onClick={() => onDelete(item.id)} aria-label="删除这条记忆">
-                <Trash2 size={13} />
-              </button>
-            ) : null}
           </div>
-          <p>{item.content}</p>
+          {page.rows.map((row) => (
+            <div className="memory-row" key={`${page.relPath}:${row.id}`}>
+              <div className="memory-row-head">
+                {row.name ? <span className="memory-name" title={row.name}>「{row.name}」</span> : null}
+                <span className="memory-badge">{kindLabels[row.kind] || row.kind || "事实"}</span>
+                {row.category && row.category !== page.title ? <span className="memory-badge subtle">{row.category}</span> : null}
+                {row.sessionId ? <span className="memory-badge subtle">仅本任务</span> : null}
+                <button className="icon-button subtle tiny" onClick={() => onDelete(row.id)} aria-label="删除这条记忆">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+              <p>{row.content}</p>
+            </div>
+          ))}
         </div>
       ))}
     </div>
@@ -2853,6 +2957,13 @@ interface ScheduleDraft {
   workspacePath?: string;
 }
 
+const scheduleHistoryStatusLabels: Record<string, string> = {
+  success: "完成",
+  failed: "失败",
+  sleeping: "挂起",
+  running: "运行中",
+};
+
 function PlansPanel({
   items,
   workspaceReady,
@@ -2861,6 +2972,7 @@ function PlansPanel({
   onToggle,
   onDelete,
   onTrigger,
+  onOpenSession,
   seed,
 }: {
   items: ScheduleRecord[];
@@ -2870,6 +2982,7 @@ function PlansPanel({
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
   onTrigger: (id: string) => void;
+  onOpenSession?: (sessionId: string) => void;
   seed?: { name: string; prompt: string } | null;
 }) {
   const [formOpen, setFormOpen] = useState(false);
@@ -2953,6 +3066,23 @@ function PlansPanel({
                 {plan.lastStatus === "running" ? "正在执行…" : plan.lastStatus === "sleeping" ? plan.lastSummary || "已挂起等待唤醒" : plan.lastStatus === "success" ? `上次完成：${plan.lastSummary || "正常"}` : `上次失败：${plan.lastSummary || "未知原因"}`}
               </p>
             )}
+            {plan.history?.length ? (
+              <details className="plan-history">
+                <summary>运行记录（{plan.history.length}）</summary>
+                {plan.history.map((entry, index) => (
+                  <div className={`plan-history-entry ${entry.status}`} key={`${entry.at}:${index}`}>
+                    <div className="plan-history-head">
+                      <span className="plan-history-status">{scheduleHistoryStatusLabels[entry.status] || entry.status || "执行"}</span>
+                      <span className="plan-history-time">{formatScheduleTime(entry.at)}</span>
+                      {entry.sessionId && onOpenSession ? (
+                        <button type="button" className="bare-button plan-history-open" onClick={() => onOpenSession(entry.sessionId)}>查看转录</button>
+                      ) : null}
+                    </div>
+                    {entry.summary ? <p>{entry.summary}</p> : null}
+                  </div>
+                ))}
+              </details>
+            ) : null}
             <button className="bare-button plan-run-now" onClick={() => onTrigger(plan.id)} disabled={plan.lastStatus === "running"}>
               立即执行
             </button>
@@ -2963,8 +3093,13 @@ function PlansPanel({
   );
 }
 
-// 上下文用量圆环：当前会话已用标记 / 当前模型上下文上限
-function ContextRing({ used, limit, exact }: { used: number; limit: number; exact?: boolean }) {
+// 上下文用量圆环：当前会话已用标记 / 当前模型上下文上限；tooltip 附带会话累计 token 用量
+function ContextRing({ used, limit, exact, stats }: {
+  used: number;
+  limit: number;
+  exact?: boolean;
+  stats?: { prompt: number; completion: number; requests: number } | null;
+}) {
   const summary = contextUsageSummary(used, limit);
   const { ratio, percent } = summary;
   const radius = 8;
@@ -2995,6 +3130,9 @@ function ContextRing({ used, limit, exact }: { used: number; limit: number; exac
         <span>上下文窗口：</span>
         <strong>{summary.percentLabel} 已用</strong>
         <span>已用 {summary.usedLabel} 标记，共 {summary.limitLabel}</span>
+        {stats && stats.requests > 0 && (
+          <span>本会话累计：输入 {formatTokenCount(stats.prompt)} + 输出 {formatTokenCount(stats.completion)} tokens（{stats.requests} 次请求）</span>
+        )}
         {!exact && <small>当前为估算值，发送任务后按服务返回值更新</small>}
       </span>
     </span>
@@ -3598,6 +3736,9 @@ function SettingsDialog({
   onSave,
   memories,
   onDeleteMemory,
+  onLintMemories,
+  memoriesLinting,
+  memoriesLintMessage,
   skills,
   onToggleSkill,
   onDeleteSkill,
@@ -3610,6 +3751,7 @@ function SettingsDialog({
   onToggleSchedule,
   onDeleteSchedule,
   onTriggerSchedule,
+  onOpenScheduleSession,
   usageRecords,
   onClearUsage,
   tab,
@@ -3621,8 +3763,11 @@ function SettingsDialog({
   value: ProviderSettings;
   onClose: () => void;
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
-  memories: MemoryItem[];
+  memories: WikiMemoryPage[];
   onDeleteMemory: (id: string) => void;
+  onLintMemories: () => void;
+  memoriesLinting: boolean;
+  memoriesLintMessage: string;
   skills: SkillRecord[];
   onToggleSkill: (id: string, enabled: boolean) => void;
   onDeleteSkill: (id: string) => void;
@@ -3635,6 +3780,7 @@ function SettingsDialog({
   onToggleSchedule: (id: string, enabled: boolean) => void;
   onDeleteSchedule: (id: string) => void;
   onTriggerSchedule: (id: string) => void;
+  onOpenScheduleSession?: (sessionId: string) => void;
   usageRecords: UsageRecord[] | null;
   onClearUsage: () => void;
   tab: SettingsTab;
@@ -3659,6 +3805,28 @@ function SettingsDialog({
   const [reviewerLocal, setReviewerLocal] = useState<ReviewerLocalStatus | null>(null);
   const [reviewerDownloading, setReviewerDownloading] = useState(false);
   const [reviewerDownloadError, setReviewerDownloadError] = useState("");
+  // 凭证预检：保存前先验证服务地址/模型/密钥可用性，避免任务运行时才发现配错
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const runCredentialProbe = async () => {
+    if (!draft.endpoint.trim() || !draft.model.trim()) {
+      setProbeResult({ ok: false, text: "请先填写服务地址和模型名称再验证。" });
+      return;
+    }
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const result = await window.dyworker?.probeCredentials({ endpoint: draft.endpoint, model: draft.model, apiKey: draft.apiKey });
+      setProbeResult(result
+        ? { ok: Boolean(result.ok), text: result.ok ? result.message || "验证通过" : result.error || "验证失败" }
+        : { ok: false, text: "当前环境不支持凭证验证。" });
+    } catch (error) {
+      setProbeResult({ ok: false, text: `验证失败：${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setProbing(false);
+    }
+  };
 
   useEffect(() => {
     if (tab !== "model") return;
@@ -3817,6 +3985,7 @@ function SettingsDialog({
         endpoint: "",
         model: "",
         apiKey: "",
+        reasoningEffort: "",
         transcriptionEndpoint: "",
       }));
       return;
@@ -3830,6 +3999,8 @@ function SettingsDialog({
         endpoint: next.endpoint,
         model: next.defaultModel,
         apiKey: "",
+        // 换厂商后原强度档位可能不再适用，回到厂商默认
+        reasoningEffort: "",
       });
     }
   };
@@ -3860,6 +4031,7 @@ function SettingsDialog({
       ...current,
       model,
       apiKey: saved?.apiKey ?? current.apiKey,
+      reasoningEffort: saved?.reasoningEffort ?? current.reasoningEffort,
       transcriptionEndpoint: saved?.transcriptionEndpoint ?? current.transcriptionEndpoint,
       transcriptionModel: saved?.transcriptionModel || current.transcriptionModel,
     }));
@@ -3886,6 +4058,7 @@ function SettingsDialog({
       endpoint,
       model,
       apiKey,
+      reasoningEffort: current.reasoningEffort || "",
       transcriptionEndpoint: current.transcriptionEndpoint,
       transcriptionModel: current.transcriptionModel,
     };
@@ -4045,6 +4218,38 @@ function SettingsDialog({
         <p className="dialog-note">
           可在模型名后加 [1M]、[256K] 或 [131072] 后缀指定上下文上限（如 k3[1M]），仅用于本地用量统计与裁剪；请求时自动剥离后缀。
         </p>
+        {preset.reasoningEfforts?.length ? (<>
+        <label>
+          推理强度
+          <select
+            value={draft.reasoningEffort || ""}
+            onChange={(event) => setDraft({ ...draft, reasoningEffort: event.target.value })}
+          >
+            <option value="">默认（厂商推荐）</option>
+            {preset.reasoningEfforts.map((effort) => (
+              <option key={effort} value={effort}>{reasoningEffortLabels[effort] || effort}</option>
+            ))}
+          </select>
+        </label>
+        <p className="dialog-note">
+          控制模型的思考深度：强度越高回答越严谨但更慢、消耗更多推理 token；关闭思考则直接作答。档位依据各厂商官方 API 文档，仅对支持的模型生效。
+        </p>
+        </>) : null}
+        <label>
+          子代理模型
+          <select
+            value={draft.subAgentProfileId || ""}
+            onChange={(event) => setDraft({ ...draft, subAgentProfileId: event.target.value })}
+          >
+            <option value="">跟随主模型</option>
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.name}</option>
+            ))}
+          </select>
+        </label>
+        <p className="dialog-note">
+          dispatch_agent 派发的子代理默认与主模型相同；可在这里换成更便宜或更快的模型（如 Flash 型）跑资料收集类子任务，密钥为空时沿用主模型密钥。
+        </p>
         <label>
           API 密钥
           <input
@@ -4054,6 +4259,13 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
         </label>
+        <div className="credential-probe">
+          <button type="button" className="button-secondary" onClick={() => void runCredentialProbe()} disabled={probing || saving}>
+            {probing ? <LoaderCircle className="spin" size={14} /> : null}
+            {probing ? "验证中…" : "验证密钥可用性"}
+          </button>
+          {probeResult ? <p className={`credential-probe-result ${probeResult.ok ? "ok" : "bad"}`}>{probeResult.text}</p> : null}
+        </div>
         {["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].some((m) => draft.model.trim().toLowerCase() === m) && (<>
         {draft.model.trim().toLowerCase() === "deepseek-v4-flash-vision-exp" ? (<>
           <div className="dialog-section-title">图片（DeepSeek V4 Flash Vision-Exp）</div>
@@ -4555,7 +4767,7 @@ function SettingsDialog({
         </div>
           </form>
         ) : tab === "memories" ? (
-          <MemoriesPanel items={memories} onDelete={onDeleteMemory} />
+          <MemoriesPanel pages={memories} onDelete={onDeleteMemory} onLint={onLintMemories} linting={memoriesLinting} lintMessage={memoriesLintMessage} />
         ) : tab === "skills" ? (
           <SkillsPanel
             items={skills}
@@ -4586,6 +4798,7 @@ function SettingsDialog({
             onToggle={onToggleSchedule}
             onDelete={onDeleteSchedule}
             onTrigger={onTriggerSchedule}
+            onOpenSession={onOpenScheduleSession}
             seed={planSeed}
           />
         )}
@@ -4649,12 +4862,15 @@ export function App() {
   const [commitMessage, setCommitMessage] = useState("");
   const [includeUnstaged, setIncludeUnstaged] = useState(true);
   const [diffStats, setDiffStats] = useState<GitDiffStats | null>(null);
-  const [gitBusy, setGitBusy] = useState<"" | "switch" | "commit" | "commit-push" | "push">("");
+  const [gitBusy, setGitBusy] = useState<"" | "switch" | "commit" | "commit-push" | "push" | "generate">("");
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
   const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
   const [query, setQuery] = useState("");
   const [composer, setComposer] = useState("");
+  // 长粘贴折叠块：当前会话输入框中折叠的大段粘贴文本
+  const [composerPastes, setComposerPastes] = useState<ComposerPasteBlock[]>([]);
+  const [expandedPasteId, setExpandedPasteId] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
@@ -4719,7 +4935,9 @@ export function App() {
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("reviewer");
   const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
   const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
-  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [memories, setMemories] = useState<WikiMemoryPage[]>([]);
+  const [memoriesLinting, setMemoriesLinting] = useState(false);
+  const [memoriesLintMessage, setMemoriesLintMessage] = useState("");
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
@@ -4825,6 +5043,33 @@ export function App() {
   // 对话列表底部 padding 据此预留空间，避免最后一条消息被输入框遮挡。
   useEffect(() => {
     activeIdRef.current = activeId;
+  }, [activeId]);
+
+  // 会话草稿：切换会话时保留各自输入框内容与折叠的长文本块（对照 Codex 的 per-session 草稿）。
+  // composer/composerPastes 的最新值经 ref 读取，避免 activeId 变化的同一次提交里闭包取到旧值。
+  const composerRef = useRef(composer);
+  const composerPastesRef = useRef(composerPastes);
+  const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[] }>>({});
+  const lastActiveIdRef = useRef(activeId);
+  useEffect(() => { composerRef.current = composer; }, [composer]);
+  useEffect(() => { composerPastesRef.current = composerPastes; }, [composerPastes]);
+  useEffect(() => {
+    sessionDraftsRef.current[lastActiveIdRef.current] = {
+      text: composerRef.current,
+      pastes: composerPastesRef.current,
+    };
+  }, [composer, composerPastes]);
+  useEffect(() => {
+    if (lastActiveIdRef.current === activeId) return;
+    sessionDraftsRef.current[lastActiveIdRef.current] = {
+      text: composerRef.current,
+      pastes: composerPastesRef.current,
+    };
+    lastActiveIdRef.current = activeId;
+    const draft = sessionDraftsRef.current[activeId];
+    setComposer(draft?.text || "");
+    setComposerPastes(draft?.pastes || []);
+    setExpandedPasteId("");
   }, [activeId]);
 
   // 会话列表快照 ref：渠道实时事件监听器（注册一次、长期存活）需要读取最新会话，
@@ -5514,6 +5759,21 @@ export function App() {
     }
   };
 
+  // AI 生成提交信息（独立按钮触发，写入输入框供用户确认或修改）
+  const generateCommitMessage = async () => {
+    if (!window.dyworker?.gitSuggestCommitMessage || gitBusy) return;
+    setGitBusy("generate");
+    try {
+      const result = await window.dyworker.gitSuggestCommitMessage(composerWorkspacePath);
+      if (!result.ok || !result.message) setError(result.error || "生成提交信息失败");
+      else setCommitMessage(result.message);
+    } catch {
+      setError("生成提交信息失败");
+    } finally {
+      setGitBusy("");
+    }
+  };
+
   const runCommit = async (push: boolean) => {
     if (!window.dyworker?.gitCommit || gitBusy) return;
     setGitBusy(push ? "commit-push" : "commit");
@@ -5718,11 +5978,30 @@ export function App() {
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
+  // 从指定消息处分叉：复制会话开头到该消息(含)的内容为新会话，原会话保持不变（对照 Codex fork）
+  const forkSession = (session: SessionRecord, messageIndex: number) => {
+    const now = new Date().toISOString();
+    const forked: SessionRecord = {
+      id: crypto.randomUUID(),
+      title: `${session.title}（分支）`,
+      workspacePath: session.workspacePath,
+      ...(session.goal ? { goal: session.goal } : {}),
+      createdAt: now,
+      updatedAt: now,
+      messages: session.messages.slice(0, messageIndex + 1).map((message) => ({ ...message })),
+    };
+    setSessions((current) => [forked, ...current]);
+    setActiveId(forked.id);
+    shouldScrollToBottomRef.current = forked.id;
+    setNotice("已从此处分叉出新任务，可继续独立对话");
+  };
+
   const deleteSession = (id: string) => {
     setSessionMenuId(null);
     newTaskGuardRef.current = false;
     // 会话删除时,它登记的待唤醒一并取消,避免无主的自动续跑
     void window.dyworker?.cancelWakesForSession?.(id);
+    delete sessionDraftsRef.current[id];
     setSessions((current) => {
       const remaining = current.filter((session) => session.id !== id);
       if (!remaining.length) {
@@ -5873,10 +6152,23 @@ export function App() {
     if (file) insertFileToken(file);
   };
 
+  // 超过阈值的大段粘贴文本折叠成块，避免撑爆输入框；发送时自动附在消息正文后
+  const addLongPasteBlock = (text: string) => {
+    setComposerPastes((current) => [...current, { id: crypto.randomUUID(), text }]);
+    setNotice(`长文本已折叠（${text.length.toLocaleString()} 字），发送时会自动附带`);
+  };
+
   const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
     const image = imageItem?.getAsFile();
-    if (!image) return;
+    if (!image) {
+      const text = event.clipboardData.getData("text/plain");
+      if (text.length >= COMPOSER_LONG_PASTE_THRESHOLD) {
+        event.preventDefault();
+        addLongPasteBlock(text);
+      }
+      return;
+    }
     event.preventDefault();
     setError("");
     if (image.size > 12 * 1024 * 1024) {
@@ -6028,6 +6320,11 @@ export function App() {
       } else {
         setNotice("粘贴失败，请检查剪贴板权限");
       }
+      return;
+    }
+    if (text.length >= COMPOSER_LONG_PASTE_THRESHOLD) {
+      addLongPasteBlock(text);
+      textarea?.focus();
       return;
     }
     setComposer(composer.slice(0, start) + text + composer.slice(end));
@@ -6465,7 +6762,7 @@ export function App() {
       return;
     }
     let content = composer.trim();
-    if ((!content && !attachments.length && !activeSkills.length) || !activeSession) return;
+    if ((!content && !attachments.length && !activeSkills.length && !composerPastes.length) || !activeSession) return;
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
     if (activeTaskRunning && !queueSupported) return;
@@ -6499,6 +6796,13 @@ export function App() {
     }
     setError("");
     setComposer("");
+    // 折叠的长粘贴块：正文里带标记发给模型，气泡只显示用户输入（对齐长粘贴折叠呈现）
+    const pastedBlocks = composerPastes;
+    setComposerPastes([]);
+    setExpandedPasteId("");
+    const pastedText = pastedBlocks.length
+      ? `\n\n${pastedBlocks.map((block, index) => `【粘贴的长文本 ${index + 1}｜共 ${block.text.length} 字】\n${block.text}`).join("\n\n")}`
+      : "";
     // 正文里的 @文件名 token 按出现顺序解析成附件（内联引用），后面跟上手动添加的附件
     const tokenAttachments: Attachment[] = [];
     const seenTokenPaths = new Set<string>();
@@ -6557,11 +6861,11 @@ export function App() {
       id: crypto.randomUUID(),
       role: "user",
       runId: messageRunId,
-      // content 带完整技能指令发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
-      content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : "请处理这些附件。")),
-      ...(selectedSkills.length ? {
-        displayContent: content || "（按模板处理当前工作区）",
-        skillsUsed: selectedSkills.map((skill) => skill.name),
+      // content 带完整技能指令与折叠的长文本发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
+      content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : "请处理这些附件。")) + pastedText,
+      ...(selectedSkills.length || pastedBlocks.length ? {
+        displayContent: content || (selectedSkills.length ? "（按模板处理当前工作区）" : "（已折叠的粘贴长文本）"),
+        ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
       attachments: selectedAttachments,
       createdAt: new Date().toISOString(),
@@ -6577,7 +6881,7 @@ export function App() {
       ...activeSession,
       ...(goalDriven ? { goal: content } : {}),
       ...(editingTarget ? { workingContext: undefined } : {}),
-      title: baseMessages.length === 0 ? shortTitle(content) : activeSession.title,
+      title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : activeSession.title,
       // 不能用空的全局值冲掉会话自己保存的工作目录（重启后全局值可能为空）
       workspacePath: workspacePath || activeSession.workspacePath || "",
       updatedAt: new Date().toISOString(),
@@ -6757,6 +7061,16 @@ export function App() {
               contextTokensExact: !agentEvent.estimated,
               contextModel: settings.model,
               contextEndpoint: settings.endpoint,
+            }));
+          } else if (agentEvent.type === "token-usage") {
+            // 会话累计用量：每次模型调用按服务端 usage（或估算）累加，圆环 tooltip 展示
+            updateSession(updatedSession.id, (session) => ({
+              ...session,
+              tokenStats: {
+                prompt: (session.tokenStats?.prompt || 0) + (Number(agentEvent.prompt) || 0),
+                completion: (session.tokenStats?.completion || 0) + (Number(agentEvent.completion) || 0),
+                requests: (session.tokenStats?.requests || 0) + 1,
+              },
             }));
           } else if (agentEvent.type === "context-compacted") {
             updateSession(updatedSession.id, (session) => ({
@@ -6945,6 +7259,16 @@ export function App() {
         return;
       }
     }
+    // ESC 中断：无候选菜单时按 ESC 终止当前会话正在运行的任务（对齐 Codex 的 ESC 打断）
+    if (event.key === "Escape" && activeSession && runningSessionIds.has(activeSession.id)) {
+      const runId = runningRunIdsRef.current.get(activeSession.id);
+      if (runId && window.dyworker?.cancelTask) {
+        event.preventDefault();
+        void window.dyworker.cancelTask(activeSession.id, runId);
+        setNotice("已请求终止当前任务");
+      }
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
       event.preventDefault();
       void sendMessage();
@@ -7052,6 +7376,11 @@ export function App() {
   };
 
   const hasModel = Boolean(settings.endpoint && settings.model && settings.apiKey);
+  // 当前提供方预设支持的推理强度档位（本地部署也有开/关思考），输入框下方快捷切换用
+  const activeReasoningEfforts = useMemo(
+    () => providerPresets.find((item) => item.id === matchProvider(settings.endpoint))?.reasoningEfforts || [],
+    [settings.endpoint],
+  );
   const identitySetupOpen = ready && settings.identity === null;
   const activeApprovalMode = composerApprovalModes.find((option) => option.value === approvalMode) || composerApprovalModes[1];
   const ActiveApprovalIcon = activeApprovalMode.icon;
@@ -7081,7 +7410,7 @@ export function App() {
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   const canSend = Boolean(
-    (composer.trim() || attachments.length || activeSkills.length)
+    (composer.trim() || attachments.length || activeSkills.length || composerPastes.length)
     && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
     && voiceState !== "transcribing",
   );
@@ -7317,6 +7646,7 @@ export function App() {
           ) : (
             <button role="menuitem" onClick={() => { setSessionMenuId(null); archiveSession(session.id); }}>归档</button>
           )}
+          <button role="menuitem" onClick={() => { setSessionMenuId(null); exportSessionMarkdown(session); }}>导出为 Markdown</button>
           <button role="menuitem" className="danger" onClick={() => deleteSession(session.id)}>删除</button>
         </div>
       )}
@@ -7444,6 +7774,38 @@ export function App() {
     </div>
   );
 
+  // 导出会话为 Markdown：正文用 displayContent（引用技能/长粘贴折叠时与气泡一致），
+  // 附件、技能标签与耗时一并带出，文件名含会话标题与日期
+  const exportSessionMarkdown = (session: SessionRecord) => {
+    const lines: string[] = [
+      `# ${session.title}`,
+      "",
+      `> 导出自 DYWorker · ${new Date().toLocaleString()}`,
+      "",
+    ];
+    for (const message of session.messages) {
+      const body = message.displayContent || message.content;
+      if (!body.trim()) continue;
+      const time = message.createdAt ? new Date(message.createdAt).toLocaleString() : "";
+      const header = message.role === "user" ? "🧑 用户" : message.role === "assistant" ? "🤖 助手" : "系统";
+      lines.push(`## ${header}${time ? ` · ${time}` : ""}`, "");
+      lines.push(body.trim(), "");
+      if (message.skillsUsed?.length) lines.push(`（使用技能：${message.skillsUsed.join("、")}）`, "");
+      if (message.attachments?.length) {
+        lines.push(`**附件：** ${message.attachments.map((item) => item.name).join("、")}`, "");
+      }
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `${session.title.replace(/[\\/:*?"<>|]/g, "_")}-${stamp}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("已导出会话为 Markdown 文件");
+  };
+
   const taskMenu = (
     <div className="topbar-menu-wrap" data-menu-root>
       <button
@@ -7461,6 +7823,7 @@ export function App() {
             {activeSession.pinned ? "取消置顶" : "置顶任务"}
           </button>
           <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
+          <button role="menuitem" onClick={() => { setTopMenuOpen(false); exportSessionMarkdown(activeSession); }}>导出为 Markdown</button>
           <button role="menuitem" onClick={() => {
             setTopMenuOpen(false);
             setPlanSeed({ name: activeSession.title, prompt: "" });
@@ -7732,7 +8095,7 @@ export function App() {
                     <textarea
                       className="commit-message-input"
                       aria-label="提交信息"
-                      placeholder="提交信息（留空将自动生成）"
+                      placeholder="提交信息（留空按文件名自动生成）"
                       rows={3}
                       value={commitMessage}
                       onChange={(event) => setCommitMessage(event.target.value)}
@@ -7740,6 +8103,12 @@ export function App() {
                         if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void runCommit(true);
                       }}
                     />
+                    <div className="commit-ai-row">
+                      <button type="button" onClick={() => void generateCommitMessage()} disabled={Boolean(gitBusy)} title="用当前模型按改动生成提交信息">
+                        <Sparkles size={14} />
+                        <span>{gitBusy === "generate" ? "生成中…" : "AI 生成提交信息"}</span>
+                      </button>
+                    </div>
                     <label className="commit-include-row">
                       <span className="commit-include-label">
                         <input
@@ -8049,7 +8418,11 @@ export function App() {
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
                             <Copy size={16} />
                           </button>
+                          <button type="button" onClick={() => forkSession(activeSession, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
+                            <GitFork size={16} />
+                          </button>
                           <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+                          <span className="ai-disclaimer">由AI生成，请注意甄别</span>
                         </div>
                       )}
                     </div>
@@ -8311,6 +8684,37 @@ export function App() {
                 )}
               </div>
             )}
+            {composerPastes.length > 0 && (
+              <div className="composer-paste-folds">
+                {composerPastes.map((block) => {
+                  const expanded = expandedPasteId === block.id;
+                  return (
+                    <div className={`paste-fold${expanded ? " expanded" : ""}`} key={block.id}>
+                      <div className="paste-fold-header">
+                        <FileText size={14} />
+                        <button
+                          type="button"
+                          className="paste-fold-toggle"
+                          onClick={() => setExpandedPasteId(expanded ? "" : block.id)}
+                          aria-expanded={expanded}
+                        >
+                          已折叠长文本 · {block.text.length.toLocaleString()} 字 · {expanded ? "收起" : "展开查看"}
+                        </button>
+                        <button
+                          type="button"
+                          className="paste-fold-remove"
+                          onClick={() => setComposerPastes((current) => current.filter((item) => item.id !== block.id))}
+                          aria-label="移除长文本"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                      {expanded && <pre className="paste-fold-preview">{block.text}</pre>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div
               className={`attachment-strip${Boolean(activeSkills.length || attachments.length) ? " has-refs" : ""}`}
               aria-label={Boolean(activeSkills.length || attachments.length) ? `已选择 ${activeSkills.length + attachments.length} 项` : undefined}
@@ -8459,6 +8863,20 @@ export function App() {
                     </div>
                   )}
                 </div>
+                {activeReasoningEfforts.length > 0 && hasModel && (
+                  <select
+                    className="composer-effort-select"
+                    value={settings.reasoningEffort || ""}
+                    onChange={(event) => void saveProviderSettings({ ...settings, reasoningEffort: event.target.value }, "推理强度已更新")}
+                    aria-label="推理强度"
+                    title="推理强度：控制模型思考深度，切换立即生效"
+                  >
+                    <option value="">强度·默认</option>
+                    {activeReasoningEfforts.map((effort) => (
+                      <option key={effort} value={effort}>{reasoningEffortLabels[effort] || effort}</option>
+                    ))}
+                  </select>
+                )}
                 <div className="approval-mode-wrap" data-menu-root>
                   <button
                     type="button"
@@ -8498,7 +8916,7 @@ export function App() {
                     </div>
                   )}
                 </div>
-                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
+                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
               </div>
               <div className="composer-actions">
                 {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
@@ -8788,9 +9206,23 @@ export function App() {
           onSave={saveProviderSettings}
           memories={memories}
           onDeleteMemory={(id) => {
-            setMemories((current) => current.filter((item) => item.id !== id));
+            setMemories((current) => current.map((page) => ({ ...page, rows: page.rows.filter((row) => row.id !== id) })));
             void window.dyworker?.deleteMemory(id);
           }}
+          onLintMemories={() => {
+            if (!window.dyworker?.lintMemories) return;
+            setMemoriesLinting(true);
+            setMemoriesLintMessage("");
+            void window.dyworker.lintMemories()
+              .then(async (result) => {
+                setMemoriesLintMessage(result?.ok ? "整理完成：重复与矛盾的记忆已合并修订。" : `整理失败：${result?.error || "未知原因"}`);
+                if (window.dyworker?.listMemories) setMemories(await window.dyworker.listMemories());
+              })
+              .catch((error) => setMemoriesLintMessage(`整理失败：${String(error)}`))
+              .finally(() => setMemoriesLinting(false));
+          }}
+          memoriesLinting={memoriesLinting}
+          memoriesLintMessage={memoriesLintMessage}
           skills={skills}
           onToggleSkill={(id, enabled) => {
             setSkills((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
@@ -8813,6 +9245,15 @@ export function App() {
           onToggleSchedule={toggleSchedule}
           onDeleteSchedule={deleteSchedule}
           onTriggerSchedule={triggerSchedule}
+          onOpenScheduleSession={(sessionId) => {
+            const target = sessions.find((session) => session.id === sessionId);
+            if (!target) {
+              setNotice("找不到该运行记录关联的会话，可能已被删除。");
+              return;
+            }
+            setActiveId(sessionId);
+            setSettingsOpen(false);
+          }}
           usageRecords={usageStats}
           onClearUsage={() => {
             setUsageStats([]);

@@ -99,6 +99,29 @@ export async function gitDiffStats(root) {
   return { isRepo: true, added, removed, files, untracked };
 }
 
+// 留空提交信息时由 AI 生成：收集改动统计 + 截断的 diff 正文作为素材；
+// 未跟踪文件 git diff 看不到，单独列名
+export async function gitCommitDiff(root) {
+  if (!root || !(await isGitRepo(root))) return null;
+  const porcelain = await readPorcelain(root);
+  if (!porcelain.length) return null;
+  let stat = await runGit(root, ["diff", "--stat", "HEAD"], { timeout: 20000 });
+  let diff = await runGit(root, ["diff", "HEAD"], { timeout: 20000 });
+  if (!diff.ok) {
+    // 仓库还没有任何提交（无 HEAD）：退化为暂存区统计
+    stat = await runGit(root, ["diff", "--stat", "--cached"], { timeout: 20000 });
+    diff = await runGit(root, ["diff", "--cached"], { timeout: 20000 });
+  }
+  const untracked = porcelain.filter((line) => line.startsWith("??")).map((line) => line.slice(3).trim());
+  const COMMIT_DIFF_MAX_CHARS = 16000;
+  return {
+    stat: stat.stdout.trim(),
+    untracked,
+    diff: diff.stdout.slice(0, COMMIT_DIFF_MAX_CHARS),
+    truncated: diff.stdout.length > COMMIT_DIFF_MAX_CHARS,
+  };
+}
+
 // 留空提交信息时自动生成：概括改动的文件
 async function autoCommitMessage(root) {
   const porcelain = await readPorcelain(root);

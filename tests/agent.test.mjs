@@ -7,7 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -203,6 +203,101 @@ test("Responses API 完成普通回复并上报真实用量", async () => {
   assert.equal(calls[0].body.tools[0].function, undefined);
   const usage = events.find((event) => event.type === "token-usage");
   assert.deepEqual({ prompt: usage.prompt, completion: usage.completion, estimated: usage.estimated }, { prompt: 25, completion: 6, estimated: false });
+});
+
+test("reasoningRequestParams：各厂商推理强度档位映射为官方 API 参数", () => {
+  // 未选择档位：除 Kimi 开放平台固定 high 控费外均不传参数
+  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "" }), {});
+  assert.deepEqual(reasoningRequestParams({ provider: "kimi-open", effort: "" }), { reasoning_effort: "high" });
+  // DeepSeek：effort 走顶层 reasoning_effort；off 用 thinking.type 关闭思考
+  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "high" }), { reasoning_effort: "high" });
+  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "off" }), { thinking: { type: "disabled" } });
+  // Kimi：K3 思考不可关闭，off 视为不传参数
+  assert.deepEqual(reasoningRequestParams({ provider: "kimi", effort: "off" }), {});
+  assert.deepEqual(reasoningRequestParams({ provider: "kimi-open", effort: "max" }), { reasoning_effort: "max" });
+  // GLM：off 用 thinking.type；档位走 reasoning_effort
+  assert.deepEqual(reasoningRequestParams({ provider: "glm", effort: "off" }), { thinking: { type: "disabled" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "glm", effort: "low" }), { reasoning_effort: "low" });
+  // Qwen（百炼兼容模式）：enable_thinking 开关 + reasoning_effort
+  assert.deepEqual(reasoningRequestParams({ provider: "qwen", effort: "off" }), { enable_thinking: false });
+  assert.deepEqual(reasoningRequestParams({ provider: "qwen", effort: "medium" }), { enable_thinking: true, reasoning_effort: "medium" });
+  // MiniMax M3：thinking.type（disabled/adaptive）
+  assert.deepEqual(reasoningRequestParams({ provider: "minimax", effort: "off" }), { thinking: { type: "disabled" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "minimax", effort: "adaptive" }), { thinking: { type: "adaptive" } });
+  // 豆包：thinking.type（off/auto）+ reasoning_effort 档位
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "off" }), { thinking: { type: "disabled" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "auto" }), { thinking: { type: "auto" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "high" }), { reasoning_effort: "high" });
+  // OpenAI / Gemini / xAI：顶层 reasoning_effort
+  assert.deepEqual(reasoningRequestParams({ provider: "openai", effort: "xhigh" }), { reasoning_effort: "xhigh" });
+  assert.deepEqual(reasoningRequestParams({ provider: "gemini", effort: "low" }), { reasoning_effort: "low" });
+  assert.deepEqual(reasoningRequestParams({ provider: "xai", effort: "high" }), { reasoning_effort: "high" });
+  // 未知厂商 / 本地部署（vLLM/Ollama/LM Studio）：off/on 用 vLLM 官方的
+  // chat_template_kwargs.enable_thinking（Qwen3 思考开关）；档位透传 OpenAI 标准 reasoning_effort
+  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "" }), {});
+  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "off" }), { chat_template_kwargs: { enable_thinking: false } });
+  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "on" }), { chat_template_kwargs: { enable_thinking: true } });
+  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "high" }), { reasoning_effort: "high" });
+});
+
+test("resolveSubAgentSettings：按档案 id 解析子代理模型，未配置时跟随主模型", () => {
+  const base = {
+    endpoint: "https://api.deepseek.com/v1/chat/completions",
+    model: "deepseek-v4-pro",
+    apiKey: "main-key",
+    reasoningEffort: "high",
+    profiles: [
+      { id: "p-flash", name: "DeepSeek · Flash", endpoint: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-v4-flash", apiKey: "flash-key", reasoningEffort: "low" },
+      { id: "p-empty", name: "空档案", endpoint: "", model: "", apiKey: "", reasoningEffort: "" },
+    ],
+  };
+  // 未选择档案：原样返回（同一对象）
+  assert.equal(resolveSubAgentSettings(base), base);
+  // 选择有效档案：端点/模型/密钥/推理强度都切到档案
+  const resolved = resolveSubAgentSettings({ ...base, subAgentProfileId: "p-flash" });
+  assert.equal(resolved.model, "deepseek-v4-flash");
+  assert.equal(resolved.apiKey, "flash-key");
+  assert.equal(resolved.reasoningEffort, "low");
+  assert.equal(resolved.endpoint, base.endpoint);
+  // 档案密钥为空：沿用主模型密钥
+  const fallbackKey = resolveSubAgentSettings({ ...base, subAgentProfileId: "p-flash", profiles: [{ ...base.profiles[0], apiKey: "" }] });
+  assert.equal(fallbackKey.apiKey, "main-key");
+  // 档案不完整（缺端点/模型）或 id 不存在：回落主模型
+  assert.equal(resolveSubAgentSettings({ ...base, subAgentProfileId: "p-empty" }).model, base.model);
+  assert.equal(resolveSubAgentSettings({ ...base, subAgentProfileId: "missing" }).model, base.model);
+});
+
+test("requestModel：推理强度随请求下发（Responses API 为 reasoning.effort）", async () => {
+  const calls = [];
+  await requestModel({
+    settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-pro", apiKey: "k", reasoningEffort: "max" },
+    messages: [{ role: "user", content: "你好" }],
+    fetchImpl: mockResponsesFetch([{
+      id: "resp_1",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "好" }] }],
+    }], calls),
+  });
+  assert.deepEqual(calls[0].body.reasoning, { effort: "max" });
+});
+
+test("requestModel：推理强度随请求下发（Chat Completions 按厂商映射）", async () => {
+  const calls = [];
+  await requestModel({
+    settings: { endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", model: "glm-5.3", apiKey: "k", reasoningEffort: "low" },
+    messages: [{ role: "user", content: "你好" }],
+    fetchImpl: mockFetch([{ role: "assistant", content: "好" }], calls),
+  });
+  assert.equal(calls[0].reasoning_effort, "low");
+  assert.equal(calls[0].thinking, undefined);
+
+  const offCalls = [];
+  await requestModel({
+    settings: { endpoint: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-v4-flash", apiKey: "k", reasoningEffort: "off" },
+    messages: [{ role: "user", content: "你好" }],
+    fetchImpl: mockFetch([{ role: "assistant", content: "好" }], offCalls),
+  });
+  assert.deepEqual(offCalls[0].thinking, { type: "disabled" });
+  assert.equal(offCalls[0].reasoning_effort, undefined);
 });
 
 test("DeepSeek 官方 base_url 自动归一化为 /responses", async () => {
@@ -1549,6 +1644,8 @@ test("save_memory 触发记忆事件并随结果返回", async () => {
     category: "用户偏好",
     content: "报告要简洁",
     kind: "preference",
+    // 命名记忆：未指定名字时为空串（用户可按名字引用已命名的记忆）
+    name: "",
     scope: "global",
     relation: "extends",
     relatedMemoryId: "",
@@ -1826,31 +1923,39 @@ test("模型名 [1M] 上下文覆盖后缀：解析、探测与请求都剥离�
   assert.equal(calls[0].model, "k3");
 });
 
-test("代理每次只收到当前任务最相关的五条记忆", async () => {
+test("代理只收到当前任务最相关的记忆页面", async () => {
   const root = await makeWorkspace();
   const calls = [];
   await runAgent({
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "整理季度报告并核对数据" }],
-    memories: [
-      ...Array.from({ length: 6 }, (_, index) => ({
-        id: `report-${index}`,
-        category: "报告规则",
-        content: `季度报告需要核对第 ${index + 1} 项数据`,
-        kind: "experience",
+    memoryPages: [
+      {
+        relPath: "pages/experiences.md",
+        title: "经验教训",
         scope: "global",
-      })),
-      { id: "trip", category: "出差", content: "高铁票需要打印", kind: "fact", scope: "global" },
+        workspacePath: "",
+        rows: [{ id: "report", kind: "experience", category: "报告规则", content: "季度报告需要核对数据" }],
+        content: "# 经验教训\n\n- 季度报告需要核对数据 <!--mem:report|experience|报告规则-->",
+      },
+      {
+        relPath: "pages/facts.md",
+        title: "常用信息",
+        scope: "global",
+        workspacePath: "",
+        rows: [{ id: "trip", kind: "fact", category: "出差", content: "高铁票需要打印" }],
+        content: "# 常用信息\n\n- 高铁票需要打印 <!--mem:trip|fact|出差-->",
+      },
     ],
     fetchImpl: mockFetch([{ role: "assistant", content: "已完成。" }], calls),
   });
 
   const memoryPrompt = calls[0].messages.find((message) => (
-    message.role === "system" && message.content.includes("长期记忆如下")
+    message.role === "system" && message.content.includes("长期记忆（个人知识库页面）")
   ));
   assert.ok(memoryPrompt);
-  assert.equal((memoryPrompt.content.match(/^- \[编号 /gm) || []).length, 5);
+  assert.match(memoryPrompt.content, /季度报告需要核对数据/);
   assert.doesNotMatch(memoryPrompt.content, /高铁票/);
 });
 

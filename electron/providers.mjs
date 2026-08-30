@@ -47,11 +47,34 @@ export const KIMI_INTERNET_TOOL_MAP = Object.freeze({
 // Kimi 开放平台主机名（官方文档 base_url = https://api.moonshot.cn/v1）
 const KIMI_OPEN_HOSTS = new Set(["api.moonshot.cn", "api.moonshot.ai"]);
 
+// Kimi 编程套餐主机名（订阅制，不支持 Formula API，但同样支持 reasoning_effort）
+const KIMI_HOSTS = new Set(["api.kimi.com"]);
+
 // DeepSeek 官方主机名（聊天走 /responses 或 /chat/completions；原生搜索走 Anthropic 兼容端点 /anthropic/v1/messages）
 const DEEPSEEK_HOSTS = new Set(["api.deepseek.com"]);
 
 // Qwen（阿里云百炼 DashScope）官方主机名：国内与国际站共用同一套 OpenAI 兼容协议
 const QWEN_HOSTS = new Set(["dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"]);
+
+// GLM（智谱开放平台）主机名
+const GLM_HOSTS = new Set(["open.bigmodel.cn"]);
+
+// MiniMax 主机名：国内站 api.minimaxi.com，海外站 api.minimax.io
+const MINIMAX_HOSTS = new Set(["api.minimaxi.com", "api.minimax.io"]);
+
+// OpenAI 官方主机名
+const OPENAI_HOSTS = new Set(["api.openai.com"]);
+
+// Google Gemini OpenAI 兼容层主机名
+const GEMINI_HOSTS = new Set(["generativelanguage.googleapis.com"]);
+
+// xAI Grok 主机名
+const XAI_HOSTS = new Set(["api.x.ai"]);
+
+// 豆包（火山方舟）主机名：ark.{region}.volces.com
+function isDoubaoHost(host) {
+  return String(host || "").endsWith(".volces.com");
+}
 
 // Qwen 原生联网搜索（官方 OpenAI 兼容-Responses 内建工具 {"type":"web_search"}）。
 // 注意协议差异（官方文档《联网搜索》）：OpenAI 兼容-ChatCompletions 的 enable_search
@@ -207,15 +230,22 @@ export function isKimiFormulaToolName(name) {
   return KIMI_FORMULA_TOOL_NAMES.has(String(name || ""));
 }
 
-// 检测 endpoint 属于哪个厂商原生能力集：Kimi 开放平台 → "kimi-open"，其余 → null
+// 检测 endpoint 属于哪个厂商：用于原生能力集（Kimi 开放平台 Formula API）与推理强度参数映射
 export function detectProvider(endpoint) {
   const value = String(endpoint || "").trim();
   if (!value) return null;
   try {
     const host = new URL(value).hostname;
     if (KIMI_OPEN_HOSTS.has(host)) return "kimi-open";
+    if (KIMI_HOSTS.has(host)) return "kimi";
     if (DEEPSEEK_HOSTS.has(host)) return "deepseek";
     if (QWEN_HOSTS.has(host)) return "qwen";
+    if (GLM_HOSTS.has(host)) return "glm";
+    if (MINIMAX_HOSTS.has(host)) return "minimax";
+    if (OPENAI_HOSTS.has(host)) return "openai";
+    if (GEMINI_HOSTS.has(host)) return "gemini";
+    if (XAI_HOSTS.has(host)) return "xai";
+    if (isDoubaoHost(host)) return "doubao";
     return null;
   } catch {
     return null;

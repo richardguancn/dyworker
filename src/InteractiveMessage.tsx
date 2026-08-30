@@ -12,6 +12,9 @@ import {
 import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import hljs from "highlight.js/lib/common";
 import { localImagePathFromSource } from "../electron/local-image-path.mjs";
 
 const localImageMarker = "dyworker-local-image:";
@@ -173,9 +176,11 @@ async function copyCodeText(text: string) {
 function MarkdownPre({ children, node: _node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef(0);
+  const preRef = useRef<HTMLPreElement>(null);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const handleCopy = () => {
-    const text = extractCodeText(children).replace(/\n$/, "");
+    // 代码高亮后正文存于 DOM，优先读 textContent；退化场景再从 React 子树还原
+    const text = (preRef.current?.textContent || extractCodeText(children)).replace(/\n$/, "");
     void copyCodeText(text).then((ok) => {
       if (!ok) return;
       setCopied(true);
@@ -195,12 +200,99 @@ function MarkdownPre({ children, node: _node, ...props }: ComponentPropsWithoutR
         {copied ? <Check size={13} /> : <Copy size={13} />}
         <span>{copied ? "已复制" : "复制"}</span>
       </button>
-      <pre {...props}>{children}</pre>
+      <pre {...props} ref={preRef}>{children}</pre>
     </div>
   );
 }
 
-const markdownComponents = { img: MarkdownImage, pre: MarkdownPre };
+// 代码块语法高亮（highlight.js 公共语言集）：流式输出与最终渲染共用本组件，
+// 不完整的代码同样可以高亮，随增量刷新稳定保持配色；未标注语言或语言不认识时保持纯文本，
+// 不做自动探测——流式期间自动探测会让同一段代码前后变色。
+function MarkdownCode({ className, children, node: _node, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
+  const language = /language-([\w+#.-]+)/.exec(String(className || ""))?.[1]?.toLowerCase();
+  const text = Array.isArray(children) ? children.join("") : String(children ?? "");
+  const highlighted = useMemo(() => {
+    if (!language || !hljs.getLanguage(language)) return null;
+    try {
+      return hljs.highlight(text, { language, ignoreIllegals: true }).value;
+    } catch {
+      return null;
+    }
+  }, [language, text]);
+  // mermaid 图表不走语法高亮，交给懒加载的 mermaid 引擎画 SVG
+  if (language === "mermaid") {
+    return <code {...props} className={className || "language-mermaid"}><MermaidDiagram code={text} /></code>;
+  }
+  if (highlighted != null) {
+    return <code {...props} className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} />;
+  }
+  return <code {...props} className={className}>{children}</code>;
+}
+
+// mermaid 按需加载：只有消息里真的出现 mermaid 代码块时才拉取图表引擎（约 1MB 的异步分包）
+let mermaidLoader: Promise<typeof import("mermaid")> | null = null;
+function loadMermaid() {
+  if (!mermaidLoader) {
+    mermaidLoader = import("mermaid").then((module) => {
+      module.default.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
+      return module;
+    });
+  }
+  return mermaidLoader;
+}
+
+// mermaid 图表渲染：流式输出期间语法尚未完整时静默等待，收尾后重渲染出图
+function MermaidDiagram({ code }: { code: string }) {
+  const [state, setState] = useState<{ status: "loading" } | { status: "done"; svg: string } | { status: "error"; message: string }>({ status: "loading" });
+  useEffect(() => {
+    let active = true;
+    setState({ status: "loading" });
+    loadMermaid()
+      .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
+      .then((result) => {
+        if (active) setState({ status: "done", svg: result.svg });
+      })
+      .catch((renderError) => {
+        if (active) setState({ status: "error", message: renderError instanceof Error ? renderError.message : String(renderError) });
+      });
+    return () => { active = false; };
+  }, [code]);
+  if (state.status === "loading") return <div className="mermaid-diagram mermaid-pending">图表渲染中…</div>;
+  if (state.status === "error") {
+    return (
+      <div className="mermaid-diagram mermaid-error">
+        <p>图表渲染失败（输出未完成或语法有误）</p>
+        <div className="mermaid-error-source">{code}</div>
+      </div>
+    );
+  }
+  return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: state.svg }} />;
+}
+
+// 中英文之间自动补空格（pangu 风格）：只作用于正文文本节点，
+// 代码块/行内代码/数学公式/HTML 原样保留，避免破坏代码与公式
+interface AutoSpaceNode {
+  type?: string;
+  value?: unknown;
+  children?: AutoSpaceNode[];
+}
+const autoSpaceCjk = "\\u3400-\\u4dbf\\u4e00-\\u9fff\\u3000-\\u303f\\uff01-\\uff60";
+const autoSpaceCjkToLatin = new RegExp(`([${autoSpaceCjk}])([A-Za-z0-9])`, "g");
+const autoSpaceLatinToCjk = new RegExp(`([A-Za-z0-9])([${autoSpaceCjk}])`, "g");
+function remarkAutoSpace() {
+  return (tree: AutoSpaceNode) => {
+    const walk = (node: AutoSpaceNode) => {
+      if (node.type === "code" || node.type === "inlineCode" || node.type === "math" || node.type === "inlineMath" || node.type === "html") return;
+      if (node.type === "text" && typeof node.value === "string") {
+        node.value = node.value.replace(autoSpaceCjkToLatin, "$1 $2").replace(autoSpaceLatinToCjk, "$1 $2");
+      }
+      for (const child of node.children || []) walk(child);
+    };
+    walk(tree);
+  };
+}
+
+const markdownComponents = { img: MarkdownImage, pre: MarkdownPre, code: MarkdownCode };
 
 interface Metric {
   label: string;
@@ -600,7 +692,12 @@ export function InteractiveMessage({ content }: { content: string }) {
         <InteractiveBlock widget={segment.widget} key={`widget-${index}`} />
       ) : segment.content.trim() ? (
         <div className="markdown-content" key={`markdown-${index}`}>
-          <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]} urlTransform={markdownUrlTransform}>{segment.content}</ReactMarkdown>
+          <ReactMarkdown
+            components={markdownComponents}
+            remarkPlugins={[remarkGfm, remarkMath, remarkAutoSpace]}
+            rehypePlugins={[rehypeKatex]}
+            urlTransform={markdownUrlTransform}
+          >{segment.content}</ReactMarkdown>
         </div>
       ) : null)}
     </div>

@@ -202,6 +202,8 @@ function normalizeProfiles(profiles) {
       endpoint,
       model,
       apiKey: String(item?.apiKey || "").trim(),
+      // 推理强度档位（见 src/providers.ts reasoningEfforts；空串表示用厂商默认）
+      reasoningEffort: String(item?.reasoningEffort || "").trim(),
       transcriptionEndpoint: String(item?.transcriptionEndpoint || "").trim(),
       transcriptionModel: String(item?.transcriptionModel || "").trim(),
     });
@@ -223,6 +225,7 @@ export function deserializeSettings(stored, secretStorage) {
         endpoint: String(source.endpoint),
         model: String(source.model),
         apiKey: currentApiKey,
+        reasoningEffort: String(source.reasoningEffort || "").trim(),
         transcriptionEndpoint: String(source.transcriptionEndpoint || ""),
         transcriptionModel: String(source.transcriptionModel || ""),
       }]
@@ -235,6 +238,10 @@ export function deserializeSettings(stored, secretStorage) {
     identity: normalizeIdentity(source.identity),
     endpoint: String(source.endpoint || ""),
     model: String(source.model || ""),
+    // 推理强度档位（空串 = 厂商默认）；由主进程按厂商映射为请求参数（agent.mjs reasoningRequestParams）
+    reasoningEffort: String(source.reasoningEffort || "").trim(),
+    // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
+    subAgentProfileId: String(source.subAgentProfileId || "").trim(),
     apiKey: currentApiKey,
     visionEndpoint: String(source.visionEndpoint || ""),
     visionModel: String(source.visionModel || ""),
@@ -285,6 +292,8 @@ export function serializeSettings(settings, secretStorage) {
     identity: normalizeIdentity(settings?.identity),
     endpoint: String(settings?.endpoint || "").trim(),
     model: String(settings?.model || "").trim(),
+    reasoningEffort: String(settings?.reasoningEffort || "").trim(),
+    subAgentProfileId: String(settings?.subAgentProfileId || "").trim(),
     apiKey: String(settings?.apiKey || "").trim(),
     visionEndpoint: String(settings?.visionEndpoint || "").trim(),
     visionModel: String(settings?.visionModel || "").trim(),
@@ -337,6 +346,7 @@ export function serializeSettings(settings, secretStorage) {
     identity: normalized.identity,
     endpoint: normalized.endpoint,
     model: normalized.model,
+    reasoningEffort: normalized.reasoningEffort,
     visionEndpoint: normalized.visionEndpoint,
     visionModel: normalized.visionModel,
     visionApiKey: visionSecret.value,
