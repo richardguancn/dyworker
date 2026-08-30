@@ -792,6 +792,9 @@ async function desktopEntries() {
     } catch {
       continue;
     }
+    // 审批加固：用户可写目录（家目录下）的 .desktop 可被植入任意 Exec= 命令，
+    // 标记来源，launch_app 的直接执行兜底只对系统目录放行
+    const systemScoped = !directory.startsWith(`${os.homedir()}/`);
     for (const name of names.filter((item) => item.endsWith(".desktop"))) {
       try {
         const content = await fs.readFile(path.join(directory, name), "utf8");
@@ -799,7 +802,7 @@ async function desktopEntries() {
         const namesInFile = [...content.matchAll(/^Name(?:\[[^\]]+\])?=(.+)$/gm)].map((match) => match[1].trim());
         const exec = content.match(/^Exec=(.+)$/m)?.[1]?.trim() || "";
         const startupClass = content.match(/^StartupWMClass=(.+)$/m)?.[1]?.trim() || "";
-        entries.push({ id: name.slice(0, -8), path: path.join(directory, name), names: namesInFile, exec, startupClass });
+        entries.push({ id: name.slice(0, -8), path: path.join(directory, name), names: namesInFile, exec, startupClass, systemScoped });
       } catch {
         // 单个损坏的 desktop 文件不影响其他应用
       }
@@ -826,10 +829,14 @@ async function launchApp(query) {
     if (launched.code === 0) return;
     const viaGio = await tryRun("gio", ["launch", entry.path], { timeoutMs: 8_000 });
     if (viaGio.code === 0) return;
-    const words = shellWords(entry.exec).filter((word) => !/^%[a-zA-Z]$/.test(word));
-    if (words.length) {
-      await run(words[0], words.slice(1), { detached: true });
-      return;
+    // 审批加固：直接执行 Exec= 兜底仅限系统应用目录；用户可写目录的 .desktop
+    // 可能携带任意命令，不能借"启动应用"的审批变相执行
+    if (entry.systemScoped) {
+      const words = shellWords(entry.exec).filter((word) => !/^%[a-zA-Z]$/.test(word));
+      if (words.length) {
+        await run(words[0], words.slice(1), { detached: true });
+        return;
+      }
     }
   }
   throw new Error(`系统应用菜单中没有找到“${query}”。请使用应用菜单中显示的正式名称。`);

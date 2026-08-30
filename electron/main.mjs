@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { builtinHooks, isSafePublicUrl, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { bareModelName, builtinHooks, isResponsesEndpoint, isSafePublicUrl, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -11,7 +11,8 @@ import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions,
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
 import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "./channels/workspace.mjs";
 import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mjs";
-import { buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, mergeBuiltinMemories, normalizeMemories } from "./memory.mjs";
+import { buildMemoryRecord, builtinMemories, extractExplicitMemoryInstructions, isBuiltinMemoryId, normalizeMemories } from "./memory.mjs";
+import { applyConsolidation, buildConsolidationMessages, ensureWiki, integrateItems, listWikiPages, parseConsolidationResult, readWikiPages, removeWikiMemory, serializeMemoryRow } from "./memory-wiki.mjs";
 import { McpClient } from "./mcp.mjs";
 import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, preserveUndecryptableSecrets, serializeSettings } from "./settings.mjs";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
@@ -26,7 +27,7 @@ import { stopLocalAsrServer, transcribeWithLocalAsr } from "./local-asr-server.m
 import { configureLocalTts, downloadLocalTtsModel, localTtsAllModelsStatus, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId } from "./local-tts.mjs";
 import { synthesizeWithLocalTts } from "./local-tts-engine.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mjs";
-import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
+import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
 import { SessionQueue } from "./session-queue.mjs";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
@@ -1258,11 +1259,73 @@ ipcMain.handle("clipboard:write-text", (event, text) => {
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
+
+// 提交信息由独立按钮触发、用当前主模型生成：给改动统计与 diff，按内置提交信息规范输出。
+// 本地 0.6B 审批小模型实测只会复读 few-shot 示例，不适合自由摘要，故走主模型。
+async function generateCommitMessage(workspacePath) {
+  const material = await gitCommitDiff(workspacePath);
+  if (!material) throw new Error("当前没有需要提交的更改");
+  const settings = await readSettings();
+  if (!settings.endpoint || !settings.model || !settings.apiKey) throw new Error("请先在设置中配置模型服务");
+  const controller = new AbortController();
+  // 推理型模型首 token 前的思考阶段常超 30 秒，总超时给足 3 分钟；
+  // 连接假死由 requestModel 内部的空闲看门狗负责中断，不靠这里的总超时兜底
+  const timer = setTimeout(() => controller.abort(), 180_000);
+  try {
+    const message = await requestModel({
+      settings,
+      tools: false,
+      fetchImpl: fetch,
+      signal: controller.signal,
+      messages: [
+        {
+          role: "system",
+          content: "你负责为代码提交生成提交信息，规范如下：\n- 必须使用简体中文\n- 使用简洁的祈使句，主题不超过 50 个字符\n- 允许使用 feat、fix、docs、style、refactor、perf、test、chore 等英文类型前缀，但标题和正文必须使用中文\n- 概括改动意图，不要罗列文件名\n只输出一行提交信息，不要引号、句号、多余解释或 markdown 代码块。",
+        },
+        {
+          role: "user",
+          content: `改动统计：\n${material.stat || "（无）"}\n\n新增文件：\n${material.untracked.length ? material.untracked.join("\n") : "（无）"}\n\ndiff${material.truncated ? "（过长已截断）" : ""}：\n${material.diff || "（无）"}`,
+        },
+      ],
+    });
+    const content = typeof message?.content === "string"
+      ? message.content
+      : Array.isArray(message?.content)
+        ? message.content.filter((part) => part?.type === "text").map((part) => String(part?.text || "")).join("\n")
+        : "";
+    const firstLine = content.split("\n").map((line) => line.trim()).filter(Boolean)[0] || "";
+    const cleaned = firstLine
+      .replace(/^[\"'「『]+|[\"'」』]+$/g, "")
+      .replace(/^提交信息[:：]?\s*/, "")
+      .replace(/^(feat|fix|docs|style|refactor|perf|test|chore)(\([^)]*\))?\s*[:：]\s*/i, "$1: ")
+      .trim()
+      .slice(0, 80);
+    if (!cleaned) throw new Error("模型没有返回可用的提交信息");
+    return cleaned;
+  } catch (error) {
+    // abort 触发的 DOMException 消息是英文 "This operation was aborted"，翻译成可读提示
+    if (controller.signal.aborted || error?.name === "AbortError") {
+      throw new Error("生成提交信息超时（3 分钟），模型响应过慢。请重试，或在设置中换用更快的模型");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 ipcMain.handle("workspace:context", (_event, workspacePath) => getWorkspaceContext(String(workspacePath || "")));
 ipcMain.handle("git:branches", (_event, workspacePath) => listGitBranches(String(workspacePath || "")));
 ipcMain.handle("git:diff-stats", (_event, workspacePath) => gitDiffStats(String(workspacePath || "")));
 ipcMain.handle("git:checkout", (_event, payload) => gitCheckout(String(payload?.workspacePath || ""), String(payload?.branch || "")));
 ipcMain.handle("git:create-branch", (_event, payload) => gitCreateBranch(String(payload?.workspacePath || ""), String(payload?.branch || "")));
+ipcMain.handle("git:suggest-commit-message", async (_event, workspacePath) => {
+  try {
+    const message = await generateCommitMessage(String(workspacePath || ""));
+    return { ok: true, message };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
 ipcMain.handle("git:commit", (_event, payload) => gitCommit(String(payload?.workspacePath || ""), {
   message: String(payload?.message || ""),
   includeUnstaged: payload?.includeUnstaged !== false,
@@ -1494,6 +1557,55 @@ ipcMain.handle("settings:save", async (_event, settings) => {
   }
 });
 
+// 凭证预检（auth check）：设置页保存 API Key 后立即验证可用性，避免运行任务时才发现配错。
+// 发一个最小 chat 请求：200 = 通过；401/403 = 密钥无效；404 = 地址或模型名不对；其余按状态码归类。
+ipcMain.handle("settings:probe-credentials", async (_event, payload) => {
+  const endpoint = String(payload?.endpoint || "").trim();
+  const model = String(payload?.model || "").trim();
+  const apiKey = String(payload?.apiKey || "").trim();
+  if (!endpoint || !model) return { ok: false, error: "请先填写服务地址和模型名称" };
+  // 模型名可能带 [1M]/[256K] 上下文后缀，请求前剥离
+  const bareModel = bareModelName(model);
+  // DeepSeek 官方根地址自动补全为 /responses；Responses API 与 Chat Completions 请求体不同
+  const target = normalizeModelEndpoint(endpoint);
+  const responsesApi = isResponsesEndpoint(target);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(target, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // 本地推理服务（vLLM/Ollama/LM Studio）常无需 Key，空 Key 时不带 Authorization 头
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify(responsesApi
+        ? { model: bareModel, input: [{ role: "user", content: "ping" }], max_output_tokens: 1 }
+        : { model: bareModel, messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false }),
+      signal: controller.signal,
+    });
+    const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 300);
+    const latencyMs = Date.now() - startedAt;
+    if (response.ok) return { ok: true, status: response.status, latencyMs, message: `验证通过：服务可达，密钥与模型可用（${latencyMs} ms）` };
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, status: response.status, latencyMs, error: `密钥被拒绝（HTTP ${response.status}）：${detail || "请检查 API Key 是否正确、是否过期或权限不足"}` };
+    }
+    if (response.status === 404) {
+      return { ok: false, status: response.status, latencyMs, error: `地址或模型不存在（HTTP 404）：${detail || "请检查服务地址和模型名称是否填写正确"}` };
+    }
+    if (response.status === 429) {
+      return { ok: false, status: response.status, latencyMs, error: `密钥有效但被限流或额度不足（HTTP 429）：${detail || "请稍后重试或检查账户额度"}` };
+    }
+    return { ok: false, status: response.status, latencyMs, error: `请求被拒绝（HTTP ${response.status}）：${detail || "服务可达，但请求未被接受"}` };
+  } catch (error) {
+    const aborted = error?.name === "AbortError";
+    return { ok: false, error: aborted ? "验证超时（20 秒无响应），服务地址可能不可达" : `无法连接服务地址：${error?.message || error}` };
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 ipcMain.handle("chat:complete", async (_event, payload) => {
   const settings = payload?.settings || {};
   if (!settings.endpoint || !settings.model || !settings.apiKey) {
@@ -1625,15 +1737,127 @@ async function readSavedMemories() {
   return normalizeMemories(items);
 }
 
-async function readMemories() {
-  return mergeBuiltinMemories(await readSavedMemories());
+// ---- 个人记忆知识库（LLM Wiki）----
+
+function wikiRoot() {
+  return path.join(app.getPath("userData"), "memory-wiki");
 }
 
-async function appendMemory(item, workspacePath) {
+let memoryWikiReadyPromise = null;
+function memoryWikiReady() {
+  // 首次运行时把旧的扁平记忆列表一次性迁移成 wiki 页面，并备份原 memory.json；
+  // 之后 memory.json 只作为待整合队列（raw sources），wiki 是唯一知识库。
+  memoryWikiReadyPromise ??= (async () => {
+    const root = wikiRoot();
+    const items = await readSavedMemories();
+    // 会话记忆不迁移进 wiki，留在队列文件里按会话注入
+    const migratable = items.filter((item) => item.scope !== "session");
+    await ensureWiki(root, { items: migratable });
+    if (migratable.length) {
+      const backup = dataFile("memory.json.pre-wiki-backup");
+      if (!existsSync(backup)) await fs.copyFile(dataFile("memory.json"), backup).catch(() => { });
+      await writeJson(dataFile("memory.json"), items.filter((item) => item.scope === "session"));
+    }
+  })();
+  return memoryWikiReadyPromise;
+}
+
+async function readMemoryPages(sessionId = "") {
+  await memoryWikiReady();
+  const pages = await readWikiPages(wikiRoot());
+  // 内置模型认知以只读伪页面参与选取：不落盘、不会出现在整合输入里，模型无法改写。
+  const builtinRows = builtinMemories.map((item) => ({ id: item.id, kind: item.kind, category: item.category, content: item.content }));
+  const builtinPage = {
+    relPath: "pages/builtin.md",
+    title: "内置模型认知",
+    scope: "global",
+    workspacePath: "",
+    rows: builtinRows,
+    content: `# 内置模型认知\n\n${builtinRows.map((row) => `- ${row.content} <!--mem:${row.id}|${row.kind}|${row.category}-->`).join("\n")}`,
+  };
+  // 会话记忆：绑定当前任务会话的临时约定，以只读伪页面注入（不进全局 wiki）
+  const sessionPage = await readSessionMemoryPage(sessionId);
+  return [...pages, builtinPage, ...(sessionPage ? [sessionPage] : [])];
+}
+
+// 读取绑定某个任务会话的记忆，聚成一个伪页面；没有会话记忆时返回 null
+async function readSessionMemoryPage(sessionId) {
+  const target = String(sessionId || "").trim();
+  if (!target) return null;
+  const items = (await readSavedMemories()).filter((item) => item.scope === "session" && item.sessionId === target);
+  if (!items.length) return null;
+  const rows = items.map((item) => ({ id: item.id, kind: item.kind, category: item.category, name: item.name, content: item.content }));
+  return {
+    relPath: "pages/session.md",
+    title: "本会话记忆",
+    scope: "global",
+    workspacePath: "",
+    rows,
+    content: `# 本会话记忆\n\n${rows.map(serializeMemoryRow).join("\n")}`,
+  };
+}
+
+let wikiConsolidationTimer = null;
+let wikiConsolidationRunning = false;
+function scheduleWikiConsolidation(delayMs = 3000) {
+  if (wikiConsolidationTimer) clearTimeout(wikiConsolidationTimer);
+  wikiConsolidationTimer = setTimeout(() => {
+    wikiConsolidationTimer = null;
+    void runWikiConsolidation().catch((error) => console.log(`[memory-wiki] 整合失败：${error?.message || error}`));
+  }, delayMs);
+}
+
+// 任务结束后批量把 memory.json 队列整合进 wiki：优先让当前模型做一次
+// 「合并 / 去重 / 修订矛盾」的页面维护；模型不可用或输出无效时回退规则式追加。
+async function runWikiConsolidation({ lint = false } = {}) {
+  if (wikiConsolidationRunning) {
+    scheduleWikiConsolidation(8000);
+    return { ok: false, error: "整合进行中，稍后自动重试" };
+  }
+  wikiConsolidationRunning = true;
+  try {
+    await memoryWikiReady();
+    const root = wikiRoot();
+    const all = await readSavedMemories();
+    // 会话记忆只绑定单个任务会话，不参与 wiki 整合；清队时原样保留
+    const sessionItems = all.filter((item) => item.scope === "session");
+    const pending = all.filter((item) => item.scope !== "session");
+    if (!lint && !pending.length) return { ok: true };
+    const pages = await readWikiPages(root);
+    const settings = await readSettings();
+    let applied = 0;
+    if (settings.endpoint && settings.model && settings.apiKey) {
+      try {
+        const message = await requestModel({ settings, messages: buildConsolidationMessages({ pages, pending, lint }), tools: false });
+        applied = await applyConsolidation(root, parseConsolidationResult(message?.content || ""));
+      } catch (error) {
+        console.log(`[memory-wiki] LLM 整合失败，回退规则式：${error?.message || error}`);
+      }
+    }
+    if (applied) {
+      // 模型漏掉的新记忆保留在队列里等下一轮，其余清空；会话记忆始终保留。
+      const knownIds = new Set((await readWikiPages(root)).flatMap((page) => page.rows.map((row) => row.id)));
+      const missed = pending.filter((item) => !knownIds.has(String(item?.id || "")));
+      await writeJson(dataFile("memory.json"), [...sessionItems, ...missed]);
+      return { ok: true, applied };
+    }
+    if (pending.length) {
+      await integrateItems(root, pending, { logTitle: "规则式整合" });
+      await writeJson(dataFile("memory.json"), sessionItems);
+      return { ok: true, applied: 0 };
+    }
+    return { ok: false, error: lint ? "整理未产生有效结果" : "整合未产生有效结果" };
+  } finally {
+    wikiConsolidationRunning = false;
+  }
+}
+
+async function appendMemory(item, workspacePath, sessionId = "") {
   const items = await readSavedMemories();
   const record = buildMemoryRecord(item, {
     id: crypto.randomUUID(),
     workspacePath,
+    sessionId,
   });
   if (!record?.content) return null;
   const duplicate = items.find((existing) => (
@@ -1642,10 +1866,13 @@ async function appendMemory(item, workspacePath) {
     && existing.kind === record.kind
     && existing.scope === record.scope
     && existing.workspacePath === record.workspacePath
+    && existing.sessionId === record.sessionId
   ));
   if (duplicate) return duplicate;
   items.push(record);
   await writeJson(dataFile("memory.json"), items);
+  // 新记忆已入队，任务收尾后由 wiki 整合流程合并进页面。
+  scheduleWikiConsolidation();
   return record;
 }
 
@@ -2142,7 +2369,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     for (const memory of explicitMemories) {
       if (agentState.cancelled) return cancelledResponse();
       if (memory.scope === "workspace" && !workspacePath) continue;
-      const record = await appendMemory(memory, workspacePath);
+      const record = await appendMemory(memory, workspacePath, sessionId);
       if (record) emit({ type: "memory-saved", item: record });
     }
     if (agentState.cancelled) return cancelledResponse();
@@ -2168,7 +2395,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     const loop = payload?.loop?.enabled
       ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
       : { enabled: false, iteration: 1, maximum: 1 };
-    const memories = await readMemories();
+    const memoryPages = await readMemoryPages(sessionId);
     const skills = await readSkills(workspacePath);
     // 每个任务结束前都做一次轻量判断；没有稳定价值的信息时不会保存。
     // 这样也覆盖同一会话切换话题的边界，不再依赖“每三轮”这种偶然触发。
@@ -2206,7 +2433,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         hooks: await readHooks(workspacePath),
         goal: String(payload?.goal || "").trim().slice(0, 500),
         conversation: iterationMessages,
-        memories,
+        memoryPages,
         skills,
         history: { search: searchHistory, readContext: readHistoryContext },
         loop,
@@ -2236,7 +2463,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       });
       for (const memory of memoriesFromAgentResult(result)) {
         if (agentState.cancelled) break;
-        await appendMemory(memory, workspacePath);
+        await appendMemory(memory, workspacePath, sessionId);
       }
       finalResult = result;
       if (agentState.cancelled) {
@@ -2401,7 +2628,26 @@ ipcMain.handle("agent:cancel", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("memories:list", () => readMemories());
+ipcMain.handle("memories:list", async () => {
+  await memoryWikiReady();
+  // 空的核心页面不展示，避免面板出现一堆零条记忆的卡片
+  const pages = (await listWikiPages(wikiRoot())).filter((page) => page.rows.length);
+  // 会话记忆单独成卡展示（带所属会话标识），与全局 wiki 页面并列
+  const sessionItems = (await readSavedMemories()).filter((item) => item.scope === "session");
+  if (sessionItems.length) {
+    const rows = sessionItems.map((item) => ({ id: item.id, kind: item.kind, category: item.category, name: item.name, content: item.content, sessionId: item.sessionId }));
+    pages.push({
+      relPath: "pages/session.md",
+      title: "会话记忆",
+      scope: "global",
+      workspacePath: "",
+      rows,
+      content: `# 会话记忆\n\n${rows.map(serializeMemoryRow).join("\n")}`,
+      updated: "",
+    });
+  }
+  return pages;
+});
 
 ipcMain.handle("usage:list", () => readUsageStats());
 
@@ -2674,9 +2920,21 @@ ipcMain.handle("usage:clear", async () => {
 
 ipcMain.handle("memories:delete", async (_event, id) => {
   if (isBuiltinMemoryId(id)) return { ok: false, error: "内置记忆不能删除" };
+  await memoryWikiReady();
+  // 队列和 wiki 页面各删一份：尚未整合的条目在队列里，已整合的在页面行上。
   const items = await readSavedMemories();
   await writeJson(dataFile("memory.json"), items.filter((item) => String(item.id) !== String(id)));
-  return { ok: true };
+  const removed = await removeWikiMemory(wikiRoot(), String(id));
+  return { ok: true, removed };
+});
+
+// 记忆整理（lint）：让模型对 wiki 做一次健康检查——合并重复、修订矛盾、归位条目。
+ipcMain.handle("memories:lint", async () => {
+  try {
+    return await runWikiConsolidation({ lint: true });
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
 });
 
 ipcMain.handle("skills:list", (_event, workspacePath) => readSkills(String(workspacePath || "")));
@@ -2792,7 +3050,7 @@ async function recoverInterruptedSchedules() {
   if (recovered) await writeSchedules(items);
 }
 
-async function markScheduleFinished(id, success, summary) {
+async function markScheduleFinished(id, success, summary, sessionId = "") {
   const items = await readSchedules();
   const item = items.find((entry) => String(entry.id) === String(id));
   if (!item) return;
@@ -2800,22 +3058,72 @@ async function markScheduleFinished(id, success, summary) {
   item.lastStatus = success ? "success" : "failed";
   item.lastSummary = String(summary || "").slice(0, 500);
   item.updatedAt = now.toISOString();
+  appendScheduleHistory(item, {
+    at: now.toISOString(),
+    status: item.lastStatus,
+    summary: item.lastSummary,
+    sessionId: String(sessionId || ""),
+  });
   if (item.recurrence === "once") item.enabled = false;
   else item.nextRun = nextOccurrence(item.recurrence, item.nextRun, now);
   await writeSchedules(items);
 }
 
-async function markScheduleSleeping(id, wake) {
+// 运行历史：每次执行追加一条（时间/结果/关联会话 id），保留最近 10 条；
+// 会话 id 对应的转录会话可在任务列表中打开，查看完整过程
+function appendScheduleHistory(item, entry) {
+  if (!Array.isArray(item.history)) item.history = [];
+  item.history.unshift(entry);
+  item.history = item.history.slice(0, 10);
+}
+
+async function markScheduleSleeping(id, wake, sessionId = "") {
   const items = await readSchedules();
   const item = items.find((entry) => String(entry.id) === String(id));
   if (!item) return;
   item.lastStatus = "sleeping";
   item.lastSummary = `已挂起，将于 ${new Date(wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${String(wake.reason || "").slice(0, 120)}）`;
   item.updatedAt = new Date().toISOString();
+  appendScheduleHistory(item, {
+    at: new Date().toISOString(),
+    status: "sleeping",
+    summary: item.lastSummary,
+    sessionId: String(sessionId || ""),
+  });
   await writeSchedules(items);
 }
 
-// ---- 自我唤醒（借鉴 openworker selfwake：agent 主动挂起,调度 tick 到点重新拉起）----
+// 定时/续跑任务的转录落盘：应用窗口未运行时，主进程直接把带完整转录的会话
+// 写进 sessions.json（下次启动经 app:initial-state 读回），不再丢失运行记录
+async function persistSessionRecord(session) {
+  try {
+    const sessions = await readJson(dataFile("sessions.json"), []);
+    if (!Array.isArray(sessions)) return;
+    if (sessions.some((item) => item?.id === session.id)) return;
+    sessions.unshift(session);
+    await writeJson(dataFile("sessions.json"), sessions);
+  } catch (error) {
+    console.log(`[schedules] 转录落盘失败：${error?.message || error}`);
+  }
+}
+
+// 窗口未运行时的续跑追加：往已落盘的会话里补转录消息（按消息内容去重，避免重复段落）
+async function persistSessionAppend(sessionId, messages) {
+  try {
+    const sessions = await readJson(dataFile("sessions.json"), []);
+    if (!Array.isArray(sessions)) return;
+    const session = sessions.find((item) => item?.id === sessionId);
+    if (!session || !Array.isArray(messages)) return;
+    const known = new Set((session.messages || []).map((message) => `${message?.role}:${message?.content}`));
+    for (const message of messages) {
+      if (!known.has(`${message?.role}:${message?.content}`)) session.messages.push(message);
+    }
+    session.updatedAt = new Date().toISOString();
+    await writeJson(dataFile("sessions.json"), sessions);
+  } catch (error) {
+    console.log(`[schedules] 续跑转录落盘失败：${error?.message || error}`);
+  }
+}
 // wakes.json 条目：{ id, sessionId, scheduleId?, workspacePath, approvalMode, wakeAt, reason,
 //   prompt, finalText, status: "pending" | "fired" | "cancelled", createdAt, firedAt? }
 // pending → fired 一次性转移,杜绝重复唤醒;会话被删除/任务被取消时置 cancelled。
@@ -2917,7 +3225,7 @@ async function resumeWake(wake) {
       hooks: await readHooks(wake.workspacePath),
       workingContext,
       conversation: [...prior, { role: "user", content: wakeText }],
-      memories: await readMemories(),
+      memoryPages: await readMemoryPages(wake.sessionId),
       memoryReviewDue: true,
       skills: await readSkills(wake.workspacePath),
       history: { search: searchHistory, readContext: readHistoryContext },
@@ -2958,7 +3266,7 @@ async function resumeWake(wake) {
         if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, wake.workspacePath);
+    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, wake.workspacePath, wake.sessionId);
     if (result.status === "sleeping" && result.wake) {
       // 再次挂起：登记下一段唤醒
       await registerWake({
@@ -2970,23 +3278,27 @@ async function resumeWake(wake) {
         prompt: wake.prompt,
         finalText: result.finalText,
       });
-      if (wake.scheduleId) await markScheduleSleeping(wake.scheduleId, result.wake);
+      if (wake.scheduleId) await markScheduleSleeping(wake.scheduleId, result.wake, wake.sessionId);
     } else if (wake.scheduleId) {
-      await markScheduleFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果");
+      await markScheduleFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId);
     }
+    const wakeContent = result.status === "sleeping" && result.wake
+      ? `${result.finalText || ""}\n\n已再次挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim()
+      : undefined;
+    const wakeMessages = collector.buildMessages(`（到点自动唤醒）${wakeText}`, result, wakeContent);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      const content = result.status === "sleeping" && result.wake
-        ? `${result.finalText || ""}\n\n已再次挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim()
-        : undefined;
       mainWindow.webContents.send("sessions:append", {
         sessionId: wake.sessionId,
         workspacePath: wake.workspacePath,
-        messages: collector.buildMessages(`（到点自动唤醒）${wakeText}`, result, content),
+        messages: wakeMessages,
       });
+    } else {
+      // 窗口未运行：续跑转录追加落盘（按消息内容去重）
+      await persistSessionAppend(wake.sessionId, wakeMessages);
     }
   } catch (error) {
     if (wake.scheduleId) {
-      await markScheduleFinished(wake.scheduleId, false, error instanceof Error ? error.message : String(error));
+      await markScheduleFinished(wake.scheduleId, false, error instanceof Error ? error.message : String(error), wake.sessionId);
     }
   } finally {
     routeExtraTool?.dispose();
@@ -3086,7 +3398,7 @@ async function runScheduledTask(record) {
       workspacePath: record.workspacePath,
       hooks: await readHooks(record.workspacePath),
       conversation: [{ role: "user", content: record.prompt }],
-      memories: await readMemories(),
+      memoryPages: await readMemoryPages(scheduleSessionId),
       memoryReviewDue: true,
       skills: await readSkills(record.workspacePath),
       history: { search: searchHistory, readContext: readHistoryContext },
@@ -3127,7 +3439,7 @@ async function runScheduledTask(record) {
         if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, record.workspacePath);
+    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, record.workspacePath, scheduleSessionId);
     if (result.status === "sleeping" && result.wake) {
       // 主动挂起：登记唤醒记录,本次不结算计划,到点由 checkDueWakes 续跑
       await registerWake({
@@ -3139,7 +3451,12 @@ async function runScheduledTask(record) {
         prompt: record.prompt,
         finalText: result.finalText,
       });
-      await markScheduleSleeping(record.id, result.wake);
+      await markScheduleSleeping(record.id, result.wake, scheduleSessionId);
+      const sleepingMessages = collector.buildMessages(
+        record.prompt,
+        result,
+        `${result.finalText || ""}\n\n已主动挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim(),
+      );
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("sessions:prepend", {
           id: scheduleSessionId,
@@ -3147,16 +3464,23 @@ async function runScheduledTask(record) {
           workspacePath: record.workspacePath,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          messages: collector.buildMessages(
-            record.prompt,
-            result,
-            `${result.finalText || ""}\n\n已主动挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim(),
-          ),
+          messages: sleepingMessages,
+        });
+      } else {
+        // 窗口未运行：转录直接落盘，下次启动读回
+        await persistSessionRecord({
+          id: scheduleSessionId,
+          title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
+          workspacePath: record.workspacePath,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: sleepingMessages,
         });
       }
       return;
     }
-    await markScheduleFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果");
+    await markScheduleFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId);
+    const finishedMessages = collector.buildMessages(record.prompt, result);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("sessions:prepend", {
         id: scheduleSessionId,
@@ -3164,11 +3488,21 @@ async function runScheduledTask(record) {
         workspacePath: record.workspacePath,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        messages: collector.buildMessages(record.prompt, result),
+        messages: finishedMessages,
+      });
+    } else {
+      // 窗口未运行：转录直接落盘，下次启动读回
+      await persistSessionRecord({
+        id: scheduleSessionId,
+        title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
+        workspacePath: record.workspacePath,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: finishedMessages,
       });
     }
   } catch (error) {
-    await markScheduleFinished(record.id, false, error instanceof Error ? error.message : String(error));
+    await markScheduleFinished(record.id, false, error instanceof Error ? error.message : String(error), scheduleSessionId);
   } finally {
     routeExtraTool?.dispose();
     trackTaskEnd();
@@ -3636,7 +3970,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     const profileId = String(settings.channels?.modelProfileId || "");
     const profile = profileId ? (settings.profiles || []).find((item) => item.id === profileId) : null;
     const taskSettings = profile
-      ? { ...settings, endpoint: profile.endpoint, model: profile.model, apiKey: profile.apiKey }
+      ? { ...settings, endpoint: profile.endpoint, model: profile.model, apiKey: profile.apiKey, reasoningEffort: profile.reasoningEffort || "" }
       : settings;
     if (!taskSettings.endpoint || !taskSettings.model || !taskSettings.apiKey) {
       throw new Error("模型还没有配置,请先在电脑端完成设置");
@@ -3711,7 +4045,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       hooks: await readHooks(workspacePath),
       workingContext,
       conversation: [...prior, { role: "user", content: contentForModel }],
-      memories: await readMemories(),
+      memoryPages: await readMemoryPages(sessionId),
       memoryReviewDue: true,
       skills: await readSkills(workspacePath),
       history: { search: searchHistory, readContext: readHistoryContext },
@@ -3765,7 +4099,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath);
+    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath, sessionId);
     if (channelTaskAborts.has(myKey) || result.status === "cancelled") {
       // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果。
       // 半截正文保留在留痕里（与桌面端"已按你的要求停止"同口径），用户不至于丢失已生成的内容。
@@ -3960,6 +4294,8 @@ ipcMain.handle("window:close", () => mainWindow?.close());
 
 app.whenReady().then(async () => {
   await migrateLegacyDataOnFirstRun();
+  // 旧扁平记忆列表一次性迁移成 wiki 页面（迁移前自动备份 memory.json）
+  void memoryWikiReady().catch((error) => console.log(`[memory-wiki] 迁移失败：${error?.message || error}`));
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();

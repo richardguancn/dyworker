@@ -567,11 +567,10 @@ test("assistant local image reader is exposed only to the trusted renderer", () 
 });
 
 test("built-in model knowledge is always loaded and cannot be deleted as user memory", () => {
-  assert.match(main, /mergeBuiltinMemories/);
-  assert.match(main, /return mergeBuiltinMemories\(await readSavedMemories\(\)\)/);
+  // 内置认知以只读伪页面参与注入：不落盘、不进整合输入，模型无法改写
+  assert.match(main, /builtinMemories/);
+  assert.match(main, /内置模型认知/);
   assert.match(main, /if \(isBuiltinMemoryId\(id\)\)/);
-  assert.match(app, /item\.builtIn/);
-  assert.match(app, />内置</);
 });
 
 test("composer uses the Codex permission menu and keeps secondary controls compact", () => {
@@ -952,7 +951,13 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(settingsStorage, /encryptSecret\(profile\.apiKey/);
   // 长期记忆：普通任务和定时任务都复盘；定时任务完成后同步刷新设置页记忆
   assert.match(main, /const memoryReviewDue = true/);
-  assert.match(main, /memories: await readMemories\(\),\n\s+memoryReviewDue: true/);
+  // 会话记忆：普通任务按会话 id 读取记忆页（session 作用域记忆随会话注入）
+  assert.match(main, /const memoryPages = await readMemoryPages\(sessionId\);/);
+  assert.match(main, /memoryPages,\n\s+skills,\n\s+history: \{ search: searchHistory, readContext: readHistoryContext \},\n\s+loop,\n\s+memoryReviewDue,/);
+  // 个人记忆知识库（LLM Wiki）：memory.json 只作队列，wiki 是唯一知识库
+  assert.match(main, /function memoryWikiReady/);
+  assert.match(main, /runWikiConsolidation/);
+  assert.match(main, /ipcMain\.handle\("memories:lint"/);
   assert.match(app, /onSchedulesChanged[\s\S]*listMemories/);
   assert.match(main, /extractExplicitMemoryInstruction/);
   const agentSend = main.slice(main.indexOf('ipcMain.handle("agent:send"'));
@@ -1223,8 +1228,9 @@ test("分支管理与提交推送端到端接线（Codex 风格）", () => {
   assert.match(app, /创建并检出新分支/);
   assert.match(app, /未提交：\{gitInfo\.uncommitted\} 个文件/);
   assert.match(app, /switchBranch/);
-  // 提交面板：留空自动生成、包含未暂存的更改、diff 统计、三个动作
-  assert.match(app, /提交信息（留空将自动生成）/);
+  // 提交面板：AI 生成提交信息独立按钮、包含未暂存的更改、diff 统计、三个动作
+  assert.match(app, /提交信息（留空按文件名自动生成）/);
+  assert.match(app, /AI 生成提交信息/);
   assert.match(app, /包含未暂存的更改/);
   assert.match(app, /commit-diff-stats/);
   assert.match(app, /提交并推送/);

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   gitCheckout: (workspacePath, branch) => ipcRenderer.invoke("git:checkout", { workspacePath, branch }),
   gitCreateBranch: (workspacePath, branch) => ipcRenderer.invoke("git:create-branch", { workspacePath, branch }),
   gitCommit: (payload) => ipcRenderer.invoke("git:commit", payload),
+  gitSuggestCommitMessage: (workspacePath) => ipcRenderer.invoke("git:suggest-commit-message", workspacePath),
   gitPush: (workspacePath) => ipcRenderer.invoke("git:push", workspacePath),
   gitReviewOverview: (payload) => ipcRenderer.invoke("git:review-overview", payload),
   gitFileDiff: (payload) => ipcRenderer.invoke("git:file-diff", payload),
@@ -40,6 +41,7 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("browser:panel-request", listener);
   },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  probeCredentials: (payload) => ipcRenderer.invoke("settings:probe-credentials", payload),
   getReviewerLocalStatus: () => ipcRenderer.invoke("reviewer-local:status"),
   downloadReviewerLocalModel: () => ipcRenderer.invoke("reviewer-local:download"),
   chooseReviewerLocalDir: () => ipcRenderer.invoke("reviewer-local:choose-dir"),
@@ -107,6 +109,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   clearUsageStats: () => ipcRenderer.invoke("usage:clear"),
   deleteMemory: (id) => ipcRenderer.invoke("memories:delete", id),
+  lintMemories: () => ipcRenderer.invoke("memories:lint"),
   listSkills: (workspacePath) => ipcRenderer.invoke("skills:list", workspacePath),
   setSkillEnabled: (id, enabled, workspacePath) => ipcRenderer.invoke("skills:set-enabled", { id, enabled, workspacePath }),
   deleteSkill: (id) => ipcRenderer.invoke("skills:delete", id),

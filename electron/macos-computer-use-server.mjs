@@ -284,10 +284,16 @@ async function launchApp(appQuery) {
     return `应用“${appQuery}”已在运行，请直接调用 get_app_state 读取界面。`;
   }
   const app = resolved.app || {};
+  // 审批加固：只允许启动应用菜单解析出的应用（bundleId 或以 .app 结尾的套装路径），
+  // 不再按原始查询串直接 open 任意路径——避免借“启动应用”之名执行脚本或任意文件
+  // （/usr/bin/open 打开 .command/.scpt 等文件会交给 Terminal/脚本编辑器执行）。
   const attempts = [];
   if (app.bundleId) attempts.push(["-b", app.bundleId]);
-  if (app.path) attempts.push([app.path]);
-  attempts.push(["-a", appQuery], [appQuery]);
+  if (app.path && String(app.path).endsWith(".app")) attempts.push([app.path]);
+  if (app.displayName) attempts.push(["-a", app.displayName]);
+  if (!attempts.length) {
+    throw new Error(`系统应用菜单中没有找到“${appQuery}”。请使用应用菜单中显示的正式名称（list_apps 可查看正在运行的应用）。`);
+  }
   let lastError = "";
   for (const args of attempts) {
     const result = await tryRun("/usr/bin/open", args, { timeoutMs: 10_000 });

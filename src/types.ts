@@ -269,6 +269,8 @@ export interface SessionRecord {
   contextTokensExact?: boolean;
   contextModel?: string;
   contextEndpoint?: string;
+  // 会话累计 token 用量（含每轮请求的输入与输出；端点不回 usage 时为估算值）
+  tokenStats?: { prompt: number; completion: number; requests: number };
   pinned?: boolean;
   archived?: boolean;
   // 后台完成未读：任务在非当前会话完成时置 true，点开会话即清除（列表小绿点）
@@ -373,6 +375,8 @@ export interface ModelProfile {
   endpoint: string;
   model: string;
   apiKey: string;
+  // 推理强度档位（见 providers.ts reasoningEfforts；空串 = 厂商默认）
+  reasoningEffort?: string;
   transcriptionEndpoint?: string;
   transcriptionModel?: string;
 }
@@ -481,6 +485,10 @@ export interface ProviderSettings {
   identity: UserIdentity | null;
   endpoint: string;
   model: string;
+  // 推理强度档位（见 providers.ts reasoningEfforts；空串 = 厂商默认）
+  reasoningEffort: string;
+  // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
+  subAgentProfileId: string;
   apiKey: string;
   visionEndpoint: string;
   visionModel: string;
@@ -552,6 +560,27 @@ export interface MemoryItem {
   builtIn?: boolean;
 }
 
+export interface WikiMemoryRow {
+  id: string;
+  kind: string;
+  category: string;
+  content: string;
+  // 命名记忆：用户可按名字引用的简短名字
+  name?: string;
+  // 会话记忆所属的任务会话 id（仅"会话记忆"页的行有值）
+  sessionId?: string;
+}
+
+export interface WikiMemoryPage {
+  relPath: string;
+  title: string;
+  scope: "global" | "workspace";
+  workspacePath: string;
+  rows: WikiMemoryRow[];
+  content: string;
+  updated: string;
+}
+
 export interface SkillRecord {
   id: string;
   name: string;
@@ -598,6 +627,8 @@ export interface ScheduleRecord {
   lastSummary: string;
   createdAt: string;
   updatedAt: string;
+  // 运行历史：每次执行追加一条（时间/结果/关联会话 id），保留最近 10 条
+  history?: Array<{ at: string; status: string; summary: string; sessionId: string }>;
 }
 
 export interface DyworkerBridge {
@@ -626,6 +657,7 @@ export interface DyworkerBridge {
   gitCheckout(workspacePath: string, branch: string): Promise<{ ok: boolean; error?: string }>;
   gitCreateBranch(workspacePath: string, branch: string): Promise<{ ok: boolean; error?: string }>;
   gitCommit(payload: { workspacePath: string; message: string; includeUnstaged: boolean }): Promise<{ ok: boolean; message?: string; error?: string }>;
+  gitSuggestCommitMessage(workspacePath: string): Promise<{ ok: boolean; message?: string; error?: string }>;
   gitPush(workspacePath: string): Promise<{ ok: boolean; error?: string }>;
   gitReviewOverview(payload: { workspacePath: string; base?: string }): Promise<GitReviewOverview>;
   gitFileDiff(payload: { workspacePath: string; base?: string; path: string; untracked?: boolean }): Promise<{ ok: boolean; diff?: string; binary?: boolean; truncated?: boolean; error?: string }>;
@@ -645,6 +677,7 @@ export interface DyworkerBridge {
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
+  probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;
   getReviewerLocalStatus(): Promise<ReviewerLocalStatus>;
   downloadReviewerLocalModel(): Promise<{ ok: boolean; skipped?: boolean; error?: string; status?: ReviewerLocalStatus }>;
   chooseReviewerLocalDir(): Promise<{ canceled: boolean; path?: string }>;
@@ -689,7 +722,7 @@ export interface DyworkerBridge {
   resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
   cancelTask(sessionId: string, runId: string): Promise<{ ok: boolean }>;
   onAgentEvent(callback: (event: SessionAgentEvent) => void): () => void;
-  listMemories(): Promise<MemoryItem[]>;
+  listMemories(): Promise<WikiMemoryPage[]>;
   listUsageStats(): Promise<UsageRecord[]>;
   clearUsageStats(): Promise<{ ok: boolean }>;
   listHooks(): Promise<{ builtin: HookRule[]; user: HookRule[]; userPath: string }>;
@@ -703,7 +736,8 @@ export interface DyworkerBridge {
   dismissInbox(id: string): Promise<{ ok: boolean; error?: string }>;
   resolveQuestion(sessionId: string, requestId: string, answer: string): Promise<{ ok: boolean }>;
   onInboxChanged(callback: () => void): () => void;
-  deleteMemory(id: string): Promise<{ ok: boolean }>;
+  deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
+  lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;
   setSkillEnabled(id: string, enabled: boolean, workspacePath?: string): Promise<{ ok: boolean }>;
   deleteSkill(id: string): Promise<{ ok: boolean; error?: string }>;

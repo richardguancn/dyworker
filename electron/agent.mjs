@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mjs";
 import { localReview } from "./local-reviewer.mjs";
-import { selectRelevantMemories } from "./memory.mjs";
+import { selectWikiPages } from "./memory-wiki.mjs";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mjs";
 import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchQwenNative } from "./providers.mjs";
 
@@ -1280,12 +1280,13 @@ export function toolDefinitions() {
       { path: stringProperty("工作区相对路径或工作区外绝对路径") }, ["path"]),
     functionTool("run_command", "在工作区内运行必要的本地程序，例如转换文档、运行脚本或验证结果。注意分工：读文件内容用 read_file（不要 cat），找文件用 list_files（不要 ls/find），改文件用 edit_file 或 write_file（不要 sed -i 或输出重定向）。执行前用户会确认。",
       { command: stringProperty("要运行的完整 shell 命令") }, ["command"]),
-    functionTool("save_memory", "保存对未来任务仍有帮助的稳定偏好、规则、禁忌、事实或经验。标明是所有工作区通用，还是只属于当前工作区。不得保存敏感信息和一次性状态。",
+    functionTool("save_memory", "保存对未来任务仍有帮助的稳定偏好、规则、禁忌、事实或经验。标明是所有工作区通用、只属于当前工作区，还是只属于当前任务会话。不得保存敏感信息和一次性状态。",
       {
         category: stringProperty("分类，例如用户偏好、项目规则、常用信息"),
         content: stringProperty("简洁、独立、可长期复用的一条事实"),
+        name: stringProperty("记忆的简短名字（30 字以内），便于用户以后按名字引用；没有合适名字时留空"),
         kind: { type: "string", enum: ["preference", "rule", "taboo", "fact", "experience"], description: "记忆类型：偏好、规则、禁忌、事实或经验" },
-        scope: { type: "string", enum: ["global", "workspace"], description: "global 表示所有工作区通用；workspace 表示只属于当前工作区" },
+        scope: { type: "string", enum: ["global", "workspace", "session"], description: "global 表示所有工作区通用；workspace 表示只属于当前工作区；session 表示只属于当前任务会话（临时性、只在本次对话有效的约定）" },
         relation: { type: "string", enum: ["extends", "refines", "supersedes"], description: "与已有记忆的关系：新增、补充或取代；默认新增" },
         related_memory_id: stringProperty("被补充或取代的已有记忆编号；没有明确对应项时留空"),
       },
@@ -2166,7 +2167,8 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 用户明确要求操作网页时，可以使用浏览器工具打开公开网页、读取内容、点击元素、填写表单和保存截图；操作全程在用户可见的窗口中进行，仍不得访问本机或内网地址。",
 
     "# 记忆与模板\n"
-    + "- 如果发现对以后任务仍有帮助的稳定偏好、规则、禁忌、事实或经验，使用 save_memory 保存并选择准确类型；用户通用偏好和禁忌用 global，项目专属规则、事实和经验用 workspace。不要保存密钥、口令、身份证号等敏感信息，也不要保存一次性的临时状态。\n"
+    + "- 如果发现对以后任务仍有帮助的稳定偏好、规则、禁忌、事实或经验，使用 save_memory 保存并选择准确类型；用户通用偏好和禁忌用 global，项目专属规则、事实和经验用 workspace，只在本任务会话内有效的临时约定用 session。不要保存密钥、口令、身份证号等敏感信息，也不要保存一次性的临时状态。\n"
+    + "- 保存成体系的流程、口径或用户明确说「以后就按这个来」的内容时，给记忆起一个简短名字（name，30 字以内），用户以后可以按名字引用。\n"
     + "- 用户纠正了已有记忆时，用 supersedes 并填写被取代的记忆编号；只是补充细节时用 refines。没有明确对应记忆时用 extends。\n"
     + "- 对用户本人的稳定信息（职务分工、分管领域、惯用的格式与语气偏好、常见对接单位）用 save_memory 保存到「用户画像」分类，随任务积累对用户的了解，以后用于定制表达和取舍。\n"
     + "- 如果一个成功任务包含五步以上且很可能重复，可以在完成后调用 save_skill，提出把做法保存为工作模板；应用会让用户确认。\n"
@@ -2705,13 +2707,92 @@ function messageFromResponses(result) {
   return message;
 }
 
-function responsesPayload({ model, messages, tools, stream }) {
+function responsesPayload({ model, messages, tools, stream, reasoning }) {
   const payload = { model, input: responsesInput(messages), stream };
+  if (reasoning) payload.reasoning = reasoning;
   if (tools !== false) {
     payload.tools = responsesTools(tools);
     payload.tool_choice = "auto";
   }
   return payload;
+}
+
+// 推理强度档位 → Chat Completions 请求参数映射（档位合法性由设置界面按
+// src/providers.ts 的 providerPresets.reasoningEfforts 限定，这里只做参数名/结构转换）。
+// 各厂商取值依据官方 API 文档：
+// - DeepSeek：顶层 reasoning_effort（low/medium 兼容映射为 high，xhigh→max）；thinking.type 关闭思考
+// - Kimi（开放平台/编程套餐）：顶层 reasoning_effort（low/high/max），K3 思考不可关闭
+// - GLM（智谱）：reasoning_effort（low/high/max，GLM-5.2+）；thinking.type 关闭思考（4.x 系列）
+// - Qwen（百炼兼容模式）：enable_thinking 开关 + reasoning_effort 档位
+// - MiniMax：M3 用 thinking.type（disabled/adaptive）；M2.x 思考不可关闭
+// - 豆包（火山方舟）：thinking.type（enabled/disabled/auto）；新模型支持 reasoning_effort 档位
+// - OpenAI：顶层 reasoning_effort（gpt-5.2 支持 none）；Responses API 为 reasoning.effort
+// - Gemini OpenAI 兼容层 / xAI Grok：顶层 reasoning_effort（low/medium/high）
+// "off" 统一表示关闭思考；未选择（空串）用厂商默认行为，仅 Kimi 开放平台默认 high 控费提速。
+export function reasoningRequestParams({ provider, effort }) {
+  const value = String(effort || "").trim();
+  // Kimi K3 顶层 reasoning_effort 默认 max，推理 token 消耗大；开放平台未显式选择时固定 high
+  if (!value) return provider === "kimi-open" ? { reasoning_effort: "high" } : {};
+  switch (provider) {
+    case "deepseek":
+      return value === "off" ? { thinking: { type: "disabled" } } : { reasoning_effort: value };
+    case "glm":
+      return value === "off" ? { thinking: { type: "disabled" } } : { reasoning_effort: value };
+    case "qwen":
+      return value === "off"
+        ? { enable_thinking: false }
+        : { enable_thinking: true, reasoning_effort: value };
+    case "minimax":
+      return { thinking: { type: value === "off" ? "disabled" : value } };
+    // 豆包（火山方舟）：doubao-seed-1.6 用 thinking.type（enabled/disabled/auto）；
+    // doubao-seed-evolving 等新模型另支持 reasoning_effort（none/minimal/low/medium/high/xhigh/max）
+    case "doubao":
+      if (value === "off") return { thinking: { type: "disabled" } };
+      if (value === "auto") return { thinking: { type: "auto" } };
+      return { reasoning_effort: value };
+    case "openai":
+      return { reasoning_effort: value === "off" ? "none" : value };
+    case "gemini":
+    case "xai":
+      return value === "off" ? {} : { reasoning_effort: value };
+    case "kimi-open":
+    case "kimi":
+      // K3 思考不可关闭，"off" 视为不传参数（走厂商默认）
+      return value === "off" ? {} : { reasoning_effort: value };
+    // 本地部署（vLLM/Ollama/LM Studio）与自建网关：detectProvider 不认识的端点返回 null。
+    // "off"/"on" 用 vLLM 官方文档的 chat_template_kwargs.enable_thinking（Qwen3 系列思考开关）；
+    // 档位（low/medium/high）透传 OpenAI 标准 reasoning_effort，不支持的服务会忽略
+    default:
+      if (value === "off") return { chat_template_kwargs: { enable_thinking: false } };
+      if (value === "on") return { chat_template_kwargs: { enable_thinking: true } };
+      return value ? { reasoning_effort: value } : {};
+  }
+}
+
+// Responses API 的推理强度：OpenAI/DeepSeek 官方语义为顶层 reasoning.effort（off → none）
+function responsesReasoningParams({ effort }) {
+  const value = String(effort || "").trim();
+  if (!value) return null;
+  return { effort: value === "off" ? "none" : value };
+}
+
+// 子代理模型：按 settings.subAgentProfileId 从模型档案解析专用配置；
+// 未配置或档案缺失/不完整时原样返回（子代理跟随主模型），密钥为空时沿用主模型密钥
+export function resolveSubAgentSettings(settings) {
+  const profileId = String(settings?.subAgentProfileId || "").trim();
+  if (!profileId) return settings;
+  const profile = (Array.isArray(settings?.profiles) ? settings.profiles : [])
+    .find((item) => item && item.id === profileId);
+  const endpoint = String(profile?.endpoint || "").trim();
+  const model = String(profile?.model || "").trim();
+  if (!endpoint || !model) return settings;
+  return {
+    ...settings,
+    endpoint,
+    model,
+    apiKey: String(profile.apiKey || "").trim() || settings.apiKey,
+    reasoningEffort: String(profile.reasoningEffort || "").trim(),
+  };
 }
 
 async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS, onReasoning = null }) {
@@ -2826,14 +2907,21 @@ export async function requestModel({ settings, messages, fetchImpl, signal, onTe
   const selectedTools = tools || toolDefinitionsWith(extraTools);
   // 模型名可能带上下文覆盖后缀（如 k3[1M]），发给服务端前剥离
   const apiModel = bareModelName(settings.model);
+  // 推理强度参数：按厂商官方 API 文档映射（档位由设置界面限定，见 reasoningRequestParams 注释）
+  const providerId = detectProvider(settings.endpoint);
+  const reasoningParams = reasoningRequestParams({ provider: providerId, effort: settings.reasoningEffort });
   const basePayload = responsesApi
-    ? responsesPayload({ model: apiModel, messages: modelMessages, tools: tools === false ? false : selectedTools, stream: false })
+    ? responsesPayload({
+        model: apiModel,
+        messages: modelMessages,
+        tools: tools === false ? false : selectedTools,
+        stream: false,
+        reasoning: responsesReasoningParams({ effort: settings.reasoningEffort }),
+      })
     : {
         model: apiModel,
         messages: modelMessages,
-        // Kimi K3 顶层 reasoning_effort 默认 max，推理 token 消耗大；开放平台固定 high 控费提速
-        // （K3 官方示例均以 kimi-k3 实测，low/high/max 均支持）
-        ...(detectProvider(settings.endpoint) === "kimi-open" ? { reasoning_effort: "high" } : {}),
+        ...reasoningParams,
       };
   if (!responsesApi && tools !== false) {
     basePayload.tools = selectedTools;
@@ -3230,7 +3318,8 @@ export async function compactConversation({ messages, settings, fetchImpl, signa
     + "只输出摘要正文，不要评论，不要寒暄。\n\n" + serialized;
   let summary;
   try {
-    const message = await requestModel({ settings, messages: [{ role: "user", content: summaryPrompt }], fetchImpl, signal, tools: false, onUsage });
+    // 压缩是纯文本摘要，关闭思考省 token 提速度（厂商不支持关闭时自动退化为不传参数）
+    const message = await requestModel({ settings: { ...settings, reasoningEffort: "off" }, messages: [{ role: "user", content: summaryPrompt }], fetchImpl, signal, tools: false, onUsage });
     summary = messageText(message).trim();
     if (!summary) throw new Error("摘要为空");
   } catch {
@@ -3262,11 +3351,34 @@ function messageText(message) {
   return "";
 }
 
+// 兼容旧的扁平 memories 参数：每条记忆视作一个单行页面，保持按相关性逐条选取的行为。
+function memoriesAsPagesFallback(items) {
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => String(item?.content || "").trim())
+    .map((item) => {
+      const rows = [{
+        id: String(item?.id || ""),
+        kind: String(item?.kind || ""),
+        category: String(item?.category || ""),
+        content: String(item.content || "").trim(),
+      }];
+      return {
+        relPath: `pages/flat/${rows[0].id || rows[0].content.slice(0, 12)}.md`,
+        title: rows[0].category || "长期记忆",
+        scope: item?.scope === "workspace" ? "workspace" : "global",
+        workspacePath: String(item?.workspacePath || ""),
+        rows,
+        content: `# ${rows[0].category || "长期记忆"}\n\n- ${rows[0].content} <!--mem:${rows[0].id}|${rows[0].kind}|${rows[0].category}-->`,
+      };
+    });
+}
+
 // options:
 //   settings      { endpoint, model, apiKey }
 //   workspacePath 工作区绝对路径
 //   conversation  用户可见的 user/assistant 消息（含刚发送的用户消息）
-//   memories      [{ category, content, kind, scope, workspacePath, relation }]
+//   memories      （已废弃，改为 memoryPages）
+//   memoryPages   个人记忆知识库页面 [{ relPath, title, scope, workspacePath, rows, content }]
 //   loop          { enabled, iteration, maximum }
 //   memoryReviewDue 是否触发记忆复盘
 //   emit(event)   向渲染端推送进度事件
@@ -3282,6 +3394,7 @@ export async function runAgent({
   conversation,
   workingContext = "",
   memories = [],
+  memoryPages = [],
   skills = [],
   history = null,
   loop = { enabled: false, iteration: 1, maximum: 1 },
@@ -3339,18 +3452,21 @@ export async function runAgent({
   } else {
     messages.push({ role: "system", content: "你是主代理派发的子代理。用户消息是一个完整自足的子任务描述：专注完成它并直接交付结果，不要询问澄清，不要再派发新的子代理（你也没有这个工具）。" });
   }
-  const relevantMemories = selectRelevantMemories(memories, {
+  // 个人记忆知识库：按当前任务选取最相关的 wiki 页面整页注入（页面内部已合并/去重）。
+  const allMemoryPages = memoryPages.length ? memoryPages : memoriesAsPagesFallback(memories);
+  const relevantMemoryPages = selectWikiPages(allMemoryPages, {
     workspacePath,
     query: messageText({ content: latestQuery }),
-    limit: 5,
+    limit: 3,
   });
-  if (relevantMemories.length) {
-    const kindLabels = { preference: "偏好", rule: "规则", taboo: "禁忌", fact: "事实", experience: "经验" };
-    const lines = relevantMemories.map((item) => {
-      const scope = item.scope === "workspace" ? "当前工作区" : "全局";
-      return `- [编号 ${item.id || "无"}｜${kindLabels[item.kind] || "事实"}｜${scope}｜${item.category}] ${item.content}`;
-    }).join("\n");
-    messages.push({ role: "system", content: `与当前任务可能相关的长期记忆如下。它们只作为背景，若与用户当前要求冲突，以当前要求为准：\n${lines}` });
+  // 本会话记忆页（pages/session.md）绑定当前会话，必须注入，不参与相关性竞争
+  const sessionMemoryPage = allMemoryPages.find((page) => page?.relPath === "pages/session.md");
+  if (sessionMemoryPage && !relevantMemoryPages.includes(sessionMemoryPage)) relevantMemoryPages.unshift(sessionMemoryPage);
+  if (relevantMemoryPages.length) {
+    const sections = relevantMemoryPages
+      .map((page) => `## ${page.title}\n${clipped(page.content, 2600)}`)
+      .join("\n\n");
+    messages.push({ role: "system", content: `与当前任务可能相关的长期记忆（个人知识库页面）如下。它们只作为背景，若与用户当前要求冲突，以当前要求为准：\n\n${sections}` });
   }
   const projectInstructions = await loadProjectInstructions(workspacePath);
   if (projectInstructions) {
@@ -4296,6 +4412,7 @@ export async function runAgent({
               savedMemory = {
                 category: String(args.category || "常用信息"),
                 content: String(args.content || ""),
+                name: String(args.name || "").trim().slice(0, 30),
                 kind: String(args.kind || "fact"),
                 scope: String(args.scope || "global"),
                 relation: String(args.relation || "extends"),
@@ -4391,7 +4508,7 @@ export async function runAgent({
               if (!task) throw new Error("子任务描述不能为空");
               const taskTitle = clipped(task.replace(/\s+/g, " "), 80);
               const sub = await runAgent({
-                settings,
+                settings: resolveSubAgentSettings(settings),
                 workspacePath,
                 contextLimit,
                 hooks,

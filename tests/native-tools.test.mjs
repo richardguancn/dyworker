@@ -94,16 +94,23 @@ function countTool(tools, name) {
 }
 
 // ---- 1. detectProvider ----
-test("detectProvider：Kimi 开放平台主机名识别，其余返回 null", () => {
+test("detectProvider：厂商主机名识别，未知地址返回 null", () => {
   assert.equal(detectProvider(KIMI_ENDPOINT), "kimi-open");
   assert.equal(detectProvider("https://api.moonshot.ai/v1/chat/completions"), "kimi-open");
   assert.equal(detectProvider("https://api.moonshot.cn/v1"), "kimi-open");
-  assert.equal(detectProvider("https://api.kimi.com/coding/v1/chat/completions"), null);
-  assert.equal(detectProvider("https://api.openai.com/v1/chat/completions"), null);
+  // Kimi 编程套餐：识别为 kimi（推理强度映射用），但不属于开放平台（无 Formula API）
+  assert.equal(detectProvider("https://api.kimi.com/coding/v1/chat/completions"), "kimi");
+  assert.equal(detectProvider("https://api.openai.com/v1/chat/completions"), "openai");
   assert.equal(detectProvider("https://api.deepseek.com/responses"), "deepseek");
   assert.equal(detectProvider("https://api.deepseek.com/v1/chat/completions"), "deepseek");
   assert.equal(detectProvider("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"), "qwen");
   assert.equal(detectProvider("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"), "qwen");
+  assert.equal(detectProvider("https://open.bigmodel.cn/api/paas/v4/chat/completions"), "glm");
+  assert.equal(detectProvider("https://api.minimaxi.com/v1/chat/completions"), "minimax");
+  assert.equal(detectProvider("https://api.minimax.io/v1/chat/completions"), "minimax");
+  assert.equal(detectProvider("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"), "gemini");
+  assert.equal(detectProvider("https://api.x.ai/v1/chat/completions"), "xai");
+  assert.equal(detectProvider("https://ark.cn-beijing.volces.com/api/v3/chat/completions"), "doubao");
   assert.equal(detectProvider("http://192.16.6.138:8000/v1/chat/completions"), null, "本地 vLLM 部署不路由到云端原生搜索");
   assert.equal(detectProvider(""), null);
   assert.equal(detectProvider("不是地址"), null);
