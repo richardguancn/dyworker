@@ -165,15 +165,62 @@ export function createWechatChannel({ token = "", userId = "", baseUrl = "", sta
         return;
       }
       if (message.kind === "voice") {
-        // 语音自带平台转写；有 transcript 直接当文本，否则按占位文案进任务
+        // 语音自带平台转写；有 transcript 直接当文本，否则按占位文案进任务。
+        // 同时尝试下载语音音频文件供桌面端点击播放。
         const transcript = String(message.transcript || "").trim();
+        const fallbackText = transcript || placeholderTextForKind("voice");
+        if (typeof ctx.downloadMedia === "function" && mediaDir) {
+          void (async () => {
+            try {
+              const buffer = await ctx.downloadMedia();
+              if (buffer && buffer.length) {
+                const messageId = String(message.id || crypto.randomUUID());
+                const extension = sniffImageExtension(buffer) || ".silk";
+                const dir = mediaDir || "";
+                await fs.mkdir(dir, { recursive: true });
+                const filePath = path.join(dir, `${messageId}${extension}`);
+                await fs.writeFile(filePath, buffer);
+                onMessage({
+                  channel: "wechat",
+                  chatType: "dm",
+                  chatId,
+                  userId: chatId,
+                  userName: "",
+                  text: fallbackText,
+                  messageId,
+                  media: [{
+                    kind: "voice",
+                    filePath,
+                    fileName: `语音${extension}`,
+                    size: buffer.byteLength,
+                    transcript,
+                  }],
+                });
+                return;
+              }
+            } catch {
+              // 下载失败降级走无落盘文件流程
+            }
+            onMessage({
+              channel: "wechat",
+              chatType: "dm",
+              chatId,
+              userId: chatId,
+              userName: "",
+              text: fallbackText,
+              messageId: String(message.id || ""),
+              ...(transcript ? {} : { media: [{ kind: "voice", transcript: "", size: Number(message.sizeBytes) || 0 }] }),
+            });
+          })();
+          return;
+        }
         onMessage({
           channel: "wechat",
           chatType: "dm",
           chatId,
           userId: chatId,
           userName: "",
-          text: transcript || placeholderTextForKind("voice"),
+          text: fallbackText,
           messageId: String(message.id || ""),
           ...(transcript ? {} : { media: [{ kind: "voice", transcript: "", size: Number(message.sizeBytes) || 0 }] }),
         });

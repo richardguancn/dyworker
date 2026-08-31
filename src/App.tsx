@@ -28,7 +28,6 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
-  GitFork,
   Globe,
   ListTree,
   Hand,
@@ -524,6 +523,132 @@ function ClampedUserText({ text, tokenNames }: { text: string; tokenNames?: Set<
         <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
       )}
     </>
+  );
+}
+
+function isVoiceAttachment(attachment?: Attachment | null): boolean {
+  if (!attachment) return false;
+  return Boolean(
+    attachment.isVoice ||
+    attachment.mimeType?.startsWith("audio/") ||
+    attachment.name === "语音" ||
+    /\.(silk|wav|mp3|m4a|aac|opus|ogg|amr)$/i.test(attachment.name || attachment.path)
+  );
+}
+
+function isVoiceMessage(message: ChatMessage): boolean {
+  if (message.attachments?.some(isVoiceAttachment)) return true;
+  const content = String(message.content || "");
+  return content.includes("[语音转写]") || content.trim() === "[语音]";
+}
+
+function parseVoiceMessageDetails(message: ChatMessage) {
+  const raw = String(message.displayContent ?? message.content ?? "").trim();
+  let text = raw;
+  let channelPrefix = "";
+
+  // 匹配 [来自QQ 张三] 或 [来自微信] 等
+  const channelMatch = text.match(/^(\[来自(?:QQ|微信|qq|wechat)[^\]]*\])\s*/i);
+  if (channelMatch) {
+    channelPrefix = channelMatch[1];
+    text = text.slice(channelMatch[0].length).trim();
+  }
+
+  // 匹配 [语音转写] 或 [语音]
+  const voiceTagMatch = text.match(/^\[(?:语音转写|语音)\]\s*/);
+  if (voiceTagMatch) {
+    text = text.slice(voiceTagMatch[0].length).trim();
+  }
+
+  // 清理 ASR 遗留的模型语言前缀或控制标记
+  text = text.replace(/^\s*language\s+[A-Za-z-]+\s*/i, "");
+  text = text.replace(/^\s*(?:zh|en|yue|ja|ko|fr|de|es|ru|ar|pt|it|vi|th|id|ms|hi|[a-z]{2}(?:-[A-Za-z]{2})?)\s*[\s,，、|｜:：-]+\s*/i, "");
+  text = text.replace(/<\|[^|]*\|>/g, "").trim();
+
+  const voiceAttachment = message.attachments?.find(isVoiceAttachment) || null;
+
+  return {
+    channelPrefix,
+    asrText: stripControlMarkers(text),
+    voiceAttachment,
+  };
+}
+
+function VoiceWaveIcon({ playing = false }: { playing?: boolean }) {
+  return (
+    <svg
+      className={`voice-wave-svg${playing ? " playing" : ""}`}
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="5" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <path className="wave-arc wave-1" d="M10 7.5a6.5 6.5 0 0 1 0 9" />
+      <path className="wave-arc wave-2" d="M15 4a12 12 0 0 1 0 16" />
+    </svg>
+  );
+}
+
+function VoiceMessageBubble({
+  message,
+  playingPath,
+  loadingPath,
+  onTogglePlay,
+  tokenNames,
+}: {
+  message: ChatMessage;
+  playingPath: string | null;
+  loadingPath: string | null;
+  onTogglePlay: (attachment: Attachment) => void;
+  tokenNames?: Set<string>;
+}) {
+  const { channelPrefix, asrText, voiceAttachment } = parseVoiceMessageDetails(message);
+  const pathKey = voiceAttachment ? (voiceAttachment.path || voiceAttachment.name) : "";
+  const isPlaying = Boolean(pathKey && playingPath === pathKey);
+  const isLoading = Boolean(pathKey && loadingPath === pathKey);
+
+  // 预估或实际时长（优先 attachment.duration，其次按 silk 约 3KB/s 预估，最少 1 秒）
+  const durationSec = voiceAttachment?.duration
+    ? Math.round(voiceAttachment.duration)
+    : (voiceAttachment?.size ? Math.max(1, Math.min(60, Math.round(voiceAttachment.size / 3000))) : 2);
+
+  // 气泡按秒数伸缩宽度（min 72px ~ max 220px）
+  const barWidth = Math.min(220, Math.max(72, 68 + durationSec * 6));
+
+  return (
+    <div className="voice-message-block">
+      {channelPrefix && (
+        <div className="voice-channel-tag">{channelPrefix}</div>
+      )}
+      {voiceAttachment && (
+        <button
+          type="button"
+          className={`voice-play-bar${isPlaying ? " playing" : ""}${isLoading ? " loading" : ""}`}
+          style={{ width: `${barWidth}px` }}
+          onClick={() => onTogglePlay(voiceAttachment)}
+          title={isPlaying ? "点击暂停" : "点击播放语音"}
+          aria-label={isPlaying ? "暂停语音" : "播放语音"}
+        >
+          {isLoading ? (
+            <LoaderCircle className="spin" size={15} />
+          ) : (
+            <VoiceWaveIcon playing={isPlaying} />
+          )}
+          <span className="voice-duration">{durationSec}&quot;</span>
+        </button>
+      )}
+      {Boolean(asrText) && (
+        <div className="voice-asr-section">
+          <ClampedUserText text={asrText} tokenNames={tokenNames} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4847,6 +4972,28 @@ function PanelRightIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+function ForkBranchIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12h5l11-7" />
+      <path d="M14 5h5v5" />
+      <path d="M8 12l11 7" />
+      <path d="M14 19h5v-5" />
+    </svg>
+  );
+}
+
 export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   const [activeId, setActiveId] = useState(previewSessions[0].id);
@@ -7519,6 +7666,69 @@ export function App() {
     }
   };
 
+  // 播放用户语音附件（QQ/微信渠道语音）
+  const [playingVoicePath, setPlayingVoicePath] = useState<string | null>(null);
+  const [voiceLoadingPath, setVoiceLoadingPath] = useState<string | null>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceObjectUrlRef = useRef("");
+
+  const stopPlayingVoice = () => {
+    if (voiceAudioRef.current) {
+      voiceAudioRef.current.pause();
+      voiceAudioRef.current = null;
+    }
+    if (voiceObjectUrlRef.current) {
+      URL.revokeObjectURL(voiceObjectUrlRef.current);
+      voiceObjectUrlRef.current = "";
+    }
+    setPlayingVoicePath(null);
+    setVoiceLoadingPath(null);
+  };
+
+  const togglePlayVoice = async (attachment: Attachment) => {
+    const pathKey = attachment.path || attachment.name;
+    if (playingVoicePath === pathKey || voiceLoadingPath === pathKey) {
+      stopPlayingVoice();
+      return;
+    }
+    stopPlayingVoice();
+    stopSpeakingMessage();
+    if (!attachment.path) {
+      setNotice("语音文件路径不存在");
+      return;
+    }
+    setVoiceLoadingPath(pathKey);
+    try {
+      const result = await window.dyworker?.readAudioAttachment(attachment.path);
+      if (!result?.ok || (!result.wav?.length && !result.bytes?.length)) {
+        setNotice(result?.error || "语音文件无法读取或已清理");
+        return;
+      }
+      const audioBuffer = result.wav ? result.wav : result.bytes!;
+      const mimeType = result.wav ? "audio/wav" : (result.mimeType || "audio/mpeg");
+      const bufferCopy = audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength) as ArrayBuffer;
+      const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType }));
+      const audio = new Audio();
+      audio.src = url;
+      audio.preload = "auto";
+      voiceObjectUrlRef.current = url;
+      voiceAudioRef.current = audio;
+      audio.onended = () => stopPlayingVoice();
+      audio.onerror = () => {
+        const errorMsg = audio.error?.message || "语音播放失败";
+        setNotice(errorMsg.includes("supported source") ? "语音格式无法播放或文件已损坏" : "语音播放失败");
+        stopPlayingVoice();
+      };
+      setPlayingVoicePath(pathKey);
+      await audio.play();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      stopPlayingVoice();
+    } finally {
+      setVoiceLoadingPath(null);
+    }
+  };
+
   const startMessageEdit = (message: ChatMessage, messageIndex: number) => {
     if (!activeSession || message.role !== "user") return;
     // 任务运行期间只允许编辑排队中、尚未开始执行的消息
@@ -8271,10 +8481,10 @@ export function App() {
                     <>
                       <div className="user-message-stack">
                         <div
-                          className={`user-bubble${isEditing ? " editing" : ""}`}
+                          className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}`}
                           onContextMenu={handleMessageContextMenu}
                         >
-                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef)) && (
+                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
                           <span className="message-inline-refs">
                             {message.skillsUsed?.map((name) => (
                               <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
@@ -8283,7 +8493,7 @@ export function App() {
                               </span>
                             ))}
                             {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
-                            {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef).map((attachment) => (
+                            {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)).map((attachment) => (
                               <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
                                 {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
                                 <span>{attachment.name}</span>
@@ -8291,10 +8501,20 @@ export function App() {
                             ))}
                           </span>
                         )}
-                        <ClampedUserText
-                          text={messageVisibleText(message)}
-                          tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
-                        />
+                        {isVoiceMessage(message) ? (
+                          <VoiceMessageBubble
+                            message={message}
+                            playingPath={playingVoicePath}
+                            loadingPath={voiceLoadingPath}
+                            onTogglePlay={togglePlayVoice}
+                            tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
+                          />
+                        ) : (
+                          <ClampedUserText
+                            text={messageVisibleText(message)}
+                            tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
+                          />
+                        )}
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
@@ -8419,7 +8639,7 @@ export function App() {
                             <Copy size={16} />
                           </button>
                           <button type="button" onClick={() => forkSession(activeSession, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
-                            <GitFork size={16} />
+                            <ForkBranchIcon size={16} />
                           </button>
                           <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
                           <span className="ai-disclaimer">由AI生成，请注意甄别</span>

@@ -23,7 +23,7 @@ import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus, resetLocalReviewerEngine } from "./local-reviewer.mjs";
 import { configureLocalAsr, downloadLocalAsrModel, downloadLocalAsrRuntime, localAsrAllModelsStatus, localAsrModelStatus, localAsrRuntimeStatus } from "./local-asr.mjs";
-import { stopLocalAsrServer, transcribeWithLocalAsr } from "./local-asr-server.mjs";
+import { stopLocalAsrServer, stripAsrText, transcribeWithLocalAsr } from "./local-asr-server.mjs";
 import { configureLocalTts, downloadLocalTtsModel, localTtsAllModelsStatus, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId } from "./local-tts.mjs";
 import { synthesizeWithLocalTts } from "./local-tts-engine.mjs";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mjs";
@@ -548,6 +548,43 @@ ipcMain.handle("tts:speak", async (_event, payload) => {
   return { ok: true, wav: new Uint8Array(await response.arrayBuffer()) };
 });
 
+// 读取语音附件音频数据供渲染层播放（支持 .silk 解码为 wav，其他音频直接返回 bytes）
+ipcMain.handle("audio:read-attachment", async (_event, payload) => {
+  const targetPath = String(payload?.path || "").trim();
+  if (!targetPath) return { ok: false, error: "缺少音频文件路径" };
+  try {
+    const stat = await fs.stat(targetPath);
+    if (!stat.isFile()) return { ok: false, error: "音频文件不存在" };
+    const rawBuffer = await fs.readFile(targetPath);
+    const { decode, isSilk, isWav } = await import("silk-wasm");
+    const ext = path.extname(targetPath).toLowerCase();
+
+    // 检查是否为 silk 编码（无论是 .silk 后缀，还是由于历史原因存成 .bin 的 silk 数据，或包含 #!SILK 魔数）
+    if (isSilk(rawBuffer) || ext === ".silk" || rawBuffer.includes(Buffer.from("#!SILK"))) {
+      try {
+        const pcm = await decode(rawBuffer, 24000);
+        const duration = pcm.duration ? Math.round(pcm.duration / 1000) : Math.max(1, Math.round(pcm.data.byteLength / (24000 * 2)));
+        const wav = buildWavFromPcm(Buffer.from(pcm.data), 24000);
+        return { ok: true, wav: new Uint8Array(wav), mimeType: "audio/wav", duration };
+      } catch (silkError) {
+        // silk 解码失败时继续往下走普通音频分支
+      }
+    }
+
+    // 如果本身就是 WAV 格式
+    if (isWav(rawBuffer) || ext === ".wav") {
+      return { ok: true, wav: new Uint8Array(rawBuffer), mimeType: "audio/wav" };
+    }
+
+    // 其他音频类型（mp3 / m4a / aac / ogg / opus 等）
+    const mimeType = attachmentType(targetPath);
+    const resolvedMime = mimeType.startsWith("audio/") ? mimeType : (ext === ".mp3" ? "audio/mpeg" : (ext === ".ogg" ? "audio/ogg" : "audio/wav"));
+    return { ok: true, bytes: new Uint8Array(rawBuffer), mimeType: resolvedMime };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
 // ---- 防止电脑休眠 ----
 // 安全设计:只用 prevent-app-suspension(阻止系统挂起),不用 prevent-display-sleep——
 // 屏幕照常关闭、照常锁屏,长任务继续跑而物理安全(锁屏)不受影响。
@@ -724,6 +761,8 @@ const mimeTypes = new Map([
   [".bmp", "image/bmp"], [".gif", "image/gif"], [".jpeg", "image/jpeg"], [".jpg", "image/jpeg"],
   [".png", "image/png"], [".webp", "image/webp"], [".csv", "text/csv"], [".html", "text/html"],
   [".json", "application/json"], [".md", "text/markdown"], [".txt", "text/plain"], [".xml", "application/xml"],
+  [".silk", "audio/silk"], [".wav", "audio/wav"], [".mp3", "audio/mpeg"], [".m4a", "audio/mp4"],
+  [".aac", "audio/aac"], [".ogg", "audio/ogg"], [".opus", "audio/opus"], [".amr", "audio/amr"],
 ]);
 
 function attachmentType(filePath) {
@@ -735,6 +774,8 @@ async function describeAttachment(filePath) {
   const stat = await fs.stat(filePath);
   const mimeType = attachmentType(filePath);
   const isImage = mimeType.startsWith("image/");
+  const extension = path.extname(filePath).toLowerCase();
+  const isVoice = mimeType.startsWith("audio/") || extension === ".silk";
   let previewUrl;
   if (isImage) {
     const source = nativeImage.createFromPath(filePath);
@@ -757,6 +798,7 @@ async function describeAttachment(filePath) {
     size: stat.size,
     mimeType,
     isImage,
+    isVoice,
     ...(previewUrl ? { previewUrl } : {}),
   };
 }
@@ -1040,8 +1082,24 @@ function createWindow({ solidFallback = false } = {}) {
     }
   });
 
-  if (isDevelopment) mainWindow.loadURL(rendererEntryUrl);
-  else mainWindow.loadFile(path.join(here, "../dist/client/index.html"));
+  const localHtmlPath = path.join(here, "../dist/client/index.html");
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else if (isDevelopment && !existsSync(localHtmlPath)) {
+    mainWindow.loadURL(rendererEntryUrl);
+  } else {
+    mainWindow.loadFile(localHtmlPath);
+  }
+
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (isMainFrame) {
+      console.log(`[dyworker] renderer load failed: ${errorCode} ${errorDescription} (${validatedURL})`);
+      if (validatedURL.startsWith("http://127.0.0.1:5173") && existsSync(localHtmlPath)) {
+        console.log("[dyworker] dev server unreachable, falling back to local built html");
+        mainWindow?.loadFile(localHtmlPath);
+      }
+    }
+  });
 }
 
 // 右侧浏览器标签页使用 webview 内嵌网页；远程页面始终关闭 Node 能力，并拦截本机/内网跳转。
@@ -1680,9 +1738,12 @@ async function transcribeQqVoice(filePath, settings) {
   const { decode } = await import("silk-wasm");
   const silk = await fs.readFile(filePath);
   const pcm = await decode(silk, 24000);
+  const duration = pcm.duration ? Math.round(pcm.duration / 1000) : Math.max(1, Math.round(pcm.data.byteLength / (24000 * 2)));
   const wav = buildWavFromPcm(Buffer.from(pcm.data), 24000);
   const result = await transcribeAudio(wav, "audio/wav", settings);
-  return result?.text || "";
+  const rawText = result?.text || "";
+  const text = stripAsrText(rawText);
+  return { text, duration };
 }
 
 // PCM(s16le) + 采样率 → 标准 WAV（44 字节头），供转写服务读取
@@ -3678,19 +3739,28 @@ async function buildChannelAttachments(media) {
   const result = [];
   for (const item of Array.isArray(media) ? media : []) {
     if (!item || typeof item !== "object") continue;
+    const ext = item.filePath ? path.extname(item.filePath).toLowerCase() : "";
+    const isVoice = item.kind === "voice" || ext === ".silk" || (item.mimeType && item.mimeType.startsWith("audio/"));
     const fallback = {
       name: item.fileName || (item.kind === "voice" ? "语音" : "附件"),
       path: item.filePath || "",
       size: Number(item.size) || 0,
-      mimeType: item.mimeType || "application/octet-stream",
+      mimeType: item.mimeType || (isVoice ? "audio/silk" : "application/octet-stream"),
       isImage: item.kind === "image",
+      isVoice: Boolean(isVoice),
+      ...(item.duration ? { duration: Number(item.duration) } : {}),
     };
     if (!item.filePath) {
       result.push(fallback);
       continue;
     }
     try {
-      result.push(await describeAttachment(item.filePath));
+      const desc = await describeAttachment(item.filePath);
+      result.push({
+        ...desc,
+        isVoice: Boolean(isVoice || desc.isVoice),
+        ...(item.duration ? { duration: Number(item.duration) } : {}),
+      });
     } catch {
       result.push(fallback);
     }
@@ -3978,15 +4048,20 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     if (!workspacePath) {
       throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
     }
-    // QQ 语音附件是 silk：解码 → WAV → 现有转写服务；失败/未配置时按占位文案进任务并提示
+    // QQ / 微信 语音附件是 silk/音频：解码 → WAV → 现有转写服务；失败/未配置时按占位文案进任务并提示
     let effectiveText = text;
     const voiceItem = (Array.isArray(media) ? media : []).find((item) => item?.kind === "voice" && item?.filePath);
-    if (channel === "qq" && voiceItem) {
-      try {
-        const transcribed = await transcribeQqVoice(voiceItem.filePath, taskSettings);
-        if (transcribed) effectiveText = `[语音转写] ${transcribed}`;
-      } catch {
-        await reply("收到语音，但语音识别服务还没有配置好。").catch(() => { });
+    if (voiceItem) {
+      if (channel === "qq" || !text || text === "[语音]") {
+        try {
+          const { text: transcribed, duration } = await transcribeQqVoice(voiceItem.filePath, taskSettings);
+          if (transcribed) effectiveText = `[语音转写] ${transcribed}`;
+          if (duration) voiceItem.duration = duration;
+        } catch {
+          if (channel === "qq") {
+            await reply("收到语音，但语音识别服务还没有配置好。").catch(() => { });
+          }
+        }
       }
     }
     // 入站媒体 → 桌面附件（缩略图/文件名）；模型可见内容由 providerMessageContent 展开

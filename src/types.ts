@@ -227,6 +227,8 @@ export interface Attachment {
   size: number;
   mimeType: string;
   isImage?: boolean;
+  isVoice?: boolean;
+  duration?: number;
   previewUrl?: string;
   // 来自输入框 @token 的内联引用：气泡里随正文按顺序展示，不再重复渲染成 chip
   inlineRef?: boolean;
@@ -759,6 +761,14 @@ export interface DyworkerBridge {
     audio: number[];
     mimeType: string;
   }): Promise<{ text: string }>;
+  readAudioAttachment(path: string): Promise<{
+    ok: boolean;
+    wav?: Uint8Array;
+    bytes?: Uint8Array;
+    mimeType?: string;
+    duration?: number;
+    error?: string;
+  }>;
   minimize(): Promise<void>;
   toggleMaximize(): Promise<void>;
   close(): Promise<void>;

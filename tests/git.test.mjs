@@ -92,7 +92,7 @@ test("无远程仓库时推送给出明确提示", async () => {
 test("推送到本地裸仓库并自动设置 upstream", async () => {
   const root = await makeRepo();
   const bare = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-bare-"));
-  execFileSync("git", ["init", "--bare", bare], { encoding: "utf8" });
+  execFileSync("git", ["init", "--bare", "-b", "main", bare], { encoding: "utf8" });
   execFileSync("git", ["-C", root, "remote", "add", "origin", bare], { encoding: "utf8" });
   const result = await gitPush(root);
   assert.equal(result.ok, true, result.error || "");
@@ -124,7 +124,7 @@ test("审阅总览：非 git 目录优雅降级，基线含 upstream 时可对�
   assert.equal(degraded.isRepo, false);
   const root = await makeRepo();
   const bare = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-bare-"));
-  execFileSync("git", ["init", "--bare", bare], { encoding: "utf8" });
+  execFileSync("git", ["init", "--bare", "-b", "main", bare], { encoding: "utf8" });
   execFileSync("git", ["-C", root, "remote", "add", "origin", bare], { encoding: "utf8" });
   await gitPush(root);
   // 提交一个不推送的提交，再与 upstream 对比

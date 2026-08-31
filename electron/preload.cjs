@@ -143,6 +143,7 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("channels:status", listener);
   },
   transcribeAudio: (payload) => ipcRenderer.invoke("voice:transcribe", payload),
+  readAudioAttachment: (path) => ipcRenderer.invoke("audio:read-attachment", { path }),
   minimize: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
   close: () => ipcRenderer.invoke("window:close"),
