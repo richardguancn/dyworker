@@ -31,6 +31,7 @@ import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, g
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
 import { SessionQueue } from "./session-queue.mjs";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
+import { backgroundTasksManager } from "./background-tasks.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -2513,6 +2514,8 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         isCancelled: () => agentState.cancelled || mcpShuttingDown,
         signal: abortController.signal,
         sleepGuard: () => hasPendingWakeForSession(sessionId),
+        sessionId,
+        startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || sessionId }),
         requestApproval: (action) => new Promise((resolve) => {
           agentState.pending.set(action.id, resolve);
           emit({ type: "approval-request", action });
@@ -2688,6 +2691,12 @@ ipcMain.handle("agent:cancel", async (_event, payload) => {
   await cancelWakesForSession(sessionId);
   return { ok: true };
 });
+
+ipcMain.handle("background-tasks:list", (_event, sessionId) => backgroundTasksManager.listTasks(sessionId));
+ipcMain.handle("background-tasks:start", (_event, payload) => backgroundTasksManager.startTask(payload));
+ipcMain.handle("background-tasks:stop", async (_event, taskId) => ({ ok: await backgroundTasksManager.stopTask(taskId) }));
+ipcMain.handle("background-tasks:restart", async (_event, taskId) => backgroundTasksManager.restartTask(taskId));
+ipcMain.handle("background-tasks:get-logs", (_event, taskId) => backgroundTasksManager.getTaskLogs(taskId));
 
 ipcMain.handle("memories:list", async () => {
   await memoryWikiReady();
@@ -3297,6 +3306,8 @@ async function resumeWake(wake) {
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(wake.sessionId),
+      sessionId: wake.sessionId,
+      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || wake.sessionId }),
       // 续跑同样无人值守：审批与提问进收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action) => {
         const pending = createInboxItem({
@@ -3470,6 +3481,8 @@ async function runScheduledTask(record) {
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown,
       sleepGuard: () => hasPendingWakeForSession(scheduleSessionId),
+      sessionId: scheduleSessionId,
+      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || scheduleSessionId }),
       // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action) => {
         const pending = createInboxItem({
@@ -4131,6 +4144,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       onExtraTool: routeExtraTool,
       isCancelled: () => mcpShuttingDown || channelTaskAborts.has(myKey),
       sleepGuard: () => hasPendingWakeForSession(sessionId),
+      sessionId,
+      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || sessionId }),
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
       // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
       requestApproval: async (action) => {
@@ -4375,6 +4390,11 @@ app.whenReady().then(async () => {
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
   createWindow();
+  backgroundTasksManager.setBroadcastCallback((event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("background-tasks:update", event);
+    }
+  });
   // 窗口先创建，自动更新初始化不阻塞界面；electron-updater 缺失时仅禁用更新
   void loadElectronUpdater().then((updater) => {
     initializeAppUpdater(storedSettings.updateUrl, updater);
@@ -4402,6 +4422,7 @@ app.on("before-quit", (event) => {
   mcpShutdownStarted = true;
   mcpShuttingDown = true;
   event.preventDefault();
+  backgroundTasksManager.cleanupAll();
   if (appUpdateTimer) clearTimeout(appUpdateTimer);
   if (appUpdateInterval) clearInterval(appUpdateInterval);
   appUpdateTimer = null;

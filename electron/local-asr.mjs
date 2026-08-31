@@ -3,7 +3,7 @@
 // 进程管理与转写请求在 local-asr-server.mjs。
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, readdirSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -202,6 +202,15 @@ function reportProgress(onProgress, phase, received, total) {
   }
 }
 
+async function computeSha256(filePath) {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
 // 断点续传下载：.part 记录进度，全部源共用同一份字节，跨源可续传。
 // expectedBytes > 0 时做精确大小 + sha256 校验（模型文件）；
 // expectedBytes 为 0 表示大小未知（运行时压缩包），只校验已收到且在 min/max 范围内。
@@ -271,9 +280,8 @@ export async function downloadToFile({ sources, target, expectedBytes, expectedS
   }
   reportProgress(onProgress, phase, finalSize, exact ? expectedBytes : finalSize);
   if (exact && expectedSha256) {
-    const hash = crypto.createHash("sha256");
-    hash.update(await fs.readFile(partial));
-    if (hash.digest("hex") !== expectedSha256) {
+    const digest = await computeSha256(partial);
+    if (digest !== expectedSha256) {
       await fs.rm(partial, { force: true });
       throw new Error("文件校验失败，已删除损坏的下载，请重试");
     }

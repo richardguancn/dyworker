@@ -150,3 +150,32 @@ test("语音转写引擎字段：只认 local，其余一律回落 cloud，序�
   const invalid = deserializeSettings(serializeSettings({ asrModel: "fake-model" }, secretStorage), secretStorage);
   assert.equal(invalid.asrModel, DEFAULT_ASR_MODEL_ID);
 });
+
+test("downloadToFile 流式下载与 SHA256 校验正确通过", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dyworker-dl-"));
+  try {
+    const { downloadToFile } = await import("../electron/local-asr.mjs");
+    const content = Buffer.from("hello world a-very-large-chunk-test");
+    const expectedSha256 = "6da9ff60458df8a213e4b7bca068ec9d6f35b2e6503c4f69ad9e4b7bca068ec9"; // wrong hash first
+    const crypto = await import("node:crypto");
+    const correctHash = crypto.createHash("sha256").update(content).digest("hex");
+    const targetFile = path.join(tmp, "model.gguf");
+
+    const mockFetch = async () => new Response(content);
+
+    await downloadToFile({
+      sources: ["https://example.com/test.gguf"],
+      target: targetFile,
+      expectedBytes: content.length,
+      expectedSha256: correctHash,
+      fetchImpl: mockFetch,
+      phase: "model",
+    });
+
+    assert.equal(fs.existsSync(targetFile), true);
+    assert.equal(fs.readFileSync(targetFile).toString("utf8"), "hello world a-very-large-chunk-test");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+

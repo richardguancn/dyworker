@@ -19,6 +19,28 @@ export function chatKeyOf(channel, chatId) {
 
 // 渠道消息里的特殊指令(不走 agent)
 const STOP_WORDS = new Set(["停止", "取消任务", "stop"]);
+const NEW_SESSION_WORDS = new Set([
+  "/new",
+  "new",
+  "/reset",
+  "reset",
+  "新建会话",
+  "新会话",
+  "新任务",
+  "重置会话",
+  "重置对话",
+  "清空上下文",
+]);
+
+export function isNewSessionCommand(text) {
+  const normalized = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^[#]/, "/")
+    .replace(/[。.!！?？]+$/, "")
+    .trim();
+  return NEW_SESSION_WORDS.has(normalized);
+}
 
 export function createChannelManager({
   readChats, // () => Promise<object>  持久化的 channel-chats 映射
@@ -104,6 +126,25 @@ export function createChannelManager({
     };
     await writeChats(all);
     return { key, record: all[key], created: true };
+  }
+
+  async function resetChatSession(key, message) {
+    const all = await loadChats();
+    const label = CHANNEL_LABELS[message.channel] || message.channel;
+    const existing = all[key] || {};
+    const workspacePath = typeof existing.workspacePath === "string" && existing.workspacePath.trim()
+      ? existing.workspacePath
+      : await defaultWorkspace();
+    const title = `${label}·${message.userName || message.chatId.slice(0, 12)}`;
+    all[key] = {
+      sessionId: randomUUID(),
+      workspacePath,
+      title,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeChats(all);
+    return all[key];
   }
 
   async function touchChat(key) {
@@ -205,7 +246,14 @@ export function createChannelManager({
       await reply(parts.length ? `${parts.join("，")}。` : "当前没有执行中或排队的任务。").catch(() => { });
       return;
     }
-    // 2. 命中待决议(审批/提问)→ 直接决议,不进任务队列
+    // 2. 特殊指令:新建会话 / /new / 重置会话
+    if (isNewSessionCommand(message.text)) {
+      if (pendingByChat.has(key)) pendingByChat.delete(key);
+      await resetChatSession(key, message);
+      await reply("已为你开启新会话，之后的任务将进入全新对话中。历史记录已在电脑端保存。").catch(() => { });
+      return;
+    }
+    // 3. 命中待决议(审批/提问)→ 直接决议,不进任务队列
     const pending = pendingByChat.get(key);
     if (pending) {
       const handled = await onResolvePending({ channel: message.channel, chatRecord: record, pending, replyText: message.text });
@@ -326,6 +374,7 @@ export function createChannelManager({
     status: () => JSON.parse(JSON.stringify(statusMap)),
     pendingCount: () => pendingByChat.size,
     updateChatWorkspaceBySession,
+    resetChatSession,
     // 测试/调试钩子
     _handleInbound: handleInbound,
     _pendingByChat: pendingByChat,

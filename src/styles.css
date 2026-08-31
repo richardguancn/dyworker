@@ -3769,6 +3769,46 @@ body.resizing-panels .app-shell {
   white-space: nowrap;
 }
 
+/* 已发送消息里的折叠长粘贴块：收起时只显示字数按钮，展开显示原文 */
+.message-paste-blocks {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.message-paste-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 3px 9px;
+  border: 1px solid rgba(107, 127, 168, 0.28);
+  border-radius: 7px;
+  background: rgba(107, 127, 168, 0.08);
+  color: #5d6f94;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.message-paste-toggle:hover {
+  background: rgba(107, 127, 168, 0.16);
+}
+
+.message-paste-content {
+  max-height: 280px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(112, 114, 107, 0.08);
+  color: inherit;
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+
 /* 输入框里的引用 chip 与消息里的同款绿色 */
 .attachment-chip.ref-attachment-chip {
   border-color: rgba(127, 164, 0, 0.24);
@@ -5159,6 +5199,23 @@ body.resizing-panels .app-shell {
   font-size: 7.5px;
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+
+/* 会话累计 token 数：显示在圆环右侧，悬停展示输入/输出明细 */
+.context-ring-tokens {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  color: #8a8d85;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.context-ring-tokens:hover {
+  color: #5f635a;
 }
 
 .context-ring-tooltip {
@@ -10367,11 +10424,19 @@ html.window-shadow.window-maximized .modal-backdrop {
   background: var(--surface);
 }
 
+.background-tasks-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
 .bt-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
@@ -10380,11 +10445,12 @@ html.window-shadow.window-maximized .modal-backdrop {
 
 .bt-header strong {
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .bt-header-title {
   min-width: 0;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -10396,6 +10462,32 @@ html.window-shadow.window-maximized .modal-backdrop {
   flex: 1;
 }
 
+.bt-scope-toggle {
+  display: inline-flex;
+  background: var(--sidebar-hover);
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
+}
+
+.bt-scope-btn {
+  border: 0;
+  background: transparent;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bt-scope-btn.active {
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
 .bt-meta {
   color: var(--quiet);
   font-size: 11px;
@@ -10404,6 +10496,7 @@ html.window-shadow.window-maximized .modal-backdrop {
 
 .bt-meta-run {
   color: var(--accent);
+  font-weight: 500;
 }
 
 .bt-meta-fail {
@@ -10415,8 +10508,12 @@ html.window-shadow.window-maximized .modal-backdrop {
   align-items: center;
   gap: 5px;
   padding: 3px 10px;
-  font-size: 12px;
-  border-radius: 7px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
 }
 
 .bt-cancel-armed {
@@ -10425,128 +10522,39 @@ html.window-shadow.window-maximized .modal-backdrop {
   background: rgba(224, 91, 155, 0.1);
 }
 
-.bt-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 24px;
-  color: var(--quiet);
-  font-size: 12.5px;
-  text-align: center;
+/* 类似图一：运行中任务条（Running Tasks Banner） */
+.bt-running-banner {
+  margin: 10px 14px 4px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
 }
 
-.bt-empty svg {
-  color: var(--quiet);
-  opacity: 0.6;
-}
-
-.bt-empty strong {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.bt-tree {
-  flex: 1;
-  overflow-y: auto;
-  padding: 6px 8px 12px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
-.bt-node {
-  display: flex;
-  flex-direction: column;
-}
-
-.bt-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 28px;
-  padding: 2px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ink);
+.bt-banner-title {
   font-size: 12px;
-  text-align: left;
-  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
 }
 
-.bt-row:hover {
-  background: var(--sidebar-hover);
+.bt-banner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
-.bt-chevron {
-  width: 13px;
-  flex: 0 0 13px;
-  display: inline-flex;
-  justify-content: center;
-  color: var(--quiet);
+.bt-banner-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--ink);
 }
 
-.bt-chevron-spacer {
-  display: inline-block;
-}
-
-.bt-branch-icon {
-  color: #7b4fbd;
-  flex: 0 0 auto;
-}
-
-.bt-ok {
-  color: #3fa878;
-  flex: 0 0 auto;
-}
-
-.bt-fail {
-  color: #d65a7c;
-  flex: 0 0 auto;
-}
-
-.bt-spin {
-  color: var(--accent);
-  flex: 0 0 auto;
-}
-
-.bt-kind-badge {
-  flex: 0 0 auto;
-  padding: 0 6px;
-  border-radius: 5px;
-  font-size: 10px;
-  white-space: nowrap;
-  background: rgba(47, 111, 237, 0.12);
-  color: var(--accent);
-}
-
-.bt-kind-badge.success {
-  background: rgba(63, 178, 127, 0.15);
-  color: #2e7d4f;
-}
-
-.bt-kind-badge.error {
-  background: rgba(224, 91, 155, 0.13);
-  color: #c2426f;
-}
-
-.bt-branch-title {
-  flex: 0 1 auto;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgba(160, 110, 224, 0.12);
-  color: #7b4fbd;
-  font-size: 10.5px;
-}
-
-.bt-title {
+.bt-banner-cmd {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -10554,38 +10562,368 @@ html.window-shadow.window-maximized .modal-backdrop {
   white-space: nowrap;
 }
 
-.bt-phase {
+.bt-banner-port {
+  color: var(--accent);
+  font-weight: 600;
+  background: rgba(47, 111, 237, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+/* 快捷启动栏 */
+.bt-quick-launch {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  align-items: center;
+}
+
+.bt-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.bt-input-icon {
+  color: var(--quiet);
   flex: 0 0 auto;
-  padding: 0 6px;
-  border-radius: 999px;
-  font-size: 10px;
+}
+
+.bt-cmd-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  outline: none;
+}
+
+.bt-cmd-input::placeholder {
+  color: var(--quiet);
+  font-family: inherit;
+}
+
+.bt-launch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bt-launch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 任务列表滚动区 */
+.bt-tasks-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.bt-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 单个任务卡片 */
+.bt-task-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: border-color 0.15s;
+}
+
+.bt-task-card.running {
+  border-color: rgba(47, 111, 237, 0.35);
+}
+
+.bt-task-card.error {
+  border-color: rgba(224, 91, 155, 0.35);
+}
+
+.bt-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.bt-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bt-status-tag {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.bt-status-tag.running {
+  background: rgba(47, 111, 237, 0.12);
+  color: var(--accent);
+}
+
+.bt-status-tag.stopped {
   background: var(--sidebar-hover);
   color: var(--muted);
 }
 
-.bt-count {
-  flex: 0 0 auto;
+.bt-status-tag.error {
+  background: rgba(224, 91, 155, 0.13);
+  color: #c2426f;
+}
+
+.bt-card-name {
+  font-weight: 600;
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bt-pid-tag {
   color: var(--quiet);
   font-size: 10.5px;
+  background: var(--sidebar-hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: monospace;
 }
 
-.bt-children {
+.bt-duration {
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bt-card-command {
+  background: var(--bubble);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.bt-card-urls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  background: rgba(47, 111, 237, 0.06);
+  border-radius: 6px;
+  border: 1px solid rgba(47, 111, 237, 0.15);
+}
+
+.bt-url-icon {
+  color: var(--accent);
+}
+
+.bt-url-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.bt-url-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-family: monospace;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.bt-url-link:hover {
+  border-color: var(--accent);
+  background: rgba(47, 111, 237, 0.08);
+}
+
+.bt-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.bt-actions-spacer {
+  flex: 1;
+}
+
+.bt-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.bt-action-btn:hover {
+  background: var(--sidebar-hover);
+}
+
+.bt-action-btn.stop {
+  border-color: rgba(224, 91, 155, 0.4);
+  color: #c2426f;
+  background: rgba(224, 91, 155, 0.08);
+}
+
+.bt-action-btn.stop:hover {
+  background: rgba(224, 91, 155, 0.18);
+  border-color: rgba(224, 91, 155, 0.7);
+}
+
+/* 终端输出面板 */
+.bt-log-terminal {
+  background: #181916;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  color: #e6e6e6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.bt-log-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #888;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #333;
+  padding-bottom: 4px;
+}
+
+.bt-log-content {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+}
+
+/* 空状态与快捷推荐 */
+.bt-empty {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 36px 20px;
+  color: var(--quiet);
+  font-size: 12.5px;
+  text-align: center;
 }
 
-.bt-detail {
-  margin: 0 8px 6px 40px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--border-strong);
-  border-radius: 4px;
-  background: var(--bubble);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 200px;
-  overflow: auto;
-  scrollbar-width: thin;
+.bt-empty svg {
+  color: var(--quiet);
+  opacity: 0.5;
 }
+
+.bt-empty strong {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.bt-empty span {
+  max-width: 380px;
+  line-height: 1.6;
+}
+
+.bt-empty-suggestions {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.bt-sug-title {
+  font-size: 11px;
+  color: var(--quiet);
+}
+
+.bt-sug-item {
+  border: 1px dashed var(--border-strong);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.bt-sug-item:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(47, 111, 237, 0.05);
+}
+
+.bt-ok {
+  color: #3fa878;
+}
+
+.bt-fail {
+  color: #d65a7c;
+}
+
+.bt-spin {
+  color: var(--accent);
+}
+

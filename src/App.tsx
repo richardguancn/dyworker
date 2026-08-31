@@ -302,6 +302,12 @@ const reasoningEffortLabels: Record<string, string> = {
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
   {
+    id: "builtin:new",
+    title: "/new",
+    detail: "开启全新会话，重置对话上下文",
+    prompt: "/new",
+  },
+  {
     id: "builtin:goal",
     title: "/goal",
     detail: "设定长期目标，跨轮持续驱动直到达成（/goal 取消 可解除）",
@@ -3251,6 +3257,11 @@ function ContextRing({ used, limit, exact, stats }: {
         />
       </svg>
       <span className="context-ring-text">{percent === 0 && used > 0 ? "<1%" : `${percent}%`}</span>
+      {stats && stats.requests > 0 && (
+        <span className="context-ring-tokens" title={`本会话累计 ${stats.requests} 次请求：输入 ${formatTokenCount(stats.prompt)} + 输出 ${formatTokenCount(stats.completion)} tokens`}>
+          {formatTokenCount(stats.prompt + stats.completion)}
+        </span>
+      )}
       <span className="context-ring-tooltip" role="tooltip">
         <span>上下文窗口：</span>
         <strong>{summary.percentLabel} 已用</strong>
@@ -3261,6 +3272,32 @@ function ContextRing({ used, limit, exact, stats }: {
         {!exact && <small>当前为估算值，发送任务后按服务返回值更新</small>}
       </span>
     </span>
+  );
+}
+
+// 已发送消息里的折叠长粘贴块：默认收起（显示字数），点击展开查看原文
+function MessagePasteBlocks({ blocks }: { blocks: Array<{ id: string; text: string }> }) {
+  const [expandedId, setExpandedId] = useState("");
+  return (
+    <div className="message-paste-blocks">
+      {blocks.map((block, index) => {
+        const expanded = expandedId === block.id;
+        return (
+          <div className="message-paste-block" key={block.id}>
+            <button
+              type="button"
+              className="message-paste-toggle"
+              onClick={() => setExpandedId(expanded ? "" : block.id)}
+              aria-expanded={expanded}
+            >
+              {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              长文本 {block.text.length} 字（第 {index + 1} 段）· {expanded ? "收起" : "点击查看"}
+            </button>
+            {expanded && <pre className="message-paste-content">{block.text}</pre>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -6536,6 +6573,21 @@ export function App() {
   const applyMention = (index: number) => {
     const item = mentionItems[index];
     if (!item || !mentionMenu) return;
+    if (mentionMenu.kind === "slash" && item.id === "builtin:new") {
+      setMentionMenu(null);
+      setComposer("");
+      setAttachments([]);
+      setActiveSkills([]);
+      setComposerPastes([]);
+      if (activeSession && activeSession.messages.length === 0) {
+        setNotice("当前已是新会话");
+        window.setTimeout(() => textareaRef.current?.focus(), 0);
+      } else {
+        createTask();
+        setNotice("已开启新会话");
+      }
+      return;
+    }
     if (mentionMenu.kind === "slash" && item.prompt) {
       // 内置命令（如 /init）：把预设指令填入输入框，由用户确认后发送
       setComposer(item.prompt);
@@ -6729,10 +6781,13 @@ export function App() {
     setToolPanelMenuOpen(false);
   };
 
-  const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false) => {
+  const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false, initialUrl?: string) => {
     if (!createNew) {
       const existing = toolPanelTabs.find((tab) => tab.kind === kind);
       if (existing) {
+        if (initialUrl !== undefined) {
+          updateToolPanelTab(existing.id, { url: initialUrl, title: initialUrl || existing.title });
+        }
         focusToolPanelTab(existing.id);
         return existing.id;
       }
@@ -6741,8 +6796,8 @@ export function App() {
     const tab: ToolPanelTab = {
       id: `${kind}-${sequence}`,
       kind,
-      title: kind === "browser" ? "新标签页" : kind === "review" ? "审阅" : kind === "chat" ? "侧边聊天" : kind === "tasks" ? "后台任务" : "打开文件",
-      ...(kind === "browser" ? { url: "" } : {}),
+      title: kind === "browser" ? (initialUrl || "新标签页") : kind === "review" ? "审阅" : kind === "chat" ? "侧边聊天" : kind === "tasks" ? "后台任务" : "打开文件",
+      ...(kind === "browser" ? { url: initialUrl || "" } : {}),
     };
     setToolPanelTabs((current) => [...current, tab]);
     setActiveToolPanelTabId(tab.id);
@@ -6920,6 +6975,22 @@ export function App() {
     const editingQueuedRunId = editingTarget?.runId && queuedRunIds.has(editingTarget.runId)
       ? editingTarget.runId
       : undefined;
+    // /new：开启全新会话（对齐渠道快捷指令与斜杠菜单）
+    const isPureNewSession = /^(?:\/new|\/reset|new|reset|新建会话|新会话|新任务|重置会话|重置对话|清空上下文)[。.!！?？\s]*$/i.test(content);
+    if (isPureNewSession) {
+      setComposer("");
+      setAttachments([]);
+      setActiveSkills([]);
+      setComposerPastes([]);
+      if (activeSession.messages.length === 0) {
+        setNotice("当前已是新会话");
+        window.setTimeout(() => textareaRef.current?.focus(), 0);
+      } else {
+        createTask();
+        setNotice("已开启新会话");
+      }
+      return;
+    }
     // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
     const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
     let goalDriven = false;
@@ -7014,6 +7085,8 @@ export function App() {
         displayContent: content || (selectedSkills.length ? "（按模板处理当前工作区）" : "（已折叠的粘贴长文本）"),
         ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
+      // 折叠块原文存进消息：content 已发给模型，气泡按块渲染、可展开查看
+      ...(pastedBlocks.length ? { pasteBlocks: pastedBlocks.map((block, index) => ({ id: `paste-${index}`, text: block.text })) } : {}),
       attachments: selectedAttachments,
       createdAt: new Date().toISOString(),
     };
@@ -8000,6 +8073,10 @@ export function App() {
       const header = message.role === "user" ? "🧑 用户" : message.role === "assistant" ? "🤖 助手" : "系统";
       lines.push(`## ${header}${time ? ` · ${time}` : ""}`, "");
       lines.push(body.trim(), "");
+      // 折叠的长粘贴块导出原文（与气泡展开后看到的一致），避免导出文件丢失内容
+      for (const [index, block] of (message.pasteBlocks || []).entries()) {
+        lines.push("", `<details><summary>长文本 ${block.text.length} 字（第 ${index + 1} 段）</summary>`, "", block.text, "", "</details>");
+      }
       if (message.skillsUsed?.length) lines.push(`（使用技能：${message.skillsUsed.join("、")}）`, "");
       if (message.attachments?.length) {
         lines.push(`**附件：** ${message.attachments.map((item) => item.name).join("、")}`, "");
@@ -8515,6 +8592,7 @@ export function App() {
                             tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
                           />
                         )}
+                        {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
@@ -9364,19 +9442,18 @@ export function App() {
           {!menuPageShown && activeToolPanelKind === "tasks" && (
             <section className="tool-panel-tasks">
               <BackgroundTasksPanel
-                traces={activeSessionTraceEvents}
+                sessionId={activeSession?.id}
                 sessionTitle={activeSession?.title}
-                running={Boolean(activeSession?.id && runningSessionIds.has(activeSession.id))}
-                onCancel={() => {
-                  const sessionId = activeSession?.id;
-                  if (!sessionId) return;
-                  const runId = runningRunIdsRef.current.get(sessionId);
-                  if (runId && window.dyworker?.cancelTask) {
-                    void window.dyworker.cancelTask(sessionId, runId);
-                    setNotice("已请求终止当前任务");
+                workspacePath={activeSession?.workspacePath || workspacePath}
+                onOpenUrl={(url) => {
+                  setRightPanelOpen(true);
+                  openToolPanelTab("browser", false, url);
+                  if (window.dyworker?.openBrowser) {
+                    void window.dyworker.openBrowser({ url, workspacePath: activeSession?.workspacePath || workspacePath });
                   }
                 }}
-                onOpenConsole={() => setDebugOpen(true)}
+                onNotice={setNotice}
+                onError={setError}
               />
             </section>
           )}

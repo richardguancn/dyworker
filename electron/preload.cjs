@@ -153,4 +153,15 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("window:maximized-changed", listener);
   },
   reportWindowPointerDown: () => ipcRenderer.send("window:pointer-down"),
+  listBackgroundTasks: (sessionId) => ipcRenderer.invoke("background-tasks:list", sessionId),
+  startBackgroundTask: (payload) => ipcRenderer.invoke("background-tasks:start", payload),
+  stopBackgroundTask: (taskId) => ipcRenderer.invoke("background-tasks:stop", taskId),
+  restartBackgroundTask: (taskId) => ipcRenderer.invoke("background-tasks:restart", taskId),
+  getBackgroundTaskLogs: (taskId) => ipcRenderer.invoke("background-tasks:get-logs", taskId),
+  onBackgroundTaskUpdate: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("background-tasks:update", listener);
+    return () => ipcRenderer.removeListener("background-tasks:update", listener);
+  },
 });
+
