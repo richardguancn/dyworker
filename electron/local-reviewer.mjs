@@ -3,7 +3,7 @@
 // 零成本、离线可用。只在 Electron 主进程使用（node-llama-cpp 不允许进渲染进程）。
 // node-llama-cpp 通过函数内动态 import 加载，保证单元测试可以在不装原生模块的环境运行。
 import crypto from "node:crypto";
-import { createWriteStream, existsSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -63,6 +63,15 @@ function reportProgress(onProgress, received, total) {
   } catch {
     // 进度回调异常不中断下载
   }
+}
+
+async function computeSha256(filePath) {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
 }
 
 // 断点续传下载：.part 记录进度，全部源共用同一份字节，跨源可续传；
@@ -131,9 +140,8 @@ export async function downloadLocalReviewerModel({ onProgress = null, fetchImpl 
       throw new Error(`下载不完整：${lastError ? lastError.message : "所有下载源都失败了"}`);
     }
     reportProgress(onProgress, LOCAL_REVIEWER_MODEL.bytes, LOCAL_REVIEWER_MODEL.bytes);
-    const hash = crypto.createHash("sha256");
-    hash.update(await fs.readFile(partial));
-    if (hash.digest("hex") !== LOCAL_REVIEWER_MODEL.sha256) {
+    const digest = await computeSha256(partial);
+    if (digest !== LOCAL_REVIEWER_MODEL.sha256) {
       await fs.rm(partial, { force: true });
       throw new Error("模型文件校验失败，已删除损坏的下载，请重试");
     }

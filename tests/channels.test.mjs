@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachment, parseApprovalReply } from "../electron/channels/qq-bot.mjs";
 import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mjs";
-import { chatKeyOf, createChannelManager, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
+import { chatKeyOf, createChannelManager, isNewSessionCommand, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
 import { verifyChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mjs";
 
@@ -799,6 +799,69 @@ test("manager:排队提示附带阻塞原因与停止说明", async () => {
   assert.ok(notice.text.includes("停止"), "提示里要告知脱身方式");
   release();
   await new Promise((resolve) => setTimeout(resolve, 10));
+});
+
+test("isNewSessionCommand: 识别新建会话/新任务/重置指令,忽略普通消息", () => {
+  for (const text of [
+    "/new",
+    "/NEW",
+    "new",
+    "NEW",
+    "/reset",
+    "reset",
+    "#new",
+    "新建会话",
+    "新建会话。",
+    "新会话",
+    "新任务！",
+    "重置会话",
+    "重置对话",
+    "清空上下文",
+  ]) {
+    assert.equal(isNewSessionCommand(text), true, text);
+  }
+  for (const text of [
+    "新建会话并帮我写个网页",
+    "这是个新任务：帮我查天气",
+    "怎么重置会话？",
+    "new feature idea",
+    "hello",
+    "",
+  ]) {
+    assert.equal(isNewSessionCommand(text), false, text);
+  }
+});
+
+test("manager: 发送 /new 或 新建会话 重置 sessionId 并回复确认", async () => {
+  const { manager, sentTexts, tasks, chatsFile } = managerHarness();
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+
+  // 1. 先发第一条任务，生成会话 1
+  await manager._handleInbound(qqMessage("任务1"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(tasks.length, 1);
+  const oldSessionId = tasks[0].chatRecord.sessionId;
+  assert.ok(oldSessionId);
+
+  // 2. 发送 /new 指令
+  await manager._handleInbound(qqMessage("/new"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  // /new 不应产生新任务
+  assert.equal(tasks.length, 1);
+  // 应向用户回复确认文案
+  const reply = sentTexts.find((entry) => entry.text.includes("已为你开启新会话"));
+  assert.ok(reply, "应当回复新会话开启提示");
+
+  // 3. 验证 channel-chats.json 中的 sessionId 已被更新，工作区保持不变
+  const newRecord = chatsFile.value[chatKeyOf("qq", "u1")];
+  assert.notEqual(newRecord.sessionId, oldSessionId, "sessionId 应当已更换为新 UUID");
+  assert.equal(newRecord.workspacePath, "/tmp/ws", "工作区应当保持不变");
+
+  // 4. 发送下一条任务，验证使用新的 sessionId
+  await manager._handleInbound(qqMessage("任务2"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[1].chatRecord.sessionId, newRecord.sessionId);
 });
 
 // ---- 渠道媒体：入站下载 / 归一化 / 出站发送（设计文档第 3/4/6 节）----

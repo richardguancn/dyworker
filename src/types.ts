@@ -243,6 +243,8 @@ export interface ChatMessage {
   // 引用技能时:content 含完整技能指令(发给模型),气泡只显示 displayContent + skillsUsed 标签
   displayContent?: string;
   skillsUsed?: string[];
+  // 折叠的长粘贴块：content 已含原文（发给模型），气泡按块折叠展示、可展开查看
+  pasteBlocks?: Array<{ id: string; text: string }>;
   createdAt: string;
   attachments?: Attachment[];
   activities?: ActivityRecord[];
@@ -774,6 +776,28 @@ export interface DyworkerBridge {
   close(): Promise<void>;
   onWindowStateChange(callback: (maximized: boolean) => void): () => void;
   reportWindowPointerDown(): void;
+  listBackgroundTasks(sessionId?: string): Promise<BackgroundTaskRecord[]>;
+  startBackgroundTask(payload: { command: string; cwd?: string; sessionId?: string; name?: string }): Promise<BackgroundTaskRecord>;
+  stopBackgroundTask(taskId: string): Promise<{ ok: boolean }>;
+  restartBackgroundTask(taskId: string): Promise<BackgroundTaskRecord>;
+  getBackgroundTaskLogs(taskId: string): Promise<string[]>;
+  onBackgroundTaskUpdate(callback: (event: { type: string; task: BackgroundTaskRecord }) => void): () => void;
+}
+
+export interface BackgroundTaskRecord {
+  id: string;
+  sessionId: string;
+  command: string;
+  cwd: string;
+  name: string;
+  status: "running" | "stopped" | "error";
+  startTime: string;
+  endTime?: string | null;
+  exitCode?: number | null;
+  ports: number[];
+  urls: string[];
+  outputTail: string[];
+  pid?: number;
 }
 
 declare global {

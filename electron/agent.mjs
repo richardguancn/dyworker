@@ -1278,8 +1278,12 @@ export function toolDefinitions() {
       ["source", "target"]),
     functionTool("delete_file", "删除一个文件（不能删除文件夹）。删除不可恢复，只在用户明确要求或任务确有必要时使用。执行前用户会确认；工作区外绝对路径会单独授权。",
       { path: stringProperty("工作区相对路径或工作区外绝对路径") }, ["path"]),
-    functionTool("run_command", "在工作区内运行必要的本地程序，例如转换文档、运行脚本或验证结果。注意分工：读文件内容用 read_file（不要 cat），找文件用 list_files（不要 ls/find），改文件用 edit_file 或 write_file（不要 sed -i 或输出重定向）。执行前用户会确认。",
-      { command: stringProperty("要运行的完整 shell 命令") }, ["command"]),
+    functionTool("run_command", "在工作区内运行必要的本地程序，例如转换文档、运行脚本或验证结果。注意分工：读文件内容用 read_file（不要 cat），找文件用 list_files（不要 ls/find），改文件用 edit_file 或 write_file（不要 sed -i 或输出重定向）。启动长驻后台服务（如 HTTP 服务器 python -m http.server、本地开发服务 npm run dev、SSH 服务等）时请将 background 设为 true，以便在后台任务面板中监控与一键关闭，避免等待超时。执行前用户会确认。",
+      {
+        command: stringProperty("要运行的完整 shell 命令"),
+        background: { type: "boolean", description: "是否在后台运行（用于长驻服务如 HTTP Server、开发服务器等，启动后立即返回并在后台任务面板中管理）" },
+      },
+      ["command"]),
     functionTool("save_memory", "保存对未来任务仍有帮助的稳定偏好、规则、禁忌、事实或经验。标明是所有工作区通用、只属于当前工作区，还是只属于当前任务会话。不得保存敏感信息和一次性状态。",
       {
         category: stringProperty("分类，例如用户偏好、项目规则、常用信息"),
@@ -1806,6 +1810,15 @@ export function isLowRiskCommand(command) {
   if (allWords.includes("osascript")) return false;
   return true;
 }
+
+export function isLikelyBackgroundCommand(command) {
+  const cmd = String(command || "").trim();
+  if (/(?:python[3]?\s+-m\s+http\.server|npm\s+run\s+dev|yarn\s+dev|pnpm\s+dev|vite\s*$|vite\s+--|live-server|http-server|ssh\s+-|next\s+dev)/i.test(cmd)) {
+    return true;
+  }
+  return false;
+}
+
 
 // 统一审批管线（借鉴 openworker coworker/permissions.py 的 evaluate 流程）：
 // 分级(classify) → 只读模式拦截 → 钩子强制 → 常驻规则放行 → 各模式判定。
@@ -3426,6 +3439,8 @@ export async function runAgent({
   trustTempDirs = true,
   audit = null,
   sleepGuard = null,
+  sessionId = "",
+  startBackgroundTask = null,
 }) {
   const workspace = new Workspace(workspacePath, { trustTempDirs });
   const priorWorkingContext = limitWorkingContext(String(workingContext || "").trim());
@@ -4403,9 +4418,28 @@ export async function runAgent({
             }
             case "export_excel_workbook": result = await exportExcelWorkbook(workspace, args.path, args.sheets); break;
             case "run_command": {
-              const commandResult = await workspace.runCommand(args.command);
-              ok = commandResult.ok;
-              result = commandResult.output;
+              const wantsBg = Boolean(args.background) || isLikelyBackgroundCommand(args.command);
+              if (wantsBg && typeof startBackgroundTask === "function") {
+                try {
+                  const bgTask = await startBackgroundTask({
+                    command: args.command,
+                    cwd: workspace.root,
+                    sessionId,
+                  });
+                  ok = true;
+                  result = `后台服务已成功启动（任务 ID: ${bgTask.id}，PID: ${bgTask.pid || "未知"}）。\n`
+                    + (bgTask.ports?.length ? `监听端口: ${bgTask.ports.join(", ")}\n` : "")
+                    + (bgTask.urls?.length ? `访问地址: ${bgTask.urls.join(", ")}\n` : "")
+                    + `服务已在后台保持运行，用户可在工作台「后台任务」面板中查看实时输出、监控状态或一键关闭服务。`;
+                } catch (bgErr) {
+                  ok = false;
+                  result = `后台服务启动失败: ${bgErr instanceof Error ? bgErr.message : String(bgErr)}`;
+                }
+              } else {
+                const commandResult = await workspace.runCommand(args.command);
+                ok = commandResult.ok;
+                result = commandResult.output;
+              }
               break;
             }
             case "save_memory": {

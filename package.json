@@ -92,7 +92,9 @@
       "target": [
         "dir"
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "artifactName": "dyworker-${version}-${arch}.${ext}"
+
     },
     "win": {
       "target": [
