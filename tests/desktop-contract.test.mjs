@@ -26,8 +26,8 @@ const styles = readSource(new URL("../src/styles.css", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
 test("desktop controls are connected across renderer, preload, and main process", () => {
-  for (const action of ["chooseAttachments", "saveClipboardImage", "readClipboardText", "writeClipboardText", "transcribeAudio"]) {
-    assert.match(app, new RegExp(`dyworker\\.${action}`));
+  for (const action of ["chooseAttachments", "saveClipboardImage", "readClipboardText", "writeClipboardText", "transcribeAudio", "readAudioAttachment"]) {
+    assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
   assert.match(main, /ipcMain\.handle\("attachments:choose"/);
@@ -35,6 +35,7 @@ test("desktop controls are connected across renderer, preload, and main process"
   assert.match(main, /ipcMain\.handle\("clipboard:read-text"/);
   assert.match(main, /ipcMain\.handle\("clipboard:write-text"/);
   assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
+  assert.match(main, /ipcMain\.handle\("audio:read-attachment"/);
 });
 
 test("内置本地审核模型的下载与进度链路贯穿三端", () => {
@@ -251,7 +252,7 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(main, /module\.autoUpdater \|\| module\.default\?\.autoUpdater/);
   assert.match(main, /electron-updater 不可用，自动更新已禁用/);
   assert.match(main, /createWindow\(\)[\s\S]*loadElectronUpdater\(\)/);
-  assert.match(packageJson, /"node_modules\/\*\*\/\*"/);
+  assert.match(packageJson, /"electron-updater"/);
   assert.match(preload, /onAppUpdateStatus/);
   assert.match(preload, /downloadAppUpdate/);
   assert.match(app, /AppUpdateDialog/);

@@ -37,6 +37,7 @@ export default defineConfig({
   base: "./",
   build: {
     outDir: "dist/client",
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         // 按依赖族拆分 vendor：单 chunk 超 500 kB 会拖慢打包后首次解析（Electron 本地加载虽然不吃网络，
@@ -48,7 +49,7 @@ export default defineConfig({
           if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return "vendor-react";
           if (id.includes("node_modules/highlight.js")) return "vendor-highlight";
           if (id.includes("node_modules/lucide-react")) return "vendor-icons";
-          // react-markdown / remark / micromark / unified 一族与其余零散依赖
+          // react-markdown / remark / micromark / unified 一族与其余零散依赖统一归入 vendor，避免循环依赖
           return "vendor";
         },
       },

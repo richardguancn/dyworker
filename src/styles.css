@@ -3335,6 +3335,174 @@ body.resizing-panels .app-shell {
   box-shadow: 0 0 0 3px rgba(127, 164, 0, 0.1), var(--shadow-sm);
 }
 
+/* 渠道语音消息（微信/QQ 风格语音条 + 下方独立 ASR 转文字卡片） */
+.user-bubble.voice-wrapper {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.voice-message-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.voice-channel-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--quiet, #8d9289);
+  font-weight: 500;
+  margin-bottom: 2px;
+  align-self: flex-end;
+}
+
+.voice-play-bar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f1f1f;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  margin-right: 6px; /* 留出右侧小箭头位置 */
+  min-width: 72px;
+  max-width: 220px;
+  align-self: flex-end;
+}
+
+/* 气泡右侧尖角（朝右指向说话人） */
+.voice-play-bar::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  right: -5px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid #ffffff;
+}
+
+.voice-play-bar:hover {
+  background: #f7f7f7;
+}
+
+.voice-play-bar:hover::after {
+  border-left-color: #f7f7f7;
+}
+
+.voice-play-bar:active {
+  transform: scale(0.98);
+}
+
+.voice-play-bar.playing {
+  background: #f0f0f0;
+}
+
+.voice-play-bar.playing::after {
+  border-left-color: #f0f0f0;
+}
+
+.voice-duration {
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+.voice-wave-svg {
+  flex-shrink: 0;
+}
+
+@keyframes voiceWaveArc1 {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+@keyframes voiceWaveArc2 {
+  0%, 100% { opacity: 0.25; }
+  100% { opacity: 1; }
+}
+
+.voice-wave-svg.playing .wave-1 {
+  animation: voiceWaveArc1 0.8s infinite ease-in-out;
+}
+
+.voice-wave-svg.playing .wave-2 {
+  animation: voiceWaveArc2 0.8s infinite ease-in-out 0.25s;
+}
+
+.voice-asr-section {
+  display: block;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f1f1f;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-size: 14px;
+  line-height: 1.62;
+  word-break: break-word;
+  align-self: flex-end;
+  max-width: 100%;
+}
+
+/* 深色模式（完美对齐图 1 效果） */
+[data-theme="dark"] .voice-play-bar,
+.dark .voice-play-bar {
+  background: #2a2a2a;
+  color: #e5e5e5;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"] .voice-play-bar::after,
+.dark .voice-play-bar::after {
+  border-left-color: #2a2a2a;
+}
+
+[data-theme="dark"] .voice-play-bar:hover,
+.dark .voice-play-bar:hover {
+  background: #333333;
+}
+
+[data-theme="dark"] .voice-play-bar:hover::after,
+.dark .voice-play-bar:hover::after {
+  border-left-color: #333333;
+}
+
+[data-theme="dark"] .voice-play-bar.playing,
+.dark .voice-play-bar.playing {
+  background: #383838;
+}
+
+[data-theme="dark"] .voice-play-bar.playing::after,
+.dark .voice-play-bar.playing::after {
+  border-left-color: #383838;
+}
+
+[data-theme="dark"] .voice-asr-section,
+.dark .voice-asr-section {
+  background: #1f1f1f;
+  color: #dedede;
+  border-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+}
+
 .message-actions {
   display: flex;
   align-items: center;

@@ -5,8 +5,9 @@
   "version": "0.1.22",
   "description": "面向办公用户的本地 AI 工作助手",
   "author": {
-    "name": "DYWorker Team",
-    "email": "support@dyworker.local"
+    "name": "麻雀软件科技（深圳）有限公司",
+    "email": "guandengyu@gmail.com",
+    "url": "https://www.maquesoft.com/"
   },
   "homepage": "https://github.com/richardguancn/dyworker",
   "private": true,
@@ -34,17 +35,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "highlight.js": "^11.11.1",
-    "katex": "^0.18.4",
-    "lucide-react": "^0.468.0",
-    "mermaid": "^11.17.2",
     "qrcode": "^1.5.4",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
     "silk-wasm": "^3.7.1",
     "weixin-clawbot": "^1.0.0"
   },
@@ -59,6 +50,16 @@
     "concurrently": "^9.1.2",
     "electron": "^41.0.0",
     "electron-builder": "^26.0.12",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.18.4",
+    "lucide-react": "^0.468.0",
+    "mermaid": "^11.17.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "typescript": "^5.7.2",
     "vite": "6.4.2",
     "wait-on": "^8.0.1"
@@ -84,8 +85,7 @@
     "files": [
       "dist/client/**/*",
       "electron/**/*",
-      "package.json",
-      "node_modules/**/*"
+      "package.json"
     ],
     "mac": {
       "category": "public.app-category.productivity",

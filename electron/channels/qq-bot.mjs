@@ -302,7 +302,9 @@ export function createQqBotClient({ appId, appSecret, mediaDir = "", fetchImpl =
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.byteLength > MAX_MEDIA_BYTES) throw new QqBotError("文件超过 50 MB，暂不支持");
     const mime = String(media.mimeType || "").toLowerCase();
+    const isVoice = media.kind === "voice" || mime.includes("voice") || mime.includes("silk") || (media.url && /\.silk(\?|$)/i.test(media.url));
     const ext = sniffImageExtension(buffer)
+      || (isVoice ? ".silk" : "")
       || (mime.startsWith("video/") ? ".mp4" : "")
       || (media.fileName ? path.extname(String(media.fileName)) : "")
       || ".bin";
