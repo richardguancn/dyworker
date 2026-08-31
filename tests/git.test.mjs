@@ -10,7 +10,8 @@ import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitF
 async function makeRepo() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-git-"));
   const git = (...args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
-  git("init", "-b", "main");
+  git("init");
+  git("checkout", "-B", "main");
   // Windows 上系统级 core.autocrlf 默认开启，会让 checkout 把 LF 换成 CRLF，
   // 破坏「恢复到提交内容」这类字节级断言；临时仓库统一关闭保证跨平台一致。
   git("config", "core.autocrlf", "false");
@@ -20,6 +21,15 @@ async function makeRepo() {
   git("add", "-A");
   git("commit", "-m", "init");
   return root;
+}
+
+async function makeBareRepo() {
+  const bare = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-bare-"));
+  execFileSync("git", ["init", "--bare", bare], { encoding: "utf8" });
+  try {
+    execFileSync("git", ["--git-dir", bare, "symbolic-ref", "HEAD", "refs/heads/main"], { encoding: "utf8" });
+  } catch {}
+  return bare;
 }
 
 test("非 git 目录优雅降级", async () => {
@@ -91,8 +101,7 @@ test("无远程仓库时推送给出明确提示", async () => {
 
 test("推送到本地裸仓库并自动设置 upstream", async () => {
   const root = await makeRepo();
-  const bare = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-bare-"));
-  execFileSync("git", ["init", "--bare", "-b", "main", bare], { encoding: "utf8" });
+  const bare = await makeBareRepo();
   execFileSync("git", ["-C", root, "remote", "add", "origin", bare], { encoding: "utf8" });
   const result = await gitPush(root);
   assert.equal(result.ok, true, result.error || "");
@@ -123,8 +132,7 @@ test("审阅总览：非 git 目录优雅降级，基线含 upstream 时可对�
   const degraded = await gitReviewOverview(notRepo, "HEAD");
   assert.equal(degraded.isRepo, false);
   const root = await makeRepo();
-  const bare = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-bare-"));
-  execFileSync("git", ["init", "--bare", "-b", "main", bare], { encoding: "utf8" });
+  const bare = await makeBareRepo();
   execFileSync("git", ["-C", root, "remote", "add", "origin", bare], { encoding: "utf8" });
   await gitPush(root);
   // 提交一个不推送的提交，再与 upstream 对比
