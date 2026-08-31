@@ -106,7 +106,8 @@ test("运行时状态：自定义路径优先，内置路径不存在时不可�
 
     // 运行时整包解压到 runtime/ 子目录：二进制必须连着动态库一起用，
     // 旧布局（binDir 根下孤零零的二进制）缺 lib*.dylib 起不来，不算已安装
-    const runtimeBin = path.join(tmp, "bin", "runtime", "llama-b10621", "llama-server");
+    const exe = process.platform === "win32" ? "llama-server.exe" : "llama-server";
+    const runtimeBin = path.join(tmp, "bin", "runtime", "llama-b10621", exe);
     fs.mkdirSync(path.dirname(runtimeBin), { recursive: true });
     fs.writeFileSync(runtimeBin, "#!/bin/sh\n");
     assert.equal(localAsrRuntimeStatus("").available, true);
