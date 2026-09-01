@@ -114,7 +114,7 @@ test("integrateItems 幂等：重复 id 不会重复写入", async () => {
 
 test("工作区记忆落到项目页并只在对应工作区可见", async () => {
   const root = await makeWikiRoot();
-  const workspacePath = "/Users/gdy/work/project-a";
+  const workspacePath = path.normalize("/Users/gdy/work/project-a");
   await ensureWiki(root, { items: [sampleItem({ id: "p1", scope: "workspace", workspacePath, kind: "rule", category: "项目规则", content: "本项目必须跑 npm test" })] });
   const pages = await readWikiPages(root);
   const projectPage = pages.find((page) => page.scope === "workspace");
@@ -123,7 +123,7 @@ test("工作区记忆落到项目页并只在对应工作区可见", async () =>
 
   const visible = selectWikiPages(pages, { workspacePath, query: "这个项目的规则是什么", limit: 3 });
   assert.ok(visible.some((page) => page.scope === "workspace"));
-  const hidden = selectWikiPages(pages, { workspacePath: "/Users/gdy/work/project-b", query: "这个项目的规则是什么", limit: 3 });
+  const hidden = selectWikiPages(pages, { workspacePath: path.normalize("/Users/gdy/work/project-b"), query: "这个项目的规则是什么", limit: 3 });
   assert.ok(!hidden.some((page) => page.scope === "workspace"));
 });
 
@@ -143,7 +143,7 @@ test("selectWikiPages 按查询相关性选页并给规则/禁忌加权", () => 
 
 test("removeWikiMemory 删除条目并清理空项目页", async () => {
   const root = await makeWikiRoot();
-  const workspacePath = "/Users/gdy/work/project-a";
+  const workspacePath = path.normalize("/Users/gdy/work/project-a");
   await ensureWiki(root, { items: [sampleItem({ id: "p1", scope: "workspace", workspacePath, kind: "rule", category: "项目规则", content: "本项目必须跑 npm test" })] });
   assert.equal(await removeWikiMemory(root, "p1"), true);
   const pages = await readWikiPages(root);
