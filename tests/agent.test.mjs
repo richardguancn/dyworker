@@ -41,7 +41,8 @@ test("渠道自动执行模式：低风险与联网读取放行，危险命令�
   assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "python3 build.py" } }), "allow");
   assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "git status" } }), "allow");
   assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "rm -rf build" } }), "ask");
-  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "curl https://example.com" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "curl https://example.com" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "curl -X POST https://example.com" } }), "ask");
   assert.equal(approvalDecision({ approvalMode: "auto", name: "read_file", hasExternalPaths: true }), "ask");
   assert.equal(approvalDecision({ approvalMode: "auto", name: "browser__open" }), "ask");
   assert.equal(approvalDecision({ approvalMode: "auto", name: "mcp__computer-use__click" }), "ask");
@@ -1537,9 +1538,23 @@ test("解释器与技能脚本路径不再算工作区外路径", async (t) => {
     externalPathsForTool(workspace, "run_command", { command: "python3 ~/Documents/x.py" }),
     [path.join(os.homedir(), "Documents/x.py")],
   );
+  // 技能脚本无论是解释器调用还是只读读取均视为受信任扩展，免除外部路径审批
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat ~/.agents/skills/foo/wechat-api.ts" }),
+    [],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "read_file", { path: path.join(os.homedir(), ".agents/skills/foo/wechat-api.ts") }),
+    [],
+  );
+  // 负例：写入技能目录仍须经外部路径审批
+  assert.deepEqual(
+    externalPathsForTool(workspace, "write_file", { path: path.join(os.homedir(), ".agents/skills/foo/wechat-api.ts") }),
     [path.join(os.homedir(), ".agents/skills/foo/wechat-api.ts")],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "read_file", { path: path.join(os.homedir(), "Documents/secret.txt") }),
+    [path.join(os.homedir(), "Documents/secret.txt")],
   );
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cd /other/dir && ls" }),
@@ -1568,8 +1583,22 @@ test("替我审批:isLowRiskCommand 按风险而非白名单判定", () => {
   assert.equal(isLowRiskCommand("python3 -c \"print(1)\""), false);
   assert.equal(isLowRiskCommand("node -e \"1+1\""), false);
   assert.equal(isLowRiskCommand("osascript -e 'tell app \"X\" to id of window 1'"), false);
-  // reviewer 模式下低风险命令直接放行，高风险仍询问
+  // 公开 GET 抓取网络内容（维基/Openverse等API或图片）属于低风险只读，不应弹窗卡死
+  const wikiSearchCmd = 'curl -s -m 30 -A "DYWorkerBot/1.0" "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=He+Changwei&srnamespace=6&srlimit=5&format=json" | head -c 800; echo; echo "EXIT=$?"';
+  assert.equal(isLowRiskCommand(wikiSearchCmd), true);
+  assert.equal(isAutoApprovableCommand(wikiSearchCmd), true);
+  assert.equal(isLowRiskCommand('curl -s -H "User-Agent: bot" "https://api.openverse.org/v1/images/?q=test" | head -c 3000'), true);
+  // 对比负例：数据外发、变更方法、探测内网仍然拦截
+  assert.equal(isLowRiskCommand("curl -d 'data=123' https://api.com"), false);
+  assert.equal(isLowRiskCommand("curl -X POST https://api.com"), false);
+  assert.equal(isLowRiskCommand("curl http://localhost:8080/secret"), false);
+  assert.equal(isLowRiskCommand("curl http://192.168.1.1/admin"), false);
+  // reviewer 模式下低风险命令与公开网络只读工具直接放行，高风险仍询问
   assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "screencapture shot.png; ls" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: wikiSearchCmd } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "web_search", args: { query: "天京事变 1856 韦昌辉" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "fetch_web_page", args: { url: "https://zh.wikipedia.org/wiki/xxx" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "gov_search", args: { query: "政策文件" } }), "allow");
   assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "rm -rf build" } }), "ask");
   assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git push origin main" } }), "ask");
 });

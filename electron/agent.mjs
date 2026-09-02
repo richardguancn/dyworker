@@ -253,6 +253,38 @@ export async function loadProjectInstructions(workspacePath, limit = 32 * 1024) 
   }
 }
 
+export function collectSkillRoots() {
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, ".agents"),
+    path.join(home, ".codex"),
+    path.join(home, ".agent"),
+    path.join(home, ".gemini", "antigravity"),
+    path.join(home, ".antigravity"),
+  ];
+  const roots = new Set();
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const resolved = path.resolve(candidate);
+    roots.add(resolved);
+    try {
+      roots.add(realpathSync(resolved));
+    } catch {
+      // 目录不存在时保留解析后的路径即可
+    }
+  }
+  return [...roots];
+}
+
+export function isSkillPath(targetPath) {
+  if (!targetPath) return false;
+  let expanded = String(targetPath || "").trim();
+  if (/^~(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice(1));
+  const canonical = path.resolve(expanded);
+  const roots = collectSkillRoots();
+  return roots.some((root) => canonical === root || canonical.startsWith(root + path.sep));
+}
+
 export class Workspace {
   constructor(root, options = {}) {
     this.root = String(root || "").trim();
@@ -266,6 +298,9 @@ export class Workspace {
     // 系统临时目录视为工作区内（对齐 Codex 沙盒的 :tmpdir / :slash_tmp）：
     // 办公转换、构建脚本和系统工具频繁读写临时目录，不应每次都要求授权。
     this.trustedTempRoots = options.trustTempDirs === false ? [] : collectTempRoots();
+    // 技能与助手扩展目录（~/.agents、~/.codex、~/.gemini/antigravity 等）：
+    // 助手读取自身技能说明、脚本与资产属于既定工作流，只读访问不应触发工作区外路径审批。
+    this.trustedSkillRoots = options.trustSkillRoots === false ? [] : collectSkillRoots();
   }
 
   canonicalPath(relativePath) {
@@ -284,19 +319,23 @@ export class Workspace {
     }
   }
 
-  isOutside(relativePath) {
+  isOutside(relativePath, { forWrite = false } = {}) {
     if (!this.root) return false;
     const absolute = this.canonicalPath(relativePath);
     if (absolute === this.root || absolute.startsWith(this.root + path.sep)) return false;
     // 临时目录不是"工作区外"，不触发审批/审核
-    return !this.trustedTempRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep));
+    if (this.trustedTempRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep))) return false;
+    // 技能与助手扩展目录：只读访问属于受信任系统扩展，不触发审批/审核
+    if (!forWrite && this.trustedSkillRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep))) return false;
+    return true;
   }
 
+  // isAuthorized(relativePath)
   // 用户已批准过的工作区外路径（含其子路径）在本次任务内视为已授权。
   // 用户直接批准（或在完全访问模式下）的授权延续到任务结束；
   // 审核助手放行、临时放行等场景仍用单次授权，调用方通过 persist 控制。
-  isAuthorized(relativePath) {
-    if (!this.isOutside(relativePath)) return true;
+  isAuthorized(relativePath, { forWrite = false } = {}) {
+    if (!this.isOutside(relativePath, { forWrite })) return true;
     const canonical = this.canonicalPath(relativePath);
     return [...this.externalAuthorizations.keys()].some((allowed) => (
       canonical === allowed || canonical.startsWith(allowed + path.sep)
@@ -320,21 +359,21 @@ export class Workspace {
     };
   }
 
-  resolve(relativePath) {
+  resolve(relativePath, { forWrite = false } = {}) {
     if (!this.root) {
       throw new Error("还没有选择工作文件夹，无法读写文件。请先告诉用户选择工作文件夹后再继续。");
     }
     const value = String(relativePath || "").trim();
     const absolute = path.resolve(this.root, value);
-    if (!this.isOutside(value)) return absolute;
-    if (!this.isAuthorized(value)) {
+    if (!this.isOutside(value, { forWrite })) return absolute;
+    if (!this.isAuthorized(value, { forWrite })) {
       throw new Error(`路径在工作区之外，必须先获得用户授权：${value}`);
     }
     return absolute;
   }
 
   async listFiles(relativePath = "") {
-    const directory = this.resolve(relativePath);
+    const directory = this.resolve(relativePath, { forWrite: false });
     let entries;
     try {
       entries = await fs.readdir(directory, { withFileTypes: true });
@@ -353,7 +392,7 @@ export class Workspace {
   }
 
   async readFile(relativePath) {
-    const file = this.resolve(relativePath);
+    const file = this.resolve(relativePath, { forWrite: false });
     const extension = path.extname(file).toLowerCase();
     if (documentExtensions.has(extension)) return this.extractDocument(file, extension, relativePath);
     if (extension && !textExtensions.has(extension)) {
@@ -420,7 +459,7 @@ export class Workspace {
   }
 
   async writeFile(relativePath, content) {
-    const file = this.resolve(relativePath);
+    const file = this.resolve(relativePath, { forWrite: true });
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, String(content ?? ""), "utf8");
     return `已写入 ${relativePath}（${Buffer.byteLength(String(content ?? ""), "utf8")} 字节）`;
@@ -428,7 +467,7 @@ export class Workspace {
 
   async readTextIfExists(relativePath) {
     try {
-      return await fs.readFile(this.resolve(relativePath), "utf8");
+      return await fs.readFile(this.resolve(relativePath, { forWrite: false }), "utf8");
     } catch {
       return null;
     }
@@ -436,7 +475,7 @@ export class Workspace {
 
   // 局部编辑（对照 Codex apply_patch 的替换语义）：精确匹配 find 并替换
   async editFile(relativePath, find, replace, replaceAll = false) {
-    const file = this.resolve(relativePath);
+    const file = this.resolve(relativePath, { forWrite: true });
     const findText = String(find ?? "");
     const replaceText = String(replace ?? "");
     if (!findText) throw new Error("edit_file 的 find 不能为空");
@@ -459,14 +498,14 @@ export class Workspace {
   }
 
   async makeDirectory(relativePath) {
-    const directory = this.resolve(relativePath);
+    const directory = this.resolve(relativePath, { forWrite: true });
     await fs.mkdir(directory, { recursive: true });
     return `已创建文件夹 ${relativePath}`;
   }
 
   // 追加内容到文件末尾（登记簿、台账场景）；文件不存在时自动新建
   async appendFile(relativePath, content) {
-    const file = this.resolve(relativePath);
+    const file = this.resolve(relativePath, { forWrite: true });
     let before = "";
     try {
       before = await fs.readFile(file, "utf8");
@@ -478,8 +517,8 @@ export class Workspace {
   }
 
   async copyFile(source, target) {
-    const from = this.resolve(source);
-    const to = this.resolve(target);
+    const from = this.resolve(source, { forWrite: false });
+    const to = this.resolve(target, { forWrite: true });
     const sourceStat = await fs.stat(from).catch(() => null);
     if (!sourceStat?.isFile()) throw new Error(`源文件不存在：${source}，请先用 list_files 或 find_files 核对`);
     const exists = await fs.stat(to).then(() => true, () => false);
@@ -490,8 +529,8 @@ export class Workspace {
   }
 
   async moveFile(source, target) {
-    const from = this.resolve(source);
-    const to = this.resolve(target);
+    const from = this.resolve(source, { forWrite: true });
+    const to = this.resolve(target, { forWrite: true });
     const sourceStat = await fs.stat(from).catch(() => null);
     if (!sourceStat) throw new Error(`源文件不存在：${source}，请先用 list_files 或 find_files 核对`);
     const exists = await fs.stat(to).then(() => true, () => false);
@@ -503,7 +542,7 @@ export class Workspace {
 
   // 只能删除文件、不能删除文件夹；始终需要用户审批，并可被 hooks 规则拦截
   async deleteFile(relativePath) {
-    const file = this.resolve(relativePath);
+    const file = this.resolve(relativePath, { forWrite: true });
     const stat = await fs.stat(file).catch(() => null);
     if (!stat) throw new Error(`文件不存在：${relativePath}，请先用 list_files 核对`);
     if (stat.isDirectory()) throw new Error(`delete_file 只能删除文件，不能删除文件夹：${relativePath}`);
@@ -514,7 +553,7 @@ export class Workspace {
 
   // 按文件名递归查找（支持 * 通配，无通配时按包含匹配）
   async findFiles(pattern, directory = "") {
-    const base = this.resolve(directory);
+    const base = this.resolve(directory, { forWrite: false });
     const raw = String(pattern || "").trim();
     if (!raw) throw new Error("请提供要查找的文件名或模式");
     const matcher = raw.includes("*")
@@ -544,7 +583,7 @@ export class Workspace {
   async searchInFiles(query, directory = "") {
     const needle = String(query || "");
     if (!needle.trim()) throw new Error("请提供要搜索的内容");
-    const base = this.resolve(directory);
+    const base = this.resolve(directory, { forWrite: false });
     const matches = [];
     const lower = needle.toLowerCase();
     const walk = async (dir) => {
@@ -1579,11 +1618,6 @@ function basenameOf(word) {
   return text.includes("/") ? text.slice(text.lastIndexOf("/") + 1) : text;
 }
 
-// 解释器/脚本运行器直接执行的 ~/.agents 技能脚本属于既定工作流而非越界访问
-// （与应用自身加载技能的信任边界一致，见 skills.mjs）。scriptRunnerPrograms 在
-// interpreterPrograms 定义之后声明（见下方），此处仅放技能根目录常量。
-const agentSkillsRoot = path.join(os.homedir(), ".agents");
-
 function commandPathCandidates(command, workspace) {
   const words = shellWords(command);
   const heads = commandSegmentHeads(command);
@@ -1608,15 +1642,15 @@ function commandPathCandidates(command, workspace) {
       // 豁免 A：某段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
       // 只豁免已知根（如 /usr/bin、PATH、版本管理器、~/.local/bin）
       if (heads.has(piece) && isExecutableRooted(expanded)) continue;
-      // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或 ~/.agents 技能脚本
+      // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或技能脚本
       if (index > 0 && (scriptRunnerPrograms.has(basenameOf(words[index - 1])) || shellWrapperPrograms.has(basenameOf(words[index - 1])))) {
         if (isExecutableRooted(expanded)) continue;
-        if (expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep)) continue;
+        if (isSkillPath(expanded)) continue;
       }
-      // 豁免 C：环境变量赋值（如 P=/usr/local/bin/python3、BUN=/opt/homebrew/bin/bun、API=~/.agents/skills/...）指向可执行根目录或全局技能。
+      // 豁免 C：环境变量赋值（如 P=/usr/local/bin/python3、BUN=/opt/homebrew/bin/bun、API=~/.agents/skills/...）指向可执行根目录或技能目录。
       // PATH 搜索路径变量赋值不在此豁免（外部目录照常上报由审核流程判断）
       const varName = word.includes("=") ? word.slice(0, word.indexOf("=")).trim() : "";
-      if (word.includes("=") && !/^(?:.*_)?PATH$/i.test(varName) && (isExecutableRooted(expanded) || expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep))) continue;
+      if (word.includes("=") && !/^(?:.*_)?PATH$/i.test(varName) && (isExecutableRooted(expanded) || isSkillPath(expanded))) continue;
       candidates.push(expanded);
     }
   }
@@ -1625,12 +1659,13 @@ function commandPathCandidates(command, workspace) {
 
 export function externalPathsForTool(workspace, name, args = {}) {
   let candidates = [];
+  const isWrite = workspaceWriteTools.has(name);
   if (pathArgumentTools.has(name) && args.path) candidates.push(args.path);
   if (name === "copy_file" || name === "move_file") candidates.push(args.source, args.target);
   if (name === "run_command") candidates.push(...commandPathCandidates(args.command, workspace));
   return [...new Set(candidates
     .map((value) => String(value || "").trim())
-    .filter((value) => value && workspace.isOutside(value) && !workspace.isAuthorized(value)))];
+    .filter((value) => value && workspace.isOutside(value, { forWrite: isWrite }) && !workspace.isAuthorized(value, { forWrite: isWrite })))];
 }
 
 // 受信只读程序与复合命令拆分：
@@ -1649,6 +1684,67 @@ const gitBranchMutationFlags = /^(-[dDmMcC]|--delete|--move|--copy)$/;
 const gitRemoteMutationSubcommands = new Set(["add", "remove", "rm", "set-url", "set-head", "set-branches", "prune", "rename", "update"]);
 const findMutationFlags = /^-(delete|exec|execdir|ok|okdir|fls|fprint|fprintf|fprint0|fprintf0)$/;
 
+const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
+const scriptRunnerPrograms = new Set([...interpreterPrograms, "bun", "bunx", "tsx", "ts-node"]);
+const shellWrapperPrograms = new Set(["sh", "bash", "zsh", "dash", "ash"]);
+const dangerousOnlyAsCommand = new Set(["eval", "exec", "source", "."]);
+
+const curlUploadFlags = new Set([
+  "-d", "--data", "--data-raw", "--data-ascii", "--data-binary", "--data-urlencode", "--json",
+  "-F", "--form", "--form-string",
+  "-T", "--upload-file",
+  "-u", "--user", "--netrc", "--netrc-file", "--netrc-optional", "--oauth2-bearer",
+]);
+const curlMutatingMethods = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+export function isSafeCurlInvocation(words = [], allWords = words) {
+  // 禁止管道流向执行环境（curl ... | bash / sh / python 等任意解释器与脚本包装器）
+  const dangerousExecutors = new Set([...shellWrapperPrograms, ...interpreterPrograms, ...dangerousOnlyAsCommand]);
+  if (allWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
+    return false;
+  }
+  let hasUrl = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const token = words[i];
+    if (curlUploadFlags.has(token)) return false;
+    if (token === "-X" || token === "--request") {
+      const method = String(words[i + 1] || "").toUpperCase();
+      if (curlMutatingMethods.has(method)) return false;
+    }
+    if (token.startsWith("-X") && curlMutatingMethods.has(token.slice(2).toUpperCase())) return false;
+    if (/^https?:\/\//i.test(token)) {
+      const check = isSafePublicUrl(token);
+      if (!check.ok) return false;
+      hasUrl = true;
+    }
+  }
+  return hasUrl;
+}
+
+const wgetUploadFlags = new Set([
+  "--post-data", "--post-file", "--method=POST", "--method=PUT", "--method=DELETE", "--method=PATCH",
+  "--http-user", "--http-password", "--user", "--password",
+]);
+
+export function isSafeWgetInvocation(words = [], allWords = words) {
+  const dangerousExecutors = new Set([...shellWrapperPrograms, ...interpreterPrograms, ...dangerousOnlyAsCommand]);
+  if (allWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
+    return false;
+  }
+  let hasUrl = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const token = words[i];
+    if (wgetUploadFlags.has(token)) return false;
+    if (token.startsWith("--method=") && curlMutatingMethods.has(token.slice(9).toUpperCase())) return false;
+    if (/^https?:\/\//i.test(token)) {
+      const check = isSafePublicUrl(token);
+      if (!check.ok) return false;
+      hasUrl = true;
+    }
+  }
+  return hasUrl;
+}
+
 function isCdSegment(argv) {
   return argv[0] === "cd" && argv.length <= 2;
 }
@@ -1664,6 +1760,12 @@ function isTrustedReadOnlySegment(argv) {
     if (subcommand === "branch" && argv.some((token) => gitBranchMutationFlags.test(token))) return false;
     if (subcommand === "remote" && argv.some((token) => gitRemoteMutationSubcommands.has(token))) return false;
     return true;
+  }
+  if (program === "curl") {
+    return isSafeCurlInvocation(argv) && !argv.some((t) => t === "-o" || t === "-O" || t === "--output");
+  }
+  if (program === "wget") {
+    return isSafeWgetInvocation(argv) && !argv.some((t) => t === "-O" || t.startsWith("--output-document"));
   }
   return trustedReadOnlyPrograms.has(program);
 }
@@ -1681,11 +1783,17 @@ const unsafeCommandRemainder = /[<>`$\\()]/;
 function splitSafeCompoundCommand(command) {
   const text = String(command || "").trim();
   if (!text || /[\r\n]/.test(text)) return null;
-  const stripped = text.replace(safeRedirectionPattern, " ");
+  // 剥离安全重定向，以及只读状态变量 $?、$PWD、$HOME，避免误判为动态命令替换
+  const stripped = text
+    .replace(safeRedirectionPattern, " ")
+    .replace(/\$(?:\?|(?:PWD|HOME)\b)/g, " ");
   if (unsafeCommandRemainder.test(stripped)) return null;
   const segments = stripped.split(commandSegmentSplit).map((segment) => segment.trim()).filter(Boolean);
-  if (!segments.length || segments.some((segment) => segment.includes("&"))) return null;
-  return segments.map((segment) => shellWords(segment));
+  if (!segments.length) return null;
+  const argvList = segments.map((segment) => shellWords(segment));
+  // 独立作为命令词的单个 & 是后台执行，依然拒绝；但包含在 URL query 参数（?a=1&b=2）内的 & 不算
+  if (argvList.some((argv) => argv.includes("&"))) return null;
+  return argvList;
 }
 
 export function isAutoApprovableCommand(command) {
@@ -1768,10 +1876,7 @@ const dangerousCommandPrograms = new Set([
   "chown", "chgrp", "useradd", "usermod", "userdel", "groupadd", "groupmod", "groupdel",
   "iptables", "ip6tables", "firewall-cmd", "systemctl", "launchctl", "scutil", "diskutil",
   "shutdown", "reboot", "halt", "poweroff",
-  "curl", "wget",
 ]);
-// 这些词只在命令位置才危险（`. ./env.sh` 是 source，但 `git add .` 里的点只是参数）
-const dangerousOnlyAsCommand = new Set(["eval", "exec", "source", "."]);
 // git 的对外与破坏性用法；提交、拉取、日常查看都自动放行
 const riskyGitSubcommands = new Set([
   "push", "reset", "clean", "rebase", "checkout", "switch", "restore", "rm",
@@ -1779,12 +1884,6 @@ const riskyGitSubcommands = new Set([
 ]);
 const riskyGitFlags = /^(--force|--hard|--delete|-f$|-D$|-d$)/;
 const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
-const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
-// 解释器 + 脚本运行器：它们后面跟的脚本路径若是 ~/.agents 技能脚本，不算越界访问
-// （供上方 commandPathCandidates 的豁免规则 B 使用）
-const scriptRunnerPrograms = new Set([...interpreterPrograms, "bun", "bunx", "tsx", "ts-node"]);
-// sh -c "…" / bash -c "…" 同样是内联任意代码；-c 必须紧跟其后
-const shellWrapperPrograms = new Set(["sh", "bash", "zsh", "dash", "ash"]);
 
 export function isLowRiskCommand(command) {
   const text = String(command || "").trim();
@@ -1798,12 +1897,23 @@ export function isLowRiskCommand(command) {
     const words = shellWords(segment);
     if (!words.length) continue;
     allWords.push(...words);
+  }
+  for (const segment of segments) {
+    const words = shellWords(segment);
+    if (!words.length) continue;
     for (let index = 0; index < words.length; index += 1) {
       const word = words[index];
       // /bin/rm 这类带路径的调用也要识别
       const base = word.includes("/") ? word.slice(word.lastIndexOf("/") + 1) : word;
       if (dangerousCommandPrograms.has(word) || dangerousCommandPrograms.has(base)) return false;
       if (index === 0 && (dangerousOnlyAsCommand.has(word) || dangerousOnlyAsCommand.has(base))) return false;
+      // curl / wget：安全的公开只读请求（GET、无上传标志、不流向 shell）视为低风险，放行
+      if (word === "curl" || base === "curl") {
+        if (!isSafeCurlInvocation(words, allWords)) return false;
+      }
+      if (word === "wget" || base === "wget") {
+        if (!isSafeWgetInvocation(words, allWords)) return false;
+      }
       if (word === "git") {
         if (riskyGitSubcommands.has(words[index + 1] || "")) return false;
       }
@@ -1846,8 +1956,8 @@ export function evaluateApproval({
   if (approvalMode === "deny-changes" && normallyNeedsApproval) return "deny";
   // 钩子强制审批永远压过常驻规则（保守：用户可用钩子撤销"始终允许"的效果）
   if (hookRequiresApproval) return "ask";
-  // 常驻允许规则：仅对本来要"ask"的调用生效，且永不覆盖 deny-changes 与钩子
-  if (normallyNeedsApproval && matchStandingRule(standingRules, name, args)) return "allow";
+  // 常驻允许规则：命中用户"始终允许"或本次会话允许的规则时直接放行，且永不覆盖 deny-changes 与钩子
+  if (matchStandingRule(standingRules, name, args)) return "allow";
   // 完全访问模式：放行所有常规命令、工作区读写与本机界面操作（避免弹窗夺取焦点冲掉下拉菜单）；
   // 仅系统级管理员安装（install_dependencies，需提权修改操作系统）保留确认。
   if (approvalMode === "full-access") {
@@ -1855,7 +1965,10 @@ export function evaluateApproval({
   }
 
   if (approvalMode === "interactive" || approvalMode === "reviewer") {
-    if (hasExternalPaths || internetApprovalTools.has(name)) return "ask";
+    if (hasExternalPaths) return "ask";
+    // 替我审批（reviewer）：公开网络只读工具（搜索与读取网页正文）直接放行，不再要求人工审批
+    if (approvalMode === "reviewer" && internetReadTools.has(name)) return "allow";
+    if (internetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
     // 删除不可恢复：不随"工作区写操作"直接放行，interactive 弹卡、reviewer 交审核助手把关
     // （含已授权的工作区外路径——路径授权只免"越界"问询，不免删除确认）

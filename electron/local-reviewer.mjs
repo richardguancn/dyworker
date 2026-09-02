@@ -180,6 +180,26 @@ export async function resetLocalReviewerEngine() {
   }
 }
 
+async function loadNodeLlamaCpp() {
+  try {
+    return await import("node-llama-cpp");
+  } catch (err) {
+    const candidatePaths = [
+      path.join(process.resourcesPath || "", "app.asar.unpacked", "node_modules", "node-llama-cpp", "dist", "index.js"),
+      path.join(process.resourcesPath || "", "node_modules", "node-llama-cpp", "dist", "index.js"),
+      path.join(process.cwd(), "node_modules", "node-llama-cpp", "dist", "index.js"),
+    ];
+    for (const candidate of candidatePaths) {
+      if (existsSync(candidate)) {
+        try {
+          return await import(candidate);
+        } catch { }
+      }
+    }
+    throw err;
+  }
+}
+
 async function getEngine() {
   if (engine) {
     scheduleIdleUnload();
@@ -189,7 +209,7 @@ async function getEngine() {
   engineLoading = (async () => {
     const status = localReviewerModelStatus();
     if (!status.downloaded) throw new Error("模型文件不存在，请先在设置中下载");
-    const { getLlama } = await import("node-llama-cpp");
+    const { getLlama } = await loadNodeLlamaCpp();
     const llama = await getLlama();
     const model = await llama.loadModel({ modelPath: localReviewerModelPath() });
     const context = await model.createContext({ contextSize: CONTEXT_SIZE, sequences: 4 });
@@ -248,7 +268,7 @@ export async function localReview({ policy, action = {}, context = "", signal = 
     idleTimer = null;
   }
   scheduleIdleUnload();
-  const { LlamaChatSession } = await import("node-llama-cpp");
+  const { LlamaChatSession } = await loadNodeLlamaCpp();
   const sequence = engineState.context.getSequence();
   if (signal) {
     // 外层审批超时（withModelTimeout）触发中止时，丢弃当前序列结束生成
