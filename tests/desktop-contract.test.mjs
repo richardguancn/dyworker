@@ -1199,15 +1199,11 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(app, /channelStreamIds/, "按会话跟踪流式消息 id");
 
   // 8. 渠道审批:createInboxItem 不能把内层 promise 包进 async 外层(会吞掉 .itemId,
-  //    IM 回复「允许」路由不到挂起条目——regression);审批严格度可调,默认自动审核
+  //    IM 回复「允许」路由不到挂起条目——regression);渠道审批模式与全局/会话设置统一
   assert.doesNotMatch(main, /async function createInboxItem/);
   assert.match(main, /pending\.itemId = item\.id/);
   assert.match(main, /inboxPersistQueue/);
-  assert.match(main, /settings\.channels\?\.approvalMode/);
-  assert.match(settingsStorage, /approvalMode = source\.approvalMode === "auto"/);
-  assert.match(app, /审批严格度/);
-  assert.match(app, /value="auto"/);
-  assert.match(app, /value="reviewer"/);
+  assert.match(main, /normalizeApprovalMode\(settings\?\.approvalMode\)/);
 });
 
 function agentEventTypeRegex(eventType) {

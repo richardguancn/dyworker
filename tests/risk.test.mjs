@@ -26,7 +26,10 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
   const computerUseMutation = name.startsWith("mcp__computer-use__") && normallyNeedsApproval;
   if (approvalMode === "deny-changes" && normallyNeedsApproval) return "deny";
   if (hookRequiresApproval) return "ask";
-  if (approvalMode === "full-access") return computerUseMutation ? "ask" : "allow";
+  if (approvalMode === "full-access") {
+    const action = name.startsWith("mcp__computer-use__") ? name.slice("mcp__computer-use__".length) : "";
+    return action === "install_dependencies" ? "ask" : "allow";
+  }
   if (approvalMode === "interactive" || approvalMode === "reviewer") {
     if (hasExternalPaths || oracleInternetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";

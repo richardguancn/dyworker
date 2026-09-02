@@ -1546,6 +1546,9 @@ const executableRoots = collectExecutableRoots();
 export function isExecutableRooted(word) {
   const normalized = path.resolve(String(word || ""));
   if (!normalized || normalized === path.parse(normalized).root) return false;
+  if (process.platform === "linux" && /^\/home\/[^/]+\/\.local\/bin(?:\/|$)/.test(normalized)) {
+    return true;
+  }
   return executableRoots.some((root) => {
     const resolvedRoot = path.resolve(root);
     return normalized === resolvedRoot || normalized.startsWith(resolvedRoot + path.sep);
@@ -1603,11 +1606,17 @@ function commandPathCandidates(command, workspace) {
       // 拆开后残留的 $PATH 等未展开变量不是真实路径
       if (!expanded || expanded.startsWith("$") || isPseudoPathWord(expanded)) continue;
       // 豁免 A：某段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
-      // 只豁免已知根（如 /usr/bin、PATH、版本管理器），~/bin/evil 这类未知二进制仍会上报
+      // 只豁免已知根（如 /usr/bin、PATH、版本管理器、~/.local/bin）
       if (heads.has(piece) && isExecutableRooted(expanded)) continue;
-      // 豁免 B：解释器/脚本运行器直接执行的 ~/.agents 技能脚本
-      if (index > 0 && scriptRunnerPrograms.has(basenameOf(words[index - 1]))
-        && (expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep))) continue;
+      // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或 ~/.agents 技能脚本
+      if (index > 0 && (scriptRunnerPrograms.has(basenameOf(words[index - 1])) || shellWrapperPrograms.has(basenameOf(words[index - 1])))) {
+        if (isExecutableRooted(expanded)) continue;
+        if (expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep)) continue;
+      }
+      // 豁免 C：环境变量赋值（如 P=/usr/local/bin/python3、BUN=/opt/homebrew/bin/bun、API=~/.agents/skills/...）指向可执行根目录或全局技能。
+      // PATH 搜索路径变量赋值不在此豁免（外部目录照常上报由审核流程判断）
+      const varName = word.includes("=") ? word.slice(0, word.indexOf("=")).trim() : "";
+      if (word.includes("=") && !/^(?:.*_)?PATH$/i.test(varName) && (isExecutableRooted(expanded) || expanded === agentSkillsRoot || expanded.startsWith(agentSkillsRoot + path.sep))) continue;
       candidates.push(expanded);
     }
   }
@@ -1839,9 +1848,11 @@ export function evaluateApproval({
   if (hookRequiresApproval) return "ask";
   // 常驻允许规则：仅对本来要"ask"的调用生效，且永不覆盖 deny-changes 与钩子
   if (normallyNeedsApproval && matchStandingRule(standingRules, name, args)) return "allow";
-  // 本机界面操作即使在完全访问模式下也必须由用户逐次确认，
-  // 避免误点付款、删除、安全设置等高风险控件。
-  if (approvalMode === "full-access") return computerUseMutation ? "ask" : "allow";
+  // 完全访问模式：放行所有常规命令、工作区读写与本机界面操作（避免弹窗夺取焦点冲掉下拉菜单）；
+  // 仅系统级管理员安装（install_dependencies，需提权修改操作系统）保留确认。
+  if (approvalMode === "full-access") {
+    return (isComputerUseTool(name) && computerUseAction(name) === "install_dependencies") ? "ask" : "allow";
+  }
 
   if (approvalMode === "interactive" || approvalMode === "reviewer") {
     if (hasExternalPaths || internetApprovalTools.has(name)) return "ask";

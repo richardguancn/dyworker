@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DYWorker 本地智能工作助手 · 单位内部推介</title>
+<style>
+deck-stage:not(:defined){visibility:hidden}
+
+:root {
+  /* 政务风格配色：深红为主、金色点缀、米白底、墨黑字 */
+  --zw-red: #A6192E;          /* 主色·政务红 */
+  --zw-red-deep: #7E1122;     /* 深红 */
+  --zw-red-dark: #4A0812;     /* 标题页底色 */
+  --zw-gold: #C9A96A;         /* 点缀金 */
+  --zw-gold-light: #E3CFA3;   /* 浅金 */
+  --zw-paper: #F7F3EA;        /* 米白纸面 */
+  --zw-cream: #FCFAF4;        /* 近白 */
+  --zw-ink: #2B2320;          /* 墨色正文 */
+  --zw-ink-soft: #6B6058;     /* 次要文字 */
+  --zw-line: #D8CDBB;         /* 分隔线 */
+  --zw-serif: "Songti SC", "STSong", "Noto Serif SC", "SimSun", serif;
+  --zw-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+body { margin: 0; font-family: var(--zw-sans); }
+
+/* ── 通用版式 ─────────────────────────────────────────── */
+.slide {
+  width: 1920px; height: 1080px;
+  background: var(--zw-paper);
+  color: var(--zw-ink);
+  position: relative;
+  overflow: hidden;
+  font-family: var(--zw-sans);
+}
+
+/* 页眉：红色细带 + 页码 */
+.s-head {
+  position: absolute; top: 0; left: 0; right: 0; height: 8px;
+  background: var(--zw-red);
+}
+.s-pageno {
+  position: absolute; bottom: 36px; right: 64px;
+  font-size: 22px; color: var(--zw-ink-soft);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.05em;
+}
+.s-foot {
+  position: absolute; bottom: 36px; left: 96px;
+  font-size: 20px; color: var(--zw-ink-soft); letter-spacing: 0.12em;
+}
+
+/* 内容页标题区 */
+.s-title-wrap {
+  position: absolute; top: 72px; left: 96px; right: 96px;
+  display: flex; align-items: baseline; gap: 28px;
+  border-bottom: 2px solid var(--zw-line);
+  padding-bottom: 26px;
+}
+.s-kicker {
+  font-size: 24px; color: var(--zw-red); font-weight: 600;
+  letter-spacing: 0.3em; white-space: nowrap;
+}
+.s-title {
+  font-family: var(--zw-serif);
+  font-size: 56px; font-weight: 700; color: var(--zw-ink);
+  letter-spacing: 0.04em; line-height: 1.2;
+}
+.s-sub {
+  margin-left: auto; font-size: 24px; color: var(--zw-ink-soft);
+  letter-spacing: 0.05em; white-space: nowrap;
+}
+
+/* 通用卡片 */
+.card {
+  background: var(--zw-cream);
+  border: 1px solid var(--zw-line);
+  border-top: 4px solid var(--zw-red);
+  padding: 36px 40px;
+  box-sizing: border-box;
+}
+.card h3 {
+  margin: 0 0 14px; font-size: 32px; font-weight: 700;
+  color: var(--zw-red); letter-spacing: 0.04em;
+  font-family: var(--zw-serif);
+}
+.card p { margin: 0; font-size: 24px; line-height: 1.75; color: var(--zw-ink); }
+
+/* 截图展示框 */
+.shot {
+  background: var(--zw-cream);
+  border: 1px solid var(--zw-line);
+  padding: 14px;
+  box-shadow: 0 6px 24px rgba(43,35,32,0.10);
+}
+.shot img { display: block; width: 100%; height: auto; }
+.shot-cap {
+  font-size: 22px; color: var(--zw-ink-soft); text-align: center;
+  padding-top: 12px; letter-spacing: 0.05em;
+}
+
+/* 金色序号徽章 */
+.num-badge {
+  width: 56px; height: 56px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--zw-red); color: #fff;
+  font-family: var(--zw-serif); font-size: 30px; font-weight: 700;
+}
+
+/* ── 封面（01）───────────────────────────────────────── */
+.cover { background: var(--zw-red-dark); color: #fff; }
+.cover .s-head { background: var(--zw-gold); height: 6px; }
+.cover-band {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 560px;
+  background: var(--zw-red-deep);
+  border-left: 2px solid rgba(201,169,106,0.5);
+}
+.cover-inner { position: absolute; left: 128px; top: 0; bottom: 0; width: 1100px; display: flex; flex-direction: column; justify-content: center; }
+.cover-org {
+  font-size: 30px; color: var(--zw-gold-light);
+  letter-spacing: 0.35em; margin-bottom: 56px;
+}
+.cover-title {
+  font-family: var(--zw-serif);
+  font-size: 108px; font-weight: 700; line-height: 1.25;
+  letter-spacing: 0.06em; margin: 0;
+}
+.cover-sub {
+  margin-top: 44px; font-size: 40px; font-weight: 400;
+  color: rgba(255,255,255,0.92); letter-spacing: 0.18em;
+  font-family: var(--zw-serif);
+}
+.cover-rule {
+  margin-top: 64px; width: 560px; height: 2px;
+  background: linear-gradient(90deg, var(--zw-gold), rgba(201,169,106,0));
+}
+.cover-meta {
+  margin-top: 40px; font-size: 26px; color: rgba(255,255,255,0.7);
+  letter-spacing: 0.15em; display: flex; gap: 48px;
+}
+.cover-side {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 560px;
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 40px;
+}
+.cover-emblem {
+  width: 200px; height: 200px; border: 2px solid var(--zw-gold);
+  border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+}
+.cover-emblem .zh { font-family: var(--zw-serif); font-size: 64px; font-weight: 700; color: var(--zw-gold-light); letter-spacing: 0.1em; }
+.cover-emblem .en { font-size: 20px; color: rgba(255,255,255,0.75); letter-spacing: 0.3em; }
+.cover-tags { display: flex; flex-direction: column; gap: 18px; align-items: center; }
+.cover-tag {
+  font-size: 26px; color: var(--zw-gold-light);
+  letter-spacing: 0.35em; padding-left: 0.35em;
+  border: 1px solid rgba(201,169,106,0.55);
+  padding: 12px 36px; padding-left: calc(36px + 0.35em);
+}
+
+/* ── 目录（02）───────────────────────────────────────── */
+.toc-body {
+  position: absolute; left: 96px; right: 96px; top: 230px; bottom: 110px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 36px 96px;
+  align-content: center;
+}
+.toc-item { display: flex; align-items: center; gap: 28px; padding: 26px 0; border-bottom: 1px solid var(--zw-line); }
+.toc-item .n { font-family: var(--zw-serif); font-size: 44px; font-weight: 700; color: var(--zw-red); width: 84px; font-variant-numeric: tabular-nums; }
+.toc-item .t { font-size: 36px; color: var(--zw-ink); letter-spacing: 0.06em; font-family: var(--zw-serif); font-weight: 700; }
+.toc-item .d { margin-left: auto; font-size: 22px; color: var(--zw-ink-soft); text-align: right; line-height: 1.5; }
+
+/* ── 背景（03）───────────────────────────────────────── */
+.bg-body {
+  position: absolute; left: 96px; right: 96px; top: 250px; bottom: 120px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 40px;
+  align-content: start;
+}
+.bg-pain { display: flex; flex-direction: column; gap: 20px; }
+.bg-pain .pain-no {
+  font-family: var(--zw-serif); font-size: 30px; font-weight: 700;
+  color: var(--zw-cream); background: var(--zw-red);
+  padding: 8px 26px; align-self: flex-start; letter-spacing: 0.1em;
+}
+.bg-quote {
+  position: absolute; left: 96px; right: 96px; bottom: 120px;
+  border-left: 6px solid var(--zw-gold);
+  background: var(--zw-cream);
+  padding: 26px 40px;
+  font-family: var(--zw-serif); font-size: 32px; line-height: 1.7;
+  color: var(--zw-ink);
+}
+.bg-quote strong { color: var(--zw-red); }
+
+/* ── 定位（04）───────────────────────────────────────── */
+.pos-body {
+  position: absolute; left: 96px; right: 96px; top: 240px; bottom: 120px;
+  display: flex; gap: 64px;
+}
+.pos-left { flex: 1.15; display: flex; flex-direction: column; justify-content: center; gap: 34px; }
+.pos-slogan {
+  font-family: var(--zw-serif); font-size: 52px; font-weight: 700;
+  color: var(--zw-red); line-height: 1.5; letter-spacing: 0.04em;
+}
+.pos-desc { font-size: 28px; line-height: 1.9; color: var(--zw-ink); }
+.pos-keys { display: flex; flex-direction: column; gap: 22px; margin-top: 8px; }
+.pos-key { display: flex; align-items: center; gap: 22px; }
+.pos-key .k {
+  flex-shrink: 0; width: 200px; text-align: center;
+  background: var(--zw-red); color: #fff;
+  font-size: 26px; font-weight: 600; padding: 12px 0; letter-spacing: 0.15em;
+}
+.pos-key .v { font-size: 25px; color: var(--zw-ink); line-height: 1.6; }
+.pos-right { flex: 1; display: flex; align-items: center; justify-content: center; }
+
+/* ── 能力总览（05）───────────────────────────────────── */
+.cap-body {
+  position: absolute; left: 96px; right: 96px; top: 240px; bottom: 120px;
+  display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr;
+  gap: 32px;
+}
+.cap-item { display: flex; gap: 24px; align-items: flex-start; }
+.cap-item .cap-no {
+  flex-shrink: 0; width: 52px; height: 52px;
+  border: 2px solid var(--zw-red); color: var(--zw-red);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--zw-serif); font-size: 26px; font-weight: 700;
+}
+.cap-item h4 { margin: 2px 0 10px; font-size: 30px; font-weight: 700; color: var(--zw-ink); font-family: var(--zw-serif); letter-spacing: 0.03em; }
+.cap-item p { margin: 0; font-size: 22px; line-height: 1.65; color: var(--zw-ink-soft); }
+
+/* ── 能力详情通用：左文右图 ──────────────────────────── */
+.split-body {
+  position: absolute; left: 96px; right: 96px; top: 240px; bottom: 120px;
+  display: flex; gap: 72px; align-items: center;
+}
+.split-text { flex: 1; display: flex; flex-direction: column; gap: 30px; }
+.split-shot { flex: 1.25; }
+.feat-list { display: flex; flex-direction: column; gap: 26px; }
+.feat { display: flex; gap: 22px; align-items: flex-start; }
+.feat .dot {
+  flex-shrink: 0; width: 14px; height: 14px; margin-top: 14px;
+  background: var(--zw-gold); border: 3px solid var(--zw-red);
+}
+.feat h4 { margin: 0 0 6px; font-size: 30px; font-weight: 700; color: var(--zw-ink); font-family: var(--zw-serif); }
+.feat p { margin: 0; font-size: 24px; line-height: 1.7; color: var(--zw-ink-soft); }
+
+/* ── 移动协同（09）：左图右文 + 双图 ─────────────────── */
+.mob-shots { display: flex; gap: 40px; flex: 1.2; align-items: center; justify-content: center; }
+.mob-shot { width: 46%; }
+.mob-shot .shot { padding: 10px; }
+
+/* ── 安全（10）───────────────────────────────────────── */
+.sec-body {
+  position: absolute; left: 96px; right: 96px; top: 240px; bottom: 120px;
+  display: flex; gap: 72px; align-items: center;
+}
+.sec-grid { flex: 1.1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.sec-item { background: var(--zw-cream); border: 1px solid var(--zw-line); border-left: 5px solid var(--zw-red); padding: 26px 30px; }
+.sec-item h4 { margin: 0 0 8px; font-size: 28px; font-weight: 700; color: var(--zw-red); font-family: var(--zw-serif); }
+.sec-item p { margin: 0; font-size: 22px; line-height: 1.65; color: var(--zw-ink-soft); }
+
+/* ── 快速上手（11）───────────────────────────────────── */
+.quick-body {
+  position: absolute; left: 96px; right: 96px; top: 250px; bottom: 120px;
+  display: flex; flex-direction: column; gap: 44px;
+}
+.quick-steps { display: flex; gap: 28px; }
+.quick-step { flex: 1; background: var(--zw-cream); border: 1px solid var(--zw-line); border-top: 4px solid var(--zw-gold); padding: 32px 34px; position: relative; }
+.quick-step .qs-no {
+  font-family: var(--zw-serif); font-size: 60px; font-weight: 700;
+  color: var(--zw-gold); line-height: 1;
+}
+.quick-step h4 { margin: 14px 0 10px; font-size: 30px; font-weight: 700; color: var(--zw-ink); font-family: var(--zw-serif); }
+.quick-step p { margin: 0; font-size: 22px; line-height: 1.7; color: var(--zw-ink-soft); }
+.quick-note {
+  border-left: 6px solid var(--zw-red); background: var(--zw-cream);
+  padding: 24px 40px; font-size: 26px; line-height: 1.75; color: var(--zw-ink);
+}
+.quick-note strong { color: var(--zw-red); }
+
+/* ── 结尾（12）───────────────────────────────────────── */
+.end { background: var(--zw-red-dark); color: #fff; }
+.end .s-head { background: var(--zw-gold); height: 6px; }
+.end-inner {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 48px; text-align: center;
+}
+.end-title { font-family: var(--zw-serif); font-size: 92px; font-weight: 700; letter-spacing: 0.1em; margin: 0; }
+.end-rule { width: 480px; height: 2px; background: linear-gradient(90deg, transparent, var(--zw-gold), transparent); }
+.end-sub { font-size: 34px; color: rgba(255,255,255,0.85); letter-spacing: 0.25em; font-family: var(--zw-serif); }
+.end-meta { margin-top: 20px; font-size: 26px; color: rgba(255,255,255,0.6); letter-spacing: 0.15em; line-height: 2; }
+
+/* 深色页上的页码 */
+.dark-page .s-pageno, .dark-page .s-foot { color: rgba(255,255,255,0.55); }
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+<!-- 01 封面 -->
+<section class="slide cover dark-page" data-label="封面">
+  <div class="s-head"></div>
+  <div class="cover-band"></div>
+  <div class="cover-inner">
+    <div class="cover-org">单位内部推介 · 培训材料</div>
+    <h1 class="cover-title">DYWorker<br>本地智能工作助手</h1>
+    <div class="cover-sub">数据不出本机 &nbsp;·&nbsp; 办事快人一步</div>
+    <div class="cover-rule"></div>
+    <div class="cover-meta">
+      <span>推介培训专用</span>
+      <span>二〇二六年</span>
+    </div>
+  </div>
+  <div class="cover-side">
+    <div class="cover-emblem">
+      <div class="zh">智办</div>
+      <div class="en">DYWORKER</div>
+    </div>
+    <div class="cover-tags">
+      <div class="cover-tag">本地运行</div>
+      <div class="cover-tag">安全可控</div>
+      <div class="cover-tag">国产适配</div>
+    </div>
+  </div>
+</section>
+
+<!-- 02 目录 -->
+<section class="slide" data-label="目录">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">目 录</div>
+    <div class="s-title">CONTENTS</div>
+    <div class="s-sub">汇报提纲</div>
+  </div>
+  <div class="toc-body">
+    <div class="toc-item"><div class="n">01</div><div class="t">背景与需求</div><div class="d">为什么需要<br>本地智能助手</div></div>
+    <div class="toc-item"><div class="n">02</div><div class="t">产品定位</div><div class="d">是什么<br>解决什么问题</div></div>
+    <div class="toc-item"><div class="n">03</div><div class="t">核心能力总览</div><div class="d">八大能力<br>一图看懂</div></div>
+    <div class="toc-item"><div class="n">04</div><div class="t">重点能力演示</div><div class="d">办文办表 · 记忆模板<br>移动协同 · 本机操作</div></div>
+    <div class="toc-item"><div class="n">05</div><div class="t">安全与合规</div><div class="d">数据不出本机<br>全程可审计</div></div>
+    <div class="toc-item"><div class="n">06</div><div class="t">快速上手</div><div class="d">四步开始使用<br>部署与支持</div></div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">02 / 12</div>
+</section>
+
+<!-- 03 背景与需求 -->
+<section class="slide" data-label="背景与需求">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第一部分</div>
+    <div class="s-title">背景与需求</div>
+    <div class="s-sub">日常办公的三个「难」</div>
+  </div>
+  <div class="bg-body">
+    <div class="bg-pain">
+      <div class="pain-no">材料多</div>
+      <div class="card" style="border-top-color: var(--zw-gold); flex: 1;">
+        <h3 style="color: var(--zw-ink);">文表处理费时费力</h3>
+        <p>通知、总结、台账、报表反复起草校对，大量时间耗在「找资料、对格式、填表格」上。</p>
+      </div>
+    </div>
+    <div class="bg-pain">
+      <div class="pain-no">数据严</div>
+      <div class="card" style="border-top-color: var(--zw-gold); flex: 1;">
+        <h3 style="color: var(--zw-ink);">数据安全红线不可越</h3>
+        <p>工作材料敏感度高，不能把文件随意上传到外部云端 AI，安全合规是硬约束。</p>
+      </div>
+    </div>
+    <div class="bg-pain">
+      <div class="pain-no">系统杂</div>
+      <div class="card" style="border-top-color: var(--zw-gold); flex: 1;">
+        <h3 style="color: var(--zw-ink);">国产化环境需适配</h3>
+        <p>办公终端逐步向麒麟、统信 UOS 等国产系统迁移，工具必须跟得上、跑得稳。</p>
+      </div>
+    </div>
+  </div>
+  <div class="bg-quote">
+    需要一位<strong>「懂规矩、守本分」</strong>的智能助手：数据留在本机，能力覆盖办文办会办事，国产系统上一样好用。
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">03 / 12</div>
+</section>
+
+<!-- 04 产品定位 -->
+<section class="slide" data-label="产品定位">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第二部分</div>
+    <div class="s-title">产品定位</div>
+    <div class="s-sub">一名「住」在您电脑里的工作助手</div>
+  </div>
+  <div class="pos-body">
+    <div class="pos-left">
+      <div class="pos-slogan">选定一个工作文件夹，<br>用一句话交代任务，<br>剩下的交给它一步步做完。</div>
+      <div class="pos-desc">DYWorker 是一款完全在本地运行的 AI 工作助手。它能读资料、理内容、写文档、做表格、操作办公软件，遇到有风险的操作会先请您确认。所有数据都留在本机，不上传云端。</div>
+      <div class="pos-keys">
+        <div class="pos-key"><div class="k">本地运行</div><div class="v">数据不出本机，密钥加密保存，绝不明文落盘</div></div>
+        <div class="pos-key"><div class="k">全程可控</div><div class="v">风险操作先弹窗确认，执行过程全程留痕可查</div></div>
+        <div class="pos-key"><div class="k">开放接入</div><div class="v">兼容主流模型接口，可接单位内网自建模型服务</div></div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="shot" style="width: 100%;">
+        <img src="shots/01-main-interface.png" alt="DYWorker 主界面">
+        <div class="shot-cap">DYWorker 主界面 · 任务对话窗口</div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">04 / 12</div>
+</section>
+
+<!-- 05 核心能力总览 -->
+<section class="slide" data-label="核心能力总览">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第三部分</div>
+    <div class="s-title">核心能力总览</div>
+    <div class="s-sub">八大能力 · 覆盖日常办公全场景</div>
+  </div>
+  <div class="cap-body">
+    <div class="card cap-item"><div class="cap-no">壹</div><div><h4>任务对话</h4><p>以工作区为中心，自然语言派活，自动拆解步骤、逐步执行、随时追溯。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">贰</div><div><h4>办文办表</h4><p>读懂 PDF、Word、Excel、PPT，直接生成真实的 Word 文档和 Excel 表格。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">叁</div><div><h4>长期记忆</h4><p>公文格式、单位口径说一次就记住，分偏好、规则、禁忌、事实、经验五类。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">肆</div><div><h4>工作模板</h4><p>常用任务沉淀为模板一键复用，还可安装技能包扩展专项能力。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">伍</div><div><h4>计划任务</h4><p>定时唤醒、断点续跑，长任务不用守着，像同事一样记着把事情做完。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">陆</div><div><h4>开放模型</h4><p>兼容主流模型接口，DeepSeek、通义、智谱或内网自建服务均可接入。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">柒</div><div><h4>移动协同</h4><p>接入 QQ、微信消息渠道，不在电脑前也能远程派活、收结果。</p></div></div>
+    <div class="card cap-item"><div class="cap-no">捌</div><div><h4>本机操作</h4><p>可操作 macOS、Linux 桌面应用，原生支持麒麟 V10 与统信 UOS。</p></div></div>
+    <div class="card cap-item" style="border-top-color: var(--zw-gold); background: var(--zw-red); color: #fff;"><div class="cap-no" style="border-color: var(--zw-gold-light); color: var(--zw-gold-light);">安</div><div><h4 style="color: #fff;">安全审计</h4><p style="color: rgba(255,255,255,0.85);">风险操作必确认，文件、命令、联网、外部调用全部留痕。</p></div></div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">05 / 12</div>
+</section>
+
+<!-- 06 办文办表 -->
+<section class="slide" data-label="重点能力·办文办表">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第四部分</div>
+    <div class="s-title">办文办表：直接生成真实文件</div>
+    <div class="s-sub">不是给一段文字，而是交付可用的文档</div>
+  </div>
+  <div class="split-body">
+    <div class="split-text">
+      <div class="feat-list">
+        <div class="feat"><div class="dot"></div><div><h4>全格式读取</h4><p>文本、PDF、Word、Excel、PPT 都能读，会议纪要、政策文件直接「喂」给它。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>公文级排版</h4><p>导出的 Word 符合公文格式规范：标题二号居中、正文三号仿宋、首行缩进、行距二十八磅。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>表格直接成册</h4><p>统计表、登记表、汇总表一键生成 Excel，打开即可继续编辑上报。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>可视化辅助决策</h4><p>回答中支持图表、步骤条等可视化展示，方案对比一目了然。</p></div></div>
+      </div>
+    </div>
+    <div class="split-shot">
+      <div class="shot">
+        <img src="shots/04-generated-word.png" alt="生成的 Word 文档">
+        <div class="shot-cap">自动生成的 Word 文档 · 符合公文格式</div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">06 / 12</div>
+</section>
+
+<!-- 07 记忆与模板 -->
+<section class="slide" data-label="重点能力·记忆与模板">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第四部分</div>
+    <div class="s-title">记忆与模板：越用越懂您</div>
+    <div class="s-sub">说一次就记住 · 沉淀一次就复用</div>
+  </div>
+  <div class="split-body">
+    <div class="split-text">
+      <div class="feat-list">
+        <div class="feat"><div class="dot"></div><div><h4>五类长期记忆</h4><p>偏好、规则、禁忌、事实、经验分类管理，可全局通用，也可只属于某个工作区。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>记住单位规矩</h4><p>「我们单位的公文格式要求」「这类材料一律用某口径」，告诉它一次，以后自动遵守。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>工作模板沉淀</h4><p>验证过的常用流程保存为模板，下次同类任务一键复用，做法不走样。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>技能包扩展</h4><p>内置技能库，可按需安装专项技能（如公众号发布、地图服务），能力持续生长。</p></div></div>
+      </div>
+    </div>
+    <div class="split-shot">
+      <div class="shot">
+        <img src="shots/07-memory.png" alt="对话中自动保存的记忆">
+        <div class="shot-cap">对话中自动保存的长期记忆</div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">07 / 12</div>
+</section>
+
+<!-- 08 开放模型接入 -->
+<section class="slide" data-label="重点能力·开放模型接入">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第四部分</div>
+    <div class="s-title">开放模型接入：用什么模型您说了算</div>
+    <div class="s-sub">兼容主流接口 · 支持内网自建</div>
+  </div>
+  <div class="split-body">
+    <div class="split-text">
+      <div class="feat-list">
+        <div class="feat"><div class="dot"></div><div><h4>接口开放兼容</h4><p>兼容 OpenAI Chat Completions 与 Responses 两套主流接口，填上地址和密钥就能用。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>多套配置切换</h4><p>内置 DeepSeek 模型，也可配置通义、智谱等多家服务，按任务自由切换。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>内网服务可接</h4><p>支持接入单位内网自建的模型服务，敏感业务全程不出内网。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>密钥安全存储</h4><p>密钥通过系统安全存储加密保存，绝不明文写入磁盘。</p></div></div>
+      </div>
+    </div>
+    <div class="split-shot">
+      <div class="shot">
+        <img src="shots/09-model-config.png" alt="多套模型配置">
+        <div class="shot-cap">模型设置 · 多套配置自由切换</div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">08 / 12</div>
+</section>
+
+<!-- 09 移动协同 -->
+<section class="slide" data-label="重点能力·移动协同">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第四部分</div>
+    <div class="s-title">移动协同：不在电脑前也能派活</div>
+    <div class="s-sub">QQ / 微信消息渠道</div>
+  </div>
+  <div class="split-body">
+    <div class="mob-shots">
+      <div class="mob-shot">
+        <div class="shot">
+          <img src="shots/12-qq-chat.png" alt="手机 QQ 远程对话">
+          <div class="shot-cap">手机上远程对话</div>
+        </div>
+      </div>
+      <div class="mob-shot">
+        <div class="shot">
+          <img src="shots/13-qq-task.png" alt="手机 QQ 远程派任务">
+          <div class="shot-cap">手机上远程派任务</div>
+        </div>
+      </div>
+    </div>
+    <div class="split-text" style="flex: 0.9;">
+      <div class="feat-list">
+        <div class="feat"><div class="dot"></div><div><h4>官方渠道接入</h4><p>支持 QQ 官方机器人与微信渠道，配置简单，消息直达。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>远程派活收结果</h4><p>外出、开会、在家，发条消息就能交代任务，做完了结果发回手机。</p></div></div>
+        <div class="feat"><div class="dot"></div><div><h4>长任务不守候</h4><p>配合定时唤醒与断点续跑，耗时任务交给它慢慢做，做完主动汇报。</p></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">09 / 12</div>
+</section>
+
+<!-- 10 安全与合规 -->
+<section class="slide" data-label="安全与合规">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第五部分</div>
+    <div class="s-title">安全与合规</div>
+    <div class="s-sub">数据不出本机 · 全程可审计 · 关键操作必确认</div>
+  </div>
+  <div class="sec-body">
+    <div class="sec-grid">
+      <div class="sec-item"><h4>数据本地留存</h4><p>工作区文件、任务数据、登录凭据只保存在本机用户数据目录，不上传云端。</p></div>
+      <div class="sec-item"><h4>风险先确认</h4><p>风险命令、本机界面修改先弹窗确认；工作区外路径单次操作单次授权。</p></div>
+      <div class="sec-item"><h4>全程留痕</h4><p>文件读写、命令执行、联网访问、外部工具调用全部记录，随时可查可回放。</p></div>
+      <div class="sec-item"><h4>过程可追溯</h4><p>轨迹控制台完整展示模型请求、工具调用、计划与文件变更的时间线。</p></div>
+      <div class="sec-item"><h4>密钥加密</h4><p>模型密钥经系统安全存储加密保存，不明文落盘、不进入代码仓库。</p></div>
+      <div class="sec-item"><h4>国产化适配</h4><p>原生支持麒麟 V10（ARM64）与统信 UOS，一条命令打出安装包。</p></div>
+    </div>
+    <div style="flex: 0 0 40%; min-width: 0;">
+      <div class="shot">
+        <img src="shots/16-risk-approval.png" alt="风险操作确认弹窗">
+        <div class="shot-cap">风险操作确认弹窗 · 单次授权</div>
+      </div>
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">10 / 12</div>
+</section>
+
+<!-- 11 快速上手 -->
+<section class="slide" data-label="快速上手">
+  <div class="s-head"></div>
+  <div class="s-title-wrap">
+    <div class="s-kicker">第六部分</div>
+    <div class="s-title">快速上手</div>
+    <div class="s-sub">四步开始使用</div>
+  </div>
+  <div class="quick-body">
+    <div class="quick-steps">
+      <div class="quick-step">
+        <div class="qs-no">一</div>
+        <h4>安装部署</h4>
+        <p>支持 Windows、macOS、麒麟 V10、统信 UOS，安装包一键安装，Windows 免管理员权限。</p>
+      </div>
+      <div class="quick-step">
+        <div class="qs-no">二</div>
+        <h4>配置模型</h4>
+        <p>打开「设置」，填入模型服务地址、模型名称与密钥；内网自建服务同样适用。</p>
+      </div>
+      <div class="quick-step">
+        <div class="qs-no">三</div>
+        <h4>选定工作区</h4>
+        <p>选择一个文件夹作为工作区，助手只在该范围内读写，边界清晰。</p>
+      </div>
+      <div class="quick-step">
+        <div class="qs-no">四</div>
+        <h4>开口派活</h4>
+        <p>用一句话描述目标，它自动拆解执行；常用要求说一次，它就长期记住。</p>
+      </div>
+    </div>
+    <div class="quick-note">
+      <strong>温馨提示：</strong>首次启动可选择「政府单位」身份，界面与默认口径更贴合机关办公习惯；身份随时可在设置中修改。使用中遇到问题，可通过轨迹控制台回看完整执行过程，便于定位与反馈。
+    </div>
+  </div>
+  <div class="s-foot">DYWorker 本地智能工作助手</div>
+  <div class="s-pageno">11 / 12</div>
+</section>
+
+<!-- 12 结尾 -->
+<section class="slide end dark-page" data-label="结束页">
+  <div class="s-head"></div>
+  <div class="end-inner">
+    <div class="end-title">让 AI 在规矩之内，<br>为您多办实事</div>
+    <div class="end-rule"></div>
+    <div class="end-sub">DYWorker 本地智能工作助手</div>
+    <div class="end-meta">数据不出本机 · 办事快人一步<br>欢迎各位同事试用并反馈意见</div>
+  </div>
+</section>
+
+</deck-stage>
+
+<script src="deck-stage.js"></script>
+</body>
+</html>

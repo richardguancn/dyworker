@@ -393,7 +393,7 @@ export interface ChannelsConfig {
   qq: { enabled: boolean; appId: string; appSecret: string };
   wechat: { enabled: boolean };
   modelProfileId: string;
-  approvalMode: "auto" | "reviewer" | "interactive";
+  approvalMode?: "auto" | "reviewer" | "interactive";
 }
 
 export type ChannelConnectionStatus = "disabled" | "connecting" | "awaiting-scan" | "online" | "error";

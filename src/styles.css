@@ -494,6 +494,28 @@ body.resizing-panels .app-shell {
   padding-left: 0;
 }
 
+.workspace-sessions-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--quiet);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-sessions-toggle:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
 .session-item-wrap {
   position: relative;
   display: flex;
@@ -5072,6 +5094,7 @@ body.resizing-panels .app-shell {
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  color-scheme: light;
 }
 
 .composer-effort-select:hover {
@@ -5081,6 +5104,11 @@ body.resizing-panels .app-shell {
 .composer-effort-select:focus-visible {
   outline: 2px solid #6b7fa8;
   outline-offset: -2px;
+}
+
+.composer-effort-select option {
+  background: #fafaf7;
+  color: #35382f;
 }
 
 .model-menu {
@@ -7553,6 +7581,7 @@ body.resizing-panels .app-shell {
   .attachment-chip,
   .attachment-chip button,
   .composer-mode,
+  .composer-effort-select,
   .add-menu button,
   .add-menu small,
   .model-menu-title,
@@ -7967,6 +7996,7 @@ body.resizing-panels .app-shell {
   .attachment-chip button:hover,
   .icon-button.active,
   .composer-mode:hover,
+  .composer-effort-select:hover,
   .add-menu button:hover,
   .model-menu button:hover,
   .model-menu button.active {
@@ -7976,10 +8006,177 @@ body.resizing-panels .app-shell {
 
   .add-menu,
   .model-menu,
-  .approval-mode-menu {
+  .approval-mode-menu,
+  .branch-menu,
+  .commit-panel {
     border-color: var(--border);
     background: #252622;
     box-shadow: var(--shadow-lg);
+  }
+
+  .composer-effort-select {
+    color-scheme: dark;
+    background: transparent;
+  }
+
+  .composer-effort-select:focus-visible {
+    outline: 1.5px solid rgba(120, 160, 255, 0.45);
+    outline-offset: -1px;
+  }
+
+  .composer-effort-select option {
+    background: #252622;
+    color: #d8dad3;
+  }
+
+  /* Git 分支管理与提交推送面板深色模式适配 */
+  .branch-button {
+    color: #c8ccc4;
+  }
+
+  .branch-button:hover,
+  .branch-button.active {
+    background: rgba(255, 255, 255, 0.08);
+    color: #f0f2ed;
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .branch-menu-action {
+    color: #d8dad3;
+  }
+
+  .branch-menu-action:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+  }
+
+  .branch-search {
+    border-color: var(--border);
+    color: #8f948a;
+  }
+
+  .branch-search input {
+    color: #e7e9e2;
+  }
+
+  .branch-search input::placeholder {
+    color: #72766e;
+  }
+
+  .branch-item {
+    color: #d8dad3;
+  }
+
+  .branch-item:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+  }
+
+  .branch-item.current {
+    color: #ffffff;
+  }
+
+  .branch-item-meta {
+    color: #8f948a;
+  }
+
+  .branch-item > svg:last-child {
+    color: #9ecc2a;
+  }
+
+  .branch-empty {
+    color: #8f948a;
+  }
+
+  .branch-create-toggle {
+    border-top-color: var(--border);
+    color: #a2a69c;
+  }
+
+  .branch-create-toggle:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+  }
+
+  .branch-create {
+    border-top-color: var(--border);
+  }
+
+  .branch-create input {
+    border-color: var(--border);
+    color: #e7e9e2;
+  }
+
+  .branch-create input:focus {
+    border-color: #9ecc2a;
+  }
+
+  .commit-panel-branch {
+    border-color: var(--border);
+    color: #d8dad3;
+  }
+
+  .commit-message-input {
+    border-color: var(--border);
+    color: #e7e9e2;
+  }
+
+  .commit-message-input::placeholder {
+    color: #72766e;
+  }
+
+  .commit-message-input:focus {
+    border-color: #9ecc2a;
+  }
+
+  .commit-ai-row button {
+    border-color: rgba(168, 207, 56, 0.35);
+    color: #a8cf38;
+  }
+
+  .commit-ai-row button:hover:not(:disabled) {
+    background: rgba(168, 207, 56, 0.12);
+  }
+
+  .commit-include-row {
+    color: #d8dad3;
+  }
+
+  .commit-include-label input {
+    accent-color: #9ecc2a;
+  }
+
+  .commit-diff-stats .diff-added {
+    color: #9ecc2a;
+  }
+
+  .commit-diff-stats .diff-removed {
+    color: #ef9189;
+  }
+
+  .commit-actions button {
+    border-color: var(--border);
+    color: #d8dad3;
+  }
+
+  .commit-actions button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+  }
+
+  .commit-actions .commit-primary {
+    border-color: rgba(168, 207, 56, 0.5);
+    background: rgba(168, 207, 56, 0.15);
+    color: #b8e635;
+  }
+
+  .commit-actions .commit-primary:hover:not(:disabled) {
+    background: rgba(168, 207, 56, 0.22);
+  }
+
+  .commit-actions kbd {
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #a2a69c;
   }
 
   .context-ring-track {

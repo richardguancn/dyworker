@@ -1,0 +1,16 @@
+{
+  "project": "dyworker-intro-deck",
+  "title": "DYWorker 项目介绍 PPT（政务风格）",
+  "created": "2026-09-02",
+  "designSystems": [],
+  "assets": [
+    {
+      "name": "DYWorker 项目介绍 PPT",
+      "file": "DYWorker 项目介绍 PPT.html",
+      "type": "deck",
+      "slides": 12,
+      "status": "draft",
+      "notes": "政务风格：深红+金色+米白；封面/目录/背景/定位/能力总览/办文办表/记忆模板/开放模型/移动协同/安全合规/快速上手/结尾"
+    }
+  ]
+}
