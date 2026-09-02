@@ -9,6 +9,7 @@ import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoA
 const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
 const oracleWorkspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
 const oracleInternetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open"]);
+const oracleInternetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
 const oracleBrowserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);
 
 function oracleNeedsApproval(name, platform) {
@@ -31,7 +32,9 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
     return action === "install_dependencies" ? "ask" : "allow";
   }
   if (approvalMode === "interactive" || approvalMode === "reviewer") {
-    if (hasExternalPaths || oracleInternetApprovalTools.has(name)) return "ask";
+    if (hasExternalPaths) return "ask";
+    if (approvalMode === "reviewer" && oracleInternetReadTools.has(name)) return "allow";
+    if (oracleInternetApprovalTools.has(name)) return "ask";
     if (!normallyNeedsApproval) return "allow";
     // 删除不可恢复：interactive/reviewer 不随工作区写操作直接放行
     if (name === "delete_file") return "ask";
@@ -130,7 +133,11 @@ test("常驻规则命中时 evaluateApproval 把 ask 改判为 allow", () => {
   const rules = [{ kind: "path-glob", tool: "write_file", pattern: "*.docx" }];
   const base = { approvalMode: "interactive", name: "write_file", args: { path: "材料/总结.docx" } };
   assert.equal(evaluateApproval({ ...base, hasExternalPaths: true }), "ask");
-  assert.equal(evaluateApproval({ ...base, hasExternalPaths: true, standingRules: rules }), "allow");
+  // 域名常驻规则同样能放行（如始终允许 zh.wikipedia.org）
+  const domainRules = [{ kind: "domain", tool: "fetch_web_page", pattern: "zh.wikipedia.org" }];
+  const fetchBase = { approvalMode: "interactive", name: "fetch_web_page", args: { url: "https://zh.wikipedia.org/wiki/西兰公国" } };
+  assert.equal(evaluateApproval(fetchBase), "ask");
+  assert.equal(evaluateApproval({ ...fetchBase, standingRules: domainRules }), "allow");
   // 钩子强制审批压过常驻规则
   assert.equal(evaluateApproval({ ...base, hasExternalPaths: true, hookRequiresApproval: true, standingRules: rules }), "ask");
   // deny-changes 压过常驻规则
