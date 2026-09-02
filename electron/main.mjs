@@ -4087,9 +4087,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       ...(attachments.length ? { attachments } : {}),
     };
     sendUserMessage();
-    // 渠道审批严格度：auto 自动执行(少打扰)/interactive 严格逐次确认，其余回退 reviewer。
-    const channelMode = settings.channels?.approvalMode;
-    const approvalMode = channelMode === "auto" || channelMode === "interactive" ? channelMode : "reviewer";
+    // 渠道任务与桌面会话保持统一的审批权限（使用全局设置/桌面当前选择的审批模式）
+    const approvalMode = normalizeApprovalMode(settings?.approvalMode);
     let baseRouter = createExtraToolRouter(taskSettings, workspacePath);
     // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
     routeExtraTool = async (name, args) => {

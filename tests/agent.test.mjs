@@ -73,7 +73,8 @@ test("Computer Use 只读查看直接执行，界面操作遵守当前权限档�
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: stateTool, platform: "darwin" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: stateTool, platform: "linux" }), "allow");
   assert.equal(approvalDecision({ approvalMode: "deny-changes", name: clickTool }), "deny");
-  assert.equal(approvalDecision({ approvalMode: "full-access", name: clickTool }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "full-access", name: clickTool }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "full-access", name: launchTool }), "allow");
 });
 
 async function makeWorkspace(files = {}) {
@@ -1508,6 +1509,15 @@ test("解释器与技能脚本路径不再算工作区外路径", async (t) => {
   // 解释器执行 ~/.agents 技能脚本属于既定工作流
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "/opt/homebrew/bin/bun ~/.agents/skills/foo/wechat-api.ts post/a.md --theme grace" }),
+    [],
+  );
+  // 环境变量赋值中的系统可执行工具与技能脚本路径豁免
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: `cd ${root} && P=/usr/local/bin/python3 && $P scripts/run.py` }),
+    [],
+  );
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: `cd ${root} && BUN=/opt/homebrew/bin/bun && API=~/.agents/skills/foo/wechat-api.ts` }),
     [],
   );
   // 负例:把工具/技能文件当数据读仍上报;未知根目录的二进制仍上报;普通数据路径仍上报

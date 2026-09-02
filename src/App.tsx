@@ -84,6 +84,7 @@ import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } f
 
 const now = new Date().toISOString();
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
+const WORKSPACE_SESSION_LIMIT = 5;
 
 const previewSessions: SessionRecord[] = [
   {
@@ -248,7 +249,7 @@ const defaultSettings: ProviderSettings = {
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
   mcpServers: [],
-  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "", approvalMode: "auto" },
+  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "" },
   skillLibraries: [{
     id: "skillhub",
     name: "SkillHub",
@@ -3799,22 +3800,6 @@ function ChannelsPanel({ value, onSave }: {
           ))}
         </select>
       </div>
-      <div className="mcp-server-row">
-        <span className="mcp-server-name">
-          <strong>审批严格度</strong>
-          <small>自动执行会放行工作区内读写、低风险命令与联网查询，只有越界路径、危险命令等仍需确认</small>
-        </span>
-        <select
-          className="channel-model-select"
-          value={channels.approvalMode}
-          disabled={saving}
-          onChange={(event) => void saveChannels({ ...channels, approvalMode: event.target.value as ChannelsConfig["approvalMode"] }, "审批严格度已更新")}
-        >
-          <option value="auto">自动执行（少打扰，推荐）</option>
-          <option value="reviewer">替我审批（低风险操作自动放行）</option>
-          <option value="interactive">严格（联网与重要操作逐次确认）</option>
-        </select>
-      </div>
 
       <div className="dialog-section-title">QQ 机器人（官方）</div>
       <ChannelStatusLine status={statusMap?.qq} />
@@ -5101,6 +5086,7 @@ export function App() {
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
+  const [workspaceSessionsExpanded, setWorkspaceSessionsExpanded] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
   const [platform, setPlatform] = useState("");
   const [windowShadow, setWindowShadow] = useState(false);
@@ -8185,6 +8171,14 @@ export function App() {
               <div className="workspace-session-list">
                 {workspaceSessionGroups.workspaces.map((group) => {
                   const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
+                  const isSearching = query.trim() !== "";
+                  const totalSessions = group.sessions.length;
+                  const hasActiveHiddenSession = group.sessions.slice(WORKSPACE_SESSION_LIMIT).some((session) => session.id === activeId);
+                  const isSessionsExpanded = isSearching || (workspaceSessionsExpanded[group.path] ?? (hasActiveHiddenSession ? true : false));
+                  const visibleGroupSessions = isSessionsExpanded || totalSessions <= WORKSPACE_SESSION_LIMIT
+                    ? group.sessions
+                    : group.sessions.slice(0, WORKSPACE_SESSION_LIMIT);
+                  const showToggle = totalSessions > WORKSPACE_SESSION_LIMIT && !isSearching;
                   return (
                     <div className={`workspace-session-group ${expanded ? "expanded" : ""} ${group.pinned ? "pinned" : ""}`} key={group.path} data-menu-root>
                       <div className="workspace-session-row">
@@ -8233,7 +8227,25 @@ export function App() {
                           </button>
                         </div>
                       )}
-                      {expanded && <div className="session-list workspace-session-items">{group.sessions.map(renderSessionItem)}</div>}
+                      {expanded && (
+                        <div className="session-list workspace-session-items">
+                          {visibleGroupSessions.map(renderSessionItem)}
+                          {showToggle && (
+                            <button
+                              type="button"
+                              className="workspace-sessions-toggle"
+                              onClick={() => {
+                                setWorkspaceSessionsExpanded((current) => ({
+                                  ...current,
+                                  [group.path]: !isSessionsExpanded,
+                                }));
+                              }}
+                            >
+                              {isSessionsExpanded ? "收起显示" : "展开显示"}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
