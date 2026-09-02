@@ -10,9 +10,11 @@ import {
   absoluteWindowPoint,
   desktopToolDefinitions,
   findBestWindow,
+  hasNonAscii,
   isTrustedRootFile,
   linuxDependencyInstallCommand,
   linuxDependencyPackages,
+  normalizeX11WindowId,
   packageManagerLockLauncherScript,
   parseWmctrlOutput,
   parseXdotoolGeometry,
@@ -114,6 +116,7 @@ linuxTest("麒麟环境安装工具使用系统授权安装固定依赖", () => 
     "wmctrl",
     "python3-pyatspi",
     "imagemagick",
+    "xclip",
   ]);
   assert.deepEqual(linuxDependencyInstallCommand(["wmctrl"]), {
     program: "/usr/bin/pkexec",
@@ -275,7 +278,7 @@ linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检
     which: [
       "#!/bin/sh",
       "case \"$1\" in",
-      "  apt-get|pkexec|systemd-run|flock|xdotool) exit 0 ;;",
+      "  apt-get|pkexec|systemd-run|flock|xdotool|xclip) exit 0 ;;",
       "  wmctrl|import) [ -f \"$DYWORKER_DEP_MARKER\" ] && exit 0 || exit 1 ;;",
       "  *) exit 1 ;;",
       "esac",
@@ -359,7 +362,7 @@ linuxTest("关闭聊天后系统后台安装继续，重新连接可以检查结
     which: [
       "#!/bin/sh",
       "case \"$1\" in",
-      "  apt-get|pkexec|systemd-run|flock|xdotool) exit 0 ;;",
+      "  apt-get|pkexec|systemd-run|flock|xdotool|xclip) exit 0 ;;",
       "  wmctrl|import) [ -f \"$DYWORKER_DEP_MARKER\" ] && exit 0 || exit 1 ;;",
       "  *) exit 1 ;;",
       "esac",
@@ -444,7 +447,7 @@ linuxTest("管理员级安装计划发生变化时停止安装", async (t) => {
     which: [
       "#!/bin/sh",
       "case \"$1\" in",
-      "  apt-get|pkexec|systemd-run|flock|xdotool|import) exit 0 ;;",
+      "  apt-get|pkexec|systemd-run|flock|xdotool|import|xclip) exit 0 ;;",
       "  wmctrl) exit 1 ;;",
       "  *) exit 1 ;;",
       "esac",
@@ -506,4 +509,19 @@ linuxTest("管理员级安装计划发生变化时停止安装", async (t) => {
   assert.equal(result.isError, true);
   assert.match(result.text, /计划已经变化/);
   await assert.rejects(() => fs.access(installed));
+});
+
+test("X11 窗口编号规范化支持十六进制与十进制转换", () => {
+  assert.equal(normalizeX11WindowId("0x03e00007"), "65011719");
+  assert.equal(normalizeX11WindowId("0x3e00007"), "65011719");
+  assert.equal(normalizeX11WindowId("65011719"), "65011719");
+  assert.equal(normalizeX11WindowId(""), "");
+});
+
+test("非 ASCII 文本检测准确识别中文与特殊字符以决定走剪贴板注入通道", () => {
+  assert.equal(hasNonAscii("hello world"), false);
+  assert.equal(hasNonAscii("npm test --verbose"), false);
+  assert.equal(hasNonAscii("你好，世界"), true);
+  assert.equal(hasNonAscii("项目汇报.docx"), true);
+  assert.equal(hasNonAscii("emoji: 🎉"), true);
 });

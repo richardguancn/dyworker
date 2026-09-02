@@ -164,6 +164,10 @@ def value_of(element):
     return "" if value is None else str(value)
 
 
+def description_of(element):
+    return safe(lambda: element.description, "") or ""
+
+
 def describe(root):
     lines = ["可操作控件（操作后必须重新读取状态）："]
     for index, element in descendants(root):
@@ -173,14 +177,17 @@ def describe(root):
         bounds = bounds_of(element)
         value = value_of(element)
         text = text_of(element, 220).replace("\n", " ").strip()
-        if not (name or actions or value or text or role in ("frame", "dialog", "entry", "button", "menu item", "check box", "combo box")):
+        desc = description_of(element).replace("\n", " ").strip()
+        if not (name or desc or actions or value or text or role in ("frame", "dialog", "entry", "button", "menu item", "check box", "combo box")):
             continue
         details = ["[e%d]" % index, role or "unknown"]
         if name:
             details.append('"%s"' % name[:240])
+        if desc and desc != name and desc != text:
+            details.append('desc="%s"' % desc[:160])
         if value:
             details.append("value=%s" % value[:120])
-        if text and text != name:
+        if text and text != name and text != desc:
             details.append('text="%s"' % text[:220])
         if bounds and bounds["width"] > 0 and bounds["height"] > 0:
             details.append(

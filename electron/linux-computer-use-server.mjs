@@ -59,6 +59,7 @@ const linuxDependencies = Object.freeze([
   { packageName: "wmctrl", label: "wmctrl", command: ["which", "wmctrl"] },
   { packageName: "python3-pyatspi", label: "python3-pyatspi", command: ["python3", "-c", "import pyatspi"] },
   { packageName: "imagemagick", label: "ImageMagick", command: ["which", "import"] },
+  { packageName: "xclip", label: "xclip", command: ["which", "xclip"] },
 ]);
 export const linuxDependencyPackages = Object.freeze(linuxDependencies.map((item) => item.packageName));
 
@@ -879,6 +880,74 @@ async function accessibility(payload) {
   }
 }
 
+export function normalizeX11WindowId(id) {
+  const str = String(id || "").trim().toLowerCase();
+  if (!str) return "";
+  if (str.startsWith("0x")) {
+    try {
+      return String(BigInt(str));
+    } catch {
+      return str;
+    }
+  }
+  if (/^\d+$/.test(str)) {
+    return str;
+  }
+  return str;
+}
+
+export async function activeWindowId() {
+  const result = await tryRun("xdotool", ["getactivewindow"], { timeoutMs: 3_000 });
+  if (result.code === 0 && result.stdout.trim()) {
+    return normalizeX11WindowId(result.stdout.trim());
+  }
+  const xpropResult = await tryRun("xprop", ["-root", "_NET_ACTIVE_WINDOW"], { timeoutMs: 3_000 });
+  if (xpropResult.code === 0) {
+    const match = xpropResult.stdout.match(/_NET_ACTIVE_WINDOW.*#\s*(0x[0-9a-fA-F]+|\d+)/);
+    if (match) return normalizeX11WindowId(match[1]);
+  }
+  return "";
+}
+
+export function hasNonAscii(str) {
+  return /[^\x20-\x7E]/.test(String(str || ""));
+}
+
+export async function typeViaClipboard(window, text) {
+  await activateWindow(window);
+  let clipOk = false;
+  const xclipResult = await tryRun("xclip", ["-selection", "clipboard"], {
+    input: text,
+    timeoutMs: 8_000,
+  });
+  if (xclipResult.code === 0) {
+    clipOk = true;
+  } else {
+    const xselResult = await tryRun("xsel", ["--clipboard", "--input"], {
+      input: text,
+      timeoutMs: 8_000,
+    });
+    if (xselResult.code === 0) {
+      clipOk = true;
+    }
+  }
+
+  if (!clipOk) {
+    throw new Error(`无法将文字写入系统剪贴板（输入中文或特殊文本需要 xclip 或 xsel 组件）：${xclipResult.stderr || "写入失败"}`);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await activateWindow(window);
+
+  const pasteResult = await tryRun("xdotool", ["key", "--clearmodifiers", "ctrl+v"], { timeoutMs: 5_000 });
+  if (pasteResult.code !== 0) {
+    const fallbackPaste = await tryRun("xdotool", ["key", "--clearmodifiers", "shift+Insert"], { timeoutMs: 5_000 });
+    if (fallbackPaste.code !== 0) {
+      throw new Error(pasteResult.stderr || fallbackPaste.stderr || "文字粘贴失败");
+    }
+  }
+}
+
 async function captureWindow(window) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-screen-"));
   const file = path.join(directory, "screen.png");
@@ -890,16 +959,45 @@ async function captureWindow(window) {
       const data = await fs.readFile(file).catch(() => null);
       if (data?.length) return data.toString("base64");
     }
+    const xwdFile = path.join(directory, "screen.xwd");
+    const xwdResult = await tryRun("xwd", ["-id", window.id, "-out", xwdFile], { timeoutMs: 6_000 });
+    if (xwdResult.code === 0) {
+      const convertResult = await tryRun("convert", [xwdFile, file], { timeoutMs: 6_000 });
+      if (convertResult.code === 0) {
+        const data = await fs.readFile(file).catch(() => null);
+        if (data?.length) return data.toString("base64");
+      }
+    }
     return "";
   } finally {
-    await fs.rm(directory, { recursive: true, force: true });
+    await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 
 async function activateWindow(window) {
-  const result = await tryRun("xdotool", ["windowactivate", "--sync", window.id], { timeoutMs: 8_000 });
-  if (result.code !== 0) {
-    throw new Error("无法激活目标窗口。请确认已安装 xdotool，并且当前使用 X11 桌面会话。");
+  const targetId = normalizeX11WindowId(window.id);
+  const initial = await activeWindowId();
+  if (initial && targetId && initial === targetId) {
+    return;
+  }
+
+  const xdoResult = await tryRun("xdotool", ["windowactivate", "--sync", window.id], { timeoutMs: 5_000 });
+  let current = await activeWindowId();
+  if (current && targetId && current === targetId) {
+    return;
+  }
+
+  const wmctrlResult = await tryRun("wmctrl", ["-i", "-a", window.id], { timeoutMs: 5_000 });
+  for (let i = 0; i < 4; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    current = await activeWindowId();
+    if (current && targetId && current === targetId) {
+      return;
+    }
+  }
+
+  if (xdoResult.code !== 0 && wmctrlResult.code !== 0 && !current) {
+    throw new Error("无法激活目标窗口。请确认已安装 xdotool 与 wmctrl，并且当前使用 X11 桌面会话。");
   }
 }
 
@@ -1152,10 +1250,17 @@ async function callTool(name, args) {
   if (name === "type_text") {
     const window = await runningWindow(args.app, args.window_id, args.window_title, true);
     await activateWindow(window);
-    const result = await tryRun("xdotool", ["type", "--clearmodifiers", "--delay", "8", "--", String(args.text || "")], {
-      timeoutMs: 30_000,
-    });
-    if (result.code !== 0) throw new Error(result.stderr || "文字输入失败");
+    const text = String(args.text || "");
+    if (hasNonAscii(text) || text.includes("\n") || text.includes("\t")) {
+      await typeViaClipboard(window, text);
+    } else {
+      const result = await tryRun("xdotool", ["type", "--clearmodifiers", "--delay", "8", "--", text], {
+        timeoutMs: 30_000,
+      });
+      if (result.code !== 0) {
+        await typeViaClipboard(window, text);
+      }
+    }
     return { text: "文字已输入。请重新读取应用状态后再继续。" };
   }
 
