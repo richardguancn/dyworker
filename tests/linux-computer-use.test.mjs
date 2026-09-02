@@ -9,6 +9,7 @@ import { McpClient } from "../electron/mcp.mjs";
 import {
   absoluteWindowPoint,
   desktopToolDefinitions,
+  findAvailableDisplay,
   findBestWindow,
   hasNonAscii,
   isTrustedRootFile,
@@ -19,7 +20,9 @@ import {
   parseWmctrlOutput,
   parseXdotoolGeometry,
   selectWindow,
+  targetDisplay,
   unpackedResourcePath,
+  VirtualDisplayManager,
 } from "../electron/linux-computer-use-server.mjs";
 
 // 该文件全部为 Linux 桌面操控专项测试（依赖 X11、dpkg、/usr/bin/python3 等），
@@ -525,3 +528,27 @@ test("非 ASCII 文本检测准确识别中文与特殊字符以决定走剪贴�
   assert.equal(hasNonAscii("项目汇报.docx"), true);
   assert.equal(hasNonAscii("emoji: 🎉"), true);
 });
+
+test("findAvailableDisplay 自动查找未被占用的 X11 虚拟显示器编号", async () => {
+  const display = await findAvailableDisplay(99, 199);
+  assert.match(display, /^:\d+$/);
+});
+
+test("VirtualDisplayManager 支持虚拟显示沙箱配置、分辨率固化与生命周期管理", async () => {
+  const manager = new VirtualDisplayManager({
+    enabled: true,
+    preferredDisplay: ":105",
+    resolution: "1920x1080x24",
+  });
+  assert.equal(manager.enabled, true);
+  assert.equal(manager.display, ":105");
+  assert.equal(manager.resolution, "1920x1080x24");
+  assert.equal(manager.effectiveDisplay(), ":105");
+
+  const disabledManager = new VirtualDisplayManager({ enabled: false });
+  assert.equal(disabledManager.enabled, false);
+  assert.equal(disabledManager.effectiveDisplay(), process.env.DISPLAY || "");
+
+  disabledManager.stop();
+});
+

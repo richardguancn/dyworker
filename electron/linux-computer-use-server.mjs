@@ -203,6 +203,99 @@ export function desktopToolDefinitions() {
   ];
 }
 
+export async function findAvailableDisplay(startNum = 99, maxNum = 199) {
+  for (let num = startNum; num <= maxNum; num += 1) {
+    const socketPath = `/tmp/.X11-unix/X${num}`;
+    const lockPath = `/tmp/.X${num}-lock`;
+    const socketExists = await fs.access(socketPath).then(() => true).catch(() => false);
+    const lockExists = await fs.access(lockPath).then(() => true).catch(() => false);
+    if (!socketExists && !lockExists) {
+      return `:${num}`;
+    }
+  }
+  return `:${startNum}`;
+}
+
+export class VirtualDisplayManager {
+  constructor({
+    enabled = process.env.DYWORKER_VIRTUAL_DISPLAY === "1" || Boolean(process.env.DYWORKER_XVFB_DISPLAY),
+    preferredDisplay = process.env.DYWORKER_XVFB_DISPLAY || "",
+    resolution = process.env.DYWORKER_XVFB_RESOLUTION || "1920x1080x24",
+  } = {}) {
+    this.enabled = Boolean(enabled);
+    this.preferredDisplay = String(preferredDisplay || "").trim();
+    this.resolution = String(resolution || "1920x1080x24").trim();
+    this.display = this.preferredDisplay;
+    this.child = null;
+    this.isStarted = false;
+  }
+
+  async start() {
+    if (!this.enabled) return "";
+    if (this.isStarted && this.display) return this.display;
+
+    const whichXvfb = await tryRun("which", ["Xvfb"], { timeoutMs: 5_000 });
+    if (whichXvfb.code !== 0) {
+      this.enabled = false;
+      return process.env.DISPLAY || "";
+    }
+
+    if (!this.display) {
+      this.display = await findAvailableDisplay(99, 199);
+    }
+
+    const [width, height, depth] = this.resolution.split("x");
+    const screenParam = `${width || 1920}x${height || 1080}x${depth || 24}`;
+
+    try {
+      this.child = spawn("Xvfb", [this.display, "-screen", "0", screenParam, "-nolisten", "tcp"], {
+        detached: true,
+        stdio: "ignore",
+      });
+      this.child.unref();
+
+      const displayNum = this.display.replace(/^:/, "");
+      const socketPath = `/tmp/.X11-unix/X${displayNum}`;
+      for (let i = 0; i < 20; i += 1) {
+        const socketReady = await fs.access(socketPath).then(() => true).catch(() => false);
+        if (socketReady) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      this.isStarted = true;
+      return this.display;
+    } catch {
+      this.enabled = false;
+      return process.env.DISPLAY || "";
+    }
+  }
+
+  stop() {
+    if (this.child) {
+      try {
+        this.child.kill("SIGTERM");
+      } catch {
+        // 忽略可能已经退出的错误
+      }
+      this.child = null;
+    }
+    this.isStarted = false;
+  }
+
+  effectiveDisplay() {
+    if (this.enabled && this.display) {
+      return this.display;
+    }
+    return process.env.DISPLAY || "";
+  }
+}
+
+export const virtualDisplayManager = new VirtualDisplayManager();
+
+export function targetDisplay() {
+  return virtualDisplayManager.effectiveDisplay();
+}
+
 const activeChildren = new Set();
 const cancelledToolRequests = new Set();
 let activeToolRequest = null;
@@ -234,8 +327,14 @@ function run(program, args = [], {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    const effectiveDisplay = targetDisplay();
+    const mergedEnv = {
+      ...process.env,
+      ...(effectiveDisplay ? { DISPLAY: effectiveDisplay } : {}),
+      ...env,
+    };
     const child = spawn(program, args, {
-      env: { ...process.env, ...env },
+      env: mergedEnv,
       detached: detached || killProcessGroup,
       stdio: detached ? "ignore" : ["pipe", "pipe", "pipe"],
     });
@@ -1162,6 +1261,9 @@ async function callTool(name, args) {
             ? "仍可根据目标窗口截图使用坐标操作。"
             : "也未取得目标窗口截图；请安装 ImageMagick。"
         }建议安装 python3-pyatspi 以获得控件编号。`,
+      virtualDisplayManager.isStarted
+        ? `\n显示环境：虚拟隔离屏幕 ${virtualDisplayManager.display} (${virtualDisplayManager.resolution})`
+        : "",
       process.env.XDG_SESSION_TYPE === "wayland"
         ? "\n提示：当前系统报告为 Wayland；麒麟 V10 建议使用 X11 会话，以确保可以操作所有办公应用。"
         : "",
@@ -1330,6 +1432,9 @@ async function handleMessage(message) {
 }
 
 async function startServer() {
+  if (virtualDisplayManager.enabled) {
+    await virtualDisplayManager.start();
+  }
   process.stdin.setEncoding("utf8");
   let buffer = "";
   let chain = Promise.resolve();
@@ -1359,6 +1464,7 @@ async function startServer() {
 }
 
 process.on("SIGTERM", () => {
+  virtualDisplayManager.stop();
   shutdownRequested = true;
   const protectedTransactionActive = [...activeChildren].some((child) => child.__dyworkerProtectedSystemTransaction);
   for (const child of activeChildren) {
@@ -1376,6 +1482,10 @@ process.on("SIGTERM", () => {
       if (!child.__dyworkerProtectedSystemTransaction) stopChild(child, "SIGKILL");
     }
   }, 250).unref();
+});
+
+process.on("exit", () => {
+  virtualDisplayManager.stop();
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
