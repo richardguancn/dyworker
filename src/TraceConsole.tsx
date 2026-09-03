@@ -53,6 +53,11 @@ const TRACE_TARGET_LABEL: Record<TraceEvent["target"], string> = {
 
 type TraceFilter = "all" | TraceEvent["target"];
 
+// 日志视图的类型筛选：按四类记录 kind 过滤
+type LogFilter = "all" | DebugLogEntry["kind"];
+
+const LOG_FILTER_KINDS: DebugLogEntry["kind"][] = ["model-request", "model-response", "tool-call", "tool-result"];
+
 function traceTime(trace: TraceEvent): string {
   const time = new Date(trace.time);
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}:${String(time.getSeconds()).padStart(2, "0")}`;
@@ -409,12 +414,15 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   const [mode, setMode] = useState<TimelineMode>("duration");
   const [search, setSearch] = useState("");
   const [logSearch, setLogSearch] = useState("");
+  const [logFilter, setLogFilter] = useState<LogFilter>("all");
   const [filter, setFilter] = useState<TraceFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string | undefined>();
   const [loadingHistory, setLoadingHistory] = useState(false);
   // 时间轴拖选的时间区间（毫秒），用于过滤明细列表；null 表示不过滤
   const [range, setRange] = useState<{ startMs: number; endMs: number } | null>(null);
   const listBodyRef = useRef<HTMLDivElement>(null);
+  // 用户手动切换过视图后，不再自动跳回「轨迹」视图（避免正在看日志时被流式轨迹抢走焦点）
+  const viewTouchedRef = useRef(false);
   // 最新 traces 镜像：loadHistory 分页递归时用 ref 去重，避免闭包捕获过期的 props
   const tracesRef = useRef(traces);
   tracesRef.current = traces;
@@ -452,13 +460,15 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
     });
   }, [traces, search, filter, range]);
 
-  // 日志视图搜索：按标题与内容过滤（与轨迹视图搜索语义一致）
+  // 日志视图过滤：类型筛选 + 按标题与内容搜索（与轨迹视图语义一致）
   const filteredLogs = useMemo(() => {
     const query = logSearch.trim().toLowerCase();
-    if (!query) return logs;
-    return logs.filter((entry) =>
-      (entry.title || "").toLowerCase().includes(query) || (entry.content || "").toLowerCase().includes(query));
-  }, [logs, logSearch]);
+    return logs.filter((entry) => {
+      if (logFilter !== "all" && entry.kind !== logFilter) return false;
+      if (!query) return true;
+      return (entry.title || "").toLowerCase().includes(query) || (entry.content || "").toLowerCase().includes(query);
+    });
+  }, [logs, logSearch, logFilter]);
 
   const rows = useMemo(() => flattenRows(filtered), [filtered]);
   const rowOffsets = useMemo(() => {
@@ -529,11 +539,17 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // 历史载入完成后自动从「日志」切回「轨迹」视图（初始 view 取决于挂载时 traces.length）
+  // 历史载入完成后自动从「日志」切回「轨迹」视图（初始 view 取决于挂载时 traces.length）。
+  // 仅在用户没手动切换过视图时执行一次：之后流式新增轨迹不再抢焦点，看日志不被打断。
+  const autoSwitchedViewRef = useRef(false);
   useEffect(() => {
-    if (traces.length && view === "log") setView("trace");
+    if (autoSwitchedViewRef.current || viewTouchedRef.current) return;
+    if (traces.length && view === "log") {
+      autoSwitchedViewRef.current = true;
+      setView("trace");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traces.length]);
+  }, [traces.length, view]);
 
   return (
     <div className="trace-console">
@@ -546,7 +562,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
             role="tab"
             aria-selected={view === "trace"}
             className={`trace-view-tab ${view === "trace" ? "active" : ""}`}
-            onClick={() => { setView("trace"); if (traces.length && !selectedKey) setSelectedKey(traceKey(traces[traces.length - 1])); }}
+            onClick={() => { viewTouchedRef.current = true; setView("trace"); if (traces.length && !selectedKey) setSelectedKey(traceKey(traces[traces.length - 1])); }}
           >
             轨迹
             <span className="trace-tab-count">{traces.length}</span>
@@ -556,7 +572,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
             role="tab"
             aria-selected={view === "log"}
             className={`trace-view-tab ${view === "log" ? "active" : ""}`}
-            onClick={() => setView("log")}
+            onClick={() => { viewTouchedRef.current = true; setView("log"); }}
           >
             日志
             <span className="trace-tab-count">{logs.length}</span>
@@ -691,6 +707,12 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
             <>
               <div className="trace-toolbar trace-log-toolbar">
                 <span className="trace-toolbar-count">{filteredLogs.length} / {logs.length} 条</span>
+                <select value={logFilter} onChange={(event) => setLogFilter(event.target.value as LogFilter)} aria-label="按类型筛选日志">
+                  <option value="all">全部类型</option>
+                  {LOG_FILTER_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>{debugKindLabels(kind)}</option>
+                  ))}
+                </select>
                 <div className="trace-search">
                   <Search size={12} />
                   <input
