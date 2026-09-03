@@ -20,6 +20,7 @@ import {
   Database,
   Copy,
   CornerUpLeft,
+  Download,
   FileCode2,
   FileDiff,
   File,
@@ -3568,6 +3569,75 @@ function IdentitySettingsPanel({ value, onSave }: {
   );
 }
 
+// 侧栏「设置」旁的更新按钮：有新版时出现；下载中把按钮本身变成圆环进度，
+// 圆环内显示百分比，点击可打开更新对话框查看更新内容
+function AppUpdateAction({
+  status,
+  onOpen,
+  onDownload,
+  onInstall,
+}: {
+  status: AppUpdateStatus;
+  onOpen: () => void;
+  onDownload: () => void;
+  onInstall: () => void;
+}) {
+  if (!["available", "downloading", "downloaded"].includes(status.state)) return null;
+  const percent = Math.round(Math.max(0, Math.min(100, status.percent || 0)));
+  const title = status.state === "available"
+    ? `发现新版本 ${status.version || ""}，点击下载更新`
+    : status.state === "downloading"
+      ? `正在下载新版本 ${status.version || ""}（${percent}%），点击查看详情`
+      : `新版本 ${status.version || ""} 已下载完成，点击安装更新`;
+
+  if (status.state === "downloading") {
+    const size = 30;
+    const stroke = 3;
+    const radius = (size - stroke) / 2;
+    const circumference = 2 * Math.PI * radius;
+    return (
+      <button
+        type="button"
+        className="app-update-button downloading"
+        title={title}
+        aria-label={title}
+        aria-valuenow={percent}
+        onClick={onOpen}
+      >
+        <svg className="app-update-ring" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+          <circle className="app-update-ring-track" cx={size / 2} cy={size / 2} r={radius} strokeWidth={stroke} fill="none" />
+          <circle
+            className="app-update-ring-bar"
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            strokeWidth={stroke}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - percent / 100)}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        </svg>
+        <span className="app-update-ring-label">{percent}</span>
+      </button>
+    );
+  }
+
+  const ready = status.state === "downloaded";
+  return (
+    <button
+      type="button"
+      className={`icon-button subtle app-update-button${ready ? " ready" : ""}`}
+      title={title}
+      aria-label={title}
+      onClick={ready ? onInstall : onDownload}
+    >
+      {ready ? <RefreshCw size={17} /> : <Download size={17} />}
+    </button>
+  );
+}
+
 function AppUpdateDialog({
   status,
   onClose,
@@ -3610,6 +3680,15 @@ function AppUpdateDialog({
         {status.state === "available" && (
           <p className="app-update-copy">GitHub 已发布新版本，下载完成后重启应用即可完成更新。</p>
         )}
+        {(status.state === "available" || status.state === "downloading" || status.state === "downloaded") && status.releaseNotes && (
+          <div className="app-update-notes">
+            <div className="app-update-notes-title">更新内容</div>
+            <div className="app-update-notes-body">{status.releaseNotes}</div>
+          </div>
+        )}
+        {(status.state === "available" || status.state === "downloading" || status.state === "downloaded") && !status.releaseNotes && (
+          <p className="app-update-copy">该版本未提供更新说明。</p>
+        )}
         {isChecking && <p className="app-update-copy">正在检查 GitHub 标签对应的最新版本，请稍候。</p>}
         {isDownloading && (
           <div className="app-update-progress" aria-label={`下载进度 ${progress}%`}>
@@ -3623,7 +3702,7 @@ function AppUpdateDialog({
         {status.state === "error" && <p className="app-update-copy error-text">{status.error || "暂时无法连接 GitHub，请稍后重试。"}</p>}
         <div className="dialog-actions app-update-actions">
           <button type="button" className="button-secondary" onClick={onClose}>稍后</button>
-          {status.state === "available" && <button type="button" className="button-primary" onClick={onDownload}>下载更新</button>}
+          {status.state === "available" && <button type="button" className="button-primary" onClick={onDownload}>下载并安装更新</button>}
           {status.state === "downloaded" && <button type="button" className="button-primary" onClick={onInstall}>重启并安装</button>}
           {(status.state === "not-available" || status.state === "error" || status.state === "unavailable") && (
             <button type="button" className="button-primary" onClick={onCheck} disabled={isChecking}>重新检查</button>
@@ -5159,6 +5238,11 @@ export function App() {
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
+  // 会话内搜索：在当前会话的消息 DOM 里高亮命中并按出现位置跳转（⌘F / Ctrl+F 打开）
+  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
+  const [conversationSearchQuery, setConversationSearchQuery] = useState("");
+  const [conversationSearchMatchIndex, setConversationSearchMatchIndex] = useState(0);
+  const [conversationMatchTotal, setConversationMatchTotal] = useState(0);
   // 排队中的任务运行标识：同会话内串行执行，排队消息未执行前允许编辑或取消
   const [queuedRunIds, setQueuedRunIds] = useState<Set<string>>(new Set());
   // 队列卡片里 ⋯ 菜单当前挂在哪条排队消息上
@@ -5173,6 +5257,13 @@ export function App() {
   const composerDockRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef(activeId);
   const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  // 会话内搜索：所有已渲染消息行的引用（含助手消息），DOM 高亮与跳转都用它
+  const messageRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const conversationSearchInputRef = useRef<HTMLInputElement>(null);
+  // 当前搜索命中的 DOM 区间列表（与 matchIndex 对齐），由高亮 effect 维护
+  const searchMatchRangesRef = useRef<Array<{ row: HTMLDivElement; range: Range }>>([]);
+  // 上一次自动滚动定位的命中标识（query#index），避免流式更新时反复滚动
+  const searchScrollKeyRef = useRef<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // @引用高亮镜像层：与 textarea 同步滚动，保持 token 背景对齐
   const composerMirrorRef = useRef<HTMLDivElement>(null);
@@ -5333,6 +5424,93 @@ export function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [imagePreview]);
+
+  // 会话内搜索：⌘F / Ctrl+F 打开（拦截浏览器默认查找），Esc 关闭
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setConversationSearchOpen(true);
+        requestAnimationFrame(() => conversationSearchInputRef.current?.select());
+      } else if (event.key === "Escape" && conversationSearchOpen) {
+        setConversationSearchOpen(false);
+        setConversationSearchQuery("");
+        setConversationSearchMatchIndex(0);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [conversationSearchOpen]);
+
+  // 会话内搜索高亮：直接在已渲染的消息行 DOM 文本上建 Range，注册 CSS Custom Highlight，
+  // 这样用户气泡与助手 Markdown 渲染结果都能命中，不必侵入各渲染组件。
+  useEffect(() => {
+    const HighlightCtor = (window as unknown as { Highlight?: new (...ranges: AbstractRange[]) => unknown }).Highlight;
+    const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+    const query = conversationSearchQuery.trim().toLowerCase();
+    if (!conversationSearchOpen || !query || !HighlightCtor || !highlights) {
+      highlights?.delete("conversation-search");
+      highlights?.delete("conversation-search-current");
+      searchMatchRangesRef.current = [];
+      setConversationMatchTotal(0);
+      return;
+    }
+    // 按消息下标顺序收集所有命中区间（跨 text node 的大小写不敏感匹配）
+    const matches: Array<{ row: HTMLDivElement; range: Range }> = [];
+    const walkerFilter = { acceptNode: () => NodeFilter.FILTER_ACCEPT };
+    for (const index of Object.keys(messageRowRefs.current).map(Number).sort((a, b) => a - b)) {
+      const row = messageRowRefs.current[index];
+      if (!row || !row.isConnected) continue;
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, walkerFilter);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const text = node.nodeValue || "";
+        const lower = text.toLowerCase();
+        let start = lower.indexOf(query);
+        while (start !== -1) {
+          const range = document.createRange();
+          range.setStart(node, start);
+          range.setEnd(node, start + query.length);
+          matches.push({ row, range });
+          start = lower.indexOf(query, start + query.length);
+        }
+      }
+    }
+    searchMatchRangesRef.current = matches;
+    highlights.set("conversation-search", new HighlightCtor(...matches.map((match) => match.range)) as never);
+    setConversationMatchTotal((previous) => previous === matches.length ? previous : matches.length);
+
+    // 当前命中：单独一层高亮并滚动定位（同一命中不重复滚动，避免流式更新时跳动）
+    const effectiveIndex = Math.min(conversationSearchMatchIndex, Math.max(0, matches.length - 1));
+    // 总数变少（改词/删消息）时把序号收敛回有效范围，保持显示与跳转一致
+    if (matches.length && conversationSearchMatchIndex !== effectiveIndex) {
+      setConversationSearchMatchIndex(effectiveIndex);
+    }
+    const current = matches[effectiveIndex];
+    highlights.delete("conversation-search-current");
+    if (current) {
+      highlights.set("conversation-search-current", new HighlightCtor(current.range) as never);
+      const scrollKey = `${query}#${effectiveIndex}`;
+      if (searchScrollKeyRef.current !== scrollKey) {
+        searchScrollKeyRef.current = scrollKey;
+        current.row.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    } else {
+      searchScrollKeyRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationSearchOpen, conversationSearchQuery, conversationSearchMatchIndex, sessions, activeId, collapsedActivities]);
+
+  // 关闭搜索或切换会话时清掉残留高亮；换会话后命中序号失效，回到第一个
+  useEffect(() => {
+    setConversationSearchMatchIndex(0);
+    searchScrollKeyRef.current = null;
+    if (conversationSearchOpen) return;
+    const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+    highlights?.delete("conversation-search");
+    highlights?.delete("conversation-search-current");
+    searchMatchRangesRef.current = [];
+  }, [conversationSearchOpen, activeId]);
 
   // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
   useEffect(() => {
@@ -5560,8 +5738,13 @@ export function App() {
     const updater = window.dyworker;
     if (!updater?.onAppUpdateStatus) return;
     const offUpdate = updater.onAppUpdateStatus((status) => {
-      setAppUpdate(status);
-      if (status.state === "available" || status.state === "downloaded") setAppUpdateDialogOpen(true);
+      setAppUpdate((previous) => {
+        // 自动检查在后台静默进行：发现新版本只点亮侧栏下载按钮，不主动弹窗；
+        // 只有用户正在查看更新对话框、或更新由「下载中」变为「下载完成」时才自动弹出
+        if (status.state === "available" && (appUpdateDialogOpen || previous.state === "checking")) setAppUpdateDialogOpen(true);
+        if (status.state === "downloaded" && previous.state === "downloading") setAppUpdateDialogOpen(true);
+        return status;
+      });
     });
     void updater.getAppUpdateStatus().then(setAppUpdate);
     return () => offUpdate?.();
@@ -8312,9 +8495,17 @@ export function App() {
             <span className="avatar"><UserRound size={14} /></span>
             <span>本地工作区</span>
           </button>
-          <button className="icon-button subtle" onClick={() => setSettingsOpen(true)} aria-label="设置">
-            <Settings size={18} />
-          </button>
+          <div className="sidebar-footer-actions">
+            <AppUpdateAction
+              status={appUpdate}
+              onOpen={() => setAppUpdateDialogOpen(true)}
+              onDownload={downloadAppUpdate}
+              onInstall={() => setAppUpdateDialogOpen(true)}
+            />
+            <button className="icon-button subtle" onClick={() => setSettingsOpen(true)} aria-label="设置">
+              <Settings size={18} />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -8502,6 +8693,17 @@ export function App() {
               <BarChart3 size={17} />
             </button>
             <button
+              className={`icon-button subtle ${conversationSearchOpen ? "active" : ""}`}
+              aria-label="搜索会话内容"
+              title="搜索会话内容：在当前会话的对话内容中查找（⌘F / Ctrl+F）"
+              onClick={() => {
+                setConversationSearchOpen(true);
+                requestAnimationFrame(() => conversationSearchInputRef.current?.select());
+              }}
+            >
+              <Search size={17} />
+            </button>
+            <button
               className={`icon-button subtle ${debugOpen ? "active" : ""}`}
               aria-label="轨迹控制台"
               title="轨迹控制台：按轮次/步骤查看模型请求、工具调用、活动与文件变更的完整时间线（可回放历史）"
@@ -8525,6 +8727,79 @@ export function App() {
             )}
           </div>
         </header>
+
+        {conversationSearchOpen && (
+          <div className="conversation-search" role="search" aria-label="搜索会话内容">
+            <Search size={13} />
+            <input
+              ref={conversationSearchInputRef}
+              type="search"
+              placeholder="搜索本会话对话内容…"
+              value={conversationSearchQuery}
+              aria-label="搜索本会话对话内容"
+              onChange={(event) => {
+                setConversationSearchQuery(event.target.value);
+                setConversationSearchMatchIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!conversationMatchTotal) return;
+                  const delta = event.shiftKey ? -1 : 1;
+                  setConversationSearchMatchIndex((current) => (current + delta + conversationMatchTotal) % conversationMatchTotal);
+                } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (!conversationMatchTotal) return;
+                  const delta = event.key === "ArrowDown" ? 1 : -1;
+                  setConversationSearchMatchIndex((current) => (current + delta + conversationMatchTotal) % conversationMatchTotal);
+                } else if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setConversationSearchOpen(false);
+                  setConversationSearchQuery("");
+                }
+              }}
+            />
+            <span className="conversation-search-count">
+              {conversationSearchQuery.trim()
+                ? conversationMatchTotal
+                  ? `${Math.min(conversationSearchMatchIndex, conversationMatchTotal - 1) + 1} / ${conversationMatchTotal}`
+                  : "无匹配"
+                : ""}
+            </span>
+            <button
+              type="button"
+              className="icon-button subtle tiny"
+              aria-label="上一个匹配"
+              title="上一个匹配（Shift+Enter）"
+              disabled={!conversationMatchTotal}
+              onClick={() => setConversationSearchMatchIndex((current) => (current - 1 + conversationMatchTotal) % conversationMatchTotal)}
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              type="button"
+              className="icon-button subtle tiny"
+              aria-label="下一个匹配"
+              title="下一个匹配（Enter）"
+              disabled={!conversationMatchTotal}
+              onClick={() => setConversationSearchMatchIndex((current) => (current + 1) % conversationMatchTotal)}
+            >
+              <ChevronDown size={14} />
+            </button>
+            <button
+              type="button"
+              className="icon-button subtle tiny"
+              aria-label="关闭搜索"
+              title="关闭搜索（Esc）"
+              onClick={() => {
+                setConversationSearchOpen(false);
+                setConversationSearchQuery("");
+              }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {conversationTurns.length > 5 && (
           <nav className="conversation-turn-rail" aria-label="对话回合导航">
@@ -8598,7 +8873,11 @@ export function App() {
                 <div
                   className={`message-row ${message.role}`}
                   key={`${message.createdAt}-${index}`}
-                  ref={message.role === "user" ? (node) => { conversationTurnRefs.current[turnIndex] = node; } : undefined}
+                  ref={(node) => {
+                    // 会话内搜索需要所有消息行的引用；用户消息行同时供回合导航使用
+                    messageRowRefs.current[index] = node;
+                    if (message.role === "user") conversationTurnRefs.current[turnIndex] = node;
+                  }}
                 >
                   {message.role === "system" ? null : message.role === "user" ? (
                     <>

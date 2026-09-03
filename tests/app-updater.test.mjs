@@ -79,3 +79,59 @@ test("开发环境不执行更新检查", async () => {
   assert.equal(result.state, "unavailable");
   assert.equal(called, false);
 });
+
+test("静默自动检查不推送 checking 状态，只在发现新版本时推送", async () => {
+  const listeners = new Map();
+  const sent = [];
+  const updater = {
+    on(event, listener) { listeners.set(event, listener); },
+    setFeedURL() {},
+    async checkForUpdates() {
+      listeners.get("update-available")?.({
+        version: "0.2.0",
+        releaseNotes: [{ version: "0.2.0", note: "- 新增侧栏下载按钮\n- 显示更新内容" }],
+      });
+    },
+    async downloadUpdate() {},
+    quitAndInstall() {},
+  };
+  const controller = createUpdaterController({
+    updater,
+    isPackaged: true,
+    currentVersion: "0.1.23",
+    updateUrl: "https://github.com/example/dyworker",
+    getWindow: () => ({ webContents: { send: (_name, status) => sent.push(status) } }),
+  });
+  await controller.check({ silent: true });
+  // 静默检查不推送 checking
+  assert.ok(!sent.some((s) => s.state === "checking"));
+  // 但发现新版本仍然推送 available，且带解析后的 releaseNotes 字符串
+  const available = sent.find((s) => s.state === "available");
+  assert.ok(available);
+  assert.equal(available.version, "0.2.0");
+  assert.equal(available.releaseNotes, "- 新增侧栏下载按钮\n- 显示更新内容");
+  assert.equal(controller.getStatus().state, "available");
+});
+
+test("静默检查失败不推送 error 状态", async () => {
+  const sent = [];
+  const updater = {
+    on() {},
+    setFeedURL() {},
+    async checkForUpdates() { throw new Error("网络不可达"); },
+    async downloadUpdate() {},
+    quitAndInstall() {},
+  };
+  const controller = createUpdaterController({
+    updater,
+    isPackaged: true,
+    currentVersion: "0.1.23",
+    updateUrl: "https://github.com/example/dyworker",
+    getWindow: () => ({ webContents: { send: (_name, status) => sent.push(status) } }),
+  });
+  const result = await controller.check({ silent: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.state, "error");
+  assert.ok(!sent.some((s) => s.state === "error"));
+  assert.equal(controller.getStatus().state, "idle");
+});

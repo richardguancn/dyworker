@@ -408,6 +408,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   const [view, setView] = useState<"trace" | "log">(traces.length ? "trace" : "log");
   const [mode, setMode] = useState<TimelineMode>("duration");
   const [search, setSearch] = useState("");
+  const [logSearch, setLogSearch] = useState("");
   const [filter, setFilter] = useState<TraceFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string | undefined>();
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -450,6 +451,14 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
       return (trace.title || "").toLowerCase().includes(query) || (trace.content || "").toLowerCase().includes(query);
     });
   }, [traces, search, filter, range]);
+
+  // 日志视图搜索：按标题与内容过滤（与轨迹视图搜索语义一致）
+  const filteredLogs = useMemo(() => {
+    const query = logSearch.trim().toLowerCase();
+    if (!query) return logs;
+    return logs.filter((entry) =>
+      (entry.title || "").toLowerCase().includes(query) || (entry.content || "").toLowerCase().includes(query));
+  }, [logs, logSearch]);
 
   const rows = useMemo(() => flattenRows(filtered), [filtered]);
   const rowOffsets = useMemo(() => {
@@ -673,19 +682,41 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
           )}
         </>
       ) : (
-        <div className="debug-console-body">
+        <div className="trace-log-view">
           {logs.length === 0 ? (
-            <div className="debug-console-empty">暂无日志。发起任务后，这里会显示每一轮模型请求的消息内容、响应（SSE 流式或 JSON）以及每次工具调用的参数与结果。</div>
-          ) : logs.map((entry) => (
-            <details className={`debug-entry debug-${entry.kind}`} key={entry.id}>
-              <summary>
-                <span className="debug-entry-kind">{debugKindLabels(entry.kind)}</span>
-                <span className="debug-entry-time">{entry.time.slice(11, 19)}</span>
-                <span className="debug-entry-title">{entry.title}</span>
-              </summary>
-              <pre>{entry.content}</pre>
-            </details>
-          ))}
+            <div className="debug-console-body">
+              <div className="debug-console-empty">暂无日志。发起任务后，这里会显示每一轮模型请求的消息内容、响应（SSE 流式或 JSON）以及每次工具调用的参数与结果。</div>
+            </div>
+          ) : (
+            <>
+              <div className="trace-toolbar trace-log-toolbar">
+                <span className="trace-toolbar-count">{filteredLogs.length} / {logs.length} 条</span>
+                <div className="trace-search">
+                  <Search size={12} />
+                  <input
+                    type="search"
+                    placeholder="搜索日志标题或内容…"
+                    value={logSearch}
+                    onChange={(event) => setLogSearch(event.target.value)}
+                    aria-label="搜索日志"
+                  />
+                </div>
+              </div>
+              <div className="debug-console-body">
+                {filteredLogs.map((entry) => (
+                  <details className={`debug-entry debug-${entry.kind}`} key={entry.id}>
+                    <summary>
+                      <span className="debug-entry-kind">{debugKindLabels(entry.kind)}</span>
+                      <span className="debug-entry-time">{entry.time.slice(11, 19)}</span>
+                      <span className="debug-entry-title">{entry.title}</span>
+                    </summary>
+                    <pre>{entry.content}</pre>
+                  </details>
+                ))}
+                {!filteredLogs.length && <div className="debug-console-empty">无匹配日志</div>}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
