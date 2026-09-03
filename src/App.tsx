@@ -5628,12 +5628,33 @@ export function App() {
     const offInbox = window.dyworker?.onInboxChanged?.(() => {
       void window.dyworker?.listInbox?.().then(setInboxItems);
     });
+    const offWakeStatus = window.dyworker?.onWakeStatus?.((payload) => {
+      if (payload.status === "running") {
+        setRunningSessionIds((current) => new Set(current).add(payload.sessionId));
+        setRunningStartedAt((current) => ({ ...current, [payload.sessionId]: Date.now() }));
+        showSessionNotice(payload.sessionId, "已到点自动唤醒，正在自主推进任务...");
+      } else {
+        setRunningSessionIds((current) => {
+          const next = new Set(current);
+          next.delete(payload.sessionId);
+          return next;
+        });
+      }
+    });
+    const offInboxFocus = window.dyworker?.onInboxFocusItem?.((item) => {
+      if (item?.sessionId) {
+        setActiveId(item.sessionId);
+      }
+      setInboxOpen(true);
+    });
     void window.dyworker?.listInbox?.().then(setInboxItems);
     return () => {
       offSchedules?.();
       offPrepend?.();
       offAppend?.();
       offInbox?.();
+      offWakeStatus?.();
+      offInboxFocus?.();
     };
   }, []);
 
@@ -6047,6 +6068,16 @@ export function App() {
     ? Math.floor((Date.now() - runningStartedAt[activeSession.id]) / 1000)
     : 0;
   const inboxPendingCount = inboxItems.filter((item) => item.status === "pending").length;
+  const sessionPendingInboxCount = (sessionId: string) =>
+    inboxItems.filter((item) => item.status === "pending" && item.sessionId === sessionId).length;
+  const activeSessionPendingInboxApproval = useMemo(() => {
+    if (!activeSession?.id) return null;
+    return inboxItems.find((item) => item.status === "pending" && item.kind === "approval" && item.sessionId === activeSession.id) || null;
+  }, [activeSession?.id, inboxItems]);
+  const activeSessionPendingInboxQuestion = useMemo(() => {
+    if (!activeSession?.id) return null;
+    return inboxItems.find((item) => item.status === "pending" && item.kind === "question" && item.sessionId === activeSession.id) || null;
+  }, [activeSession?.id, inboxItems]);
   const activeSessionError = activeSession?.id ? sessionErrors[activeSession.id] || "" : "";
   const activeSessionNotice = activeSession?.id ? sessionNotices[activeSession.id] || "" : "";
   const visibleSessions = useMemo(() => {
@@ -7890,6 +7921,9 @@ export function App() {
           )}
           <span>{session.title}</span>
           {session.unread && <span className="session-unread-dot" role="status" aria-label="有新的完成结果" title="有新的完成结果" />}
+          {sessionPendingInboxCount(session.id) > 0 && (
+            <span className="session-pending-dot" role="status" aria-label="有待审批事项" title="该任务有待确认的审批或提问" />
+          )}
           {runningSessionIds.has(session.id) && <LoaderCircle className="spin session-running-icon" size={15} />}
         </button>
       )}
@@ -8779,6 +8813,41 @@ export function App() {
                       const next = { ...current };
                       delete next[activeSession.id];
                       return next;
+                    });
+                  }}
+                />
+              </div>
+            )}
+
+            {activeSessionPendingInboxApproval && !activePendingApproval && (
+              <div className="message-row assistant">
+                <ApprovalCard
+                  action={{
+                    id: activeSessionPendingInboxApproval.id,
+                    kind: activeSessionPendingInboxApproval.tool || "run_command",
+                    title: activeSessionPendingInboxApproval.title || "自动续跑任务申请操作",
+                    details: activeSessionPendingInboxApproval.details || "",
+                  }}
+                  onResolve={(approved) => {
+                    void window.dyworker?.resolveInbox({ id: activeSessionPendingInboxApproval.id, approved }).then(() => {
+                      void window.dyworker?.listInbox().then(setInboxItems);
+                    });
+                  }}
+                />
+              </div>
+            )}
+
+            {activeSessionPendingInboxQuestion && !activePendingQuestion && (
+              <div className="message-row assistant">
+                <QuestionCard
+                  request={{
+                    id: activeSessionPendingInboxQuestion.id,
+                    question: activeSessionPendingInboxQuestion.question || "请回答任务提问",
+                    options: activeSessionPendingInboxQuestion.options || [],
+                  }}
+                  onResolve={(answer) => {
+                    void window.dyworker?.resolveInbox({ id: activeSessionPendingInboxQuestion.id, answer }).then(() => {
+                      void window.dyworker?.listInbox().then(setInboxItems);
                     });
                   }}
                 />

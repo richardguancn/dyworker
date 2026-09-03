@@ -1,6 +1,6 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, promises as fs } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { bareModelName, builtinHooks, isResponsesEndpoint, isSafePublicUrl, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
@@ -60,6 +60,44 @@ if (
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// 崩溃兜底：任务执行期间任何未捕获异常不能再让整个进程无声退出。
+// 先记到终端标准输出，再持久化到 userData/crash.log（桌面图标启动时
+// 终端输出会丢，崩溃日志是唯一的排查依据）。
+function crashLogFile() {
+  try {
+    return path.join(app.getPath("userData"), "crash.log");
+  } catch {
+    return "";
+  }
+}
+function reportFatal(kind, error) {
+  const detail = error instanceof Error ? (error.stack || error.message) : String(error);
+  console.error(`[dyworker] ${kind}: ${detail}`);
+  const file = crashLogFile();
+  if (!file) return;
+  try {
+    // 崩溃日志超过 2 MB 时截掉前半，只保留近期记录，防止占满磁盘
+    try {
+      if (statSync(file).size > 2 * 1024 * 1024) {
+        const content = readFileSync(file, "utf8");
+        writeFileSync(file, content.slice(Math.floor(content.length / 2)), "utf8");
+      }
+    } catch {
+      // 文件不存在或读取失败时直接追加即可
+    }
+    appendFileSync(file, `[${new Date().toISOString()}] ${kind}: ${detail}\n`, "utf8");
+  } catch {
+    // 崩溃日志写失败不能再次触发异常
+  }
+}
+process.on("uncaughtException", (error) => {
+  reportFatal("uncaughtException", error);
+});
+process.on("unhandledRejection", (reason) => {
+  reportFatal("unhandledRejection", reason instanceof Error ? reason : new Error(String(reason)));
+});
+
 const isDevelopment = !app.isPackaged;
 const rendererEntryUrl = isDevelopment
   ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
@@ -2837,6 +2875,27 @@ function createInboxItem(partial) {
     items.push(item);
     await writeInbox(items);
     broadcastInboxChanged();
+    if (typeof Notification?.isSupported === "function" && Notification.isSupported()) {
+      try {
+        const notifTitle = item.kind === "question" ? "DYWorker 任务提问" : "DYWorker 审批申请";
+        const notifBody = item.title || (item.kind === "question" ? "后台任务有新的提问需要您回复" : "自动任务申请执行关键操作，请确认");
+        const notification = new Notification({
+          title: notifTitle,
+          body: notifBody,
+          silent: false,
+        });
+        notification.on("click", () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+            mainWindow.webContents.send("inbox:focus-item", item);
+          }
+        });
+        notification.show();
+      } catch {
+        // 系统通知失败不影响业务流程
+      }
+    }
   }).catch(() => { });
   return pending;
 }
@@ -3214,6 +3273,36 @@ async function hasPendingWakeForSession(sessionId) {
   return wakes.some((wake) => wake.status === "pending" && String(wake.sessionId) === String(sessionId));
 }
 
+let wakeTimer = null;
+
+async function scheduleNextWakeCheck() {
+  if (mcpShuttingDown) return;
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
+  }
+  const wakes = await readWakes();
+  const pending = wakes.filter((wake) => wake.status === "pending" && wake.wakeAt);
+  if (!pending.length) return;
+  const now = Date.now();
+  let minWaitMs = Infinity;
+  for (const wake of pending) {
+    const target = new Date(wake.wakeAt).getTime();
+    if (Number.isNaN(target)) continue;
+    const diff = target - now;
+    const wait = Math.max(0, diff);
+    if (wait < minWaitMs) minWaitMs = wait;
+  }
+  if (!Number.isFinite(minWaitMs)) return;
+  // 最长等待 2 小时，到期触发后再次动态对齐
+  const delay = Math.min(minWaitMs, 2 * 3600 * 1000);
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    void checkDueWakes().then(() => scheduleNextWakeCheck());
+  }, delay);
+  if (typeof wakeTimer.unref === "function") wakeTimer.unref();
+}
+
 async function registerWake({ sessionId, scheduleId, workspacePath, approvalMode, wake, prompt, finalText }) {
   if (!sessionId || !workspacePath || !wake?.wakeAt) return;
   const wakes = await readWakes();
@@ -3232,6 +3321,7 @@ async function registerWake({ sessionId, scheduleId, workspacePath, approvalMode
     createdAt: new Date().toISOString(),
   });
   await writeWakes(wakes);
+  void scheduleNextWakeCheck();
 }
 
 async function cancelWakesForSession(sessionId) {
@@ -3243,7 +3333,10 @@ async function cancelWakesForSession(sessionId) {
       changed = true;
     }
   }
-  if (changed) await writeWakes(wakes);
+  if (changed) {
+    await writeWakes(wakes);
+    void scheduleNextWakeCheck();
+  }
 }
 
 // 从会话存档中重建可见对话（只读,渲染端仍是唯一写者）；找不到时退回唤醒记录里的提示与进展
@@ -3277,6 +3370,14 @@ async function resumeWake(wake) {
   runningScheduledTask = true;
   trackTaskStart();
   let routeExtraTool = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("wake:status", {
+      sessionId: wake.sessionId,
+      status: "running",
+      wakeAt: wake.wakeAt,
+      reason: wake.reason,
+    });
+  }
   try {
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
@@ -3288,7 +3389,11 @@ async function resumeWake(wake) {
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector();
-    const approvalMode = normalizeApprovalMode(wake.approvalMode);
+    // 自动唤醒任务是无人值守的自主推进：若原会话是交互确认(interactive)或审核模式，
+    // 唤醒后自动提升为 auto 模式（工作区内读写、低风险命令与安全操作自动放行，仅高危操作拦截）；
+    // 若原模式是 full-access 则保留
+    const sourceApprovalMode = normalizeApprovalMode(wake.approvalMode);
+    const approvalMode = sourceApprovalMode === "full-access" ? "full-access" : "auto";
     const result = await runAgent({
       settings,
       workspacePath: wake.workspacePath,
@@ -3308,7 +3413,7 @@ async function resumeWake(wake) {
       sleepGuard: () => hasPendingWakeForSession(wake.sessionId),
       sessionId: wake.sessionId,
       startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || wake.sessionId }),
-      // 续跑同样无人值守：审批与提问进收件箱挂起等待（2 小时上限，超时按拒绝处理）
+      // 续跑无人值守：审批与提问进收件箱挂起等待；等待期间暂时释放 runningScheduledTask 锁，避免系统调度死锁 2 小时
       requestApproval: async (action) => {
         const pending = createInboxItem({
           kind: "approval",
@@ -3318,8 +3423,13 @@ async function resumeWake(wake) {
           title: `续跑任务申请：${action.title || action.kind}`,
           details: action.details,
         });
-        const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
-        return Boolean(resolution?.ok);
+        runningScheduledTask = false;
+        try {
+          const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
+          return Boolean(resolution?.ok);
+        } finally {
+          runningScheduledTask = true;
+        }
       },
       requestUserInput: (request) => {
         const pending = createInboxItem({
@@ -3330,7 +3440,12 @@ async function resumeWake(wake) {
           options: request.options,
           title: "续跑任务提问",
         });
-        return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+        runningScheduledTask = false;
+        try {
+          return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+        } finally {
+          runningScheduledTask = true;
+        }
       },
       emit: (agentEvent) => {
         collector.handle(agentEvent);
@@ -3345,7 +3460,7 @@ async function resumeWake(wake) {
         sessionId: wake.sessionId,
         scheduleId: wake.scheduleId,
         workspacePath: wake.workspacePath,
-        approvalMode,
+        approvalMode: wake.approvalMode,
         wake: result.wake,
         prompt: wake.prompt,
         finalText: result.finalText,
@@ -3369,27 +3484,73 @@ async function resumeWake(wake) {
       await persistSessionAppend(wake.sessionId, wakeMessages);
     }
   } catch (error) {
+    const errorReason = error instanceof Error ? error.message : String(error);
+    console.error(`[wakes] 续跑任务异常 (${wake.sessionId}):`, errorReason);
     if (wake.scheduleId) {
-      await markScheduleFinished(wake.scheduleId, false, error instanceof Error ? error.message : String(error), wake.sessionId);
+      await markScheduleFinished(wake.scheduleId, false, errorReason, wake.sessionId);
+    }
+    const failureMessages = [
+      {
+        role: "assistant",
+        content: `（到点自动唤醒失败）系统尝试唤醒任务时发生异常：${errorReason}`,
+        createdAt: new Date().toISOString(),
+        taskStatus: "error",
+      },
+    ];
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("sessions:append", {
+        sessionId: wake.sessionId,
+        workspacePath: wake.workspacePath,
+        messages: failureMessages,
+      });
+    } else {
+      await persistSessionAppend(wake.sessionId, failureMessages);
     }
   } finally {
     routeExtraTool?.dispose();
     trackTaskEnd();
     runningScheduledTask = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("wake:status", {
+        sessionId: wake.sessionId,
+        status: "idle",
+      });
+    }
   }
 }
 
+const runningWakeSessionIds = new Set();
+
 async function checkDueWakes() {
-  if (mcpShuttingDown || runningScheduledTask || runningChannelTaskCount > 0 || activeAgents.size) return;
+  if (mcpShuttingDown) return;
   const now = new Date();
   const wakes = await readWakes();
-  const due = wakes.find((wake) => wake.status === "pending" && wake.wakeAt && new Date(wake.wakeAt) <= now);
-  if (!due) return;
-  // 先落盘 fired 再执行：pending → fired 一次性转移,应用中途退出也不会重复唤醒
-  due.status = "fired";
-  due.firedAt = now.toISOString();
-  await writeWakes(wakes);
-  await resumeWake(due);
+  const dueList = wakes.filter((wake) => wake.status === "pending" && wake.wakeAt && new Date(wake.wakeAt) <= now);
+  if (!dueList.length) return;
+
+  for (const due of dueList) {
+    if (mcpShuttingDown) break;
+    const sid = String(due.sessionId || "");
+    // 若目标会话正处于前台活跃或已在唤醒运行中，暂缓该会话唤醒（不阻碍其他会话）
+    if (activeAgents.has(sid) || runningWakeSessionIds.has(sid)) continue;
+    // 若已有正在执行计算/工具的后台调度任务，串行排队
+    if (runningScheduledTask) break;
+
+    // 先落盘 fired 再执行：pending → fired 一次性转移,应用中途退出也不会重复唤醒
+    due.status = "fired";
+    due.firedAt = now.toISOString();
+    await writeWakes(wakes);
+
+    runningWakeSessionIds.add(sid);
+    try {
+      await resumeWake(due);
+    } catch (error) {
+      console.error(`[wakes] 唤醒执行异常 (${sid}):`, error);
+    } finally {
+      runningWakeSessionIds.delete(sid);
+    }
+  }
+  void scheduleNextWakeCheck();
 }
 
 ipcMain.handle("wakes:cancel-for-session", async (_event, sessionId) => {
@@ -3493,8 +3654,13 @@ async function runScheduledTask(record) {
           title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
           details: action.details,
         });
-        const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
-        return Boolean(resolution?.ok);
+        runningScheduledTask = false;
+        try {
+          const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
+          return Boolean(resolution?.ok);
+        } finally {
+          runningScheduledTask = true;
+        }
       },
       requestUserInput: (request) => {
         const pending = createInboxItem({
@@ -3505,7 +3671,12 @@ async function runScheduledTask(record) {
           options: request.options,
           title: `定时任务「${record.name || "未命名"}」提问`,
         });
-        return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+        runningScheduledTask = false;
+        try {
+          return awaitInboxWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
+        } finally {
+          runningScheduledTask = true;
+        }
       },
       emit: (agentEvent) => {
         collector.handle(agentEvent);
@@ -3603,8 +3774,21 @@ function startScheduler() {
     if (mcpShuttingDown) return;
     // 同一 tick 先看到点的主动唤醒（self-wake）再到期的定时计划；两者共用忙碌守卫，串行执行
     const tick = () => void checkDueWakes().then(() => checkDueSchedules());
-    schedulerTimer = setInterval(tick, 30_000);
+    schedulerTimer = setInterval(tick, 10_000);
     setTimeout(tick, 1500);
+    void scheduleNextWakeCheck();
+
+    // 监听系统睡眠恢复与屏幕解锁：macOS 笔记本开盖/唤醒时立即补跑任务
+    if (typeof powerMonitor?.on === "function") {
+      powerMonitor.on("resume", () => {
+        void checkDueWakes().then(() => checkDueSchedules());
+        void scheduleNextWakeCheck();
+      });
+      powerMonitor.on("unlock-screen", () => {
+        void checkDueWakes().then(() => checkDueSchedules());
+        void scheduleNextWakeCheck();
+      });
+    }
   });
 }
 

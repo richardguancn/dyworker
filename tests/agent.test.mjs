@@ -1101,6 +1101,31 @@ test("替我审批:审核助手放行时不再弹人工审批", async () => {
   assert.match(allowed.detail, /用户明确要求推送/);
 });
 
+test("替我审批:修改审批逻辑文件绕过审核助手,直接转人工", async () => {
+  const root = await makeWorkspace();
+  const agentPath = path.resolve(new URL("../electron/agent.mjs", import.meta.url).pathname);
+  const calls = [];
+  let userApprovals = 0;
+  // 即便审核助手会放行，修改 electron/agent.mjs 也必须直接弹人工（不消耗这条 reviewer 响应）
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "优化一下措辞" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "edit_file", { path: agentPath, find: "a", replace: "b" })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"不该被用到的放行"}' },
+      { role: "assistant", content: "已修改。" },
+    ], calls),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 1, "修改审批逻辑文件必须直接转人工");
+  const reviewerRounds = calls.filter((call) =>
+    String(call.messages?.at(-1)?.content || "").includes("待审核操作")).length;
+  assert.equal(reviewerRounds, 0, "修改审批逻辑文件不应经过审核助手");
+});
+
 test("替我审批:审核助手拒绝后不执行并告知模型", async () => {
   const root = await makeWorkspace();
   const calls = [];
@@ -2137,13 +2162,17 @@ test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败�
     action,
     fetchImpl: mockFetch([{ role: "assistant", content: '{"decision":"allow","reason":"操作安全"}' }]),
   });
-  assert.deepEqual(allow, { decision: "allow", reason: "操作安全" });
+  assert.equal(allow.decision, "allow");
+  assert.equal(allow.reason, "操作安全");
+  assert.match(allow.policyHash, /^[0-9a-f]{12}$/);
   const deny = await reviewApproval({
     settings,
     action,
     fetchImpl: mockFetch([{ role: "assistant", content: '{"decision":"deny","reason":"可能外发数据"}' }]),
   });
-  assert.deepEqual(deny, { decision: "deny", reason: "可能外发数据" });
+  assert.equal(deny.decision, "deny");
+  assert.equal(deny.reason, "可能外发数据");
+  assert.match(deny.policyHash, /^[0-9a-f]{12}$/);
   const ask = await reviewApproval({
     settings,
     action,
@@ -2175,7 +2204,9 @@ test("审核助手可走独立本地小模型端点,密钥缺省回退主模型"
     action: { kind: "run_command", title: "运行命令", details: "npm install" },
     fetchImpl,
   });
-  assert.deepEqual(result, { decision: "allow", reason: "本地模型放行" });
+  assert.equal(result.decision, "allow");
+  assert.equal(result.reason, "本地模型放行");
+  assert.match(result.policyHash, /^[0-9a-f]{12}$/);
   assert.equal(seen.length, 1);
   assert.match(seen[0].url, /127\.0\.0\.1:11434/);
   assert.equal(seen[0].body.model, "qwen3:4b");
@@ -2219,7 +2250,9 @@ test("reviewApproval 走本地内置审核模型,异常时 fail-closed", async (
     fetchImpl: fetchGuard,
     localReviewImpl: localImpl,
   });
-  assert.deepEqual(result, { decision: "allow", reason: "本地模型放行" });
+  assert.equal(result.decision, "allow");
+  assert.equal(result.reason, "本地模型放行");
+  assert.match(result.policyHash, /^[0-9a-f]{12}$/);
   assert.equal(calls.length, 1);
   assert.match(calls[0].policy, /审核助手/);
   assert.equal(calls[0].action.kind, "run_command");

@@ -1053,7 +1053,7 @@ test("微信渠道:image/file 消息触发 downloadMedia 并落盘带 media 进�
     downloadMedia: async () => { downloads += 1; return png; },
   };
   bot.handlers.message(ctx);
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  for (let i = 0; i < 20 && received.length < 1; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(downloads, 1, "图片消息应触发 downloadMedia");
   assert.equal(received.length, 1);
   assert.equal(received[0].text, "[图片]");
@@ -1071,7 +1071,7 @@ test("微信渠道:image/file 消息触发 downloadMedia 并落盘带 media 进�
     downloadMedia: async () => xlsx,
   };
   bot.handlers.message(ctxFile);
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  for (let i = 0; i < 20 && received.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(received.length, 2);
   assert.equal(received[1].text, "[文件:报表.xlsx]");
   assert.match(received[1].media[0].filePath, /\.xlsx$/);

@@ -2,7 +2,7 @@
 // 本文件不依赖 electron，方便用 node --test 直接测试。
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { promises as fs, realpathSync } from "node:fs";
+import { promises as fs, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1885,10 +1885,9 @@ const riskyGitSubcommands = new Set([
 const riskyGitFlags = /^(--force|--hard|--delete|-f$|-D$|-d$)/;
 const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
 
-export function isLowRiskCommand(command) {
-  const text = String(command || "").trim();
-  // 反引号无法界定内容边界，保守退回人工
-  if (!text || /[\r\n`]/.test(text)) return false;
+function isSingleLineLowRiskCommand(line) {
+  const text = String(line || "").trim();
+  if (!text || text.includes("`")) return false;
   // 按 &&/||/;/| 切段：每段第一个词才是命令位置——
   // `.`/`source`/`eval`/`exec` 只在命令位置危险，`git add .` 里的点只是参数
   const segments = text.split(/&&|\|\||[;|]/);
@@ -1928,6 +1927,15 @@ export function isLowRiskCommand(command) {
   // osascript 包一层 shell 等同任意命令；纯界面脚本交给本机界面操作的审批通道
   if (allWords.includes("osascript")) return false;
   return true;
+}
+
+export function isLowRiskCommand(command) {
+  const text = String(command || "").trim();
+  // 反引号无法界定内容边界，保守退回人工
+  if (!text || text.includes("`")) return false;
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  return lines.every((line) => isSingleLineLowRiskCommand(line));
 }
 
 export function isLikelyBackgroundCommand(command) {
@@ -1990,6 +1998,7 @@ export function evaluateApproval({
     }
     if (internetReadTools.has(name)) return "allow";
     if (workspaceWriteTools.has(name)) return "allow";
+    if (name === "save_skill" || name === "update_skill") return "allow";
     return normallyNeedsApproval ? "ask" : "allow";
   }
 
@@ -3219,7 +3228,13 @@ function validateToolArguments(schema, args) {
 // 用户钩子强制审批、系统破坏性命令一律绕过审核、直接交给用户。
 // 工作区外路径也交给审核助手判断（见 REVIEWER_POLICY 第 5 条）——
 // 工具链目录的枚举规则永远加不完，而模型能按上下文区分开发环境与私人数据。
-export const REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的职责：在用户不盯着的任务里，判断一次本来需要人工确认的操作是否可以放行。
+//
+// 审核纪律外置为独立文件 electron/reviewer-policy.md：修改策略即改这一个文件，
+// 不必触碰代码；配合「审批逻辑文件强制转人工」亮线规则，策略文件自身被修改
+// 也必须经用户人工确认。文件缺失/为空时回落到内嵌默认策略，绝不中断任务。
+const REVIEWER_POLICY_PATH = path.join(moduleDir, "reviewer-policy.md");
+
+const DEFAULT_REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的职责：在用户不盯着的任务里，判断一次本来需要人工确认的操作是否可以放行。
 审核纪律：
 1. 只输出放行、拒绝、转人工三种结果，不执行操作，不改写用户要求。
 2. 必须拒绝（deny）：向外发送私密数据、密钥或凭据；探测或读取凭据、令牌、Cookie 等敏感材料；削弱系统或应用安全配置；明显不可逆且高破坏性的操作；绕过用户明确规则的操作。
@@ -3228,6 +3243,24 @@ export const REVIEWER_POLICY = `你是 DYWorker 的安全审核助手。你的�
 5. 操作涉及工作区外路径时按路径性质判断，不要一律转人工：读取或执行本机开发工具链与系统程序目录（如 /usr、/bin、/opt、~/.nvm、~/.pyenv 等版本管理器目录，which/node/npm 等开发工具）属于正常开发操作，可以放行；只有触及个人或单位的私有数据、凭据，或要对系统目录做变更时才转人工。对工作区外文件的删除、移动或覆盖原则上转人工（工作区内的文件清理可以放行）。请求里的【工作区边界】标注是判断内外的事实依据，不要自行猜测。
 6. 只有涉及外发数据、凭据、系统权限、不可逆破坏、代码发布，或确实无法判断意图时才转人工（ask）。
 7. 回复必须只包含一个 JSON 对象：{"decision":"allow"|"deny"|"ask","reason":"一句话理由"}`;
+
+// 加载审核纪律全文并给出内容哈希（SHA-256 前 12 位）。
+// 每次审核调用时实时读取——策略若被修改，新的决策立即用新策略，且审计记录里
+// 的 policyHash 随之跳变，让「规则是何时从哪版变成哪版」在日志里留痕可查。
+export function loadReviewerPolicy() {
+  let text = "";
+  try {
+    text = readFileSync(REVIEWER_POLICY_PATH, "utf8").trim();
+  } catch {
+    text = "";
+  }
+  if (!text) text = DEFAULT_REVIEWER_POLICY;
+  const hash = createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12);
+  return { text, hash };
+}
+
+// 供冒烟脚本与测试导入的当前策略全文（与审核时实际发送的一致）
+export const REVIEWER_POLICY = loadReviewerPolicy().text;
 
 const REVIEWER_HARD_BLOCK_GIT = new Set(["reset", "clean", "rebase", "gc"]);
 
@@ -3273,14 +3306,15 @@ function reviewerBoundaryNote(workspace, name, args) {
 }
 
 export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null } = {}) {
-  const policy = REVIEWER_POLICY;
+  // 实时读取策略文件：策略被修改后新决策立即生效，policyHash 随之变化
+  const { text: policy, hash: policyHash } = loadReviewerPolicy();
   // 本地内置审核模型：Qwen3-0.6B 在本机 llama.cpp 上推理，零成本离线
   if (settings?.reviewerBackend === "local") {
     try {
       const replyText = await (localReviewImpl || localReview)({ policy, action, context, signal });
-      return parseReviewerDecision(replyText);
+      return { ...parseReviewerDecision(replyText), policyHash };
     } catch (error) {
-      return { decision: "ask", reason: `本地审核模型不可用：${error instanceof Error ? error.message : String(error)}` };
+      return { decision: "ask", reason: `本地审核模型不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
     }
   }
   // 自定义审核端点（OpenAI 兼容）；旧数据没有 reviewerBackend 字段时按是否填过端点推断
@@ -3307,9 +3341,9 @@ export async function reviewApproval({ settings, action = {}, context = "", fetc
   ];
   try {
     const message = await requestModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage });
-    return parseReviewerDecision(messageText(message));
+    return { ...parseReviewerDecision(messageText(message)), policyHash };
   } catch (error) {
-    return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}` };
+    return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
   }
 }
 
@@ -4274,6 +4308,7 @@ export async function runAgent({
           let approved = decision !== "deny";
           let approvalSource = "user";
           let reviewerReason = "";
+          let reviewerPolicyHash = "";
           if (decision === "ask") {
             const details = approvalDetails(approvalToolName, displayArgs);
             const suggestedRule = suggestStandingRule(approvalToolName, displayArgs) || undefined;
@@ -4298,12 +4333,28 @@ export async function runAgent({
                 const target = String(args?.path ?? "");
                 return Boolean(target) && workspace.isOutside(target);
               })();
+            // 修改审批逻辑自身（本模块或审核纪律文件）是亮线规则：
+            // 审核助手就是被这套规则约束的执行者，不能让它批准改写自己的规则，
+            // 无论改动被描述得多无害——一律绕过审核助手，直接转人工确认。
+            const touchesReviewerLogic = (approvalToolName === "edit_file" || approvalToolName === "write_file")
+              && (() => {
+                const target = String(args?.path ?? "");
+                if (!target) return false;
+                let canonical;
+                try {
+                  canonical = workspace.canonicalPath(target);
+                } catch {
+                  return false;
+                }
+                return canonical === REVIEWER_POLICY_PATH
+                  || canonical === path.join(moduleDir, "agent.mjs");
+              })();
             const reviewable = isReviewerEligible({
               name: approvalToolName,
               args: displayArgs,
               hookRequiresApproval: decisionInput.hookRequiresApproval,
               approvalMode,
-            }) && !deleteOutsideWorkspace;
+            }) && !deleteOutsideWorkspace && !touchesReviewerLogic;
             if (reviewable && reviewerState.active) {
               // 缓存命中：同一操作本次任务内已由审核助手放行过，跳过模型调用
               const cacheKey = reviewerCacheKey(approvalToolName, detailText);
@@ -4329,6 +4380,7 @@ export async function runAgent({
                 approved = true;
                 approvalSource = "reviewer";
                 reviewerReason = review.reason;
+                reviewerPolicyHash = review.policyHash || "";
                 if (cacheKey && !reviewerState.decisions.has(cacheKey) && reviewerState.decisions.size < 200) {
                   reviewerState.decisions.set(cacheKey, true);
                 }
@@ -4339,7 +4391,7 @@ export async function runAgent({
                   reviewerState.active = false;
                   debugLog("tool-result", "审核助手：熔断", "连续拒绝 3 次，后续审批直接转人工");
                 }
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：拒绝`, `${summary}\n${review.reason}`);
                 return {
                   message: {
@@ -4350,7 +4402,7 @@ export async function runAgent({
                 };
               } else {
                 reviewerState.consecutiveDenials = 0;
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
                 approved = await askApproval();
               }
@@ -4383,7 +4435,7 @@ export async function runAgent({
             auditRecord({
               tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
               decision: approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
-              ...(approvalSource === "reviewer" ? { detail: reviewerReason, model: reviewerModelLabel } : {}),
+              ...(approvalSource === "reviewer" ? { detail: reviewerReason, model: reviewerModelLabel, policyHash: reviewerPolicyHash } : {}),
             });
           }
         }

@@ -33,8 +33,9 @@ export function createAuditLog({ filePath, maxBytes = 5 * 1024 * 1024 } = {}) {
   }
 
   return {
-    // entry: { time?, sessionId?, tool, summary?, riskClass?, decision, approvalMode?, detail?, model? }
+    // entry: { time?, sessionId?, tool, summary?, riskClass?, decision, approvalMode?, detail?, model?, policyHash? }
     // decision ∈ auto-allowed | rule-allowed | approved | denied | blocked | executed | failed
+    // policyHash：做出该决策时审核纪律（reviewer-policy.md）的内容哈希，用于追溯"依据哪版规则"
     record(entry) {
       const sanitized = {
         time: entry?.time || new Date().toISOString(),
@@ -44,6 +45,7 @@ export function createAuditLog({ filePath, maxBytes = 5 * 1024 * 1024 } = {}) {
         decision: String(entry?.decision || ""),
         ...(entry?.approvalMode ? { approvalMode: String(entry.approvalMode) } : {}),
         ...(entry?.model ? { model: String(entry.model).slice(0, 120) } : {}),
+        ...(entry?.policyHash ? { policyHash: String(entry.policyHash).slice(0, 24) } : {}),
         ...(entry?.summary ? { summary: clipText(entry.summary, MAX_SUMMARY) } : {}),
         ...(entry?.detail ? { detail: clipText(entry.detail, MAX_DETAIL) } : {}),
       };

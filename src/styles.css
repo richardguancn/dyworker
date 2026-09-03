@@ -981,6 +981,17 @@ body.resizing-panels .app-shell {
   box-shadow: 0 0 0 2.5px rgba(127, 164, 0, 0.14);
 }
 
+/* 后台待审批提醒小橙点，提示任务正停在关键审批/提问 */
+.session-item > .session-pending-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2.5px rgba(245, 158, 11, 0.2);
+}
+
 .session-running-icon {
   flex: 0 0 auto;
   color: #9ca29a;
