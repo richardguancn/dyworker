@@ -76,6 +76,18 @@ function releaseText(value, limit = 240) {
   return String(value || "").trim().slice(0, limit);
 }
 
+// electron-updater 的 releaseNotes 可能是字符串，也可能是 [{ version, note }] 数组
+function releaseNotesText(value, limit = 12000) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => releaseText(entry?.note ?? entry, limit))
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, limit);
+  }
+  return releaseText(value, limit);
+}
+
 export function releaseTagForVersion(version, prefix = DEFAULT_TAG_PREFIX) {
   const normalizedVersion = versionText(version);
   const normalizedPrefix = String(prefix ?? DEFAULT_TAG_PREFIX);
@@ -126,6 +138,7 @@ export function createUpdaterController({ updater, isPackaged, currentVersion, g
     version: versionText(info.version),
     releaseName: releaseText(info.releaseName),
     releaseDate: releaseText(info.releaseDate, 80),
+    releaseNotes: releaseNotesText(info.releaseNotes),
     error: undefined,
     percent: undefined,
   }));
@@ -147,12 +160,15 @@ export function createUpdaterController({ updater, isPackaged, currentVersion, g
     state: "downloaded",
     version: versionText(info.version) || status.version,
     releaseName: releaseText(info.releaseName) || status.releaseName,
+    releaseNotes: releaseNotesText(info.releaseNotes) || status.releaseNotes,
     percent: 100,
     error: undefined,
   }));
   register("error", (error) => publish({ state: "error", error: errorMessage(error) }));
 
-  const check = async () => {
+  // silent=true 用于启动后/定时的后台自动检查：不改状态、不推送渲染层，
+  // 避免侧栏下载按钮因 "checking" 闪现，也避免无新版本的例行结果打扰用户
+  const check = async ({ silent = false } = {}) => {
     if (!isPackaged) {
       return { ok: false, state: "unavailable", error: "开发环境不检查应用更新" };
     }
@@ -161,13 +177,13 @@ export function createUpdaterController({ updater, isPackaged, currentVersion, g
     }
     if (checkPromise) return checkPromise;
     checkPromise = (async () => {
-      publish({ state: "checking", error: undefined });
+      if (!silent) publish({ state: "checking", error: undefined });
       try {
         await updater.checkForUpdates();
         return { ok: true, state: status.state, version: status.version };
       } catch (error) {
         const message = errorMessage(error);
-        publish({ state: "error", error: message });
+        if (!silent) publish({ state: "error", error: message });
         return { ok: false, state: "error", error: message };
       } finally {
         checkPromise = null;

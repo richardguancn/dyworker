@@ -1266,13 +1266,38 @@ test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   assert.match(app, /key === "p"/);
 });
 
-test("应用更新入口在设置的应用更新页,而不是会话顶栏或侧栏", () => {
-  assert.doesNotMatch(app, /app-update-button/);
+test("应用更新入口在设置的应用更新页,发现新版本时侧栏设置按钮旁出现下载按钮", () => {
+  // 侧栏下载按钮：available/downloading/downloaded 三态
+  assert.match(app, /function AppUpdateAction\(/);
+  assert.match(app, /icon-button subtle app-update-button/);
+  assert.match(app, /aria-label="设置"[\s\S]{0,200}Settings size=\{18\}/);
+  // 下载中把按钮变成圆环进度（SVG circle + dashoffset）
+  assert.match(app, /app-update-ring/);
+  assert.match(app, /strokeDashoffset/);
+  assert.match(app, /strokeDasharray=\{circumference\}/);
+  assert.match(styles, /\.app-update-ring-bar/);
+  assert.match(styles, /\.app-update-ring-track/);
+  // 侧栏 footer 里按钮在设置按钮旁
+  assert.match(app, /sidebar-footer-actions/);
+  assert.match(styles, /\.sidebar-footer-actions/);
+  // 更新内容（releaseNotes）展示
+  assert.match(app, /app-update-notes/);
+  assert.match(app, /status\.releaseNotes/);
+  assert.match(styles, /\.app-update-notes-body/);
+  // 主进程透传 releaseNotes（字符串或数组）
+  assert.match(appUpdater, /releaseNotes/);
+  assert.match(appUpdater, /releaseNotesText/);
+  // 自动检查是静默的：启动后 + 每 6 小时
+  assert.match(main, /check\(\{ silent: true \}\)/);
+  assert.match(appUpdater, /silent/);
+  // 设置页仍保留手动检查入口
   assert.match(app, /tab === "updates"/);
   assert.match(app, /settings-update-row/);
   assert.match(app, /onCheckUpdate=\{openAppUpdateDialog\}/);
   assert.match(app, /当前版本 \{appUpdate\.currentVersion/);
   assert.match(styles, /\.settings-update-row/);
+  // 自动检查发现新版本不再强制弹窗，只点亮下载按钮
+  assert.doesNotMatch(app, /status\.state === "available"\) setAppUpdateDialogOpen\(true\)/);
 });
 
 test("消息文本右键可复制选中内容,输入框右键支持复制/剪切/粘贴", () => {

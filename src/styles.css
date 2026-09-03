@@ -2744,6 +2744,56 @@ body.resizing-panels .app-shell {
   gap: 6px;
 }
 
+/* 会话内搜索条：悬浮在对话区右上角（topbar 下方） */
+.conversation-search {
+  position: absolute;
+  z-index: 30;
+  top: calc(var(--topbar-height) + 10px);
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--quiet);
+  box-shadow: var(--shadow-sm, 0 4px 14px rgba(0, 0, 0, 0.08));
+}
+
+.conversation-search input {
+  width: 210px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.conversation-search input::placeholder {
+  color: var(--quiet);
+}
+
+.conversation-search-count {
+  min-width: 54px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+/* CSS Custom Highlight：会话内搜索命中的文本高亮（当前项更醒目） */
+::highlight(conversation-search) {
+  background-color: rgba(250, 204, 21, 0.45);
+}
+
+::highlight(conversation-search-current) {
+  background-color: #f59e0b;
+  color: #1f2937;
+}
+
 .window-controls {
   display: flex;
   align-self: stretch;
@@ -6808,12 +6858,88 @@ body.resizing-panels .app-shell {
   pointer-events: none;
 }
 
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .app-update-button {
   position: relative;
 }
 
 .app-update-button.ready {
   color: var(--accent);
+}
+
+/* 下载中：按钮本身变成圆环进度，环内显示百分比 */
+.app-update-button.downloading {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.app-update-button.downloading:hover {
+  background: rgba(100, 102, 95, 0.1);
+}
+
+.app-update-ring {
+  display: block;
+}
+
+.app-update-ring-track {
+  stroke: var(--border);
+}
+
+.app-update-ring-bar {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 160ms ease;
+}
+
+.app-update-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* 更新内容（release notes）展示 */
+.app-update-notes {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(100, 102, 95, 0.05);
+  overflow: hidden;
+}
+
+.app-update-notes-title {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-update-notes-body {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .app-update-dialog {
@@ -10152,6 +10278,24 @@ html.window-shadow.window-maximized .modal-backdrop {
 
 .trace-search input::placeholder {
   color: var(--quiet);
+}
+
+/* 日志视图：搜索工具栏 + 滚动列表（与轨迹视图同结构） */
+.trace-log-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.trace-log-toolbar {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.trace-log-toolbar .trace-toolbar-count {
+  margin-left: 0;
+  margin-right: auto;
 }
 
 .trace-toolbar select {

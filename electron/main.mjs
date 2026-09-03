@@ -4579,11 +4579,13 @@ app.whenReady().then(async () => {
     }
   });
   // 窗口先创建，自动更新初始化不阻塞界面；electron-updater 缺失时仅禁用更新
+  // 启动 8 秒后、之后每 6 小时静默自动检查一次新版本（不改 checking 状态，只在发现新版本时推送）
   void loadElectronUpdater().then((updater) => {
     initializeAppUpdater(storedSettings.updateUrl, updater);
     if (app.isPackaged) {
-      appUpdateTimer = setTimeout(() => void checkForAppUpdate(), 8_000);
-      appUpdateInterval = setInterval(() => void checkForAppUpdate(), 6 * 60 * 60 * 1000);
+      const silentCheck = () => void appUpdater?.check({ silent: true });
+      appUpdateTimer = setTimeout(silentCheck, 8_000);
+      appUpdateInterval = setInterval(silentCheck, 6 * 60 * 60 * 1000);
     }
   });
   await expireOrphanedInboxItems();

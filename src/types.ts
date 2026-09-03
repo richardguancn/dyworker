@@ -416,6 +416,7 @@ export interface AppUpdateStatus {
   version?: string;
   releaseName?: string;
   releaseDate?: string;
+  releaseNotes?: string;
   percent?: number;
   bytesPerSecond?: number;
   transferred?: number;
