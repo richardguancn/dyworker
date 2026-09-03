@@ -12,7 +12,7 @@ export function normalizeApprovalMode(value) {
   // 兼容旧版本审批数据，但统一迁移到新的自动审核模式，避免
   // 界面显示一个模式、任务实际按另一个模式运行。
   if (value === "allow-writes") return "reviewer";
-  return ["interactive", "reviewer", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
+  return ["interactive", "reviewer", "auto", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
 }
 
 // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义 OpenAI 兼容端点。

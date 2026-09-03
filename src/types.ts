@@ -740,6 +740,8 @@ export interface DyworkerBridge {
   dismissInbox(id: string): Promise<{ ok: boolean; error?: string }>;
   resolveQuestion(sessionId: string, requestId: string, answer: string): Promise<{ ok: boolean }>;
   onInboxChanged(callback: () => void): () => void;
+  onInboxFocusItem?(callback: (item: InboxItem) => void): () => void;
+  onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; wakeAt?: string; reason?: string }) => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
   lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;

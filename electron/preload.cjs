@@ -136,6 +136,16 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("sessions:append", listener);
   },
   cancelWakesForSession: (sessionId) => ipcRenderer.invoke("wakes:cancel-for-session", sessionId),
+  onWakeStatus: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("wake:status", listener);
+    return () => ipcRenderer.removeListener("wake:status", listener);
+  },
+  onInboxFocusItem: (callback) => {
+    const listener = (_event, item) => callback(item);
+    ipcRenderer.on("inbox:focus-item", listener);
+    return () => ipcRenderer.removeListener("inbox:focus-item", listener);
+  },
   getChannelsStatus: () => ipcRenderer.invoke("channels:get-status"),
   onChannelsStatus: (callback) => {
     const listener = (_event, statusMap) => callback(statusMap);
