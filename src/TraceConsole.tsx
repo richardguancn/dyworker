@@ -58,8 +58,10 @@ type LogFilter = "all" | DebugLogEntry["kind"];
 
 const LOG_FILTER_KINDS: DebugLogEntry["kind"][] = ["model-request", "model-response", "tool-call", "tool-result"];
 
-function traceTime(trace: TraceEvent): string {
+// 本地时间 HH:mm:ss：日志/轨迹的 time 均为 UTC ISO 串，不能直接切片显示
+function traceTime(trace: { time: string }): string {
   const time = new Date(trace.time);
+  if (isNaN(time.getTime())) return "";
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}:${String(time.getSeconds()).padStart(2, "0")}`;
 }
 
@@ -729,7 +731,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                   <details className={`debug-entry debug-${entry.kind}`} key={entry.id}>
                     <summary>
                       <span className="debug-entry-kind">{debugKindLabels(entry.kind)}</span>
-                      <span className="debug-entry-time">{entry.time.slice(11, 19)}</span>
+                      <span className="debug-entry-time">{traceTime(entry)}</span>
                       <span className="debug-entry-title">{entry.title}</span>
                     </summary>
                     <pre>{entry.content}</pre>
