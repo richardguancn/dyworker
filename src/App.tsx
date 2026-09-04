@@ -848,6 +848,13 @@ const debugKindLabels: Record<DebugLogEntry["kind"], string> = {
   "tool-result": "工具结果",
 };
 
+// 日志时间（UTC ISO 串）转本地 HH:mm:ss，不能直接切片显示（会有时区偏差）
+function formatLogTime(iso: string): string {
+  const time = new Date(iso);
+  if (isNaN(time.getTime())) return "";
+  return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}:${String(time.getSeconds()).padStart(2, "0")}`;
+}
+
 function DebugConsole({ logs, onClear, onClose }: { logs: DebugLogEntry[]; onClear: () => void; onClose: () => void }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -871,7 +878,7 @@ function DebugConsole({ logs, onClear, onClose }: { logs: DebugLogEntry[]; onCle
           <details className={`debug-entry debug-${entry.kind}`} key={entry.id}>
             <summary>
               <span className="debug-entry-kind">{debugKindLabels[entry.kind]}</span>
-              <span className="debug-entry-time">{entry.time.slice(11, 19)}</span>
+              <span className="debug-entry-time">{formatLogTime(entry.time)}</span>
               <span className="debug-entry-title">{entry.title}</span>
             </summary>
             <pre>{entry.content}</pre>
@@ -9059,7 +9066,7 @@ export function App() {
               <div className="message-row assistant">
                 <div className="assistant-working">
                   <LoaderCircle className="spin" size={17} />
-                  <span>{activeLoopState ? `持续执行 第 ${activeLoopState.iteration}/${activeLoopState.maximum} 轮 · ${activeLoopState.status}` : `正在处理任务${activeElapsedSeconds > 1 ? ` · ${activeElapsedSeconds} 秒` : ""}`}</span>
+                  <span>{activeLoopState ? `持续执行 第 ${activeLoopState.iteration}/${activeLoopState.maximum} 轮 · ${activeLoopState.status}` : `正在处理任务${activeElapsedSeconds > 1 ? ` · ${formatDuration(activeElapsedSeconds * 1000)}` : ""}`}</span>
                 </div>
               </div>
             )}
