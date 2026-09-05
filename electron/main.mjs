@@ -1107,7 +1107,13 @@ function createWindow({ solidFallback = false } = {}) {
   });
   if (process.platform !== "linux") mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    // 只把 http/https 交给系统浏览器，其余协议（file:、smb:、自定义协议等）一律拒绝，防止协议处理器滥用
+    try {
+      const target = new URL(url);
+      if (target.protocol === "http:" || target.protocol === "https:") void shell.openExternal(target.toString());
+    } catch {
+      // Ignore malformed open targets.
+    }
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -1601,7 +1607,8 @@ ipcMain.handle("workspace:write-file", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入工作目录文件" };
   return writeWorkspaceFile(String(payload?.workspacePath || ""), String(payload?.filePath || ""), String(payload?.content ?? ""));
 });
-ipcMain.handle("workspace:open", async (_event, targetPath) => {
+ipcMain.handle("workspace:open", async (event, targetPath) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许打开本地文件" };
   const error = await shell.openPath(String(targetPath || ""));
   return error ? { ok: false, error } : { ok: true };
 });
@@ -2655,6 +2662,7 @@ function drainSessionQueue(sessionId) {
 
 ipcMain.handle("agent:send", async (event, payload) => {
   if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "任务请求来源无效" };
   const sessionId = String(payload?.sessionId || "").trim();
   const runId = String(payload?.runId || "").trim();
   if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };

@@ -2726,6 +2726,24 @@ test("isSafePublicUrl 拦截本机与内网地址", () => {
   assert.equal(isSafePublicUrl("file:///etc/passwd").ok, false);
 });
 
+test("isSafePublicUrl 拦截 IPv4 变体与 IPv6 内网形式", () => {
+  // 八进制/十六进制/整数写法：new URL() 规范化为点分 IPv4 后拦截
+  assert.equal(isSafePublicUrl("http://0177.0.0.1/x").ok, false);
+  assert.equal(isSafePublicUrl("http://0x7f.1/x").ok, false);
+  assert.equal(isSafePublicUrl("http://2130706433/x").ok, false); // 127.0.0.1 的整数形式
+  // IPv4 映射 IPv6（::ffff:127.0.0.1 会被规范化为 [::ffff:7f00:1]）
+  assert.equal(isSafePublicUrl("http://[::ffff:127.0.0.1]/x").ok, false);
+  assert.equal(isSafePublicUrl("http://[::ffff:7f00:1]/x").ok, false);
+  // IPv6 环回 / ULA 私网 / 链路本地
+  assert.equal(isSafePublicUrl("http://[::1]/x").ok, false);
+  assert.equal(isSafePublicUrl("https://[fd00::1]/x").ok, false);
+  assert.equal(isSafePublicUrl("https://[fe80::1]/x").ok, false);
+  // 公网 IPv6 与正常域名应放行（旧的裸 fc/fd 前缀正则会误伤这些域名）
+  assert.equal(isSafePublicUrl("https://[2606:4700::6810:85e5]/x").ok, true);
+  assert.equal(isSafePublicUrl("https://fdn.gov/x").ok, true);
+  assert.equal(isSafePublicUrl("https://fcbarcelona.com/x").ok, true);
+});
+
 test("parseSoResults 提取 360 搜索结果", () => {
   const html = `
     <h3   class="res-title"><a href="https://example.com/news" rel="noopener">示例新闻标题</a></h3>

@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs, readFileSync, realpathSync } from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -903,7 +904,37 @@ function currentDatetime() {
 
 // ---- 网页工具：仅公开 HTTP/HTTPS，阻断本机与内网地址 ----
 
-const privateIpPattern = /^(localhost|.*\.localhost|.*\.local|0\.|10\.|127\.|169\.254\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[0-2]\d)\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd|fe80)/i;
+// 内网/本机地址判断：new URL() 已把八进制、十六进制、整数等 IPv4 变体规范化为点分十进制，
+// 这里按「IPv4 字面量 / IPv6 字面量（含方括号与 zone id）/ 域名」三类分别判断，
+// 避免旧的裸前缀正则（fc|fd|fe80）误伤 fcxxx.com 这类正常域名。
+function isPrivateIpv4(host) {
+  const [a, b] = host.split(".").map(Number);
+  return a === 0 || a === 10 || a === 127
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 100 && b >= 64 && b <= 127);
+}
+
+function isPrivateIpv6Literal(host) {
+  const bare = host.split("%")[0];
+  if (!bare.includes(":")) return false;
+  // 以 "::" 开头涵盖环回（::1）、未指定（::）与 IPv4 映射/兼容形式（::ffff:7f00:1 等，均代表本机或内网 IPv4）
+  if (bare.startsWith(":")) return true;
+  const first = Number.parseInt(bare.split(":")[0], 16);
+  if (!Number.isFinite(first)) return true; // 解析不了的 IPv6 形式按可疑处理
+  return (first >= 0xfc00 && first <= 0xfdff) // ULA 私网 fc00::/7
+    || (first >= 0xfe80 && first <= 0xfebf); // 链路本地 fe80::/10
+}
+
+function isPrivateHost(hostname) {
+  let host = String(hostname || "").toLowerCase().trim();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host.includes(":")) return isPrivateIpv6Literal(host);
+  if (net.isIP(host) === 4) return isPrivateIpv4(host);
+  // 域名：只拦本地域名后缀
+  return /(^|\.)localhost$|\.local$/.test(host);
+}
 
 export function isSafePublicUrl(rawUrl) {
   let url;
@@ -917,7 +948,7 @@ export function isSafePublicUrl(rawUrl) {
   }
   if (url.username || url.password) return { ok: false, error: "网页地址不能包含账号或口令" };
   const host = url.hostname.toLowerCase();
-  if (!host || privateIpPattern.test(host)) return { ok: false, error: "不允许访问本机或内部网络地址" };
+  if (!host || isPrivateHost(host)) return { ok: false, error: "不允许访问本机或内部网络地址" };
   return { ok: true, url };
 }
 
@@ -2321,6 +2352,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 使用某个工作模板完成任务的过程中，如果实践验证了更优做法或发现模板有缺漏、过时步骤，交付前用 update_skill 把改进后的完整执行要求写回模板（应用会让用户确认）；没有确信心得就不要改。",
 
     "# 沟通风格\n"
+    + "- 深度思考（内部推理过程）也使用简体中文进行，与回复语言保持一致。\n"
     + "- 对用户使用简洁、自然的中文，说明做成了什么；不要展示内部工具名或原始命令，除非用户明确要求。\n"
     + "- 中文回复一律使用全角标点（，。！？：；、「」），不要受用户消息里的标点习惯影响；代码、命令、URL 内保持原样。\n"
     + "- 完成后用一两句话说清结果即可，不要复述全文，不要追问「还需要什么」。",
