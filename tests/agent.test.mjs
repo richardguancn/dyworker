@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
@@ -4577,6 +4578,59 @@ test("老式 .doc 二进制文件经本机转换器读取（textutil/antiword/Li
   const workspace = new Workspace(root);
   const content = await workspace.readFile("通知.doc");
   assert.match(content, /关于报送材料的通知/);
+});
+
+test("read_file 解析老式 .xls 二进制表格（纯标准库 BIFF 解析，含 SST 跨记录长字符串）", async (t) => {
+  const pythonAvailable = await new Promise((resolve) => {
+    execFile(process.platform === "win32" ? "python" : "python3", ["--version"], (error) => resolve(!error));
+  });
+  if (!pythonAvailable) {
+    t.skip("本机没有 Python 运行环境,跳过 .xls 解析");
+    return;
+  }
+  const root = await makeWorkspace();
+  await fs.copyFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "sample.xls"), path.join(root, "sample.xls"));
+  const workspace = new Workspace(root);
+  const content = await workspace.readFile("sample.xls");
+  assert.match(content, /=== 工作表 1：数据表 ===/);
+  assert.match(content, /=== 工作表 2：Sheet2 ===/);
+  assert.match(content, /=== 工作表 3：Hidden（隐藏） ===/);
+  assert.match(content, /A1=Hello Report/);
+  assert.match(content, /C1=数据汇总·2026/);
+  assert.match(content, /D1=3\.14159/);
+  assert.match(content, /E1=42\t/);
+  assert.match(content, /F1=1234\t/);
+  assert.match(content, /G1=12\.34\t/);
+  assert.match(content, /H1=直书文本/);
+  assert.match(content, /A2=100\tB2=200\tC2=300/);
+  assert.match(content, /D2=99\.5/);
+  assert.match(content, /E2=TRUE/);
+  assert.match(content, /F2=#DIV\/0!/);
+  assert.match(content, /G2=FALSE/);
+  assert.match(content, /A1=summary/);
+  assert.match(content, /B1=-5\.5/);
+  assert.ok(content.includes("L".repeat(12000)), "超长字符串应跨 CONTINUE 记录完整还原");
+});
+
+test("read_file 经 textutil 读取 RTF 富文本", async (t) => {
+  const root = await makeWorkspace({ "a.txt": "关于报送材料的通知\n\n请按时报送。" });
+  const converted = await new Promise((resolve) => {
+    execFile("textutil", ["-convert", "rtf", path.join(root, "a.txt")], (error) => resolve(!error));
+  });
+  if (!converted) {
+    t.skip("本机没有 textutil,跳过 .rtf 生成");
+    return;
+  }
+  const workspace = new Workspace(root);
+  const content = await workspace.readFile("a.rtf");
+  assert.match(content, /关于报送材料的通知/);
+  assert.match(content, /请按时报送/);
+});
+
+test("read_file 对不支持的扩展名给出包含新支持格式的提示", async () => {
+  const root = await makeWorkspace({ "sample.zzz": "binary" });
+  const workspace = new Workspace(root);
+  await assert.rejects(workspace.readFile("sample.zzz"), /\.zzz 格式的文件/);
 });
 
 test("内置 hooks:sudo 等灾难性命令在自动修改模式下也直接阻止", async () => {

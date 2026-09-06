@@ -45,11 +45,20 @@ const WORKING_CONTEXT_LIMIT = 48 * 1024;
 const WORKING_CONTEXT_ITEM_LIMIT = 12 * 1024;
 
 const textExtensions = new Set([
-  ".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".html", ".ini", ".java", ".js", ".json",
-  ".jsx", ".log", ".md", ".markdown", ".mjs", ".py", ".rs", ".sh", ".sql", ".toml", ".ts", ".tsv", ".tsx", ".txt",
-  ".xml", ".yaml", ".yml", ".conf", ".htm",
+  ".adoc", ".bat", ".c", ".cc", ".cfg", ".clj", ".cljs", ".cmake", ".cmd", ".conf", ".cpp", ".css", ".csv", ".dart",
+  ".eml", ".env", ".erl", ".ex", ".exs", ".go", ".gradle", ".graphql", ".gql", ".groovy", ".h", ".hpp", ".htm", ".html",
+  ".http", ".ini", ".ipynb", ".java", ".js", ".json", ".jsonl", ".jsx", ".kt", ".less", ".log", ".lua", ".m", ".md",
+  ".markdown", ".mjs", ".mm", ".ndjson", ".org", ".php", ".pl", ".properties", ".proto", ".ps1", ".psm1", ".py", ".r",
+  ".rb", ".rs", ".rst", ".sass", ".scala", ".scss", ".sh", ".svelte", ".sql", ".svg", ".swift", ".tex", ".tf", ".toml",
+  ".ts", ".tsv", ".tsx", ".txt", ".vue", ".xml", ".yaml", ".yml", ".zig",
 ]);
-const documentExtensions = new Set([".pdf", ".doc", ".docx", ".xlsx", ".pptx"]);
+// .docx/.docm/.pptx/.pptm/.xlsx/.xlsm 由 scripts/extract_office.py 解析（纯标准库，
+// 其中 .xls 为 OLE2+BIFF8 二进制格式）；.pdf 用 pdftotext；.doc/.ppt/.rtf 走本机转换器
+const documentExtensions = new Set([
+  ".pdf", ".doc", ".docx", ".docm", ".rtf",
+  ".xls", ".xlsx", ".xlsm",
+  ".ppt", ".pptx", ".pptm",
+]);
 const ignoredNames = new Set([".git", "node_modules", "dist", ".DS_Store"]);
 
 function runProcess(program, args, timeoutMs, maxOutput, options = {}) {
@@ -397,7 +406,7 @@ export class Workspace {
     const extension = path.extname(file).toLowerCase();
     if (documentExtensions.has(extension)) return this.extractDocument(file, extension, relativePath);
     if (extension && !textExtensions.has(extension)) {
-      throw new Error(`暂不支持读取 ${extension} 格式的文件，可读取文本、代码、Markdown 以及 PDF、Word、Excel、PPT 文档`);
+      throw new Error(`暂不支持读取 ${extension} 格式的文件，可读取文本、代码、Markdown、CSV 等文本文件，以及 PDF、Word（.doc/.docx）、Excel（.xls/.xlsx/.xlsm）、PPT（.ppt/.pptx）、RTF 文档`);
     }
     let content;
     try {
@@ -442,6 +451,8 @@ export class Workspace {
       throw new Error(`文件不存在：${relativePath}`);
     }
     if (extension === ".doc") return this.extractLegacyDoc(file, relativePath);
+    if (extension === ".ppt") return this.extractLegacyPpt(file);
+    if (extension === ".rtf") return this.extractRtf(file);
     if (extension === ".pdf") {
       const result = await runProcess("pdftotext", ["-layout", file, "-"], 60_000, READ_LIMIT);
       if (!result.ok) {
@@ -451,12 +462,48 @@ export class Workspace {
       }
       return result.output.trim() || "（PDF 中没有可提取的文字）";
     }
+    // .docx/.docm/.pptx/.pptm/.xlsx/.xlsm 走 zip 解析；.xls 走内置 BIFF 解析
+    const text = await this.runOfficeExtractor(file);
+    return text || "（文档中没有可提取的文字）";
+  }
+
+  async runOfficeExtractor(file) {
     const scriptSource = path.join(moduleDir, "scripts", "extract_office.py");
     const temporary = path.join(os.tmpdir(), `dyworker-office-${process.pid}.py`);
     await fs.copyFile(scriptSource, temporary);
     const result = await runPython([temporary, file], 60_000, READ_LIMIT);
     if (!result.ok) throw new Error(`办公文档解析失败：${result.output}`);
-    return result.output.trim() || "（文档中没有可提取的文字）";
+    return result.output.trim();
+  }
+
+  // RTF 富文本：macOS 自带 textutil 可转纯文本；无 textutil 时退回 LibreOffice
+  async extractRtf(file) {
+    const result = await runProcess("textutil", ["-convert", "txt", "-stdout", file], 60_000, READ_LIMIT);
+    if (result.ok && result.output.trim()) return result.output.trim();
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-rtf-"));
+    const converted = await runProcess("soffice", ["--headless", "--convert-to", "txt:Text", "--outdir", outdir, file], 60_000, 2000);
+    if (converted.ok) {
+      const txt = path.join(outdir, `${path.basename(file, path.extname(file))}.txt`);
+      const text = await fs.readFile(txt, "utf8").catch(() => "");
+      if (text.trim()) return text.trim();
+    }
+    throw new Error("读取 RTF 需要 textutil（macOS 自带）或 LibreOffice 之一，本机未找到可用的转换器");
+  }
+
+  // 老式 .ppt 是二进制格式：优先 catppt，其次 LibreOffice 转成 .pptx 后按新格式解析
+  async extractLegacyPpt(file, relativePath) {
+    const catppt = await runProcess("catppt", [file], 60_000, READ_LIMIT);
+    if (catppt.ok && catppt.output.trim()) return catppt.output.trim();
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-ppt-"));
+    const converted = await runProcess("soffice", ["--headless", "--convert-to", "pptx", "--outdir", outdir, file], 120_000, 2000);
+    if (converted.ok) {
+      const pptxFile = path.join(outdir, `${path.basename(file, path.extname(file))}.pptx`);
+      try {
+        const text = await this.runOfficeExtractor(pptxFile);
+        if (text) return text;
+      } catch { /* 转换产物解析失败则落到下方提示 */ }
+    }
+    throw new Error("老式 .ppt 是二进制格式，需要本机装有 catppt 或 LibreOffice 才能读取；也可以用 WPS 把文件另存为 .pptx 后再读");
   }
 
   async writeFile(relativePath, content) {
@@ -1318,7 +1365,7 @@ export function toolDefinitions() {
       }, ["query"]),
     functionTool("get_datetime", "获取当前真实日期、时间和星期。起草落款日期、判断「今天/本周/截止日」等相对时间前必须调用，不要凭记忆猜日期。",
       {}, []),
-    functionTool("read_file", "读取文本、PDF、Word、Excel 或 PPT 文件并提取可分析的文字内容。默认最多返回 2000 行，大文件用 offset/limit 分段续读；修改文件前必须先用本工具核对原文，不要凭记忆改。工作区外绝对路径会先弹出单次授权。",
+    functionTool("read_file", "读取文本、代码、CSV，以及 PDF、Word（.doc/.docx）、Excel（.xls/.xlsx/.xlsm）、PPT（.ppt/.pptx）、RTF 文件并提取可分析的文字内容。默认最多返回 2000 行，大文件用 offset/limit 分段续读；修改文件前必须先用本工具核对原文，不要凭记忆改。工作区外绝对路径会先弹出单次授权。",
       {
         path: stringProperty("工作区相对路径或工作区外绝对路径"),
         offset: integerProperty("从第几行开始读取（1 起），默认 1", 1, 10000000),
@@ -2434,7 +2481,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     ? `本任务的长期目标是：${goal}。把它当作最高优先级：每轮交付前对照目标自检——已达成则在 finish_task 中明确说明目标已达成；未达成就继续推进下一步，不得提前宣布完成。目标在达成前持续有效。`
     : "";
   const workspaceLine = workspacePath
-    ? `当前工作区是：${workspacePath}。你可以自动查看工作区目录，并读取文本、PDF、Word、Excel、PPT 文件中的文字内容。写文件、创建文件夹、运行程序会由应用按当前审批设置处理。`
+    ? `当前工作区是：${workspacePath}。你可以自动查看工作区目录，并读取文本、PDF、Word、Excel（含老式 .xls）、PPT、RTF 文件中的文字内容。写文件、创建文件夹、运行程序会由应用按当前审批设置处理。`
     : "当前会话还没有选择工作文件夹。你可以正常回答不涉及本地文件的问题（政策检索、写作、计算、整理思路等）；如果需要读取或写入本地文件、运行命令或创建文件夹，必须在回复中告诉用户先选择工作文件夹，等用户选择并再次发送消息后继续。不要猜测任何文件路径，也不要用文件工具尝试访问任意位置。";
   const dynamicSections = [
     workspaceLine,
