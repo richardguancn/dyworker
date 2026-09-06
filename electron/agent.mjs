@@ -1957,23 +1957,14 @@ const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
 // 低风险判定里的 git 段级检查：先定位子命令（跳过 -C <path>、--git-dir <dir> 等带值全局选项），
 // 拒绝危险子命令与 branch/remote 的变更参数——被只读/白名单判定拒绝的操作必须在此同样拒绝，
 // 否则会经低风险分支重新放行（安全验收 2026-09-06 问题 2）
-// 从 start 起定位词表中第一个 git（容忍 env/nohup 等包装命令前缀），再解析其子命令。
-// 自校验的自定位设计：从 start 起逐个尝试 git 候选位置，且要求该位置不被
-// 包装命令的取值参数占用（env -u git git … 的第一个 git 是 -u 的值，第二个才是程序）。
-// 若 start 处本应是 git 却不匹配，则继续向后寻找真正可执行的 git。
-function isGitSegmentRisky(words, start = 0) {
+// 每段只扫描一次，检查所有 git 候选位置（包括 env/nohup 等包装后的程序）。
+// 保守设计：不做「前一词像带值选项就跳过」的推测——env -u -u git … 中第二个 -u 是
+// 第一个 -u 的取值（名为 -u 的变量），git 是真正的程序，推测跳过会造成漏检。
+// 无法证明只是参数的候选也保守检查；不能因一个候选安全就放过后面的危险候选。
+function isGitSegmentRisky(words) {
   const valueTakingGlobalFlags = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"]);
-  // env 自身取值参数：-u/-i 之外，-u NAME 与 --unset=NAME 的 NAME 不能当 git
-  const envValueFlags = new Set(["-u", "--unset"]);
-  const first = Math.max(0, start);
-  for (let gitIndex = first; gitIndex < words.length; gitIndex += 1) {
+  for (let gitIndex = 0; gitIndex < words.length; gitIndex += 1) {
     if (words[gitIndex] !== "git" && basenameOf(words[gitIndex]) !== "git") continue;
-    // 向前核查：候选位置若在带值选项（如 env -u git 的 -u）之后，它只是取值参数，跳过继续找下一个 git
-    const prev = words[gitIndex - 1];
-    if (prev !== undefined) {
-      const prevBase = prev.startsWith("-") ? prev.split("=")[0] : prev;
-      if (envValueFlags.has(prevBase) && !prev.includes("=")) continue;
-    }
     // 跳过 git 的全局选项定位子命令
     let i = gitIndex + 1;
     while (i < words.length && words[i].startsWith("-")) {
@@ -2003,6 +1994,7 @@ function isSingleLineLowRiskCommand(line) {
   for (const segment of segments) {
     const words = shellWords(segment);
     if (!words.length) continue;
+    if (isGitSegmentRisky(words)) return false;
     for (let index = 0; index < words.length; index += 1) {
       const word = words[index];
       // /bin/rm 这类带路径的调用也要识别
@@ -2015,11 +2007,6 @@ function isSingleLineLowRiskCommand(line) {
       }
       if (word === "wget" || base === "wget") {
         if (!isSafeWgetInvocation(words, allWords)) return false;
-      }
-      if (word === "git" || base === "git") {
-        // 传当前 index：env -u git git … 中第一个 git 是 -u 的取值，
-        // 从该位置起继续向后核查后续真正的 git 程序（见 isGitSegmentRisky 的自校验设计）
-        if (isGitSegmentRisky(words, index)) return false;
       }
       if (["npm", "pnpm", "yarn", "bun"].includes(word) && devBlockedPublishSubcommands.has(words[index + 1] || "")) return false;
       // 解释器内联代码（python3 -c / node -e）等同任意代码，脚本文件则放行
