@@ -3875,8 +3875,9 @@ const channelManager = createChannelManager({
   wechatStateRoot: channelWechatStateRoot(),
   onStatus: broadcastChannelsStatus,
   onRunTask: runChannelTask,
-  onResolvePending: async ({ channel, pending, replyText }) => {
-    const via = CHANNEL_LABELS[channel] || channel;
+  onResolvePending: async ({ channel, pending, replyText, userName }) => {
+    // 决议来源标注到人：审批留痕可追溯到具体 IM 用户（群聊里即任务发起人）
+    const via = `${CHANNEL_LABELS[channel] || channel}${userName ? `·${String(userName).slice(0, 24)}` : ""}`;
     if (pending.kind === "approval") {
       const approved = parseApprovalReply(replyText);
       if (approved === null) return false;

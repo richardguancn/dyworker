@@ -782,6 +782,44 @@ test("manager:没有任务时「停止」如实反馈", async () => {
   assert.ok(sentTexts.some((entry) => entry.text.includes("没有执行中或排队")));
 });
 
+test("安全扫描 2026-09-05:群聊待决审批绑定发起人,其他成员不能代为决议", async () => {
+  const resolves = [];
+  const groupMessage = (text, userId, messageId) => ({
+    channel: "qq", chatType: "group", chatId: "g1", userId, userName: userId === "owner" ? "发起人" : "其他成员", text, messageId,
+  });
+  const { manager, sentTexts } = managerHarness({
+    // 模拟真实接线:任务执行中挂起审批,registerPending 由 manager 绑定发起人
+    onRunTask: async (task) => { task.registerPending({ itemId: "inbox-g1", kind: "approval" }); },
+    onResolvePending: async (payload) => { resolves.push(payload); return true; },
+  });
+  await manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  // 发起人在群里下发任务,任务挂起审批
+  await manager._handleInbound(groupMessage("整理文件", "owner", "m-g1-1"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(manager._pendingByChat.size, 1);
+  // 同群其他成员回复「1」:不能代替发起人决议审批
+  await manager._handleInbound(groupMessage("1", "someone-else", "m-g1-2"));
+  assert.equal(resolves.length, 0, "其他成员的回复不能进入审批决议处理");
+  assert.equal(manager._pendingByChat.size, 1, "待决状态保持");
+  assert.ok(sentTexts.some((entry) => entry.text.includes("只有发起人")));
+  // 发起人本人回复「1」:正常决议,且决议回调带上发送者身份
+  await manager._handleInbound(groupMessage("1", "owner", "m-g1-3"));
+  assert.equal(resolves.length, 1);
+  assert.equal(resolves[0].replyText, "1");
+  assert.equal(resolves[0].userId, "owner", "决议回调包含发送者身份");
+  assert.equal(resolves[0].userName, "发起人");
+  assert.equal(manager._pendingByChat.size, 0);
+  // 决议完成后,其他成员的消息恢复正常任务语义（文本避开「新任务」等新建会话指令词）
+  const tasks2 = [];
+  const manager2info = managerHarness({
+    onRunTask: async (task) => { tasks2.push(task.chat.userId); },
+  });
+  await manager2info.manager.reconcile({ qq: { enabled: true, appId: "a", appSecret: "s" } });
+  await manager2info.manager._handleInbound(groupMessage("帮忙查资料", "someone-else", "m-g1-4"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(tasks2, ["someone-else"], "无待决时其他成员消息照常入队");
+});
+
 test("manager:排队提示附带阻塞原因与停止说明", async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
