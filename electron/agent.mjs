@@ -1710,10 +1710,15 @@ const trustedReadOnlyPrograms = new Set([
   "sort", "uniq", "diff", "comm", "tr", "basename", "dirname", "realpath",
 ]);
 const trustedGitReadOnlySubcommands = new Set(["status", "diff", "log", "show", "branch", "ls-files", "remote"]);
-// 这些子命令虽在白名单里，但带上特定参数就会变更数据，需要排除
-const gitBranchMutationFlags = /^(-[dDmMcC]|--delete|--move|--copy)$/;
+// 这些子命令虽在白名单里，但带上特定参数就会变更数据，需要排除：
+// branch 的删除/改名/复制标志（-d/-D/-m/-M/-c/-C，含 -df、-qD、-mnewname 这类
+// 组合短选项与连写取值）和 remote 的变更子命令
+const gitBranchMutationArg = (token) =>
+  /^--(delete|move|copy|edit-description)(=|$)/.test(token) || /^-[^-]*[dDmMcC]/.test(token);
 const gitRemoteMutationSubcommands = new Set(["add", "remove", "rm", "set-url", "set-head", "set-branches", "prune", "rename", "update"]);
 const findMutationFlags = /^-(delete|exec|execdir|ok|okdir|fls|fprint|fprintf|fprint0|fprintf0)$/;
+// uniq 的 -f/-s/-w 及长形式带独立取值，统计位置参数时需一并跳过其值
+const uniqValueFlags = new Set(["-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"]);
 
 const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
 const scriptRunnerPrograms = new Set([...interpreterPrograms, "bun", "bunx", "tsx", "ts-node"]);
@@ -1785,10 +1790,28 @@ function isTrustedReadOnlySegment(argv) {
   if (!program || ruleNeverAllowCommands.has(program)) return false;
   if (isCdSegment(argv)) return true;
   if (program === "find") return !argv.some((token) => findMutationFlags.test(token));
+  // sort/diff 的 -o/--output 会直接写文件（含 -oFILE、-ro 连写形式），不得按程序名认定为只读
+  if (program === "sort" || program === "diff") {
+    return !argv.some((token) => token.startsWith("--output") || /^-[^-]*o/.test(token));
+  }
+  // uniq 的第二个位置参数是输出文件（uniq in.txt out.txt 直接覆盖写入），按位置参数判定
+  if (program === "uniq") {
+    const positional = [];
+    for (let i = 1; i < argv.length; i += 1) {
+      const token = argv[i];
+      if (token === "--") { positional.push(...argv.slice(i + 1)); break; }
+      if (uniqValueFlags.has(token)) { i += 1; continue; } // 标志带独立取值，连同值一起跳过
+      // 单独的 - 表示标准输入，是合法的输入位置参数，不能当选项跳过
+      if (token === "-") { positional.push(token); continue; }
+      if (token.startsWith("-")) continue;
+      positional.push(token);
+    }
+    return positional.length <= 1;
+  }
   if (program === "git") {
     const subcommand = argv[1] || "";
     if (!trustedGitReadOnlySubcommands.has(subcommand)) return false;
-    if (subcommand === "branch" && argv.some((token) => gitBranchMutationFlags.test(token))) return false;
+    if (subcommand === "branch" && argv.some(gitBranchMutationArg)) return false;
     if (subcommand === "remote" && argv.some((token) => gitRemoteMutationSubcommands.has(token))) return false;
     return true;
   }
@@ -1845,7 +1868,14 @@ function isDevAutoApprovableSegment(argv) {
   const program = argv[0] || "";
   if (!program || ruleNeverAllowCommands.has(program)) return false;
   if (isCdSegment(argv) || isTrustedReadOnlySegment(argv)) return true;
-  if (program === "git") return devAutoAllowGitCommands.has(argv[1] || "");
+  if (program === "git") {
+    const subcommand = argv[1] || "";
+    if (!devAutoAllowGitCommands.has(subcommand)) return false;
+    // 复用只读判定的参数检查：branch -D、remote 变更等危险参数不得因子命令在白名单而放行
+    if (subcommand === "branch" && argv.some(gitBranchMutationArg)) return false;
+    if (subcommand === "remote" && argv.some((token) => gitRemoteMutationSubcommands.has(token))) return false;
+    return true;
+  }
   if (!devAutoAllowPrograms.has(program)) return false;
   // 包管理器:发布/登录类子命令、全局安装标志或 yarn global 时不自动放行
   if (devBlockedPublishSubcommands.has(argv[1] || "")) return false;
@@ -1878,7 +1908,14 @@ function isReviewerAutoApprovableSegment(argv) {
   const program = argv[0] || "";
   if (!program || ruleNeverAllowCommands.has(program)) return false;
   if (isCdSegment(argv) || isTrustedReadOnlySegment(argv)) return true;
-  if (program === "git") return reviewerSafeGitCommands.has(argv[1] || "");
+  if (program === "git") {
+    const subcommand = argv[1] || "";
+    if (!reviewerSafeGitCommands.has(subcommand)) return false;
+    // 复用只读判定的参数检查：branch -D、remote 变更等危险参数不得因子命令在白名单而放行
+    if (subcommand === "branch" && argv.some(gitBranchMutationArg)) return false;
+    if (subcommand === "remote" && argv.some((token) => gitRemoteMutationSubcommands.has(token))) return false;
+    return true;
+  }
   if (["npm", "pnpm", "yarn", "bun"].includes(program)) {
     if (argv[1] === "test") return true;
     return argv[1] === "run" && reviewerSafeScripts.has(argv[2] || "");
@@ -1913,8 +1950,43 @@ const riskyGitSubcommands = new Set([
   "push", "reset", "clean", "rebase", "checkout", "switch", "restore", "rm",
   "filter-branch", "update-ref", "stash", "apply",
 ]);
-const riskyGitFlags = /^(--force|--hard|--delete|-f$|-D$|-d$)/;
+// 危险标志：--force/--hard/--delete 长选项，以及含 -d/-D/-f 的短选项簇（-df、-qD、-qf 连写）
+const riskyGitFlags = /^(--force|--hard|--delete|-[^-]*[dDf])/;
 const inlineCodeFlags = new Set(["-c", "-e", "--eval", "-m"]);
+
+// 低风险判定里的 git 段级检查：先定位子命令（跳过 -C <path>、--git-dir <dir> 等带值全局选项），
+// 拒绝危险子命令与 branch/remote 的变更参数——被只读/白名单判定拒绝的操作必须在此同样拒绝，
+// 否则会经低风险分支重新放行（安全验收 2026-09-06 问题 2）
+// 从 start 起定位词表中第一个 git（容忍 env/nohup 等包装命令前缀），再解析其子命令。
+// 自校验的自定位设计：从 start 起逐个尝试 git 候选位置，且要求该位置不被
+// 包装命令的取值参数占用（env -u git git … 的第一个 git 是 -u 的值，第二个才是程序）。
+// 若 start 处本应是 git 却不匹配，则继续向后寻找真正可执行的 git。
+function isGitSegmentRisky(words, start = 0) {
+  const valueTakingGlobalFlags = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"]);
+  // env 自身取值参数：-u/-i 之外，-u NAME 与 --unset=NAME 的 NAME 不能当 git
+  const envValueFlags = new Set(["-u", "--unset"]);
+  const first = Math.max(0, start);
+  for (let gitIndex = first; gitIndex < words.length; gitIndex += 1) {
+    if (words[gitIndex] !== "git" && basenameOf(words[gitIndex]) !== "git") continue;
+    // 向前核查：候选位置若在带值选项（如 env -u git 的 -u）之后，它只是取值参数，跳过继续找下一个 git
+    const prev = words[gitIndex - 1];
+    if (prev !== undefined) {
+      const prevBase = prev.startsWith("-") ? prev.split("=")[0] : prev;
+      if (envValueFlags.has(prevBase) && !prev.includes("=")) continue;
+    }
+    // 跳过 git 的全局选项定位子命令
+    let i = gitIndex + 1;
+    while (i < words.length && words[i].startsWith("-")) {
+      i += valueTakingGlobalFlags.has(words[i]) ? 2 : 1;
+    }
+    const subcommand = words[i] || "";
+    if (riskyGitSubcommands.has(subcommand)) return true;
+    if (subcommand === "branch" && words.slice(i + 1).some(gitBranchMutationArg)) return true;
+    // remote 自身可带 -v 等选项，变更子命令未必紧邻其后：扫描其后全部 token
+    if (subcommand === "remote" && words.slice(i + 1).some((token) => gitRemoteMutationSubcommands.has(token))) return true;
+  }
+  return false;
+}
 
 function isSingleLineLowRiskCommand(line) {
   const text = String(line || "").trim();
@@ -1944,8 +2016,10 @@ function isSingleLineLowRiskCommand(line) {
       if (word === "wget" || base === "wget") {
         if (!isSafeWgetInvocation(words, allWords)) return false;
       }
-      if (word === "git") {
-        if (riskyGitSubcommands.has(words[index + 1] || "")) return false;
+      if (word === "git" || base === "git") {
+        // 传当前 index：env -u git git … 中第一个 git 是 -u 的取值，
+        // 从该位置起继续向后核查后续真正的 git 程序（见 isGitSegmentRisky 的自校验设计）
+        if (isGitSegmentRisky(words, index)) return false;
       }
       if (["npm", "pnpm", "yarn", "bun"].includes(word) && devBlockedPublishSubcommands.has(words[index + 1] || "")) return false;
       // 解释器内联代码（python3 -c / node -e）等同任意代码，脚本文件则放行

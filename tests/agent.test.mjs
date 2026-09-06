@@ -2137,6 +2137,129 @@ test("替我审批:低风险命令直接放行,发布/推送等风险命令仍�
   assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "rm -rf node_modules" } }), "ask");
 });
 
+test("安全扫描 2026-09-05:强制删除分支不得经宽松分支再次放行", () => {
+  // 替我审批（reviewer）模式：branch -D 不能因子命令在白名单而放行
+  assert.equal(isReviewerAutoApprovableCommand("git branch -D disposable"), false);
+  assert.equal(isReviewerAutoApprovableCommand("git branch --delete disposable"), false);
+  assert.equal(isReviewerAutoApprovableCommand("git remote remove origin"), false);
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git branch -D disposable" } }), "ask");
+  // 省心（allow-writes）模式同样不放行破坏性分支操作
+  assert.equal(isDevAutoApprovableCommand("git branch -D disposable"), false);
+  assert.equal(isDevAutoApprovableCommand("git branch -m renamed"), false);
+  assert.equal(isDevAutoApprovableCommand("git remote add origin https://example.com/x.git"), false);
+  assert.equal(approvalDecision({ approvalMode: "allow-writes", name: "run_command", args: { command: "git branch -D disposable" } }), "ask");
+  // 查看与新建分支不受影响
+  assert.equal(isReviewerAutoApprovableCommand("git branch"), true);
+  assert.equal(isReviewerAutoApprovableCommand("git branch -a"), true);
+  assert.equal(isReviewerAutoApprovableCommand("git branch new-feature"), true);
+  assert.equal(isDevAutoApprovableCommand("git branch new-feature"), true);
+});
+
+test("安全扫描 2026-09-05:只读命令不得忽略写入参数", () => {
+  // sort/diff 的 -o/--output 直接写文件，不得按程序名认定为只读
+  assert.equal(isAutoApprovableCommand("sort input.txt -o output.txt"), false);
+  assert.equal(isAutoApprovableCommand("sort --output=out.txt input.txt"), false);
+  assert.equal(isAutoApprovableCommand("sort -ro out.txt input.txt"), false);
+  assert.equal(isAutoApprovableCommand("sort -ooutput.txt input.txt"), false);
+  assert.equal(isAutoApprovableCommand("diff -o merged.txt a.txt b.txt"), false);
+  assert.equal(isAutoApprovableCommand("diff --output=m.txt a.txt b.txt"), false);
+  // interactive 模式走完整审批管线，不再直接 allow
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "sort input.txt -o output.txt" } }), "ask");
+  // 纯只读用法不受影响
+  assert.equal(isAutoApprovableCommand("sort names.txt"), true);
+  assert.equal(isAutoApprovableCommand("sort -rn scores.txt"), true);
+  assert.equal(isAutoApprovableCommand("diff -u a.ts b.ts"), true);
+  assert.equal(isAutoApprovableCommand("cat a | sort | uniq"), true);
+});
+
+test("验收 2026-09-06:组合短选项与低风险分支不得绕过最终审批", () => {
+  // 问题1:组合短选项删除分支（-df/-qD 含 -d/-D 标志）在最终审批入口全部拒绝
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git branch -df disposable" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git branch -qD disposable" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git branch -qD disposable" } }), "ask");
+  // 连写取值形式（-mnewname）同样拒绝
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git branch -mrenamed" } }), "ask");
+  // 全局选项 -C 在前不能遮蔽检查
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git -C src branch -D disposable" } }), "ask");
+  // 问题2:被只读/白名单拒绝的 remote 删除、branch 改名不得经低风险分支重新放行
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git remote remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git remote rename origin upstream" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git branch -m renamed" } }), "ask");
+  assert.equal(isLowRiskCommand("git remote remove origin"), false);
+  assert.equal(isLowRiskCommand("git branch -m renamed"), false);
+  assert.equal(isLowRiskCommand("git branch -df disposable"), false);
+  // 渠道 auto 模式共用低风险判定,同样不得放行
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "git remote remove origin" } }), "ask");
+  // 危险标志组合短选项（-qf 强拉取）按同类规则拒绝
+  assert.equal(isLowRiskCommand("git tag -df v1.0"), false);
+  assert.equal(isLowRiskCommand("git fetch -qf origin"), false);
+  // 问题3:uniq 位置参数写入（uniq in out 第二参数是输出文件）
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq input.txt output.txt" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq -c input.txt output.txt" } }), "ask");
+  assert.equal(isAutoApprovableCommand("uniq -- input.txt output.txt"), false);
+  // 只读用法不受影响
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq -c input.txt" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq -f 2 input.txt" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git branch -av" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git branch --merged HEAD" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git branch --sort=-committerdate" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git remote -v" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git remote show origin" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git branch -a" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git status" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git commit -m \"整理格式\"" } }), "allow");
+});
+
+test("验收 2026-09-06 第二轮:stdin 占位与包装定位不得绕过审批", () => {
+  // uniq 用 - 表示标准输入时,输出文件是第二个位置参数,不能当选项跳过（含管道形式）
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "cat input.txt | uniq - output.txt" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq - output.txt" } }), "ask");
+  assert.equal(isAutoApprovableCommand("cat input.txt | uniq - output.txt"), false);
+  // 纯标准输入读取(无输出文件)仍是只读
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq -" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "uniq -f 1 -" } }), "allow");
+  // remote 自带 -v 选项时,变更子命令在非紧邻位置也要识别
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git remote -v remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git remote -v rename origin upstream" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "git remote -v remove origin" } }), "ask");
+  // env 等包装命令前缀下,从 git 实际位置解析子命令
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env git remote remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env git branch -D disposable" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "env git push origin main" } }), "ask");
+  assert.equal(isLowRiskCommand("env git remote remove origin"), false);
+  assert.equal(isLowRiskCommand("env git branch -D disposable"), false);
+  // env 包装的只读用法不受影响
+  assert.equal(isLowRiskCommand("env git status"), true);
+  assert.equal(isLowRiskCommand("env git diff --stat"), true);
+  // remote 纯查看不受影响
+  assert.equal(approvalDecision({ approvalMode: "interactive", name: "run_command", args: { command: "git remote -v" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "git remote show origin" } }), "allow");
+});
+
+test("验收 2026-09-06 第三轮:同名参数不得遮蔽真正执行的 git 命令", () => {
+  // env -u git 的第一个 git 是要移除的环境变量名,第二个 git 才是程序:
+  // 危险操作不得被当成取值参数而漏检（reviewer / auto 均需拦截）
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git remote remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git branch -m renamed" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git reset --soft HEAD~1" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git branch -D disposable" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "env -u git git remote remove origin" } }), "ask");
+  // --unset 长选项形式
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env --unset git git remote remove origin" } }), "ask");
+  // 普通不同名参数:环境变量赋值后的 git 正常识别
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env GIT_SSH=x git remote remove origin" } }), "ask");
+  // 多层包装:nohup 包 env 包 git
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git nohup git branch -D x" } }), "ask");
+  // 低风险判定同步拒绝
+  assert.equal(isLowRiskCommand("env -u git git remote remove origin"), false);
+  assert.equal(isLowRiskCommand("env -u git git reset --soft HEAD~1"), false);
+  // 只读操作不受影响:去掉的是同名变量,读取照常放行
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git status" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git diff --stat" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u git git remote -v" } }), "allow");
+  assert.equal(isLowRiskCommand("env -u git git log --oneline -5"), true);
+});
+
 test("自动审核执行常见构建命令时不再额外调用审核助手", async () => {
   const root = await makeWorkspace();
   const calls = [];

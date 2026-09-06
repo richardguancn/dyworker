@@ -10,3 +10,4 @@ coverage/
 *.user
 post-to-wechat
 cover-image
+docs/security/

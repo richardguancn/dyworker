@@ -256,7 +256,16 @@ export function createChannelManager({
     // 3. 命中待决议(审批/提问)→ 直接决议,不进任务队列
     const pending = pendingByChat.get(key);
     if (pending) {
-      const handled = await onResolvePending({ channel: message.channel, chatRecord: record, pending, replyText: message.text });
+      // 群聊防越权：待决议记录绑定任务发起人（见 registerPending），其他成员的回复
+      // 不能代替发起人决议审批/提问。私聊天然同人不受影响；桌面端收件箱决议
+      // 走 main 的 resolveInboxInternal，电脑主人始终可处理。
+      if (pending.userId && String(message.userId || "") !== String(pending.userId)) {
+        await reply(pending.kind === "approval"
+          ? "这条审批由本群其他成员发起，只有发起人可以回复处理；可到电脑端的审批收件箱处理。"
+          : "这个提问由本群其他成员发起，只有发起人可以回复；可到电脑端处理。").catch(() => { });
+        return;
+      }
+      const handled = await onResolvePending({ channel: message.channel, chatRecord: record, pending, replyText: message.text, userId: message.userId, userName: message.userName });
       if (handled) {
         pendingByChat.delete(key);
         // 不再回文字确认,沿用任务开始时的「正在输入」提示,避免确认消息刷屏
@@ -283,7 +292,8 @@ export function createChannelManager({
         reply,
         replyMedia,
         sendTyping,
-        registerPending: (pending) => pendingByChat.set(key, pending),
+        // 待决议记录绑定任务发起人：群聊里只有发起人可以回复决议（防其他成员代批）
+        registerPending: (pending) => pendingByChat.set(key, { ...pending, userId: message.userId }),
         clearPending: () => pendingByChat.delete(key),
       });
     });
