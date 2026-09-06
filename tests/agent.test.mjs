@@ -2260,6 +2260,32 @@ test("验收 2026-09-06 第三轮:同名参数不得遮蔽真正执行的 git �
   assert.equal(isLowRiskCommand("env -u git git log --oneline -5"), true);
 });
 
+test("验收 2026-09-06 第四轮:选项取值本身是选项形状时不得跳过 git 候选", () => {
+  // env -u -u git …:第二个 -u 是第一个 -u 的取值(要移除的变量名叫 -u),git 才是程序。
+  // 不做「前一词像带值选项就跳过」的推测,否则真正的 git 被跳过而漏检
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git remote remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git branch -m renamed" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git reset --soft HEAD~1" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git branch -D disposable" } }), "ask");
+  // auto 渠道模式共用低风险判定,同样拦截
+  assert.equal(approvalDecision({ approvalMode: "auto", name: "run_command", args: { command: "env -u -u git remote remove origin" } }), "ask");
+  assert.equal(isLowRiskCommand("env -u -u git remote remove origin"), false);
+  assert.equal(isLowRiskCommand("env -u -u git reset --soft HEAD~1"), false);
+  // 分离与连写的取值形状:--unset 的取值、取值本身又是选项
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u --unset git remote remove origin" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env --unset -u git branch -D x" } }), "ask");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env --unset=git git remote remove origin" } }), "ask");
+  // 多层包装
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u nohup git branch -D x" } }), "ask");
+  // 普通变量名(环境变量赋值)包装的变更操作同样拦截
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env GIT_SSH=x git remote remove origin" } }), "ask");
+  // 只读查看行为不受影响:取值形状奇怪的包装下读取照常放行
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git status" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git diff --stat" } }), "allow");
+  assert.equal(approvalDecision({ approvalMode: "reviewer", name: "run_command", args: { command: "env -u -u git remote -v" } }), "allow");
+  assert.equal(isLowRiskCommand("env -u -u git log --oneline -5"), true);
+});
+
 test("自动审核执行常见构建命令时不再额外调用审核助手", async () => {
   const root = await makeWorkspace();
   const calls = [];
