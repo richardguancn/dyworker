@@ -4908,6 +4908,35 @@ body.resizing-panels .app-shell {
   background: rgba(47, 111, 237, 0.1);
 }
 
+/* /技能名 token 的内联高亮：与 @文件 同一套内联融合呈现，不独占一行 */
+.composer-mirror .skill-token,
+.user-message-text .skill-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .skill-token {
+  background: rgba(124, 82, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(124, 82, 255, 0.22);
+}
+
+.user-message-text .skill-token {
+  color: #7c52ff;
+  background: rgba(124, 82, 255, 0.1);
+}
+
+/* 气泡里的 @文件 token 可点击打开 */
+.user-message-text .file-token.clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.user-message-text .file-token.clickable:hover {
+  background: rgba(47, 111, 237, 0.2);
+}
+
 /* 输入框长粘贴折叠块：大段粘贴文本折叠成条，点击展开预览 */
 .composer-paste-folds {
   display: flex;

@@ -516,7 +516,17 @@ function ShowMoreToggle({ expanded, onToggle }: { expanded: boolean; onToggle: (
   );
 }
 
-function ClampedUserText({ text, tokenNames }: { text: string; tokenNames?: Set<string> }) {
+function ClampedUserText({
+  text,
+  tokenNames,
+  skillNames,
+  onFileToken,
+}: {
+  text: string;
+  tokenNames?: Set<string>;
+  skillNames?: Set<string>;
+  onFileToken?: (name: string) => void;
+}) {
   const active = text.length > LONG_TEXT_GATE;
   const { ref, overflowing, expanded, setExpanded } = useClampToggle<HTMLSpanElement>(active);
   return (
@@ -525,7 +535,7 @@ function ClampedUserText({ text, tokenNames }: { text: string; tokenNames?: Set<
         ref={ref}
         className={`user-message-text${active && !expanded ? " clamped" : ""}${expanded ? " expanded" : ""}`}
       >
-        {renderFileTokenText(text, tokenNames ?? new Set<string>(), "bubble")}
+        {renderInlineTokens(text, tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: "bubble", onFileToken })}
       </span>
       {overflowing && (
         <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
@@ -609,12 +619,16 @@ function VoiceMessageBubble({
   loadingPath,
   onTogglePlay,
   tokenNames,
+  skillNames,
+  onFileToken,
 }: {
   message: ChatMessage;
   playingPath: string | null;
   loadingPath: string | null;
   onTogglePlay: (attachment: Attachment) => void;
   tokenNames?: Set<string>;
+  skillNames?: Set<string>;
+  onFileToken?: (name: string) => void;
 }) {
   const { channelPrefix, asrText, voiceAttachment } = parseVoiceMessageDetails(message);
   const pathKey = voiceAttachment ? (voiceAttachment.path || voiceAttachment.name) : "";
@@ -653,7 +667,7 @@ function VoiceMessageBubble({
       )}
       {Boolean(asrText) && (
         <div className="voice-asr-section">
-          <ClampedUserText text={asrText} tokenNames={tokenNames} />
+          <ClampedUserText text={asrText} tokenNames={tokenNames} skillNames={skillNames} onFileToken={onFileToken} />
         </div>
       )}
     </div>
@@ -741,25 +755,56 @@ interface ComposerPasteBlock {
 }
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
-// 把文本中的 @文件名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
-// 引用文件按输入顺序随正文展示，而不是单独堆成一排 chip
+// 把文本中的 @文件名 与 /技能名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
+// 引用文件/技能按输入顺序随正文展示，而不是单独堆成一排 chip
 const FILE_TOKEN_REGEX = /@([^\s@]+)/g;
+// /技能名 遇空格、@ 或下一个 / 即止；@文件名 允许携带路径（如 @src/pages/list）
+const SKILL_TOKEN_REGEX = /\/([^\s/@]+)/g;
+const INLINE_TOKEN_REGEX = /(@[^\s@]+|\/[^\s/@]+)/g;
 
-function renderFileTokenText(text: string, names: Set<string>, keyPrefix = ""): ReactNode {
+// 正文里出现的 /token 名字集合：判断技能引用是否已内联在正文中
+function skillTokensInText(text: string): Set<string> {
+  const names = new Set<string>();
+  SKILL_TOKEN_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SKILL_TOKEN_REGEX.exec(text))) names.add(match[1]);
+  return names;
+}
+
+function renderInlineTokens(
+  text: string,
+  fileNames: Set<string>,
+  skillNames: Set<string>,
+  options?: { keyPrefix?: string; onFileToken?: (name: string) => void },
+): ReactNode {
   if (!text) return null;
-  if (!names.size) return text;
+  if (!fileNames.size && !skillNames.size) return text;
+  const { keyPrefix = "", onFileToken } = options || {};
   const parts: ReactNode[] = [];
   let last = 0;
   let index = 0;
-  FILE_TOKEN_REGEX.lastIndex = 0;
+  INLINE_TOKEN_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = FILE_TOKEN_REGEX.exec(text))) {
-    if (!names.has(match[1])) continue;
+  while ((match = INLINE_TOKEN_REGEX.exec(text))) {
+    const token = match[0];
+    const name = token.slice(1);
+    const isFile = token.startsWith("@") && fileNames.has(name);
+    const isSkill = token.startsWith("/") && skillNames.has(name);
+    if (!isFile && !isSkill) continue;
     if (match.index > last) parts.push(text.slice(last, match.index));
-    parts.push(
-      <span className="file-token" key={`${keyPrefix}-${index++}`}>@{match[1]}</span>,
-    );
-    last = match.index + match[0].length;
+    if (isFile) {
+      parts.push(
+        <span
+          className={`file-token${onFileToken ? " clickable" : ""}`}
+          key={`${keyPrefix}-${index++}`}
+          title={onFileToken ? `打开 ${name}` : undefined}
+          onClick={onFileToken ? () => onFileToken(name) : undefined}
+        >@{name}</span>,
+      );
+    } else {
+      parts.push(<span className="skill-token" key={`${keyPrefix}-${index++}`}>/{name}</span>);
+    }
+    last = match.index + token.length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
@@ -6505,6 +6550,24 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composer, workspaceFiles]);
 
+  // 正文里已选技能的 /技能名：与 @文件 一样在镜像层画内联高亮
+  const activeSkillNames = useMemo(() => new Set(activeSkills.map((skill) => skill.name)), [activeSkills]);
+
+  // 打开气泡里被引用的文件（@token 点击）：优先用消息里记录的附件路径，桌面版调主进程，预览环境给提示
+  const openReferencedFile = async (name: string, knownPath?: string) => {
+    const filePath = knownPath || resolveTokenFile(name)?.path;
+    if (!filePath) {
+      setNotice(`没有找到文件 ${name}，可能已移动或删除`);
+      return;
+    }
+    if (window.dyworker?.openPath) {
+      const result = await window.dyworker.openPath(filePath);
+      if (result && !result.ok) setNotice(result.error || `打开 ${name} 失败`);
+    } else {
+      setNotice(`预览环境无法打开本地文件：${filePath}`);
+    }
+  };
+
   // 在光标处插入「@文件名 」内联 token：引用随正文按顺序展示（对齐 Codex 的 @ 引用体验）
   const insertFileToken = (file: WorkspaceEntry) => {
     const token = `@${file.name} `;
@@ -6756,11 +6819,16 @@ export function App() {
       .map((file) => ({ id: file.path, title: file.name, detail: file.path, file }));
   }, [mentionMenu, mentionSkills, workspaceFiles]);
 
-  const updateComposer = (value: string) => {
+  // 候选菜单触发（对照 Codex/Claude 的 @、/ 引用）：以光标位置为准检测紧邻的触发 token，
+  // 文本中间随时可触发；触发符前只允许行首/空白/中日韩字符——邮箱(a@b)与路径(src/)这类
+  // 连续 ASCII 里夹杂的 @// 不打扰候选菜单
+  const updateComposer = (value: string, caret?: number) => {
     setComposer(value);
-    const slashMatch = value.match(/^\s*\/([^\s@/]*)$/);
+    const position = Math.min(Math.max(caret ?? value.length, 0), value.length);
+    const before = value.slice(0, position);
+    const slashMatch = before.match(/(?:^|[\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\/([^\s@/]*)$/);
     // @ 引用允许在路径中出现 /（如 @src/pages/list），输入 / 不再中断候选菜单
-    const atMatch = value.match(/(?:^|\s)@([^\s@]*)$/);
+    const atMatch = before.match(/(?:^|[\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])@([^\s@]*)$/);
     const matched = slashMatch
       ? { kind: "slash" as const, query: slashMatch[1] }
       : atMatch
@@ -6773,10 +6841,15 @@ export function App() {
           setMentionSkills(items);
         });
       }
-      setMentionMenu({ kind: matched.kind, query: matched.query, start: value.length - matched.query.length - 1 });
+      setMentionMenu({ kind: matched.kind, query: matched.query, start: position - matched.query.length - 1 });
       setMentionIndex(0);
     } else if (mentionMenu) {
       setMentionMenu(null);
+    }
+    // 技能引用以 /技能名 内联 token 留在正文里：删掉 token 即移除引用（与 @文件 一致）
+    if (activeSkills.length) {
+      const inlineSkillNames = skillTokensInText(value);
+      setActiveSkills((current) => current.filter((skill) => inlineSkillNames.has(skill.name)));
     }
   };
 
@@ -6816,12 +6889,25 @@ export function App() {
           target.setSelectionRange(pos, pos);
         }
       }, 0);
+    } else if (mentionMenu.kind === "slash" && item.skill) {
+      // 技能引用：在 / 触发位置原地插入 /技能名 内联 token，前后正文保留（与 @文件 同一融合呈现）
+      const skill = item.skill;
+      const token = `/${skill.name} `;
+      const start = mentionMenu.start;
+      const end = start + mentionMenu.query.length + 1;
+      setActiveSkills((current) => current.some((entry) => entry.id === skill.id) ? current : [...current, skill]);
+      setComposer(composer.slice(0, start) + token + composer.slice(end));
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + token.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
     } else {
+      // 防御：仅清掉触发文本
       setComposer(composer.slice(0, mentionMenu.start));
-      if (mentionMenu.kind === "slash" && item.skill) {
-        const skill = item.skill;
-        setActiveSkills((current) => current.some((entry) => entry.id === skill.id) ? current : [...current, skill]);
-      }
     }
     setMentionMenu(null);
     if (mentionMenu.kind === "slash") window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -8879,6 +8965,21 @@ export function App() {
                   && activeTaskRunning
                   && !message.taskStatus
                   && index === streamingAssistantIndex;
+                // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
+                const inlineTokenNames = message.role === "user"
+                  ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
+                  : new Set<string>();
+                const messageSkillNames = message.role === "user"
+                  ? new Set(message.skillsUsed ?? [])
+                  : new Set<string>();
+                // 旧消息兼容：正文里没有 /技能名 token 时才退回 chip 展示（新消息已内联融合）
+                const legacySkillChips = message.role === "user"
+                  ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
+                  : [];
+                const openMessageFile = (name: string) => {
+                  const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
+                  void openReferencedFile(name, recorded?.path);
+                };
                 return (
                 <div
                   className={`message-row ${message.role}`}
@@ -8896,9 +8997,10 @@ export function App() {
                           className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}`}
                           onContextMenu={handleMessageContextMenu}
                         >
-                        {Boolean(message.skillsUsed?.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
+                        {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
                           <span className="message-inline-refs">
-                            {message.skillsUsed?.map((name) => (
+                            {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
+                            {legacySkillChips.map((name) => (
                               <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
                                 <Package size={13} />
                                 <span>{name}</span>
@@ -8919,12 +9021,16 @@ export function App() {
                             playingPath={playingVoicePath}
                             loadingPath={voiceLoadingPath}
                             onTogglePlay={togglePlayVoice}
-                            tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
+                            tokenNames={inlineTokenNames}
+                            skillNames={messageSkillNames}
+                            onFileToken={openMessageFile}
                           />
                         ) : (
                           <ClampedUserText
                             text={messageVisibleText(message)}
-                            tokenNames={new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))}
+                            tokenNames={inlineTokenNames}
+                            skillNames={messageSkillNames}
+                            onFileToken={openMessageFile}
                           />
                         )}
                         {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
@@ -9384,22 +9490,10 @@ export function App() {
               </div>
             )}
             <div
-              className={`attachment-strip${Boolean(activeSkills.length || attachments.length) ? " has-refs" : ""}`}
-              aria-label={Boolean(activeSkills.length || attachments.length) ? `已选择 ${activeSkills.length + attachments.length} 项` : undefined}
+              className={`attachment-strip${attachments.length ? " has-refs" : ""}`}
+              aria-label={attachments.length ? `已选择 ${attachments.length} 项` : undefined}
             >
-              {activeSkills.map((skill) => (
-                <span className="attachment-chip ref-attachment-chip" key={skill.id}>
-                  <Package size={14} />
-                  <span title={skill.description}>/{skill.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSkills((current) => current.filter((item) => item.id !== skill.id))}
-                    aria-label={`移除技能 ${skill.name}`}
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              ))}
+              {/* 技能引用以 /技能名 内联 token 留在正文里（删 token 即移除），不再单独占一行 chip */}
               {attachments.map((attachment) => (
                 <span
                   className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : " ref-attachment-chip"}`}
@@ -9433,13 +9527,20 @@ export function App() {
               <div className="composer-input-wrap">
                 {/* 镜像层：渲染在 textarea 之下，给正文里的 @文件 token 画内联高亮底色 */}
                 <div className="composer-mirror" ref={composerMirrorRef} aria-hidden>
-                  {renderFileTokenText(composer, activeTokenNames, "mirror")}
+                  {renderInlineTokens(composer, activeTokenNames, activeSkillNames, { keyPrefix: "mirror" })}
                 </div>
                 <textarea
                   ref={textareaRef}
                   value={composer}
-                  onChange={(event) => updateComposer(event.target.value)}
+                  onChange={(event) => updateComposer(event.target.value, event.target.selectionStart ?? event.target.value.length)}
                   onPaste={(event) => void handleComposerPaste(event)}
+                  onSelect={(event) => {
+                    // 光标点击/移动时同步候选菜单：点回 @token//token 后面可重新唤起，移开即关闭
+                    if (composingRef.current) return;
+                    const target = event.currentTarget;
+                    if (target.selectionStart !== target.selectionEnd) return;
+                    updateComposer(target.value, target.selectionStart ?? target.value.length);
+                  }}
                   onContextMenu={handleComposerContextMenu}
                   onKeyDown={onComposerKeyDown}
                   onScroll={(event) => {
