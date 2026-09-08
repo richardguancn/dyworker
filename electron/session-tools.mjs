@@ -245,3 +245,45 @@ export function handleSessionTool(name, args, { sessions } = {}) {
     return { ok: false, result: `会话工具执行失败：${error instanceof Error ? error.message : String(error)}` };
   }
 }
+
+// ---- 侧边聊天（chat:complete）：只检索当前主会话 ----
+// 与全量三件套不同：数据源是调用方传入的当前会话单条，检索不到其他会话的内容。
+// 渲染层把当前打开的会话随请求传入，主进程在工具循环里执行（见 main.mjs chat:complete）。
+
+export function sideChatToolDefinitions() {
+  const tool = (name, description, properties, required) => ({
+    type: "function",
+    function: { name, description, parameters: { type: "object", properties, required } },
+  });
+  return [
+    tool(
+      "search_current_session",
+      "在用户当前主会话的消息正文里按关键词搜索，返回命中片段（含角色与时间）。用于「之前提到过 XX 吗」「那个报错是什么」这类针对当前会话的提问。",
+      {
+        keyword: stringArg("要搜索的关键词"),
+        limit: stringArg("可选：最多返回几条命中，默认 20"),
+      },
+      ["keyword"],
+    ),
+    tool(
+      "read_current_session",
+      "读取用户当前主会话的最近对话正文（用户与助手的完整消息，按时间顺序）。用于总结当前会话、了解正在进行的任务，不需要 sessionId。",
+      {
+        lastN: stringArg("可选：读最近几条消息，默认 20"),
+      },
+    ),
+  ];
+}
+
+// 两个工具都映射到全量实现，但 sessions 永远只装调用方传入的当前会话这一条
+export function handleSideChatTool(name, args, { session } = {}) {
+  const mapped = name === "search_current_session"
+    ? { name: "search_sessions", args: args || {} }
+    : name === "read_current_session"
+      ? { name: "read_session", args: { ...(args || {}), sessionId: session?.id } }
+      : null;
+  if (!mapped) return { ok: false, result: `没有找到侧边聊天工具：${name}` };
+  const sessions = session && Array.isArray(session.messages) && session.messages.length ? [session] : [];
+  if (!sessions.length) return { ok: false, result: "当前主会话还没有消息，暂时检索不到内容。" };
+  return handleSessionTool(mapped.name, mapped.args, { sessions });
+}

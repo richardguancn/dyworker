@@ -1594,8 +1594,10 @@ function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: str
 }
 
 // ===== 侧边聊天：临时问答（不持久化，关闭应用后消失；对照 Codex 侧边聊天页） =====
+// 当前会话作为工具数据随请求传给主进程（payload.session）：
+// 模型在回答前可按需 search/read 这一个会话，而不是把会话正文注入上下文
 
-function SideChatPanel({ settings }: { settings: ProviderSettings }) {
+function SideChatPanel({ settings, session }: { settings: ProviderSettings; session?: SessionRecord }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -1618,7 +1620,8 @@ function SideChatPanel({ settings }: { settings: ProviderSettings }) {
         setMessages([...next, { role: "assistant", content: "当前预览环境没有连接模型，这里只是界面演示。", createdAt: new Date().toISOString() }]);
         return;
       }
-      const result = await window.dyworker.completeChat({ settings, messages: next });
+      // 当前会话随请求传给主进程：模型用它按需检索（search/read_current_session），不进气泡
+      const result = await window.dyworker.completeChat({ settings, messages: next, session });
       setMessages([...next, { role: "assistant", content: result.content || "（空回复）", createdAt: new Date().toISOString() }]);
     } catch (sendError) {
       setMessages([...next, { role: "assistant", content: `发送失败：${sendError instanceof Error ? sendError.message : String(sendError)}`, createdAt: new Date().toISOString() }]);
@@ -1634,7 +1637,7 @@ function SideChatPanel({ settings }: { settings: ProviderSettings }) {
           <div className="browser-empty-state side-chat-empty">
             <MessageSquarePlus size={46} />
             <strong>侧边聊天</strong>
-            <span>侧边聊天是临时聊天，关闭应用后会消失。</span>
+            <span>临时聊天，关闭应用后会消失{session?.messages.length ? "；就当前会话提问时会按需检索会话内容。" : "。"}</span>
           </div>
         ) : (
           messages.map((message, index) => (
@@ -9803,7 +9806,7 @@ export function App() {
           )}
 
           {!menuPageShown && activeToolPanelKind === "chat" && (
-            <SideChatPanel settings={settings} />
+            <SideChatPanel settings={settings} session={activeSession} />
           )}
 
           {!menuPageShown && activeToolPanelKind === "tasks" && (
