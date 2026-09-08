@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { SESSION_TOOL_NAMES, handleSessionTool, sessionToolDefinitions } from "../electron/session-tools.mjs";
+import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "../electron/session-tools.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -210,4 +210,56 @@ test("main.mjs 接线契约:extraTools 含会话工具,路由优先于浏览器/
   assert.match(source, /SESSION_TOOL_NAMES\.has\(String\(name\)\)[\s\S]*?handleSessionTool\(name, args, \{ sessions \}\)[\s\S]*?name\.startsWith\("browser__"\)/);
   // 渠道自定义路由最终 fall through 到 baseRouter(createExtraToolRouter 实例),会话工具可达
   assert.match(source, /return baseRouter\(name, args\);/);
+});
+
+// ---- 侧边聊天（只检索当前会话） ----
+
+const sideCall = (name, args) => handleSideChatTool(name, args, { session: fixtureSessions[0] });
+
+test("sideChatToolDefinitions:两个只读工具,定义形状与全量工具一致", () => {
+  const definitions = sideChatToolDefinitions();
+  assert.deepEqual(definitions.map((tool) => tool.function.name), ["search_current_session", "read_current_session"]);
+  assert.ok(definitions.every((tool) => tool.type === "function"));
+  assert.ok(definitions.every((tool) => tool.function.description.length >= 10));
+  assert.deepEqual(definitions.find((tool) => tool.function.name === "search_current_session").function.parameters.required, ["keyword"]);
+});
+
+test("search_current_session:只在传入的当前会话内检索,不碰其他会话", () => {
+  const hit = sideCall("search_current_session", { keyword: "请款函" });
+  assert.equal(hit.ok, true);
+  assert.ok(hit.result.includes("请款函"));
+  // 关键词只出现在其他会话(s2 周报)里时,当前会话内查不到
+  const miss = sideCall("search_current_session", { keyword: "周报" });
+  assert.equal(miss.ok, true);
+  assert.ok(miss.result.includes("没有找到"));
+  // 缺关键词走全量工具的参数校验文案
+  const missingKeyword = sideCall("search_current_session", {});
+  assert.equal(missingKeyword.ok, false);
+  assert.ok(missingKeyword.result.includes("缺少搜索关键词"));
+});
+
+test("read_current_session:不需要 sessionId,读的是传入会话", () => {
+  const { ok, result } = sideCall("read_current_session", { lastN: 2 });
+  assert.equal(ok, true);
+  assert.ok(result.includes("已修订完成"));
+  assert.ok(!result.includes("周报"));
+});
+
+test("handleSideChatTool:无会话与未知工具的兜底", () => {
+  const empty = handleSideChatTool("search_current_session", { keyword: "x" }, {});
+  assert.equal(empty.ok, false);
+  assert.ok(empty.result.includes("还没有消息"));
+  const unknown = sideCall("other_tool", {});
+  assert.equal(unknown.ok, false);
+  assert.ok(unknown.result.includes("没有找到侧边聊天工具"));
+});
+
+test("main.mjs 接线契约:chat:complete 带会话检索工具循环", () => {
+  const source = readFileSync(path.join(here, "../electron/main.mjs"), "utf8");
+  // 渲染层传入的 session 开放侧边聊天工具
+  assert.match(source, /payload\?\.session \|\| null/);
+  assert.match(source, /sideChatToolDefinitions\(\)/);
+  // 工具结果以 tool 消息回传给模型,循环有轮数上限兜底
+  assert.match(source, /handleSideChatTool\(call\?\.function\?\.name/);
+  assert.match(source, /SIDE_CHAT_TOOL_ROUNDS/);
 });

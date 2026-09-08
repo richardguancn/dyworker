@@ -709,6 +709,8 @@ export interface DyworkerBridge {
   completeChat(payload: {
     settings: ProviderSettings;
     messages: ChatMessage[];
+    // 侧边聊天传入当前主会话：主进程据此开放 search/read_current_session 只读检索工具
+    session?: SessionRecord;
   }): Promise<{ content: string; demo?: boolean }>;
   sendTask(payload: {
     settings: ProviderSettings;
