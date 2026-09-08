@@ -310,10 +310,30 @@ test("@ 引用文件按顺序内联展示，输入 / 可继续过滤路径", () 
   assert.match(app, /inlineRef: true/);
   // 输入框镜像层给 token 画高亮底色；气泡正文同步内联高亮，不再重复渲染 chip
   assert.match(app, /composer-mirror/);
-  assert.match(app, /renderFileTokenText/);
+  // 镜像层与气泡共用 renderInlineTokens：@文件 与 /技能 token 都内联高亮
+  assert.match(app, /renderInlineTokens\(composer, activeTokenNames, activeSkillNames/);
+  assert.doesNotMatch(app, /renderFileTokenText/);
   assert.match(app, /attachment\.inlineRef/);
   assert.match(styles, /\.composer-mirror/);
   assert.match(styles, /\.file-token/);
+  assert.match(styles, /\.skill-token/);
+});
+
+test("文本中间也能触发 @ 与 / 候选菜单，引用文件可点击打开", () => {
+  // onChange 必须带上光标位置：只在文本末尾触发是 bug，中间输入 @ / 也要弹候选
+  assert.match(app, /updateComposer\(event\.target\.value, event\.target\.selectionStart/);
+  // 光标点击移动时同步候选菜单（点回 token 后面重新唤起，移开关闭）
+  assert.match(app, /onSelect=\{\(event\)/);
+  // updateComposer 以传入光标为准检测触发 token，而不是文本末尾
+  assert.match(app, /const position = Math\.min\(Math\.max\(caret \?\? value\.length/);
+  // 气泡里的 @文件 token 点击打开：优先用消息记录的内联附件路径
+  assert.match(app, /const openMessageFile = \(name: string\)/);
+  assert.match(app, /onFileToken=\{openMessageFile\}/);
+  assert.match(app, /attachment\.inlineRef && attachment\.name === name/);
+  assert.match(styles, /\.file-token\.clickable/);
+  // /技能 token 内联融合在正文里；只有旧消息（正文无 token）才退回 chip
+  assert.match(app, /legacySkillChips/);
+  assert.match(app, /skillNames=\{messageSkillNames\}/);
 });
 
 test("消息支持复制、时间显示和编辑后重新发送", () => {
