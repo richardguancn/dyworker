@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bareModelName, builtinHooks, isResponsesEndpoint, isSafePublicUrl, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -139,6 +139,10 @@ function systemWindowBackground() {
 // DYWORKER_FORCE_WINDOW_SHADOW=1 强制开启（保留诊断日志，不自动回退）。
 let linuxWindowShadowCache;
 let currentWindowShadow = false;
+// 渲染端透明留白的单边宽度（px），与 styles.css 的 html.window-shadow .app-shell
+// margin 保持一致：getBounds() 含四周各这么宽一圈透明区，凡是依赖窗口几何的
+// 逻辑（如 rebuildLinuxWindowAsSolid）都要换算。改这里必须同步改 CSS。
+const LINUX_SHADOW_MARGIN = 32;
 // 重建窗口期间置位：销毁最后一个窗口会触发 window-all-closed，若此时应用
 // 退出，就表现为“进程还在但界面消失”。重建期间不退出，等新窗口接管。
 let recreatingWindow = false;
@@ -219,7 +223,27 @@ function describeLinuxWindowState(win) {
 // 避免窗口销毁触发 window-all-closed 退出应用（表现为进程在但界面消失）。
 function rebuildLinuxWindowAsSolid() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const bounds = mainWindow.getBounds();
+  // 透明阴影窗口的 getBounds() 含渲染端四周各 LINUX_SHADOW_MARGIN 的透明留白
+  // （styles.css 的 html.window-shadow .app-shell margin）；不透明窗口内容铺满，
+  // 直接搬运 bounds 会让重建后的窗口比原来大 2 倍留白，这里先扣掉。
+  // wasShadow 必须在 createWindow 之前捕获——createWindow 内会重置 currentWindowShadow。
+  const wasShadow = currentWindowShadow;
+  const raw = mainWindow.getBounds();
+  let bounds = raw;
+  if (wasShadow) {
+    bounds = {
+      x: raw.x + LINUX_SHADOW_MARGIN,
+      y: raw.y + LINUX_SHADOW_MARGIN,
+      width: raw.width - LINUX_SHADOW_MARGIN * 2,
+      height: raw.height - LINUX_SHADOW_MARGIN * 2,
+    };
+    // 贴边窗口（如拖到屏幕边缘的半屏布局）内缩后可能越界，钳制回工作区
+    const workArea = screen.getDisplayMatching(raw).workArea;
+    bounds.x = Math.max(bounds.x, workArea.x);
+    bounds.y = Math.max(bounds.y, workArea.y);
+    bounds.width = Math.min(bounds.width, workArea.x + workArea.width - bounds.x);
+    bounds.height = Math.min(bounds.height, workArea.y + workArea.height - bounds.y);
+  }
   const maximized = mainWindow.isMaximized();
   recreatingWindow = true;
   try {
@@ -908,8 +932,16 @@ function createWindow({ solidFallback = false } = {}) {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
-  mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-changed", true));
-  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-changed", false));
+  // 最大化/还原时复位鼠标忽略状态：最大化无透明留白（不需要穿透），
+  // 还原后由渲染端 hit-test 重新接管（见 window:set-ignore-mouse）。
+  mainWindow.on("maximize", () => {
+    mainWindow?.setIgnoreMouseEvents(false);
+    mainWindow?.webContents.send("window:maximized-changed", true);
+  });
+  mainWindow.on("unmaximize", () => {
+    mainWindow?.setIgnoreMouseEvents(false);
+    mainWindow?.webContents.send("window:maximized-changed", false);
+  });
   // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
   // 被送到上一个窗口（X11/XWayland 无边框窗口的常见问题）。
   if (process.platform === "linux") {
@@ -1132,13 +1164,15 @@ function createWindow({ solidFallback = false } = {}) {
   });
 }
 
-// 右侧浏览器标签页使用 webview 内嵌网页；远程页面始终关闭 Node 能力，并拦截本机/内网跳转。
+// 右侧浏览器标签页使用 webview 内嵌网页；远程页面始终关闭 Node 能力。
+// 协议白名单校验（http/https、禁 userinfo）；localhost/内网地址按产品决策放行
+// （用户可全程看到面板内容，查看本地开发服务是正当需求）。
 app.on("will-attach-webview", (event, webPreferences, params) => {
   delete webPreferences.preload;
   webPreferences.nodeIntegration = false;
   webPreferences.contextIsolation = true;
   webPreferences.sandbox = true;
-  if (params.src && params.src !== "about:blank" && !isSafePublicUrl(params.src).ok) event.preventDefault();
+  if (params.src && params.src !== "about:blank" && !isSafeBrowserUrl(params.src).ok) event.preventDefault();
 });
 
 app.on("web-contents-created", (_event, contents) => {
@@ -1148,7 +1182,7 @@ app.on("web-contents-created", (_event, contents) => {
     if (embeddedBrowserContents === contents) embeddedBrowserContents = null;
   });
   contents.on("will-navigate", (event, url) => {
-    if (!isSafePublicUrl(url).ok) event.preventDefault();
+    if (!isSafeBrowserUrl(url).ok) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
@@ -1692,7 +1726,7 @@ ipcMain.handle("traces:read", async (_event, payload) => {
 });
 ipcMain.handle("browser:open", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "浏览器请求来源无效" };
-  const check = isSafePublicUrl(String(payload?.url || ""));
+  const check = isSafeBrowserUrl(String(payload?.url || ""));
   if (!check.ok) return { ok: false, result: check.error };
   return { ok: true, url: check.url.toString(), result: "已在当前浏览器标签页打开网页" };
 });
@@ -4667,6 +4701,18 @@ ipcMain.handle("window:toggle-maximize", () => {
   else mainWindow.maximize();
 });
 ipcMain.handle("window:close", () => mainWindow?.close());
+
+// Linux 透明阴影窗口的留白区点击穿透：渲染端 hit-test 报告指针是否落在
+// 窗口主体（.app-shell）之外；落在透明留白区时忽略鼠标，让点击穿透到下层
+// 窗口（否则用户以为点到了后面的应用，实际点击被本窗口吞掉）。
+// forward: true 保留 mousemove 转发，渲染端才能在指针移回主体时恢复接收事件。
+ipcMain.on("window:set-ignore-mouse", (event, ignore) => {
+  if (process.platform !== "linux" || !currentWindowShadow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (event.sender !== mainWindow.webContents) return;
+  if (mainWindow.isMaximized()) return; // 最大化时无留白，整个窗口都是内容
+  mainWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
+});
 
 app.whenReady().then(async () => {
   await migrateLegacyDataOnFirstRun();

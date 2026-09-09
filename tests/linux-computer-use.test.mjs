@@ -233,9 +233,9 @@ linuxTest("Linux 无障碍树只读取已绑定的具体窗口", async () => {
   );
   assert.match(helper, /window_root = find_window_root\(application, payload\.get\("window_title"\)\)/);
   assert.match(helper, /describe\(window_root\)/);
-  assert.match(helper, /element_at\(\s*window_root,/);
+  assert.match(helper, /element_at\(window_root,/);
   assert.doesNotMatch(helper, /describe\(application\)/);
-  assert.doesNotMatch(helper, /element_at\(\s*application,/);
+  assert.doesNotMatch(helper, /element_at\(application,/);
 });
 
 linuxTest("Linux 无障碍助手支持控件身份指纹绑定与过期检测", async () => {
