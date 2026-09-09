@@ -3,7 +3,7 @@ import { localImageMimeType, localImagePathFromSource } from "./local-image-path
 
 export { localImagePathFromSource } from "./local-image-path.mjs";
 
-const defaultMaxBytes = 12 * 1024 * 1024;
+const defaultMaxBytes = 32 * 1024 * 1024;
 
 export async function readLocalImageData(source, { maxBytes = defaultMaxBytes } = {}) {
   const filePath = localImagePathFromSource(source);

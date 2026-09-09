@@ -74,6 +74,7 @@ import {
 } from "lucide-react";
 import hljs from "highlight.js/lib/common";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { copyImageToClipboard, copyMessageWithImages, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
 import { TraceConsole } from "./TraceConsole";
@@ -2662,6 +2663,111 @@ function QuestionCard({ request, onResolve }: { request: QuestionRequest; onReso
   );
 }
 
+// 图片预览灯箱：优先按原始尺寸展示，超出视口时等比缩放；大图可拖动查看细节。
+function ImageLightbox({ preview, onClose, onCopied }: {
+  preview: { url: string; name: string; path?: string };
+  onClose: () => void;
+  onCopied?: (copied: boolean) => void;
+}) {
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return;
+    // 用内容盒尺寸（clientWidth 含 padding，会撑出水平滚动条）
+    const measure = () => {
+      const style = window.getComputedStyle(element);
+      const width = element.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0");
+      const height = element.clientHeight - parseFloat(style.paddingTop || "0") - parseFloat(style.paddingBottom || "0");
+      setViewportSize({ width: Math.max(0, width), height: Math.max(0, height) });
+    };
+    measure();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
+  // 原图不超过上限时按原始尺寸展示；上限为视口内容区的 80%，超出才等比缩小（小图绝不放大）
+  const maxDisplaySize = useMemo(() => ({
+    width: viewportSize.width * 0.8,
+    height: viewportSize.height * 0.8,
+  }), [viewportSize]);
+  const displayScale = useMemo(() => {
+    if (!naturalSize || !maxDisplaySize.width || !maxDisplaySize.height) return 1;
+    return Math.min(1, maxDisplaySize.width / naturalSize.width, maxDisplaySize.height / naturalSize.height);
+  }, [naturalSize, maxDisplaySize]);
+  const displaySize = useMemo(() => {
+    if (!naturalSize) return null;
+    return {
+      width: Math.max(1, Math.round(naturalSize.width * displayScale)),
+      height: Math.max(1, Math.round(naturalSize.height * displayScale)),
+    };
+  }, [naturalSize, displayScale]);
+
+  const copyImage = async () => {
+    try {
+      if (preview.path) rememberLocalImageData(preview.path, preview.url);
+      await copyImageToClipboard({ ok: true, dataUrl: preview.url }, preview.path);
+      setCopied(true);
+      onCopied?.(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      onCopied?.(false);
+    }
+  };
+
+  return (
+    <div
+      className="image-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`图片预览：${preview.name}`}
+      onClick={onClose}
+    >
+      <div className="image-lightbox-viewport" ref={viewportRef}>
+        <img
+          src={preview.url}
+          alt={preview.name}
+          draggable={false}
+          style={displaySize ? {
+            width: displaySize.width,
+            height: displaySize.height,
+          } : undefined}
+          onClick={(event) => event.stopPropagation()}
+          onLoad={(event) => {
+            const target = event.currentTarget;
+            if (target.naturalWidth && target.naturalHeight) {
+              setNaturalSize({ width: target.naturalWidth, height: target.naturalHeight });
+            }
+          }}
+        />
+      </div>
+      <div className="image-lightbox-toolbar" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="image-lightbox-copy" onClick={() => void copyImage()} aria-label="复制图片" title="复制图片到剪贴板">
+          <Copy size={15} />
+          {copied ? "已复制" : "复制"}
+        </button>
+        <button
+          type="button"
+          className="image-lightbox-close"
+          onClick={onClose}
+          aria-label="关闭预览"
+          title="关闭（Esc）"
+        >
+          <X size={18} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function InboxDialog({ items, onClose, onResolve, onDismiss }: {
   items: InboxItem[];
   onClose: () => void;
@@ -2670,8 +2776,22 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const pending = items.filter((item) => item.status === "pending");
-  const settled = items.filter((item) => item.status !== "pending").slice(-10).reverse();
+  const [query, setQuery] = useState("");
+  const itemText = (item: InboxItem) => item.kind === "question" ? item.question || "" : item.title || "";
+  // 完整列表：待处理全量、已处理按时间倒序全量；搜索同时匹配标题、详情与处理结果
+  const queryText = query.trim().toLowerCase();
+  const matches = (item: InboxItem) => {
+    if (!queryText) return true;
+    return [itemText(item), item.details, item.resolution, item.tool]
+      .some((value) => String(value || "").toLowerCase().includes(queryText));
+  };
+  const pending = items.filter((item) => item.status === "pending" && matches(item));
+  const settled = items
+    .filter((item) => item.status !== "pending" && matches(item))
+    .sort((a, b) => String(b.resolvedAt || b.createdAt).localeCompare(String(a.resolvedAt || a.createdAt)));
+  const formatTime = (value?: string) => value
+    ? new Date(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "";
   const resolve = async (item: InboxItem, resolution: { approved?: boolean; answer?: string }) => {
     const result = await window.dyworker?.resolveInbox({ id: item.id, ...resolution });
     if (result && !result.ok) setErrors((current) => ({ ...current, [item.id]: result.error || "处理失败" }));
@@ -2690,14 +2810,38 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
             <X size={18} />
           </button>
         </div>
+        <div className="inbox-toolbar">
+          <div className="inbox-search">
+            <Search size={13} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索标题、详情或处理结果"
+              aria-label="搜索收件箱"
+            />
+            {query && (
+              <button type="button" className="icon-button subtle tiny" onClick={() => setQuery("")} aria-label="清空搜索">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        </div>
         <div className="inbox-dialog-body">
-          {!pending.length && <p className="panel-empty">没有待处理的事项。无人值守的定时任务需要确认或向你提问时，会出现在这里。</p>}
+          {!pending.length && (
+            <p className="panel-empty">
+              {queryText
+                ? "没有匹配的待处理事项。"
+                : "没有待处理的事项。无人值守的定时任务需要确认或向你提问时，会出现在这里。"}
+            </p>
+          )}
           {pending.map((item) => (
             <div className="inbox-item" key={item.id}>
               <div className="inbox-item-head">
                 <span className={`inbox-kind ${item.kind}`}>{item.kind === "question" ? "提问" : "审批"}</span>
-                <span className="inbox-title">{item.kind === "question" ? item.question : item.title}</span>
-                <small>{new Date(item.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</small>
+                <span className="inbox-title">{itemText(item)}</span>
+              </div>
+              <div className="inbox-item-meta">
+                <span>请求时间：{formatTime(item.createdAt)}</span>
               </div>
               {item.details && <pre className="approval-details">{item.details}</pre>}
               {item.kind === "question" && item.options && item.options.length > 0 && (
@@ -2732,17 +2876,21 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
           ))}
           {settled.length > 0 && (
             <>
-              <div className="dialog-section-title">最近已处理</div>
+              <div className="dialog-section-title">已处理（{settled.length}）</div>
               {settled.map((item) => (
                 <div className="inbox-item settled" key={item.id}>
                   <div className="inbox-item-head">
                     <span className={`inbox-kind ${item.status === "expired" ? "expired" : item.kind}`}>
                       {item.status === "expired" ? "已失效" : item.kind === "question" ? "提问" : "审批"}
                     </span>
-                    <span className="inbox-title">{item.kind === "question" ? item.question : item.title}</span>
+                    <span className="inbox-title">{itemText(item)}</span>
                     <button className="icon-button subtle tiny" onClick={() => onDismiss(item.id)} aria-label="移除这条记录">
                       <Trash2 size={13} />
                     </button>
+                  </div>
+                  <div className="inbox-item-meta">
+                    <span>请求时间：{formatTime(item.createdAt)}</span>
+                    {item.resolvedAt && <span>处理时间：{formatTime(item.resolvedAt)}</span>}
                   </div>
                   {item.resolution && <small className="inbox-resolution">{item.resolution}</small>}
                 </div>
@@ -5292,7 +5440,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
-  const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ url: string; name: string; path?: string } | null>(null);
   // 会话内搜索：在当前会话的消息 DOM 里高亮命中并按出现位置跳转（⌘F / Ctrl+F 打开）
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
@@ -6672,7 +6820,7 @@ export function App() {
 
   // 消息文本上右键：始终提供「复制」。有选中文本时复制选中内容，
   // 未选中时复制整条消息正文（跳过操作按钮、时间等非正文区域）。
-  const handleMessageContextMenu = (event: MouseEvent<HTMLElement>) => {
+  const handleMessageContextMenu = (event: MouseEvent<HTMLElement>, message?: ChatMessage) => {
     event.preventDefault();
     const selection = window.getSelection();
     const selected = selection?.toString().trim() ?? "";
@@ -6688,7 +6836,11 @@ export function App() {
         label: hasSelected ? "复制" : "复制消息",
         icon: <Copy size={15} />,
         onSelect: () => {
-          void copyTextToClipboard(text).then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
+          // 复制整条消息且带图片时图文一起进剪贴板；选中复制时保持纯文本
+          const action = !hasSelected && message?.attachments?.length
+            ? copyMessageWithImages(text, message.attachments)
+            : copyTextToClipboard(text);
+          void action.then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
         },
       },
     ]);
@@ -7968,7 +8120,9 @@ export function App() {
   };
 
   const copyMessage = async (message: ChatMessage) => {
-    const copied = await copyTextToClipboard(messageVisibleText(message));
+    const text = messageVisibleText(message);
+    // 带图片的消息：图文一起进剪贴板，粘贴到微信/备忘录等应用时同时出现
+    const copied = await copyMessageWithImages(text, message.attachments || []);
     setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
   };
 
@@ -8995,7 +9149,7 @@ export function App() {
                       <div className="user-message-stack">
                         <div
                           className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}`}
-                          onContextMenu={handleMessageContextMenu}
+                          onContextMenu={(event) => handleMessageContextMenu(event, message)}
                         >
                         {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
                           <span className="message-inline-refs">
@@ -9037,24 +9191,12 @@ export function App() {
                         {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
                           <div className="message-attachments">
                             {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
-                              attachment.isImage && attachment.previewUrl ? (
-                                <figure
-                                  className="message-attachment-image clickable"
-                                  key={`${message.createdAt}-${attachment.path}`}
-                                  aria-label="图片附件，点击预览"
-                                  role="button"
-                                  tabIndex={0}
-                                  title="点击预览图片"
-                                  onClick={() => setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" })}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                      event.preventDefault();
-                                      setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" });
-                                    }
-                                  }}
-                                >
-                                  <img className="attachment-preview-image" src={attachment.previewUrl} alt="上传的图片" />
-                                </figure>
+                              attachment.path || attachment.previewUrl ? (
+                                <ImageAttachmentView
+                                  key={`${message.createdAt}-${attachment.path || attachment.previewUrl}`}
+                                  attachment={attachment}
+                                  onPreview={(payload) => setImagePreview(payload)}
+                                />
                               ) : (
                                 <span key={`${message.createdAt}-${attachment.path}`}>
                                   <FileImage size={13} />
@@ -9079,7 +9221,7 @@ export function App() {
                       </div>
                     </>
                   ) : (
-                    <div className="assistant-message" onContextMenu={handleMessageContextMenu}>
+                    <div className="assistant-message" onContextMenu={(event) => handleMessageContextMenu(event, message)}>
                       {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
                       {(() => {
                         const visibleActivities = (message.activities || []).filter((activity) => activity.kind !== "thinking");
@@ -9279,24 +9421,14 @@ export function App() {
         )}
 
         {imagePreview && (
-          <div
-            className="image-lightbox"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`图片预览：${imagePreview.name}`}
-            onClick={() => setImagePreview(null)}
-          >
-            <img src={imagePreview.url} alt={imagePreview.name} onClick={(event) => event.stopPropagation()} />
-            <button
-              type="button"
-              className="image-lightbox-close"
-              onClick={() => setImagePreview(null)}
-              aria-label="关闭预览"
-              title="关闭（Esc）"
-            >
-              <X size={18} />
-            </button>
-          </div>
+          <ImageLightbox
+            preview={imagePreview}
+            onClose={() => setImagePreview(null)}
+            onCopied={(copied) => {
+              if (copied) setNotice("图片已复制到剪贴板");
+              else setError("图片复制失败，请重试");
+            }}
+          />
         )}
 
         <div className="composer-dock" ref={composerDockRef}>
@@ -9496,23 +9628,18 @@ export function App() {
               {/* 技能引用以 /技能名 内联 token 留在正文里（删 token 即移除），不再单独占一行 chip */}
               {attachments.map((attachment) => (
                 <span
-                  className={`attachment-chip${attachment.isImage && attachment.previewUrl ? " image-attachment-chip" : " ref-attachment-chip"}`}
+                  className={`attachment-chip${attachment.isImage ? " image-attachment-chip" : " ref-attachment-chip"}`}
                   key={attachment.path}
                 >
-                  {attachment.isImage && attachment.previewUrl
+                  {attachment.isImage
                     ? (
-                      <img
-                        className="attachment-preview-image clickable"
-                        src={attachment.previewUrl}
-                        alt="待发送的图片，点击预览"
-                        title="点击预览图片"
-                        onClick={() => setImagePreview({ url: attachment.previewUrl!, name: attachment.name || "图片" })}
+                      <ImageAttachmentThumb
+                        attachment={attachment}
+                        onPreview={(payload) => setImagePreview(payload)}
                       />
                     )
-                    : attachment.isImage
-                      ? <FileImage size={14} />
-                      : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}
-                  {!(attachment.isImage && attachment.previewUrl) && (
+                    : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}
+                  {!attachment.isImage && (
                     <span title={attachment.path}>{attachment.isImage ? "图片" : attachment.name}</span>
                   )}
                   <button

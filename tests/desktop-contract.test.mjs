@@ -8,6 +8,7 @@ const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 
 const app = readSource(new URL("../src/App.tsx", import.meta.url));
 const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
+const imageAttachment = readSource(new URL("../src/ImageAttachment.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mjs", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
@@ -500,14 +501,47 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
 });
 
 test("image attachments render real previews before and after sending", () => {
-  assert.match(main, /previewUrl/);
-  assert.match(app, /attachment\.isImage && attachment\.previewUrl/);
-  assert.match(app, /className="attachment-preview-image"/);
+  // 原图经 local-image:read 按原尺寸读取，会话存档不再内嵌缩略图；
+  // 消息气泡与输入区 chip 复用同一组件（ImageAttachmentView / ImageAttachmentThumb）
+  assert.match(main, /ipcMain|local-image/);
+  assert.doesNotMatch(main, /previewUrl = `data:image/);
+  assert.match(app, /<ImageAttachmentView/);
+  assert.match(app, /<ImageAttachmentThumb/);
+  assert.match(imageAttachment, /className="attachment-preview-image"/);
   assert.doesNotMatch(app, /<figcaption[^>]*>\{attachment\.name\}<\/figcaption>/);
-  assert.match(app, /!\(attachment\.isImage && attachment\.previewUrl\) && \(/);
-  assert.match(app, /attachment\.isImage \? "图片" : attachment\.name/);
   assert.match(styles, /\.attachment-preview-image/);
   assert.match(styles, /\.image-attachment-chip > button\s*\{[^}]*position:\s*absolute/s);
+  // 气泡内图片可直接复制；灯箱提供复制按钮
+  assert.match(imageAttachment, /attachment-image-copy/);
+  assert.match(imageAttachment, /copyImageToClipboard/);
+  // 复制优先走主进程原生剪贴板（clipboard.writeImage），Web 剪贴板做兜底
+  assert.match(imageAttachment, /writeClipboardImage/);
+  assert.match(main, /ipcMain\.handle\("clipboard:write-image"/);
+  assert.match(main, /clipboard\.writeImage/);
+  assert.match(preload, /clipboard:write-image/);
+  assert.match(types, /writeClipboardImage/);
+  // 灯箱优先原始尺寸展示，超过视口内容区 80% 时等比缩放（小图不放大）
+  assert.match(app, /naturalWidth/);
+  assert.match(app, /Math\.min\(1, maxDisplaySize\.width \/ naturalSize\.width/);
+  assert.match(app, /viewportSize\.width \* 0\.8/);
+  assert.match(styles, /\.image-lightbox-viewport \{[\s\S]*overflow: hidden/);
+  assert.match(styles, /\.image-lightbox img \{[\s\S]*max-width: 80%/);
+  assert.doesNotMatch(styles, /\.image-lightbox img\.pannable/);
+});
+
+test("复制带图片的消息时图文一起写入剪贴板", () => {
+  // 主进程提供「文本 + 图片 + HTML」一次写入的剪贴板通道（clipboard.write({ text, image, html })），
+  // 让只认图片、只认文本、只认富文本的目标应用都能拿到可用格式
+  assert.match(main, /ipcMain\.handle\("clipboard:write-rich"/);
+  assert.match(main, /let html = ""/);
+  assert.match(main, /data\.html = html/);
+  assert.match(main, /clipboard\.write\(data\)/);
+  assert.match(preload, /writeClipboardRich: \(payload\) => ipcRenderer\.invoke\("clipboard:write-rich"/);
+  assert.match(types, /writeClipboardRich\(payload: \{ text\?: string; dataUrl\?: string; path\?: string \}\)/);
+  // 渲染层复制消息时带上消息附件中的图片，失败时退化为纯文本
+  assert.match(imageAttachment, /export async function copyMessageWithImages/);
+  assert.match(imageAttachment, /attachment\.isImage && \(attachment\.path \|\| attachment\.previewUrl\)/);
+  assert.match(app, /copyMessageWithImages\(text, message\.attachments \|\| \[\]\)/);
 });
 
 test("title bar does not show a workspace folder chooser", () => {

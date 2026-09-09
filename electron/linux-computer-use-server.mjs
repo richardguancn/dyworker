@@ -163,31 +163,104 @@ export function desktopToolDefinitions() {
     tool("get_app_state", "读取已运行应用的当前窗口、可访问控件与目标窗口截图。每轮操作应用前必须先调用。", appTargetProperties(), ["app"], true),
     tool("click", "按控件编号或目标窗口内坐标点击。窗口截图左上角为 (0,0)。", appTargetProperties({
       element_index: { type: "string", description: "get_app_state 返回的控件编号，例如 e12" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹，用于操作前核对控件未变化",
+      },
       x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
       y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
       mouse_button: { type: "string", enum: ["left", "right", "middle"], description: "鼠标按键，默认 left" },
       click_count: { type: "integer", minimum: 1, maximum: 3, description: "点击次数，默认 1" },
     }), stableTargetRequired()),
+    tool("hover", "把鼠标移动到控件或目标窗口内坐标上方，不点击。", appTargetProperties({
+      element_index: { type: "string", description: "get_app_state 返回的控件编号，例如 e12" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹",
+      },
+      x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
+      y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
+    }), stableTargetRequired()),
     tool("perform_secondary_action", "执行控件公开的次级动作，例如展开、显示菜单或增加数值。", appTargetProperties({
       element_index: { type: "string", description: "控件编号" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹",
+      },
       action: { type: "string", description: "get_app_state 中显示的动作名称" },
     }), stableTargetRequired(["element_index", "action"])),
     tool("set_value", "设置输入框、可编辑文字或数值控件的值。", appTargetProperties({
       element_index: { type: "string", description: "控件编号" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹",
+      },
       value: { type: "string", description: "要设置的值" },
     }), stableTargetRequired(["element_index", "value"])),
     tool("select_text", "选择可编辑控件中的文字，或把光标放到文字前后。", appTargetProperties({
       element_index: { type: "string", description: "文字控件编号" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹",
+      },
       text: { type: "string", description: "要选择的原文" },
       prefix: { type: "string", description: "可选的前置文字，用于区分重复内容" },
       suffix: { type: "string", description: "可选的后置文字，用于区分重复内容" },
       selection: { type: "string", enum: ["text", "cursor_before", "cursor_after"], description: "选择方式，默认 text" },
     }), stableTargetRequired(["element_index", "text"])),
-    tool("scroll", "在指定控件位置向上、下、左或右滚动。", appTargetProperties({
+    tool("scroll", "在指定控件或窗口内坐标位置向上、下、左或右滚动。控件树不可用时可用坐标滚动。", appTargetProperties({
       element_index: { type: "string", description: "滚动区域或附近控件编号" },
+      element_signature: {
+        type: "object",
+        properties: {
+          role: { type: "string" },
+          name: { type: "string" },
+          parent_role: { type: "string" },
+          index_in_parent: { type: "number" },
+        },
+        additionalProperties: false,
+        description: "get_app_state 返回的控件身份指纹",
+      },
+      x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
+      y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
       direction: { type: "string", enum: ["up", "down", "left", "right", "u", "d", "l", "r"] },
       pages: { type: "number", minimum: 0.1, maximum: 10, description: "滚动页数，默认 1" },
-    }), stableTargetRequired(["element_index", "direction"])),
+    }), stableTargetRequired(["direction"])),
     tool("drag", "按目标窗口内坐标从一个位置拖动到另一个位置，截图左上角为 (0,0)。", appTargetProperties({
       from_x: { type: "number" },
       from_y: { type: "number" },
@@ -228,6 +301,7 @@ export class VirtualDisplayManager {
     this.display = this.preferredDisplay;
     this.child = null;
     this.isStarted = false;
+    this.lastError = "";
   }
 
   async start() {
@@ -237,7 +311,8 @@ export class VirtualDisplayManager {
     const whichXvfb = await tryRun("which", ["Xvfb"], { timeoutMs: 5_000 });
     if (whichXvfb.code !== 0) {
       this.enabled = false;
-      return process.env.DISPLAY || "";
+      this.lastError = "未找到 Xvfb，无法启动独立桌面环境";
+      return "";
     }
 
     if (!this.display) {
@@ -256,17 +331,34 @@ export class VirtualDisplayManager {
 
       const displayNum = this.display.replace(/^:/, "");
       const socketPath = `/tmp/.X11-unix/X${displayNum}`;
-      for (let i = 0; i < 20; i += 1) {
-        const socketReady = await fs.access(socketPath).then(() => true).catch(() => false);
+      let socketReady = false;
+      for (let i = 0; i < 40; i += 1) {
+        socketReady = await fs.access(socketPath).then(() => true).catch(() => false);
         if (socketReady) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
 
+      if (!socketReady) {
+        throw new Error("Xvfb 启动后 2 秒内未创建显示套接字，独立桌面不可用");
+      }
+
+      // 验证 X 服务器真正可连接，而不仅仅是套接字文件存在
+      const xdpyinfo = await tryRun("xdpyinfo", ["-display", this.display], { timeoutMs: 5_000 });
+      if (xdpyinfo.code !== 0) {
+        throw new Error(`Xvfb 显示 ${this.display} 无法连接：${xdpyinfo.stderr || xdpyinfo.stdout || "xdpyinfo 失败"}`);
+      }
+
       this.isStarted = true;
+      this.lastError = "";
       return this.display;
-    } catch {
+    } catch (error) {
       this.enabled = false;
-      return process.env.DISPLAY || "";
+      this.lastError = error instanceof Error ? error.message : String(error);
+      if (this.child) {
+        try { this.child.kill("SIGTERM"); } catch { /* 忽略 */ }
+        this.child = null;
+      }
+      return "";
     }
   }
 
@@ -283,11 +375,20 @@ export class VirtualDisplayManager {
   }
 
   effectiveDisplay() {
-    if (this.enabled && this.display) {
+    if (this.enabled && this.display && this.isStarted) {
       return this.display;
     }
-    return process.env.DISPLAY || "";
+    return "";
   }
+}
+
+export function virtualDisplayUnavailableError() {
+  if (virtualDisplayManager.enabled && !virtualDisplayManager.isStarted) {
+    return new Error(
+      `独立桌面环境启动失败，已停止操作以避免切回用户当前桌面。原因：${virtualDisplayManager.lastError || "未知"}`
+    );
+  }
+  return null;
 }
 
 export const virtualDisplayManager = new VirtualDisplayManager();
@@ -322,6 +423,11 @@ function run(program, args = [], {
   return new Promise((resolve, reject) => {
     if (activeToolRequest?.cancelled && !protectedSystemTransaction) {
       reject(new Error("任务已停止"));
+      return;
+    }
+    const unavailable = virtualDisplayUnavailableError();
+    if (unavailable) {
+      reject(unavailable);
       return;
     }
     let stdout = "";
@@ -979,6 +1085,25 @@ async function accessibility(payload) {
   }
 }
 
+// 缓存最近一次 get_app_state 返回的控件指纹，按应用+窗口绑定。
+// 模型后续操作只需携带 element_index，服务端自动补全指纹做核对。
+const elementSignatureCache = new Map();
+
+function signatureCacheKey(app, windowId) {
+  return `${String(app || "")}::${String(windowId || "")}`;
+}
+
+function cacheElementSignatures(app, windowId, signatures) {
+  if (!signatures || typeof signatures !== "object") return;
+  elementSignatureCache.set(signatureCacheKey(app, windowId), signatures);
+}
+
+function cachedElementSignature(app, windowId, elementIndex) {
+  const signatures = elementSignatureCache.get(signatureCacheKey(app, windowId));
+  if (!signatures) return null;
+  return signatures[String(elementIndex || "").toLowerCase()] || null;
+}
+
 export function normalizeX11WindowId(id) {
   const str = String(id || "").trim().toLowerCase();
   if (!str) return "";
@@ -1130,12 +1255,15 @@ function buttonNumber(button) {
 async function elementAction(args, command, extra = {}) {
   const window = await runningWindow(args.app, args.window_id, args.window_title, true);
   if (command !== "bounds") await activateWindow(window);
+  const signature = args.element_signature
+    || cachedElementSignature(args.app, window.id, args.element_index);
   const result = await accessibility({
     command,
     app: args.app,
     hints: [window.className, window.title],
     window_title: window.title,
     element_index: args.element_index,
+    element_signature: signature,
     ...extra,
   });
   if (!result.ok) throw new Error(result.error || "无障碍控件操作失败");
@@ -1248,6 +1376,9 @@ async function callTool(name, args) {
       accessibility({ command: "state", app: args.app, hints: [window.className, window.title], window_title: window.title }),
       captureWindow(window),
     ]);
+    if (tree.ok && tree.signatures) {
+      cacheElementSignatures(args.app, window.id, tree.signatures);
+    }
     const fallback = [
       `应用：${args.app}`,
       `窗口：${window.title || "（无标题）"}`,
@@ -1286,17 +1417,39 @@ async function callTool(name, args) {
       ]);
       if (result.code !== 0) throw new Error(result.stderr || "鼠标点击失败");
     }
-    return { text: "点击已完成。请重新读取应用状态后再继续。" };
+    return { text: "点击已完成（executed）。请重新读取应用状态后再继续。" };
+  }
+
+  if (name === "hover") {
+    if (args.element_index) {
+      const bounds = await elementAction(args, "bounds");
+      const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+      await activateWindow(window);
+      const result = await tryRun("xdotool", [
+        "mousemove", "--sync", String(bounds.x), String(bounds.y),
+      ]);
+      if (result.code !== 0) throw new Error(result.stderr || "鼠标移动失败");
+    } else {
+      if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) throw new Error("hover 需要 element_index，或同时提供 x 和 y");
+      const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+      const point = absoluteWindowPoint(await windowGeometry(window), args.x, args.y, "悬停");
+      await activateWindow(window);
+      const result = await tryRun("xdotool", [
+        "mousemove", "--sync", String(point.x), String(point.y),
+      ]);
+      if (result.code !== 0) throw new Error(result.stderr || "鼠标移动失败");
+    }
+    return { text: "鼠标已移动到目标位置（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "perform_secondary_action") {
     await elementAction(args, "secondary", { action: args.action });
-    return { text: `已执行“${args.action}”。请重新读取应用状态后再继续。` };
+    return { text: `已执行“${args.action}”（executed）。请重新读取应用状态后再继续。` };
   }
 
   if (name === "set_value") {
     await elementAction(args, "set_value", { value: String(args.value ?? "") });
-    return { text: "控件内容已设置。请重新读取应用状态后再继续。" };
+    return { text: "控件内容已设置（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "select_text") {
@@ -1306,23 +1459,31 @@ async function callTool(name, args) {
       suffix: String(args.suffix || ""),
       selection: String(args.selection || "text"),
     });
-    return { text: "文字选择已完成。请重新读取应用状态后再继续。" };
+    return { text: "文字选择已完成（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "scroll") {
-    const bounds = await elementAction(args, "bounds");
     const window = await runningWindow(args.app, args.window_id, args.window_title, true);
     await activateWindow(window);
     const direction = String(args.direction || "down").toLowerCase();
     const button = { up: "4", u: "4", down: "5", d: "5", left: "6", l: "6", right: "7", r: "7" }[direction];
     if (!button) throw new Error("滚动方向必须是 up、down、left 或 right");
     const repeats = Math.min(30, Math.max(1, Math.round((Number(args.pages) || 1) * 3)));
+    let point;
+    if (args.element_index) {
+      point = await elementAction(args, "bounds");
+    } else {
+      if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) {
+        throw new Error("scroll 需要 element_index，或同时提供 x 和 y 坐标");
+      }
+      point = absoluteWindowPoint(await windowGeometry(window), args.x, args.y, "滚动");
+    }
     const result = await tryRun("xdotool", [
-      "mousemove", "--sync", String(bounds.x), String(bounds.y),
+      "mousemove", "--sync", String(point.x), String(point.y),
       "click", "--repeat", String(repeats), button,
     ]);
     if (result.code !== 0) throw new Error(result.stderr || "滚动失败");
-    return { text: "滚动已完成。请重新读取应用状态后再继续。" };
+    return { text: "滚动已完成（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "drag") {
@@ -1338,7 +1499,7 @@ async function callTool(name, args) {
       "mouseup", "1",
     ]);
     if (result.code !== 0) throw new Error(result.stderr || "拖动失败");
-    return { text: "拖动已完成。请重新读取应用状态后再继续。" };
+    return { text: "拖动已完成（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "press_key") {
@@ -1346,7 +1507,7 @@ async function callTool(name, args) {
     await activateWindow(window);
     const result = await tryRun("xdotool", ["key", "--clearmodifiers", String(args.key || "")]);
     if (result.code !== 0) throw new Error(result.stderr || "按键失败");
-    return { text: "按键已发送。请重新读取应用状态后再继续。" };
+    return { text: "按键已发送（executed）。请重新读取应用状态后再继续。" };
   }
 
   if (name === "type_text") {
@@ -1363,7 +1524,7 @@ async function callTool(name, args) {
         await typeViaClipboard(window, text);
       }
     }
-    return { text: "文字已输入。请重新读取应用状态后再继续。" };
+    return { text: "文字已输入（executed）。请重新读取应用状态后再继续。" };
   }
 
   throw new Error(`未知工具：${name}`);
@@ -1431,9 +1592,34 @@ async function handleMessage(message) {
   };
 }
 
+async function releaseInputDevices() {
+  // 任务停止或服务退出时，释放可能残留的按键和鼠标，防止后续输入漂移。
+  // 只发送「抬起」事件，不发送「按下」，确保任何中断的拖动/组合键都被安全终止。
+  const display = targetDisplay();
+  const env = display ? { ...process.env, DISPLAY: display } : process.env;
+  const releaseCommands = [
+    ["keyup", "1"], ["keyup", "2"], ["keyup", "3"],
+    ["keyup", "ctrl"], ["keyup", "shift"], ["keyup", "alt"], ["keyup", "super"],
+    ["keyup", "Return"], ["keyup", "Escape"],
+  ];
+  for (const args of releaseCommands) {
+    try {
+      const child = spawn("xdotool", args, { env, stdio: "ignore" });
+      child.unref();
+    } catch {
+      // 忽略：xdotool 可能不可用，或 X 服务器已断开
+    }
+  }
+}
+
 async function startServer() {
   if (virtualDisplayManager.enabled) {
-    await virtualDisplayManager.start();
+    const display = await virtualDisplayManager.start();
+    if (!display) {
+      // 独立桌面启动失败：立即以明确错误退出，不回落到用户桌面
+      process.stderr.write(`独立桌面环境启动失败：${virtualDisplayManager.lastError || "未知"}\n`);
+      process.exit(1);
+    }
   }
   process.stdin.setEncoding("utf8");
   let buffer = "";
@@ -1464,6 +1650,7 @@ async function startServer() {
 }
 
 process.on("SIGTERM", () => {
+  releaseInputDevices().catch(() => {});
   virtualDisplayManager.stop();
   shutdownRequested = true;
   const protectedTransactionActive = [...activeChildren].some((child) => child.__dyworkerProtectedSystemTransaction);
@@ -1485,6 +1672,7 @@ process.on("SIGTERM", () => {
 });
 
 process.on("exit", () => {
+  releaseInputDevices().catch(() => {});
   virtualDisplayManager.stop();
 });
 
