@@ -165,6 +165,8 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("window:maximized-changed", listener);
   },
   reportWindowPointerDown: () => ipcRenderer.send("window:pointer-down"),
+  // Linux 透明阴影窗口：指针进入/离开透明留白区时切换点击穿透（fire-and-forget）
+  setIgnoreMouse: (ignore) => ipcRenderer.send("window:set-ignore-mouse", Boolean(ignore)),
   listBackgroundTasks: (sessionId) => ipcRenderer.invoke("background-tasks:list", sessionId),
   startBackgroundTask: (payload) => ipcRenderer.invoke("background-tasks:start", payload),
   stopBackgroundTask: (taskId) => ipcRenderer.invoke("background-tasks:stop", taskId),

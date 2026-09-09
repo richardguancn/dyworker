@@ -1787,13 +1787,14 @@ test("模型请求超时后自动重试一次，重发成功则任务继续", as
   assert.equal(requestCount, 2);
 });
 
-test("模型请求连续超时，自动重试一次后仍失败才报错", async () => {
+test("模型请求连续超时，三次自动重试后仍失败才报错", async () => {
   const root = await makeWorkspace();
   let requestCount = 0;
   const result = await runAgent({
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "你好" }],
+    transportRetryBaseDelayMs: 0,
     fetchImpl: async () => {
       requestCount += 1;
       const error = new Error("aborted");
@@ -1802,8 +1803,8 @@ test("模型请求连续超时，自动重试一次后仍失败才报错", async
     },
   });
   assert.equal(result.status, "error");
-  assert.equal(result.reason, "模型服务连接超时或中断");
-  assert.equal(requestCount, 2);
+  assert.match(result.reason, /模型服务连接超时或中断，已尝试 4 次/);
+  assert.equal(requestCount, 4);
 });
 
 test("流式响应长时间没有数据时判定断流并中断", async () => {

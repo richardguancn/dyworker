@@ -2477,6 +2477,72 @@ function activityDisplayTitle(activity: ActivityRecord) {
   return `已运行 ${command}`;
 }
 
+// 地址栏协议补全：localhost/内网地址默认 http（本地开发服务多无 TLS），其余默认 https。
+// 单标签主机名（无点，如 nas:8080）公网不存在，按内网处理；裸 IPv6 补方括号。
+function normalizeBrowserInput(raw: string): string {
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const hostEnd = raw.search(/[/?#]/);
+  const head = hostEnd === -1 ? raw : raw.slice(0, hostEnd);
+  const tail = hostEnd === -1 ? "" : raw.slice(hostEnd);
+  const bracketed = head.startsWith("[");
+  // 裸 IPv6（含 2 个以上冒号且无方括号）：整段都是主机名，没有端口可剥
+  const bareIpv6 = !bracketed && (head.match(/:/g) || []).length > 1;
+  const host = bracketed
+    ? head.slice(1, head.indexOf("]")).toLowerCase()
+    : bareIpv6
+      ? head.toLowerCase()
+      : head.toLowerCase().replace(/:\d+$/, "");
+  // IPv6 环回/未指定/IPv4 映射以 ":" 开头；fe80::/10 链路本地与 fc00::/7 ULA 私网
+  const ipv6Local = host.includes(":")
+    && (host.startsWith(":") || /^(fe[89ab]|fc|fd)/.test(host));
+  const isLocal =
+    host === "localhost" || host.endsWith(".localhost")
+    || host.endsWith(".local")
+    || ipv6Local
+    || /^127\./.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    || /^169\.254\./.test(host)
+    || /^0\./.test(host)
+    || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+    || (!host.includes(".") && !host.includes(":")); // 单标签主机名视为内网
+  const normalized = bareIpv6 ? `[${head}]${tail}` : raw;
+  return `${isLocal ? "http" : "https"}://${normalized}`;
+}
+
+// 子代理分支活动挂载：把带 branch 的活动追加到父活动（dispatch_agent）的 children 上，
+// 成为 message.activities 的一部分（随 sessions.json 落盘，天然按消息归属，不会跨会话串数据）。
+// 找不到父活动（极端时序）时返回 attached: false，由调用方丢弃，不混进主活动流。
+function appendBranchActivity(list: ActivityRecord[], activity: ActivityRecord): { list: ActivityRecord[]; attached: boolean } {
+  const parentId = activity.branch?.parentId;
+  if (!parentId) return { list, attached: false };
+  let attached = false;
+  const next = list.map((parent) => {
+    if (parent.id !== parentId) return parent;
+    attached = true;
+    return { ...parent, children: [...(parent.children || []), activity] };
+  });
+  return { list: next, attached };
+}
+
+// 按 id 不可变更新活动状态/详情（同时覆盖主活动与子代理 children 嵌套层），主/子活动共用
+function patchActivityTree(list: ActivityRecord[], id: string, status: ActivityRecord["status"], detail: string | undefined): ActivityRecord[] {
+  return list.map((activity) => {
+    if (activity.id === id) {
+      return { ...activity, status, detail: detail ?? activity.detail };
+    }
+    if (activity.children?.some((child) => child.id === id)) {
+      return {
+        ...activity,
+        children: (activity.children || []).map((child) =>
+          child.id === id ? { ...child, status, detail: detail ?? child.detail } : child),
+      };
+    }
+    return activity;
+  });
+}
+
 // 推理模型的思考过程：固定高度滚动框，流式期间自动跟随到底部显示最新内容。
 // 用户主动上翻后停止跟随（避免打断阅读），滚回贴近底部时自动恢复跟随。
 function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean }) {
@@ -2550,7 +2616,11 @@ function ReasoningBlock({ text, streaming }: { text: string; streaming: boolean 
 
 function ActivityRow({ activity }: { activity: ActivityRecord }) {
   const [open, setOpen] = useState(false);
-  const expandable = Boolean(activity.detail);
+  const childCount = activity.children?.length || 0;
+  // 子代理（dispatch_agent）活动：children 有运行中条目时保持行首转圈，
+  // 即使父活动自身已 success（父活动先于子代理流收尾属正常时序）
+  const hasRunningChild = Boolean(activity.children?.some((child) => child.status === "running"));
+  const expandable = Boolean(activity.detail) || childCount > 0;
   const isCommand = activity.kind === "run_command";
   return (
     <div className={`activity-row ${activity.status} ${isCommand ? "command" : ""}`}>
@@ -2560,7 +2630,7 @@ function ActivityRow({ activity }: { activity: ActivityRecord }) {
         disabled={!expandable}
       >
         <span className={`activity-status ${isCommand ? "activity-status-command" : ""}`}>
-          {activity.status === "running"
+          {activity.status === "running" || hasRunningChild
             ? <LoaderCircle className="spin" size={13} />
             : activity.status === "error"
               ? <X size={13} />
@@ -2570,9 +2640,15 @@ function ActivityRow({ activity }: { activity: ActivityRecord }) {
         </span>
         {!isCommand && <ActivityIcon kind={activity.kind} />}
         <span className="activity-title">{activityDisplayTitle(activity)}</span>
+        {childCount > 0 && <span className="activity-child-count">{childCount} 项</span>}
         {expandable && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
       </button>
       {open && activity.detail && <pre className="activity-detail">{activity.detail}</pre>}
+      {open && childCount > 0 && (
+        <div className="activity-children">
+          <ActivityList activities={activity.children || []} />
+        </div>
+      )}
     </div>
   );
 }
@@ -5410,9 +5486,8 @@ export function App() {
   // 供轨迹控制台与「需求→实现」链路视图使用；内存上限 5000 条，历史靠 userData 落盘回放
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
   const traceEventsRef = useRef<TraceEvent[]>([]);
-  // 子代理分支活动（process-chain）：带 branch 的活动不混入主活动流，单独缓存供链路视图
-  const [subAgentActivities, setSubAgentActivities] = useState<{ runId: string; activity: ActivityRecord }[]>([]);
-  const subAgentActivitiesRef = useRef<{ runId: string; activity: ActivityRecord }[]>([]);
+  // 子代理分支活动（带 branch）直接挂到父活动（dispatch_agent）的 children 上，
+  // 见 appendBranchActivity / patchActivityTree；随 message.activities 一并落盘
   // 按 run 缓存 trace 事件（不可变更新，保证渲染端 useMemo 能感知新事件）：
   // 「需求→实现」链路视图按消息 runId 取本 run 的事件流归约
   const runTraceEventsRef = useRef<Map<string, TraceEvent[]>>(new Map());
@@ -5864,6 +5939,40 @@ export function App() {
     return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
   }, []);
 
+  // Linux 透明阴影窗口：四周 32px 留白也是窗口的一部分，点击会被本窗口吞掉
+  // （用户以为点到了后面的应用，实际无反应）。这里 hit-test 指针是否在窗口主体
+  // （.app-shell）内，落在留白区时让主进程忽略鼠标（forward:true 保留 mousemove
+  // 转发，指针移回主体时才能恢复接收）。只在状态翻转时发 IPC（天然节流），
+  // 2px 滞回带防止指针压在边界线上时高频翻转。模态框打开期间不特殊处理：
+  // 点击留白穿透到下层窗口，比"看似点到却没反应"更不困惑。
+  useEffect(() => {
+    if (platform !== "linux" || !windowShadow || windowMaximized) return;
+    if (!window.dyworker?.setIgnoreMouse) return;
+    let ignoring = false;
+    const HYSTERESIS = 2;
+    const onMouseMove = (event: globalThis.MouseEvent) => {
+      const shell = document.querySelector(".app-shell");
+      if (!shell) return;
+      const rect = shell.getBoundingClientRect();
+      // 滞回：已忽略时用内缩 2px 的 rect 判"回到主体内"，未忽略时用原 rect 判"离开主体"
+      const inset = ignoring ? HYSTERESIS : 0;
+      const inside =
+        event.clientX >= rect.left + inset && event.clientX <= rect.right - inset &&
+        event.clientY >= rect.top + inset && event.clientY <= rect.bottom - inset;
+      const next = !inside;
+      if (next !== ignoring) {
+        ignoring = next;
+        window.dyworker?.setIgnoreMouse?.(next);
+      }
+    };
+    window.addEventListener("mousemove", onMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      // effect 卸载（如最大化、阴影关闭）时若仍处于忽略态，复位避免窗口永久不响应
+      if (ignoring) window.dyworker?.setIgnoreMouse?.(false);
+    };
+  }, [platform, windowShadow, windowMaximized]);
+
   useEffect(() => {
     if (!ready || !window.dyworker) return;
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
@@ -6094,17 +6203,24 @@ export function App() {
         setRunningSessionIds((current) => new Set(current).add(sessionId));
         setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
       } else if (event.type === "activity") {
-        if (!event.activity.branch) {
-          ensureChannelAssistant(sessionId, runId);
+        ensureChannelAssistant(sessionId, runId);
+        if (event.activity.branch) {
+          // 子代理分支活动挂到父活动 children（与桌面 runTask 监听器同一套归约）
+          patchChannelAssistant(sessionId, (current) => {
+            const { list, attached } = appendBranchActivity(current.activities || [], event.activity);
+            if (!attached) {
+              console.warn("子代理分支活动找不到父活动，已丢弃", event.activity.id);
+              return current;
+            }
+            return { ...current, activities: list };
+          });
+        } else {
           patchChannelAssistant(sessionId, (current) => ({ ...current, activities: [...(current.activities || []), event.activity] }));
         }
       } else if (event.type === "activity-update") {
         patchChannelAssistant(sessionId, (current) => ({
           ...current,
-          activities: (current.activities || []).map((activity) =>
-            activity.id === event.id
-              ? { ...activity, status: event.status, detail: event.detail ?? activity.detail }
-              : activity),
+          activities: patchActivityTree(current.activities || [], event.id, event.status, event.detail),
         }));
       } else if (event.type === "assistant-text") {
         ensureChannelAssistant(sessionId, runId);
@@ -7280,7 +7396,7 @@ export function App() {
       setError("请输入网址");
       return;
     }
-    const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const url = normalizeBrowserInput(raw);
     updateToolPanelTab(tab.id, { url });
     setError("");
     setBrowserOpening(true);
@@ -7640,29 +7756,26 @@ export function App() {
           if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
           const agentEvent = sessionAgentEvent.event;
           if (agentEvent.type === "activity") {
-            // 子代理分支活动（带 branch）不进主活动流，单独缓存供链路视图
+            // 子代理分支活动（带 branch）挂到父活动（dispatch_agent）的 children 上，
+            // 随 message.activities 落盘；不再走单独的全局缓存（会跨会话串数据）
             if (agentEvent.activity.branch) {
-              subAgentActivitiesRef.current.push({ runId: taskRunId, activity: agentEvent.activity });
-              setSubAgentActivities(subAgentActivitiesRef.current.slice(-200));
+              patchAssistant((current) => {
+                const { list, attached } = appendBranchActivity(current.activities || [], agentEvent.activity);
+                if (!attached) {
+                  console.warn("子代理分支活动找不到父活动，已丢弃", agentEvent.activity.id);
+                  return current;
+                }
+                return { ...current, activities: list };
+              });
             } else {
               patchAssistant((current) => ({ ...current, activities: [...(current.activities || []), agentEvent.activity] }));
             }
           } else if (agentEvent.type === "activity-update") {
-            if (agentEvent.branch) {
-              subAgentActivitiesRef.current = subAgentActivitiesRef.current.map((entry) =>
-                entry.activity.id === agentEvent.id
-                  ? { ...entry, activity: { ...entry.activity, status: agentEvent.status, detail: agentEvent.detail ?? entry.activity.detail } }
-                  : entry);
-              setSubAgentActivities(subAgentActivitiesRef.current.slice(-200));
-            } else {
-              patchAssistant((current) => ({
-                ...current,
-                activities: (current.activities || []).map((activity) =>
-                  activity.id === agentEvent.id
-                    ? { ...activity, status: agentEvent.status, detail: agentEvent.detail ?? activity.detail }
-                    : activity),
-              }));
-            }
+            // patchActivityTree 同时覆盖主活动与子代理 children，branch 标记无需区分
+            patchAssistant((current) => ({
+              ...current,
+              activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail),
+            }));
           } else if (agentEvent.type === "trace") {
             traceEventsRef.current.push(agentEvent.trace);
             if (traceEventsRef.current.length > 5000) traceEventsRef.current = traceEventsRef.current.slice(-5000);

@@ -46,6 +46,9 @@ export interface ActivityRecord {
   phase?: "plan" | "execute" | "verify" | "fix" | "deliver";
   // process-chain：子代理分支标记，带 branch 的活动不混入主活动流
   branch?: { parentId: string; title?: string; depth: number };
+  // 子代理（dispatch_agent）分支活动：展开该活动时嵌套显示的时间线，
+  // 随 message.activities 一并落盘（sessions.json），会话重载后仍可见
+  children?: ActivityRecord[];
 }
 
 export interface ApprovalAction {
@@ -783,6 +786,8 @@ export interface DyworkerBridge {
   close(): Promise<void>;
   onWindowStateChange(callback: (maximized: boolean) => void): () => void;
   reportWindowPointerDown(): void;
+  // Linux 透明阴影窗口：指针进入/离开透明留白区时切换点击穿透
+  setIgnoreMouse(ignore: boolean): void;
   listBackgroundTasks(sessionId?: string): Promise<BackgroundTaskRecord[]>;
   startBackgroundTask(payload: { command: string; cwd?: string; sessionId?: string; name?: string }): Promise<BackgroundTaskRecord>;
   stopBackgroundTask(taskId: string): Promise<{ ok: boolean }>;

@@ -6857,6 +6857,20 @@ body.resizing-panels .app-shell {
   padding-left: 33px;
 }
 
+/* 子代理（dispatch_agent）嵌套活动时间线：缩进 + 左侧引导线 */
+.activity-children {
+  margin: 0 0 4px 18px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+/* 子活动计数徽标（折叠态显示在标题后） */
+.activity-child-count {
+  flex: none;
+  color: #9a9d94;
+  font-size: 12px;
+}
+
 /* ---- 操作确认卡片 ---- */
 
 .approval-card {
@@ -8719,6 +8733,7 @@ html.window-shadow #root {
 }
 
 html.window-shadow .app-shell {
+  /* 透明留白宽度与 main.mjs 的 LINUX_SHADOW_MARGIN 保持一致，改动需同步 */
   margin: 32px;
   width: calc(100% - 64px);
   height: calc(100% - 64px);

@@ -1,8 +1,9 @@
 // DYWorker 浏览器协作（ROADMAP：在用户明确授权后打开网页、填写表单、下载资料和保存截图）。
-// 右侧浏览器面板持有页面内容，操作可审计；导航走 SSRF 守卫，每次导航后重检重定向目标。
+// 右侧浏览器面板持有页面内容，操作可审计；导航走浏览器专用校验（协议白名单，
+// localhost/内网按产品决策放行），每次导航后重检重定向目标（防跳到 file:// 等协议）。
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { isSafePublicUrl, isSafeRelativePath } from "./agent.mjs";
+import { isSafeBrowserUrl, isSafeRelativePath } from "./agent.mjs";
 
 const PAGE_TEXT_LIMIT = 8000;
 const SNAPSHOT_LIMIT = 60;
@@ -134,7 +135,7 @@ export class BrowserAgent {
   }
 
   async open(rawUrl) {
-    const check = isSafePublicUrl(rawUrl);
+    const check = isSafeBrowserUrl(rawUrl);
     if (!check.ok) return { ok: false, result: check.error };
     if (!this.openPanel) return { ok: false, result: "当前应用没有连接右侧浏览器面板" };
     const panel = await this.openPanel(check.url.toString());
@@ -142,10 +143,10 @@ export class BrowserAgent {
     const contents = panel.contents;
     this.contents = contents;
     this.attachDownloadHandler(contents);
-    // 重定向后的最终地址也要过守卫，防止跳到内网
+    // 重定向后的最终地址也要过校验，防止跳到 file:// 等非 http(s) 协议（内网地址本身合法）
     const finalUrl = contents.getURL();
     if (finalUrl && finalUrl !== "about:blank") {
-      const finalCheck = isSafePublicUrl(finalUrl);
+      const finalCheck = isSafeBrowserUrl(finalUrl);
       if (!finalCheck.ok) {
         await contents.loadURL("about:blank").catch(() => {});
         return { ok: false, result: `网页重定向到了不允许的地址，已拦截：${finalUrl}` };
@@ -196,7 +197,7 @@ export function browserToolDefinitions() {
     function: { name, description, parameters: { type: "object", properties, required } },
   });
   return [
-    tool("browser__open", "在当前任务窗口右侧的浏览器面板中打开一个公开网页（用户可全程看到操作）。不得访问本机或内网地址。", { url: stringArg("公开 HTTP/HTTPS 网址") }, ["url"]),
+    tool("browser__open", "在当前任务窗口右侧的浏览器面板中打开一个网页（用户可全程看到操作）。允许 localhost 与内网地址（例如本地开发服务），仅支持 HTTP/HTTPS。", { url: stringArg("HTTP/HTTPS 网址，可以是 localhost 或内网地址") }, ["url"]),
     tool("browser__read", "读取当前网页的正文文字内容。", {}, []),
     tool("browser__snapshot", "列出当前网页的可交互元素（链接、按钮、输入框等）及编号，点击或输入前先获取。", {}, []),
     tool("browser__click", "点击网页中的一个元素（用 browser__snapshot 返回的编号）。", { ref: { type: "integer", description: "元素编号" } }, ["ref"]),
