@@ -87,6 +87,7 @@ linuxTest("Linux 桌面服务提供与 macOS 一致的基础操作", () => {
     "launch_app",
     "get_app_state",
     "click",
+    "hover",
     "perform_secondary_action",
     "set_value",
     "select_text",
@@ -235,6 +236,66 @@ linuxTest("Linux 无障碍树只读取已绑定的具体窗口", async () => {
   assert.match(helper, /element_at\(window_root,/);
   assert.doesNotMatch(helper, /describe\(application\)/);
   assert.doesNotMatch(helper, /element_at\(application,/);
+});
+
+linuxTest("Linux 无障碍助手支持控件身份指纹绑定与过期检测", async () => {
+  const helper = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "scripts", "linux_computer_use.py"),
+    "utf8",
+  );
+  assert.match(helper, /def element_signature\(element\):/);
+  assert.match(helper, /def signature_matches\(element, expected\):/);
+  assert.match(helper, /expected_signature=payload\.get\("element_signature"\)/);
+  assert.match(helper, /控件 e%d 的身份已经变化/);
+  assert.match(helper, /signatures\["e%d" % index\] = signature/);
+});
+
+linuxTest("Linux 桌面服务支持控件身份指纹缓存与自动补全", async () => {
+  const source = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    "utf8",
+  );
+  assert.match(source, /elementSignatureCache/);
+  assert.match(source, /cacheElementSignatures\(args\.app, window\.id, tree\.signatures\)/);
+  assert.match(source, /cachedElementSignature\(args\.app, window\.id, args\.element_index\)/);
+});
+
+linuxTest("Linux 桌面服务提供坐标滚动与悬停入口", async () => {
+  const source = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    "utf8",
+  );
+  const scrollTool = desktopToolDefinitions().find((t) => t.name === "scroll");
+  assert.ok(scrollTool);
+  assert.ok(scrollTool.inputSchema.properties.x);
+  assert.ok(scrollTool.inputSchema.properties.y);
+  assert.ok(!scrollTool.inputSchema.required.includes("element_index"));
+  assert.ok(desktopToolDefinitions().find((t) => t.name === "hover"));
+  assert.match(source, /if \(args\.element_index\) \{\s*point = await elementAction\(args, "bounds"\)/);
+});
+
+linuxTest("Linux 虚拟显示启动失败时明确拒绝回落到用户桌面", async () => {
+  const source = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    "utf8",
+  );
+  assert.match(source, /virtualDisplayUnavailableError/);
+  assert.match(source, /独立桌面环境启动失败，已停止操作以避免切回用户当前桌面/);
+  assert.match(source, /process\.stderr\.write\(`独立桌面环境启动失败/);
+  assert.match(source, /process\.exit\(1\)/);
+});
+
+linuxTest("Linux 桌面服务在退出时释放按键与鼠标残留", async () => {
+  const source = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    "utf8",
+  );
+  assert.match(source, /releaseInputDevices/);
+  assert.match(source, /keyup", "1"\]/);
+  assert.match(source, /keyup", "ctrl"\]/);
+  assert.match(source, /keyup", "shift"\]/);
+  assert.match(source, /keyup", "alt"\]/);
+  assert.match(source, /keyup", "super"\]/);
 });
 
 linuxTest("Linux 桌面服务可通过 DYWorker 的基础工具通道完成握手", async () => {
@@ -543,11 +604,16 @@ test("VirtualDisplayManager 支持虚拟显示沙箱配置、分辨率固化与�
   assert.equal(manager.enabled, true);
   assert.equal(manager.display, ":105");
   assert.equal(manager.resolution, "1920x1080x24");
+  // 未实际启动 Xvfb 时，effectiveDisplay 必须为空，防止回落到用户桌面
+  assert.equal(manager.effectiveDisplay(), "");
+
+  // 启动成功后才返回虚拟显示编号
+  manager.isStarted = true;
   assert.equal(manager.effectiveDisplay(), ":105");
 
   const disabledManager = new VirtualDisplayManager({ enabled: false });
   assert.equal(disabledManager.enabled, false);
-  assert.equal(disabledManager.effectiveDisplay(), process.env.DISPLAY || "");
+  assert.equal(disabledManager.effectiveDisplay(), "");
 
   disabledManager.stop();
 });

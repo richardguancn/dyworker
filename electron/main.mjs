@@ -18,7 +18,7 @@ import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, e
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mjs";
 import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "./session-tools.mjs";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mjs";
-import { registerLocalImageIpc } from "./local-image.mjs";
+import { localImagePathFromSource, registerLocalImageIpc } from "./local-image.mjs";
 import { saveClipboardImage } from "./clipboard-image.mjs";
 import { importLegacyData } from "./legacy-data.mjs";
 import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus, resetLocalReviewerEngine } from "./local-reviewer.mjs";
@@ -815,22 +815,8 @@ async function describeAttachment(filePath) {
   const isImage = mimeType.startsWith("image/");
   const extension = path.extname(filePath).toLowerCase();
   const isVoice = mimeType.startsWith("audio/") || extension === ".silk";
-  let previewUrl;
-  if (isImage) {
-    const source = nativeImage.createFromPath(filePath);
-    if (!source.isEmpty()) {
-      const size = source.getSize();
-      const scale = Math.min(1, 480 / Math.max(1, size.width), 320 / Math.max(1, size.height));
-      const preview = scale < 1
-        ? source.resize({
-            width: Math.max(1, Math.round(size.width * scale)),
-            height: Math.max(1, Math.round(size.height * scale)),
-            quality: "good",
-          })
-        : source;
-      previewUrl = `data:image/png;base64,${preview.toPNG().toString("base64")}`;
-    }
-  }
+  // 不再内嵌缩略图：previewUrl 会随会话存档落盘，大图会让存档体积翻倍；
+  // 渲染层统一走 local-image:read 按原尺寸读取，气泡/预览/复制共用同一份原图。
   return {
     name: path.basename(filePath),
     path: filePath,
@@ -838,7 +824,6 @@ async function describeAttachment(filePath) {
     mimeType,
     isImage,
     isVoice,
-    ...(previewUrl ? { previewUrl } : {}),
   };
 }
 
@@ -1359,6 +1344,72 @@ ipcMain.handle("clipboard:write-text", (event, text) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false };
   clipboard.writeText(String(text ?? ""));
   return { ok: true };
+});
+
+// 渲染进程的 navigator.clipboard.write/ClipboardItem 在部分 Electron 版本不可用，
+// 复制图片改走主进程原生剪贴板（clipboard.writeImage），粘贴到画图/聊天等应用最稳。
+ipcMain.handle("clipboard:write-image", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入剪贴板图片" };
+  try {
+    let image = null;
+    const dataUrl = String(payload?.dataUrl || "");
+    if (dataUrl.startsWith("data:image/")) {
+      image = nativeImage.createFromDataURL(dataUrl);
+    } else {
+      const filePath = localImagePathFromSource(payload?.path);
+      if (filePath) {
+        const content = await fs.readFile(filePath);
+        if (content.length) image = nativeImage.createFromBuffer(content);
+      }
+    }
+    if (!image || image.isEmpty()) return { ok: false, error: "图片无法复制" };
+    clipboard.writeImage(image);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// 一次写入「文本 + 图片」：clipboard.write 会把两者放进同一剪贴板项，
+// 粘贴到微信/备忘录/Word 等应用时图文一起出现。
+// 同时写入 HTML 格式（dataURL 内嵌图片），让支持 HTML 粘贴的应用能同时拿到图文。
+ipcMain.handle("clipboard:write-rich", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入剪贴板" };
+  try {
+    const text = String(payload?.text || "");
+    let image = null;
+    let html = "";
+    const dataUrl = String(payload?.dataUrl || "");
+    if (dataUrl.startsWith("data:image/")) {
+      image = nativeImage.createFromDataURL(dataUrl);
+      // 生成内嵌图片的 HTML，供支持富文本粘贴的应用使用
+      html = `<img src="${dataUrl.replace(/"/g, '&quot;')}" alt="" />${text ? `<p>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}`;
+    } else {
+      const filePath = localImagePathFromSource(payload?.path);
+      if (filePath) {
+        const content = await fs.readFile(filePath);
+        if (content.length) {
+          image = nativeImage.createFromBuffer(content);
+          // 文件路径转 file:// URL，供 HTML 引用
+          const fileUrl = `file://${filePath.replace(/ /g, "%20")}`;
+          html = `<img src="${fileUrl.replace(/"/g, '&quot;')}" alt="" />${text ? `<p>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}`;
+        }
+      }
+    }
+    if (image && !image.isEmpty()) {
+      const data = { text, image };
+      if (html) data.html = html;
+      clipboard.write(data);
+      return { ok: true };
+    }
+    if (text) {
+      clipboard.writeText(text);
+      return { ok: true };
+    }
+    return { ok: false, error: "没有可复制的内容" };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));

@@ -33,6 +33,45 @@ def accessible_name(accessible):
     return safe(lambda: accessible.name, "") or ""
 
 
+# ---------------------------------------------------------------------------
+# 控件引用绑定：用「路径指纹 + 预期属性」替代裸序号，防止控件树变化后误操作
+# ---------------------------------------------------------------------------
+
+def element_signature(element):
+    """生成控件的身份指纹：角色 + 名称 + 在父节点中的序号 + 父节点角色。"""
+    role = safe(lambda: element.getRoleName(), "") or ""
+    name = accessible_name(element)
+    parent = safe(lambda: element.getParent())
+    parent_role = safe(lambda: parent.getRoleName(), "") if parent else ""
+    index_in_parent = -1
+    if parent:
+        count = safe(lambda: parent.childCount, 0) or 0
+        for index in range(min(count, 500)):
+            child = safe(lambda index=index: parent.getChildAtIndex(index))
+            if child == element:
+                index_in_parent = index
+                break
+    return {
+        "role": role,
+        "name": name,
+        "parent_role": parent_role or "",
+        "index_in_parent": index_in_parent,
+    }
+
+
+def signature_matches(element, expected):
+    """核对控件当前指纹与观察时记录的指纹是否一致。"""
+    if not expected or not isinstance(expected, dict):
+        return True  # 未提供预期指纹（兼容旧调用），不额外拦截
+    current = element_signature(element)
+    for key in ("role", "name", "parent_role"):
+        want = norm(expected.get(key))
+        got = norm(current.get(key))
+        if want and want != got:
+            return False
+    return True
+
+
 def descendants(root, limit=600):
     stack = [root]
     index = 0
@@ -108,7 +147,7 @@ def find_window_root(application, expected_title):
     )
 
 
-def element_at(root, raw_index):
+def element_at(root, raw_index, expected_signature=None):
     text = str(raw_index or "").strip().lower()
     if text.startswith("e"):
         text = text[1:]
@@ -118,6 +157,11 @@ def element_at(root, raw_index):
         raise RuntimeError("控件编号无效：%s" % raw_index)
     for index, element in descendants(root):
         if index == target:
+            if not signature_matches(element, expected_signature):
+                raise RuntimeError(
+                    "控件 e%d 的身份已经变化（角色或名称与读取时不一致），"
+                    "已停止操作以避免误点。请重新读取应用状态。" % target
+                )
             return element
     raise RuntimeError("没有找到控件：e%d。请重新读取应用状态。" % target)
 
@@ -170,6 +214,7 @@ def description_of(element):
 
 def describe(root):
     lines = ["可操作控件（操作后必须重新读取状态）："]
+    signatures = {}
     for index, element in descendants(root):
         role = safe(lambda element=element: element.getRoleName(), "") or ""
         name = accessible_name(element).replace("\n", " ").strip()
@@ -180,6 +225,8 @@ def describe(root):
         desc = description_of(element).replace("\n", " ").strip()
         if not (name or desc or actions or value or text or role in ("frame", "dialog", "entry", "button", "menu item", "check box", "combo box")):
             continue
+        signature = element_signature(element)
+        signatures["e%d" % index] = signature
         details = ["[e%d]" % index, role or "unknown"]
         if name:
             details.append('"%s"' % name[:240])
@@ -200,7 +247,7 @@ def describe(root):
         if len(lines) >= 360:
             lines.append("…控件较多，已截断")
             break
-    return "\n".join(lines)
+    return "\n".join(lines), signatures
 
 
 def click_element(element):
@@ -281,9 +328,14 @@ def main():
         window_root = find_window_root(application, payload.get("window_title"))
         command = payload.get("command") or "state"
         if command == "state":
-            emit({"ok": True, "text": describe(window_root)})
+            text, signatures = describe(window_root)
+            emit({"ok": True, "text": text, "signatures": signatures})
             return
-        element = element_at(window_root, payload.get("element_index"))
+        element = element_at(
+            window_root,
+            payload.get("element_index"),
+            expected_signature=payload.get("element_signature"),
+        )
         if command == "click":
             click_element(element)
         elif command == "secondary":

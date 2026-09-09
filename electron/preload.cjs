@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   saveClipboardImage: (payload) => ipcRenderer.invoke("attachments:save-clipboard-image", payload),
   readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
   writeClipboardText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
+  writeClipboardImage: (payload) => ipcRenderer.invoke("clipboard:write-image", payload),
+  writeClipboardRich: (payload) => ipcRenderer.invoke("clipboard:write-rich", payload),
   readLocalImage: (path) => ipcRenderer.invoke("local-image:read", path),
   refreshWorkspace: (path) => ipcRenderer.invoke("workspace:refresh", path),
   getWorkspaceContext: (path) => ipcRenderer.invoke("workspace:context", path),
