@@ -5532,7 +5532,6 @@ export function App() {
   const [workspaceSessionsExpanded, setWorkspaceSessionsExpanded] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
   const [platform, setPlatform] = useState("");
-  const [windowShadow, setWindowShadow] = useState(false);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -5988,7 +5987,6 @@ export function App() {
         setSettings(state.settings);
         setPinnedWorkspacePaths(state.pinnedWorkspacePaths || []);
         setPlatform(state.platform || "");
-        setWindowShadow(Boolean(state.windowShadow));
         setWindowMaximized(Boolean(state.windowMaximized));
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -6000,12 +5998,12 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Linux 透明窗口模式：由渲染端负责圆角、留白与阴影；最大化时贴满屏幕。
+  // Linux 系统标题栏占用窗口外框，页面不再重复显示自绘标题栏。
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("window-shadow", windowShadow);
+    root.classList.toggle("native-window-frame", platform === "linux");
     root.classList.toggle("window-maximized", windowMaximized);
-  }, [windowShadow, windowMaximized]);
+  }, [platform, windowMaximized]);
 
   useEffect(() => {
     if (!window.dyworker) return;
@@ -6014,17 +6012,6 @@ export function App() {
     );
     return () => unsubscribe?.();
   }, []);
-
-  // Linux 透明窗口输入健康检查：用户点击窗口后，主进程会确认窗口是否
-  // 真正获得键盘焦点，拿不到时自动退回不透明窗口。
-  useEffect(() => {
-    if (!window.dyworker) return;
-    const onPointerDown = () => window.dyworker?.reportWindowPointerDown?.();
-    window.addEventListener("pointerdown", onPointerDown, { capture: true });
-    return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
-  }, []);
-
-  // Linux 保留透明阴影，但不切换整窗鼠标穿透；边缘经过后应始终能点击正文。
 
   useEffect(() => {
     if (!ready || !window.dyworker) return;
