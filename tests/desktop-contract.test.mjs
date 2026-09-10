@@ -807,6 +807,23 @@ test("linux 默认用透明窗口自绘阴影，拿不到键盘焦点时自动�
   assert.match(preload, /reportWindowPointerDown/);
 });
 
+test("linux 留白区点击穿透：忽略态由主进程轮询恢复，不能依赖 forward 选项", () => {
+  // forward 选项只支持 macOS/Windows；Linux 上忽略期间渲染端收不到 mousemove，
+  // 若没有主进程恢复机制，窗口会永久点击穿透（表现为点哪里窗口都像消失了）
+  assert.match(main, /window:set-ignore-mouse/);
+  assert.match(main, /startIgnoreMouseRecovery/);
+  assert.match(main, /stopIgnoreMouseRecovery/);
+  assert.match(main, /screen\.getCursorScreenPoint/);
+  // 恢复后通知渲染端复位本地状态，避免状态错位漏发下一次切换
+  assert.match(main, /window:ignore-mouse-restored/);
+  assert.match(preload, /onWindowIgnoreMouseRestored/);
+  assert.match(preload, /window:ignore-mouse-restored/);
+  assert.match(app, /onWindowIgnoreMouseRestored/);
+  assert.match(types, /onWindowIgnoreMouseRestored/);
+  // 最大化/还原与窗口关闭时停止轮询并复位忽略态
+  assert.match(main, /mainWindow\.on\("maximize"[\s\S]*?stopIgnoreMouseRecovery/);
+});
+
 test("linux 透明窗口启动后主动检查接管状态，未接管或重建时不会退出应用", () => {
   // 纯 Wayland（无 DISPLAY/XWayland）不启用透明阴影，避免老合成器下窗口
   // 无法映射导致“进程在但界面不显示”
