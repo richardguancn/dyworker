@@ -74,7 +74,6 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import hljs from "highlight.js/lib/common";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { copyImageToClipboard, copyMessageWithImages, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
@@ -837,7 +836,8 @@ function WorkspaceNode({ entry, depth = 0, onOpenFile, onInsertFile, forceExpand
   onInsertFile?: (entry: WorkspaceEntry) => void;
   forceExpand?: boolean;
 }) {
-  const [expandedState, setExpanded] = useState(depth === 0);
+  // 目录默认全部收缩（含顶层），点击展开；筛选时由 forceExpand 强制展开匹配路径
+  const [expandedState, setExpanded] = useState(false);
   const expanded = forceExpand || expandedState;
   const isDirectory = entry.kind === "directory";
   const hasChildren = Boolean(entry.children?.length);
@@ -986,56 +986,6 @@ function fileExtension(filePath: string) {
 
 function isTextPreviewFile(filePath: string) {
   return TEXT_PREVIEW_EXTENSIONS.has(fileExtension(filePath));
-}
-
-// 扩展名 → highlight.js 语言名(getLanguage 兜底校验)
-const highlightLanguageMap: Record<string, string> = {
-  mjs: "javascript", cjs: "javascript", jsx: "javascript",
-  ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
-  htm: "xml", svg: "xml", vue: "xml",
-  sh: "bash", zsh: "bash",
-  yml: "yaml", md: "markdown",
-  h: "c", hpp: "cpp", cc: "cpp", cxx: "cpp",
-  toml: "ini", cfg: "ini", conf: "ini", env: "ini", properties: "ini",
-  gitignore: "plaintext", gitattributes: "plaintext", editorconfig: "ini", dockerignore: "plaintext", npmignore: "plaintext",
-  txt: "plaintext", log: "plaintext",
-};
-
-function highlightLanguageFor(filePath: string) {
-  const extension = fileExtension(filePath);
-  const candidate = highlightLanguageMap[extension] || extension;
-  return hljs.getLanguage(candidate) ? candidate : undefined;
-}
-
-function escapeHtml(text: string) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-const CODE_VIEW_MAX_CHARS = 400 * 1024;
-
-// Codex 风格的代码查看:行号栏 + 整文件语法高亮
-function CodeView({ content, filePath }: { content: string; filePath: string }) {
-  const truncated = content.length > CODE_VIEW_MAX_CHARS;
-  const shown = truncated ? content.slice(0, CODE_VIEW_MAX_CHARS) : content;
-  const html = useMemo(() => {
-    const language = highlightLanguageFor(filePath);
-    try {
-      return language ? hljs.highlight(shown, { language, ignoreIllegals: true }).value : escapeHtml(shown);
-    } catch {
-      return escapeHtml(shown);
-    }
-  }, [shown, filePath]);
-  const lineNumbers = useMemo(() => {
-    const count = shown.split("\n").length;
-    return Array.from({ length: count }, (_value, index) => index + 1).join("\n");
-  }, [shown]);
-  return (
-    <div className="code-view">
-      <pre className="code-view-gutter" aria-hidden="true">{lineNumbers}</pre>
-      <pre className="code-view-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
-      {truncated && <div className="code-view-truncated">文件过大,仅显示前 400 KB</div>}
-    </div>
-  );
 }
 
 // 面包屑:工作区名 › 目录 › 文件
@@ -1772,6 +1722,146 @@ function persistFileDrafts(drafts: Record<string, { content: string; savedAt: st
   }
 }
 
+// 把 markdown 按空行切成块（围栏代码块内部的空行不切分）。
+// 链接/脚注定义块（[x]: … 形式的整块）不单独渲染，收集起来拼到每个渲染块后面，
+// 让跨块的引用链接、脚注在分块渲染时仍能解析。
+function splitMarkdownBlocks(source: string) {
+  const lines = source.split("\n");
+  const blocks: string[] = [];
+  const definitions: string[] = [];
+  let current: string[] = [];
+  let fence: { char: string; length: number } | null = null;
+  const pushBlock = () => {
+    const block = current.join("\n").trim();
+    current = [];
+    if (!block) return;
+    const isDefinitionBlock = block.split("\n").every((line) => /^\s{0,3}\[\^?[^\]]+\]:\s*\S/.test(line));
+    if (isDefinitionBlock) definitions.push(block);
+    else blocks.push(block);
+  };
+  for (const line of lines) {
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      const char = fenceMatch[1][0];
+      const length = fenceMatch[1].length;
+      // 闭合围栏要求同字符且长度不小于起始围栏
+      if (!fence) fence = { char, length };
+      else if (char === fence.char && length >= fence.length) fence = null;
+      current.push(line);
+      continue;
+    }
+    if (!fence && /^\s*$/.test(line)) {
+      pushBlock();
+      continue;
+    }
+    current.push(line);
+  }
+  pushBlock();
+  return { blocks, definitions: definitions.join("\n") };
+}
+
+// Typora 式即时渲染编辑：文档按块渲染，点击某个块时该块显示 markdown 源码，
+// 失焦提交回整体文档（由父级自动保存落盘）
+function MarkdownLivePreview({ source, onChange }: { source: string; onChange: (next: string) => void }) {
+  const parsed = useMemo(() => splitMarkdownBlocks(source), [source]);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const commitEdit = () => {
+    if (editingIndex === null) return;
+    const current = parsed.blocks[editingIndex];
+    setEditingIndex(null);
+    setDraft("");
+    if (current !== undefined && draft === current) return;
+    const blocks = [...parsed.blocks];
+    if (draft.trim()) {
+      if (editingIndex < blocks.length) blocks[editingIndex] = draft;
+      else blocks.push(draft);
+    } else if (editingIndex < blocks.length) {
+      // 清空的块视为删除
+      blocks.splice(editingIndex, 1);
+    } else {
+      return;
+    }
+    const parts = parsed.definitions ? [...blocks, parsed.definitions] : blocks;
+    onChange(parts.join("\n\n"));
+  };
+
+  // 卸载（切文件/切源代码视图）前提交未完成的块编辑，避免丢字
+  const commitRef = useRef(commitEdit);
+  commitRef.current = commitEdit;
+  useEffect(() => () => commitRef.current(), []);
+
+  useEffect(() => {
+    if (editingIndex === null) return;
+    editorRef.current?.focus();
+  }, [editingIndex]);
+
+  // 编辑中的块随内容自动撑高
+  useEffect(() => {
+    const node = editorRef.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${node.scrollHeight}px`;
+  }, [draft, editingIndex]);
+
+  const startBlockEdit = (index: number, event: MouseEvent<HTMLDivElement>) => {
+    // 链接、图片等交互元素保持原行为，不触发编辑
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, textarea, select, img")) return;
+    commitRef.current();
+    setEditingIndex(index);
+    setDraft(parsed.blocks[index] || "");
+  };
+
+  return (
+    <div className="markdown-live">
+      {parsed.blocks.map((block, index) => editingIndex === index ? (
+        <textarea
+          key={index}
+          ref={editorRef}
+          className="markdown-block-editor"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => commitRef.current()}
+          spellCheck={false}
+          aria-label={`编辑第 ${index + 1} 个 Markdown 块`}
+        />
+      ) : (
+        <div key={index} className="markdown-block" onClick={(event) => startBlockEdit(index, event)}>
+          <InteractiveMessage content={parsed.definitions ? `${block}\n\n${parsed.definitions}` : block} />
+        </div>
+      ))}
+      {!parsed.blocks.length && editingIndex === null && (
+        <div
+          className="markdown-block markdown-live-empty"
+          onClick={() => { setEditingIndex(0); setDraft(""); }}
+        >
+          点击输入 Markdown…
+        </div>
+      )}
+      {editingIndex !== null && editingIndex >= parsed.blocks.length && (
+        <textarea
+          ref={editorRef}
+          className="markdown-block-editor"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => commitRef.current()}
+          spellCheck={false}
+          aria-label="编辑新的 Markdown 块"
+        />
+      )}
+      {/* 文档末尾的留白：点击追加一个新块 */}
+      <div
+        className="markdown-live-tail"
+        aria-hidden="true"
+        onClick={() => { commitRef.current(); setEditingIndex(parsed.blocks.length); setDraft(""); }}
+      />
+    </div>
+  );
+}
+
 function FilesSplitPanel({
   workspacePath,
   workspaceEntries,
@@ -1779,7 +1869,6 @@ function FilesSplitPanel({
   onRefresh,
   onClearWorkspace,
   onError,
-  onNotice,
   onInsertFile,
 }: {
   workspacePath: string;
@@ -1788,42 +1877,142 @@ function FilesSplitPanel({
   onRefresh: () => void;
   onClearWorkspace: () => void;
   onError: (message: string) => void;
-  onNotice?: (message: string) => void;
   onInsertFile?: (entry: WorkspaceEntry) => void;
 }) {
   const [fileFilter, setFileFilter] = useState("");
   const [selection, setSelection] = useState<FilePanelSelection | null>(null);
-  // markdown 默认渲染预览，可切换查看源代码
+  // markdown 默认即时渲染编辑（Typora 式），可切换为纯源码编辑
   const [showSource, setShowSource] = useState(false);
   // 右侧文件树开关（默认开启）与拖拽调宽（null = 跟随默认弹性宽度）
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState<number | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
   const treeResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "pending" | "saving" | "saved">("idle");
+  // 草稿是崩溃备份：自动保存成功后清除
   const draftsRef = useRef<Record<string, { content: string; savedAt: string }>>(loadFileDrafts());
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
+  // 待落盘队列：path → { workspacePath, content }。切换工作区后仍按原工作区写盘
+  const pendingSavesRef = useRef<Map<string, { workspacePath: string; content: string }>>(new Map());
+  const saveTimerRef = useRef<number | null>(null);
+  const savingRef = useRef(false);
+  // 每个文件最近一次编辑内容：写盘完成后判断是否仍有更新内容，避免旧结果回写基准
+  const latestEditRef = useRef<{ path: string; content: string } | null>(null);
   const fileFilterActive = Boolean(fileFilter.trim());
   const visibleEntries = useMemo(
     () => filterWorkspaceEntries(workspaceEntries, fileFilter),
     [workspaceEntries, fileFilter],
   );
 
-  const draftKeyFor = (path: string) => `${workspacePath}|${path}`;
-  const currentDraft = selection ? draftsRef.current[draftKeyFor(selection.path)] : undefined;
+  const draftKeyFor = (workspace: string, path: string) => `${workspace}|${path}`;
+
+  // 自动保存：防抖落盘；切文件、切工作区、面板卸载前都会先冲刷队列
+  const flushSaves = async () => {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (savingRef.current) {
+      // 上一次写入未结束，稍后再试，避免并发写同一文件
+      if (pendingSavesRef.current.size) {
+        saveTimerRef.current = window.setTimeout(() => {
+          saveTimerRef.current = null;
+          void flushSaves();
+        }, 300);
+      }
+      return;
+    }
+    const next = pendingSavesRef.current.entries().next().value as [string, { workspacePath: string; content: string }] | undefined;
+    if (!next) return;
+    const [path, pending] = next;
+    pendingSavesRef.current.delete(path);
+    if (!window.dyworker?.writeWorkspaceFile) {
+      setSaveError("当前预览环境没有写入文件的通道");
+      return;
+    }
+    savingRef.current = true;
+    setSaveState("saving");
+    setSaveError("");
+    try {
+      const result = await window.dyworker.writeWorkspaceFile(pending.workspacePath, path, pending.content);
+      if (!result.ok) {
+        // 写失败：内容回到队列（除非已有更新版本在排队），等下一次编辑再触发；
+        // 内容同时留在 localStorage 草稿里，不会丢
+        if (!pendingSavesRef.current.has(path)) pendingSavesRef.current.set(path, pending);
+        setSaveState("pending");
+        setSaveError(result.error || "保存失败");
+        return;
+      }
+      // 队列里没有该文件的更新内容时才能清草稿、推进显示基准
+      if (!pendingSavesRef.current.has(path)) {
+        delete draftsRef.current[draftKeyFor(pending.workspacePath, path)];
+        persistFileDrafts(draftsRef.current);
+      }
+      const latest = latestEditRef.current;
+      if (latest && latest.path === path && latest.content === pending.content) {
+        setSelection((current) => current && current.path === path ? { ...current, content: pending.content } : current);
+      }
+      setSaveState((state) => (state === "saving" ? "saved" : state));
+    } catch (saveError) {
+      if (!pendingSavesRef.current.has(path)) pendingSavesRef.current.set(path, pending);
+      setSaveState("pending");
+      setSaveError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      savingRef.current = false;
+    }
+    // 队列里还有别的文件/更新内容，继续落盘
+    if (pendingSavesRef.current.size) void flushSaves();
+  };
+
+  const scheduleSave = (path: string, content: string) => {
+    pendingSavesRef.current.set(path, { workspacePath, content });
+    setSaveState("pending");
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void flushSaves();
+    }, 800);
+  };
+
+  // 崩溃备份草稿：每次编辑都记，自动保存成功后由 flushSaves 清除；超上限淘汰最旧
+  const updateDraftFor = (path: string, content: string) => {
+    draftsRef.current[draftKeyFor(workspacePath, path)] = { content, savedAt: new Date().toISOString() };
+    const keys = Object.keys(draftsRef.current);
+    if (keys.length > MAX_FILE_DRAFTS) {
+      const stale = keys
+        .map((item) => ({ key: item, savedAt: draftsRef.current[item].savedAt }))
+        .sort((a, b) => a.savedAt.localeCompare(b.savedAt))
+        .slice(0, keys.length - MAX_FILE_DRAFTS);
+      for (const entry of stale) delete draftsRef.current[entry.key];
+    }
+    persistFileDrafts(draftsRef.current);
+  };
+
+  const handleEditChange = (path: string, value: string) => {
+    latestEditRef.current = { path, content: value };
+    updateDraftFor(path, value);
+    scheduleSave(path, value);
+    // 卸载提交（Typora 块失焦）可能来自上一个文件的渲染闭包：只对当前选中文件更新编辑区
+    if (selection && selection.path === path) setEditContent(value);
+  };
 
   useEffect(() => {
+    void flushSaves();
     setSelection(null);
     setFileFilter("");
-    setEditing(false);
-    setDirty(false);
     setSaveError("");
+    setSaveState("idle");
     setShowSource(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]);
+
+  // 面板卸载前冲刷一次（setState 在卸载后是 no-op，写盘照常完成）
+  const flushSavesRef = useRef(flushSaves);
+  flushSavesRef.current = flushSaves;
+  useEffect(() => () => {
+    void flushSavesRef.current();
+  }, []);
 
   // 文件树拖拽调宽：在预览区与目录树之间的分隔条上按下后，跟随指针调整右侧树宽度
   useEffect(() => {
@@ -1847,10 +2036,11 @@ function FilesSplitPanel({
 
   const previewFile = async (entry: WorkspaceEntry) => {
     const previewKind: "markdown" | "code" | "" = isMarkdownFile(entry.path) ? "markdown" : isTextPreviewFile(entry.path) ? "code" : "";
+    // 切走前把上一个文件的待保存内容落盘
+    void flushSaves();
     setShowSource(false);
-    setEditing(false);
-    setDirty(false);
     setSaveError("");
+    setSaveState("idle");
     if (!previewKind) {
       // 二进制/未知类型交给系统默认应用
       if (!window.dyworker?.openPath) return;
@@ -1876,86 +2066,24 @@ function FilesSplitPanel({
         setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: result.error || "文件读取失败" });
         return;
       }
-      setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: result.content || "", loading: false });
+      const diskContent = result.content || "";
+      // 有崩溃备份草稿（自动保存没来得及落盘）时恢复草稿并立即补一次自动保存
+      const draft = draftsRef.current[draftKeyFor(workspacePath, entry.path)];
+      const initial = draft ? draft.content : diskContent;
+      setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: diskContent, loading: false });
+      setEditContent(initial);
+      latestEditRef.current = { path: entry.path, content: initial };
+      if (draft && draft.content !== diskContent) scheduleSave(entry.path, draft.content);
     } catch (previewError) {
       setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: `文件读取失败：${previewError instanceof Error ? previewError.message : String(previewError)}` });
     }
   };
 
-  const startEdit = () => {
-    if (!selection) return;
-    const draft = draftsRef.current[draftKeyFor(selection.path)];
-    setEditContent(draft ? draft.content : selection.content);
-    setDirty(Boolean(draft));
-    setSaveError("");
-    setEditing(true);
-    window.setTimeout(() => editorRef.current?.focus(), 0);
-  };
-
-  const updateDraft = (content: string) => {
-    if (!selection) return;
-    const key = draftKeyFor(selection.path);
-    const draft = content === selection.content ? undefined : { content, savedAt: new Date().toISOString() };
-    if (draft) {
-      draftsRef.current[key] = draft;
-      const keys = Object.keys(draftsRef.current);
-      if (keys.length > MAX_FILE_DRAFTS) {
-        const stale = keys
-          .map((item) => ({ key: item, savedAt: draftsRef.current[item].savedAt }))
-          .sort((a, b) => a.savedAt.localeCompare(b.savedAt))
-          .slice(0, keys.length - MAX_FILE_DRAFTS);
-        for (const entry of stale) delete draftsRef.current[entry.key];
-      }
-    } else {
-      delete draftsRef.current[key];
-    }
-    persistFileDrafts(draftsRef.current);
-  };
-
-  const saveFile = async () => {
-    if (!selection || saving) return;
-    if (!window.dyworker?.writeWorkspaceFile) {
-      setSaveError("当前预览环境没有写入文件的通道");
-      return;
-    }
-    setSaving(true);
-    setSaveError("");
-    try {
-      const result = await window.dyworker.writeWorkspaceFile(workspacePath, selection.path, editContent);
-      if (!result.ok) {
-        setSaveError(result.error || "保存失败");
-        return;
-      }
-      const key = draftKeyFor(selection.path);
-      delete draftsRef.current[key];
-      persistFileDrafts(draftsRef.current);
-      setSelection((current) => current ? { ...current, content: editContent } : current);
-      setDirty(false);
-      setEditing(false);
-      onNotice?.(`已保存：${selection.name}`);
-    } catch (saveError) {
-      setSaveError(saveError instanceof Error ? saveError.message : String(saveError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const discardEdit = () => {
-    if (!selection) return;
-    const key = draftKeyFor(selection.path);
-    delete draftsRef.current[key];
-    persistFileDrafts(draftsRef.current);
-    setEditContent(selection.content);
-    setDirty(false);
-    setEditing(false);
-    setSaveError("");
-  };
-
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Ctrl/Cmd+S 原子保存
+    // Ctrl/Cmd+S 立即落盘（不等防抖）
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
-      void saveFile();
+      void flushSaves();
     }
   };
 
@@ -1976,46 +2104,24 @@ function FilesSplitPanel({
             ) : (
               <div className="code-breadcrumb" />
             )}
-            {selection && currentDraft && !editing && (
-              <span className="file-draft-badge" title={`未保存草稿：${new Date(currentDraft.savedAt).toLocaleString("zh-CN")}`}>
-                有未保存草稿
+            {selection && saveState !== "idle" && !selection.loading && !selection.error && (
+              <span className={`file-save-state ${saveState}`}>
+                {saveState === "pending" ? "待保存" : saveState === "saving" ? "保存中…" : "已保存"}
               </span>
             )}
-            {selection && selection.kind === "markdown" && !editing && (
+            {selection && selection.kind === "markdown" && (
               <button
                 className="code-open-external"
                 onClick={() => setShowSource((value) => !value)}
                 disabled={selection.loading || Boolean(selection.error)}
-                title={showSource ? "返回渲染预览" : "查看 Markdown 源代码"}
+                title={showSource ? "返回即时渲染编辑" : "查看 Markdown 源代码"}
               >
                 {showSource ? "查看预览" : "查看源代码"}
               </button>
             )}
-            {selection && !editing && (
-              <button
-                className="code-open-external"
-                onClick={startEdit}
-                title="切换到编辑模式（Ctrl/Cmd+S 保存）"
-                disabled={selection.loading || Boolean(selection.error)}
-              >
-                <Pencil size={13} />
-                编辑
-              </button>
-            )}
-            {selection && editing && (
-              <button className="code-open-external" onClick={() => void saveFile()} disabled={saving} title="保存到工作区（Ctrl/Cmd+S）">
-                <Check size={13} />
-                {saving ? "保存中…" : "保存"}
-              </button>
-            )}
-            {selection && editing && (
-              <button className="code-open-external" onClick={discardEdit} title="放弃未保存的改动，恢复为磁盘内容">
-                放弃
-              </button>
-            )}
             {selection && (
               <button
-                className="code-open-external"
+                className="code-open-external primary"
                 onClick={() => void window.dyworker?.revealInFolder?.(selection.path)}
                 disabled={selection.loading}
                 title="在系统文件管理器中打开所在目录"
@@ -2047,27 +2153,19 @@ function FilesSplitPanel({
               <p className="panel-empty">正在读取文件…</p>
             ) : selection.error ? (
               <p className="panel-empty error-text">{selection.error}</p>
-            ) : editing ? (
+            ) : selection.kind === "markdown" && !showSource ? (
+              // 即时渲染编辑：渲染块点击即改，失焦回到渲染
+              <MarkdownLivePreview key={selection.path} source={editContent} onChange={(value) => handleEditChange(selection.path, value)} />
+            ) : (
+              // 文本文件打开即编辑状态，自动保存
               <textarea
-                ref={editorRef}
                 className="file-editor"
                 value={editContent}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setEditContent(value);
-                  setDirty(value !== selection.content);
-                  updateDraft(value);
-                }}
+                onChange={(event) => handleEditChange(selection.path, event.target.value)}
                 onKeyDown={handleEditorKeyDown}
                 spellCheck={false}
                 aria-label={`编辑 ${selection.name}`}
               />
-            ) : selection.kind === "markdown" && !showSource ? (
-              <article className="markdown-file-preview-content file-split-markdown">
-                <InteractiveMessage content={selection.content} />
-              </article>
-            ) : (
-              <CodeView content={selection.content} filePath={selection.path} />
             )}
             </>
           )}
@@ -8644,7 +8742,7 @@ export function App() {
     return !toolPanelTabs.some((tab) => tab.kind === kind);
   });
   const toolPanelAddMenu = toolPanelAddMenuOpen && (
-    <div className="session-menu tool-panel-add-menu" role="menu">
+    <div className="session-menu tool-panel-add-menu" role="menu" data-menu-root>
       {addMenuItems.map((item) => (
         <button
           role="menuitem"
@@ -10045,8 +10143,9 @@ export function App() {
               </button>
             </div>
           ))}
-          {!pristineMenuPage && (
-            <div className="tool-panel-add-wrap" data-menu-root>
+          {!pristineMenuPage && toolPanelAddMenu}
+          <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
+            {!pristineMenuPage && (
               <button
                 className={`tool-panel-new-tab ${toolPanelAddMenuOpen ? "active" : ""}`}
                 aria-label="打开侧边操作"
@@ -10056,10 +10155,7 @@ export function App() {
               >
                 <Plus size={18} />
               </button>
-              {toolPanelAddMenu}
-            </div>
-          )}
-          <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
+            )}
             <button
               className="icon-button subtle"
               aria-label="收起右侧工具栏"
@@ -10180,7 +10276,6 @@ export function App() {
                 onRefresh={() => void refreshWorkspace()}
                 onClearWorkspace={clearWorkspace}
                 onError={setError}
-                onNotice={setNotice}
                 onInsertFile={insertFileToken}
               />
             </section>

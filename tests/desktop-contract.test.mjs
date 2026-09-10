@@ -355,31 +355,41 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(styles, /\.message-actions/);
 });
 
-test("文件面板为左右分栏，Markdown 在内联预览（Codex 风格）", () => {
+test("文件面板为左右分栏，Markdown 即时渲染编辑（Typora 式）", () => {
   assert.match(app, /isMarkdownFile/);
   assert.match(app, /previewKind === "markdown" \? window\.dyworker\?\.readWorkspaceMarkdown : window\.dyworker\?\.readWorkspaceFile/);
   assert.match(app, /function FilesSplitPanel/);
   assert.match(app, /从工作区目录树中选择文件/);
-  assert.match(app, /<InteractiveMessage content=\{selection\.content\}/);
+  // markdown 预览按块渲染，点击块显示源码、失焦提交（Typora 式）
+  assert.match(app, /function MarkdownLivePreview/);
+  assert.match(app, /splitMarkdownBlocks/);
+  assert.match(app, /<MarkdownLivePreview key=\{selection\.path\}/);
   assert.match(main, /ipcMain\.handle\("workspace:read-markdown"/);
   assert.match(main, /readWorkspaceMarkdown/);
   assert.match(styles, /\.file-split/);
-  assert.match(styles, /\.file-split-markdown/);
-  assert.match(styles, /\.markdown-file-preview-content/);
+  assert.match(styles, /\.markdown-live/);
+  assert.match(styles, /\.markdown-block-editor/);
 });
 
-test("任意文本文件在文件面板内联预览：语法高亮、面包屑与文件筛选（Codex 风格）", () => {
+test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Codex 风格）", () => {
   assert.match(app, /isTextPreviewFile/);
   assert.match(app, /TEXT_PREVIEW_EXTENSIONS/);
-  assert.match(app, /<CodeView content=\{selection\.content\}/);
-  assert.match(app, /function CodeView/);
-  assert.match(app, /highlight\.js\/lib\/common/);
-  assert.match(app, /hljs\.highlight/);
+  // 打开即编辑：不再有独立编辑按钮，textarea 直接可编辑
+  assert.match(app, /className="file-editor"/);
+  assert.doesNotMatch(app, /CodeView/);
+  assert.doesNotMatch(app, /highlight\.js\/lib\/common/);
+  // 自动保存：防抖落盘 + 切文件/卸载前冲刷 + 崩溃备份草稿
+  assert.match(app, /flushSaves/);
+  assert.match(app, /scheduleSave/);
+  assert.match(app, /pendingSavesRef/);
+  assert.match(app, /writeWorkspaceFile/);
+  assert.match(app, /FILE_DRAFTS_KEY/);
+  assert.match(app, /file-save-state/);
   assert.match(app, /codeBreadcrumbSegments/);
   // 「打开」按钮改为在系统文件管理器中定位文件所在目录（shell.showItemInFolder）
   assert.match(app, /revealInFolder/);
   assert.match(app, /在系统文件管理器中打开所在目录/);
-  // markdown 默认渲染预览，可切换查看源代码
+  // markdown 默认即时渲染编辑，可切换纯源码编辑
   assert.match(app, /查看源代码/);
   assert.match(app, /查看预览/);
   // 右侧文件树显示开关（默认开启）与拖拽调宽分隔条
@@ -395,7 +405,7 @@ test("任意文本文件在文件面板内联预览：语法高亮、面包屑�
   assert.match(app, /forceExpand/);
   assert.match(preload, /readWorkspaceFile/);
   assert.match(main, /ipcMain\.handle\("workspace:read-file"/);
-  assert.match(styles, /\.code-view-gutter/);
+  assert.match(styles, /\.file-save-state/);
   assert.match(styles, /\.code-breadcrumb/);
   assert.match(styles, /\.tool-file-filter/);
 });
