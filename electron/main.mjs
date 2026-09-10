@@ -146,44 +146,6 @@ const LINUX_SHADOW_MARGIN = 32;
 // 重建窗口期间置位：销毁最后一个窗口会触发 window-all-closed，若此时应用
 // 退出，就表现为“进程还在但界面消失”。重建期间不退出，等新窗口接管。
 let recreatingWindow = false;
-// Linux 点击穿透恢复轮询：setIgnoreMouseEvents 的 forward 选项只支持
-// macOS/Windows，Linux 上窗口进入忽略态后渲染端收不到 mousemove，无法自行
-// 恢复（表现为点击窗口任意位置都穿透，窗口像“消失”了一样）。进入忽略态时
-// 由主进程轮询光标位置，回到窗口主体时恢复接收（见 window:set-ignore-mouse）。
-let ignoreMouseRecoveryTimer = null;
-function stopIgnoreMouseRecovery() {
-  if (ignoreMouseRecoveryTimer) {
-    clearInterval(ignoreMouseRecoveryTimer);
-    ignoreMouseRecoveryTimer = null;
-  }
-}
-function startIgnoreMouseRecovery() {
-  if (ignoreMouseRecoveryTimer) return;
-  ignoreMouseRecoveryTimer = setInterval(() => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      stopIgnoreMouseRecovery();
-      return;
-    }
-    try {
-      const bounds = mainWindow.getBounds();
-      const point = screen.getCursorScreenPoint();
-      // 与渲染端 hit-test 同一几何：窗口 bounds 四周扣除 LINUX_SHADOW_MARGIN 留白
-      const inside =
-        point.x >= bounds.x + LINUX_SHADOW_MARGIN &&
-        point.x <= bounds.x + bounds.width - LINUX_SHADOW_MARGIN &&
-        point.y >= bounds.y + LINUX_SHADOW_MARGIN &&
-        point.y <= bounds.y + bounds.height - LINUX_SHADOW_MARGIN;
-      if (!inside) return;
-      mainWindow.setIgnoreMouseEvents(false);
-      stopIgnoreMouseRecovery();
-      // 通知渲染端复位本地忽略态，避免与主进程状态错位后漏发下一次切换
-      mainWindow.webContents.send("window:ignore-mouse-restored");
-    } catch {
-      // 光标/几何查询失败时保持忽略态，下一轮再试
-    }
-  }, 80);
-  ignoreMouseRecoveryTimer.unref?.();
-}
 function supportsLinuxWindowShadow() {
   if (process.platform !== "linux") return false;
   if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
@@ -970,15 +932,12 @@ function createWindow({ solidFallback = false } = {}) {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
-  // 最大化/还原时复位鼠标忽略状态：最大化无透明留白（不需要穿透），
-  // 还原后由渲染端 hit-test 重新接管（见 window:set-ignore-mouse）。
+  // 最大化/还原时确保窗口始终接收鼠标输入。
   mainWindow.on("maximize", () => {
-    stopIgnoreMouseRecovery();
     mainWindow?.setIgnoreMouseEvents(false);
     mainWindow?.webContents.send("window:maximized-changed", true);
   });
   mainWindow.on("unmaximize", () => {
-    stopIgnoreMouseRecovery();
     mainWindow?.setIgnoreMouseEvents(false);
     mainWindow?.webContents.send("window:maximized-changed", false);
   });
@@ -1156,7 +1115,6 @@ function createWindow({ solidFallback = false } = {}) {
     });
   }
   mainWindow.once("closed", () => {
-    stopIgnoreMouseRecovery();
     mainWindow = undefined;
   });
   mainWindow.webContents.session.setPermissionCheckHandler((_webContents, permission) => permission === "media");
@@ -4751,21 +4709,14 @@ ipcMain.handle("window:toggle-maximize", () => {
 });
 ipcMain.handle("window:close", () => mainWindow?.close());
 
-// Linux 透明阴影窗口的留白区点击穿透：渲染端 hit-test 报告指针是否落在
-// 窗口主体（.app-shell）之外；落在透明留白区时忽略鼠标，让点击穿透到下层
-// 窗口（否则用户以为点到了后面的应用，实际点击被本窗口吞掉）。
-// 注意：forward 选项只支持 macOS/Windows，Linux 上忽略期间渲染端收不到
-// mousemove，无法靠“移回主体”自行恢复——进入忽略态后由主进程轮询光标位置
-// 恢复（startIgnoreMouseRecovery），否则整个窗口永久点击穿透、无法交互。
-ipcMain.on("window:set-ignore-mouse", (event, ignore) => {
-  if (process.platform !== "linux" || !currentWindowShadow) return;
+// Linux 不启用整窗鼠标穿透：边缘移入与点击之间存在竞态，且部分桌面
+// 无法可靠查询全局光标，轮询不能保证恢复。保留旧消息的安全兼容处理，
+// 无论请求值或最大化/阴影状态如何，都恢复接收输入。
+ipcMain.on("window:set-ignore-mouse", (event, _ignore) => {
+  if (process.platform !== "linux") return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (event.sender !== mainWindow.webContents) return;
-  if (mainWindow.isMaximized()) return; // 最大化时无留白，整个窗口都是内容
-  const next = Boolean(ignore);
-  mainWindow.setIgnoreMouseEvents(next, { forward: true });
-  if (next) startIgnoreMouseRecovery();
-  else stopIgnoreMouseRecovery();
+  mainWindow.setIgnoreMouseEvents(false);
 });
 
 app.whenReady().then(async () => {

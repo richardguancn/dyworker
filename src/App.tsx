@@ -6024,46 +6024,7 @@ export function App() {
     return () => window.removeEventListener("pointerdown", onPointerDown, { capture: true });
   }, []);
 
-  // Linux 透明阴影窗口：四周 32px 留白也是窗口的一部分，点击会被本窗口吞掉
-  // （用户以为点到了后面的应用，实际无反应）。这里 hit-test 指针是否在窗口主体
-  // （.app-shell）内，落在留白区时让主进程忽略鼠标。注意 setIgnoreMouseEvents 的
-  // forward 选项只支持 macOS/Windows，Linux 上忽略期间渲染端收不到 mousemove，
-  // 恢复由主进程轮询光标位置完成，并通过 onWindowIgnoreMouseRestored 通知这里
-  // 复位本地状态（否则整个窗口永久点击穿透，表现为“点哪里窗口都像消失了”）。
-  // 只在状态翻转时发 IPC（天然节流），2px 滞回带防止指针压在边界线上时高频翻转。
-  // 模态框打开期间不特殊处理：点击留白穿透到下层窗口，比"看似点到却没反应"更不困惑。
-  useEffect(() => {
-    if (platform !== "linux" || !windowShadow || windowMaximized) return;
-    if (!window.dyworker?.setIgnoreMouse) return;
-    let ignoring = false;
-    const HYSTERESIS = 2;
-    const onMouseMove = (event: globalThis.MouseEvent) => {
-      const shell = document.querySelector(".app-shell");
-      if (!shell) return;
-      const rect = shell.getBoundingClientRect();
-      // 滞回：已忽略时用内缩 2px 的 rect 判"回到主体内"，未忽略时用原 rect 判"离开主体"
-      const inset = ignoring ? HYSTERESIS : 0;
-      const inside =
-        event.clientX >= rect.left + inset && event.clientX <= rect.right - inset &&
-        event.clientY >= rect.top + inset && event.clientY <= rect.bottom - inset;
-      const next = !inside;
-      if (next !== ignoring) {
-        ignoring = next;
-        window.dyworker?.setIgnoreMouse?.(next);
-      }
-    };
-    window.addEventListener("mousemove", onMouseMove, { passive: true });
-    // 主进程轮询恢复后同步本地状态，避免后续"移出留白"的翻转因状态错位而漏发
-    const unsubscribeRestored = window.dyworker?.onWindowIgnoreMouseRestored?.(() => {
-      ignoring = false;
-    });
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      unsubscribeRestored?.();
-      // effect 卸载（如最大化、阴影关闭）时若仍处于忽略态，复位避免窗口永久不响应
-      if (ignoring) window.dyworker?.setIgnoreMouse?.(false);
-    };
-  }, [platform, windowShadow, windowMaximized]);
+  // Linux 保留透明阴影，但不切换整窗鼠标穿透；边缘经过后应始终能点击正文。
 
   useEffect(() => {
     if (!ready || !window.dyworker) return;
