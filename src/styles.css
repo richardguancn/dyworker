@@ -2150,7 +2150,6 @@ body.resizing-panels .app-shell {
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 6px;
   min-height: var(--topbar-height);
   padding: 7px 92px 7px 12px;
   /* 不能 overflow:hidden，否则会裁掉 + 按钮的下拉菜单；标签页靠 min-width:0 收缩 */
@@ -4216,7 +4215,7 @@ body.resizing-panels .app-shell {
   background: transparent;
 }
 
-/* 消息代码块语法高亮记号配色（与 .code-view 的 highlight.js 主题一致） */
+/* 消息代码块语法高亮记号配色（highlight.js，贴合暖色主题） */
 .markdown-content pre .hljs-keyword,
 .markdown-content pre .hljs-selector-tag,
 .markdown-content pre .hljs-built_in { color: #a05a1f; }
@@ -8848,8 +8847,8 @@ html.native-window-frame .titlebar {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
+  gap: 6px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -8857,9 +8856,10 @@ html.native-window-frame .titlebar {
 .code-breadcrumb {
   display: flex;
   flex: 1;
-  flex-wrap: wrap;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 12.5px;
 }
@@ -8867,6 +8867,19 @@ html.native-window-frame .titlebar {
 .code-breadcrumb-item {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 目录段优先收缩成省略号，文件名始终完整可见（对照 VS Code 面包屑） */
+.code-breadcrumb-item > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-breadcrumb-item:last-child {
+  flex-shrink: 0;
 }
 
 .code-breadcrumb-sep {
@@ -8890,6 +8903,30 @@ html.native-window-frame .titlebar {
   cursor: pointer;
 }
 
+/* 文件预览头部空间窄：操作按钮收成无边框文本按钮（对照 VS Code），
+   主操作「打开」保留描边强调；不影响其他面板共用的 .code-open-external */
+.code-panel-header .code-open-external {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.code-panel-header .code-open-external.primary {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+}
+
+.code-panel-header .code-open-external:hover:not(:disabled) {
+  color: var(--ink);
+}
+
 .code-open-external:hover:not(:disabled) {
   background: var(--sidebar-hover);
 }
@@ -8899,78 +8936,6 @@ html.native-window-frame .titlebar {
   cursor: default;
 }
 
-.code-view {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  flex: 1;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-.code-view-gutter {
-  position: sticky;
-  left: 0;
-  flex: none;
-  margin: 0;
-  padding: 12px 8px 30px 14px;
-  background: var(--surface);
-  color: var(--quiet);
-  text-align: right;
-  user-select: none;
-}
-
-.code-view-body {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 12px 16px 30px 10px;
-  white-space: pre;
-  overflow-x: auto;
-}
-
-.code-view-truncated {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--card);
-  color: var(--muted);
-  font-size: 12px;
-  box-shadow: var(--shadow-xs);
-}
-
-/* highlight.js 记号配色(贴合暖色主题) */
-.code-view .hljs-keyword,
-.code-view .hljs-selector-tag,
-.code-view .hljs-built_in { color: #a05a1f; }
-.code-view .hljs-string,
-.code-view .hljs-attr,
-.code-view .hljs-template-string { color: #6a7a12; }
-.code-view .hljs-comment,
-.code-view .hljs-quote { color: #96998e; font-style: italic; }
-.code-view .hljs-number,
-.code-view .hljs-literal { color: #b0512e; }
-.code-view .hljs-title,
-.code-view .hljs-title.function_,
-.code-view .hljs-name { color: #2f6fed; }
-.code-view .hljs-title.class_,
-.code-view .hljs-type { color: #7a5aa8; }
-.code-view .hljs-variable,
-.code-view .hljs-template-variable { color: #8a4a6b; }
-.code-view .hljs-meta,
-.code-view .hljs-selector-class,
-.code-view .hljs-selector-id { color: #a05a1f; }
-.code-view .hljs-regexp { color: #b0512e; }
-.code-view .hljs-symbol,
-.code-view .hljs-link { color: #2f6fed; }
-.code-view .hljs-deletion { color: #c0524a; }
-.code-view .hljs-addition { color: #5d7a00; }
-.code-view .hljs-emphasis { font-style: italic; }
-.code-view .hljs-strong { font-weight: 700; }
 
 /* 审阅面板 */
 .review-panel {
@@ -9144,13 +9109,8 @@ html.native-window-frame .titlebar {
 
 /* ---- Codex 风格右侧面板重构：+ 下拉菜单 / Git 审阅分栏 / 文件分栏 / 浏览器更多菜单 / 导入对话框 ---- */
 
-/* + 按钮的下拉菜单（对照 Codex 新标签页菜单） */
-.tool-panel-add-wrap {
-  flex: 0 0 auto;
-  /* + 按钮固定靠标签条右端（对照 Codex），下拉菜单锚定整个标签条而不是按钮 */
-  margin-left: auto;
-}
-
+/* + 按钮的下拉菜单（对照 Codex 新标签页菜单）；+ 按钮本身在右侧 actions 里，
+   菜单锚定整个标签条（.tool-panel-tabs，position:relative）而不是按钮 */
 .tool-panel-add-menu {
   top: calc(100% - 2px);
   right: 8px;
@@ -9557,9 +9517,13 @@ html.native-window-frame .titlebar {
 }
 
 /* ---- 文件浏览分栏（对照 Codex 文件页） ---- */
+/* 分栏文件面板直接顶到标签栏：基类的 margin-top/border-top 会在标签栏下方
+   形成一条空白带，还让高度 100% 的内容溢出出外层滚动条 */
 .tool-file-browser.file-split-panel {
   height: 100%;
+  margin-top: 0;
   padding: 0;
+  border-top: 0;
 }
 
 .file-split {
@@ -9584,17 +9548,59 @@ html.native-window-frame .titlebar {
   min-height: 0;
 }
 
-.file-split-preview-inner .code-view {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.file-split-markdown {
+/* Typora 式即时渲染编辑：渲染块可点击进入源码编辑，失焦回到渲染 */
+.markdown-live {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 18px 32px;
+  padding: 12px 18px 0;
+  display: flex;
+  flex-direction: column;
+  cursor: text;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.markdown-block {
+  border-radius: 6px;
+}
+
+.markdown-block:hover {
+  background: rgba(69, 71, 66, 0.04);
+}
+
+.markdown-live-empty {
+  padding: 6px 0;
+  color: var(--quiet);
+}
+
+/* 编辑中的块显示 markdown 源码，随内容自动撑高 */
+.markdown-block-editor {
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--card);
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: none;
+  overflow: hidden;
+  tab-size: 2;
+}
+
+.markdown-block-editor:focus {
+  border-color: rgba(47, 111, 237, 0.5);
+}
+
+/* 文档末尾留白：点击追加新块 */
+.markdown-live-tail {
+  flex: 1;
+  min-height: 140px;
 }
 
 .file-split-tree {
@@ -10818,15 +10824,16 @@ body.resizing-panels .file-split-resizer::after {
   color: var(--accent);
 }
 
-/* 文件预览：未保存草稿徽标、编辑按钮、编辑器 */
-.file-draft-badge {
+/* 文件预览：自动保存状态（待保存/保存中…/已保存）与编辑器 */
+.file-save-state {
   flex: none;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(224, 147, 12, 0.14);
-  color: #b06d07;
   font-size: 11px;
+  color: var(--quiet);
   white-space: nowrap;
+}
+
+.file-save-state.saved {
+  color: #5d7a00;
 }
 
 .file-editor {
