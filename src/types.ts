@@ -789,6 +789,8 @@ export interface DyworkerBridge {
   reportWindowPointerDown(): void;
   // Linux 透明阴影窗口：指针进入/离开透明留白区时切换点击穿透
   setIgnoreMouse(ignore: boolean): void;
+  // Linux 上忽略态由主进程轮询光标恢复后通知渲染端复位本地状态
+  onWindowIgnoreMouseRestored(callback: () => void): () => void;
   listBackgroundTasks(sessionId?: string): Promise<BackgroundTaskRecord[]>;
   startBackgroundTask(payload: { command: string; cwd?: string; sessionId?: string; name?: string }): Promise<BackgroundTaskRecord>;
   stopBackgroundTask(taskId: string): Promise<{ ok: boolean }>;

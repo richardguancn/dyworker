@@ -168,6 +168,13 @@ contextBridge.exposeInMainWorld("dyworker", {
   reportWindowPointerDown: () => ipcRenderer.send("window:pointer-down"),
   // Linux 透明阴影窗口：指针进入/离开透明留白区时切换点击穿透（fire-and-forget）
   setIgnoreMouse: (ignore) => ipcRenderer.send("window:set-ignore-mouse", Boolean(ignore)),
+  // Linux 上忽略态由主进程轮询光标位置恢复（forward 选项不支持 Linux），
+  // 恢复后通知渲染端复位本地状态，避免下一次切换漏发
+  onWindowIgnoreMouseRestored: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("window:ignore-mouse-restored", listener);
+    return () => ipcRenderer.removeListener("window:ignore-mouse-restored", listener);
+  },
   listBackgroundTasks: (sessionId) => ipcRenderer.invoke("background-tasks:list", sessionId),
   startBackgroundTask: (payload) => ipcRenderer.invoke("background-tasks:start", payload),
   stopBackgroundTask: (taskId) => ipcRenderer.invoke("background-tasks:stop", taskId),
