@@ -47,6 +47,8 @@ import {
   MoreHorizontal,
   MoreVertical,
   Package,
+  PanelRight,
+  PanelRightClose,
   Paperclip,
   Pencil,
   Pin,
@@ -1791,6 +1793,13 @@ function FilesSplitPanel({
 }) {
   const [fileFilter, setFileFilter] = useState("");
   const [selection, setSelection] = useState<FilePanelSelection | null>(null);
+  // markdown 默认渲染预览，可切换查看源代码
+  const [showSource, setShowSource] = useState(false);
+  // 右侧文件树开关（默认开启）与拖拽调宽（null = 跟随默认弹性宽度）
+  const [treeVisible, setTreeVisible] = useState(true);
+  const [treeWidth, setTreeWidth] = useState<number | null>(null);
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const treeResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -1813,10 +1822,35 @@ function FilesSplitPanel({
     setEditing(false);
     setDirty(false);
     setSaveError("");
+    setShowSource(false);
   }, [workspacePath]);
+
+  // 文件树拖拽调宽：在预览区与目录树之间的分隔条上按下后，跟随指针调整右侧树宽度
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const resize = treeResizeRef.current;
+      if (!resize) return;
+      const maxWidth = Math.max(320, Math.round(window.innerWidth * 0.5));
+      setTreeWidth(Math.min(Math.max(resize.startWidth + (resize.startX - event.clientX), 200), maxWidth));
+    };
+    const onPointerUp = () => {
+      treeResizeRef.current = null;
+      document.body.classList.remove("resizing-panels");
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, []);
 
   const previewFile = async (entry: WorkspaceEntry) => {
     const previewKind: "markdown" | "code" | "" = isMarkdownFile(entry.path) ? "markdown" : isTextPreviewFile(entry.path) ? "code" : "";
+    setShowSource(false);
+    setEditing(false);
+    setDirty(false);
+    setSaveError("");
     if (!previewKind) {
       // 二进制/未知类型交给系统默认应用
       if (!window.dyworker?.openPath) return;
@@ -1926,11 +1960,11 @@ function FilesSplitPanel({
   };
 
   return (
-    <div className="file-split">
+    <div className={`file-split ${treeVisible ? "" : "tree-hidden"}`}>
       <div className="file-split-preview">
-        {selection ? (
-          <div className="file-split-preview-inner">
-            <div className="code-panel-header">
+        <div className="file-split-preview-inner">
+          <div className="code-panel-header">
+            {selection ? (
               <div className="code-breadcrumb" title={selection.path}>
                 {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
                   <span className="code-breadcrumb-item" key={index}>
@@ -1939,41 +1973,75 @@ function FilesSplitPanel({
                   </span>
                 ))}
               </div>
-              {currentDraft && !editing && (
-                <span className="file-draft-badge" title={`未保存草稿：${new Date(currentDraft.savedAt).toLocaleString("zh-CN")}`}>
-                  有未保存草稿
-                </span>
-              )}
-              {!editing && (
-                <button
-                  className="code-open-external"
-                  onClick={startEdit}
-                  title="切换到编辑模式（Ctrl/Cmd+S 保存）"
-                  disabled={selection.loading || Boolean(selection.error)}
-                >
-                  <Pencil size={13} />
-                  编辑
-                </button>
-              )}
-              {editing && (
-                <button className="code-open-external" onClick={() => void saveFile()} disabled={saving} title="保存到工作区（Ctrl/Cmd+S）">
-                  <Check size={13} />
-                  {saving ? "保存中…" : "保存"}
-                </button>
-              )}
-              {editing && (
-                <button className="code-open-external" onClick={discardEdit} title="放弃未保存的改动，恢复为磁盘内容">
-                  放弃
-                </button>
-              )}
+            ) : (
+              <div className="code-breadcrumb" />
+            )}
+            {selection && currentDraft && !editing && (
+              <span className="file-draft-badge" title={`未保存草稿：${new Date(currentDraft.savedAt).toLocaleString("zh-CN")}`}>
+                有未保存草稿
+              </span>
+            )}
+            {selection && selection.kind === "markdown" && !editing && (
               <button
                 className="code-open-external"
-                onClick={() => void window.dyworker?.openPath(selection.path)}
-                title="用系统默认应用打开"
+                onClick={() => setShowSource((value) => !value)}
+                disabled={selection.loading || Boolean(selection.error)}
+                title={showSource ? "返回渲染预览" : "查看 Markdown 源代码"}
               >
+                {showSource ? "查看预览" : "查看源代码"}
+              </button>
+            )}
+            {selection && !editing && (
+              <button
+                className="code-open-external"
+                onClick={startEdit}
+                title="切换到编辑模式（Ctrl/Cmd+S 保存）"
+                disabled={selection.loading || Boolean(selection.error)}
+              >
+                <Pencil size={13} />
+                编辑
+              </button>
+            )}
+            {selection && editing && (
+              <button className="code-open-external" onClick={() => void saveFile()} disabled={saving} title="保存到工作区（Ctrl/Cmd+S）">
+                <Check size={13} />
+                {saving ? "保存中…" : "保存"}
+              </button>
+            )}
+            {selection && editing && (
+              <button className="code-open-external" onClick={discardEdit} title="放弃未保存的改动，恢复为磁盘内容">
+                放弃
+              </button>
+            )}
+            {selection && (
+              <button
+                className="code-open-external"
+                onClick={() => void window.dyworker?.revealInFolder?.(selection.path)}
+                disabled={selection.loading}
+                title="在系统文件管理器中打开所在目录"
+              >
+                <FolderOpen size={13} />
                 打开
               </button>
+            )}
+            <button
+              className="icon-button subtle tiny file-tree-toggle"
+              onClick={() => setTreeVisible((value) => !value)}
+              aria-label={treeVisible ? "隐藏文件树" : "显示文件树"}
+              aria-pressed={treeVisible}
+              title={treeVisible ? "隐藏文件树" : "显示文件树"}
+            >
+              {treeVisible ? <PanelRightClose size={15} /> : <PanelRight size={15} />}
+            </button>
+          </div>
+          {!selection ? (
+            <div className="browser-empty-state">
+              <FolderOpen size={46} />
+              <strong>打开文件</strong>
+              <span>从工作区目录树中选择文件</span>
             </div>
+          ) : (
+            <>
             {saveError && <p className="panel-empty error-text">{saveError}</p>}
             {selection.loading ? (
               <p className="panel-empty">正在读取文件…</p>
@@ -1994,23 +2062,39 @@ function FilesSplitPanel({
                 spellCheck={false}
                 aria-label={`编辑 ${selection.name}`}
               />
-            ) : selection.kind === "markdown" ? (
+            ) : selection.kind === "markdown" && !showSource ? (
               <article className="markdown-file-preview-content file-split-markdown">
                 <InteractiveMessage content={selection.content} />
               </article>
             ) : (
               <CodeView content={selection.content} filePath={selection.path} />
             )}
-          </div>
-        ) : (
-          <div className="browser-empty-state">
-            <FolderOpen size={46} />
-            <strong>打开文件</strong>
-            <span>从工作区目录树中选择文件</span>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
-      <div className="file-split-tree">
+      {treeVisible && (
+        <div
+          className="file-split-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整文件树宽度"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            treeResizeRef.current = {
+              startX: event.clientX,
+              startWidth: treeRef.current?.getBoundingClientRect().width || 280,
+            };
+            document.body.classList.add("resizing-panels");
+          }}
+        />
+      )}
+      {treeVisible && (
+      <div
+        className={`file-split-tree ${treeWidth ? "pinned" : ""}`}
+        ref={treeRef}
+        style={treeWidth ? { flex: `0 0 ${treeWidth}px`, width: treeWidth } : undefined}
+      >
         <div className="file-split-tree-header">
           <span className="file-split-tree-path" title={workspacePath}>
             <Folder size={14} />
@@ -2052,6 +2136,7 @@ function FilesSplitPanel({
         ))}
         {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
       </div>
+      )}
     </div>
   );
 }

@@ -376,7 +376,20 @@ test("任意文本文件在文件面板内联预览：语法高亮、面包屑�
   assert.match(app, /highlight\.js\/lib\/common/);
   assert.match(app, /hljs\.highlight/);
   assert.match(app, /codeBreadcrumbSegments/);
-  assert.match(app, /用系统默认应用打开/);
+  // 「打开」按钮改为在系统文件管理器中定位文件所在目录（shell.showItemInFolder）
+  assert.match(app, /revealInFolder/);
+  assert.match(app, /在系统文件管理器中打开所在目录/);
+  // markdown 默认渲染预览，可切换查看源代码
+  assert.match(app, /查看源代码/);
+  assert.match(app, /查看预览/);
+  // 右侧文件树显示开关（默认开启）与拖拽调宽分隔条
+  assert.match(app, /treeVisible/);
+  assert.match(app, /隐藏文件树/);
+  assert.match(app, /file-split-resizer/);
+  assert.match(preload, /revealInFolder/);
+  assert.match(main, /ipcMain\.handle\("workspace:reveal"/);
+  assert.match(main, /shell\.showItemInFolder/);
+  assert.match(styles, /\.file-split-resizer/);
   assert.match(app, /filterWorkspaceEntries/);
   assert.match(app, /筛选文件…/);
   assert.match(app, /forceExpand/);

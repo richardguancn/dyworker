@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   getImportedLocalStorage: (origin) => ipcRenderer.invoke("browser-import:localstorage-entries", origin),
   markImportedLocalStorageDone: (origin) => ipcRenderer.invoke("browser-import:localstorage-done", origin),
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
+  revealInFolder: (path) => ipcRenderer.invoke("workspace:reveal", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
   onBrowserPanelRequest: (callback) => {
     const listener = (_event, request) => callback(request);

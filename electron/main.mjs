@@ -1697,6 +1697,14 @@ ipcMain.handle("workspace:open", async (event, targetPath) => {
   const error = await shell.openPath(String(targetPath || ""));
   return error ? { ok: false, error } : { ok: true };
 });
+// 在系统文件管理器中定位文件（访达/资源管理器选中该文件所在目录项）
+ipcMain.handle("workspace:reveal", async (event, targetPath) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许打开本地文件" };
+  const target = String(targetPath || "");
+  if (!target) return { ok: false, error: "路径为空" };
+  shell.showItemInFolder(target);
+  return { ok: true };
+});
 // 轨迹事件流（trace-console）：会话级 append-only jsonl，分页读取供轨迹视图回放
 const safeTraceSessionId = (sessionId) => String(sessionId || "").replace(/[^a-zA-Z0-9_-]/g, "") || "session";
 ipcMain.handle("traces:list", async (_event, sessionId) => {
