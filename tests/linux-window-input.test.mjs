@@ -38,3 +38,19 @@ for (const maximized of [false, true]) {
     });
   }
 }
+
+for (const platform of ["linux", "darwin", "win32"]) {
+  test(`窗口选项使用实色内容，Linux 由系统提供边框和阴影：${platform}`, () => {
+    const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
+    const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
+      process: { platform },
+      systemWindowBackground: () => "#f7f7f4",
+      path: { join: (...parts) => parts.join("/") },
+      here: "/app/electron",
+    });
+    assert.equal(options.frame, platform === "linux");
+    assert.equal(options.hasShadow, true);
+    assert.equal(options.backgroundColor, "#f7f7f4");
+    assert.notEqual(options.transparent, true);
+  });
+}

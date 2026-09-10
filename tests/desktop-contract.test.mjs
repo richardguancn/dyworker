@@ -757,8 +757,8 @@ test("desktop theme follows the macOS and Linux system appearance", () => {
   assert.match(html, /name="color-scheme" content="light dark"/);
 });
 
-test("主窗口使用应用自己的标题栏和窗口按钮", () => {
-  assert.match(main, /frame:\s*false/);
+test("非 Linux 窗口保留应用自己的标题栏和窗口按钮", () => {
+  assert.match(main, /frame: process\.platform === "linux"/);
   assert.doesNotMatch(main, /titleBarStyle|titleBarOverlay/);
   assert.match(app, /window-controls/);
   assert.match(app, /dyworker\?\.minimize/);
@@ -770,69 +770,19 @@ test("主窗口使用应用自己的标题栏和窗口按钮", () => {
   assert.match(app, /titlebar-right/);
 });
 
-test("linux 默认用透明窗口自绘阴影，拿不到键盘焦点时自动回退不透明窗口", () => {
-  assert.match(main, /supportsLinuxWindowShadow/);
-  assert.match(main, /_NET_WM_CM_S0/);
-  assert.match(main, /xprop/);
-  assert.match(main, /DYWORKER_NO_WINDOW_SHADOW/);
-  assert.match(main, /DYWORKER_FORCE_WINDOW_SHADOW/);
-  assert.match(main, /XDG_SESSION_TYPE === "wayland"/);
-  assert.match(main, /linux window shadow/);
-  assert.match(main, /transparent:\s*true/);
-  // 透明窗口拿不到焦点时自动重建为不透明窗口，保证输入可用
-  assert.match(main, /solidFallback/);
-  assert.match(main, /describeLinuxWindowState/);
-  assert.match(main, /xwininfo/);
-  assert.match(main, /document\.hasFocus\(\)/);
-  assert.match(main, /rebuilding as a solid window without shadow/);
-  assert.match(main, /window:pointer-down/);
-  // 无边框窗口显示后主动申请键盘焦点，并记录渲染端焦点状态便于排查
-  assert.match(main, /mainWindow\.on\("show"/);
-  assert.match(main, /mainWindow\.focus\(\)/);
-  assert.match(main, /"window:maximized-changed"/);
-  assert.match(main, /windowShadow:/);
-  assert.match(main, /windowMaximized:/);
-  assert.match(preload, /onWindowStateChange/);
-  assert.match(preload, /window:maximized-changed/);
-  assert.match(app, /window-shadow/);
-  assert.match(app, /window-maximized/);
-  assert.match(app, /onWindowStateChange/);
-  assert.match(app, /reportWindowPointerDown/);
-  assert.match(styles, /html\.window-shadow/);
-  assert.match(styles, /html\.window-shadow\.window-maximized/);
-  assert.match(styles, /box-shadow:/);
-  assert.match(types, /windowShadow: boolean/);
-  assert.match(types, /onWindowStateChange/);
-  assert.match(types, /reportWindowPointerDown/);
-  assert.match(preload, /reportWindowPointerDown/);
-});
-
-test("linux 保留阴影但不启用整窗点击穿透", () => {
-  assert.match(main, /window:set-ignore-mouse/);
-  assert.doesNotMatch(main, /startIgnoreMouseRecovery|ignoreMouseRecoveryTimer/);
-  assert.doesNotMatch(main, /setIgnoreMouseEvents\(next|setIgnoreMouseEvents\(true/);
+test("linux 使用系统边框与阴影，不扩大窗口输入区域", () => {
+  assert.match(main, /frame: process\.platform === "linux"/);
+  assert.match(main, /hasShadow: true/);
+  assert.doesNotMatch(main, /transparent: true|LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
+  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux"\)/);
+  assert.match(styles, /html\.native-window-frame \{\s*--titlebar-height: 0px/);
+  assert.match(styles, /html\.native-window-frame \.titlebar \{\s*display: none/);
+  assert.doesNotMatch(styles, /html\.window-shadow/);
+  assert.doesNotMatch(main, /setIgnoreMouseEvents\(true/);
   assert.doesNotMatch(app, /setIgnoreMouse\??\./);
-  assert.match(main, /transparent:\s*true/);
-  assert.match(styles, /html\.window-shadow/);
 });
 
-test("linux 透明窗口启动后主动检查接管状态，未接管或重建时不会退出应用", () => {
-  // 纯 Wayland（无 DISPLAY/XWayland）不启用透明阴影，避免老合成器下窗口
-  // 无法映射导致“进程在但界面不显示”
-  assert.match(main, /waylandSession && Boolean\(process\.env\.DISPLAY\)/);
-  // 窗口显示后主动检查是否被窗口管理器接管，未接管自动重建为不透明窗口
-  assert.match(main, /checkWindowMapped/);
-  assert.match(main, /is not managed/);
-  assert.match(main, /mainWindow\.once\("show"[\s\S]*setTimeout\(checkWindowMapped, 1200\)/);
-  // xwininfo 缺失时用 xprop 兜底判断接管状态
-  assert.match(main, /managed\(xprop\)/);
-  // 重建窗口期间不触发 window-all-closed 退出，避免进程活着但界面消失
-  assert.match(main, /rebuildLinuxWindowAsSolid/);
-  assert.match(main, /recreatingWindow/);
-  assert.match(main, /window-all-closed[\s\S]*!recreatingWindow/);
-});
-
-test("linux 记录窗口与渲染器诊断，渲染空白时先重载再强制不透明", () => {
+test("linux 保留窗口诊断与空白重载", () => {
   // 启动时记录窗口几何、显示器信息，便于真机定位“进程在但界面不显示”
   assert.match(main, /logWindowGeometry/);
   assert.match(main, /screen\.getDisplayMatching/);
@@ -841,12 +791,11 @@ test("linux 记录窗口与渲染器诊断，渲染空白时先重载再强制�
   assert.match(main, /render-process-gone/);
   assert.match(main, /preload-error/);
   assert.match(main, /console-message/);
-  // 透明模式下检查渲染器是否真的挂载了内容；空白先重载一次，仍空白则
-  // 重建为不透明窗口，保证用户至少能看到界面
+  // 检查渲染器是否挂载内容，空白先重载一次，仍空白则记录诊断
   assert.match(main, /inspectRendererContent/);
   assert.match(main, /rootChildren/);
   assert.match(main, /renderer is blank; reloading once/);
-  assert.match(main, /renderer still blank after reload; forcing solid window/);
+  assert.match(main, /renderer still blank after reload/);
 });
 
 test("codex alignment surfaces are wired end to end", () => {

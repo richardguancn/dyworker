@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -128,138 +128,12 @@ function systemWindowBackground() {
   return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
 }
 
-// Linux 无边框窗口默认没有系统阴影，需要透明窗口由渲染端自绘。
-// 默认启用条件：
-// - Wayland 会话（应用走 XWayland）：由 Wayland 合成器负责混合透明窗口；
-// - X11 会话：检测到合成器（_NET_WM_CM_S0）。
-// 透明窗口在部分 X11/XWayland 桌面上会拿不到键盘焦点（窗口未被窗口管理器
-// 接管，表现为能点但无法打字）。创建后会做焦点健康检查，确认拿不到焦点时
-// 自动重建为不透明窗口（见 createWindow 内 Linux 分支），保证输入可用。
-// 环境变量覆盖：DYWORKER_NO_WINDOW_SHADOW=1 强制关闭；
-// DYWORKER_FORCE_WINDOW_SHADOW=1 强制开启（保留诊断日志，不自动回退）。
-let linuxWindowShadowCache;
-let currentWindowShadow = false;
-// 渲染端透明留白的单边宽度（px），与 styles.css 的 html.window-shadow .app-shell
-// margin 保持一致：getBounds() 含四周各这么宽一圈透明区，凡是依赖窗口几何的
-// 逻辑（如 rebuildLinuxWindowAsSolid）都要换算。改这里必须同步改 CSS。
-const LINUX_SHADOW_MARGIN = 32;
-// 重建窗口期间置位：销毁最后一个窗口会触发 window-all-closed，若此时应用
-// 退出，就表现为“进程还在但界面消失”。重建期间不退出，等新窗口接管。
-let recreatingWindow = false;
-function supportsLinuxWindowShadow() {
-  if (process.platform !== "linux") return false;
-  if (linuxWindowShadowCache !== undefined) return linuxWindowShadowCache;
-  if (process.env.DYWORKER_NO_WINDOW_SHADOW === "1") {
-    linuxWindowShadowCache = false;
-    return false;
-  }
-  if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
-    linuxWindowShadowCache = true;
-    return true;
-  }
-  const waylandSession =
-    process.env.XDG_SESSION_TYPE === "wayland" || Boolean(process.env.WAYLAND_DISPLAY);
-  // 纯 Wayland（无 DISPLAY/XWayland）下老合成器既可能不映射窗口，也可能
-  // 不支持透明混合；此时不启用透明阴影，保证窗口可显示。
-  let composited = waylandSession && Boolean(process.env.DISPLAY);
-  if (!composited && process.env.DISPLAY) {
-    try {
-      const probe = spawnSync("xprop", ["-root", "_NET_WM_CM_S0"], {
-        encoding: "utf8",
-        timeout: 2000,
-      });
-      composited = probe.status === 0 && String(probe.stdout || "").includes("window id");
-    } catch {
-      composited = false;
-    }
-  }
-  linuxWindowShadowCache = composited;
-  console.log(
-    `[dyworker] linux window shadow: ${composited ? "enabled" : "disabled"}` +
-      ` (session=${process.env.XDG_SESSION_TYPE || "x11"}, wayland=${Boolean(process.env.WAYLAND_DISPLAY)})`,
-  );
-  return linuxWindowShadowCache;
-}
-
+// Linux 使用系统边框与阴影，不再为自绘阴影扩大应用的输入区域。
 nativeTheme.on("updated", () => {
-  if (mainWindow && !mainWindow.isDestroyed() && !currentWindowShadow) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setBackgroundColor(systemWindowBackground());
   }
 });
-
-// 诊断：检查 X11 窗口是否被窗口管理器接管。透明无边框窗口拿不到键盘焦点
-// 的常见原因是窗口成了 override-redirect（不受 WM 管理）。
-function describeLinuxWindowState(win) {
-  try {
-    const handle = win.getNativeWindowHandle();
-    if (!handle || handle.length < 4) return "no-native-handle";
-    const xid = `0x${handle.readUInt32LE(0).toString(16)}`;
-    const probe = spawnSync("xwininfo", ["-id", xid], { encoding: "utf8", timeout: 2000 });
-    if (probe.status === 0) {
-      const override = /Override Redirect State:\s*(yes|no)/i.exec(probe.stdout);
-      const managed = /WM_STATE/i.test(probe.stdout) ? "managed" : "no-wm-state";
-      return override ? `override-redirect=${override[1]},${managed}` : `xwininfo-parse-miss,${managed}`;
-    }
-    // xwininfo 缺失时退而用 xprop 判断窗口是否被窗口管理器接管
-    //（xprop 已用于合成器检测，作为兜底依赖更常见）。
-    const fallback = spawnSync("xprop", ["-id", xid, "WM_STATE", "_NET_WM_STATE"], {
-      encoding: "utf8",
-      timeout: 2000,
-    });
-    if (fallback.status === 0) {
-      if (/WM_STATE\s*:/.test(fallback.stdout) || /_NET_WM_STATE\s*:/.test(fallback.stdout)) {
-        return "override-redirect=unknown,managed(xprop)";
-      }
-      return "override-redirect=unknown,no-wm-state";
-    }
-    const detail = String(fallback.stderr || fallback.error?.message || "unknown").trim().slice(0, 60);
-    return `xwininfo-failed(${detail || "no-stderr"})`;
-  } catch (error) {
-    return `xwininfo-error(${error instanceof Error ? error.message : String(error)})`;
-  }
-}
-
-// Linux 透明窗口故障时重建为不透明窗口。重建期间置位 recreatingWindow，
-// 避免窗口销毁触发 window-all-closed 退出应用（表现为进程在但界面消失）。
-function rebuildLinuxWindowAsSolid() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  // 透明阴影窗口的 getBounds() 含渲染端四周各 LINUX_SHADOW_MARGIN 的透明留白
-  // （styles.css 的 html.window-shadow .app-shell margin）；不透明窗口内容铺满，
-  // 直接搬运 bounds 会让重建后的窗口比原来大 2 倍留白，这里先扣掉。
-  // wasShadow 必须在 createWindow 之前捕获——createWindow 内会重置 currentWindowShadow。
-  const wasShadow = currentWindowShadow;
-  const raw = mainWindow.getBounds();
-  let bounds = raw;
-  if (wasShadow) {
-    bounds = {
-      x: raw.x + LINUX_SHADOW_MARGIN,
-      y: raw.y + LINUX_SHADOW_MARGIN,
-      width: raw.width - LINUX_SHADOW_MARGIN * 2,
-      height: raw.height - LINUX_SHADOW_MARGIN * 2,
-    };
-    // 贴边窗口（如拖到屏幕边缘的半屏布局）内缩后可能越界，钳制回工作区
-    const workArea = screen.getDisplayMatching(raw).workArea;
-    bounds.x = Math.max(bounds.x, workArea.x);
-    bounds.y = Math.max(bounds.y, workArea.y);
-    bounds.width = Math.min(bounds.width, workArea.x + workArea.width - bounds.x);
-    bounds.height = Math.min(bounds.height, workArea.y + workArea.height - bounds.y);
-  }
-  const maximized = mainWindow.isMaximized();
-  recreatingWindow = true;
-  try {
-    mainWindow.destroy();
-  } finally {
-    try {
-      createWindow({ solidFallback: true });
-    } finally {
-      recreatingWindow = false;
-    }
-  }
-  if (mainWindow) {
-    if (maximized) mainWindow.maximize();
-    else mainWindow.setBounds(bounds);
-  }
-}
 
 function dataFile(name) {
   return path.join(app.getPath("userData"), name);
@@ -905,23 +779,21 @@ function transcriptionEndpoint(settings) {
   }
 }
 
-function createWindow({ solidFallback = false } = {}) {
+function createWindow() {
   if (process.platform === "linux") {
     Menu.setApplicationMenu(null);
   }
 
-  const linuxWindowShadow = !solidFallback && supportsLinuxWindowShadow();
-  currentWindowShadow = linuxWindowShadow;
   const windowOptions = {
     width: 1480,
     height: 920,
     minWidth: 980,
     minHeight: 660,
-    backgroundColor: linuxWindowShadow ? "#00000000" : systemWindowBackground(),
+    backgroundColor: systemWindowBackground(),
     show: process.platform === "linux",
     title: "DYWorker",
-    frame: false,
-    ...(linuxWindowShadow ? { transparent: true } : {}),
+    frame: process.platform === "linux",
+    hasShadow: true,
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
@@ -995,85 +867,7 @@ function createWindow({ solidFallback = false } = {}) {
       mainWindow.webContents.focus();
     });
   }
-  // 透明窗口健康检查：部分 X11/XWayland 桌面上透明无边框窗口拿不到键盘
-  // 焦点（override-redirect，能点但无法打字）。用户点击窗口后若仍拿不到
-  // 焦点，自动重建为不透明窗口，保证输入可用。仅在用户实际点击窗口后
-  // 检查，避免在用户使用其他窗口时抢焦点。
-  if (process.platform === "linux" && linuxWindowShadow) {
-    let everFocused = false;
-    mainWindow.on("focus", () => {
-      everFocused = true;
-    });
-    // 启动后主动确认透明窗口被窗口管理器接管：部分 X11/XWayland 桌面上
-    // 透明无边框窗口会成为 override-redirect（不受 WM 管理），可能不显示
-    // 也不在任务栏。此时无法靠点击触发键盘焦点检查，改为窗口显示后定时
-    // 检查接管状态，未接管则自动重建为不透明窗口。
-    const checkWindowMapped = () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (!mainWindow.isVisible()) {
-        console.log("[dyworker] linux transparent window is not visible; rebuilding as solid");
-        rebuildLinuxWindowAsSolid();
-        return;
-      }
-      const windowState = describeLinuxWindowState(mainWindow);
-      if (
-        !windowState ||
-        windowState.includes("xwininfo-failed") ||
-        windowState.includes("xwininfo-error") ||
-        windowState.includes("xwininfo-parse-miss")
-      ) {
-        console.log(`[dyworker] linux window state check skipped: ${windowState || "unknown"}`);
-        return;
-      }
-      if (windowState.includes("override-redirect=yes") || windowState.includes("no-wm-state")) {
-        console.log(
-          `[dyworker] linux transparent window is not managed (${windowState}); rebuilding as solid`,
-        );
-        rebuildLinuxWindowAsSolid();
-        return;
-      }
-      console.log(`[dyworker] linux window state check: ${windowState}`);
-    };
-    mainWindow.once("show", () => {
-      setTimeout(checkWindowMapped, 1200);
-    });
-    const tryEnsureFocus = () => {
-      if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
-      if (everFocused || mainWindow.isFocused()) return;
-      mainWindow.focus();
-      setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        const windowState = describeLinuxWindowState(mainWindow);
-        mainWindow.webContents
-          .executeJavaScript("document.hasFocus()")
-          .then((hasFocus) => {
-            if (hasFocus || mainWindow.isFocused()) return;
-            if (process.env.DYWORKER_FORCE_WINDOW_SHADOW === "1") {
-              console.log(
-                `[dyworker] linux transparent window cannot gain keyboard focus (${windowState}); ` +
-                  "DYWORKER_FORCE_WINDOW_SHADOW=1 keeps it for diagnosis",
-              );
-              return;
-            }
-            console.log(
-              `[dyworker] linux transparent window cannot gain keyboard focus (${windowState}); ` +
-                "rebuilding as a solid window without shadow",
-            );
-            rebuildLinuxWindowAsSolid();
-          })
-          .catch(() => {
-            // 诊断失败不影响窗口使用
-          });
-      }, 400);
-    };
-    ipcMain.on("window:pointer-down", tryEnsureFocus);
-    mainWindow.once("closed", () => {
-      ipcMain.removeListener("window:pointer-down", tryEnsureFocus);
-    });
-  }
-  // Linux 透明窗口下如果渲染器没有挂载任何内容，整个窗口是完全透明的，
-  // 表现为“进程在但界面不显示”。加载完成后检查一次渲染内容，空白时
-  // 先重新加载一次，仍空白则重建为不透明窗口，保证至少能看到界面。
+  // 加载后检查界面是否挂载；空白时重载一次，保留诊断日志。
   if (process.platform === "linux") {
     let rendererReloaded = false;
     const inspectRendererContent = async () => {
@@ -1105,10 +899,7 @@ function createWindow({ solidFallback = false } = {}) {
         mainWindow.webContents.reload();
         return;
       }
-      console.log("[dyworker] linux renderer still blank after reload; forcing solid window for visibility");
-      if (currentWindowShadow) {
-        rebuildLinuxWindowAsSolid();
-      }
+      console.log("[dyworker] linux renderer still blank after reload");
     };
     mainWindow.webContents.on("did-finish-load", () => {
       setTimeout(() => void ensureRendererContent(), 2000);
@@ -1297,7 +1088,7 @@ ipcMain.handle("app:initial-state", async () => {
       ? pinnedWorkspacePaths.filter((item) => typeof item === "string" && item.trim())
       : [],
     platform: process.platform,
-    windowShadow: currentWindowShadow,
+    windowShadow: false, // 兼容旧界面字段；系统阴影无需透明留白
     windowMaximized: mainWindow?.isMaximized() ?? false,
   };
 });
@@ -4752,7 +4543,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !recreatingWindow) app.quit();
+  if (process.platform !== "darwin") app.quit();
 });
 
 let mcpShutdownStarted = false;
