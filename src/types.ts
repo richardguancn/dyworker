@@ -684,6 +684,7 @@ export interface DyworkerBridge {
   listTraces(sessionId: string): Promise<{ ok: boolean; count: number; size: number; updatedAt: string }>;
   readTraces(payload: { sessionId: string; offset?: number; limit?: number }): Promise<{ ok: boolean; records: TraceEvent[]; total: number; offset: number }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
+  revealInFolder(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;

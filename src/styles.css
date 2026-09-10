@@ -9643,6 +9643,47 @@ html.window-shadow.window-maximized .modal-backdrop {
   padding: 10px 8px 24px;
 }
 
+/* 拖拽调宽后固定为像素宽度，覆盖默认的弹性占比限制 */
+.file-split-tree.pinned {
+  min-width: 0;
+  max-width: none;
+}
+
+/* 预览区与文件树之间的拖拽分隔条：命中区 7px，视觉只画一条细线 */
+.file-split-resizer {
+  flex: 0 0 7px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.file-split-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: transparent;
+}
+
+.file-split-resizer:hover::after,
+body.resizing-panels .file-split-resizer::after {
+  background: rgba(128, 132, 124, 0.45);
+}
+
+/* 隐藏文件树后预览区不再保留右侧分隔边框 */
+.file-split.tree-hidden .file-split-preview {
+  border-right: none;
+}
+
+.file-tree-toggle {
+  flex: none;
+}
+
 .file-split-tree-header {
   display: flex;
   align-items: center;
