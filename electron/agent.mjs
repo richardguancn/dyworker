@@ -311,6 +311,9 @@ export class Workspace {
     // 技能与助手扩展目录（~/.agents、~/.codex、~/.gemini/antigravity 等）：
     // 助手读取自身技能说明、脚本与资产属于既定工作流，只读访问不应触发工作区外路径审批。
     this.trustedSkillRoots = options.trustSkillRoots === false ? [] : collectSkillRoots();
+    // 任务取消信号：runCommand 的长耗时命令据此立即终止，而不是等超时
+    this.cancellationSignal = options.signal || null;
+    this.isCancelled = typeof options.isCancelled === "function" ? options.isCancelled : null;
   }
 
   canonicalPath(relativePath) {
@@ -668,30 +671,51 @@ export class Workspace {
       const win32 = process.platform === "win32";
       const program = win32 ? "cmd.exe" : "/bin/bash";
       const args = win32 ? ["/d", "/s", "/c", String(command)] : ["-lc", String(command)];
-      const child = spawn(program, args, { cwd: this.root });
+      // detached：让 bash 自成进程组，终止时连子进程（如 docker、脚本）一起杀掉，
+      // 否则只杀 bash 会留下孤儿进程继续占用资源
+      const child = spawn(program, args, { cwd: this.root, detached: !win32 });
       let stdout = "";
       let stderr = "";
       let settled = false;
-      const timer = setTimeout(() => {
+      const kill = () => {
+        try {
+          if (!win32) process.kill(-child.pid, "SIGKILL");
+          else child.kill("SIGKILL");
+        } catch {
+          try { child.kill("SIGKILL"); } catch { /* 进程已退出 */ }
+        }
+      };
+      const finish = (result) => {
         if (settled) return;
         settled = true;
-        child.kill("SIGKILL");
-        resolve({ ok: false, output: `命令运行超过 ${COMMAND_TIMEOUT_MS / 1000} 秒，已被终止` });
+        clearTimeout(timer);
+        if (poll) clearInterval(poll);
+        this.cancellationSignal?.removeEventListener?.("abort", onAbort);
+        resolve(result);
+      };
+      // 停止/取消：立即杀掉命令进程组并结束本次工具调用
+      const onAbort = () => {
+        kill();
+        finish({ ok: false, output: "任务已停止，命令被终止" });
+      };
+      const timer = setTimeout(() => {
+        kill();
+        finish({ ok: false, output: `命令运行超过 ${COMMAND_TIMEOUT_MS / 1000} 秒，已被终止` });
       }, COMMAND_TIMEOUT_MS);
+      // 渠道「停止」等只翻转 isCancelled 的场景靠轮询兜底（对齐 waitModelRetry 的 100ms）
+      const poll = this.isCancelled ? setInterval(() => { if (this.isCancelled()) onAbort(); }, 100) : null;
+      if (this.cancellationSignal) {
+        if (this.cancellationSignal.aborted) { onAbort(); return; }
+        this.cancellationSignal.addEventListener("abort", onAbort, { once: true });
+      }
       child.stdout.on("data", (chunk) => { stdout = clipped(stdout + chunk.toString(), COMMAND_OUTPUT_LIMIT); });
       child.stderr.on("data", (chunk) => { stderr = clipped(stderr + chunk.toString(), COMMAND_OUTPUT_LIMIT); });
       child.on("error", (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ ok: false, output: `命令无法启动：${error.message}` });
+        finish({ ok: false, output: `命令无法启动：${error.message}` });
       });
       child.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
         const output = [stdout, stderr].filter(Boolean).join("\n") || "（命令没有输出）";
-        resolve({ ok: code === 0, output: `退出码 ${code}\n${output}` });
+        finish({ ok: code === 0, output: `退出码 ${code}\n${output}` });
       });
     });
   }
@@ -3810,7 +3834,7 @@ export async function runAgent({
   sessionId = "",
   startBackgroundTask = null,
 }) {
-  const workspace = new Workspace(workspacePath, { trustTempDirs });
+  const workspace = new Workspace(workspacePath, { trustTempDirs, signal: cancellationSignal, isCancelled });
   const priorWorkingContext = limitWorkingContext(String(workingContext || "").trim());
   // 本次任务内的自动放行规则：用户点一次「允许执行」后，同一任务里同类操作不再反复询问；
   // 只在本轮任务内存活、不落盘。用户批准的工作区外路径同样只在本次任务内记在

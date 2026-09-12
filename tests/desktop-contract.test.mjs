@@ -23,6 +23,7 @@ const afterPack = readSource(new URL("../build/afterPack.cjs", import.meta.url))
 const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
 const types = readSource(new URL("../src/types.ts", import.meta.url));
+const markdownLiveEditor = readSource(new URL("../src/markdownLiveEditor.ts", import.meta.url));
 const styles = readSource(new URL("../src/styles.css", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
@@ -161,6 +162,10 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(main, /activeAgents\.set\(sessionId, agentState\);\n\s*trackTaskStart\(\);\n\s*try \{/);
   assert.match(main, /agentState\.abortController\.abort\(\)/);
   assert.match(main, /if \(agentState\.cancelled\) \{\n\s*await cancelWakesForSession\(sessionId\)/);
+  // 停止要立刻生效：运行中的命令进程组随取消信号被终止，而不是等 120s 超时
+  assert.match(agent, /new Workspace\(workspacePath, \{ trustTempDirs, signal: cancellationSignal, isCancelled \}\)/);
+  assert.match(agent, /任务已停止，命令被终止/);
+  assert.match(agent, /process\.kill\(-child\.pid, "SIGKILL"\)/);
   assert.match(main, /const mcpClientConnections = new Map\(\)/);
   assert.match(main, /if \(pendingConnection\) return pendingConnection/);
   assert.match(preload, /cancelTask: \(sessionId, runId\)/);
@@ -355,20 +360,45 @@ test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(styles, /\.message-actions/);
 });
 
-test("文件面板为左右分栏，Markdown 即时渲染编辑（Typora 式）", () => {
+test("文件面板为左右分栏，Markdown 即时渲染编辑（Codex 式）", () => {
   assert.match(app, /isMarkdownFile/);
   assert.match(app, /previewKind === "markdown" \? window\.dyworker\?\.readWorkspaceMarkdown : window\.dyworker\?\.readWorkspaceFile/);
   assert.match(app, /function FilesSplitPanel/);
   assert.match(app, /从工作区目录树中选择文件/);
-  // markdown 预览按块渲染，点击块显示源码、失焦提交（Typora 式）
-  assert.match(app, /function MarkdownLivePreview/);
-  assert.match(app, /splitMarkdownBlocks/);
-  assert.match(app, /<MarkdownLivePreview key=\{selection\.path\}/);
+  // CodeMirror 装饰渲染编辑器按文件挂载，源码即文档
+  assert.match(app, /function MarkdownLiveEditorPane/);
+  assert.match(app, /<MarkdownLiveEditorPane\n\s*key=\{selection\.path\}/);
+  assert.match(app, /import\("\.\/markdownLiveEditor"\)/);
+  assert.match(app, /plainSource=\{showSource\}/);
   assert.match(main, /ipcMain\.handle\("workspace:read-markdown"/);
   assert.match(main, /readWorkspaceMarkdown/);
   assert.match(styles, /\.file-split/);
-  assert.match(styles, /\.markdown-live/);
-  assert.match(styles, /\.markdown-block-editor/);
+  assert.match(styles, /\.markdown-live-editor/);
+});
+
+test("Markdown 编辑器：行首光标透视源码，其余行隐藏语法标记按渲染态编辑", () => {
+  // CodeMirror 6 + lezer markdown（GFM 表格/任务列表/删除线）
+  assert.match(markdownLiveEditor, /createMarkdownLiveEditor/);
+  assert.match(markdownLiveEditor, /markdown\(\{ extensions: GFM \}\)/);
+  assert.match(markdownLiveEditor, /Decoration\.set/);
+  // 行首透视：光标为空选区且落在行首缩进范围内；未聚焦时整篇保持渲染态
+  assert.match(markdownLiveEditor, /function lineRevealsSource/);
+  assert.match(markdownLiveEditor, /r\.empty && r\.anchor >= start && r\.anchor <= end && r\.head >= start && r\.head <= end/);
+  assert.match(markdownLiveEditor, /if \(!focused\) return false;/);
+  // 语法标记零宽隐藏 + 渲染样式装饰
+  assert.match(markdownLiveEditor, /Decoration\.replace\(\{\}\)/);
+  assert.match(markdownLiveEditor, /"cm-md-strong"/);
+  assert.match(markdownLiveEditor, /"cm-md-inlinecode"/);
+  assert.match(markdownLiveEditor, /`cm-md-h\$\{level\}`/);
+  assert.match(markdownLiveEditor, /cm-md-codeblock/);
+  // 围栏代码块：光标不在块内时隐藏首尾围栏行
+  assert.match(markdownLiveEditor, /fencesVisible = selectionTouches\(node\.from, node\.to\)/);
+  // 「查看源代码」纯源码模式经 Compartment 热切换
+  assert.match(markdownLiveEditor, /setPlainSource/);
+  assert.match(markdownLiveEditor, /renderCompartment\.reconfigure/);
+  // Ctrl/Cmd+S 立即落盘走 onSaveRequest
+  assert.match(markdownLiveEditor, /"Mod-s"/);
+  assert.match(app, /onSaveRequest=\{\(\) => void flushSaves\(\)\}/);
 });
 
 test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Codex 风格）", () => {
@@ -693,6 +723,30 @@ test("Codex skills are refreshed for the active workspace and managed in setting
   assert.match(styles, /\.skill-search-field/);
   assert.doesNotMatch(app, /\[\.\.\.commands, \.\.\.skills\]\.slice/);
   assert.match(main, /readSkills\(workspacePath\)/);
+  assert.match(preload, /createSkill: \(payload\)/);
+});
+
+test("会话可一键总结为工作模板", () => {
+  // 入口：列表菜单与顶栏任务菜单各一项，挨着「导出为 Markdown」
+  assert.match(app, /总结为工作模板/);
+  assert.match(app, /summarizeSessionToSkill/);
+  // 提炼走一次性对话且不带 session（避免侧边聊天检索工具污染 JSON 输出）
+  assert.match(app, /buildSkillSummaryTranscript/);
+  assert.match(app, /buildSkillSummaryMessages/);
+  assert.match(app, /parseSkillDraft/);
+  assert.match(app, /completeChat\(\{ settings, messages \}\)/);
+  // 草稿对话框与保存链路
+  assert.match(app, /SkillDraftDialog/);
+  assert.match(app, /保存到技能库/);
+  // 主进程：复用 appendSkill 且返回创建记录
+  assert.match(main, /ipcMain\.handle\("skills:create"/);
+  assert.match(main, /return record;/);
+  // preload 与类型贯通
+  assert.match(preload, /createSkill:/);
+  assert.match(types, /createSkill\(payload: \{ name: string/);
+  // 样式
+  assert.match(styles, /\.skill-draft-dialog/);
+  assert.match(styles, /\.skill-draft-actions/);
 });
 
 test("技能库设置贯通配置、主进程和渲染端", () => {

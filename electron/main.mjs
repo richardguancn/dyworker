@@ -2009,15 +2009,17 @@ async function writeSkills(items) {
 
 async function appendSkill(item) {
   const skills = await readStoredSkills();
-  skills.push({
+  const record = {
     id: crypto.randomUUID(),
     name: String(item.name || ""),
     description: String(item.description || ""),
     instructions: String(item.instructions || ""),
     enabled: true,
     createdAt: new Date().toISOString(),
-  });
+  };
+  skills.push(record);
   await writeSkills(skills);
+  return record;
 }
 
 // 技能自我改进（借鉴 Hermes Agent 的学习闭环）：按 id 更新已有模板的说明与执行要求
@@ -3032,6 +3034,14 @@ ipcMain.handle("skills:delete", async (_event, id) => {
     }
   }
   return { ok: true };
+});
+
+// 会话「总结为工作模板」：渲染端已提炼好草稿，这里只负责落进 skills.json 并返回创建记录
+ipcMain.handle("skills:create", async (_event, payload) => {
+  const name = String(payload?.name || "").trim();
+  if (!name) return { ok: false, error: "模板名称不能为空" };
+  const item = await appendSkill({ name, description: payload?.description, instructions: payload?.instructions });
+  return { ok: true, item };
 });
 
 ipcMain.handle("skill-libraries:search", async (_event, payload) => {

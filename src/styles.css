@@ -9548,59 +9548,214 @@ html.native-window-frame .titlebar {
   min-height: 0;
 }
 
-/* Typora 式即时渲染编辑：渲染块可点击进入源码编辑，失焦回到渲染 */
-.markdown-live {
+/* Codex 式即时渲染编辑（CodeMirror）：整篇为 markdown 源码，
+   光标停在行首时该行显示原始源码，其余行隐藏语法标记按渲染样式展示 */
+.markdown-live-editor {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   padding: 12px 18px 0;
   display: flex;
   flex-direction: column;
   cursor: text;
   font-size: 13px;
   line-height: 1.65;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.markdown-block {
-  border-radius: 6px;
+.markdown-live-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  color: inherit;
 }
 
-.markdown-block:hover {
-  background: rgba(69, 71, 66, 0.04);
+.markdown-live-editor .cm-editor.cm-focused {
+  outline: none;
 }
 
-.markdown-live-empty {
-  padding: 6px 0;
+.markdown-live-editor .cm-scroller {
+  overflow-y: auto;
+  font-family: inherit;
+  line-height: inherit;
+  padding-bottom: 140px;
+}
+
+.markdown-live-editor .cm-content {
+  padding: 0;
+}
+
+.markdown-live-editor .cm-line {
+  padding: 3px 0;
+}
+
+.markdown-live-editor .cm-placeholder {
   color: var(--quiet);
 }
 
-/* 编辑中的块显示 markdown 源码，随内容自动撑高 */
-.markdown-block-editor {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
+/* 隐藏语法标记后的渲染样式（对齐消息里的 markdown 观感） */
+.markdown-live-editor .cm-md-strong {
+  font-weight: 700;
+}
+
+.markdown-live-editor .cm-md-em {
+  font-style: italic;
+}
+
+.markdown-live-editor .cm-md-strike {
+  text-decoration: line-through;
+}
+
+.markdown-live-editor .cm-md-inlinecode {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #ebece7;
+  color: #454a43;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.markdown-live-editor .cm-md-link {
+  color: var(--accent);
+}
+
+.markdown-live-editor .cm-md-image-alt {
+  color: #70746d;
+}
+
+.markdown-live-editor .cm-md-image-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid #dedfd9;
   border-radius: 6px;
-  outline: none;
-  background: var(--card);
-  color: var(--ink);
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  background: #f3f4f0;
+  color: #70746d;
+  font-size: 12px;
+}
+
+.markdown-live-editor .cm-md-bullet,
+.markdown-live-editor .cm-md-listmark,
+.markdown-live-editor .cm-md-task {
+  color: var(--quiet);
+}
+
+.markdown-live-editor .cm-md-task.checked {
+  color: #4d7c2a;
+}
+
+/* 标题/引用/列表/代码块/表格的整行样式 */
+.markdown-live-editor .cm-md-h1,
+.markdown-live-editor .cm-md-h2,
+.markdown-live-editor .cm-md-h3 {
+  color: #40443e;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+.markdown-live-editor .cm-md-h1 {
+  padding-top: 16px;
+  padding-bottom: 3px;
+  font-size: 21px;
+}
+
+.markdown-live-editor .cm-md-h2 {
+  padding-top: 14px;
+  padding-bottom: 2px;
+  font-size: 17px;
+}
+
+.markdown-live-editor .cm-md-h3 {
+  padding-top: 12px;
+  font-size: 15px;
+}
+
+.markdown-live-editor .cm-md-h4,
+.markdown-live-editor .cm-md-h5,
+.markdown-live-editor .cm-md-h6 {
+  padding-top: 10px;
+  font-weight: 600;
+}
+
+.markdown-live-editor .cm-md-list {
+  padding-left: 6px;
+}
+
+.markdown-live-editor .cm-md-quote {
+  border-left: 3px solid #d2d4cd;
+  padding-left: 12px;
+  color: #70746d;
+}
+
+.markdown-live-editor .cm-md-codeblock {
+  padding-left: 12px;
+  padding-right: 12px;
+  background: #edeee9;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12.5px;
-  line-height: 1.6;
-  resize: none;
-  overflow: hidden;
-  tab-size: 2;
 }
 
-.markdown-block-editor:focus {
-  border-color: rgba(47, 111, 237, 0.5);
+.markdown-live-editor .cm-md-table {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
 }
 
-/* 文档末尾留白：点击追加新块 */
-.markdown-live-tail {
-  flex: 1;
-  min-height: 140px;
+.markdown-live-editor .cm-md-rule {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid #d2d4cd;
+}
+
+/* 纯源码模式（「查看源代码」）：关闭装饰，等宽编辑 */
+.markdown-live-editor.plain-source .cm-content {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+}
+
+/* 纯源码模式保留基础行距即可，去掉渲染态的行内边距 */
+.markdown-live-editor.plain-source .cm-line {
+  padding: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .markdown-live-editor .cm-md-inlinecode {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cdd1c8;
+  }
+
+  .markdown-live-editor .cm-md-h1,
+  .markdown-live-editor .cm-md-h2,
+  .markdown-live-editor .cm-md-h3 {
+    color: #e1e3dc;
+  }
+
+  .markdown-live-editor .cm-md-quote {
+    border-left-color: rgba(255, 255, 255, 0.14);
+    color: #b3b7ad;
+  }
+
+  .markdown-live-editor .cm-md-codeblock {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  .markdown-live-editor .cm-md-image-alt {
+    color: #b3b7ad;
+  }
+
+  .markdown-live-editor .cm-md-image-chip {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #b3b7ad;
+  }
+
+  .markdown-live-editor .cm-md-task.checked {
+    color: #8fba7e;
+  }
+
+  .markdown-live-editor .cm-md-rule {
+    border-top-color: rgba(255, 255, 255, 0.14);
+  }
 }
 
 .file-split-tree {
@@ -9746,6 +9901,72 @@ body.resizing-panels .file-split-resizer::after {
   align-items: center;
   justify-content: center;
   background: rgba(30, 32, 28, 0.32);
+}
+
+/* 「总结为工作模板」草稿确认对话框 */
+.skill-draft-dialog {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+}
+
+.skill-draft-dialog h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.skill-draft-dialog .dialog-note {
+  margin: 0;
+}
+
+.skill-draft-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-draft-field > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.skill-draft-field input,
+.skill-draft-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.skill-draft-field textarea {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.skill-draft-error {
+  margin: 0;
+  font-size: 12px;
+}
+
+.skill-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .browser-import-dialog {
