@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>markdown live editor harness</title>
+    <style>
+      body { font: 13px/1.65 -apple-system, sans-serif; color: #262823; background: #fffdf7; margin: 0; }
+      #host { width: 640px; height: 70vh; margin: 12px; padding: 12px 18px; }
+      /* 复制编辑器渲染样式便于视觉核对 */
+      .cm-md-strong { font-weight: 700; }
+      .cm-md-em { font-style: italic; }
+      .cm-md-strike { text-decoration: line-through; }
+      .cm-md-inlinecode { padding: 2px 5px; border-radius: 5px; background: #ebece7; font-family: Menlo, monospace; font-size: 0.9em; }
+      .cm-md-link { color: #2f6fed; }
+      .cm-md-image-alt { color: #70746d; }
+      .cm-md-bullet, .cm-md-listmark, .cm-md-task { color: #a2a59b; }
+      .cm-md-h1, .cm-md-h2, .cm-md-h3 { color: #40443e; font-weight: 600; }
+      .cm-md-h1 { font-size: 21px; }
+      .cm-md-h2 { font-size: 17px; }
+      .cm-md-h3 { font-size: 15px; }
+      .cm-md-quote { border-left: 3px solid #d2d4cd; padding-left: 12px; color: #70746d; }
+      .cm-md-codeblock { background: #edeee9; font-family: Menlo, monospace; font-size: 12.5px; }
+      .cm-md-table { font-family: Menlo, monospace; font-size: 12.5px; }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script type="module">
+      import { createMarkdownLiveEditor } from "/src/markdownLiveEditor.ts";
+      import { EditorView } from "/node_modules/@codemirror/view/dist/index.js";
+
+      const sample = [
+        "# 生日灯牌实施方案",
+        "",
+        "**一句话**：把 1 米灯带贴在端面上，插电即亮。",
+        "",
+        "普通段落带 `行内代码` 和 ~~删除线~~ 以及 [链接文字](http://example.com)。",
+        "",
+        "- 项目一",
+        "- 项目二",
+        "  - 嵌套项",
+        "",
+        "> 引用文本一行",
+        "",
+        "```js",
+        "const a = 1;",
+        "const b = 2;",
+        "```",
+        "",
+        "| 列A | 列B |",
+        "|-----|-----|",
+        "| 1   | 2   |",
+        "",
+        "- [ ] 待办事项",
+        "- [x] 已完成事项",
+        "",
+        "---",
+      ].join("\n");
+
+      window.__onChangeLog = [];
+      window.__editor = createMarkdownLiveEditor(document.getElementById("host"), {
+        value: sample,
+        placeholderText: "点击输入 Markdown…",
+        onChange: (value) => window.__onChangeLog.push(value),
+      });
+      window.__view = EditorView.findFromDOM(document.querySelector("#host .cm-editor"));
+      window.__ready = true;
+    </script>
+  </body>
+</html>

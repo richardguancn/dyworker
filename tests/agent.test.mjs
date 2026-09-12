@@ -937,6 +937,32 @@ test("没有工作目录的 Workspace 拒绝文件操作与命令", async () => 
   assert.match(command.output, /还没有选择工作文件夹/);
 });
 
+test("停止任务时正在运行的命令被立即终止，不等超时", async () => {
+  const root = await makeWorkspace();
+  const controller = new AbortController();
+  const workspace = new Workspace(root, { signal: controller.signal });
+  const started = Date.now();
+  const running = workspace.runCommand("sleep 60");
+  setTimeout(() => controller.abort(), 50);
+  const result = await running;
+  assert.equal(result.ok, false);
+  assert.match(result.output, /任务已停止/);
+  assert.ok(Date.now() - started < 5000, "停止后应立即返回，而不是等命令超时");
+});
+
+test("isCancelled 翻转时正在运行的命令同样被终止（渠道停止场景）", async () => {
+  const root = await makeWorkspace();
+  let cancelled = false;
+  const workspace = new Workspace(root, { isCancelled: () => cancelled });
+  const started = Date.now();
+  const running = workspace.runCommand("sleep 60");
+  setTimeout(() => { cancelled = true; }, 50);
+  const result = await running;
+  assert.equal(result.ok, false);
+  assert.match(result.output, /任务已停止/);
+  assert.ok(Date.now() - started < 5000, "isCancelled 轮询应在 100ms 级生效");
+});
+
 test("审批通过后 run_command 在工作区内执行", async () => {
   const root = await makeWorkspace();
   const result = await runAgent({

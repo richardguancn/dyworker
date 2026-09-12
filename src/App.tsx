@@ -78,6 +78,7 @@ import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, Key
 import { copyImageToClipboard, copyMessageWithImages, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
+import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
@@ -999,6 +1000,107 @@ function codeBreadcrumbSegments(filePath: string, workspacePath: string) {
   return [workspaceName, ...relative.split(/[\\/]/).filter(Boolean)];
 }
 
+// ===== 会话「总结为工作模板」 =====
+// 转录与导出 Markdown 一致用 displayContent（折叠长粘贴）；超限时按消息边界
+// 保留头尾（头留原始需求、尾留最终做法），中间省略。
+const SKILL_TRANSCRIPT_LIMIT = 24000;
+const SKILL_TRANSCRIPT_HEAD = 6000;
+
+function buildSkillSummaryTranscript(session: SessionRecord) {
+  const parts: string[] = [];
+  for (const message of session.messages) {
+    const body = (message.displayContent || message.content || "").trim();
+    if (!body) continue;
+    const speaker = message.role === "user" ? "【用户】" : message.role === "assistant" ? "【助手】" : "【系统】";
+    const skillsLine = message.skillsUsed?.length ? `\n（使用技能：${message.skillsUsed.join("、")}）` : "";
+    parts.push(`${speaker}${body}${skillsLine}`);
+  }
+  const full = parts.join("\n\n");
+  if (full.length <= SKILL_TRANSCRIPT_LIMIT) return full;
+  const headParts: string[] = [];
+  let headUsed = 0;
+  for (const part of parts) {
+    if (headParts.length && headUsed + part.length > SKILL_TRANSCRIPT_HEAD) break;
+    if (!headParts.length && part.length > SKILL_TRANSCRIPT_HEAD) {
+      // 第一条消息就超头预算：硬截，保证头部始终留有上下文
+      headParts.push(part.slice(0, SKILL_TRANSCRIPT_HEAD));
+      headUsed = SKILL_TRANSCRIPT_HEAD;
+      break;
+    }
+    headParts.push(part);
+    headUsed += part.length + 2;
+  }
+  const tailBudget = SKILL_TRANSCRIPT_LIMIT - SKILL_TRANSCRIPT_HEAD;
+  const tailParts: string[] = [];
+  let tailUsed = 0;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (tailParts.length && tailUsed + part.length > tailBudget) break;
+    if (!tailParts.length && part.length > tailBudget) {
+      tailParts.unshift(part.slice(part.length - tailBudget));
+      tailUsed = tailBudget;
+      break;
+    }
+    tailParts.unshift(part);
+    tailUsed += part.length + 2;
+  }
+  const kept = headParts.join("\n\n").length + tailParts.join("\n\n").length;
+  return [...headParts, `……（中间省略约 ${Math.max(full.length - kept, 0)} 字）……`, ...tailParts].join("\n\n");
+}
+
+// chat:complete 会丢弃 system 消息，提炼指令全部折叠进这一条 user 消息；
+// 不传 session，避免侧边聊天的检索工具与提示词污染 JSON 输出
+function buildSkillSummaryMessages(session: SessionRecord): ChatMessage[] {
+  return [{
+    role: "user",
+    content: [
+      "你是工作方法提炼助手。阅读下面的会话转录，把这次任务中经过验证的做法提炼成一个可复用的「工作模板」，让以后遇到同类任务时可以直接照做。",
+      "",
+      "只输出一个 JSON 对象，不要用 Markdown 围栏包裹，不要输出任何解释。JSON 结构：",
+      `{"name":"模板名称（10字以内）","description":"一句话简介（40字以内，说明什么时候该用它）","instructions":"执行要求（Markdown 分步，可含检查清单，200-600字）"}`,
+      "",
+      "提炼要求：",
+      "- 泛化掉本次的具体文件名、人名、路径等一次性细节，保留可复用的步骤、工具使用顺序和注意事项；",
+      "- 只提炼确实做成、值得重复的做法；如果会话里只是闲聊或没有可复用流程，instructions 里如实说明没有可提炼的流程；",
+      "- 用中文。",
+      "",
+      "----",
+      `会话标题：${session.title}`,
+      "",
+      buildSkillSummaryTranscript(session),
+    ].join("\n"),
+    createdAt: new Date().toISOString(),
+  }];
+}
+
+// 模型输出的草稿稳健解析：直接 parse → 去代码围栏 → 取首尾花括号子串
+function parseSkillDraft(text: string) {
+  const trimmed = String(text || "").trim();
+  const candidates: string[] = [];
+  if (trimmed) candidates.push(trimmed);
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (!parsed || typeof parsed !== "object") continue;
+      const draft = {
+        name: typeof parsed.name === "string" ? parsed.name.trim() : "",
+        description: typeof parsed.description === "string" ? parsed.description.trim() : "",
+        instructions: typeof parsed.instructions === "string" ? parsed.instructions.trim() : "",
+      };
+      if (draft.name || draft.description || draft.instructions) return draft;
+    } catch {
+      // 尝试下一种截取方式
+    }
+  }
+  return null;
+}
+
+
 type ReviewDiffRow =
   | { type: "add" | "del" | "ctx"; oldNo?: number; newNo?: number; text: string }
   | { type: "gap"; count: number };
@@ -1722,143 +1824,68 @@ function persistFileDrafts(drafts: Record<string, { content: string; savedAt: st
   }
 }
 
-// 把 markdown 按空行切成块（围栏代码块内部的空行不切分）。
-// 链接/脚注定义块（[x]: … 形式的整块）不单独渲染，收集起来拼到每个渲染块后面，
-// 让跨块的引用链接、脚注在分块渲染时仍能解析。
-function splitMarkdownBlocks(source: string) {
-  const lines = source.split("\n");
-  const blocks: string[] = [];
-  const definitions: string[] = [];
-  let current: string[] = [];
-  let fence: { char: string; length: number } | null = null;
-  const pushBlock = () => {
-    const block = current.join("\n").trim();
-    current = [];
-    if (!block) return;
-    const isDefinitionBlock = block.split("\n").every((line) => /^\s{0,3}\[\^?[^\]]+\]:\s*\S/.test(line));
-    if (isDefinitionBlock) definitions.push(block);
-    else blocks.push(block);
-  };
-  for (const line of lines) {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch) {
-      const char = fenceMatch[1][0];
-      const length = fenceMatch[1].length;
-      // 闭合围栏要求同字符且长度不小于起始围栏
-      if (!fence) fence = { char, length };
-      else if (char === fence.char && length >= fence.length) fence = null;
-      current.push(line);
-      continue;
-    }
-    if (!fence && /^\s*$/.test(line)) {
-      pushBlock();
-      continue;
-    }
-    current.push(line);
-  }
-  pushBlock();
-  return { blocks, definitions: definitions.join("\n") };
-}
-
-// Typora 式即时渲染编辑：文档按块渲染，点击某个块时该块显示 markdown 源码，
-// 失焦提交回整体文档（由父级自动保存落盘）
-function MarkdownLivePreview({ source, onChange }: { source: string; onChange: (next: string) => void }) {
-  const parsed = useMemo(() => splitMarkdownBlocks(source), [source]);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [draft, setDraft] = useState("");
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const commitEdit = () => {
-    if (editingIndex === null) return;
-    const current = parsed.blocks[editingIndex];
-    setEditingIndex(null);
-    setDraft("");
-    if (current !== undefined && draft === current) return;
-    const blocks = [...parsed.blocks];
-    if (draft.trim()) {
-      if (editingIndex < blocks.length) blocks[editingIndex] = draft;
-      else blocks.push(draft);
-    } else if (editingIndex < blocks.length) {
-      // 清空的块视为删除
-      blocks.splice(editingIndex, 1);
-    } else {
-      return;
-    }
-    const parts = parsed.definitions ? [...blocks, parsed.definitions] : blocks;
-    onChange(parts.join("\n\n"));
-  };
-
-  // 卸载（切文件/切源代码视图）前提交未完成的块编辑，避免丢字
-  const commitRef = useRef(commitEdit);
-  commitRef.current = commitEdit;
-  useEffect(() => () => commitRef.current(), []);
+// Codex 式即时渲染编辑面板：整篇文档作为 markdown 源码交给 CodeMirror，
+// 光标停在行首时该行显示原始源码，其余行隐藏语法标记按渲染样式展示，可直接编辑
+function MarkdownLiveEditorPane({
+  path,
+  name,
+  value,
+  plainSource,
+  onChange,
+  onSaveRequest,
+}: {
+  path: string;
+  name: string;
+  value: string;
+  plainSource: boolean;
+  onChange: (value: string) => void;
+  onSaveRequest: () => void;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<MarkdownLiveEditorHandle | null>(null);
+  const optionsRef = useRef({ value, plainSource });
+  optionsRef.current = { value, plainSource };
 
   useEffect(() => {
-    if (editingIndex === null) return;
-    editorRef.current?.focus();
-  }, [editingIndex]);
+    let disposed = false;
+    let handle: MarkdownLiveEditorHandle | null = null;
+    // 编辑器按需异步加载（CodeMirror 约几百 KB），首包不引入
+    void import("./markdownLiveEditor").then(({ createMarkdownLiveEditor }) => {
+      if (disposed || !hostRef.current) return;
+      handle = createMarkdownLiveEditor(hostRef.current, {
+        value: optionsRef.current.value,
+        plainSource: optionsRef.current.plainSource,
+        placeholderText: "点击输入 Markdown…",
+        onChange,
+        onSaveRequest,
+      });
+      editorRef.current = handle;
+    });
+    return () => {
+      disposed = true;
+      handle?.destroy();
+      editorRef.current = null;
+    };
+    // key={path} 已按文件重挂载；仅挂载时创建一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
 
-  // 编辑中的块随内容自动撑高
+  // 「查看源代码」切换：同一编辑器开关装饰渲染
   useEffect(() => {
-    const node = editorRef.current;
-    if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${node.scrollHeight}px`;
-  }, [draft, editingIndex]);
+    editorRef.current?.setPlainSource(plainSource);
+  }, [plainSource]);
 
-  const startBlockEdit = (index: number, event: MouseEvent<HTMLDivElement>) => {
-    // 链接、图片等交互元素保持原行为，不触发编辑
-    const target = event.target as HTMLElement;
-    if (target.closest("a, button, input, textarea, select, img")) return;
-    commitRef.current();
-    setEditingIndex(index);
-    setDraft(parsed.blocks[index] || "");
-  };
+  // 外部内容同步（草稿恢复、落盘后回读）；编辑中不回写
+  useEffect(() => {
+    editorRef.current?.setValue(value);
+  }, [value]);
 
   return (
-    <div className="markdown-live">
-      {parsed.blocks.map((block, index) => editingIndex === index ? (
-        <textarea
-          key={index}
-          ref={editorRef}
-          className="markdown-block-editor"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => commitRef.current()}
-          spellCheck={false}
-          aria-label={`编辑第 ${index + 1} 个 Markdown 块`}
-        />
-      ) : (
-        <div key={index} className="markdown-block" onClick={(event) => startBlockEdit(index, event)}>
-          <InteractiveMessage content={parsed.definitions ? `${block}\n\n${parsed.definitions}` : block} />
-        </div>
-      ))}
-      {!parsed.blocks.length && editingIndex === null && (
-        <div
-          className="markdown-block markdown-live-empty"
-          onClick={() => { setEditingIndex(0); setDraft(""); }}
-        >
-          点击输入 Markdown…
-        </div>
-      )}
-      {editingIndex !== null && editingIndex >= parsed.blocks.length && (
-        <textarea
-          ref={editorRef}
-          className="markdown-block-editor"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => commitRef.current()}
-          spellCheck={false}
-          aria-label="编辑新的 Markdown 块"
-        />
-      )}
-      {/* 文档末尾的留白：点击追加一个新块 */}
-      <div
-        className="markdown-live-tail"
-        aria-hidden="true"
-        onClick={() => { commitRef.current(); setEditingIndex(parsed.blocks.length); setDraft(""); }}
-      />
-    </div>
+    <div
+      className={`markdown-live-editor${plainSource ? " plain-source" : ""}`}
+      ref={hostRef}
+      aria-label={`编辑 ${name}`}
+    />
   );
 }
 
@@ -1881,7 +1908,7 @@ function FilesSplitPanel({
 }) {
   const [fileFilter, setFileFilter] = useState("");
   const [selection, setSelection] = useState<FilePanelSelection | null>(null);
-  // markdown 默认即时渲染编辑（Typora 式），可切换为纯源码编辑
+  // markdown 默认即时渲染编辑（Codex 式：行首显示源码、其余渲染态），可切换为纯源码编辑
   const [showSource, setShowSource] = useState(false);
   // 右侧文件树开关（默认开启）与拖拽调宽（null = 跟随默认弹性宽度）
   const [treeVisible, setTreeVisible] = useState(true);
@@ -2153,9 +2180,18 @@ function FilesSplitPanel({
               <p className="panel-empty">正在读取文件…</p>
             ) : selection.error ? (
               <p className="panel-empty error-text">{selection.error}</p>
-            ) : selection.kind === "markdown" && !showSource ? (
-              // 即时渲染编辑：渲染块点击即改，失焦回到渲染
-              <MarkdownLivePreview key={selection.path} source={editContent} onChange={(value) => handleEditChange(selection.path, value)} />
+            ) : selection.kind === "markdown" ? (
+              // Codex 式即时渲染编辑：光标在行首显示该行源码，其余位置渲染态直接编辑；
+              // showSource 切换为纯源码模式
+              <MarkdownLiveEditorPane
+                key={selection.path}
+                path={selection.path}
+                name={selection.name}
+                value={editContent}
+                plainSource={showSource}
+                onChange={(value) => handleEditChange(selection.path, value)}
+                onSaveRequest={() => void flushSaves()}
+              />
             ) : (
               // 文本文件打开即编辑状态，自动保存
               <textarea
@@ -2255,6 +2291,92 @@ function BrowserBrandMark({ id, name }: { id: string; name: string }) {
   const color = BROWSER_BRAND_COLORS[id] || "#8a8f85";
   const initial = id === "qaxbrowser" ? "奇" : id === "browser360" ? "360" : name.trim().charAt(0).toUpperCase() || "?";
   return <span className="browser-brand-mark" style={{ background: color }} aria-hidden="true">{initial}</span>;
+}
+
+// 「总结为工作模板」的草稿确认对话框：模型生成初稿，用户可改，确认后写入技能库
+function SkillDraftDialog({
+  initial,
+  onClose,
+  onSaved,
+}: {
+  initial: { name: string; description: string; instructions: string };
+  onClose: () => void;
+  onSaved: (item?: SkillRecord) => void;
+}) {
+  const [name, setName] = useState(initial.name);
+  const [description, setDescription] = useState(initial.description);
+  const [instructions, setInstructions] = useState(initial.instructions);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if (!name.trim()) {
+      setError("请填写模板名称");
+      return;
+    }
+    if (!window.dyworker?.createSkill) {
+      setError("当前预览环境没有保存技能的通道");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const result = await window.dyworker.createSkill({
+        name: name.trim(),
+        description: description.trim(),
+        instructions: instructions.trim(),
+      });
+      if (!result.ok) {
+        setError(result.error || "保存失败");
+        return;
+      }
+      onSaved(result.item);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+      <div
+        className="skill-draft-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="保存为工作模板"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h3>保存为工作模板</h3>
+        <p className="dialog-note">确认后保存进技能库，之后的任务里可以用 / 引用它。</p>
+        <label className="skill-draft-field">
+          <span>模板名称</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：周报汇总" autoFocus />
+        </label>
+        <label className="skill-draft-field">
+          <span>一句话简介</span>
+          <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="什么时候该用它" />
+        </label>
+        <label className="skill-draft-field">
+          <span>执行要求</span>
+          <textarea
+            rows={10}
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            placeholder="Markdown 分步描述可复用的做法…"
+            spellCheck={false}
+          />
+        </label>
+        {error && <p className="error-text skill-draft-error">{error}</p>}
+        <div className="skill-draft-actions">
+          <button type="button" className="button-secondary" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="button-primary" onClick={() => void save()} disabled={saving}>
+            {saving ? "保存中…" : "保存到技能库"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // 从浏览器导入（对照 Codex）：选择来源浏览器 + 用户画像 + 分类开关（密码/Cookie/浏览记录）
@@ -5623,6 +5745,9 @@ export function App() {
   const [toolPanelAddMenuOpen, setToolPanelAddMenuOpen] = useState(false);
   const [browserMoreOpen, setBrowserMoreOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
+  const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
+  const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
   // 已导入的浏览记录：地址栏输入联想
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
@@ -8634,6 +8759,11 @@ export function App() {
             <button role="menuitem" onClick={() => { setSessionMenuId(null); archiveSession(session.id); }}>归档</button>
           )}
           <button role="menuitem" onClick={() => { setSessionMenuId(null); exportSessionMarkdown(session); }}>导出为 Markdown</button>
+          <button
+            role="menuitem"
+            disabled={skillSummarySessionId === session.id}
+            onClick={() => { setSessionMenuId(null); void summarizeSessionToSkill(session); }}
+          >总结为工作模板</button>
           <button role="menuitem" className="danger" onClick={() => deleteSession(session.id)}>删除</button>
         </div>
       )}
@@ -8797,6 +8927,53 @@ export function App() {
     setNotice("已导出会话为 Markdown 文件");
   };
 
+  // 总结为工作模板：把会话转录发给模型提炼草稿，弹可编辑对话框，确认后写入技能库
+  const summarizeSessionToSkill = async (session: SessionRecord) => {
+    if (skillSummarySessionId) return;
+    if (buildSkillSummaryTranscript(session).length < 50) {
+      setError("会话内容太少，还没有可总结的做法");
+      return;
+    }
+    if (!window.dyworker?.completeChat) {
+      setError("当前预览环境没有连接模型，无法提炼工作模板");
+      return;
+    }
+    setSkillSummarySessionId(session.id);
+    showSessionNotice(session.id, "正在提炼工作模板…");
+    try {
+      const messages = buildSkillSummaryMessages(session);
+      let result = await window.dyworker.completeChat({ settings, messages });
+      if (result.demo) {
+        setError(result.content);
+        return;
+      }
+      let draft = parseSkillDraft(result.content || "");
+      if (!draft) {
+        // 输出不是合法 JSON：追加强调后重试一次
+        result = await window.dyworker.completeChat({
+          settings,
+          messages: [...messages, { role: "assistant" as const, content: result.content || "", createdAt: new Date().toISOString() }, { role: "user" as const, content: "上一次输出不是合法 JSON。请只输出一个 JSON 对象（name/description/instructions），不要用 Markdown 围栏，不要任何解释。", createdAt: new Date().toISOString() }],
+        });
+        if (result.demo) {
+          setError(result.content);
+          return;
+        }
+        draft = parseSkillDraft(result.content || "");
+      }
+      if (draft) {
+        setSkillDraft(draft);
+      } else {
+        // 兜底：打开空草稿让用户手动填写，不让这次提炼白跑
+        setSkillDraft({ name: session.title, description: "", instructions: "" });
+        setNotice("模型没能生成初稿，请手动填写");
+      }
+    } catch (summaryError) {
+      setError(`提炼失败：${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
+    } finally {
+      setSkillSummarySessionId(null);
+    }
+  };
+
   const taskMenu = (
     <div className="topbar-menu-wrap" data-menu-root>
       <button
@@ -8815,6 +8992,11 @@ export function App() {
           </button>
           <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
           <button role="menuitem" onClick={() => { setTopMenuOpen(false); exportSessionMarkdown(activeSession); }}>导出为 Markdown</button>
+          <button
+            role="menuitem"
+            disabled={skillSummarySessionId === activeSession.id}
+            onClick={() => { setTopMenuOpen(false); void summarizeSessionToSkill(activeSession); }}
+          >总结为工作模板</button>
           <button role="menuitem" onClick={() => {
             setTopMenuOpen(false);
             setPlanSeed({ name: activeSession.title, prompt: "" });
@@ -10339,6 +10521,18 @@ export function App() {
             browserWebviewRef.current?.reload?.();
           }}
           onError={(message) => setError(message)}
+        />
+      )}
+
+      {skillDraft && (
+        <SkillDraftDialog
+          initial={skillDraft}
+          onClose={() => setSkillDraft(null)}
+          onSaved={(item) => {
+            setSkillDraft(null);
+            void refreshSkills();
+            setNotice(`工作模板「${item?.name || ""}」已保存`);
+          }}
         />
       )}
 
