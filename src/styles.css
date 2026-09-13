@@ -7773,6 +7773,118 @@ body.resizing-panels .app-shell {
     color: #b9bdb4;
   }
 
+  .browser-tab-spinner {
+    border-color: rgba(255, 255, 255, 0.16);
+    border-top-color: #a4a99f;
+  }
+
+  .browser-progress::after {
+    background: var(--accent);
+  }
+
+  .browser-start-page {
+    color: #8b9187;
+  }
+
+  .browser-start-page svg {
+    color: #7c8178;
+  }
+
+  .browser-start-page strong {
+    color: #b9bdb4;
+  }
+
+  .browser-start-page > span {
+    color: #8b9187;
+  }
+
+  .browser-start-links button {
+    border-color: rgba(255, 255, 255, 0.09);
+    background: #242521;
+    color: #c3c7be;
+  }
+
+  .browser-start-links button:hover {
+    border-color: rgba(120, 160, 255, 0.45);
+    background: rgba(120, 160, 255, 0.08);
+    color: var(--accent);
+  }
+
+  .browser-error-state strong {
+    color: #b9bdb4;
+  }
+
+  .browser-find-bar {
+    border-color: rgba(255, 255, 255, 0.065);
+    color: #8b9187;
+  }
+
+  .browser-find-input {
+    background: rgba(255, 255, 255, 0.045);
+    color: #bfc3ba;
+  }
+
+  .browser-find-input:focus {
+    background: var(--card);
+  }
+
+  .browser-find-bar button:hover {
+    background: rgba(255, 255, 255, 0.055);
+    color: #e0e3db;
+  }
+
+  .browser-tab-page.emulated {
+    background: #121310;
+  }
+
+  .browser-device-bar,
+  .browser-password-bar {
+    border-color: rgba(255, 255, 255, 0.065);
+    color: #8b9187;
+  }
+
+  .browser-device-bar button {
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #a4a99f;
+  }
+
+  .browser-password-bar {
+    background: rgba(120, 160, 255, 0.07);
+  }
+
+  .browser-password-bar button {
+    border-color: rgba(255, 255, 255, 0.14);
+    color: #c3c7be;
+  }
+
+  .browser-password-row {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .browser-password-copy strong {
+    color: #e1e3dc;
+  }
+
+  .browser-password-copy code {
+    background: rgba(255, 255, 255, 0.07);
+    color: #e1e3dc;
+  }
+
+  .browser-password-actions button {
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #c3c7be;
+  }
+
+  .browser-more-zoom-controls button.active {
+    border-color: rgba(120, 160, 255, 0.5);
+    background: rgba(120, 160, 255, 0.1);
+  }
+
+  .browser-clear-button {
+    border-color: rgba(230, 107, 98, 0.4);
+    color: #ef9189 !important;
+  }
+
   .tool-panel-scroll {
     scrollbar-color: rgba(190, 194, 184, 0.24) transparent;
   }
@@ -9841,7 +9953,10 @@ body.resizing-panels .file-split-resizer::after {
 .browser-more-menu {
   top: 32px;
   right: 0;
-  min-width: 220px;
+  min-width: 250px;
+  max-width: 320px;
+  max-height: min(72vh, 560px);
+  overflow-y: auto;
   padding: 6px;
 }
 
@@ -9870,26 +9985,607 @@ body.resizing-panels .file-split-resizer::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 7px 12px;
   color: var(--quiet);
   font-size: 13px;
 }
 
+.browser-more-label {
+  color: var(--quiet);
+  font-size: 12px;
+}
+
 .browser-more-zoom-controls {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  color: var(--ink);
 }
 
 .browser-more-zoom-controls button {
-  width: 22px;
+  min-width: 22px;
   height: 22px;
-  padding: 0;
+  padding: 0 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.browser-more-zoom-controls button:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.browser-more-zoom-controls button:disabled {
   color: var(--quiet);
   cursor: default;
+}
+
+.browser-more-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.browser-more-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+}
+
+.browser-more-history-head button {
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--quiet);
+}
+
+.browser-more-history-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.browser-more-history-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 12px;
+}
+
+.browser-more-history-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.browser-more-history-url {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.browser-more-history-empty {
+  margin: 0;
+  padding: 4px 12px 6px;
+  color: var(--quiet);
+  font-size: 12px;
+}
+
+/* 浏览器标签页常驻容器：非激活标签隐藏但保留页面状态 */
+.browser-tab-page {
+  position: relative;
+  display: none;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.browser-tab-page.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 标签条 favicon 与加载指示 */
+.browser-tab-favicon,
+.browser-url-favicon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.browser-tab-spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(69, 71, 66, 0.18);
+  border-top-color: #6d7169;
+  border-radius: 50%;
+  animation: browser-tab-spin 0.8s linear infinite;
+}
+
+@keyframes browser-tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* URL 栏左侧 favicon：为输入文字留出空间 */
+.browser-url-wrap .browser-url-input {
+  padding-left: 30px;
+}
+
+.browser-url-favicon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* 顶部加载进度条（不确定进度动画） */
+.browser-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  background: transparent;
+  flex: 0 0 auto;
+}
+
+.browser-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: browser-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes browser-progress-slide {
+  0% {
+    left: -36%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+/* 起始页：未打开网页的新标签页 */
+.browser-start-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 22px;
+  color: #a1a49c;
+  text-align: center;
+}
+
+.browser-start-page svg {
+  color: #aeb2aa;
+}
+
+.browser-start-page strong {
+  color: #737870;
+  font-size: 17px;
+  font-weight: 610;
+}
+
+.browser-start-page > span {
+  color: #9ea29a;
+  font-size: 12.5px;
+}
+
+.browser-start-links {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.browser-start-links button {
+  min-width: 92px;
+  padding: 10px 14px;
+  border: 1px solid rgba(69, 71, 66, 0.1);
+  border-radius: 12px;
+  background: #fff;
+  color: #555a52;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.browser-start-links button:hover {
+  border-color: rgba(47, 111, 237, 0.4);
+  color: var(--accent);
+  background: rgba(47, 111, 237, 0.04);
+}
+
+/* 页面加载失败：错误覆盖层（webview 保留在下面） */
+.browser-error-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 30px;
+  background: var(--card);
+  color: #a1a49c;
+  text-align: center;
+}
+
+.browser-error-state svg {
+  color: #c0524a;
+}
+
+.browser-error-state strong {
+  color: #737870;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.browser-error-state span {
+  font-size: 12.5px;
+}
+
+.browser-error-actions {
+  margin-top: 6px;
+}
+
+.browser-error-actions button {
+  padding: 7px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.browser-error-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 页内查找栏 */
+.browser-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.08);
+  color: #9a9e96;
+  flex: 0 0 auto;
+}
+
+.browser-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  outline: 0;
+  background: rgba(72, 74, 68, 0.045);
+  color: #656960;
+  font-size: 12px;
+}
+
+.browser-find-input:focus {
+  border-color: var(--border-strong);
+  background: var(--card);
+}
+
+.browser-find-count {
+  min-width: 44px;
+  color: var(--quiet);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.browser-find-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9a9e96;
+  cursor: pointer;
+}
+
+.browser-find-bar button:hover {
+  background: rgba(72, 74, 68, 0.07);
+  color: #555a52;
+}
+
+/* 更多菜单里的激活项（设备预设等） */
+.browser-more-zoom-controls button.active {
+  border-color: rgba(47, 111, 237, 0.5);
+  background: rgba(47, 111, 237, 0.08);
+  color: var(--accent);
+}
+
+/* 下载列表行 */
+.browser-download-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+}
+
+.browser-download-row .browser-download-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.browser-download-row .browser-download-actions button {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  color: var(--quiet);
+}
+
+/* 清除浏览数据区 */
+.browser-more-clear {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0;
+}
+
+.browser-clear-kind {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px;
+  color: var(--ink);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.browser-clear-kind input {
+  accent-color: var(--accent);
+}
+
+.browser-clear-button {
+  margin: 3px 12px 4px;
+  border: 1px solid rgba(192, 82, 74, 0.35);
+  border-radius: 8px;
+  color: #c0524a !important;
+  text-align: center;
+}
+
+.browser-clear-button:hover {
+  background: rgba(192, 82, 74, 0.08);
+}
+
+/* 设备视图：webview 收进设备尺寸的画框，居中展示 */
+.browser-tab-page.emulated {
+  align-items: center;
+  justify-content: center;
+  background: #2c2e29;
+  padding: 14px;
+}
+
+.browser-tab-page.emulated .browser-webview {
+  width: var(--device-width, 390px);
+  height: var(--device-height, 844px);
+  max-width: 100%;
+  max-height: 100%;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  box-shadow: 0 6px 30px rgba(20, 21, 18, 0.35);
+  background: #fff;
+}
+
+/* 设备工具栏条 */
+.browser-device-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.08);
+  color: #9a9e96;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.browser-device-bar button {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: #6d7169;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.browser-device-bar button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 保存密码提示条 */
+.browser-password-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.08);
+  background: rgba(47, 111, 237, 0.05);
+  color: #656960;
+  font-size: 12.5px;
+  flex: 0 0 auto;
+}
+
+.browser-password-bar > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.browser-password-bar-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-password-bar button {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: #555a52;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.browser-password-bar button.primary {
+  border-color: rgba(47, 111, 237, 0.5);
+  color: var(--accent);
+}
+
+.browser-password-bar button:hover {
+  background: rgba(47, 111, 237, 0.07);
+}
+
+/* 填充已保存密码的悬浮按钮 */
+.browser-fill-chip {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid rgba(47, 111, 237, 0.35);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(34, 35, 31, 0.1);
+}
+
+.browser-fill-chip:hover {
+  background: rgba(47, 111, 237, 0.07);
+}
+
+/* 密码和自动填充对话框 */
+.browser-passwords-dialog .browser-passwords-hint {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.browser-password-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.browser-password-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.browser-password-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.browser-password-copy strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.browser-password-copy span {
+  color: var(--quiet);
+  font-size: 12px;
+}
+
+.browser-password-copy code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(72, 74, 68, 0.07);
+  color: var(--ink);
+  font-size: 12px;
+  align-self: flex-start;
+}
+
+.browser-password-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.browser-password-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.browser-password-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.browser-password-actions button.primary {
+  border-color: rgba(47, 111, 237, 0.5);
+  color: var(--accent);
+}
+
+.browser-password-actions button.danger:hover {
+  border-color: rgba(192, 82, 74, 0.55);
+  color: #c0524a;
+}
+
+.browser-passwords-empty {
+  margin: 0;
+  padding: 14px 4px;
+  color: var(--quiet);
+  font-size: 12.5px;
+  text-align: center;
 }
 
 /* ---- 导入 Cookie 和密码对话框 ---- */
@@ -11687,3 +12383,31 @@ body.resizing-panels .file-split-resizer::after {
   color: var(--accent);
 }
 
+
+/* Browser menus and address suggestions stay within their owning surface. */
+.browser-more-menu { width: 286px; min-width: 0; max-width: calc(100vw - 32px); }
+.browser-more-menu > button { display: flex; align-items: center; justify-content: space-between; }
+.browser-more-zoom { padding: 8px; gap: 8px; white-space: nowrap; }
+.browser-more-zoom-controls { flex: 0 0 auto; }
+.browser-more-zoom-controls button { width: auto; min-width: 28px; height: 28px; padding: 0 7px; flex: 0 0 auto; white-space: nowrap; }
+.browser-suggestions { position: absolute; z-index: 100; top: calc(100% + 5px); left: 0; width: 100%; box-sizing: border-box; max-height: min(360px, 55vh); overflow: auto; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: 0 10px 28px #0002; }
+.browser-suggestions button { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.browser-suggestions button:hover, .browser-suggestions button[aria-selected="true"] { background: var(--sidebar-hover); }
+.browser-suggestions svg { flex-shrink: 0; color: var(--quiet); }
+.browser-suggestions button > span { min-width: 0; flex: 1; }
+.browser-suggestions strong, .browser-suggestions small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-suggestions strong { font-size: 13px; font-weight: 500; }
+.browser-suggestions small { font-size: 11px; color: var(--quiet); margin-top: 3px; }
+.browser-section-dialog { width: 540px; max-width: calc(100vw - 40px); max-height: 80vh; padding: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--card); color: var(--ink); box-shadow: 0 20px 70px #0003; }
+.browser-section-dialog::backdrop { background: #0005; }
+.browser-section-dialog header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.browser-section-dialog h2 { margin: 0; font-size: 17px; }
+.browser-section-body { padding: 16px; overflow: auto; }
+.browser-section-dialog .browser-more-history-list { max-height: 50vh; }
+.browser-section-dialog .browser-more-history-list > button, .browser-section-dialog .browser-download-row { flex-shrink: 0; min-width: 0; border: 0; border-radius: 8px; background: transparent; padding: 12px; text-align: left; }
+.browser-section-dialog .browser-more-history-list > button:hover { background: var(--sidebar-hover); }
+.browser-section-dialog .browser-more-history-empty { padding: 32px 12px; text-align: center; }
+.browser-section-dialog .browser-clear-kind { padding: 12px; }
+.browser-section-dialog .browser-clear-kind input { width: 16px; height: 16px; flex-shrink: 0; }
+.browser-section-dialog .browser-clear-button { padding: 10px; margin-top: 18px; background: transparent; cursor: pointer; }
+.browser-section-dialog .browser-clear-button:disabled { opacity: .45; cursor: default; }

@@ -686,6 +686,24 @@ export interface DyworkerBridge {
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   revealInFolder(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
+  /** 上报当前显示的内置浏览器 webview，agent 的 browser__* 工具只作用于可见页面 */
+  setActiveBrowserContents?(webContentsId: number): void;
+  /** 在系统默认浏览器打开 http/https 网址 */
+  openBrowserExternal?(url: string): Promise<{ ok: boolean; error?: string }>;
+  /** 内置浏览器设备模拟（手机/平板视图），宽高为 0 时关闭 */
+  emulateDevice?(webContentsId: number, width: number, height: number): Promise<{ ok: boolean; error?: string }>;
+  /** 保存登录密码（safeStorage 加密落盘） */
+  savePassword?(origin: string, username: string, password: string): Promise<{ ok: boolean; error?: string }>;
+  /** 列出已保存的密码（不含明文）；origin 为空时返回全部 */
+  listPasswords?(origin: string): Promise<{ ok: boolean; passwords?: Array<{ origin: string; username: string; source: string; importedAt: string }>; error?: string }>;
+  /** 按条解密密码（填充用） */
+  revealPassword?(origin: string, username: string): Promise<{ ok: boolean; password?: string; error?: string }>;
+  /** 删除一条已保存的密码 */
+  deletePassword?(origin: string, username: string): Promise<{ ok: boolean; error?: string }>;
+  /** 清除内置浏览器的浏览数据 */
+  clearBrowserData?(kinds: { cookies: boolean; cache: boolean; siteData: boolean }): Promise<{ ok: boolean; error?: string }>;
+  /** 内置浏览器下载进度广播 */
+  onBrowserDownloadProgress?(callback: (record: { id: string; filename: string; path: string; received: number; total: number; state: "progressing" | "interrupted" | "completed" | "cancelled"; startedAt: number }) => void): () => void;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;

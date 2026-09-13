@@ -553,6 +553,89 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(styles, /\.browser-import-kinds/);
 });
 
+test("内置浏览器为 Codex 式多标签：webview 常驻、导航状态同步、缩放/查找/截图/历史", () => {
+  // 每个浏览器标签页常驻一个 webview，切换标签不销毁页面
+  assert.match(app, /browserWebviewsRef/);
+  assert.match(app, /browser-tab-page/);
+  assert.match(app, /aria-hidden=\{!isActive\}/);
+  // webview 导航事件同步到标签页：地址/标题/图标/加载态/会话历史
+  assert.match(app, /bindBrowserWebview/);
+  assert.match(app, /did-navigate-in-page/);
+  assert.match(app, /page-title-updated/);
+  assert.match(app, /page-favicon-updated/);
+  assert.match(app, /did-fail-load/);
+  assert.match(app, /ERR_ABORTED 是导航被打断/);
+  assert.match(app, /browserSessionHistory/);
+  // 工具栏状态化：后退/前进按导航历史禁用，加载中变停止，顶部不确定进度条
+  assert.match(app, /disabled=\{!activeToolPanelTab\.canGoBack\}/);
+  assert.match(app, /停止加载/);
+  assert.match(styles, /\.browser-progress\b/);
+  assert.match(styles, /browser-progress-slide/);
+  // 起始页快捷链接
+  assert.match(app, /BROWSER_START_LINKS/);
+  assert.match(styles, /\.browser-start-links/);
+  // 更多菜单实装：缩放/页内查找/截图/系统浏览器打开
+  assert.match(app, /changeBrowserZoom/);
+  assert.match(app, /setZoomLevel/);
+  assert.match(app, /openBrowserFind/);
+  assert.match(app, /findInPage/);
+  assert.match(styles, /\.browser-find-bar/);
+  assert.match(app, /captureBrowserScreenshot/);
+  assert.match(app, /openBrowserExternal/);
+  assert.match(preload, /browser:open-external/);
+  assert.match(main, /ipcMain\.handle\("browser:open-external"/);
+  assert.match(main, /shell\.openExternal/);
+  // agent 的 browser__* 工具路由到当前显示的 webview
+  assert.match(app, /setActiveBrowserContents/);
+  assert.match(preload, /browser:active-contents/);
+  assert.match(main, /ipcMain\.on\("browser:active-contents"/);
+  assert.match(main, /function activeEmbeddedBrowserContents/);
+  assert.match(main, /getContents: \(\) => activeEmbeddedBrowserContents\(\)/);
+});
+
+test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设备视图", () => {
+  // ===== 密码和自动填充 =====
+  // webview 专用 preload 只暴露“报告密码表单提交”，页面无法触及 ipcRenderer
+  const webviewPreload = readSource(new URL("../electron/webview-preload.cjs", import.meta.url));
+  assert.match(webviewPreload, /contextBridge\.exposeInMainWorld\("dyworkerPage"/);
+  assert.match(webviewPreload, /sendToHost\("dyworker:password-submit"/);
+  assert.doesNotMatch(webviewPreload, /require\("electron"\)\.ipcRenderer(?!\))/);
+  assert.match(main, /webPreferences\.preload = path\.join\(__dirname, "webview-preload\.cjs"\)/);
+  assert.match(main, /webPreferences\.nodeIntegration = false/);
+  // 保存/列表/解密/删除：列表不含明文，safeStorage 加密与导入密码同库
+  assert.match(main, /ipcMain\.handle\("browser:save-password"/);
+  assert.match(main, /ipcMain\.handle\("browser:list-passwords"/);
+  assert.match(main, /safeStorage\.decryptString/);
+  assert.match(main, /imported-passwords\.json/);
+  assert.match(app, /browserPasswordPrompt/);
+  assert.match(app, /保存密码提示条|保存 <strong>/);
+  assert.match(app, /function BrowserPasswordsDialog/);
+  assert.match(app, /browserPasswordFillScript/);
+  assert.match(app, /填充已保存的密码/);
+  // ===== 下载管理 =====
+  assert.match(main, /browser:download-progress/);
+  assert.match(main, /item\.on\("updated"/);
+  assert.match(app, /browserDownloads/);
+  assert.match(app, /revealInFolder\?\.\(entry\.path\)/);
+  assert.match(preload, /browser:download-progress/);
+  // ===== 清除浏览数据 =====
+  assert.match(main, /ipcMain\.handle\("browser:clear-data"/);
+  assert.match(main, /clearStorageData/);
+  assert.match(main, /clearCache\(\)/);
+  assert.match(app, /browserClearKinds/);
+  // ===== 打印与设备视图 =====
+  assert.match(main, /ipcMain\.handle\("browser:emulate-device"/);
+  assert.match(main, /enableDeviceEmulation/);
+  assert.match(app, /printBrowserPage/);
+  assert.match(app, /BROWSER_DEVICE_PRESETS/);
+  assert.match(app, /BROWSER_MOBILE_UA/);
+  assert.match(app, /browser-device-bar/);
+  assert.match(styles, /\.browser-password-bar/);
+  assert.match(styles, /\.browser-device-bar/);
+  assert.match(styles, /\.browser-fill-chip/);
+  assert.match(styles, /\.browser-passwords-dialog/);
+});
+
 test("image attachments render real previews before and after sending", () => {
   // 原图经 local-image:read 按原尺寸读取，会话存档不再内嵌缩略图；
   // 消息气泡与输入区 chip 复用同一组件（ImageAttachmentView / ImageAttachmentThumb）

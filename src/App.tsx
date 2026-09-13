@@ -819,14 +819,49 @@ type ToolPanelTab = {
   title: string;
   url?: string;
   loadedUrl?: string;
+  // 浏览器标签页实时状态：随 webview 导航事件同步
+  favicon?: string;
+  loading?: boolean;
+  loadError?: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  zoom?: number;
+  /** 当前站点已保存的密码条数（dom-ready 时探测，用于填充提示） */
+  fillHint?: number;
+  /** 设备模拟（手机/平板视图） */
+  device?: { name: string; width: number; height: number };
 };
+
+type BrowserDownloadRecord = {
+  id: string;
+  filename: string;
+  path: string;
+  received: number;
+  total: number;
+  state: "progressing" | "interrupted" | "completed" | "cancelled";
+  startedAt: number;
+};
+
+type BrowserPasswordEntry = { origin: string; username: string; source: string; importedAt: string };
 
 type BrowserWebviewElement = HTMLElement & {
   goBack?: () => void;
   goForward?: () => void;
   reload?: () => void;
+  stop?: () => void;
   getURL?: () => string;
+  canGoBack?: () => boolean;
+  canGoForward?: () => boolean;
+  isLoading?: () => boolean;
+  getWebContentsId?: () => number;
   executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
+  findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => Promise<unknown>;
+  stopFindInPage?: (action?: "clearSelection" | "keepSelection") => void;
+  setZoomLevel?: (level: number) => void;
+  capturePage?: () => Promise<{ toDataURL: () => string }>;
+  print?: () => void;
+  setUserAgent?: (userAgent: string) => void;
+  getUserAgent?: () => string;
 };
 
 function WorkspaceNode({ entry, depth = 0, onOpenFile, onInsertFile, forceExpand = false }: {
@@ -967,6 +1002,41 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
 }
 
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
+
+// 浏览器起始页的快捷链接（新标签页未打开网页时展示）
+const BROWSER_START_LINKS = [
+  { name: "OA", url: "https://" },
+  { name: "营商环境综合服务平台", url: "https://59.33.255.205/" },
+];
+
+// 设备工具栏预设（设备模拟）
+const BROWSER_DEVICE_PRESETS = [
+  { name: "手机", width: 390, height: 844 },
+  { name: "平板", width: 820, height: 1180 },
+];
+
+const BROWSER_MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+let browserDefaultUserAgent = "";
+
+// 往页面里填已保存的密码：密码框必填，用户名框取密码框之前最近的文本/邮箱输入
+const browserPasswordFillScript = (username: string, password: string) => `(() => {
+  const pw = document.querySelector("input[type=password]");
+  if (!pw) return "页面上没有密码输入框";
+  const scope = pw.closest("form") || document;
+  const fields = [...scope.querySelectorAll("input")];
+  const pwIndex = fields.indexOf(pw);
+  const user = [...fields.slice(0, pwIndex)].reverse().find((el) => ["text", "email", "tel", ""].includes(el.type)
+    || /username|email|account|phone|user/i.test(el.name + " " + el.id + " " + el.autocomplete));
+  const setVal = (el, value) => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    if (descriptor?.set) descriptor.set.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  if (user) setVal(user, ${JSON.stringify(username)});
+  setVal(pw, ${JSON.stringify(password)});
+  return user ? "已填充用户名和密码" : "已填充密码";
+})()`;
 
 // 可在代码标签页预览的文本文件类型(其余交给系统默认应用)
 const TEXT_PREVIEW_EXTENSIONS = new Set([
@@ -2578,6 +2648,108 @@ function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void
               )}
             </div>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 已保存的密码管理：列表（站点/用户名/来源）、按条显示明文、删除；
+// 当前页 origin 匹配的条目可直接填充到页面
+function BrowserSectionDialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => { ref.current?.showModal(); }, []);
+  return <dialog ref={ref} className="browser-section-dialog" aria-labelledby="browser-section-title" onCancel={(event) => { event.preventDefault(); onClose(); }}>
+    <header><h2 id="browser-section-title">{title}</h2><button autoFocus className="icon-button" aria-label="关闭弹窗" onClick={onClose}><X size={18} /></button></header>
+    <div className="browser-section-body">{children}</div>
+  </dialog>;
+}
+
+function BrowserPasswordsDialog({
+  activeOrigin,
+  onFill,
+  onClose,
+}: {
+  activeOrigin: string;
+  onFill: () => void;
+  onClose: () => void;
+}) {
+  const [entries, setEntries] = useState<BrowserPasswordEntry[]>([]);
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.dyworker?.listPasswords?.("").then((result) => {
+      if (!cancelled) setEntries(result?.passwords || []);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const entryKey = (entry: BrowserPasswordEntry) => `${entry.origin}\n${entry.username}`;
+  const toggleReveal = async (entry: BrowserPasswordEntry) => {
+    const key = entryKey(entry);
+    if (revealed[key]) {
+      setRevealed((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+    const result = await window.dyworker?.revealPassword?.(entry.origin, entry.username);
+    if (!result?.ok || !result.password) {
+      setError(result?.error || "无法读取密码");
+      return;
+    }
+    setError("");
+    setRevealed((current) => ({ ...current, [key]: result.password || "" }));
+  };
+  const removeEntry = async (entry: BrowserPasswordEntry) => {
+    if (!window.confirm(`确定删除 ${entry.origin} 的已保存密码吗？删除后无法恢复。`)) return;
+    const result = await window.dyworker?.deletePassword?.(entry.origin, entry.username);
+    if (!result?.ok) {
+      setError(result?.error || "删除失败");
+      return;
+    }
+    setEntries((current) => current.filter((item) => entryKey(item) !== entryKey(entry)));
+  };
+
+  return (
+    <div className="dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="skill-draft-dialog browser-passwords-dialog" role="dialog" aria-modal="true" aria-label="密码和自动填充">
+        <div className="dialog-header">
+          <h2>密码和自动填充</h2>
+          <button className="icon-button subtle" aria-label="关闭" onClick={onClose}><X size={16} /></button>
+        </div>
+        <p className="browser-passwords-hint">
+          保存的密码经系统加密存储（与导入的密码同库）。在页面提交登录表单时会询问是否保存；
+          再次打开对应站点时可通过「填充已保存的密码」一键填写。
+        </p>
+        {error && <p className="error-text">{error}</p>}
+        {entries.length ? (
+          <div className="browser-password-list">
+            {entries.map((entry) => {
+              const key = entryKey(entry);
+              const canFill = Boolean(activeOrigin) && entry.origin === activeOrigin;
+              return (
+                <div className="browser-password-row" key={key}>
+                  <div className="browser-password-copy">
+                    <strong>{entry.origin.replace(/^https?:\/\//i, "")}</strong>
+                    <span>{entry.username || "（无用户名）"} · {entry.source || "导入"}</span>
+                    {revealed[key] && <code>{revealed[key]}</code>}
+                  </div>
+                  <div className="browser-password-actions">
+                    <button onClick={() => void toggleReveal(entry)}>{revealed[key] ? "隐藏" : "显示"}</button>
+                    {canFill && <button className="primary" onClick={() => { onFill(); onClose(); }}>填充到当前页</button>}
+                    <button className="danger" onClick={() => void removeEntry(entry)}>删除</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="browser-passwords-empty">还没有保存的密码。在内置浏览器里登录网站时选择「保存」即可。</p>
         )}
       </div>
     </div>
@@ -5744,6 +5916,10 @@ export function App() {
   const [toolPanelMenuOpen, setToolPanelMenuOpen] = useState(false);
   const [toolPanelAddMenuOpen, setToolPanelAddMenuOpen] = useState(false);
   const [browserMoreOpen, setBrowserMoreOpen] = useState(false);
+  const [browserSection, setBrowserSection] = useState<"history" | "downloads" | "clear" | null>(null);
+  const [browserSuggestionsOpen, setBrowserSuggestionsOpen] = useState(false);
+  const [browserSuggestionIndex, setBrowserSuggestionIndex] = useState(-1);
+  const [browserClearing, setBrowserClearing] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
   const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
@@ -5854,7 +6030,21 @@ export function App() {
   const composerMirrorRef = useRef<HTMLDivElement>(null);
   // @token → 实际选择的文件路径：同名文件时以用户候选菜单里点选的那个为准
   const mentionTokenPathsRef = useRef<Map<string, string>>(new Map());
-  const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
+  // 每个浏览器标签页一个常驻 webview：切换标签不销毁页面（对照 Codex 浏览器）
+  const browserWebviewsRef = useRef<Map<string, BrowserWebviewElement>>(new Map());
+  // 地址栏编辑草稿：输入过程中不把中间态写进标签页（导航同步会覆盖回来）
+  const [browserUrlDraft, setBrowserUrlDraft] = useState<{ tabId: string; value: string } | null>(null);
+  // 页内查找栏：文本 + 命中计数（found-in-page 事件回填）
+  const [browserFind, setBrowserFind] = useState<{ tabId: string; text: string; matches: number; active: number } | null>(null);
+  // 本会话导航历史：更多菜单里可回跳
+  const [browserSessionHistory, setBrowserSessionHistory] = useState<Array<{ url: string; title: string; at: number }>>([]);
+  // 内置浏览器下载记录（进度广播回填）
+  const [browserDownloads, setBrowserDownloads] = useState<BrowserDownloadRecord[]>([]);
+  // 页面提交了登录表单后询问是否保存密码（密码只暂存在内存里，用户确认才落盘）
+  const [browserPasswordPrompt, setBrowserPasswordPrompt] = useState<{ tabId: string; origin: string; username: string; password: string } | null>(null);
+  // 密码和自动填充管理对话框
+  const [browserPasswordsOpen, setBrowserPasswordsOpen] = useState(false);
+  const [browserClearKinds, setBrowserClearKinds] = useState({ cookies: true, cache: true, siteData: false });
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
   const toolPanelTabSequenceRef = useRef(1);
   const composingRef = useRef(false);
@@ -6116,6 +6306,7 @@ export function App() {
                 url,
                 loadedUrl: url,
                 title: url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
+                loadError: "",
               }
             : tab);
         }
@@ -7532,16 +7723,45 @@ export function App() {
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
   const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
 
-  // 导入的 localStorage 注入：内置浏览器首次访问对应站点时，把暂存的键值写入页面 localStorage 并刷新一次。
-  // SPA 站点（如 kimi）的登录令牌在 localStorage 里，刷新后页面带着令牌重新启动即恢复登录。
-  useEffect(() => {
-    const webview = browserWebviewRef.current;
-    if (!webview || activeToolPanelKind !== "browser" || !activeToolPanelTab?.loadedUrl) return;
-    let disposed = false;
-    const handledUrls = new Set<string>(); // 每个 URL 只处理一次，注入后刷新不会死循环
-    const onDomReady = () => {
+  // ===== 内置浏览器：webview 生命周期 =====
+  // 每个浏览器标签页常驻一个 webview，切换标签不销毁页面；导航/标题/图标/加载状态
+  // 通过 webview 事件同步到标签页状态（对照 Codex 浏览器）。当前显示的 webview 上报给
+  // 主进程，让助手的 browser__* 工具只作用于用户可见的页面。
+
+  // 每次渲染刷新镜像：ref 回调与 webview 事件闭包里读最新值
+  const activeToolPanelTabIdRef = useRef("");
+  activeToolPanelTabIdRef.current = activeToolPanelTabId;
+  const toolPanelTabsRef = useRef<ToolPanelTab[]>([]);
+  toolPanelTabsRef.current = toolPanelTabs;
+
+  const patchBrowserTab = (tabId: string, patch: Partial<ToolPanelTab>) => {
+    setToolPanelTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, ...patch } : tab));
+  };
+
+  const readWebviewNavState = (webview: BrowserWebviewElement) => ({
+    url: webview.getURL?.() || "",
+    canGoBack: webview.canGoBack?.() ?? false,
+    canGoForward: webview.canGoForward?.() ?? false,
+  });
+
+  // 主进程路由 agent 浏览器工具的目标：当前激活标签页的 webview
+  const reportActiveBrowserContents = () => {
+    const webview = browserWebviewsRef.current.get(activeToolPanelTabIdRef.current);
+    try {
+      const id = webview?.getWebContentsId?.();
+      if (id) window.dyworker?.setActiveBrowserContents?.(id);
+    } catch {
+      // webview 尚未 attach：did-attach 后会再报一次
+    }
+  };
+
+  // 首次访问站点时注入暂存的 localStorage（每个 URL 只注入一次，注入后刷新生效）；
+  // 同时探测该站点是否有已保存的密码，用于显示填充提示
+  const prepareGuestPage = (webview: BrowserWebviewElement, tabId: string) => {
+    const handledUrls = new Set<string>();
+    webview.addEventListener("dom-ready", () => {
       const url = webview.getURL?.() || "";
-      if (disposed || !/^https?:\/\//i.test(url) || handledUrls.has(url)) return;
+      if (!/^https?:\/\//i.test(url) || handledUrls.has(url)) return;
       handledUrls.add(url);
       let origin = "";
       try {
@@ -7552,23 +7772,107 @@ export function App() {
       void (async () => {
         try {
           const entries = await window.dyworker?.getImportedLocalStorage?.(origin);
-          if (!entries || disposed) return;
-          await webview.executeJavaScript?.(
-            `(() => { const data = ${JSON.stringify(entries)}; for (const [k, v] of Object.entries(data)) { try { localStorage.setItem(k, v); } catch { /* 单键失败不阻塞其余 */ } } })()`,
-          );
-          await window.dyworker?.markImportedLocalStorageDone?.(origin);
-          if (!disposed) webview.reload?.();
+          if (entries) {
+            await webview.executeJavaScript?.(
+              `(() => { const data = ${JSON.stringify(entries)}; for (const [k, v] of Object.entries(data)) { try { localStorage.setItem(k, v); } catch { /* 单键失败不阻塞其余 */ } } })()`,
+            );
+            await window.dyworker?.markImportedLocalStorageDone?.(origin);
+            webview.reload?.();
+          }
         } catch {
           // 注入失败：保留暂存数据，下次访问该站点时重试
         }
+        try {
+          const stored = await window.dyworker?.listPasswords?.(origin);
+          patchBrowserTab(tabId, { fillHint: stored?.passwords?.length || undefined });
+        } catch {
+          // 探测失败不影响页面
+        }
       })();
+    });
+  };
+
+  // 绑定单个 webview 的事件（ref 回调里调用；监听器随元素销毁，无需手动解绑）
+  const bindBrowserWebview = (tabId: string, webview: BrowserWebviewElement) => {
+    const navSync = () => patchBrowserTab(tabId, readWebviewNavState(webview));
+    const rememberInHistory = () => {
+      const url = webview.getURL?.() || "";
+      if (!/^https?:\/\//i.test(url)) return;
+      setBrowserSessionHistory((current) => {
+        if (current[0]?.url === url) return current;
+        const host = url.replace(/^https?:\/\//i, "").split("/")[0] || url;
+        return [{ url, title: host, at: Date.now() }, ...current].slice(0, 100);
+      });
     };
-    webview.addEventListener("dom-ready", onDomReady);
-    return () => {
-      disposed = true;
-      webview.removeEventListener("dom-ready", onDomReady);
-    };
-  }, [activeToolPanelTab?.id, activeToolPanelTab?.loadedUrl, activeToolPanelKind]);
+    webview.addEventListener("did-start-loading", () => patchBrowserTab(tabId, { loading: true, loadError: "" }));
+    webview.addEventListener("did-stop-loading", () => patchBrowserTab(tabId, { loading: false, ...readWebviewNavState(webview) }));
+    webview.addEventListener("did-navigate", () => { navSync(); rememberInHistory(); });
+    webview.addEventListener("did-navigate-in-page", () => { navSync(); rememberInHistory(); });
+    webview.addEventListener("page-title-updated", ((event: Event & { title: string }) => {
+      const title = event.title || "";
+      if (!title) return;
+      patchBrowserTab(tabId, { title });
+      const url = webview.getURL?.() || "";
+      setBrowserSessionHistory((current) => current.map((entry, index) => index === 0 && entry.url === url ? { ...entry, title } : entry));
+    }) as EventListener);
+    webview.addEventListener("page-favicon-updated", ((event: Event & { favicons: string[] }) => {
+      patchBrowserTab(tabId, { favicon: event.favicons?.[event.favicons.length - 1] || "" });
+    }) as EventListener);
+    webview.addEventListener("did-fail-load", ((event: Event & { errorCode: number; errorDescription: string; isMainFrame: boolean }) => {
+      // ERR_ABORTED 是导航被打断（如重定向、手动停止），不算失败；子框架失败不影响整页
+      if (event.errorCode === -3 || !event.isMainFrame) return;
+      patchBrowserTab(tabId, {
+        loading: false,
+        loadError: `网页加载失败（${event.errorDescription || event.errorCode}）`,
+      });
+    }) as EventListener);
+    webview.addEventListener("found-in-page", ((event: Event & { matches: number; activeMatchOrdinal: number }) => {
+      setBrowserFind((current) => current && current.tabId === tabId
+        ? { ...current, matches: event.matches ?? 0, active: event.activeMatchOrdinal ?? 0 }
+        : current);
+    }) as EventListener);
+    webview.addEventListener("did-attach", () => {
+      const zoom = toolPanelTabsRef.current.find((tab) => tab.id === tabId)?.zoom ?? 0;
+      if (zoom) webview.setZoomLevel?.(zoom);
+      if (tabId === activeToolPanelTabIdRef.current) reportActiveBrowserContents();
+    });
+    // 客页面报告的登录表单提交（webview-preload.cjs 经 sendToHost 发来）：弹出保存密码提示
+    webview.addEventListener("ipc-message", ((event: Event & { channel: string; args: unknown[] }) => {
+      if (event.channel !== "dyworker:password-submit") return;
+      const payload = event.args?.[0] as { origin?: string; username?: string; password?: string } | undefined;
+      if (!payload?.origin || !/^https?:\/\//i.test(payload.origin) || !payload.password) return;
+      setBrowserPasswordPrompt({ tabId, origin: payload.origin, username: payload.username || "", password: payload.password });
+    }) as EventListener);
+    prepareGuestPage(webview, tabId);
+  };
+
+  // ref 回调按 tabId 缓存稳定身份，避免每次渲染触发挥挂/卸载
+  const browserWebviewRefCallbacks = useRef<Map<string, (node: BrowserWebviewElement | null) => void>>(new Map());
+  const browserWebviewRefFor = (tabId: string) => {
+    let callback = browserWebviewRefCallbacks.current.get(tabId);
+    if (!callback) {
+      callback = (node: BrowserWebviewElement | null) => {
+        const previous = browserWebviewsRef.current.get(tabId);
+        if (previous === node) return;
+        if (node) {
+          browserWebviewsRef.current.set(tabId, node);
+          bindBrowserWebview(tabId, node);
+        } else {
+          browserWebviewsRef.current.delete(tabId);
+          if (activeToolPanelTabIdRef.current === tabId) window.dyworker?.setActiveBrowserContents?.(0);
+        }
+      };
+      browserWebviewRefCallbacks.current.set(tabId, callback);
+    }
+    return callback;
+  };
+
+  // 激活标签页或其 webview 变化后上报主进程
+  useEffect(() => {
+    if (activeToolPanelKind !== "browser") return;
+    reportActiveBrowserContents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeToolPanelTabId, activeToolPanelKind, toolPanelTabs.map((tab) => tab.kind === "browser" ? `${tab.id}:${tab.loadedUrl || ""}` : tab.id).join("|")]);
 
   // 菜单页可见性派生：没有任何标签页时始终显示菜单页（即使全局 closeAll 把菜单状态关掉，
   // 比如拖动面板边框触发的外部点击关闭），避免出现空面板
@@ -7648,11 +7952,24 @@ export function App() {
     }
   };
 
-  const openBrowserUrl = async () => {
+  const browserSuggestionQuery = (browserUrlDraft && browserUrlDraft.tabId === activeToolPanelTab?.id ? browserUrlDraft.value : activeToolPanelTab?.url || "").trim().toLowerCase();
+  const browserSuggestions = useMemo(() => {
+    const seen = new Set<string>();
+    return [...browserSessionHistory, ...importedHistory].filter((entry) => {
+      if (seen.has(entry.url)) return false;
+      seen.add(entry.url);
+      return !browserSuggestionQuery || `${entry.title} ${entry.url}`.toLowerCase().includes(browserSuggestionQuery);
+    }).slice(0, 8);
+  }, [browserSessionHistory, importedHistory, browserSuggestionQuery]);
+  useEffect(() => { setBrowserSuggestionsOpen(false); setBrowserSuggestionIndex(-1); }, [activeToolPanelTabId]);
+
+  const openBrowserUrl = async (rawOverride?: string) => {
+    setBrowserSuggestionsOpen(false);
     const tab = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab : undefined;
-    const raw = activeBrowserUrl.trim();
+    const draft = tab && browserUrlDraft?.tabId === tab.id ? browserUrlDraft.value : "";
+    const raw = (rawOverride ?? draft ?? activeBrowserUrl).trim();
     if (!tab) {
-      openToolPanelTab("browser");
+      openToolPanelTab("browser", true, rawOverride);
       return;
     }
     if (!raw) {
@@ -7660,7 +7977,8 @@ export function App() {
       return;
     }
     const url = normalizeBrowserInput(raw);
-    updateToolPanelTab(tab.id, { url });
+    setBrowserUrlDraft(null);
+    updateToolPanelTab(tab.id, { url, loadError: "" });
     setError("");
     setBrowserOpening(true);
     try {
@@ -7674,17 +7992,174 @@ export function App() {
         return;
       }
       const loadedUrl = result.url || url;
+      const webview = browserWebviewsRef.current.get(tab.id);
+      // 地址未变化时 src 属性不变、不会触发导航，手动刷新一次
+      if (webview?.getURL?.() === loadedUrl) webview.reload?.();
       updateToolPanelTab(tab.id, {
         url: loadedUrl,
         loadedUrl,
         title: loadedUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
       });
-      setNotice("已在当前浏览器标签页打开网页");
     } catch (browserError) {
       setError(`网页打开失败：${browserError instanceof Error ? browserError.message : String(browserError)}`);
     } finally {
       setBrowserOpening(false);
     }
+  };
+
+  const activeBrowserWebview = () => browserWebviewsRef.current.get(activeToolPanelTabId);
+
+  // ===== 页内查找 =====
+  const openBrowserFind = () => {
+    if (activeToolPanelKind !== "browser" || !activeToolPanelTab?.loadedUrl) return;
+    setBrowserFind({ tabId: activeToolPanelTabId, text: browserFind?.tabId === activeToolPanelTabId ? browserFind.text : "", matches: 0, active: 0 });
+  };
+  const runBrowserFind = (forward: boolean, findNext: boolean) => {
+    const webview = activeBrowserWebview();
+    const text = browserFind?.text ?? "";
+    if (!webview?.findInPage || !text) return;
+    void webview.findInPage(text, { forward, findNext });
+  };
+  const closeBrowserFind = () => {
+    if (browserFind?.tabId) browserWebviewsRef.current.get(browserFind.tabId)?.stopFindInPage?.("clearSelection");
+    setBrowserFind(null);
+  };
+
+  // ===== 缩放（1.2 的幂次，与 Chromium 缩放步进一致）=====
+  const browserZoomPercent = (tab: ToolPanelTab | undefined) => Math.round(100 * 1.2 ** (tab?.zoom ?? 0));
+  const changeBrowserZoom = (delta: number) => {
+    const tab = activeToolPanelTab;
+    if (!tab || tab.kind !== "browser") return;
+    const level = Math.min(8, Math.max(-5, (tab.zoom ?? 0) + delta));
+    updateToolPanelTab(tab.id, { zoom: level });
+    activeBrowserWebview()?.setZoomLevel?.(level);
+  };
+  const resetBrowserZoom = () => {
+    const tab = activeToolPanelTab;
+    if (!tab || tab.kind !== "browser") return;
+    updateToolPanelTab(tab.id, { zoom: 0 });
+    activeBrowserWebview()?.setZoomLevel?.(0);
+  };
+
+  // ===== 截图到剪贴板 =====
+  const captureBrowserScreenshot = async () => {
+    const webview = activeBrowserWebview();
+    if (!webview?.capturePage) {
+      setNotice("当前页面还不支持截取");
+      return;
+    }
+    try {
+      const image = await webview.capturePage();
+      await copyImageToClipboard({ ok: true, dataUrl: image.toDataURL() });
+      setNotice("已截取页面并复制到剪贴板");
+    } catch (captureError) {
+      setNotice(`截图失败：${captureError instanceof Error ? captureError.message : String(captureError)}`);
+    }
+  };
+
+  // ===== 在系统默认浏览器打开 =====
+  const openBrowserExternal = async () => {
+    const url = activeToolPanelTab?.url;
+    if (!url || !window.dyworker?.openBrowserExternal) {
+      if (url) setNotice("当前预览环境无法调用系统浏览器");
+      return;
+    }
+    const result = await window.dyworker.openBrowserExternal(url);
+    if (!result?.ok) setNotice(result?.error || "系统浏览器打开失败");
+  };
+
+  const clearBrowserSessionHistory = () => {
+    if (window.confirm("确定清空本次浏览历史吗？清空后无法恢复，已导入的历史记录不受影响。")) setBrowserSessionHistory([]);
+  };
+
+  // ===== 下载进度 =====
+  useEffect(() => window.dyworker?.onBrowserDownloadProgress?.((record) => {
+    setBrowserDownloads((current) => [record, ...current.filter((entry) => entry.id !== record.id)].slice(0, 20));
+  }), []);
+  const browserActiveDownloadCount = browserDownloads.filter((entry) => entry.state === "progressing" || entry.state === "interrupted").length;
+
+  // ===== 密码：保存提示 / 填充 =====
+  const dismissBrowserPasswordPrompt = () => setBrowserPasswordPrompt(null);
+  const saveBrowserPasswordPrompt = async () => {
+    const prompt = browserPasswordPrompt;
+    if (!prompt) return;
+    dismissBrowserPasswordPrompt();
+    if (!window.dyworker?.savePassword) {
+      setNotice("当前预览环境无法保存密码");
+      return;
+    }
+    const result = await window.dyworker.savePassword(prompt.origin, prompt.username, prompt.password);
+    setNotice(result.ok ? "密码已保存，下次登录时可一键填充" : (result.error || "保存失败"));
+  };
+  const fillSavedPassword = async () => {
+    const tab = activeToolPanelTab;
+    const webview = activeBrowserWebview();
+    if (!tab || !webview?.executeJavaScript) return;
+    let origin = "";
+    try {
+      origin = new URL(webview.getURL?.() || "").origin;
+    } catch {
+      return;
+    }
+    const stored = await window.dyworker?.listPasswords?.(origin);
+    const entry = stored?.passwords?.[0];
+    if (!entry) return;
+    const revealed = await window.dyworker?.revealPassword?.(entry.origin, entry.username);
+    if (!revealed?.ok || !revealed.password) {
+      setNotice(revealed?.error || "无法读取已保存的密码");
+      return;
+    }
+    try {
+      const result = await webview.executeJavaScript(browserPasswordFillScript(entry.username, revealed.password), true);
+      setNotice(typeof result === "string" ? result : "已填充密码");
+    } catch (fillError) {
+      setNotice(`填充失败：${fillError instanceof Error ? fillError.message : String(fillError)}`);
+    }
+  };
+
+  // ===== 打印 =====
+  const printBrowserPage = () => activeBrowserWebview()?.print?.();
+
+  // ===== 设备视图（手机/平板模拟）=====
+  const applyBrowserDevice = async (tab: ToolPanelTab, device: { name: string; width: number; height: number } | null) => {
+    const webview = browserWebviewsRef.current.get(tab.id);
+    updateToolPanelTab(tab.id, { device: device ? { ...device } : undefined });
+    if (!webview) return;
+    try {
+      if (!browserDefaultUserAgent && webview.getUserAgent) browserDefaultUserAgent = webview.getUserAgent();
+      if (device && webview.setUserAgent) webview.setUserAgent(BROWSER_MOBILE_UA);
+      else if (!device && browserDefaultUserAgent && webview.setUserAgent) webview.setUserAgent(browserDefaultUserAgent);
+      await window.dyworker?.emulateDevice?.(webview.getWebContentsId?.() || 0, device ? device.width : 0, device ? device.height : 0);
+    } catch {
+      // 模拟失败时仅保留容器尺寸，页面照常显示
+    }
+  };
+  const rotateBrowserDevice = () => {
+    const tab = activeToolPanelTab;
+    if (!tab?.device) return;
+    void applyBrowserDevice(tab, { ...tab.device, width: tab.device.height, height: tab.device.width });
+  };
+
+  // ===== 清除浏览数据 =====
+  const clearBrowserData = async () => {
+    if (browserClearing || !Object.values(browserClearKinds).some(Boolean)) return;
+    const selected = [browserClearKinds.cookies && "Cookie 和登录状态", browserClearKinds.cache && "缓存的图片和文件", browserClearKinds.siteData && "站点数据和网站设置"].filter(Boolean).join("、");
+    if (!window.confirm(`确定清除${selected}吗？此操作无法撤销。${browserClearKinds.cookies || browserClearKinds.siteData ? "部分网站可能需要重新登录。" : ""}`)) return;
+    if (!window.dyworker?.clearBrowserData) {
+      setNotice("当前预览环境无法清除浏览数据");
+      return;
+    }
+    setBrowserClearing(true);
+    try {
+    const result = await window.dyworker.clearBrowserData(browserClearKinds);
+    if (!result.ok) {
+      setNotice(result.error || "清除失败");
+      return;
+    }
+    for (const webview of browserWebviewsRef.current.values()) webview.reload?.();
+    setNotice("已清除所选的浏览数据");
+    setBrowserSection(null);
+    } catch { setNotice("清除失败，请重试"); } finally { setBrowserClearing(false); }
   };
 
   const finishRecording = async (recorder: MediaRecorder) => {
@@ -10317,7 +10792,13 @@ export function App() {
                 onClick={() => focusToolPanelTab(tab.id)}
                 title={tab.title}
               >
-                {tab.kind === "browser" ? <Globe size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
+                {tab.kind === "browser"
+                  ? tab.loading
+                    ? <span className="browser-tab-spinner" aria-hidden="true" />
+                    : tab.favicon
+                      ? <img className="browser-tab-favicon" src={tab.favicon} alt="" aria-hidden="true" />
+                      : <Globe size={16} />
+                  : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
                 <span>{tab.title}</span>
               </button>
               <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
@@ -10353,33 +10834,83 @@ export function App() {
           {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "browser" && (
             <section className="browser-panel">
               <div className="browser-toolbar">
-                <button className="browser-toolbar-button" aria-label="后退" onClick={() => browserWebviewRef.current?.goBack?.()} disabled={!activeToolPanelTab?.loadedUrl}>
+                <button
+                  className="browser-toolbar-button"
+                  aria-label="后退"
+                  title="后退"
+                  onClick={() => activeBrowserWebview()?.goBack?.()}
+                  disabled={!activeToolPanelTab.canGoBack}
+                >
                   <ChevronRight size={17} className="browser-back-icon" />
                 </button>
-                <button className="browser-toolbar-button" aria-label="前进" onClick={() => browserWebviewRef.current?.goForward?.()} disabled={!activeToolPanelTab?.loadedUrl}>
+                <button
+                  className="browser-toolbar-button"
+                  aria-label="前进"
+                  title="前进"
+                  onClick={() => activeBrowserWebview()?.goForward?.()}
+                  disabled={!activeToolPanelTab.canGoForward}
+                >
                   <ChevronRight size={17} />
                 </button>
-                <button className="browser-toolbar-button" aria-label="刷新" onClick={() => browserWebviewRef.current?.reload?.()} disabled={!activeToolPanelTab?.loadedUrl}>
-                  <RefreshCw size={16} />
-                </button>
+                {activeToolPanelTab.loading ? (
+                  <button
+                    className="browser-toolbar-button"
+                    aria-label="停止加载"
+                    title="停止加载"
+                    onClick={() => activeBrowserWebview()?.stop?.()}
+                  >
+                    <X size={16} />
+                  </button>
+                ) : (
+                  <button
+                    className="browser-toolbar-button"
+                    aria-label="刷新"
+                    title="刷新"
+                    onClick={() => activeBrowserWebview()?.reload?.()}
+                    disabled={!activeToolPanelTab.loadedUrl}
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                )}
                 <div className="browser-url-wrap">
+                  {activeToolPanelTab.favicon && activeToolPanelTab.loadedUrl && (
+                    <img className="browser-url-favicon" src={activeToolPanelTab.favicon} alt="" aria-hidden="true" />
+                  )}
                   <input
                     className="browser-url-input"
-                    placeholder="输入 URL"
+                    placeholder="输入 URL 或搜索词"
                     aria-label="网页地址"
-                    list="browser-history-suggestions"
-                    value={activeBrowserUrl}
-                    onChange={(event) => activeToolPanelTab && updateToolPanelTab(activeToolPanelTab.id, { url: event.target.value })}
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={browserSuggestionsOpen && browserSuggestions.length > 0}
+                    aria-controls="browser-history-suggestions"
+                    aria-activedescendant={browserSuggestionsOpen && browserSuggestions[browserSuggestionIndex] ? `browser-suggestion-${browserSuggestionIndex}` : undefined}
+                    autoComplete="off"
+                    value={browserUrlDraft?.tabId === activeToolPanelTab.id ? browserUrlDraft.value : activeToolPanelTab.url || ""}
+                    onChange={(event) => { setBrowserUrlDraft({ tabId: activeToolPanelTab.id, value: event.target.value }); setBrowserSuggestionsOpen(true); setBrowserSuggestionIndex(-1); }}
+                    onFocus={(event) => { event.currentTarget.select(); setBrowserSuggestionsOpen(true); }}
+                    onBlur={() => setBrowserSuggestionsOpen(false)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") void openBrowserUrl();
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault(); setBrowserSuggestionsOpen(true);
+                        setBrowserSuggestionIndex((current) => browserSuggestions.length ? (current + (event.key === "ArrowDown" ? 1 : -1) + browserSuggestions.length) % browserSuggestions.length : -1);
+                      }
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void openBrowserUrl(browserSuggestionsOpen && browserSuggestionIndex >= 0 ? browserSuggestions[browserSuggestionIndex]?.url : undefined); }
+                      if (event.key === "Escape") {
+                        setBrowserUrlDraft(null);
+                        event.currentTarget.blur();
+                      }
                     }}
                     disabled={browserOpening}
                   />
-                  <datalist id="browser-history-suggestions">
-                    {importedHistory.slice(0, 500).map((entry) => (
-                      <option value={entry.url} key={entry.url}>{entry.title || entry.url}</option>
-                    ))}
-                  </datalist>
+                  {browserSuggestionsOpen && browserSuggestions.length > 0 && (
+                    <div id="browser-history-suggestions" className="browser-suggestions" role="listbox" aria-label="地址建议">
+                      {browserSuggestions.map((entry, index) => <button type="button" role="option" id={`browser-suggestion-${index}`} aria-selected={index === browserSuggestionIndex} key={entry.url}
+                        onMouseDown={(event) => event.preventDefault()} onClick={() => void openBrowserUrl(entry.url)} title={entry.url}>
+                        <History size={15} /><span><strong>{entry.title || entry.url}</strong><small>{entry.url}</small></span>
+                      </button>)}
+                    </div>
+                  )}
                   <button
                     className="browser-url-submit"
                     aria-label="打开网页"
@@ -10402,43 +10933,149 @@ export function App() {
                   </button>
                   {browserMoreOpen && (
                     <div className="session-menu browser-more-menu" role="menu">
-                      {/* <button role="menuitem" disabled title="暂未实现">在页面中查找</button>
-                      <button role="menuitem" disabled title="暂未实现">打印</button>
-                      <div className="browser-more-sep" />
-                      <div className="browser-more-zoom" aria-label="缩放（暂未实现）">
-                        <span>缩放</span>
+                      <div className="browser-more-zoom" aria-label="缩放">
+                        <span className="browser-more-label">缩放</span>
                         <span className="browser-more-zoom-controls">
-                          <button disabled title="暂未实现">−</button>
-                          <span>100%</span>
-                          <button disabled title="暂未实现">＋</button>
+                          <button role="menuitem" aria-label="缩小" title="缩小" onClick={() => changeBrowserZoom(-1)}>−</button>
+                          <span>{browserZoomPercent(activeToolPanelTab)}%</span>
+                          <button role="menuitem" aria-label="放大" title="放大" onClick={() => changeBrowserZoom(1)}>＋</button>
+                          <button role="menuitem" aria-label="重置缩放" title="重置缩放" disabled={(activeToolPanelTab.zoom ?? 0) === 0} onClick={resetBrowserZoom}>重置</button>
                         </span>
                       </div>
-                      <button role="menuitem" disabled title="暂未实现">显示设备工具栏</button>
-                      <button role="menuitem" disabled title="暂未实现">截取屏幕截图</button>
-                      <div className="browser-more-sep" /> */}
-                      <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setImportDialogOpen(true); }}>导入 Cookie 和密码…</button>
-                      {/* <button role="menuitem" disabled title="暂未实现">密码和自动填充</button>
-                      <button role="menuitem" disabled title="暂未实现">下载</button>
-                      <button role="menuitem" disabled title="暂未实现">历史记录</button>
-                      <button role="menuitem" disabled title="暂未实现">清除浏览数据</button>
+                      <button role="menuitem" disabled={!activeToolPanelTab.loadedUrl} onClick={() => { setBrowserMoreOpen(false); openBrowserFind(); }}>在页面中查找…</button>
+                      <button role="menuitem" disabled={!activeToolPanelTab.loadedUrl} onClick={() => { setBrowserMoreOpen(false); printBrowserPage(); }}>打印…</button>
+                      <button role="menuitem" disabled={!activeToolPanelTab.loadedUrl} onClick={() => { setBrowserMoreOpen(false); void captureBrowserScreenshot(); }}>截取屏幕截图</button>
+                      <button role="menuitem" disabled={!activeToolPanelTab.url} onClick={() => { setBrowserMoreOpen(false); void openBrowserExternal(); }}>在系统浏览器打开</button>
                       <div className="browser-more-sep" />
-                      <button role="menuitem" disabled title="暂未实现">浏览器设置</button> */}
+                      <div className="browser-more-zoom" aria-label="设备工具栏">
+                        <span className="browser-more-label">设备视图</span>
+                        <span className="browser-more-zoom-controls">
+                          {BROWSER_DEVICE_PRESETS.map((preset) => (
+                            <button
+                              key={preset.name}
+                              role="menuitem"
+                              className={activeToolPanelTab.device?.name === preset.name ? "active" : ""}
+                              title={`${preset.name}视图（${preset.width}×${preset.height}）`}
+                              onClick={() => {
+                                setBrowserMoreOpen(false);
+                                void applyBrowserDevice(activeToolPanelTab, activeToolPanelTab.device?.name === preset.name ? null : preset);
+                              }}
+                            >{preset.name}</button>
+                          ))}
+                        </span>
+                      </div>
+                      <div className="browser-more-sep" />
+                      {([["history", "历史记录"], ["downloads", "下载记录"], ["clear", "清除浏览数据"]] as const).map(([section, label]) => (
+                        <button role="menuitem" key={section} onClick={() => { setBrowserMoreOpen(false); setBrowserSection(section); }}>
+                          <span>{label}</span><ChevronRight size={14} />
+                        </button>
+                      ))}
+                      <div className="browser-more-sep" />
+                      <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setBrowserPasswordsOpen(true); }}>密码和自动填充…</button>
+                      <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setImportDialogOpen(true); }}>导入 Cookie 和密码…</button>
                     </div>
                   )}
                 </div>
               </div>
+              {browserFind && browserFind.tabId === activeToolPanelTab.id && (
+                <div className="browser-find-bar">
+                  <Search size={13} />
+                  <input
+                    autoFocus
+                    className="browser-find-input"
+                    placeholder="在页面中查找"
+                    aria-label="在页面中查找"
+                    value={browserFind.text}
+                    onChange={(event) => setBrowserFind({ ...browserFind, text: event.target.value, matches: 0, active: 0 })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        runBrowserFind(!event.shiftKey, true);
+                      }
+                      if (event.key === "Escape") closeBrowserFind();
+                    }}
+                  />
+                  <span className="browser-find-count" aria-live="polite">
+                    {browserFind.text ? (browserFind.matches ? `${browserFind.active}/${browserFind.matches}` : "无结果") : ""}
+                  </span>
+                  <button aria-label="上一个" title="上一个（Shift+Enter）" onClick={() => runBrowserFind(false, true)}><ChevronRight size={14} className="browser-back-icon" /></button>
+                  <button aria-label="下一个" title="下一个（Enter）" onClick={() => runBrowserFind(true, true)}><ChevronRight size={14} /></button>
+                  <button aria-label="关闭查找" title="关闭（Esc）" onClick={closeBrowserFind}><X size={14} /></button>
+                </div>
+              )}
+              {activeToolPanelTab.device && (
+                <div className="browser-device-bar">
+                  <Monitor size={13} />
+                  <span>{activeToolPanelTab.device.name}视图 · {activeToolPanelTab.device.width}×{activeToolPanelTab.device.height}</span>
+                  <button onClick={rotateBrowserDevice} title="横竖屏切换">旋转</button>
+                  <button onClick={() => void applyBrowserDevice(activeToolPanelTab, null)} title="退出设备视图">退出</button>
+                </div>
+              )}
+              {activeToolPanelTab.loading && <div className="browser-progress" aria-hidden="true" />}
+              {browserPasswordPrompt && browserPasswordPrompt.tabId === activeToolPanelTab.id && (
+                <div className="browser-password-bar">
+                  <KeyRound size={14} />
+                  <span className="browser-password-bar-text">
+                    保存 <strong>{browserPasswordPrompt.origin.replace(/^https?:\/\//i, "")}</strong> 的密码{browserPasswordPrompt.username ? `（${browserPasswordPrompt.username}）` : ""}？
+                  </span>
+                  <button className="primary" onClick={() => void saveBrowserPasswordPrompt()}>保存</button>
+                  <button onClick={dismissBrowserPasswordPrompt}>不保存</button>
+                </div>
+              )}
               <div className="browser-content">
-                {activeToolPanelTab?.loadedUrl ? (
-                  createElement("webview", {
-                    key: activeToolPanelTab.id,
-                    ref: (node: BrowserWebviewElement | null) => { browserWebviewRef.current = node; },
-                    className: "browser-webview",
-                    src: activeToolPanelTab.loadedUrl,
-                    partition: "persist:dyworker-browser",
-                    title: activeToolPanelTab.title,
-                    allowpopups: false,
-                  })
-                ) : (
+                {activeToolPanelTab.fillHint && !activeToolPanelTab.loading && activeToolPanelTab.loadedUrl && (
+                  <button className="browser-fill-chip" onClick={() => void fillSavedPassword()} title="自动填写此站点已保存的用户名和密码">
+                    <KeyRound size={12} />
+                    填充已保存的密码（{activeToolPanelTab.fillHint}）
+                  </button>
+                )}
+                {toolPanelTabs.filter((tab) => tab.kind === "browser").map((tab) => {
+                  const isActive = tab.id === activeToolPanelTabId;
+                  if (!tab.loadedUrl) {
+                    // 未打开过网页的标签页显示起始页；非激活的空标签页无需渲染
+                    return isActive ? (
+                      <div className="browser-start-page" key={tab.id}>
+                        <Globe size={40} />
+                        <strong>开始浏览</strong>
+                        <div className="browser-start-links">
+                          {BROWSER_START_LINKS.map((link) => (
+                            <button key={link.url} onClick={() => void openBrowserUrl(link.url)}>{link.name}</button>
+                          ))}
+                        </div>
+                        <span>在上方地址栏输入网址，或让助手用浏览器工具打开页面</span>
+                      </div>
+                    ) : null;
+                  }
+                  return (
+                    <div
+                      key={tab.id}
+                      className={`browser-tab-page${isActive ? " active" : ""}${tab.device ? " emulated" : ""}`}
+                      aria-hidden={!isActive}
+                      style={tab.device ? { "--device-width": `${tab.device.width}px`, "--device-height": `${tab.device.height}px` } as CSSProperties : undefined}
+                    >
+                      {createElement("webview", {
+                        key: tab.id,
+                        ref: browserWebviewRefFor(tab.id),
+                        className: "browser-webview",
+                        src: tab.loadedUrl,
+                        partition: "persist:dyworker-browser",
+                        title: tab.title,
+                        allowpopups: false,
+                      })}
+                      {isActive && tab.loadError && (
+                        <div className="browser-error-state">
+                          <AlertTriangle size={34} />
+                          <strong>{tab.loadError}</strong>
+                          <span>请检查网址是否正确，或稍后重试</span>
+                          <div className="browser-error-actions">
+                            <button onClick={() => { patchBrowserTab(tab.id, { loadError: "" }); activeBrowserWebview()?.reload?.(); }}>重新加载</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!activeToolPanelTab.loadedUrl && !toolPanelTabs.some((tab) => tab.kind === "browser" && tab.id === activeToolPanelTabId) && (
                   <div className="browser-empty-state">
                     <Globe size={46} />
                     <strong>开始浏览</strong>
@@ -10511,6 +11148,84 @@ export function App() {
         </div>
       </aside>
 
+      {browserSection && (
+        <BrowserSectionDialog title={{ history: "历史记录", downloads: "下载记录", clear: "清除浏览数据" }[browserSection]} onClose={() => { if (!browserClearing) setBrowserSection(null); }}>
+{browserSection === "downloads" && (<div className="browser-more-downloads" role="group" aria-label="下载">
+                        <div className="browser-more-history-head">
+                          <span className="browser-more-label">下载</span>
+                          {browserActiveDownloadCount > 0 && <span className="browser-more-history-url">{browserActiveDownloadCount} 个进行中</span>}
+                        </div>
+                        {browserDownloads.length ? (
+                          <div className="browser-more-history-list">
+                            {browserDownloads.map((entry) => {
+                              const percent = entry.total > 0 ? Math.min(100, Math.round((entry.received / entry.total) * 100)) : 0;
+                              return (
+                                <div className="browser-download-row" key={entry.id}>
+                                  <span className="browser-more-history-title" title={entry.path || entry.filename}>{entry.filename}</span>
+                                  <span className="browser-more-history-url">
+                                    {entry.state === "completed" ? "已完成"
+                                      : entry.state === "cancelled" ? "已取消"
+                                      : entry.state === "interrupted" ? "已中断"
+                                      : entry.total > 0 ? `${percent}%` : "下载中…"}
+                                  </span>
+                                  <span className="browser-download-actions">
+                                    {entry.state === "completed" && entry.path && (
+                                      <>
+                                        <button  onClick={() => void window.dyworker?.openPath?.(entry.path)}>打开</button>
+                                        <button  onClick={() => void window.dyworker?.revealInFolder?.(entry.path)}>所在文件夹</button>
+                                      </>
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="browser-more-history-empty">本次运行还没有下载</p>
+                        )}
+                      </div>)}
+{browserSection === "history" && (<div className="browser-more-history" role="group" aria-label="本次浏览历史">
+                        <div className="browser-more-history-head">
+                          <span className="browser-more-label">本次浏览历史</span>
+                          {browserSessionHistory.length > 0 && (
+                            <button  aria-label="清空历史" title="清空历史" onClick={clearBrowserSessionHistory}>清空</button>
+                          )}
+                        </div>
+                        {browserSessionHistory.length ? (
+                          <div className="browser-more-history-list">
+                            {browserSessionHistory.map((entry) => (
+                              <button
+                                key={`${entry.at}-${entry.url}`}
+
+                                title={entry.url}
+                                onClick={() => { setBrowserSection(null); void openBrowserUrl(entry.url); }}
+                              >
+                                <span className="browser-more-history-title">{entry.title || entry.url}</span>
+                                <span className="browser-more-history-url">{entry.url}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="browser-more-history-empty">还没有浏览记录</p>
+                        )}
+                      </div>)}
+{browserSection === "clear" && (<div className="browser-more-clear" role="group" aria-label="清除浏览数据">
+                        <span className="browser-more-label">清除浏览数据（内置浏览器）</span>
+                        {([["cookies", "Cookie 和登录状态"], ["cache", "缓存的图片和文件"], ["siteData", "站点数据和网站设置"]] as const).map(([kind, label]) => (
+                          <label className="browser-clear-kind" key={kind}>
+                            <input
+                              type="checkbox"
+                              checked={browserClearKinds[kind]}
+                              onChange={(event) => setBrowserClearKinds((current) => ({ ...current, [kind]: event.target.checked }))}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                        <button  className="browser-clear-button" disabled={browserClearing || !Object.values(browserClearKinds).some(Boolean)} onClick={() => void clearBrowserData()}>清除所选数据</button>
+                      </div>)}
+        </BrowserSectionDialog>
+      )}
+
       {importDialogOpen && (
         <BrowserImportDialog
           onClose={() => setImportDialogOpen(false)}
@@ -10518,9 +11233,23 @@ export function App() {
             setNotice(message);
             refreshImportedHistory();
             // 已打开的页面仍带着旧（未登录）状态，导入后刷新一次让新 Cookie 生效
-            browserWebviewRef.current?.reload?.();
+            for (const webview of browserWebviewsRef.current.values()) webview.reload?.();
           }}
           onError={(message) => setError(message)}
+        />
+      )}
+
+      {browserPasswordsOpen && (
+        <BrowserPasswordsDialog
+          activeOrigin={(() => {
+            try {
+              return new URL(activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "").origin;
+            } catch {
+              return "";
+            }
+          })()}
+          onFill={() => void fillSavedPassword()}
+          onClose={() => setBrowserPasswordsOpen(false)}
         />
       )}
 

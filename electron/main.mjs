@@ -103,7 +103,13 @@ const rendererEntryUrl = isDevelopment
   ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
   : pathToFileURL(path.join(here, "../dist/client/index.html")).href;
 let mainWindow;
+// 内置浏览器的 webview 登记：每个浏览器标签页常驻一个 webview，
+// agent 的 browser__* 工具只作用于渲染进程上报的「当前显示」那个（无上报时回退最后创建的）
+const embeddedBrowserContentsById = new Map();
+let activeEmbeddedBrowserContentsId = 0;
 let embeddedBrowserContents = null;
+// 渲染进程未上报（旧版本/预览环境）时的回退目标
+let fallbackEmbeddedBrowserContentsId = 0;
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
@@ -958,7 +964,9 @@ function createWindow() {
 // 协议白名单校验（http/https、禁 userinfo）；localhost/内网地址按产品决策放行
 // （用户可全程看到面板内容，查看本地开发服务是正当需求）。
 app.on("will-attach-webview", (event, webPreferences, params) => {
-  delete webPreferences.preload;
+  // 远程页面始终关闭 Node 能力；preload 只注入最小桥接（webview-preload.cjs：
+  // 仅暴露“报告密码表单提交”一个函数，供面板的保存密码提示使用）
+  webPreferences.preload = path.join(__dirname, "webview-preload.cjs");
   webPreferences.nodeIntegration = false;
   webPreferences.contextIsolation = true;
   webPreferences.sandbox = true;
@@ -967,20 +975,67 @@ app.on("will-attach-webview", (event, webPreferences, params) => {
 
 app.on("web-contents-created", (_event, contents) => {
   if (contents.getType() !== "webview") return;
+  embeddedBrowserContentsById.set(contents.id, contents);
   embeddedBrowserContents = contents;
+  fallbackEmbeddedBrowserContentsId = contents.id;
   contents.once("destroyed", () => {
-    if (embeddedBrowserContents === contents) embeddedBrowserContents = null;
+    embeddedBrowserContentsById.delete(contents.id);
+    if (activeEmbeddedBrowserContentsId === contents.id) activeEmbeddedBrowserContentsId = 0;
+    if (embeddedBrowserContents === contents) {
+      embeddedBrowserContents = null;
+      fallbackEmbeddedBrowserContentsId = 0;
+    }
   });
   contents.on("will-navigate", (event, url) => {
     if (!isSafeBrowserUrl(url).ok) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // 下载进度跟踪：保存位置仍由 BrowserAgent 决定（工作区“下载”目录），
+  // 这里只观察并广播给面板展示。持久分区所有 webview 共享，只挂一次。
+  if (!contents.session.__dyworkerDownloadTracker) {
+    contents.session.__dyworkerDownloadTracker = true;
+    contents.session.on("will-download", (_event, item) => {
+      const record = {
+        id: `${item.getStartTime()}-${item.getFilename()}`,
+        filename: item.getFilename() || "download",
+        path: "",
+        received: 0,
+        total: item.getTotalBytes(),
+        state: "progressing",
+        startedAt: Date.now(),
+      };
+      const send = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("browser:download-progress", record);
+      };
+      item.on("updated", (_e, state) => {
+        record.received = item.getReceivedBytes();
+        record.total = item.getTotalBytes();
+        record.state = state === "interrupted" ? "interrupted" : "progressing";
+        record.path = item.getSavePath() || "";
+        send();
+      });
+      item.once("done", (_e, state) => {
+        record.received = item.getTotalBytes();
+        record.state = state === "completed" ? "completed" : state === "interrupted" ? "interrupted" : "cancelled";
+        record.path = item.getSavePath() || "";
+        send();
+      });
+      send();
+    });
+  }
 });
+
+// 当前显示的内置浏览器页面：优先渲染进程上报的激活 webview
+function activeEmbeddedBrowserContents() {
+  return embeddedBrowserContentsById.get(activeEmbeddedBrowserContentsId)
+    || embeddedBrowserContentsById.get(fallbackEmbeddedBrowserContentsId)
+    || null;
+}
 
 function waitForEmbeddedBrowser(sender, url) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    const previousUrl = embeddedBrowserContents?.getURL?.() || "";
+    const previousUrl = activeEmbeddedBrowserContents()?.getURL?.() || "";
     let observedContents = null;
     let timer = null;
     let settled = false;
@@ -1020,7 +1075,7 @@ function waitForEmbeddedBrowser(sender, url) {
         finish({ ok: false, result: "右侧浏览器面板加载超时" });
         return;
       }
-      const contents = embeddedBrowserContents;
+      const contents = activeEmbeddedBrowserContents();
       if (contents && !contents.isDestroyed()) {
         if (observedContents !== contents) {
           observedContents = contents;
@@ -1527,6 +1582,157 @@ ipcMain.handle("browser:open", async (event, payload) => {
   const check = isSafeBrowserUrl(String(payload?.url || ""));
   if (!check.ok) return { ok: false, result: check.error };
   return { ok: true, url: check.url.toString(), result: "已在当前浏览器标签页打开网页" };
+});
+
+// 渲染进程上报当前显示的内置浏览器 webview：agent 的 browser__* 工具只作用于可见页面
+ipcMain.on("browser:active-contents", (event, webContentsId) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return;
+  const id = Number(webContentsId) || 0;
+  // 只接受登记过的 webview，防止渲染进程指向任意页面
+  if (id && !embeddedBrowserContentsById.has(id)) return;
+  activeEmbeddedBrowserContentsId = id;
+});
+
+// 在系统默认浏览器打开（仅 http/https，复用内置浏览器的地址白名单）
+ipcMain.handle("browser:open-external", async (event, rawUrl) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const check = isSafeBrowserUrl(String(rawUrl || ""));
+  if (!check.ok) return { ok: false, error: check.error };
+  if (check.url.protocol !== "http:" && check.url.protocol !== "https:") {
+    return { ok: false, error: "仅支持 http/https 地址" };
+  }
+  try {
+    await shell.openExternal(check.url.toString());
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// ===== 内置浏览器密码管理 =====
+// 与导入的密码同库（userData/imported-passwords.json，safeStorage 加密）。
+// 列表接口不返回密码明文；填充时按 origin+username 单条解密。
+const browserPasswordStorePath = () => path.join(app.getPath("userData"), "imported-passwords.json");
+
+ipcMain.handle("browser:save-password", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const origin = String(payload?.origin || "").trim();
+  const username = String(payload?.username || "").trim();
+  const password = String(payload?.password || "");
+  if (!/^https?:\/\//i.test(origin) || !password) return { ok: false, error: "来源或密码无效" };
+  try {
+    const existing = await readJson(browserPasswordStorePath(), []);
+    const key = `${origin}\n${username}`;
+    const known = existing.find((item) => `${item.origin}\n${item.username}` === key);
+    const encrypted = safeStorage.isEncryptionAvailable()
+      ? safeStorage.encryptString(password).toString("base64")
+      : "";
+    if (known) {
+      // 同站点同用户名：更新密码
+      known.passwordEnc = encrypted;
+      known.passwordPlain = safeStorage.isEncryptionAvailable() ? undefined : password;
+      known.updatedAt = new Date().toISOString();
+    } else {
+      existing.push({
+        origin,
+        username,
+        passwordEnc: encrypted,
+        passwordPlain: safeStorage.isEncryptionAvailable() ? undefined : password,
+        source: "内置浏览器",
+        importedAt: new Date().toISOString(),
+      });
+    }
+    await writeJson(browserPasswordStorePath(), existing);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("browser:list-passwords", async (event, rawOrigin) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const origin = String(rawOrigin || "").trim();
+  try {
+    const existing = await readJson(browserPasswordStorePath(), []);
+    const passwords = existing
+      .filter((item) => !origin || item.origin === origin)
+      .map((item) => ({ origin: item.origin, username: item.username, source: item.source || "", importedAt: item.importedAt || "" }));
+    return { ok: true, passwords };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("browser:reveal-password", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const origin = String(payload?.origin || "");
+  const username = String(payload?.username || "");
+  try {
+    const existing = await readJson(browserPasswordStorePath(), []);
+    const entry = existing.find((item) => item.origin === origin && item.username === username);
+    if (!entry) return { ok: false, error: "没有找到这条密码" };
+    const password = entry.passwordEnc && safeStorage.isEncryptionAvailable()
+      ? safeStorage.decryptString(Buffer.from(entry.passwordEnc, "base64"))
+      : String(entry.passwordPlain || "");
+    if (!password) return { ok: false, error: "密码数据损坏或系统加密不可用" };
+    return { ok: true, password };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle("browser:delete-password", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const origin = String(payload?.origin || "");
+  const username = String(payload?.username || "");
+  try {
+    const existing = await readJson(browserPasswordStorePath(), []);
+    const next = existing.filter((item) => !(item.origin === origin && item.username === username));
+    await writeJson(browserPasswordStorePath(), next);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// ===== 清除浏览数据（仅内置浏览器的 persist 分区）=====
+ipcMain.handle("browser:clear-data", async (event, kinds) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const wantCookies = kinds?.cookies !== false;
+  const wantCache = kinds?.cache !== false;
+  const wantSiteData = kinds?.siteData === true;
+  if (!wantCookies && !wantCache && !wantSiteData) return { ok: false, error: "请至少选择一类数据" };
+  try {
+    const browserSession = session.fromPartition("persist:dyworker-browser");
+    const storages = [];
+    if (wantCookies) storages.push("cookies");
+    if (wantSiteData) storages.push("localstorage", "indexeddb", "serviceworkers", "cachestorage", "websql", "filesystem");
+    if (storages.length) await browserSession.clearStorageData({ storages });
+    if (wantCache) await browserSession.clearCache();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+// ===== 设备模拟（手机/平板视图）=====
+ipcMain.handle("browser:emulate-device", async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
+  const contents = embeddedBrowserContentsById.get(Number(payload?.webContentsId) || 0);
+  if (!contents || contents.isDestroyed()) return { ok: false, error: "页面已关闭" };
+  const width = Number(payload?.width) || 0;
+  const height = Number(payload?.height) || 0;
+  if (!width || !height) {
+    contents.disableDeviceEmulation();
+    return { ok: true };
+  }
+  contents.enableDeviceEmulation({
+    screenPosition: "mobile",
+    screenSize: { width, height },
+    viewSize: { width, height },
+    deviceScaleFactor: 2,
+  });
+  return { ok: true };
 });
 ipcMain.handle("settings:save", async (_event, settings) => {
   try {
@@ -2257,7 +2463,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {
   const browserAgent = new BrowserAgent({
     openPanel: renderer ? (url) => waitForEmbeddedBrowser(renderer, url) : undefined,
     closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer) : undefined,
-    getContents: () => embeddedBrowserContents,
+    getContents: () => activeEmbeddedBrowserContents(),
   });
   browserAgent.setWorkspace(workspacePath);
   const route = async (name, args) => {

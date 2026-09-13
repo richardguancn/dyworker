@@ -38,6 +38,25 @@ contextBridge.exposeInMainWorld("dyworker", {
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
   revealInFolder: (path) => ipcRenderer.invoke("workspace:reveal", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
+  // 上报当前显示的内置浏览器 webview：agent 的 browser__* 工具只作用于可见页面
+  setActiveBrowserContents: (webContentsId) => ipcRenderer.send("browser:active-contents", webContentsId),
+  // 在系统默认浏览器打开网址
+  openBrowserExternal: (url) => ipcRenderer.invoke("browser:open-external", url),
+  // 设备模拟（手机/平板视图）：width/height 为 0 时关闭
+  emulateDevice: (webContentsId, width, height) => ipcRenderer.invoke("browser:emulate-device", { webContentsId, width, height }),
+  // 内置浏览器密码管理：保存/列表（不含明文）/按条解密/删除
+  savePassword: (origin, username, password) => ipcRenderer.invoke("browser:save-password", { origin, username, password }),
+  listPasswords: (origin) => ipcRenderer.invoke("browser:list-passwords", origin),
+  revealPassword: (origin, username) => ipcRenderer.invoke("browser:reveal-password", { origin, username }),
+  deletePassword: (origin, username) => ipcRenderer.invoke("browser:delete-password", { origin, username }),
+  // 清除内置浏览器的浏览数据（Cookie/缓存/站点数据）
+  clearBrowserData: (kinds) => ipcRenderer.invoke("browser:clear-data", kinds),
+  // 下载进度广播
+  onBrowserDownloadProgress: (callback) => {
+    const listener = (_event, record) => callback(record);
+    ipcRenderer.on("browser:download-progress", listener);
+    return () => ipcRenderer.removeListener("browser:download-progress", listener);
+  },
   onBrowserPanelRequest: (callback) => {
     const listener = (_event, request) => callback(request);
     ipcRenderer.on("browser:panel-request", listener);
