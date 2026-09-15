@@ -284,6 +284,16 @@ export interface SessionRecord {
   unread?: boolean;
 }
 
+// 会话保存增量载荷：渲染端按引用身份对比出「变化的会话」只发增量，
+// order 是当前全部会话的权威顺序（主进程据此删除已不存在的会话文件）；
+// meta 是渠道同步用的轻量信息。旧版整档数组仍被主进程兼容。
+export interface SessionSavePayload {
+  changed: SessionRecord[];
+  removed: string[];
+  order: string[];
+  meta: Array<{ id: string; channel?: "qq" | "wechat"; workspacePath?: string }>;
+}
+
 export interface WorkspaceEntry {
   name: string;
   path: string;
@@ -650,7 +660,7 @@ export interface DyworkerBridge {
     windowShadow: boolean;
     windowMaximized: boolean;
   }>;
-  saveSessions(sessions: SessionRecord[]): Promise<{ ok: boolean; error?: string }>;
+  saveSessions(payload: SessionRecord[] | SessionSavePayload): Promise<{ ok: boolean; error?: string }>;
   savePinnedWorkspaces(paths: string[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;

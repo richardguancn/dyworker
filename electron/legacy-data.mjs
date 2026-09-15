@@ -31,6 +31,8 @@ const EXCLUDED_DIRECTORIES = new Set([
 const DYWORKER_DATA_FILES = new Set([
   "settings.json",
   "sessions.json",
+  // 会话存档已按会话拆分为 sessions/ 目录（index.json + 每会话一个文件）
+  "sessions",
   "memory.json",
   "skills.json",
   "skill-overrides.json",

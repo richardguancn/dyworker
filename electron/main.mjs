@@ -30,6 +30,9 @@ import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMar
 import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mjs";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mjs";
 import { SessionQueue } from "./session-queue.mjs";
+import { createCoalescedWriter } from "./session-store.mjs";
+import { createSessionArchive } from "./session-archive.mjs";
+import { enforceDirTotalSize, halveFileIfOversized } from "./log-rotation.mjs";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
 import { backgroundTasksManager } from "./background-tasks.mjs";
 
@@ -143,6 +146,19 @@ nativeTheme.on("updated", () => {
 
 function dataFile(name) {
   return path.join(app.getPath("userData"), name);
+}
+
+// 会话存档：按会话拆分为 sessions/<id>.json + index.json（迁移见
+// session-archive.mjs）。渲染端正常只发「变化的会话」增量；旧渲染端
+// 仍可能发整档数组，由合并写入器承接（整档写盘按间隔合并，防写放大）。
+const sessionArchive = createSessionArchive({ dir: path.join(app.getPath("userData"), "sessions"), legacyFile: dataFile("sessions.json") });
+const sessionArchiveStore = createCoalescedWriter({
+  minIntervalMs: 2000,
+  write: (sessions) => sessionArchive.saveAll(sessions),
+});
+// 各只读消费方（历史检索、会话工具、渠道工作区推导等）统一入口
+function readAllSessions() {
+  return sessionArchive.loadAll();
 }
 
 // 自动更新模块属于可选能力：如果打包产物缺少 electron-updater（历史上曾
@@ -600,6 +616,8 @@ function channelDebug(event, payload = {}) {
     .catch(() => {})
     .then(async () => {
       try {
+        // 只增不减的日志会把 userData 吃满：超过 5MB 截掉前半，只留近期记录
+        await halveFileIfOversized(file, 5 * 1024 * 1024);
         await fs.appendFile(file, line + "\n", "utf8");
       } catch {
         // 日志写失败不影响运行
@@ -1112,11 +1130,12 @@ registerLocalImageIpc(ipcMain, {
 });
 
 // 电脑端给渠道会话更换工作区的内存基线：sessionId -> workspacePath。
-// 只对比变化，避免每次 sessions:save 都全量重读 sessions.json。
+// 只对比变化，避免每次 sessions:save 都全量重读存档。入参是轻量 meta
+// （id/channel/workspacePath），整档与增量两条保存路径统一形状。
 let lastChannelWorkspaceBySession = new Map();
 
-async function syncChannelSessionWorkspaces(incoming) {
-  for (const session of incoming) {
+async function syncChannelSessionWorkspaces(meta) {
+  for (const session of Array.isArray(meta) ? meta : []) {
     if (!session?.channel) continue;
     const id = String(session.id || "");
     const after = String(session.workspacePath || "").trim();
@@ -1131,7 +1150,9 @@ async function syncChannelSessionWorkspaces(incoming) {
 }
 
 ipcMain.handle("app:initial-state", async () => {
-  const sessions = await readJson(dataFile("sessions.json"), defaultSessions());
+  // 全新安装时保留默认欢迎会话；已有存档（拆分文件或迁移数据）则原样返回
+  const loaded = await readAllSessions();
+  const sessions = loaded.length ? loaded : defaultSessions();
   const workspacePath = sessions.find((session) => session.workspacePath)?.workspacePath || "";
   const pinnedWorkspacePaths = await readJson(dataFile("workspace-pins.json"), []);
   return {
@@ -1148,14 +1169,31 @@ ipcMain.handle("app:initial-state", async () => {
   };
 });
 
-ipcMain.handle("sessions:save", async (_event, sessions) => {
+// 整档数组（旧渲染端）与增量对象（新渲染端）统一推导渠道同步用的轻量 meta
+function channelMetaOf(sessions) {
+  return (Array.isArray(sessions) ? sessions : [])
+    .filter((session) => session?.channel)
+    .map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath }));
+}
+
+ipcMain.handle("sessions:save", async (_event, payload) => {
   try {
-    const incoming = Array.isArray(sessions) ? sessions : [];
-    await writeJson(dataFile("sessions.json"), incoming);
-    // 电脑端给渠道会话（QQ/微信）更换工作区时，同步到渠道聊天记录；
-    // 否则下一条 IM 消息仍按旧目录执行（渠道记录与桌面会话各自持有一份工作区）。
-    // 用内存基线对比，避免每次保存都全量重读 sessions.json。
-    await syncChannelSessionWorkspaces(incoming);
+    if (Array.isArray(payload)) {
+      // 旧渲染端整档快照：走合并写入器（2 秒间隔尾沿落盘，防写放大）
+      await syncChannelSessionWorkspaces(channelMetaOf(payload));
+      sessionArchiveStore.requestSave(payload);
+      return { ok: true };
+    }
+    // 新渲染端增量：只含变化的会话/删除的 id/权威顺序，直接落盘。
+    // 渠道同步用渲染端随载荷附带的轻量 meta（全量会话各一条），保证
+    // 升级后从未变化的渠道会话也能在首次见到时同步一次工作区基线。
+    const delta = {
+      changed: Array.isArray(payload?.changed) ? payload.changed : [],
+      removed: Array.isArray(payload?.removed) ? payload.removed : [],
+      order: Array.isArray(payload?.order) ? payload.order : [],
+    };
+    await syncChannelSessionWorkspaces(Array.isArray(payload?.meta) ? payload.meta : channelMetaOf(delta.changed));
+    await sessionArchive.applyDelta(delta);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -2282,7 +2320,7 @@ function historyMessageText(message) {
 async function searchHistory(query, limit = 10, offset = 0) {
   const needle = String(query || "").trim().toLowerCase();
   if (!needle) return "请提供要查找的关键词";
-  const sessions = await readJson(dataFile("sessions.json"), []);
+  const sessions = await readAllSessions();
   const matches = [];
   for (const session of Array.isArray(sessions) ? sessions : []) {
     for (let index = 0; index < (session.messages || []).length; index++) {
@@ -2308,7 +2346,7 @@ async function searchHistory(query, limit = 10, offset = 0) {
 }
 
 async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4) {
-  const sessions = await readJson(dataFile("sessions.json"), []);
+  const sessions = await readAllSessions();
   const session = (Array.isArray(sessions) ? sessions : []).find((item) => String(item.id) === String(sessionId));
   if (!session) return `没有找到任务：${sessionId}`;
   const messages = session.messages || [];
@@ -2469,7 +2507,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {
   const route = async (name, args) => {
     // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
     if (SESSION_TOOL_NAMES.has(String(name))) {
-      const sessions = await readJson(dataFile("sessions.json"), []);
+      const sessions = await readAllSessions();
       return handleSessionTool(name, args, { sessions });
     }
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
@@ -2489,7 +2527,7 @@ function emitToSession(sender, sessionId, runId, agentEvent) {
 async function queuedPayloadFromSession({ sessionId, runId, payload }) {
   const freshPayload = { ...(payload || {}) };
   try {
-    const stored = await readJson(dataFile("sessions.json"), []);
+    const stored = await readAllSessions();
     const session = Array.isArray(stored) ? stored.find((item) => String(item?.id) === String(sessionId)) : null;
     const messages = Array.isArray(session?.messages) ? session.messages : [];
     const queuedIndex = messages.findIndex((message) => String(message?.runId || "") === String(runId) && message?.role === "user");
@@ -2764,6 +2802,9 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         try {
           await fs.mkdir(traceDir, { recursive: true });
           await fs.appendFile(traceFile, lines, "utf8");
+          // 总量封顶：traces 只增不减会把 userData 吃满（实测一年 177MB），
+          // 超过 128MB 时按最旧优先清理，当前文件保留
+          await enforceDirTotalSize(traceDir, 128 * 1024 * 1024, { keep: [traceFile] });
         } catch {
           // 落盘失败不影响任务与界面，轨迹视图会降级为内存事件
         }
@@ -3374,13 +3415,11 @@ async function markScheduleSleeping(id, wake, sessionId = "") {
 
 // 定时/续跑任务的转录落盘：应用窗口未运行时，主进程直接把带完整转录的会话
 // 写进 sessions.json（下次启动经 app:initial-state 读回），不再丢失运行记录
+// 窗口未运行时计划任务的转录落盘：写进按会话拆分的存档（下次启动经
+// app:initial-state 读回），不再丢失运行记录
 async function persistSessionRecord(session) {
   try {
-    const sessions = await readJson(dataFile("sessions.json"), []);
-    if (!Array.isArray(sessions)) return;
-    if (sessions.some((item) => item?.id === session.id)) return;
-    sessions.unshift(session);
-    await writeJson(dataFile("sessions.json"), sessions);
+    await sessionArchive.upsert(session);
   } catch (error) {
     console.log(`[schedules] 转录落盘失败：${error?.message || error}`);
   }
@@ -3389,16 +3428,7 @@ async function persistSessionRecord(session) {
 // 窗口未运行时的续跑追加：往已落盘的会话里补转录消息（按消息内容去重，避免重复段落）
 async function persistSessionAppend(sessionId, messages) {
   try {
-    const sessions = await readJson(dataFile("sessions.json"), []);
-    if (!Array.isArray(sessions)) return;
-    const session = sessions.find((item) => item?.id === sessionId);
-    if (!session || !Array.isArray(messages)) return;
-    const known = new Set((session.messages || []).map((message) => `${message?.role}:${message?.content}`));
-    for (const message of messages) {
-      if (!known.has(`${message?.role}:${message?.content}`)) session.messages.push(message);
-    }
-    session.updatedAt = new Date().toISOString();
-    await writeJson(dataFile("sessions.json"), sessions);
+    await sessionArchive.appendMessages(sessionId, messages);
   } catch (error) {
     console.log(`[schedules] 续跑转录落盘失败：${error?.message || error}`);
   }
@@ -3491,7 +3521,7 @@ async function cancelWakesForSession(sessionId) {
 
 // 从会话存档中重建可见对话（只读,渲染端仍是唯一写者）；找不到时退回唤醒记录里的提示与进展
 async function visibleConversationForSession(sessionId, fallbackPrompt, fallbackFinalText) {
-  const sessions = await readJson(dataFile("sessions.json"), []);
+  const sessions = await readAllSessions();
   const session = Array.isArray(sessions) ? sessions.find((item) => String(item?.id) === String(sessionId)) : null;
   const visible = (session?.messages || [])
     .filter((message) => message?.role === "user" || message?.role === "assistant")
@@ -3506,7 +3536,7 @@ async function visibleConversationForSession(sessionId, fallbackPrompt, fallback
 }
 
 async function workingContextForSession(sessionId) {
-  const sessions = await readJson(dataFile("sessions.json"), []);
+  const sessions = await readAllSessions();
   const session = Array.isArray(sessions) ? sessions.find((item) => String(item?.id) === String(sessionId)) : null;
   if (!session) return "";
   const messageContext = [...(session.messages || [])]
@@ -3991,7 +4021,7 @@ function broadcastChannelsStatus(statusMap) {
 
 // 渠道会话的工作区推导:与 app:initial-state 同款,取最近一个带工作区的会话
 async function defaultChannelWorkspace() {
-  const sessions = await readJson(dataFile("sessions.json"), []);
+  const sessions = await readAllSessions();
   // 只接受非空字符串,避免把历史脏数据(对象/占位字符串)再次当作工作区
   return (Array.isArray(sessions) ? sessions : []).find((session) =>
     typeof session?.workspacePath === "string" && session.workspacePath.trim()
@@ -4768,6 +4798,8 @@ app.on("before-quit", (event) => {
   mcpShutdownStarted = true;
   mcpShuttingDown = true;
   event.preventDefault();
+  // 会话存档合并窗口内可能还有积压快照，退出前立即落盘
+  void sessionArchiveStore.flush();
   backgroundTasksManager.cleanupAll();
   if (appUpdateTimer) clearTimeout(appUpdateTimer);
   if (appUpdateInterval) clearInterval(appUpdateInterval);

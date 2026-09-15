@@ -1496,3 +1496,31 @@ test("消息文本右键可复制选中内容,输入框右键支持复制/剪切
   assert.match(styles, /\.context-menu-item/);
   assert.match(styles, /\.context-menu\s*\{/);
 });
+
+test("会话存档保存链路做写放大治理：流式暂停常规保存 + 主进程合并写入", () => {
+  // 主进程：sessions 存档按会话拆分（sessions/<id>.json + index.json），
+  // 旧渲染端整档数组走合并写入器（2 秒间隔尾沿落盘）；增量直接 applyDelta。
+  // 退出前 flush，保证合并窗口内的最终快照不丢
+  assert.match(main, /createSessionArchive\(\{\s*dir: path\.join\(app\.getPath\("userData"\), "sessions"\), legacyFile: dataFile\("sessions\.json"\)/);
+  assert.match(main, /const sessionArchiveStore = createCoalescedWriter\(\{/);
+  assert.match(main, /sessionArchiveStore\.requestSave\(payload\)/);
+  assert.match(main, /await sessionArchive\.applyDelta\(delta\)/);
+  assert.doesNotMatch(main, /writeJson\(dataFile\("sessions\.json"\)/);
+  assert.match(main, /app\.on\("before-quit"[\s\S]{0,600}sessionArchiveStore\.flush\(\)/);
+  // 渲染端：按引用身份构建增量载荷（changed/removed/order/meta），不再整档重发
+  assert.match(app, /buildSessionSavePayload/);
+  assert.match(app, /savedSessionsRef\.current = new Map\(loaded\.map\(\(session\) => \[session\.id, session\]\)\)/);
+  assert.match(app, /saveSessions\(buildSessionSavePayload\(sessions\)\)/);
+  // 有任务运行（流式输出让 sessions 以分片频率变化）时暂停 180ms
+  // 常规保存，只保留低频兜底快照；任务结束后常规保存立即恢复
+  assert.match(app, /if \(runningSessionIds\.size\) return;\s*\n\s*const timeout = window\.setTimeout\(\(\) => void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessions\)\), 180\)/);
+  assert.match(app, /SESSION_STREAMING_SAVE_INTERVAL_MS/);
+  assert.match(app, /setInterval\(\(\) => \{\s*void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessionsRef\.current\)\)/);
+});
+
+test("运行痕迹与渠道诊断日志有封顶清理，不再无限增长", () => {
+  // traces 目录总量封顶 128MB（旧文件优先清理，当前轨迹保留）
+  assert.match(main, /await enforceDirTotalSize\(traceDir, 128 \* 1024 \* 1024, \{ keep: \[traceFile\] \}\)/);
+  // channel-debug.log 超过 5MB 截掉前半，只留近期记录
+  assert.match(main, /await halveFileIfOversized\(file, 5 \* 1024 \* 1024\)/);
+});

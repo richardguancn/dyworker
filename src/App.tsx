@@ -83,12 +83,17 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WorkspaceContext, WorkspaceEntry } from "./types";
 import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
 const WORKSPACE_SESSION_LIMIT = 5;
+// 任务运行中的会话快照兜底保存间隔：流式输出让 sessions 状态以分片频率
+// 变化，常规 180ms 防抖保存会把整份存档（大档几十 MB）以秒级频率整档
+// 写盘 + IPC 克隆，曾在 Linux 上打出 194MB/s 磁盘写入并把进程拖死；
+// 任务期间只按此间隔低频兜底，任务结束后常规保存立即恢复。
+const SESSION_STREAMING_SAVE_INTERVAL_MS = 30000;
 
 const previewSessions: SessionRecord[] = [
   {
@@ -6013,6 +6018,9 @@ export function App() {
   const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
+  // 已保存会话的引用镜像（id → 上次发给主进程的对象）：会话更新全部走
+  // 不可变替换，比较引用即可零成本找出「变化的会话」，保存只发增量
+  const savedSessionsRef = useRef<Map<string, SessionRecord>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
@@ -6394,6 +6402,8 @@ export function App() {
         if (cancelled) return;
         const loaded = keepSingleUnstartedSession(state.sessions.length ? state.sessions : [makeSession(state.workspacePath)]);
         setSessions(loaded);
+        // 种子保存基线：首次保存不需要把整档重发一遍
+        savedSessionsRef.current = new Map(loaded.map((session) => [session.id, session]));
         setActiveId(loaded[0].id);
         // 全局工作目录可能被上次的无目录会话清空，优先用当前会话保存的目录
         setWorkspacePath(loaded[0].workspacePath || state.workspacePath);
@@ -6427,11 +6437,40 @@ export function App() {
     return () => unsubscribe?.();
   }, []);
 
+  // 会话保存增量：与上次实际发出的快照比引用，只带变化的会话/删除的 id/
+  // 权威顺序与渠道 meta。主进程按会话拆分落盘（sessions/<id>.json）。
+  const buildSessionSavePayload = (current: SessionRecord[]): SessionSavePayload => {
+    const saved = savedSessionsRef.current;
+    const changed = current.filter((session) => saved.get(session.id) !== session);
+    const currentIds = new Set(current.map((session) => session.id));
+    const removed = [...saved.keys()].filter((id) => !currentIds.has(id));
+    savedSessionsRef.current = new Map(current.map((session) => [session.id, session]));
+    return {
+      changed,
+      removed,
+      order: current.map((session) => session.id),
+      meta: current.map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath })),
+    };
+  };
+
   useEffect(() => {
     if (!ready || !window.dyworker) return;
-    const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(sessions), 180);
+    // 有任务在跑时暂停常规保存（见 SESSION_STREAMING_SAVE_INTERVAL_MS 的
+    // 说明）；任务结束 runningSessionIds 变化后本 effect 重跑，最终内容
+    // 会按 180ms 防抖立即落盘，流式期间的内容不会丢
+    if (runningSessionIds.size) return;
+    const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(buildSessionSavePayload(sessions)), 180);
     return () => window.clearTimeout(timeout);
-  }, [ready, sessions]);
+  }, [ready, sessions, runningSessionIds]);
+
+  // 任务运行中的低频兜底快照：应用崩溃时最多丢这一窗口内的流式内容
+  useEffect(() => {
+    if (!ready || !window.dyworker || !runningSessionIds.size) return;
+    const interval = window.setInterval(() => {
+      void window.dyworker?.saveSessions(buildSessionSavePayload(sessionsRef.current));
+    }, SESSION_STREAMING_SAVE_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [ready, runningSessionIds]);
 
   useEffect(() => {
     if (!ready || !window.dyworker) return;
