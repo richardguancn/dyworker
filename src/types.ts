@@ -5,6 +5,7 @@ export type ActivityKind =
   | "update_plan"
   | "list_files"
   | "read_file"
+  | "ocr_file"
   | "write_file"
   | "edit_file"
   | "make_directory"
@@ -717,6 +718,8 @@ export interface DyworkerBridge {
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;
+  /** 拉取同一服务地址 + 密钥下的可用模型列表（GET /models），用于模型名称下拉切换 */
+  listModels(payload: { endpoint: string; apiKey: string }): Promise<{ ok: boolean; count?: number; models?: Array<{ id: string; contextLimit?: number }>; error?: string }>;
   getReviewerLocalStatus(): Promise<ReviewerLocalStatus>;
   downloadReviewerLocalModel(): Promise<{ ok: boolean; skipped?: boolean; error?: string; status?: ReviewerLocalStatus }>;
   chooseReviewerLocalDir(): Promise<{ canceled: boolean; path?: string }>;

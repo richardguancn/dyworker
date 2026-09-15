@@ -13,7 +13,7 @@ export const RISK = Object.freeze({
 // 需要审批的内建工具（= 全部 consequential 内建工具，单源，agent.mjs 从这里 import）
 export const toolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
 export const workspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
-export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open"]);
+export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
 
 // 浏览器协作中的只读操作（打开网页、点击、输入、截图都可能产生对外影响，需确认）
 export const browserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);
@@ -36,6 +36,8 @@ export function computerUseActionNeedsApproval(name, platform = process.platform
 
 // 联网信息获取（搜索/读网页正文）不改变外部世界，只读语义：
 // 互动模式下仍会逐次询问（internetApprovalTools），但只读模式（deny-changes）放行。
+// ocr_file 在 internetApprovalTools 但不在此集合：它会把文件内容上传到智谱云端，
+// 属于数据外发而非纯读取，自动执行（auto）与替我审批（reviewer）模式下也要人工确认。
 export const internetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
 
 // 把一次工具调用归入四级风险之一。返回：
@@ -58,6 +60,11 @@ export function classify(name, args = {}, { platform = process.platform } = {}) 
     return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: name === "browser__open" };
   }
   if (internetReadTools.has(name)) {
+    return { risk: RISK.EXTERNAL, consequential: false, computerUseMutation: false, internet: true };
+  }
+  // 联网且含数据外发（ocr_file 把文件内容上传到智谱云端）：外部交互、不改本地；
+  // 互动与自动模式下逐次确认（见 evaluateApproval），不随「联网只读」自动放行
+  if (internetApprovalTools.has(name)) {
     return { risk: RISK.EXTERNAL, consequential: false, computerUseMutation: false, internet: true };
   }
   if (name.startsWith("mcp__")) {

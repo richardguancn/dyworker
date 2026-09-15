@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   probeCredentials: (payload) => ipcRenderer.invoke("settings:probe-credentials", payload),
+  // 拉取同一密钥下的可用模型列表（GET /models），设置页下拉切换模型用
+  listModels: (payload) => ipcRenderer.invoke("settings:list-models", payload),
   getReviewerLocalStatus: () => ipcRenderer.invoke("reviewer-local:status"),
   downloadReviewerLocalModel: () => ipcRenderer.invoke("reviewer-local:download"),
   chooseReviewerLocalDir: () => ipcRenderer.invoke("reviewer-local:choose-dir"),

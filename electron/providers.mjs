@@ -1,12 +1,16 @@
-// 厂商原生能力适配层（v1：Kimi 开放平台官方工具）。
+// 厂商原生能力适配层（v1：Kimi 开放平台官方工具；v2：GLM 智谱开放平台原生搜索与 OCR）。
 // 本文件不依赖 electron，方便用 node --test 直接测试。
 //
 // 背景：Kimi 有两套独立产品，官方工具（Formula API）与内置 $web_search 只文档化在
 // 「Kimi 开放平台」（api.moonshot.cn / api.moonshot.ai，按量付费）上；
 // 「Kimi 编程套餐」（api.kimi.com/coding/...，订阅制）不支持 Formula API。
-// 本文件只针对开放平台端点实现，非开放平台端点一律返回 null / 不启用。
+// Kimi 部分只针对开放平台端点实现，非开放平台端点一律返回 null / 不启用。
 //
-// 后续为 DeepSeek / GLM / 通义等厂商扩展原生能力时，在本文件按同样的
+// GLM（智谱开放平台 open.bigmodel.cn）按官方文档接入两项原生能力：
+// - Web Search API（/paas/v4/web_search）：webSearch 链的厂商路由后端；
+// - GLM-OCR 文档解析（/paas/v4/layout_parsing）：ocr_file 工具的识别引擎。
+//
+// 后续为 DeepSeek / 通义等厂商扩展原生能力时，在本文件按同样的
 // detectProvider + 能力定义 + 执行函数的模式追加。
 
 // Kimi 官方 12 个 Formula 工具（URI 列表可硬编码；function.name 需运行时 GET /tools 获取，
@@ -214,6 +218,112 @@ export async function searchDeepseekNative(fetchImpl, { apiKey, query, maxResult
     }
   }
   return items.slice(0, Math.min(Math.max(maxResults, 1), 20));
+}
+
+// GLM 原生联网搜索（智谱 Web Search API，独立于聊天的工具接口）。
+// 官方文档《联网搜索》：POST /paas/v4/web_search，返回结构化 search_result
+// （标题/摘要/链接/网站名/发布时间），比公开网页抓取稳定，且结果可溯源。
+// 搜索引擎默认 search_std（智谱基础版引擎，按次计费最低）；search_result
+// 空视为失败，由调用方回退 webSearch 链的其他后端。不接入 Chat Completions
+// 内置 web_search 工具（tools:[{type:"web_search"}]）：服务端隐式搜索绕过
+// 本地联网审批与审计口径，本地工具 + 搜索 API 的组合全程可审计。
+export const GLM_SEARCH_ENGINE = "search_std";
+const GLM_SEARCH_QUERY_MAX_CHARS = 70;
+
+// 由 GLM 聊天端点推导工具 API base：
+//   https://open.bigmodel.cn/api/paas/v4/chat/completions → https://open.bigmodel.cn/api/paas/v4
+export function glmToolBaseUrl(endpoint) {
+  const value = String(endpoint || "").trim();
+  const marker = "/chat/completions";
+  const index = value.indexOf(marker);
+  if (index > 0) return value.slice(0, index);
+  try {
+    const url = new URL(value);
+    return `${url.origin}/api/paas/v4`;
+  } catch {
+    return "https://open.bigmodel.cn/api/paas/v4";
+  }
+}
+
+// 执行一次 GLM 原生搜索，返回归一化结果数组 [{ title, url, snippet, publishedAt }]。
+export async function searchGlmNative(fetchImpl, { apiKey, query, maxResults = 10, signal, baseUrl, searchEngine = GLM_SEARCH_ENGINE }) {
+  const response = await fetchImpl(`${baseUrl || glmToolBaseUrl("")}/web_search`, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    // 官方限制 search_query ≤ 70 字符，超长截断（关键词都在前部，截断不改变意图）
+    body: JSON.stringify({
+      search_query: String(query || "").slice(0, GLM_SEARCH_QUERY_MAX_CHARS),
+      search_engine: searchEngine,
+      search_intent: false,
+      count: Math.min(Math.max(Number(maxResults) || 10, 1), 50),
+    }),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) throw new Error(`GLM 搜索返回错误（HTTP ${response.status}）`);
+  const payload = await response.json();
+  if (payload?.error) throw new Error(`GLM 搜索返回错误：${payload.error.message || JSON.stringify(payload.error)}`);
+  const seen = new Set();
+  const items = [];
+  for (const item of Array.isArray(payload?.search_result) ? payload.search_result : []) {
+    if (!item?.link || seen.has(item.link)) continue;
+    seen.add(item.link);
+    const title = item.media ? `${String(item.title || "").trim()} - ${item.media}` : String(item.title || "").trim();
+    items.push({
+      url: item.link,
+      title,
+      snippet: String(item.content || ""),
+      publishedAt: String(item.publish_date || ""),
+    });
+  }
+  if (!items.length) throw new Error("GLM 搜索未返回结果");
+  return items.slice(0, Math.min(Math.max(Number(maxResults) || 10, 1), 50));
+}
+
+// GLM-OCR 文档解析（官方文档《文档解析》：POST /paas/v4/layout_parsing）。
+// 0.9B 专业 OCR 模型，支持图片（PNG/JPG，单张 ≤10MB）与 PDF（≤50MB、≤100 页），
+// 印刷体/手写体/表格/公式/印章均可识别，md_results 返回 Markdown（复杂表格转 HTML 表格）。
+// file 字段官方支持 URL 与 base64；本地文件按 GLM 视觉系约定编码为 Data URL 传入。
+export const GLM_OCR_MODEL = "glm-ocr";
+
+// 执行一次 GLM-OCR 识别，返回 { markdown, usage }。md_results 为空视为失败。
+export async function glmOcrFile(fetchImpl, { apiKey, file, startPage, endPage, signal, baseUrl }) {
+  const response = await fetchImpl(`${baseUrl || glmToolBaseUrl("")}/layout_parsing`, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: GLM_OCR_MODEL,
+      file,
+      // 页码参数仅 PDF 有效；从 1 起，未提供时不传
+      ...(Number(startPage) >= 1 ? { start_page_id: Math.floor(Number(startPage)) } : {}),
+      ...(Number(endPage) >= 1 ? { end_page_id: Math.floor(Number(endPage)) } : {}),
+    }),
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) throw new Error(`GLM-OCR 返回错误（HTTP ${response.status}）`);
+  const payload = await response.json();
+  if (payload?.error) throw new Error(`GLM-OCR 返回错误：${payload.error.message || JSON.stringify(payload.error)}`);
+  const markdown = String(payload?.md_results || "").trim();
+  if (!markdown) throw new Error("GLM-OCR 未返回识别结果");
+  return { markdown, usage: payload?.usage || null };
+}
+
+// GLM 多模态模型（原生处理 image_url，无需视觉服务改写）：
+// GLM-5.3-Flash（原生多模态 VLM）、GLM-4.5V、GLM-4.1V 系（thinking）与
+// 历史 GLM-4V 系（4v / 4v-plus / 4v-flash）。纯文本模型（glm-5.3、glm-4.6 等）不在其列。
+const GLM_NATIVE_VISION_MODEL_PATTERN = /^glm-(5\.3-flash|4\.5v|4\.1v|4v)(?=[-_]|$)/i;
+
+export function isGlmNativeVisionModel(model) {
+  return GLM_NATIVE_VISION_MODEL_PATTERN.test(String(model || "").trim());
 }
 
 // 由 URI slug 推导 function.name（slug 用连字符，function.name 用下划线，如 web-search → web_search）

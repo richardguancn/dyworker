@@ -416,6 +416,11 @@ def xls(path):
 
 
 def main():
+    # Windows 下管道输出默认走 ANSI 代码页（中文系统是 GBK），中文会乱码或抛
+    # UnicodeEncodeError；统一强制 UTF-8，与 Node 侧 chunk.toString() 的解码一致。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     path = Path(sys.argv[1])
     suffix = path.suffix.lower()
     if suffix == ".xls":

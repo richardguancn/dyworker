@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
@@ -1835,6 +1835,14 @@ ipcMain.handle("settings:probe-credentials", async (_event, payload) => {
   } finally {
     clearTimeout(timer);
   }
+});
+
+// 模型列表拉取：同一服务地址 + 密钥下 GET /models，列出该账号可用的全部模型，
+// 设置页「获取可用模型」按钮调用，用于在同一 Key 下直接切换模型。
+ipcMain.handle("settings:list-models", async (_event, payload) => {
+  const endpoint = String(payload?.endpoint || "").trim();
+  if (!endpoint) return { ok: false, error: "请先填写服务地址" };
+  return listServerModels({ endpoint, apiKey: String(payload?.apiKey || "").trim() });
 });
 
 // 侧边聊天工具循环上限：只读检索工具，几轮足够定位；防止模型连续发工具调用不收尾

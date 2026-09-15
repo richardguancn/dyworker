@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -87,6 +87,9 @@ async function makeWorkspace(files = {}) {
   }
   return root;
 }
+
+// cmd.exe 没有 sleep 命令，用 ping 模拟一条约 60 秒的长耗时命令
+const longRunningCommand = () => (process.platform === "win32" ? "ping -n 61 127.0.0.1 >nul" : "sleep 60");
 
 async function trySymlink(t, target, linkPath) {
   try {
@@ -942,7 +945,7 @@ test("停止任务时正在运行的命令被立即终止，不等超时", async
   const controller = new AbortController();
   const workspace = new Workspace(root, { signal: controller.signal });
   const started = Date.now();
-  const running = workspace.runCommand("sleep 60");
+  const running = workspace.runCommand(longRunningCommand());
   setTimeout(() => controller.abort(), 50);
   const result = await running;
   assert.equal(result.ok, false);
@@ -955,7 +958,7 @@ test("isCancelled 翻转时正在运行的命令同样被终止（渠道停止�
   let cancelled = false;
   const workspace = new Workspace(root, { isCancelled: () => cancelled });
   const started = Date.now();
-  const running = workspace.runCommand("sleep 60");
+  const running = workspace.runCommand(longRunningCommand());
   setTimeout(() => { cancelled = true; }, 50);
   const result = await running;
   assert.equal(result.ok, false);
@@ -1130,7 +1133,7 @@ test("替我审批:审核助手放行时不再弹人工审批", async () => {
 
 test("替我审批:修改审批逻辑文件绕过审核助手,直接转人工", async () => {
   const root = await makeWorkspace();
-  const agentPath = path.resolve(new URL("../electron/agent.mjs", import.meta.url).pathname);
+  const agentPath = fileURLToPath(new URL("../electron/agent.mjs", import.meta.url));
   const calls = [];
   let userApprovals = 0;
   // 即便审核助手会放行，修改 electron/agent.mjs 也必须直接弹人工（不消耗这条 reviewer 响应）
@@ -1984,6 +1987,138 @@ test("上下文上限探测失败或不适用时静默回退 null", async () => 
     fetchImpl: async () => { throw new Error("不应被调用"); },
   });
   assert.equal(skipped, null);
+});
+
+test("拉取同一密钥下的可用模型列表（GET /models）：推导地址、去重并提取上下文上限", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ data: [
+        { id: "glm-5.3" },
+        { id: "glm-5.3-flash", max_model_len: 1048576 },
+        { id: "glm-5.3" }, // 重复 id 去重
+      ] }),
+    };
+  };
+  const result = await listServerModels({
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    apiKey: "sk-test",
+    fetchImpl,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 2);
+  assert.deepEqual(result.models, [{ id: "glm-5.3" }, { id: "glm-5.3-flash", contextLimit: 1048576 }]);
+  // chat/completions → models 的地址推导（只替换尾部路径段），鉴权头带 Bearer
+  assert.equal(calls[0].url, "https://open.bigmodel.cn/api/paas/v4/models");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer sk-test");
+
+  // 空 Key（本地 vLLM 等）不带 Authorization；DeepSeek 根地址补全为 /responses 后同样可推导
+  const local = await listServerModels({
+    endpoint: "http://192.16.6.138:8000/v1/chat/completions",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, text: async () => JSON.stringify({ data: [{ id: "Qwen3.8-27B", max_model_len: 262144 }] }) };
+    },
+  });
+  assert.equal(local.ok, true);
+  assert.deepEqual(local.models, [{ id: "Qwen3.8-27B", contextLimit: 262144 }]);
+  assert.equal(calls.at(-1).url, "http://192.16.6.138:8000/v1/models");
+  assert.equal(calls.at(-1).options.headers.Authorization, undefined);
+
+  const deepseek = await listServerModels({
+    endpoint: "https://api.deepseek.com",
+    apiKey: "sk-ds",
+    fetchImpl: async (url) => {
+      calls.push({ url, options: {} });
+      return { ok: true, text: async () => JSON.stringify({ data: [{ id: "deepseek-v4-flash" }] }) };
+    },
+  });
+  assert.equal(deepseek.ok, true);
+  assert.equal(calls.at(-1).url, "https://api.deepseek.com/models");
+});
+
+test("模型列表拉取失败时按状态码给出可操作的错误", async () => {
+  // 地址无法推导 /models（如只填了根地址的非 DeepSeek 服务）：不发请求直接报错
+  const badShape = await listServerModels({
+    endpoint: "https://api.example.com",
+    fetchImpl: async () => { throw new Error("不应被调用"); },
+  });
+  assert.equal(badShape.ok, false);
+  assert.match(badShape.error, /无法从服务地址推导/);
+
+  // 401：密钥被拒绝
+  const rejected = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    apiKey: "sk-bad",
+    fetchImpl: async () => ({ ok: false, status: 401, text: async () => '{"error":{"message":"invalid key"}}' }),
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.status, 401);
+  assert.match(rejected.error, /密钥被拒绝/);
+
+  // 404：服务不提供模型列表接口
+  const missing = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => ({ ok: false, status: 404, text: async () => "not found" }),
+  });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /未提供模型列表接口/);
+
+  // 连接失败 / 超时
+  const unreachable = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => { throw new Error("fetch failed"); },
+  });
+  assert.equal(unreachable.ok, false);
+  assert.match(unreachable.error, /无法连接服务地址/);
+
+  // 200 但返回的不是模型列表 / 列表为空
+  const notList = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => ({ ok: true, text: async () => "<html>login page</html>" }),
+  });
+  assert.equal(notList.ok, false);
+  assert.match(notList.error, /不是模型列表/);
+
+  const empty = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify({ data: [] }) }),
+  });
+  assert.equal(empty.ok, false);
+  assert.match(empty.error, /模型列表为空/);
+});
+
+test("模型列表超过 300 字符仍能完整解析（截断回归）", async () => {
+  // 真实厂商的 /models 响应普遍远超 300 字符；曾经先截断再 parse 导致全部报「缺少 data 字段」
+  const raw = JSON.stringify({ data: Array.from({ length: 20 }, (_, index) => ({ id: `provider-model-with-long-name-${index}` })) });
+  assert.ok(raw.length > 300, "测试数据本身要超过 300 字符才能覆盖回归");
+  const result = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    apiKey: "k",
+    fetchImpl: async () => ({ ok: true, text: async () => raw }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.count, 20);
+  assert.equal(result.models.at(-1).id, "provider-model-with-long-name-19");
+});
+
+test("兼容非标准模型列表返回：{ models: [...] } 与裸数组、name 字段", async () => {
+  const modelsField = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify({ models: [{ id: "m1" }, { id: "m2" }] }) }),
+  });
+  assert.equal(modelsField.ok, true);
+  assert.deepEqual(modelsField.models, [{ id: "m1" }, { id: "m2" }]);
+
+  const bareArray = await listServerModels({
+    endpoint: "https://api.example.com/v1/chat/completions",
+    fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify([{ id: "m1" }, { name: "models/gemini-pro" }]) }),
+  });
+  assert.equal(bareArray.ok, true);
+  // name 字段兜底，并剥掉 Gemini 原生风格的 models/ 前缀
+  assert.deepEqual(bareArray.models, [{ id: "m1" }, { id: "gemini-pro" }]);
 });
 
 test("模型名 [1M] 上下文覆盖后缀：解析、探测与请求都剥离为裸模型名", async () => {

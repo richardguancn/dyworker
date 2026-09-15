@@ -56,6 +56,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  ScanText,
   Search,
   Settings,
   Scissors,
@@ -84,7 +85,7 @@ import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WorkspaceContext, WorkspaceEntry } from "./types";
-import { matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
+import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
@@ -2917,6 +2918,8 @@ function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
       return <Trash2 size={14} />;
     case "read_file":
       return <FileText size={14} />;
+    case "ocr_file":
+      return <ScanText size={14} />;
     case "write_file":
       return <FileCode2 size={14} />;
     case "save_memory":
@@ -4795,6 +4798,10 @@ function SettingsDialog({
   // 凭证预检：保存前先验证服务地址/模型/密钥可用性，避免任务运行时才发现配错
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // 同一密钥下的可用模型列表（GET /models）：输入密钥后自动拉取，填充「模型名称」下拉
+  const [modelsFetching, setModelsFetching] = useState(false);
+  const [modelOptions, setModelOptions] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
+  const [modelsError, setModelsError] = useState("");
 
   const runCredentialProbe = async () => {
     if (!draft.endpoint.trim() || !draft.model.trim()) {
@@ -4814,6 +4821,49 @@ function SettingsDialog({
       setProbing(false);
     }
   };
+
+  // 输入完密钥后自动拉取该密钥可用的模型列表（GET /models），填充「模型名称」下拉；
+  // 700ms 防抖等输入稳定，服务地址或密钥一变就重新拉（本地服务无需密钥时仍可用预设清单手填）
+  useEffect(() => {
+    if (tab !== "model") return;
+    const endpoint = draft.endpoint.trim();
+    const apiKey = draft.apiKey.trim();
+    if (!endpoint || !apiKey) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setModelsFetching(true);
+      window.dyworker?.listModels({ endpoint, apiKey })
+        .then((result) => {
+          if (cancelled) return;
+          if (result?.ok && result.models?.length) {
+            setModelOptions(result.models);
+            setModelsError("");
+          } else {
+            setModelOptions(null);
+            setModelsError(result?.error || "获取可用模型失败，可手动填写模型名称。");
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setModelsError(`获取可用模型失败：${error instanceof Error ? error.message : String(error)}`);
+        })
+        .finally(() => {
+          if (!cancelled) setModelsFetching(false);
+        });
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tab, draft.endpoint, draft.apiKey]);
+
+  // 模型名称下拉候选：服务端拉取的列表在前（对该密钥是权威的），预设清单兜底补充
+  const modelChoices: Array<{ id: string; contextLimit?: number }> = (() => {
+    const fetched = modelOptions ?? [];
+    const extras = preset.models
+      .filter((model) => !fetched.some((item) => item.id === model))
+      .map((model) => ({ id: model }));
+    return [...fetched, ...extras];
+  })();
 
   useEffect(() => {
     if (tab !== "model") return;
@@ -5191,17 +5241,38 @@ function SettingsDialog({
             : "系统会根据服务地址自动判断使用 Responses API 或 Chat Completions；DeepSeek 官方根地址会自动补全为 /responses。"}
         </p>
         <label>
+          API 密钥
+          <input
+            value={draft.apiKey}
+            type="password"
+            placeholder={`仅保存在当前设备（${preset.keyHint}）`}
+            onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
+          />
+        </label>
+        <div className="credential-probe">
+          <button type="button" className="button-secondary" onClick={() => void runCredentialProbe()} disabled={probing || saving}>
+            {probing ? <LoaderCircle className="spin" size={14} /> : null}
+            {probing ? "验证中…" : "验证密钥可用性"}
+          </button>
+          {probeResult ? <p className={`credential-probe-result ${probeResult.ok ? "ok" : "bad"}`}>{probeResult.text}</p> : null}
+        </div>
+        <label>
           模型名称
           <input
             value={draft.model}
             list="preset-models"
-            placeholder={preset.defaultModel || "填写服务商提供的模型名称"}
+            placeholder={modelsFetching ? "正在获取可用模型…" : preset.defaultModel || "填写服务商提供的模型名称"}
             onChange={(event) => applyModel(event.target.value)}
           />
           <datalist id="preset-models">
-            {preset.models.map((model) => <option key={model} value={model} />)}
+            {modelChoices.map((item) => <option key={item.id} value={item.id} />)}
           </datalist>
         </label>
+        {modelsFetching ? <p className="dialog-note">正在获取该密钥可用的模型…</p> : null}
+        {!modelsFetching && modelOptions ? (
+          <p className="dialog-note">已获取 {modelOptions.length} 个可用模型，点击上方输入框即可下拉选择；也可手动输入其他名称。</p>
+        ) : null}
+        {modelsError ? <p className="credential-probe-result bad">{modelsError}</p> : null}
         <p className="dialog-note">
           可在模型名后加 [1M]、[256K] 或 [131072] 后缀指定上下文上限（如 k3[1M]），仅用于本地用量统计与裁剪；请求时自动剥离后缀。
         </p>
@@ -5237,29 +5308,24 @@ function SettingsDialog({
         <p className="dialog-note">
           dispatch_agent 派发的子代理默认与主模型相同；可在这里换成更便宜或更快的模型（如 Flash 型）跑资料收集类子任务，密钥为空时沿用主模型密钥。
         </p>
-        <label>
-          API 密钥
-          <input
-            value={draft.apiKey}
-            type="password"
-            placeholder={`仅保存在当前设备（${preset.keyHint}）`}
-            onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
-          />
-        </label>
-        <div className="credential-probe">
-          <button type="button" className="button-secondary" onClick={() => void runCredentialProbe()} disabled={probing || saving}>
-            {probing ? <LoaderCircle className="spin" size={14} /> : null}
-            {probing ? "验证中…" : "验证密钥可用性"}
-          </button>
-          {probeResult ? <p className={`credential-probe-result ${probeResult.ok ? "ok" : "bad"}`}>{probeResult.text}</p> : null}
-        </div>
-        {["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].some((m) => draft.model.trim().toLowerCase() === m) && (<>
-        {draft.model.trim().toLowerCase() === "deepseek-v4-flash-vision-exp" ? (<>
-          <div className="dialog-section-title">图片（DeepSeek V4 Flash Vision-Exp）</div>
-          <p className="dialog-note">该模型原生支持图片输入（input_image / image_url），附件图片会原样随请求发送给 DeepSeek，无需再配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。</p>
-        </>) : (<>
-        <div className="dialog-section-title">图片识别（DeepSeek V4 Flash / Pro）</div>
-        <p className="dialog-note">DeepSeek V4 系列模型本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。</p>
+        {(() => {
+          const modelName = draft.model.trim();
+          const deepseekVision = modelName.toLowerCase() === "deepseek-v4-flash-vision-exp";
+          const deepseekText = ["deepseek-v4-flash", "deepseek-v4-pro"].includes(modelName.toLowerCase());
+          const glmVision = providerId === "glm" && isGlmNativeVisionModel(modelName);
+          const glmText = providerId === "glm" && /^glm-/i.test(modelName) && !glmVision;
+          if (!(deepseekVision || deepseekText || glmVision || glmText)) return null;
+          if (deepseekVision || glmVision) return (<>
+          <div className="dialog-section-title">图片（{modelName}）</div>
+          <p className="dialog-note">{glmVision
+            ? "该模型是 GLM 原生多模态模型，附件图片会以 image_url 原样随请求发送给智谱，无需配置外部视觉服务。"
+            : "该模型原生支持图片输入（input_image / image_url），附件图片会原样随请求发送给 DeepSeek，无需再配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。"}</p>
+          </>);
+          return (<>
+        <div className="dialog-section-title">图片识别（{deepseekText ? "DeepSeek V4 Flash / Pro" : "GLM 纯文本模型"}）</div>
+        <p className="dialog-note">{deepseekText
+          ? "DeepSeek V4 系列模型本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。"
+          : `GLM 纯文本模型不接收图片。可以把模型换成多模态的 glm-5.3-flash（推荐，图片直接发给智谱），或配置下方视觉服务：图片先交给视觉服务识别，再把识别结果交给 GLM，原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url（如智谱 glm-4.5v）。`}</p>
         <label>
           视觉服务地址
           <input
@@ -5285,8 +5351,8 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })}
           />
         </label>
-        </>)}
-        </>)}
+          </>);
+        })()}
         {providerId === "kimi-open" && (<>
         <div className="dialog-section-title">Kimi 原生工具（开放平台）</div>
         <label className="dialog-check">
@@ -5466,7 +5532,7 @@ function SettingsDialog({
           />
           仅使用境内搜索（推荐敏感单位开启：跳过必应，查询不发送给外企服务）
         </label>
-        <p className="dialog-note">搜索按模型厂商路由：Kimi 开放平台用 Kimi 官方搜索（公式 web_search，按次计费）；DeepSeek 模型用 DeepSeek 服务端搜索（复用会话密钥，每次搜索计一次模型调用）；其他模型默认也用 DeepSeek 搜索（需在此配置密钥）。以上都不可用时回退：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
+        <p className="dialog-note">搜索按模型厂商路由：Kimi 开放平台用 Kimi 官方搜索（公式 web_search，按次计费）；DeepSeek 模型用 DeepSeek 服务端搜索（复用会话密钥，每次搜索计一次模型调用）；GLM（智谱）模型用智谱 Web Search API（复用会话密钥，按次计费，境内引擎）；其他模型默认也用 DeepSeek 搜索（需在此配置密钥）。以上都不可用时回退：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
         </>)}
         {tab === "mcp" && (<>
         <div className="dialog-section-title">MCP 工具服务器（可选）</div>
@@ -5888,6 +5954,11 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  // 模型菜单里「此密钥可用的模型」段：菜单打开时按 endpoint+key 拉一次 /models 并缓存，
+  // 换服务地址或密钥后重新拉；拉取失败静默降级（菜单仍列出已保存的配置）
+  const [composerModels, setComposerModels] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
+  const [composerModelsLoading, setComposerModelsLoading] = useState(false);
+  const composerModelsKeyRef = useRef("");
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(300);
@@ -8904,6 +8975,61 @@ export function App() {
     await saveProviderSettings(nextSettings, `已切换到 ${profile.name}`);
   };
 
+  // 模型菜单打开时拉一次「此密钥可用的模型」；同一 endpoint+key 只拉一次，换地址或密钥后重新拉
+  const ensureComposerModels = () => {
+    const endpoint = settings.endpoint.trim();
+    const key = `${endpoint}\n${settings.apiKey.trim()}`;
+    if (!endpoint || composerModelsKeyRef.current === key) return;
+    composerModelsKeyRef.current = key;
+    setComposerModels(null);
+    setComposerModelsLoading(true);
+    window.dyworker?.listModels({ endpoint, apiKey: settings.apiKey })
+      .then((result) => setComposerModels(result?.ok ? (result.models || []) : []))
+      .catch(() => setComposerModels([]))
+      .finally(() => setComposerModelsLoading(false));
+  };
+
+  // 在同一密钥下切换到另一个模型：已有对应配置就整个启用；没有就按当前密钥现做一套并保存，
+  // 之后它会出现在「已保存的模型」列表里，可与其它厂商配置一样管理
+  const switchComposerModel = async (modelId: string) => {
+    const endpoint = settings.endpoint.trim();
+    const model = modelId.trim();
+    if (!endpoint || !model) return;
+    setModelMenuOpen(false);
+    const existing = (settings.profiles || []).find((item) => item.endpoint === endpoint && item.model === model);
+    if (existing) {
+      await saveProviderSettings(settingsWithProfile(settings, existing), `已切换到 ${existing.name}`);
+      return;
+    }
+    let shortProvider = providerPresets.find((item) => item.id === matchProvider(endpoint))?.name.replace(/（.*?）/g, "") || "";
+    if (matchProvider(endpoint) === "custom") {
+      try {
+        shortProvider = new URL(endpoint).host;
+      } catch {
+        shortProvider = "自定义";
+      }
+    }
+    const profile: ModelProfile = {
+      id: crypto.randomUUID(),
+      name: `${shortProvider} · ${model}`.trim(),
+      endpoint,
+      model,
+      apiKey: settings.apiKey.trim(),
+      reasoningEffort: settings.reasoningEffort || "",
+      transcriptionEndpoint: settings.transcriptionEndpoint,
+      transcriptionModel: settings.transcriptionModel,
+    };
+    const next = {
+      ...settings,
+      model,
+      profiles: [
+        ...(settings.profiles || []).filter((item) => !(item.endpoint === endpoint && item.model === model)),
+        profile,
+      ],
+    };
+    await saveProviderSettings(next, `已切换到 ${profile.name}`);
+  };
+
   const saveSchedule = async (draft: ScheduleDraft) => {
     const planWorkspacePath = (draft.workspacePath || "").trim() || workspacePath;
     const result = await window.dyworker?.saveSchedule({ ...draft, workspacePath: planWorkspacePath });
@@ -10659,8 +10785,13 @@ export function App() {
                   <button
                     className={`composer-mode ${modelMenuOpen ? "active" : ""}`}
                     onClick={() => {
-                      if (settings.profiles?.length) setModelMenuOpen((value) => !value);
-                      else {
+                      if (settings.profiles?.length || settings.endpoint) {
+                        setModelMenuOpen((value) => {
+                          const next = !value;
+                          if (next) ensureComposerModels();
+                          return next;
+                        });
+                      } else {
                         setSettingsTab("model");
                         setSettingsOpen(true);
                       }
@@ -10671,25 +10802,57 @@ export function App() {
                   </button>
                   {modelMenuOpen && (
                     <div className="model-menu" role="menu">
-                      <div className="model-menu-title">选择模型</div>
-                      {(settings.profiles || []).map((profile) => {
-                        const active = profile.endpoint === settings.endpoint && profile.model === settings.model;
-                        return (
-                          <button
-                            key={profile.id}
-                            type="button"
-                            role="menuitem"
-                            className={active ? "active" : ""}
-                            onClick={() => void activateModelProfile(profile)}
-                          >
-                            <span>
-                              <strong>{profile.name}</strong>
-                              <small>{profile.model}</small>
-                            </span>
-                            {active && <Check size={14} />}
-                          </button>
-                        );
-                      })}
+                      {(settings.profiles || []).length ? (<>
+                        <div className="model-menu-title">已保存的模型</div>
+                        {(settings.profiles || []).map((profile) => {
+                          const active = profile.endpoint === settings.endpoint && profile.model === settings.model;
+                          return (
+                            <button
+                              key={profile.id}
+                              type="button"
+                              role="menuitem"
+                              className={active ? "active" : ""}
+                              onClick={() => void activateModelProfile(profile)}
+                            >
+                              <span>
+                                <strong>{profile.name}</strong>
+                                <small>{profile.model}</small>
+                              </span>
+                              {active && <Check size={14} />}
+                            </button>
+                          );
+                        })}
+                      </>) : null}
+                      {composerModelsLoading ? (
+                        <div className="model-menu-title">
+                          <LoaderCircle className="spin" size={12} />
+                          正在获取此密钥可用的模型…
+                        </div>
+                      ) : composerModels?.length ? (<>
+                        <div className="model-menu-title">此密钥可用的模型</div>
+                        {composerModels
+                          .filter((item) => !(settings.profiles || []).some((profile) => profile.endpoint === settings.endpoint && profile.model === item.id))
+                          .map((item) => {
+                            const active = settings.model === item.id;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                role="menuitem"
+                                className={active ? "active" : ""}
+                                onClick={() => void switchComposerModel(item.id)}
+                              >
+                                <span>
+                                  <strong>{item.id}</strong>
+                                  {item.contextLimit
+                                    ? <small>{item.contextLimit >= 1048576 ? `${Math.round(item.contextLimit / 1048576)}M` : `${Math.round(item.contextLimit / 1024)}K`} 上下文</small>
+                                    : null}
+                                </span>
+                                {active && <Check size={14} />}
+                              </button>
+                            );
+                          })}
+                      </>) : null}
                       <button
                         type="button"
                         role="menuitem"

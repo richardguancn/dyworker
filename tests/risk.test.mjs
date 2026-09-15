@@ -8,7 +8,7 @@ import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoA
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
 const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
 const oracleWorkspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
-const oracleInternetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open"]);
+const oracleInternetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
 const oracleInternetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
 const oracleBrowserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);
 
@@ -90,6 +90,12 @@ test("classify 风险分级矩阵", () => {
   assert.equal(classify("run_command").risk, RISK.EXEC);
   assert.equal(classify("web_search").risk, RISK.EXTERNAL);
   assert.equal(classify("fetch_web_page").internet, true);
+  // ocr_file：联网且含数据外发（上传文件内容到智谱云端）→ EXTERNAL + internet，但不随联网只读自动放行
+  assert.equal(classify("ocr_file").risk, RISK.EXTERNAL);
+  assert.equal(classify("ocr_file").internet, true);
+  assert.equal(classify("ocr_file").consequential, false);
+  assert.equal(evaluateApproval({ approvalMode: "auto", name: "ocr_file" }), "ask", "自动执行模式下 ocr_file 仍需人工确认");
+  assert.equal(evaluateApproval({ approvalMode: "auto", name: "web_search" }), "allow", "web_search 联网只读保持自动放行");
   assert.equal(classify("browser__open").risk, RISK.EXTERNAL);
   assert.equal(classify("browser__read").risk, RISK.READ);
   assert.equal(classify("browser__click").risk, RISK.EXTERNAL);

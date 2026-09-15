@@ -74,7 +74,8 @@ export const providerPresets: ProviderPreset[] = [
     },
     defaultContextLimit: 204800,
     // 官方文档：GLM-5.2 及以上支持 reasoning_effort（GLM-5.3 仅 low/high/max，默认 max）；
-    // GLM-5.3 强制开启思考（thinking disabled 会报错），"off" 仅适用于 4.x 系列
+    // GLM-5.3 强制开启思考（thinking disabled 会报错），"off" 仅适用于 4.x 系列。
+    // glm-5.3-flash 是原生多模态模型（可直接识别图片），其余为纯文本模型
     reasoningEfforts: ["off", "low", "high", "max"],
   },
   {
@@ -202,6 +203,12 @@ export function matchProvider(endpoint: string): string {
   if (!value) return "custom";
   const preset = providerPresets.find((item) => item.id !== "custom" && item.endpoint === value);
   return preset?.id || "custom";
+}
+
+// GLM 多模态模型（原生处理 image_url，无需视觉服务改写）：GLM-5.3-Flash、GLM-4.5V、
+// GLM-4.1V 系与历史 GLM-4V 系。判定模式与主进程 electron/providers.mjs 保持同源同步。
+export function isGlmNativeVisionModel(model: string): boolean {
+  return /^glm-(5\.3-flash|4\.5v|4\.1v|4v)(?=[-_]|$)/i.test(String(model || "").trim());
 }
 
 // 按 baseurl 判断是否走 Responses API：路径以 /responses 结尾即按 Responses 请求，

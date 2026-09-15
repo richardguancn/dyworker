@@ -1,14 +1,16 @@
-// Kimi 开放平台原生工具适配测试（node --test）。
+// Kimi 开放平台原生工具 + GLM 智谱开放平台原生能力（联网搜索 / GLM-OCR / 多模态判定）适配测试（node --test）。
 // 覆盖：detectProvider / kimiFormulaBaseUrl / fetchKimiFormulaDefinitions（缓存与重试）/
 // runKimiFormula（原样透传与两种 output 解析）/ runAgent 工具装配与全链路（formula web_search、
-// $web_search 回传、失败容错、非 kimi 回归）/ 流式 tool_calls 多 index 拼接。
+// $web_search 回传、失败容错、非 kimi 回归）/ 流式 tool_calls 多 index 拼接；
+// GLM：searchGlmNative / glmOcrFile / glmToolBaseUrl / 多模态模型判定 / web_search 与
+// ocr_file 的 runAgent 全链路 / 纯文本模型的图片改写。
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchQwenNative } from "../electron/providers.mjs";
-import { requestModel, runAgent } from "../electron/agent.mjs";
+import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isGlmNativeVisionModel, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "../electron/providers.mjs";
+import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent } from "../electron/agent.mjs";
 
 const KIMI_ENDPOINT = "https://api.moonshot.cn/v1/chat/completions";
 
@@ -772,4 +774,241 @@ test("requestModel 流式：delta.tool_calls 按 index 累积 id/name/arguments�
   assert.equal(message.tool_calls[0].id, "call_1");
   assert.equal(message.tool_calls[0].function.name, "web_search");
   assert.equal(message.tool_calls[0].function.arguments, '{"query":"北京天气"}');
+});
+
+// ---- GLM（智谱开放平台）原生能力：联网搜索 / GLM-OCR / 多模态模型判定 ----
+
+const GLM_ENDPOINT = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+
+function glmSearchPayload() {
+  return {
+    search_result: [
+      { title: "结果 A", content: "A 的摘要", link: "https://a.com/x", media: "搜狐", publish_date: "2026-08-01" },
+      { title: "结果 B", content: "B 的摘要", link: "https://b.com/y" },
+      { title: "结果 A 重复", content: "", link: "https://a.com/x" },
+    ],
+  };
+}
+
+test("glmToolBaseUrl：由聊天端点推导工具 API base", () => {
+  assert.equal(glmToolBaseUrl(GLM_ENDPOINT), "https://open.bigmodel.cn/api/paas/v4");
+  assert.equal(glmToolBaseUrl("https://open.bigmodel.cn/api/paas/v4"), "https://open.bigmodel.cn/api/paas/v4");
+  assert.equal(glmToolBaseUrl("不是地址"), "https://open.bigmodel.cn/api/paas/v4");
+});
+
+test("searchGlmNative：请求形状正确，media 并入标题、按链接去重", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), headers: options.headers, body: JSON.parse(options.body) });
+    return jsonResponse(glmSearchPayload());
+  };
+  const items = await searchGlmNative(fetchImpl, { apiKey: "sk-glm", query: "某企业联系电话", maxResults: 10 });
+  assert.equal(calls[0].url, "https://open.bigmodel.cn/api/paas/v4/web_search");
+  assert.equal(calls[0].headers.Authorization, "Bearer sk-glm");
+  assert.equal(calls[0].body.search_engine, "search_std");
+  assert.equal(calls[0].body.search_intent, false);
+  assert.equal(calls[0].body.count, 10);
+  assert.equal(items.length, 2, "同一链接应去重");
+  assert.deepEqual(items[0], { url: "https://a.com/x", title: "结果 A - 搜狐", snippet: "A 的摘要", publishedAt: "2026-08-01" });
+  assert.deepEqual(items[1], { url: "https://b.com/y", title: "结果 B", snippet: "B 的摘要", publishedAt: "" });
+});
+
+test("searchGlmNative：query 超 70 字符截断、count 钳制、错误与空结果抛错", async () => {
+  const calls = [];
+  await searchGlmNative(async (url, options) => {
+    calls.push(JSON.parse(options.body));
+    return jsonResponse(glmSearchPayload());
+  }, { apiKey: "k", query: "长".repeat(80), maxResults: 99 });
+  assert.equal(calls[0].search_query.length, 70, "官方限制 search_query ≤ 70 字符");
+  assert.equal(calls[0].count, 50, "count 上限 50");
+  await assert.rejects(
+    () => searchGlmNative(async () => jsonResponse({ search_result: [] }), { apiKey: "k", query: "q" }),
+    /未返回结果/,
+  );
+  await assert.rejects(
+    () => searchGlmNative(async () => jsonResponse({}, 401), { apiKey: "k", query: "q" }),
+    /HTTP 401/,
+  );
+  await assert.rejects(
+    () => searchGlmNative(async () => jsonResponse({ error: { code: "1701", message: "网络搜索并发已达上限" } }), { apiKey: "k", query: "q" }),
+    /并发已达上限/,
+  );
+});
+
+test("glmOcrFile：请求形状正确，页码参数按需携带", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), body: JSON.parse(options.body) });
+    return jsonResponse({ md_results: "# 标题\n\n正文", usage: { total_tokens: 100 } });
+  };
+  const result = await glmOcrFile(fetchImpl, { apiKey: "sk-glm", file: "data:image/png;base64,AAAA", startPage: 2, endPage: 5 });
+  assert.equal(calls[0].url, "https://open.bigmodel.cn/api/paas/v4/layout_parsing");
+  assert.equal(calls[0].body.model, "glm-ocr");
+  assert.equal(calls[0].body.file, "data:image/png;base64,AAAA");
+  assert.equal(calls[0].body.start_page_id, 2);
+  assert.equal(calls[0].body.end_page_id, 5);
+  assert.equal(result.markdown, "# 标题\n\n正文");
+  await glmOcrFile(fetchImpl, { apiKey: "k", file: "data:application/pdf;base64,BBBB" });
+  assert.equal("start_page_id" in calls[1].body, false, "未传页码时不应携带 start_page_id");
+  assert.equal("end_page_id" in calls[1].body, false);
+  await assert.rejects(
+    () => glmOcrFile(async () => jsonResponse({}), { apiKey: "k", file: "f" }),
+    /未返回识别结果/,
+  );
+  await assert.rejects(
+    () => glmOcrFile(async () => jsonResponse({ error: { message: "文件超过大小限制" } }), { apiKey: "k", file: "f" }),
+    /文件超过大小限制/,
+  );
+});
+
+test("isGlmNativeVisionModel：GLM 多模态模型判定", () => {
+  assert.equal(isGlmNativeVisionModel("glm-5.3-flash"), true, "GLM-5.3-Flash 原生多模态");
+  assert.equal(isGlmNativeVisionModel("GLM-4.5V"), true);
+  assert.equal(isGlmNativeVisionModel("glm-4.1v-thinking"), true);
+  assert.equal(isGlmNativeVisionModel("glm-4.1v-flash-thinking"), true);
+  assert.equal(isGlmNativeVisionModel("glm-4v-plus"), true);
+  assert.equal(isGlmNativeVisionModel("glm-4v"), true);
+  assert.equal(isGlmNativeVisionModel("glm-5.3"), false, "GLM-5.3 是纯文本模型");
+  assert.equal(isGlmNativeVisionModel("glm-5.2"), false);
+  assert.equal(isGlmNativeVisionModel("glm-4.6"), false);
+  assert.equal(isGlmNativeVisionModel("glm-4-flash"), false);
+  assert.equal(isGlmNativeVisionModel("k3"), false);
+  assert.equal(isGlmNativeVisionModel(""), false);
+});
+
+test("isGlmVisionModel / isGlmTextModelNeedingVisionRewrite：上下文后缀剥离与端点限定", () => {
+  assert.equal(isGlmVisionModel({ endpoint: GLM_ENDPOINT, model: "glm-5.3-flash[1M]" }), true, "应剥离 [1M] 上下文后缀");
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.3" }), true);
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.3-flash" }), false);
+  // 自建网关跑 GLM 权重（非智谱云端端点）不强制改写，保持原样透传
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: "http://vllm.local/v1/chat/completions", model: "glm-5.3" }), false);
+});
+
+test("runAgent：GLM 端点下 web_search 走智谱 Web Search API 并复用会话密钥", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const messages = [
+    { role: "assistant", content: "", tool_calls: [toolCall("call_glm", "web_search", { query: "某企业电话" })] },
+    { role: "assistant", content: "找到了，电话见结果 A。" },
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    const target = String(url);
+    calls.push({ url: target, headers: options.headers || {}, body: options.body ? JSON.parse(options.body) : null });
+    if (target.endsWith("/web_search")) return jsonResponse(glmSearchPayload());
+    if (target.endsWith("/chat/completions")) {
+      const message = messages.length > 1 ? messages.shift() : messages[0];
+      return jsonResponse({ choices: [{ message }] });
+    }
+    throw new Error(`未预期的请求：${target}`);
+  };
+  const result = await runAgent({
+    settings: { endpoint: GLM_ENDPOINT, model: "glm-5.3", apiKey: "sk-glm-session" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "查企业电话" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  const searchCall = calls.find((call) => call.url.endsWith("/web_search"));
+  assert.ok(searchCall, "应发起智谱搜索请求");
+  assert.equal(searchCall.headers.Authorization, "Bearer sk-glm-session", "GLM 端点应复用会话密钥");
+  const chatCalls = calls.filter((call) => call.url.endsWith("/chat/completions"));
+  const toolMessage = chatCalls[1].body.messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /搜索来源：GLM 联网搜索（智谱服务端）/);
+  assert.match(toolMessage.content, /1\. 结果 A - 搜狐（2026-08-01）\nhttps:\/\/a\.com\/x/);
+});
+
+test("runAgent：GLM 端点下 ocr_file 走 GLM-OCR 并把文件编码为 Data URL", async () => {
+  const root = await makeWorkspace();
+  // 1x1 透明 PNG
+  const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  await fs.writeFile(path.join(root, "扫描件.png"), Buffer.from(pngBase64, "base64"));
+  const calls = [];
+  const messages = [
+    { role: "assistant", content: "", tool_calls: [toolCall("call_ocr", "ocr_file", { path: "扫描件.png" })] },
+    { role: "assistant", content: "识别完成。" },
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    const target = String(url);
+    calls.push({ url: target, body: options.body ? JSON.parse(options.body) : null });
+    if (target.endsWith("/layout_parsing")) return jsonResponse({ md_results: "# 识别结果\n\n六国灭亡了" });
+    if (target.endsWith("/chat/completions")) {
+      const message = messages.length > 1 ? messages.shift() : messages[0];
+      return jsonResponse({ choices: [{ message }] });
+    }
+    throw new Error(`未预期的请求：${target}`);
+  };
+  const result = await runAgent({
+    settings: { endpoint: GLM_ENDPOINT, model: "glm-5.3", apiKey: "sk-glm" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "识别扫描件里的文字" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  const ocrCall = calls.find((call) => call.url.endsWith("/layout_parsing"));
+  assert.ok(ocrCall, "应发起 GLM-OCR 请求");
+  assert.equal(ocrCall.body.model, "glm-ocr");
+  assert.equal(ocrCall.body.file, `data:image/png;base64,${pngBase64}`);
+  const chatCalls = calls.filter((call) => call.url.endsWith("/chat/completions"));
+  const toolMessage = chatCalls[1].body.messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /# 识别结果/);
+});
+
+test("runAgent：非 GLM 端点调用 ocr_file 返回可操作的失败提示", async () => {
+  const root = await makeWorkspace();
+  const messages = [
+    { role: "assistant", content: "", tool_calls: [toolCall("call_ocr2", "ocr_file", { path: "x.png" })] },
+    { role: "assistant", content: "改用别的方式。" },
+  ];
+  const chatBodies = [];
+  const fetchImpl = async (url, options = {}) => {
+    const target = String(url);
+    if (!target.endsWith("/chat/completions")) throw new Error(`未预期的请求：${target}`);
+    chatBodies.push(JSON.parse(options.body));
+    const message = messages.length > 1 ? messages.shift() : messages[0];
+    return jsonResponse({ choices: [{ message }] });
+  };
+  const result = await runAgent({
+    settings: { endpoint: "https://api.deepseek.com/v1/chat/completions", model: "deepseek-v4-flash", apiKey: "sk-ds" },
+    workspacePath: root,
+    conversation: [{ role: "user", content: "识别图片" }],
+    fetchImpl,
+    requestApproval: async () => true,
+  });
+  assert.equal(result.status, "done");
+  const toolMessage = chatBodies[1].messages.find((message) => message.role === "tool");
+  assert.match(toolMessage.content, /^失败/, "ocr_file 在非 GLM 端点应失败回填");
+  assert.match(toolMessage.content, /GLM-OCR/);
+  assert.match(toolMessage.content, /切换为 GLM/);
+});
+
+test("requestModel：GLM 纯文本模型带图无视觉服务时报错，glm-5.3-flash 原生放行", async () => {
+  const imageMessages = [{
+    role: "user",
+    content: [
+      { type: "text", text: "看图" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+    ],
+  }];
+  await assert.rejects(
+    () => requestModel({
+      settings: { endpoint: GLM_ENDPOINT, model: "glm-5.3", apiKey: "k" },
+      messages: imageMessages,
+      fetchImpl: async () => { throw new Error("不应发起任何请求"); },
+    }),
+    /glm-5\.3-flash/,
+    "应提示改用多模态模型或配置视觉服务",
+  );
+  const calls = [];
+  await requestModel({
+    settings: { endpoint: GLM_ENDPOINT, model: "glm-5.3-flash", apiKey: "k" },
+    messages: imageMessages,
+    fetchImpl: async (url, options) => {
+      calls.push(JSON.parse(options.body));
+      return jsonResponse({ choices: [{ message: { role: "assistant", content: "图里有只猫" } }] });
+    },
+    tools: false,
+  });
+  assert.equal(calls[0].messages[0].content[1].image_url.url, "data:image/png;base64,AAAA", "glm-5.3-flash 应原样携带图片");
 });
