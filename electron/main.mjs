@@ -127,6 +127,18 @@ function isTrustedRendererUrl(rawUrl) {
   }
 }
 
+// 全部 IPC handler 的统一入口：校验调用方是主渲染进程（webview 客页面只能走
+// sendToHost 到渲染层，到不了这里）。纵深防御——渲染层一旦出现注入（XSS/供应链），
+// 未经此校验的 handler 会成为任意文件读写、git 操作、后台命令的直达通道。
+function trustedHandle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error(`不受信任的 IPC 调用来源：${channel}`);
+    }
+    return handler(event, ...args);
+  });
+}
+
 app.setName("DYWorker");
 nativeTheme.themeSource = "system";
 if (process.platform === "linux") {
@@ -196,18 +208,18 @@ async function checkForAppUpdate() {
   return appUpdater?.check() || { ok: false, state: "unavailable", error: "更新服务尚未准备好" };
 }
 
-ipcMain.handle("app-update:status", () => appUpdater?.getStatus() || {
+trustedHandle("app-update:status", () => appUpdater?.getStatus() || {
   state: "unavailable",
   currentVersion: app.getVersion(),
 });
 
-ipcMain.handle("app-update:check", () => checkForAppUpdate());
-ipcMain.handle("app-update:download", () => appUpdater?.download() || {
+trustedHandle("app-update:check", () => checkForAppUpdate());
+trustedHandle("app-update:download", () => appUpdater?.download() || {
   ok: false,
   state: "unavailable",
   error: "更新服务尚未准备好",
 });
-ipcMain.handle("app-update:install", () => appUpdater?.install() || {
+trustedHandle("app-update:install", () => appUpdater?.install() || {
   ok: false,
   state: "unavailable",
   error: "更新服务尚未准备好",
@@ -232,8 +244,8 @@ function applyReviewerModelDir(settingsValue) {
   reviewerModelDirApplied = dir;
 }
 
-ipcMain.handle("reviewer-local:status", () => localReviewerModelStatus());
-ipcMain.handle("reviewer-local:download", async () => {
+trustedHandle("reviewer-local:status", () => localReviewerModelStatus());
+trustedHandle("reviewer-local:download", async () => {
   try {
     const result = await downloadLocalReviewerModel({
       onProgress: (progress) => {
@@ -247,7 +259,7 @@ ipcMain.handle("reviewer-local:download", async () => {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
-ipcMain.handle("reviewer-local:choose-dir", async () => {
+trustedHandle("reviewer-local:choose-dir", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择审核模型保存目录",
     properties: ["openDirectory", "createDirectory"],
@@ -290,7 +302,7 @@ function applyAsrSettings(saved) {
   return modelId;
 }
 
-ipcMain.handle("voice-local:status", async () => {
+trustedHandle("voice-local:status", async () => {
   const saved = await readSettings();
   const modelId = applyAsrSettings(saved);
   return {
@@ -301,7 +313,7 @@ ipcMain.handle("voice-local:status", async () => {
   };
 });
 
-ipcMain.handle("voice-local:download", async (_event, payload) => {
+trustedHandle("voice-local:download", async (_event, payload) => {
   try {
     // 先应用磁盘上的最新设置：改了保存路径后无需重启，下载直接落到新目录
     const saved = await readSettings();
@@ -337,7 +349,7 @@ ipcMain.handle("voice-local:download", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("voice-local:choose-dir", async () => {
+trustedHandle("voice-local:choose-dir", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择语音模型保存目录",
     properties: ["openDirectory", "createDirectory"],
@@ -366,7 +378,7 @@ function applyTtsSettings(saved) {
   return modelId;
 }
 
-ipcMain.handle("tts-local:status", async () => {
+trustedHandle("tts-local:status", async () => {
   const saved = await readSettings();
   const modelId = applyTtsSettings(saved);
   return {
@@ -377,7 +389,7 @@ ipcMain.handle("tts-local:status", async () => {
   };
 });
 
-ipcMain.handle("tts-local:download", async (_event, payload) => {
+trustedHandle("tts-local:download", async (_event, payload) => {
   try {
     // 先应用磁盘上的最新设置：改了保存路径后无需重启，下载直接落到新目录
     const saved = await readSettings();
@@ -414,7 +426,7 @@ ipcMain.handle("tts-local:download", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("tts-local:choose-dir", async () => {
+trustedHandle("tts-local:choose-dir", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择语音合成模型保存目录",
     properties: ["openDirectory", "createDirectory"],
@@ -424,7 +436,7 @@ ipcMain.handle("tts-local:choose-dir", async () => {
 });
 
 // 选择参考音色音频（本地 TTS 克隆音色用；wav/mp3 等格式，压缩格式由渲染层转码后写回）
-ipcMain.handle("tts-local:choose-voice", async () => {
+trustedHandle("tts-local:choose-voice", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择参考音色音频",
     properties: ["openFile"],
@@ -435,7 +447,7 @@ ipcMain.handle("tts-local:choose-voice", async () => {
 });
 
 // 读取参考音色音频原始字节给渲染层解码（Web Audio 认识 m4a/aac/opus，llama.cpp 不认识）
-ipcMain.handle("tts-local:read-voice", async (_event, payload) => {
+trustedHandle("tts-local:read-voice", async (_event, payload) => {
   const voicePath = String(payload?.path || "").trim();
   if (!voicePath) return { ok: false, error: "缺少音频路径" };
   try {
@@ -448,7 +460,7 @@ ipcMain.handle("tts-local:read-voice", async (_event, payload) => {
 });
 
 // 保存渲染层转码出的 24kHz 单声道 wav（m4a 等格式 llama.cpp 解不了，统一落一份 wav 供合成使用）
-ipcMain.handle("tts-local:write-voice", async (_event, payload) => {
+trustedHandle("tts-local:write-voice", async (_event, payload) => {
   const bytes = payload?.bytes;
   if (!(bytes instanceof Uint8Array) || bytes.length <= 44) {
     return { ok: false, error: "转换结果无效" };
@@ -464,7 +476,7 @@ ipcMain.handle("tts-local:write-voice", async (_event, payload) => {
 
 // 会话内朗读：把文本合成为 wav 返回给渲染层播放（与渠道语音发送同一套 TTS 设置，
 // 不走 silk 编码、不登记发送）。本地引擎用 Qwen3-TTS，云端引擎走 OpenAI 兼容 /audio/speech。
-ipcMain.handle("tts:speak", async (_event, payload) => {
+trustedHandle("tts:speak", async (_event, payload) => {
   const text = String(payload?.text || "").trim();
   if (!text) return { ok: false, error: "没有可朗读的文本" };
   const saved = await readSettings();
@@ -508,12 +520,14 @@ ipcMain.handle("tts:speak", async (_event, payload) => {
 });
 
 // 读取语音附件音频数据供渲染层播放（支持 .silk 解码为 wav，其他音频直接返回 bytes）
-ipcMain.handle("audio:read-attachment", async (_event, payload) => {
+trustedHandle("audio:read-attachment", async (_event, payload) => {
   const targetPath = String(payload?.path || "").trim();
   if (!targetPath) return { ok: false, error: "缺少音频文件路径" };
   try {
     const stat = await fs.stat(targetPath);
     if (!stat.isFile()) return { ok: false, error: "音频文件不存在" };
+    // 无上限整体读入会把主进程内存打爆，附件音频按 100MB 封顶
+    if (stat.size > 100 * 1024 * 1024) return { ok: false, error: "音频文件过大（超过 100MB）" };
     const rawBuffer = await fs.readFile(targetPath);
     const { decode, isSilk, isWav } = await import("silk-wasm");
     const ext = path.extname(targetPath).toLowerCase();
@@ -589,6 +603,8 @@ async function readJson(file, fallback) {
 // 同一文件的并发写入串行化 + 唯一临时文件名：避免多个 token-usage 事件同时
 // 追加 usage-stats.json 时共用同一个 .tmp，导致 rename 互相踩踏（ENOENT 未捕获异常）
 const jsonWriteChains = new Map();
+// 含密钥/凭据的落盘文件收紧到仅属主可读写（safeStorage 不可用时的明文回退也受保护）
+const SENSITIVE_JSON_FILES = new Set(["settings.json", "imported-passwords.json", "channel-credentials.json"]);
 async function writeJson(file, value) {
   const previous = jsonWriteChains.get(file) || Promise.resolve();
   const next = previous.catch(() => {}).then(async () => {
@@ -596,6 +612,7 @@ async function writeJson(file, value) {
     const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await fs.writeFile(temporary, JSON.stringify(value, null, 2), "utf8");
     await fs.rename(temporary, file);
+    if (SENSITIVE_JSON_FILES.has(path.basename(file))) await fs.chmod(file, 0o600).catch(() => {});
   });
   jsonWriteChains.set(file, next);
   try {
@@ -1153,7 +1170,7 @@ async function syncChannelSessionWorkspaces(meta) {
   }
 }
 
-ipcMain.handle("app:initial-state", async () => {
+trustedHandle("app:initial-state", async () => {
   // 全新安装时保留默认欢迎会话；已有存档（拆分文件或迁移数据）则原样返回
   const loaded = await readAllSessions();
   const sessions = loaded.length ? loaded : defaultSessions();
@@ -1180,7 +1197,7 @@ function channelMetaOf(sessions) {
     .map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath }));
 }
 
-ipcMain.handle("sessions:save", async (_event, payload) => {
+trustedHandle("sessions:save", async (_event, payload) => {
   try {
     if (Array.isArray(payload)) {
       // 旧渲染端整档快照：走合并写入器（2 秒间隔尾沿落盘，防写放大）
@@ -1204,7 +1221,7 @@ ipcMain.handle("sessions:save", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("workspace-pins:save", async (_event, paths) => {
+trustedHandle("workspace-pins:save", async (_event, paths) => {
   try {
     const normalized = Array.isArray(paths)
       ? [...new Set(paths.map((item) => String(item || "").trim()).filter(Boolean))]
@@ -1216,7 +1233,7 @@ ipcMain.handle("workspace-pins:save", async (_event, paths) => {
   }
 });
 
-ipcMain.handle("workspace:choose", async () => {
+trustedHandle("workspace:choose", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择工作文件夹",
     properties: ["openDirectory", "createDirectory"],
@@ -1226,7 +1243,7 @@ ipcMain.handle("workspace:choose", async () => {
   return { canceled: false, path: selectedPath, entries: await listWorkspace(selectedPath) };
 });
 
-ipcMain.handle("attachments:choose", async () => {
+trustedHandle("attachments:choose", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "添加附件",
     properties: ["openFile", "multiSelections"],
@@ -1242,7 +1259,7 @@ ipcMain.handle("attachments:choose", async () => {
   }
   return { canceled: false, attachments };
 });
-ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
+trustedHandle("attachments:save-clipboard-image", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取剪贴板图片" };
   try {
     const saved = await saveClipboardImage(payload, path.join(app.getPath("userData"), "clipboard-images"));
@@ -1252,7 +1269,7 @@ ipcMain.handle("attachments:save-clipboard-image", async (event, payload) => {
   }
 });
 
-ipcMain.handle("clipboard:read-text", (event) => {
+trustedHandle("clipboard:read-text", (event) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return "";
   try {
     return clipboard.readText();
@@ -1261,7 +1278,7 @@ ipcMain.handle("clipboard:read-text", (event) => {
   }
 });
 
-ipcMain.handle("clipboard:write-text", (event, text) => {
+trustedHandle("clipboard:write-text", (event, text) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false };
   clipboard.writeText(String(text ?? ""));
   return { ok: true };
@@ -1269,7 +1286,7 @@ ipcMain.handle("clipboard:write-text", (event, text) => {
 
 // 渲染进程的 navigator.clipboard.write/ClipboardItem 在部分 Electron 版本不可用，
 // 复制图片改走主进程原生剪贴板（clipboard.writeImage），粘贴到画图/聊天等应用最稳。
-ipcMain.handle("clipboard:write-image", async (event, payload) => {
+trustedHandle("clipboard:write-image", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入剪贴板图片" };
   try {
     let image = null;
@@ -1294,7 +1311,7 @@ ipcMain.handle("clipboard:write-image", async (event, payload) => {
 // 一次写入「文本 + 图片」：clipboard.write 会把两者放进同一剪贴板项，
 // 粘贴到微信/备忘录/Word 等应用时图文一起出现。
 // 同时写入 HTML 格式（dataURL 内嵌图片），让支持 HTML 粘贴的应用能同时拿到图文。
-ipcMain.handle("clipboard:write-rich", async (event, payload) => {
+trustedHandle("clipboard:write-rich", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入剪贴板" };
   try {
     const text = String(payload?.text || "");
@@ -1333,7 +1350,7 @@ ipcMain.handle("clipboard:write-rich", async (event, payload) => {
   }
 });
 
-ipcMain.handle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
+trustedHandle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
 
 // 提交信息由独立按钮触发、用当前主模型生成：给改动统计与 diff，按内置提交信息规范输出。
 // 本地 0.6B 审批小模型实测只会复读 few-shot 示例，不适合自由摘要，故走主模型。
@@ -1388,12 +1405,12 @@ async function generateCommitMessage(workspacePath) {
   }
 }
 
-ipcMain.handle("workspace:context", (_event, workspacePath) => getWorkspaceContext(String(workspacePath || "")));
-ipcMain.handle("git:branches", (_event, workspacePath) => listGitBranches(String(workspacePath || "")));
-ipcMain.handle("git:diff-stats", (_event, workspacePath) => gitDiffStats(String(workspacePath || "")));
-ipcMain.handle("git:checkout", (_event, payload) => gitCheckout(String(payload?.workspacePath || ""), String(payload?.branch || "")));
-ipcMain.handle("git:create-branch", (_event, payload) => gitCreateBranch(String(payload?.workspacePath || ""), String(payload?.branch || "")));
-ipcMain.handle("git:suggest-commit-message", async (_event, workspacePath) => {
+trustedHandle("workspace:context", (_event, workspacePath) => getWorkspaceContext(String(workspacePath || "")));
+trustedHandle("git:branches", (_event, workspacePath) => listGitBranches(String(workspacePath || "")));
+trustedHandle("git:diff-stats", (_event, workspacePath) => gitDiffStats(String(workspacePath || "")));
+trustedHandle("git:checkout", (_event, payload) => gitCheckout(String(payload?.workspacePath || ""), String(payload?.branch || "")));
+trustedHandle("git:create-branch", (_event, payload) => gitCreateBranch(String(payload?.workspacePath || ""), String(payload?.branch || "")));
+trustedHandle("git:suggest-commit-message", async (_event, workspacePath) => {
   try {
     const message = await generateCommitMessage(String(workspacePath || ""));
     return { ok: true, message };
@@ -1401,31 +1418,31 @@ ipcMain.handle("git:suggest-commit-message", async (_event, workspacePath) => {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
-ipcMain.handle("git:commit", (_event, payload) => gitCommit(String(payload?.workspacePath || ""), {
+trustedHandle("git:commit", (_event, payload) => gitCommit(String(payload?.workspacePath || ""), {
   message: String(payload?.message || ""),
   includeUnstaged: payload?.includeUnstaged !== false,
 }));
-ipcMain.handle("git:push", (_event, workspacePath) => gitPush(String(workspacePath || "")));
-ipcMain.handle("git:review-overview", (_event, payload) => gitReviewOverview(String(payload?.workspacePath || ""), String(payload?.base || "HEAD")));
-ipcMain.handle("git:file-diff", (_event, payload) => gitFileDiff(
+trustedHandle("git:push", (_event, workspacePath) => gitPush(String(workspacePath || "")));
+trustedHandle("git:review-overview", (_event, payload) => gitReviewOverview(String(payload?.workspacePath || ""), String(payload?.base || "HEAD")));
+trustedHandle("git:file-diff", (_event, payload) => gitFileDiff(
   String(payload?.workspacePath || ""),
   String(payload?.base || "HEAD"),
   String(payload?.path || ""),
   Boolean(payload?.untracked),
 ));
-ipcMain.handle("git:stage", (_event, payload) => gitStage(String(payload?.workspacePath || ""), payload?.paths));
-ipcMain.handle("git:discard", (_event, payload) => gitDiscard(String(payload?.workspacePath || ""), payload?.paths));
+trustedHandle("git:stage", (_event, payload) => gitStage(String(payload?.workspacePath || ""), payload?.paths));
+trustedHandle("git:discard", (_event, payload) => gitDiscard(String(payload?.workspacePath || ""), payload?.paths));
 
 // ---- 浏览器数据导入（导入 Cookie 和密码，对照 Codex 浏览器更多菜单） ----
 
-ipcMain.handle("browser-import:list", async (event) => {
+trustedHandle("browser-import:list", async (event) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return [];
   const browsers = await listImportableBrowsers();
   // keyNames 只用于主进程解密，不下发给渲染进程
   return browsers.map(({ keyNames, ...browser }) => browser);
 });
 
-ipcMain.handle("browser-import:import", async (event, payload) => {
+trustedHandle("browser-import:import", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许导入浏览器数据" };
   try {
     const kinds = {
@@ -1541,14 +1558,14 @@ ipcMain.handle("browser-import:import", async (event, payload) => {
 });
 
 // 已导入的浏览记录：地址栏联想用，不含敏感信息
-ipcMain.handle("browser-import:history", async (event) => {
+trustedHandle("browser-import:history", async (event) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return [];
   const storePath = path.join(app.getPath("userData"), "imported-history.json");
   return readJson(storePath, []);
 });
 
 // 待注入的 localStorage：webview 首访对应站点时取出注入，成功后确认删除
-ipcMain.handle("browser-import:localstorage-entries", async (event, origin) => {
+trustedHandle("browser-import:localstorage-entries", async (event, origin) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return null;
   const storePath = path.join(app.getPath("userData"), "imported-localstorage.json");
   const store = await readJson(storePath, {});
@@ -1557,7 +1574,7 @@ ipcMain.handle("browser-import:localstorage-entries", async (event, origin) => {
   return entries && typeof entries === "object" ? entries : null;
 });
 
-ipcMain.handle("browser-import:localstorage-done", async (event, origin) => {
+trustedHandle("browser-import:localstorage-done", async (event, origin) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false };
   const storePath = path.join(app.getPath("userData"), "imported-localstorage.json");
   const store = await readJson(storePath, {});
@@ -1567,25 +1584,25 @@ ipcMain.handle("browser-import:localstorage-done", async (event, origin) => {
   }
   return { ok: true };
 });
-ipcMain.handle("workspace:read-markdown", (event, payload) => {
+trustedHandle("workspace:read-markdown", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
   return readWorkspaceMarkdown(String(payload?.workspacePath || ""), String(payload?.filePath || ""));
 });
-ipcMain.handle("workspace:read-file", (event, payload) => {
+trustedHandle("workspace:read-file", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许读取工作目录文件" };
   return readWorkspaceFile(String(payload?.workspacePath || ""), String(payload?.filePath || ""));
 });
-ipcMain.handle("workspace:write-file", (event, payload) => {
+trustedHandle("workspace:write-file", (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入工作目录文件" };
   return writeWorkspaceFile(String(payload?.workspacePath || ""), String(payload?.filePath || ""), String(payload?.content ?? ""));
 });
-ipcMain.handle("workspace:open", async (event, targetPath) => {
+trustedHandle("workspace:open", async (event, targetPath) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许打开本地文件" };
   const error = await shell.openPath(String(targetPath || ""));
   return error ? { ok: false, error } : { ok: true };
 });
 // 在系统文件管理器中定位文件（访达/资源管理器选中该文件所在目录项）
-ipcMain.handle("workspace:reveal", async (event, targetPath) => {
+trustedHandle("workspace:reveal", async (event, targetPath) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许打开本地文件" };
   const target = String(targetPath || "");
   if (!target) return { ok: false, error: "路径为空" };
@@ -1594,7 +1611,7 @@ ipcMain.handle("workspace:reveal", async (event, targetPath) => {
 });
 // 轨迹事件流（trace-console）：会话级 append-only jsonl，分页读取供轨迹视图回放
 const safeTraceSessionId = (sessionId) => String(sessionId || "").replace(/[^a-zA-Z0-9_-]/g, "") || "session";
-ipcMain.handle("traces:list", async (_event, sessionId) => {
+trustedHandle("traces:list", async (_event, sessionId) => {
   const file = path.join(app.getPath("userData"), "traces", `${safeTraceSessionId(sessionId)}.jsonl`);
   try {
     const stat = await fs.stat(file);
@@ -1604,7 +1621,7 @@ ipcMain.handle("traces:list", async (_event, sessionId) => {
     return { ok: true, count: 0, size: 0, updatedAt: "" };
   }
 });
-ipcMain.handle("traces:read", async (_event, payload) => {
+trustedHandle("traces:read", async (_event, payload) => {
   const file = path.join(app.getPath("userData"), "traces", `${safeTraceSessionId(payload?.sessionId)}.jsonl`);
   const offset = Math.max(0, Number(payload?.offset) || 0);
   const limit = Math.min(Math.max(1, Number(payload?.limit) || 500), 2000);
@@ -1619,7 +1636,7 @@ ipcMain.handle("traces:read", async (_event, payload) => {
     return { ok: true, records: [], total: 0, offset };
   }
 });
-ipcMain.handle("browser:open", async (event, payload) => {
+trustedHandle("browser:open", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "浏览器请求来源无效" };
   const check = isSafeBrowserUrl(String(payload?.url || ""));
   if (!check.ok) return { ok: false, result: check.error };
@@ -1636,7 +1653,7 @@ ipcMain.on("browser:active-contents", (event, webContentsId) => {
 });
 
 // 在系统默认浏览器打开（仅 http/https，复用内置浏览器的地址白名单）
-ipcMain.handle("browser:open-external", async (event, rawUrl) => {
+trustedHandle("browser:open-external", async (event, rawUrl) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const check = isSafeBrowserUrl(String(rawUrl || ""));
   if (!check.ok) return { ok: false, error: check.error };
@@ -1656,7 +1673,7 @@ ipcMain.handle("browser:open-external", async (event, rawUrl) => {
 // 列表接口不返回密码明文；填充时按 origin+username 单条解密。
 const browserPasswordStorePath = () => path.join(app.getPath("userData"), "imported-passwords.json");
 
-ipcMain.handle("browser:save-password", async (event, payload) => {
+trustedHandle("browser:save-password", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const origin = String(payload?.origin || "").trim();
   const username = String(payload?.username || "").trim();
@@ -1691,7 +1708,7 @@ ipcMain.handle("browser:save-password", async (event, payload) => {
   }
 });
 
-ipcMain.handle("browser:list-passwords", async (event, rawOrigin) => {
+trustedHandle("browser:list-passwords", async (event, rawOrigin) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const origin = String(rawOrigin || "").trim();
   try {
@@ -1705,7 +1722,7 @@ ipcMain.handle("browser:list-passwords", async (event, rawOrigin) => {
   }
 });
 
-ipcMain.handle("browser:reveal-password", async (event, payload) => {
+trustedHandle("browser:reveal-password", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const origin = String(payload?.origin || "");
   const username = String(payload?.username || "");
@@ -1723,7 +1740,7 @@ ipcMain.handle("browser:reveal-password", async (event, payload) => {
   }
 });
 
-ipcMain.handle("browser:delete-password", async (event, payload) => {
+trustedHandle("browser:delete-password", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const origin = String(payload?.origin || "");
   const username = String(payload?.username || "");
@@ -1738,7 +1755,7 @@ ipcMain.handle("browser:delete-password", async (event, payload) => {
 });
 
 // ===== 清除浏览数据（仅内置浏览器的 persist 分区）=====
-ipcMain.handle("browser:clear-data", async (event, kinds) => {
+trustedHandle("browser:clear-data", async (event, kinds) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const wantCookies = kinds?.cookies !== false;
   const wantCache = kinds?.cache !== false;
@@ -1758,7 +1775,7 @@ ipcMain.handle("browser:clear-data", async (event, kinds) => {
 });
 
 // ===== 设备模拟（手机/平板视图）=====
-ipcMain.handle("browser:emulate-device", async (event, payload) => {
+trustedHandle("browser:emulate-device", async (event, payload) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "请求来源无效" };
   const contents = embeddedBrowserContentsById.get(Number(payload?.webContentsId) || 0);
   if (!contents || contents.isDestroyed()) return { ok: false, error: "页面已关闭" };
@@ -1776,7 +1793,7 @@ ipcMain.handle("browser:emulate-device", async (event, payload) => {
   });
   return { ok: true };
 });
-ipcMain.handle("settings:save", async (_event, settings) => {
+trustedHandle("settings:save", async (_event, settings) => {
   try {
     const updateUrl = await saveSettings(settings);
     sleepBlockMode = normalizePreventSleep(settings?.preventSleep);
@@ -1794,7 +1811,7 @@ ipcMain.handle("settings:save", async (_event, settings) => {
 
 // 凭证预检（auth check）：设置页保存 API Key 后立即验证可用性，避免运行任务时才发现配错。
 // 发一个最小 chat 请求：200 = 通过；401/403 = 密钥无效；404 = 地址或模型名不对；其余按状态码归类。
-ipcMain.handle("settings:probe-credentials", async (_event, payload) => {
+trustedHandle("settings:probe-credentials", async (_event, payload) => {
   const endpoint = String(payload?.endpoint || "").trim();
   const model = String(payload?.model || "").trim();
   const apiKey = String(payload?.apiKey || "").trim();
@@ -1843,7 +1860,7 @@ ipcMain.handle("settings:probe-credentials", async (_event, payload) => {
 
 // 模型列表拉取：同一服务地址 + 密钥下 GET /models，列出该账号可用的全部模型，
 // 设置页「获取可用模型」按钮调用，用于在同一 Key 下直接切换模型。
-ipcMain.handle("settings:list-models", async (_event, payload) => {
+trustedHandle("settings:list-models", async (_event, payload) => {
   const endpoint = String(payload?.endpoint || "").trim();
   if (!endpoint) return { ok: false, error: "请先填写服务地址" };
   return listServerModels({ endpoint, apiKey: String(payload?.apiKey || "").trim() });
@@ -1852,7 +1869,7 @@ ipcMain.handle("settings:list-models", async (_event, payload) => {
 // 侧边聊天工具循环上限：只读检索工具，几轮足够定位；防止模型连续发工具调用不收尾
 const SIDE_CHAT_TOOL_ROUNDS = 5;
 
-ipcMain.handle("chat:complete", async (_event, payload) => {
+trustedHandle("chat:complete", async (_event, payload) => {
   const settings = payload?.settings || {};
   if (!settings.endpoint || !settings.model || !settings.apiKey) {
     return {
@@ -1998,7 +2015,7 @@ function buildWavFromPcm(pcm, sampleRate) {
   return Buffer.concat([header, pcm]);
 }
 
-ipcMain.handle("voice:transcribe", async (_event, payload) => {
+trustedHandle("voice:transcribe", async (_event, payload) => {
   const payloadSettings = payload?.settings || {};
   // 引擎选择与本地模型路径以磁盘最新设置为准（改路径保存后立即生效）；
   // 云引擎沿用渲染端传来的地址与密钥
@@ -2306,9 +2323,25 @@ async function readHooks(workspacePath) {
 
 const USAGE_STATS_LIMIT = 20000;
 
+// 进程内缓存 + 防抖落盘：此前每次用量事件都把整个文件（上限 2 万条、可达数 MB）
+// 读-改-写一遍；现在读一次常驻内存，写入合并到 1 秒一次的尾沿
+let usageStatsCache = null;
+let usageStatsWriteTimer = null;
+
 async function readUsageStats() {
-  const items = await readJson(dataFile("usage-stats.json"), []);
-  return Array.isArray(items) ? items : [];
+  if (!usageStatsCache) {
+    const items = await readJson(dataFile("usage-stats.json"), []);
+    usageStatsCache = Array.isArray(items) ? items : [];
+  }
+  return usageStatsCache;
+}
+
+function scheduleUsageStatsWrite() {
+  if (usageStatsWriteTimer) clearTimeout(usageStatsWriteTimer);
+  usageStatsWriteTimer = setTimeout(() => {
+    usageStatsWriteTimer = null;
+    void writeJson(dataFile("usage-stats.json"), usageStatsCache || []).catch(() => {});
+  }, 1000);
 }
 
 async function appendUsageStat(event) {
@@ -2320,7 +2353,8 @@ async function appendUsageStat(event) {
     completion: Math.max(0, Math.round(Number(event.completion) || 0)),
     estimated: event.estimated === true,
   });
-  await writeJson(dataFile("usage-stats.json"), items.slice(-USAGE_STATS_LIMIT));
+  if (items.length > USAGE_STATS_LIMIT) usageStatsCache = items.slice(-USAGE_STATS_LIMIT);
+  scheduleUsageStatsWrite();
 }
 
 // ---- 跨会话历史搜索 ----
@@ -2574,7 +2608,34 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
   let lastTraceTurnStep = { turn: 0, step: 0 };
   let lastProjectedPlanContent = "";
   const seqByOriginal = new Map();
+  // 流式文本事件（assistant-text / assistant-reasoning）每个 token 携带累积全文，
+  // 逐 token 发 IPC 是 O(n²) 的结构化克隆；这里按 50ms 合并只发最新快照。
+  // 其他事件（工具调用、收尾）到达前先冲刷缓冲，保证事件顺序不错位。
+  let pendingStreamEvents = null;
+  let streamFlushTimer = null;
+  const flushPendingStreamEvents = () => {
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    if (!pendingStreamEvents) return;
+    const buffered = [...pendingStreamEvents.values()];
+    pendingStreamEvents = null;
+    for (const pending of buffered) emitToSession(sender, sessionId, runId, pending);
+  };
   const emit = (agentEvent) => {
+    if (agentEvent?.type === "assistant-text" || agentEvent?.type === "assistant-reasoning") {
+      if (!pendingStreamEvents) pendingStreamEvents = new Map();
+      pendingStreamEvents.set(agentEvent.type, agentEvent);
+      if (!streamFlushTimer) {
+        streamFlushTimer = setTimeout(() => {
+          streamFlushTimer = null;
+          flushPendingStreamEvents();
+        }, 50);
+      }
+      return;
+    }
+    flushPendingStreamEvents();
     if (agentEvent?.type === "trace" && agentEvent.trace) {
       // 渲染端与落盘都带 runId：同会话多轮次时 trace.seq 会重置，控制台用 runId+seq 区分
       runTraceSeq += 1;
@@ -2847,7 +2908,7 @@ function drainSessionQueue(sessionId) {
   });
 }
 
-ipcMain.handle("agent:send", async (event, payload) => {
+trustedHandle("agent:send", async (event, payload) => {
   if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "任务请求来源无效" };
   const sessionId = String(payload?.sessionId || "").trim();
@@ -2861,7 +2922,7 @@ ipcMain.handle("agent:send", async (event, payload) => {
   return executeAgentRun({ payload, sender: event.sender });
 });
 
-ipcMain.handle("agent:remove-queued", (_event, payload) => {
+trustedHandle("agent:remove-queued", (_event, payload) => {
   const sessionId = String(payload?.sessionId || "").trim();
   const runId = String(payload?.runId || "").trim();
   const removed = sessionQueue.remove(sessionId, runId);
@@ -2871,7 +2932,7 @@ ipcMain.handle("agent:remove-queued", (_event, payload) => {
 // “立即执行”排队消息：提到队首并取消当前任务，
 // 当前任务收尾时 drainSessionQueue 会自动从队首启动它，
 // 复用既有出队链路（queue-start 事件、从存档取最新内容等）保持一致行为
-ipcMain.handle("agent:run-queued-now", async (_event, payload) => {
+trustedHandle("agent:run-queued-now", async (_event, payload) => {
   const sessionId = String(payload?.sessionId || "").trim();
   const runId = String(payload?.runId || "").trim();
   if (!sessionId || !runId) return { ok: false, error: "任务标识无效" };
@@ -2890,7 +2951,7 @@ ipcMain.handle("agent:run-queued-now", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("agent:resolve-approval", (_event, payload) => {
+trustedHandle("agent:resolve-approval", (_event, payload) => {
   const agentState = activeAgents.get(String(payload?.sessionId || ""));
   const resolve = agentState?.pending.get(String(payload?.actionId || ""));
   if (!resolve) return { ok: false };
@@ -2899,7 +2960,7 @@ ipcMain.handle("agent:resolve-approval", (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("agent:resolve-question", (_event, payload) => {
+trustedHandle("agent:resolve-question", (_event, payload) => {
   const agentState = activeAgents.get(String(payload?.sessionId || ""));
   const key = `q:${String(payload?.requestId || "")}`;
   const resolve = agentState?.pending.get(key);
@@ -2909,7 +2970,7 @@ ipcMain.handle("agent:resolve-question", (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("agent:cancel", async (_event, payload) => {
+trustedHandle("agent:cancel", async (_event, payload) => {
   const sessionId = String(payload?.sessionId || "");
   const runId = String(payload?.runId || "");
   if (!sessionId || !runId) return { ok: false };
@@ -2925,13 +2986,13 @@ ipcMain.handle("agent:cancel", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("background-tasks:list", (_event, sessionId) => backgroundTasksManager.listTasks(sessionId));
-ipcMain.handle("background-tasks:start", (_event, payload) => backgroundTasksManager.startTask(payload));
-ipcMain.handle("background-tasks:stop", async (_event, taskId) => ({ ok: await backgroundTasksManager.stopTask(taskId) }));
-ipcMain.handle("background-tasks:restart", async (_event, taskId) => backgroundTasksManager.restartTask(taskId));
-ipcMain.handle("background-tasks:get-logs", (_event, taskId) => backgroundTasksManager.getTaskLogs(taskId));
+trustedHandle("background-tasks:list", (_event, sessionId) => backgroundTasksManager.listTasks(sessionId));
+trustedHandle("background-tasks:start", (_event, payload) => backgroundTasksManager.startTask(payload));
+trustedHandle("background-tasks:stop", async (_event, taskId) => ({ ok: await backgroundTasksManager.stopTask(taskId) }));
+trustedHandle("background-tasks:restart", async (_event, taskId) => backgroundTasksManager.restartTask(taskId));
+trustedHandle("background-tasks:get-logs", (_event, taskId) => backgroundTasksManager.getTaskLogs(taskId));
 
-ipcMain.handle("memories:list", async () => {
+trustedHandle("memories:list", async () => {
   await memoryWikiReady();
   // 空的核心页面不展示，避免面板出现一堆零条记忆的卡片
   const pages = (await listWikiPages(wikiRoot())).filter((page) => page.rows.length);
@@ -2952,9 +3013,9 @@ ipcMain.handle("memories:list", async () => {
   return pages;
 });
 
-ipcMain.handle("usage:list", () => readUsageStats());
+trustedHandle("usage:list", () => readUsageStats());
 
-ipcMain.handle("hooks:list", async () => {
+trustedHandle("hooks:list", async () => {
   const userPath = dataFile("hooks.json");
   const userRules = await readJson(userPath, []);
   return {
@@ -2964,7 +3025,7 @@ ipcMain.handle("hooks:list", async () => {
   };
 });
 
-ipcMain.handle("hooks:open-user", async () => {
+trustedHandle("hooks:open-user", async () => {
   const userPath = dataFile("hooks.json");
   if (!existsSync(userPath)) await writeJson(userPath, []);
   return shell.openPath(userPath);
@@ -2980,9 +3041,9 @@ async function readStandingRules() {
   return Array.isArray(rules) ? rules : [];
 }
 
-ipcMain.handle("rules:list", () => readStandingRules());
+trustedHandle("rules:list", () => readStandingRules());
 
-ipcMain.handle("rules:add", async (_event, payload) => {
+trustedHandle("rules:add", async (_event, payload) => {
   const kind = String(payload?.kind || "");
   const tool = String(payload?.tool || "");
   const pattern = String(payload?.pattern || "").trim();
@@ -3006,13 +3067,13 @@ ipcMain.handle("rules:add", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("rules:delete", async (_event, id) => {
+trustedHandle("rules:delete", async (_event, id) => {
   const rules = await readStandingRules();
   await writeJson(dataFile("standing-rules.json"), rules.filter((rule) => String(rule.id) !== String(id)));
   return { ok: true };
 });
 
-ipcMain.handle("audit:open", async () => {
+trustedHandle("audit:open", async () => {
   const auditPath = dataFile("audit.jsonl");
   if (!existsSync(auditPath)) await fs.writeFile(auditPath, "", "utf8");
   return shell.openPath(auditPath);
@@ -3197,7 +3258,7 @@ async function expireOrphanedInboxItems() {
   if (changed) await writeInbox(items);
 }
 
-ipcMain.handle("inbox:list", async () => {
+trustedHandle("inbox:list", async () => {
   await sweepOrphanedInboxItems();
   return readInbox();
 });
@@ -3225,10 +3286,10 @@ async function resolveInboxInternal(id, { approved, answer, via = "desktop" } = 
   return { ok: true };
 }
 
-ipcMain.handle("inbox:resolve", async (_event, payload) =>
+trustedHandle("inbox:resolve", async (_event, payload) =>
   resolveInboxInternal(String(payload?.id || ""), { approved: payload?.approved, answer: payload?.answer }));
 
-ipcMain.handle("inbox:dismiss", async (_event, id) => {
+trustedHandle("inbox:dismiss", async (_event, id) => {
   const items = await readInbox();
   const item = items.find((entry) => String(entry.id) === String(id));
   if (item?.status === "pending") return { ok: false, error: "待处理事项不能移除，请先处理" };
@@ -3237,12 +3298,17 @@ ipcMain.handle("inbox:dismiss", async (_event, id) => {
   return { ok: true };
 });
 
-ipcMain.handle("usage:clear", async () => {
+trustedHandle("usage:clear", async () => {
+  if (usageStatsWriteTimer) {
+    clearTimeout(usageStatsWriteTimer);
+    usageStatsWriteTimer = null;
+  }
+  usageStatsCache = [];
   await writeJson(dataFile("usage-stats.json"), []);
   return { ok: true };
 });
 
-ipcMain.handle("memories:delete", async (_event, id) => {
+trustedHandle("memories:delete", async (_event, id) => {
   if (isBuiltinMemoryId(id)) return { ok: false, error: "内置记忆不能删除" };
   await memoryWikiReady();
   // 队列和 wiki 页面各删一份：尚未整合的条目在队列里，已整合的在页面行上。
@@ -3253,7 +3319,7 @@ ipcMain.handle("memories:delete", async (_event, id) => {
 });
 
 // 记忆整理（lint）：让模型对 wiki 做一次健康检查——合并重复、修订矛盾、归位条目。
-ipcMain.handle("memories:lint", async () => {
+trustedHandle("memories:lint", async () => {
   try {
     return await runWikiConsolidation({ lint: true });
   } catch (error) {
@@ -3261,9 +3327,9 @@ ipcMain.handle("memories:lint", async () => {
   }
 });
 
-ipcMain.handle("skills:list", (_event, workspacePath) => readSkills(String(workspacePath || "")));
+trustedHandle("skills:list", (_event, workspacePath) => readSkills(String(workspacePath || "")));
 
-ipcMain.handle("skills:set-enabled", async (_event, payload) => {
+trustedHandle("skills:set-enabled", async (_event, payload) => {
   const id = String(payload?.id || "");
   const storedSkills = await readStoredSkills();
   const storedSkill = storedSkills.find((item) => String(item.id) === id);
@@ -3280,7 +3346,7 @@ ipcMain.handle("skills:set-enabled", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("skills:delete", async (_event, id) => {
+trustedHandle("skills:delete", async (_event, id) => {
   const skills = await readStoredSkills();
   const target = skills.find((item) => String(item.id) === String(id));
   if (!target) return { ok: false, error: "文件技能请在来源目录中管理" };
@@ -3296,14 +3362,14 @@ ipcMain.handle("skills:delete", async (_event, id) => {
 });
 
 // 会话「总结为工作模板」：渲染端已提炼好草稿，这里只负责落进 skills.json 并返回创建记录
-ipcMain.handle("skills:create", async (_event, payload) => {
+trustedHandle("skills:create", async (_event, payload) => {
   const name = String(payload?.name || "").trim();
   if (!name) return { ok: false, error: "模板名称不能为空" };
   const item = await appendSkill({ name, description: payload?.description, instructions: payload?.instructions });
   return { ok: true, item };
 });
 
-ipcMain.handle("skill-libraries:search", async (_event, payload) => {
+trustedHandle("skill-libraries:search", async (_event, payload) => {
   try {
     const settings = await readSettings();
     return { ok: true, ...(await searchSkillLibraries(settings.skillLibraries, payload?.query)) };
@@ -3312,7 +3378,7 @@ ipcMain.handle("skill-libraries:search", async (_event, payload) => {
   }
 });
 
-ipcMain.handle("skill-libraries:install", async (_event, payload) => {
+trustedHandle("skill-libraries:install", async (_event, payload) => {
   try {
     const settings = await readSettings();
     const result = await installSkillFromLibrary(settings.skillLibraries, payload?.libraryId, payload?.slug);
@@ -3745,7 +3811,7 @@ async function checkDueWakes() {
   void scheduleNextWakeCheck();
 }
 
-ipcMain.handle("wakes:cancel-for-session", async (_event, sessionId) => {
+trustedHandle("wakes:cancel-for-session", async (_event, sessionId) => {
   await cancelWakesForSession(String(sessionId || ""));
   return { ok: true };
 });
@@ -4678,11 +4744,11 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   }
 }
 
-ipcMain.handle("channels:get-status", () => channelManager.status());
+trustedHandle("channels:get-status", () => channelManager.status());
 
-ipcMain.handle("schedules:list", () => readSchedules());
+trustedHandle("schedules:list", () => readSchedules());
 
-ipcMain.handle("schedules:save", async (_event, payload) => {
+trustedHandle("schedules:save", async (_event, payload) => {
   const name = String(payload?.name || "").trim();
   const prompt = String(payload?.prompt || "").trim();
   const workspacePath = String(payload?.workspacePath || "").trim();
@@ -4720,14 +4786,14 @@ ipcMain.handle("schedules:save", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("schedules:delete", async (_event, id) => {
+trustedHandle("schedules:delete", async (_event, id) => {
   const items = await readSchedules();
   await writeSchedules(items.filter((item) => String(item.id) !== String(id)));
   broadcastSchedulesChanged();
   return { ok: true };
 });
 
-ipcMain.handle("schedules:set-enabled", async (_event, payload) => {
+trustedHandle("schedules:set-enabled", async (_event, payload) => {
   const items = await readSchedules();
   const item = items.find((entry) => String(entry.id) === String(payload?.id));
   if (!item) return { ok: false };
@@ -4738,7 +4804,7 @@ ipcMain.handle("schedules:set-enabled", async (_event, payload) => {
   return { ok: true };
 });
 
-ipcMain.handle("schedules:trigger-now", async (_event, id) => {
+trustedHandle("schedules:trigger-now", async (_event, id) => {
   const items = await readSchedules();
   const item = items.find((entry) => String(entry.id) === String(id));
   if (!item) return { ok: false, error: "没有找到这个定时任务" };
@@ -4750,13 +4816,13 @@ ipcMain.handle("schedules:trigger-now", async (_event, id) => {
   return { ok: true };
 });
 
-ipcMain.handle("window:minimize", () => mainWindow?.minimize());
-ipcMain.handle("window:toggle-maximize", () => {
+trustedHandle("window:minimize", () => mainWindow?.minimize());
+trustedHandle("window:toggle-maximize", () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   else mainWindow.maximize();
 });
-ipcMain.handle("window:close", () => mainWindow?.close());
+trustedHandle("window:close", () => mainWindow?.close());
 
 // Linux 不启用整窗鼠标穿透：边缘移入与点击之间存在竞态，且部分桌面
 // 无法可靠查询全局光标，轮询不能保证恢复。保留旧消息的安全兼容处理，
@@ -4812,6 +4878,12 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   // 会话存档合并窗口内可能还有积压快照，退出前立即落盘
   void sessionArchiveStore.flush();
+  // 用量统计的防抖写也立即落盘，避免丢失最后一秒的记录
+  if (usageStatsWriteTimer) {
+    clearTimeout(usageStatsWriteTimer);
+    usageStatsWriteTimer = null;
+    void writeJson(dataFile("usage-stats.json"), usageStatsCache || []).catch(() => {});
+  }
   backgroundTasksManager.cleanupAll();
   if (appUpdateTimer) clearTimeout(appUpdateTimer);
   if (appUpdateInterval) clearInterval(appUpdateInterval);

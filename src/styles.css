@@ -2979,6 +2979,10 @@ body.resizing-panels .app-shell {
   position: relative;
   width: 100%;
   margin: 0 0 29px;
+  /* 视口外跳过渲染（长会话数千 DOM 节点的廉价虚拟化）；
+     auto 记住上次渲染高度，回滚时不跳滚动条 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
 }
 
 .message-row.system {

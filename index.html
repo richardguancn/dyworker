@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'none'; base-uri 'self'" />
+    <!--
+      渲染进程全部能力走 IPC，不直连网络；webview 客页面不受本 CSP 约束（由主进程
+      will-attach-webview/will-navigate 管控）。img-src 放开 https: 是因为 markdown 允许远程配图。
+      style-src 需要 'unsafe-inline'：React 内联样式与 mermaid SVG 内嵌 <style> 依赖它。
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws:; object-src 'none'; base-uri 'self'" />
     <title>DYWorker 工作助手</title>
   </head>
   <body>

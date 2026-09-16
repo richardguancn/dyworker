@@ -9,7 +9,7 @@ import {
   ListChecks,
   SlidersHorizontal,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -211,14 +211,17 @@ function MarkdownPre({ children, node: _node, ...props }: ComponentPropsWithoutR
 function MarkdownCode({ className, children, node: _node, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
   const language = /language-([\w+#.-]+)/.exec(String(className || ""))?.[1]?.toLowerCase();
   const text = Array.isArray(children) ? children.join("") : String(children ?? "");
+  // 流式期间 text 每个 token 都变：用 deferred 值做高亮，让 React 在渲染压力下合并
+  // 多次增量为一次全量高亮，避免逐 token 对整段代码 O(n) 重跑 hljs
+  const highlightText = useDeferredValue(text);
   const highlighted = useMemo(() => {
     if (!language || !hljs.getLanguage(language)) return null;
     try {
-      return hljs.highlight(text, { language, ignoreIllegals: true }).value;
+      return hljs.highlight(highlightText, { language, ignoreIllegals: true }).value;
     } catch {
       return null;
     }
-  }, [language, text]);
+  }, [language, highlightText]);
   // mermaid 图表不走语法高亮，交给懒加载的 mermaid 引擎画 SVG
   if (language === "mermaid") {
     return <code {...props} className={className || "language-mermaid"}><MermaidDiagram code={text} /></code>;
@@ -246,16 +249,22 @@ function MermaidDiagram({ code }: { code: string }) {
   const [state, setState] = useState<{ status: "loading" } | { status: "done"; svg: string } | { status: "error"; message: string }>({ status: "loading" });
   useEffect(() => {
     let active = true;
-    setState({ status: "loading" });
-    loadMermaid()
-      .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
-      .then((result) => {
-        if (active) setState({ status: "done", svg: result.svg });
-      })
-      .catch((renderError) => {
-        if (active) setState({ status: "error", message: renderError instanceof Error ? renderError.message : String(renderError) });
-      });
-    return () => { active = false; };
+    // 流式期间 code 每个 token 都变，mermaid.render 一次上百毫秒：
+    // 等输入稳定 400ms 再渲染，避免逐 token 反复解析半截语法
+    const timer = window.setTimeout(() => {
+      loadMermaid()
+        .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
+        .then((result) => {
+          if (active) setState({ status: "done", svg: result.svg });
+        })
+        .catch((renderError) => {
+          if (active) setState({ status: "error", message: renderError instanceof Error ? renderError.message : String(renderError) });
+        });
+    }, 400);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [code]);
   if (state.status === "loading") return <div className="mermaid-diagram mermaid-pending">图表渲染中…</div>;
   if (state.status === "error") {
@@ -685,7 +694,11 @@ function InteractiveBlock({ widget }: { widget: InteractiveWidget }) {
 }
 
 export function InteractiveMessage({ content }: { content: string }) {
-  const segments = useMemo(() => parseInteractiveMessage(content), [content]);
+  // 流式期间 content 每个 token 都是新字符串：用 deferred 值驱动整段
+  // remark(gfm+math+autospace)→rehype-katex 解析，让 React 在高频更新下合并中间帧，
+  // 空闲时立即追上最新内容（长回复下避免逐 token 全量重解析主线程卡顿）
+  const deferredContent = useDeferredValue(content);
+  const segments = useMemo(() => parseInteractiveMessage(deferredContent), [deferredContent]);
   return (
     <div className="message-content">
       {segments.map((segment, index) => segment.kind === "widget" ? (

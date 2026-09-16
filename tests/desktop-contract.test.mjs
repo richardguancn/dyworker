@@ -32,12 +32,12 @@ test("desktop controls are connected across renderer, preload, and main process"
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
-  assert.match(main, /ipcMain\.handle\("attachments:choose"/);
-  assert.match(main, /ipcMain\.handle\("attachments:save-clipboard-image"/);
-  assert.match(main, /ipcMain\.handle\("clipboard:read-text"/);
-  assert.match(main, /ipcMain\.handle\("clipboard:write-text"/);
-  assert.match(main, /ipcMain\.handle\("voice:transcribe"/);
-  assert.match(main, /ipcMain\.handle\("audio:read-attachment"/);
+  assert.match(main, /trustedHandle\("attachments:choose"/);
+  assert.match(main, /trustedHandle\("attachments:save-clipboard-image"/);
+  assert.match(main, /trustedHandle\("clipboard:read-text"/);
+  assert.match(main, /trustedHandle\("clipboard:write-text"/);
+  assert.match(main, /trustedHandle\("voice:transcribe"/);
+  assert.match(main, /trustedHandle\("audio:read-attachment"/);
 });
 
 test("内置本地审核模型的下载与进度链路贯穿三端", () => {
@@ -45,9 +45,9 @@ test("内置本地审核模型的下载与进度链路贯穿三端", () => {
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
-  assert.match(main, /ipcMain\.handle\("reviewer-local:status"/);
-  assert.match(main, /ipcMain\.handle\("reviewer-local:download"/);
-  assert.match(main, /ipcMain\.handle\("reviewer-local:choose-dir"/);
+  assert.match(main, /trustedHandle\("reviewer-local:status"/);
+  assert.match(main, /trustedHandle\("reviewer-local:download"/);
+  assert.match(main, /trustedHandle\("reviewer-local:choose-dir"/);
   assert.match(main, /reviewer-local:download-progress/);
   assert.match(main, /configureLocalReviewer\(/);
   assert.match(main, /applyReviewerModelDir\(/);
@@ -59,9 +59,9 @@ test("本地语音转写引擎（Qwen3-ASR）的下载、设置与转写链路�
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
-  assert.match(main, /ipcMain\.handle\("voice-local:status"/);
-  assert.match(main, /ipcMain\.handle\("voice-local:download"/);
-  assert.match(main, /ipcMain\.handle\("voice-local:choose-dir"/);
+  assert.match(main, /trustedHandle\("voice-local:status"/);
+  assert.match(main, /trustedHandle\("voice-local:download"/);
+  assert.match(main, /trustedHandle\("voice-local:choose-dir"/);
   assert.match(main, /voice-local:download-progress/);
   // 转写主链路：本地引擎分支走 transcribeWithLocalAsr，云引擎保持原路径
   assert.match(main, /transcriptionEngine.*===.*"local"/);
@@ -83,13 +83,13 @@ test("本地语音合成引擎（Qwen3-TTS）的下载、设置与合成链路�
     assert.match(app, new RegExp(`dyworker\\??\\.${action}`));
     assert.match(preload, new RegExp(`${action}:`));
   }
-  assert.match(main, /ipcMain\.handle\("tts-local:status"/);
-  assert.match(main, /ipcMain\.handle\("tts-local:download"/);
-  assert.match(main, /ipcMain\.handle\("tts-local:choose-dir"/);
-  assert.match(main, /ipcMain\.handle\("tts-local:choose-voice"/);
-  assert.match(main, /ipcMain\.handle\("tts-local:read-voice"/);
-  assert.match(main, /ipcMain\.handle\("tts-local:write-voice"/);
-  assert.match(main, /ipcMain\.handle\("tts:speak"/);
+  assert.match(main, /trustedHandle\("tts-local:status"/);
+  assert.match(main, /trustedHandle\("tts-local:download"/);
+  assert.match(main, /trustedHandle\("tts-local:choose-dir"/);
+  assert.match(main, /trustedHandle\("tts-local:choose-voice"/);
+  assert.match(main, /trustedHandle\("tts-local:read-voice"/);
+  assert.match(main, /trustedHandle\("tts-local:write-voice"/);
+  assert.match(main, /trustedHandle\("tts:speak"/);
   assert.match(main, /tts-local:download-progress/);
   // 合成主链路：本地引擎分支走 synthesizeWithLocalTts，云引擎保持原 /audio/speech 路径
   assert.match(main, /normalizeTtsEngine/);
@@ -186,9 +186,9 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   assert.match(main, /queue-start/, "队列项开始执行时通知渲染端");
   assert.match(main, /queuedPayloadFromSession/, "执行前从会话存档取排队消息的最新内容");
   assert.match(main, /messages\.slice\(0, queuedIndex \+ 1\)/, "只截取到本条排队消息，不提前带入后面的排队消息");
-  assert.match(main, /ipcMain\.handle\("agent:remove-queued"/);
+  assert.match(main, /trustedHandle\("agent:remove-queued"/);
   // 立即执行：提到队首 + 取消当前任务，复用既有出队链路
-  assert.match(main, /ipcMain\.handle\("agent:run-queued-now"/);
+  assert.match(main, /trustedHandle\("agent:run-queued-now"/);
   assert.match(main, /sessionQueue\.promote\(sessionId, runId\)/);
   // 预加载桥接
   assert.match(preload, /removeQueuedTask/);
@@ -251,7 +251,7 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   assert.match(main, /storedSettings\.updateUrl/);
   assert.match(main, /appUpdater\.getUpdateUrl\(\)/);
   assert.match(main, /appUpdater\.configure\(updateUrl\)/);
-  assert.match(main, /ipcMain\.handle\("app-update:check"/);
+  assert.match(main, /trustedHandle\("app-update:check"/);
   assert.match(main, /updater\.autoDownload = false/);
   // electron-updater 动态加载：缺失时只禁用自动更新，不影响窗口启动
   assert.match(main, /loadElectronUpdater/);
@@ -370,7 +370,7 @@ test("文件面板为左右分栏，Markdown 即时渲染编辑（Codex 式）",
   assert.match(app, /<MarkdownLiveEditorPane\n\s*key=\{selection\.path\}/);
   assert.match(app, /import\("\.\/markdownLiveEditor"\)/);
   assert.match(app, /plainSource=\{showSource\}/);
-  assert.match(main, /ipcMain\.handle\("workspace:read-markdown"/);
+  assert.match(main, /trustedHandle\("workspace:read-markdown"/);
   assert.match(main, /readWorkspaceMarkdown/);
   assert.match(styles, /\.file-split/);
   assert.match(styles, /\.markdown-live-editor/);
@@ -427,14 +427,14 @@ test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Co
   assert.match(app, /隐藏文件树/);
   assert.match(app, /file-split-resizer/);
   assert.match(preload, /revealInFolder/);
-  assert.match(main, /ipcMain\.handle\("workspace:reveal"/);
+  assert.match(main, /trustedHandle\("workspace:reveal"/);
   assert.match(main, /shell\.showItemInFolder/);
   assert.match(styles, /\.file-split-resizer/);
   assert.match(app, /filterWorkspaceEntries/);
   assert.match(app, /筛选文件…/);
   assert.match(app, /forceExpand/);
   assert.match(preload, /readWorkspaceFile/);
-  assert.match(main, /ipcMain\.handle\("workspace:read-file"/);
+  assert.match(main, /trustedHandle\("workspace:read-file"/);
   assert.match(styles, /\.file-save-state/);
   assert.match(styles, /\.code-breadcrumb/);
   assert.match(styles, /\.tool-file-filter/);
@@ -454,8 +454,8 @@ test("审阅面板按 Git 基线逐文件展示 diff（Codex 风格）", () => {
   assert.match(app, /openToolPanelTab\("review"\)/);
   assert.match(preload, /git:review-overview/);
   assert.match(preload, /git:file-diff/);
-  assert.match(main, /ipcMain\.handle\("git:review-overview"/);
-  assert.match(main, /ipcMain\.handle\("git:file-diff"/);
+  assert.match(main, /trustedHandle\("git:review-overview"/);
+  assert.match(main, /trustedHandle\("git:file-diff"/);
   assert.match(styles, /\.review-diff-row\.add/);
   assert.match(styles, /\.review-diff-gap/);
   assert.match(styles, /\.review-file-row/);
@@ -504,8 +504,8 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(app, /importBrowserData/);
   assert.match(preload, /browser-import:list/);
   assert.match(preload, /browser-import:import/);
-  assert.match(main, /ipcMain\.handle\("browser-import:list"/);
-  assert.match(main, /ipcMain\.handle\("browser-import:import"/);
+  assert.match(main, /trustedHandle\("browser-import:list"/);
+  assert.match(main, /trustedHandle\("browser-import:import"/);
   assert.match(main, /persist:dyworker-browser/);
   // 会话级 Cookie（登录态多为这种）导入时必须补有效期，否则持久分区重启即丢
   assert.match(main, /400 \* 86400/);
@@ -543,7 +543,7 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(browserImport, /History/);
   assert.match(browserImport, /FROM urls/);
   assert.match(main, /imported-history\.json/);
-  assert.match(main, /ipcMain\.handle\("browser-import:history"/);
+  assert.match(main, /trustedHandle\("browser-import:history"/);
   assert.match(preload, /browser-import:history/);
   assert.match(app, /browser-history-suggestions/);
   // 只导入浏览记录时不触发密钥链（不解析解密密钥）
@@ -583,7 +583,7 @@ test("内置浏览器为 Codex 式多标签：webview 常驻、导航状态同�
   assert.match(app, /captureBrowserScreenshot/);
   assert.match(app, /openBrowserExternal/);
   assert.match(preload, /browser:open-external/);
-  assert.match(main, /ipcMain\.handle\("browser:open-external"/);
+  assert.match(main, /trustedHandle\("browser:open-external"/);
   assert.match(main, /shell\.openExternal/);
   // agent 的 browser__* 工具路由到当前显示的 webview
   assert.match(app, /setActiveBrowserContents/);
@@ -603,8 +603,8 @@ test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设�
   assert.match(main, /webPreferences\.preload = path\.join\(__dirname, "webview-preload\.cjs"\)/);
   assert.match(main, /webPreferences\.nodeIntegration = false/);
   // 保存/列表/解密/删除：列表不含明文，safeStorage 加密与导入密码同库
-  assert.match(main, /ipcMain\.handle\("browser:save-password"/);
-  assert.match(main, /ipcMain\.handle\("browser:list-passwords"/);
+  assert.match(main, /trustedHandle\("browser:save-password"/);
+  assert.match(main, /trustedHandle\("browser:list-passwords"/);
   assert.match(main, /safeStorage\.decryptString/);
   assert.match(main, /imported-passwords\.json/);
   assert.match(app, /browserPasswordPrompt/);
@@ -619,12 +619,12 @@ test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设�
   assert.match(app, /revealInFolder\?\.\(entry\.path\)/);
   assert.match(preload, /browser:download-progress/);
   // ===== 清除浏览数据 =====
-  assert.match(main, /ipcMain\.handle\("browser:clear-data"/);
+  assert.match(main, /trustedHandle\("browser:clear-data"/);
   assert.match(main, /clearStorageData/);
   assert.match(main, /clearCache\(\)/);
   assert.match(app, /browserClearKinds/);
   // ===== 打印与设备视图 =====
-  assert.match(main, /ipcMain\.handle\("browser:emulate-device"/);
+  assert.match(main, /trustedHandle\("browser:emulate-device"/);
   assert.match(main, /enableDeviceEmulation/);
   assert.match(app, /printBrowserPage/);
   assert.match(app, /BROWSER_DEVICE_PRESETS/);
@@ -652,7 +652,7 @@ test("image attachments render real previews before and after sending", () => {
   assert.match(imageAttachment, /copyImageToClipboard/);
   // 复制优先走主进程原生剪贴板（clipboard.writeImage），Web 剪贴板做兜底
   assert.match(imageAttachment, /writeClipboardImage/);
-  assert.match(main, /ipcMain\.handle\("clipboard:write-image"/);
+  assert.match(main, /trustedHandle\("clipboard:write-image"/);
   assert.match(main, /clipboard\.writeImage/);
   assert.match(preload, /clipboard:write-image/);
   assert.match(types, /writeClipboardImage/);
@@ -668,7 +668,7 @@ test("image attachments render real previews before and after sending", () => {
 test("复制带图片的消息时图文一起写入剪贴板", () => {
   // 主进程提供「文本 + 图片 + HTML」一次写入的剪贴板通道（clipboard.write({ text, image, html })），
   // 让只认图片、只认文本、只认富文本的目标应用都能拿到可用格式
-  assert.match(main, /ipcMain\.handle\("clipboard:write-rich"/);
+  assert.match(main, /trustedHandle\("clipboard:write-rich"/);
   assert.match(main, /let html = ""/);
   assert.match(main, /data\.html = html/);
   assert.match(main, /clipboard\.write\(data\)/);
@@ -700,7 +700,7 @@ test("工作目录支持新建对话、置顶和在系统文件管理器中打�
   assert.match(styles, /\.workspace-session-actions/);
   assert.match(styles, /\.workspace-menu/);
   assert.match(preload, /savePinnedWorkspaces: \(paths\).*workspace-pins:save/);
-  assert.match(main, /ipcMain\.handle\("workspace-pins:save"/);
+  assert.match(main, /trustedHandle\("workspace-pins:save"/);
 });
 
 test("主对话区为每个用户回合提供定位线和悬停简介", () => {
@@ -822,7 +822,7 @@ test("会话可一键总结为工作模板", () => {
   assert.match(app, /SkillDraftDialog/);
   assert.match(app, /保存到技能库/);
   // 主进程：复用 appendSkill 且返回创建记录
-  assert.match(main, /ipcMain\.handle\("skills:create"/);
+  assert.match(main, /trustedHandle\("skills:create"/);
   assert.match(main, /return record;/);
   // preload 与类型贯通
   assert.match(preload, /createSkill:/);
@@ -837,8 +837,8 @@ test("技能库设置贯通配置、主进程和渲染端", () => {
   assert.match(settingsStorage, /normalizeSkillLibraries/);
   assert.match(preload, /searchSkillLibraries: \(query\)/);
   assert.match(preload, /installSkillFromLibrary: \(payload\)/);
-  assert.match(main, /ipcMain\.handle\("skill-libraries:search"/);
-  assert.match(main, /ipcMain\.handle\("skill-libraries:install"/);
+  assert.match(main, /trustedHandle\("skill-libraries:search"/);
+  assert.match(main, /trustedHandle\("skill-libraries:install"/);
   assert.match(app, /label: "技能库"/);
   assert.match(app, /searchSkillLibraries\(text\)/);
   assert.match(app, /search\(""\)/);
@@ -1137,10 +1137,15 @@ test("codex alignment surfaces are wired end to end", () => {
   // 个人记忆知识库（LLM Wiki）：memory.json 只作队列，wiki 是唯一知识库
   assert.match(main, /function memoryWikiReady/);
   assert.match(main, /runWikiConsolidation/);
-  assert.match(main, /ipcMain\.handle\("memories:lint"/);
+  assert.match(main, /trustedHandle\("memories:lint"/);
   assert.match(app, /onSchedulesChanged[\s\S]*listMemories/);
   assert.match(main, /extractExplicitMemoryInstruction/);
-  const agentSend = main.slice(main.indexOf('ipcMain.handle("agent:send"'));
+  // IPC 纵深防御：所有 handler 必须经 trustedHandle 注册（校验 sender 是主渲染进程），
+  // 唯一直接调用 ipcMain.handle 的地方是 trustedHandle 自己的定义
+  assert.match(main, /function trustedHandle\(channel, handler\) \{\s*ipcMain\.handle\(channel/);
+  const directHandles = main.match(/ipcMain\.handle\(/g) || [];
+  assert.equal(directHandles.length, 1, "main.mjs 中只允许 trustedHandle 定义内出现一次 ipcMain.handle");
+  const agentSend = main.slice(main.indexOf('trustedHandle("agent:send"'));
   assert.ok(agentSend.indexOf("const explicitMemories") < agentSend.indexOf("if (!settings.endpoint"));
   assert.match(agent, /externalPathsForTool/);
   assert.match(agent, /withModelTimeout/);
@@ -1182,9 +1187,9 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(auditSource, /entry\?\.model/);
   assert.match(main, /"reviewer"/);
   assert.match(main, /standing-rules\.json/);
-  assert.match(main, /ipcMain\.handle\("rules:list"/);
-  assert.match(main, /ipcMain\.handle\("rules:add"/);
-  assert.match(main, /ipcMain\.handle\("rules:delete"/);
+  assert.match(main, /trustedHandle\("rules:list"/);
+  assert.match(main, /trustedHandle\("rules:add"/);
+  assert.match(main, /trustedHandle\("rules:delete"/);
   assert.match(main, /standingRules: await readStandingRules\(\)/);
   assert.match(main, /kind === "command-prefix" \? \{ command: pattern \}/);
   assert.match(preload, /listRules:/);
@@ -1198,7 +1203,7 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(agent, /auditRecord\(/);
   assert.match(main, /createAuditLog/);
   assert.match(main, /audit\.jsonl/);
-  assert.match(main, /ipcMain\.handle\("audit:open"/);
+  assert.match(main, /trustedHandle\("audit:open"/);
   assert.match(preload, /openAuditLog:/);
   assert.match(app, /打开审计日志/);
 
@@ -1208,9 +1213,9 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(agent, /requestUserInput/);
   assert.match(main, /inbox\.json/);
   assert.match(main, /createInboxItem/);
-  assert.match(main, /ipcMain\.handle\("inbox:list"/);
-  assert.match(main, /ipcMain\.handle\("inbox:resolve"/);
-  assert.match(main, /ipcMain\.handle\("inbox:dismiss"/);
+  assert.match(main, /trustedHandle\("inbox:list"/);
+  assert.match(main, /trustedHandle\("inbox:resolve"/);
+  assert.match(main, /trustedHandle\("inbox:dismiss"/);
   assert.match(main, /expireOrphanedInboxItems/);
   assert.match(main, /expireAllPendingInbox/);
   // 孤儿 pending 条目（等待 promise 已消失）在读取列表前自动判为失效，杜绝“已失效钉子户”卡片
@@ -1222,7 +1227,7 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   // 渲染层：决议失败也刷新列表（过期卡片移入“最近已处理”）；打开收件箱时重新拉取
   assert.match(app, /无论成败都刷新/);
   assert.match(app, /setInboxOpen\(true\);\s*\/\/ 打开时重新拉取/);
-  assert.match(main, /ipcMain\.handle\("agent:resolve-question"/);
+  assert.match(main, /trustedHandle\("agent:resolve-question"/);
   assert.match(preload, /listInbox:/);
   assert.match(preload, /resolveInbox:/);
   assert.match(preload, /resolveQuestion:/);
@@ -1243,7 +1248,7 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(main, /resumeWake/);
   assert.match(main, /visibleConversationForSession/);
   assert.match(main, /sessions:append/);
-  assert.match(main, /ipcMain\.handle\("wakes:cancel-for-session"/);
+  assert.match(main, /trustedHandle\("wakes:cancel-for-session"/);
   assert.match(preload, /onSessionAppend:/);
   assert.match(preload, /cancelWakesForSession:/);
   assert.match(app, /onSessionAppend/);
@@ -1314,7 +1319,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /async function runChannelTask/);
   assert.match(main, /activeAgents\.size \|\| runningScheduledTask \|\| runningChannelTaskCount > 0/);
   assert.match(main, /resolveInboxInternal/);
-  assert.match(main, /ipcMain\.handle\("channels:get-status"/);
+  assert.match(main, /trustedHandle\("channels:get-status"/);
   assert.match(main, /broadcastChannelsStatus/);
   assert.match(main, /channelManager\.stopAll\(\)/);
   assert.match(main, /channel-chats\.json/);
@@ -1411,9 +1416,9 @@ test("分支管理与提交推送端到端接线（Codex 风格）", () => {
   assert.match(app, /commit-diff-stats/);
   assert.match(app, /提交并推送/);
   // 主进程与 preload 的 Git 通道
-  assert.match(main, /ipcMain\.handle\("git:branches"/);
-  assert.match(main, /ipcMain\.handle\("git:commit"/);
-  assert.match(main, /ipcMain\.handle\("git:push"/);
+  assert.match(main, /trustedHandle\("git:branches"/);
+  assert.match(main, /trustedHandle\("git:commit"/);
+  assert.match(main, /trustedHandle\("git:push"/);
   assert.match(preload, /gitBranches/);
   assert.match(preload, /gitCommit/);
   assert.match(preload, /gitPush/);

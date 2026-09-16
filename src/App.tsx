@@ -433,6 +433,12 @@ function plainConversationText(content: string) {
     .trim();
 }
 
+// Intl.DateTimeFormat 构造昂贵（每条消息每次渲染都会调一次），按两种格式模块级缓存
+const timeFormatterCache = {
+  sameDay: new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }),
+  full: new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }),
+};
+
 function formatMessageTime(createdAt: string) {
   const timestamp = new Date(createdAt).getTime();
   if (!Number.isFinite(timestamp)) return "";
@@ -442,12 +448,7 @@ function formatMessageTime(createdAt: string) {
     && date.getMonth() === now.getMonth()
     && date.getDate() === now.getDate();
   // 当天只显示时分；更早的消息带完整日期便于回溯
-  return new Intl.DateTimeFormat("zh-CN", {
-    ...(sameDay ? {} : { year: "numeric", month: "2-digit", day: "2-digit" }),
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+  return (sameDay ? timeFormatterCache.sameDay : timeFormatterCache.full).format(date);
 }
 
 // 模型偶尔会把其他 agent 框架的控制标记（如 ::git-stage{cwd="..."}）原样输出到回复里，
@@ -1996,6 +1997,7 @@ function FilesSplitPanel({
   const [saveState, setSaveState] = useState<"idle" | "pending" | "saving" | "saved">("idle");
   // 草稿是崩溃备份：自动保存成功后清除
   const draftsRef = useRef<Record<string, { content: string; savedAt: string }>>(loadFileDrafts());
+  const draftPersistTimerRef = useRef<number | null>(null);
   // 待落盘队列：path → { workspacePath, content }。切换工作区后仍按原工作区写盘
   const pendingSavesRef = useRef<Map<string, { workspacePath: string; content: string }>>(new Map());
   const saveTimerRef = useRef<number | null>(null);
@@ -2078,7 +2080,8 @@ function FilesSplitPanel({
     }, 800);
   };
 
-  // 崩溃备份草稿：每次编辑都记，自动保存成功后由 flushSaves 清除；超上限淘汰最旧
+  // 崩溃备份草稿：每次编辑都记，自动保存成功后由 flushSaves 清除；超上限淘汰最旧。
+  // 落盘做 800ms 尾沿防抖：此前每个击键都 JSON.stringify 全部草稿并同步写 localStorage
   const updateDraftFor = (path: string, content: string) => {
     draftsRef.current[draftKeyFor(workspacePath, path)] = { content, savedAt: new Date().toISOString() };
     const keys = Object.keys(draftsRef.current);
@@ -2089,7 +2092,11 @@ function FilesSplitPanel({
         .slice(0, keys.length - MAX_FILE_DRAFTS);
       for (const entry of stale) delete draftsRef.current[entry.key];
     }
-    persistFileDrafts(draftsRef.current);
+    if (draftPersistTimerRef.current) window.clearTimeout(draftPersistTimerRef.current);
+    draftPersistTimerRef.current = window.setTimeout(() => {
+      draftPersistTimerRef.current = null;
+      persistFileDrafts(draftsRef.current);
+    }, 800);
   };
 
   const handleEditChange = (path: string, value: string) => {
@@ -7805,34 +7812,38 @@ export function App() {
   const isMacPlatform = platform === "darwin";
   const shortcutLabel = (mac: string, other: string) => (isMacPlatform ? mac : other);
 
+  // 处理器经 ref 读取最新状态，effect 只在挂载时挂一次监听；
+  // 此前无依赖数组，流式期间每个 token 都 remove+add 一次 window keydown
+  const keydownHandlerRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
+  keydownHandlerRef.current = (event: globalThis.KeyboardEvent) => {
+    const key = event.key.toLowerCase();
+    const modOnly = (isMacPlatform ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
+    if (modOnly && key === "t") {
+      event.preventDefault();
+      setRightPanelOpen(true);
+      openToolPanelTab("browser");
+    } else if (modOnly && key === "p") {
+      event.preventDefault();
+      setRightPanelOpen(true);
+      openToolPanelTab("files");
+    } else if (modOnly && key === "j") {
+      event.preventDefault();
+      setDebugOpen((value) => !value);
+    } else if (event.ctrlKey && event.shiftKey && key === "g" && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      setRightPanelOpen(true);
+      openToolPanelTab("review");
+    } else if (key === "s" && event.altKey && (isMacPlatform ? event.metaKey : event.ctrlKey)) {
+      event.preventDefault();
+      setRightPanelOpen(true);
+      openToolPanelTab("chat");
+    }
+  };
   useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      const modOnly = (isMacPlatform ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
-      if (modOnly && key === "t") {
-        event.preventDefault();
-        setRightPanelOpen(true);
-        openToolPanelTab("browser");
-      } else if (modOnly && key === "p") {
-        event.preventDefault();
-        setRightPanelOpen(true);
-        openToolPanelTab("files");
-      } else if (modOnly && key === "j") {
-        event.preventDefault();
-        setDebugOpen((value) => !value);
-      } else if (event.ctrlKey && event.shiftKey && key === "g" && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        setRightPanelOpen(true);
-        openToolPanelTab("review");
-      } else if (key === "s" && event.altKey && (isMacPlatform ? event.metaKey : event.ctrlKey)) {
-        event.preventDefault();
-        setRightPanelOpen(true);
-        openToolPanelTab("chat");
-      }
-    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => keydownHandlerRef.current(event);
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, []);
 
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
   const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
@@ -7954,8 +7965,16 @@ export function App() {
     webview.addEventListener("ipc-message", ((event: Event & { channel: string; args: unknown[] }) => {
       if (event.channel !== "dyworker:password-submit") return;
       const payload = event.args?.[0] as { origin?: string; username?: string; password?: string } | undefined;
-      if (!payload?.origin || !/^https?:\/\//i.test(payload.origin) || !payload.password) return;
-      setBrowserPasswordPrompt({ tabId, origin: payload.origin, username: payload.username || "", password: payload.password });
+      if (!payload?.password) return;
+      // origin 由客页面自行上报、可被恶意站点伪造：一律以 webview 当前实际 URL 的 origin 为准
+      let actualOrigin = "";
+      try {
+        actualOrigin = new URL(webview.getURL?.() || "").origin;
+      } catch {
+        return;
+      }
+      if (!/^https?:\/\//i.test(actualOrigin)) return;
+      setBrowserPasswordPrompt({ tabId, origin: actualOrigin, username: payload.username || "", password: payload.password });
     }) as EventListener);
     prepareGuestPage(webview, tabId);
   };
@@ -10214,7 +10233,9 @@ export function App() {
                 return (
                 <div
                   className={`message-row ${message.role}`}
-                  key={`${message.createdAt}-${index}`}
+                  // key 用稳定的消息 id：此前拼 createdAt-index，任务收尾改写 createdAt 会让
+                  // 流式期间建好的整棵子树（高亮代码、mermaid 图）整体卸载重建
+                  key={message.id || `${message.createdAt}-${index}`}
                   ref={(node) => {
                     // 会话内搜索需要所有消息行的引用；用户消息行同时供回合导航使用
                     messageRowRefs.current[index] = node;

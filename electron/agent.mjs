@@ -3757,7 +3757,20 @@ export function reviewerCacheKey(kind = "", details = "") {
 export function estimateTextTokens(text) {
   if (!text) return 0;
   const value = String(text);
-  const cjk = (value.match(/[　-鿿豈-﫿︰-﹏＀-￯]/g) || []).length;
+  // 逐字符按码点区间计数，与原正则等价；不用 match，
+  // 避免长上下文（几十万字）每轮分配几十万元素的临时数组
+  let cjk = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      (code >= 0x3000 && code <= 0x9fff)
+      || (code >= 0xf900 && code <= 0xfaff)
+      || (code >= 0xfe30 && code <= 0xfe4f)
+      || (code >= 0xff00 && code <= 0xffef)
+    ) {
+      cjk += 1;
+    }
+  }
   return cjk + Math.ceil((value.length - cjk) / 4);
 }
 

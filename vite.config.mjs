@@ -24,7 +24,23 @@ export default defineConfig({
   base: "./",
   build: {
     outDir: "dist/client",
-    chunkSizeWarningLimit: 2000,
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        // 首屏 vendor 分包：react 框架与 markdown 渲染链（react-markdown/remark/rehype/
+        // highlight.js）更新频率不同，拆开利于缓存并行加载；mermaid/CodeMirror 已是动态分包
+        manualChunks: {
+          react: ["react", "react-dom"],
+          markdown: [
+            "react-markdown",
+            "remark-gfm",
+            "remark-math",
+            "rehype-katex",
+            "highlight.js",
+          ],
+        },
+      },
+    },
   },
   optimizeDeps: {
     include: ["react", "react-dom/client"],

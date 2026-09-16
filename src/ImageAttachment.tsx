@@ -13,10 +13,21 @@ const localImageReads = new Map<string, Promise<LocalImageReadResult>>();
 
 // 会话内图片数量可控（同一文件路径反复出现只读一次），读到的原图缓存住，
 // 来回滚动/反复打开预览不用重复 IPC 读盘。
+// LRU 上限 30 张：原图 dataURL 单张可达数 MB，无界缓存会让长会话内存只涨不缩
+const LOCAL_IMAGE_CACHE_LIMIT = 30;
 const localImageDataCache = new Map<string, string>();
 
 export function rememberLocalImageData(filePath: string, dataUrl: string) {
-  if (filePath && dataUrl) localImageDataCache.set(filePath, dataUrl);
+  if (!filePath || !dataUrl) return;
+  // 重新插入到末尾维持 LRU 顺序，超限时淘汰最久未用
+  localImageDataCache.delete(filePath);
+  localImageDataCache.set(filePath, dataUrl);
+  while (localImageDataCache.size > LOCAL_IMAGE_CACHE_LIMIT) {
+    const oldest = localImageDataCache.keys().next().value;
+    if (oldest === undefined) break;
+    localImageDataCache.delete(oldest);
+    localImageReads.delete(oldest);
+  }
 }
 
 function drainLocalImageReadQueue() {
@@ -47,14 +58,19 @@ export function readLocalImageDataUrl(filePath: string): Promise<LocalImageReadR
   const key = String(filePath || "").trim();
   if (!key) return Promise.resolve<LocalImageReadResult>({ ok: false, error: "图片路径无效" });
   const cached = localImageDataCache.get(key);
-  if (cached) return Promise.resolve({ ok: true, dataUrl: cached });
+  if (cached) {
+    // 命中刷新 LRU 位置
+    localImageDataCache.delete(key);
+    localImageDataCache.set(key, cached);
+    return Promise.resolve({ ok: true, dataUrl: cached });
+  }
   const pending = localImageReads.get(key);
   if (pending) return pending;
   const reader = window.dyworker?.readLocalImage;
   if (!reader) return Promise.resolve<LocalImageReadResult>({ ok: false, error: "当前环境无法读取本地图片" });
   const request = scheduleLocalImageRead(() => reader(key))
     .then((result) => {
-      if (result.ok && result.dataUrl) localImageDataCache.set(key, result.dataUrl);
+      if (result.ok && result.dataUrl) rememberLocalImageData(key, result.dataUrl);
       return result;
     })
     .finally(() => {
