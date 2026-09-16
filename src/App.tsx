@@ -75,7 +75,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { copyImageToClipboard, copyMessageWithImages, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
@@ -6006,7 +6006,9 @@ export function App() {
   const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
   const [workspaceSessionsExpanded, setWorkspaceSessionsExpanded] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
-  const [platform, setPlatform] = useState("");
+  // 平台标识初始值同步取自 preload（process.platform），首帧就能渲染正确布局，
+  // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
+  const [platform, setPlatform] = useState(() => window.dyworker?.platform || "");
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -6493,10 +6495,12 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Linux 系统标题栏占用窗口外框，页面不再重复显示自绘标题栏。
-  useEffect(() => {
+  // Linux 系统标题栏占用窗口外框，页面不再重复显示自绘标题栏；
+  // mac 用 titleBarStyle:hidden 隐藏系统标题栏，原生红绿灯内嵌到第一行工具栏，同样不显示自绘标题栏。
+  // 用 useLayoutEffect：首帧绘制前就把类挂到 <html> 上，启动时不闪现自绘标题栏
+  useLayoutEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("native-window-frame", platform === "linux");
+    root.classList.toggle("native-window-frame", platform === "linux" || platform === "darwin");
     root.classList.toggle("window-maximized", windowMaximized);
   }, [platform, windowMaximized]);
 

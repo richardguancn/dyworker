@@ -809,14 +809,18 @@ function createWindow() {
   }
 
   const windowOptions = {
-    width: 1480,
-    height: 920,
+    width: 1184,
+    height: 736,
     minWidth: 980,
     minHeight: 660,
     backgroundColor: systemWindowBackground(),
     show: process.platform === "linux",
     title: "DYWorker",
     frame: process.platform === "linux",
+    // mac 隐藏系统标题栏，窗口内容直接贴顶；原生红绿灯嵌进第一行工具栏
+    // （侧栏品牌行/顶栏高 54px，按钮高约 16px，y=(54-16)/2=19 垂直居中，x=14 对齐左侧留白），
+    // 该行本身就是 -webkit-app-region: drag 拖拽区，窗口拖动不受影响
+    ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 19 } } : {}),
     hasShadow: true,
     webPreferences: {
       preload: path.join(here, "preload.cjs"),

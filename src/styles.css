@@ -163,6 +163,16 @@ body.resizing-panels .app-shell {
   display: none;
 }
 
+/* mac 红绿灯内嵌在第一行左侧（trafficLightPosition x=14，整组约 60px 宽），
+   品牌行与收起侧栏后的顶栏都留出避让空间，避免可点按钮被灯盖住 */
+.platform-darwin .sidebar-brand-row {
+  padding-left: 84px;
+}
+
+.platform-darwin.sidebar-collapsed .topbar {
+  padding-left: 84px;
+}
+
 .sidebar-brand-row,
 .sidebar-footer,
 .topbar,
@@ -197,7 +207,8 @@ body.resizing-panels .app-shell {
 .sidebar-brand-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 6px;
   flex: 1;
   min-width: 0;
 }

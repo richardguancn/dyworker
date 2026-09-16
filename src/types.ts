@@ -651,6 +651,8 @@ export interface ScheduleRecord {
 }
 
 export interface DyworkerBridge {
+  /** 同步平台标识（preload 直接读 process.platform）：首帧渲染即用，不经过 IPC */
+  readonly platform: string;
   getInitialState(): Promise<{
     sessions: SessionRecord[];
     workspacePath: string;

@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("dyworker", {
+  // 同步暴露平台（sandbox preload 可直接读 process.platform）：首帧渲染就要用它决定
+  // 显示自绘标题栏还是避让 mac 红绿灯，走异步 IPC 会闪现一帧错误布局
+  platform: process.platform,
   getInitialState: () => ipcRenderer.invoke("app:initial-state"),
   saveSessions: (sessions) => ipcRenderer.invoke("sessions:save", sessions),
   savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),

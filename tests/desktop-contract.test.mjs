@@ -904,24 +904,31 @@ test("desktop theme follows the macOS and Linux system appearance", () => {
   assert.match(html, /name="color-scheme" content="light dark"/);
 });
 
-test("非 Linux 窗口保留应用自己的标题栏和窗口按钮", () => {
+test("Windows 保留自绘标题栏，mac 用原生隐藏标题栏 + 红绿灯内嵌工具栏", () => {
   assert.match(main, /frame: process\.platform === "linux"/);
-  assert.doesNotMatch(main, /titleBarStyle|titleBarOverlay/);
+  // mac：隐藏系统标题栏，原生红绿灯定位进第一行工具栏（不与自绘按钮重复）
+  assert.match(main, /titleBarStyle: "hidden"/);
+  assert.match(main, /trafficLightPosition/);
+  assert.match(main, /process\.platform === "darwin" \? \{ titleBarStyle/);
+  // Windows 仍用自绘窗口按钮
   assert.match(app, /window-controls/);
   assert.match(app, /dyworker\?\.minimize/);
   assert.match(app, /dyworker\?\.toggleMaximize/);
   assert.match(app, /dyworker\?\.close/);
-  // 单独的全宽标题栏：菜单与三个窗口按钮固定在右上角
+  // 单独的全宽标题栏：菜单与三个窗口按钮固定在右上角（mac 上由 native-window-frame 隐藏）
   assert.match(app, /className="titlebar"/);
   assert.match(app, /titlebar-brand/);
   assert.match(app, /titlebar-right/);
+  // mac 与 linux 一样隐藏自绘标题栏；品牌行与收起侧栏后的顶栏避让内嵌红绿灯
+  assert.match(styles, /platform-darwin \.sidebar-brand-row \{[^}]*padding-left: 84px/);
+  assert.match(styles, /platform-darwin\.sidebar-collapsed \.topbar \{[^}]*padding-left: 84px/);
 });
 
 test("linux 使用系统边框与阴影，不扩大窗口输入区域", () => {
   assert.match(main, /frame: process\.platform === "linux"/);
   assert.match(main, /hasShadow: true/);
   assert.doesNotMatch(main, /transparent: true|LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
-  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux"\)/);
+  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux" \|\| platform === "darwin"\)/);
   assert.match(styles, /html\.native-window-frame \{\s*--titlebar-height: 0px/);
   assert.match(styles, /html\.native-window-frame \.titlebar \{\s*display: none/);
   assert.doesNotMatch(styles, /html\.window-shadow/);
