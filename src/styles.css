@@ -207,10 +207,16 @@ body.resizing-panels .app-shell {
 .sidebar-brand-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  justify-content: space-between;
   flex: 1;
   min-width: 0;
+}
+
+/* mac 第一行左侧被原生红绿灯占据，搜索与收起成组靠右；
+   Windows/Linux 该行左侧无系统控件，保持搜索在左、收起在右 */
+.platform-darwin .sidebar-brand-actions {
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .sidebar-brand-row .icon-button {
