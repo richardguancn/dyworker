@@ -291,8 +291,9 @@ function MermaidDiagram({ code }: { code: string }) {
 }
 
 // echarts 图表渲染：与 mermaid 同样的流式策略——等输入稳定 400ms 再解析渲染。
-// 内容是严格 JSON 的 ECharts option（模型生成），只经 JSON.parse，不做任何代码求值；
-// 流式期间 JSON 不完整时解析失败属正常，code 稳定后自动重试。
+// 内容是严格 JSON 的 ECharts option（模型生成），只经 JSON.parse，不做任何代码求值。
+// 流式期间 JSON 不完整时解析失败属正常：错误以叠加层呈现，画布始终保持挂载——
+// 否则中间态的错误会卸载画布，后续解析成功也无处初始化（containerRef 为 null 卡死）。
 function EchartsDiagram({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -334,15 +335,18 @@ function EchartsDiagram({ code }: { code: string }) {
       chart?.dispose();
     };
   }, [code]);
-  if (error != null) {
-    return (
-      <div className="mermaid-diagram mermaid-error">
-        <p>图表渲染失败（输出未完成或语法有误）</p>
-        <div className="mermaid-error-source">{code}</div>
-      </div>
-    );
-  }
-  return <div className="echarts-diagram"><div ref={containerRef} className="echarts-canvas" /></div>;
+  return (
+    <div className="echarts-diagram">
+      {error != null ? (
+        <div className="echarts-error-overlay">
+          <p>图表渲染失败（输出未完成或语法有误）</p>
+          <p className="echarts-error-detail">{error}</p>
+          <div className="mermaid-error-source">{code}</div>
+        </div>
+      ) : null}
+      <div ref={containerRef} className="echarts-canvas" />
+    </div>
+  );
 }
 
 // 中英文之间自动补空格（pangu 风格）：只作用于正文文本节点，
