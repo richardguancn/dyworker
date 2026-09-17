@@ -10,6 +10,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -76,7 +77,7 @@ import {
   X,
 } from "lucide-react";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
-import { copyImageToClipboard, copyMessageWithImages, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
+import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage } from "./InteractiveMessage";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
@@ -3232,15 +3233,20 @@ function QuestionCard({ request, onResolve }: { request: QuestionRequest; onReso
 }
 
 // 图片预览灯箱：优先按原始尺寸展示，超出视口时等比缩放；大图可拖动查看细节。
-function ImageLightbox({ preview, onClose, onCopied }: {
+// 多图时显示左右切换箭头与序号（也支持 ←/→ 键，循环切换）。
+function ImageLightbox({ preview, onClose, onCopied, navigation }: {
   preview: { url: string; name: string; path?: string };
   onClose: () => void;
   onCopied?: (copied: boolean) => void;
+  navigation?: { index: number; count: number; onNavigate: (direction: -1 | 1) => void };
 }) {
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  // 切换图片后重新测量原始尺寸，避免沿用上张图的缩放
+  useEffect(() => setNaturalSize(null), [preview.url]);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -3317,7 +3323,32 @@ function ImageLightbox({ preview, onClose, onCopied }: {
           }}
         />
       </div>
+      {navigation && navigation.count > 1 && (
+        <>
+          <button
+            type="button"
+            className="image-lightbox-nav prev"
+            aria-label="上一张"
+            title="上一张（←）"
+            onClick={(event) => { event.stopPropagation(); navigation.onNavigate(-1); }}
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <button
+            type="button"
+            className="image-lightbox-nav next"
+            aria-label="下一张"
+            title="下一张（→）"
+            onClick={(event) => { event.stopPropagation(); navigation.onNavigate(1); }}
+          >
+            <ChevronRight size={22} />
+          </button>
+        </>
+      )}
       <div className="image-lightbox-toolbar" onClick={(event) => event.stopPropagation()}>
+        {navigation && navigation.count > 1 && (
+          <span className="image-lightbox-counter">{navigation.index + 1} / {navigation.count}</span>
+        )}
         <button type="button" className="image-lightbox-copy" onClick={() => void copyImage()} aria-label="复制图片" title="复制图片到剪贴板">
           <Copy size={15} />
           {copied ? "已复制" : "复制"}
@@ -6084,6 +6115,31 @@ export function App() {
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ url: string; name: string; path?: string } | null>(null);
+  // 同一条消息的全部图片附件：预览灯箱用它在多张图之间左右切换
+  const [imagePreviewPeers, setImagePreviewPeers] = useState<Array<Pick<Attachment, "path" | "previewUrl" | "name">>>([]);
+  const openImagePreview = (payload: { url: string; name: string; path?: string }, peers?: Array<Pick<Attachment, "path" | "previewUrl" | "name">>) => {
+    setImagePreviewPeers(peers ?? []);
+    setImagePreview(payload);
+  };
+  const closeImagePreview = () => {
+    setImagePreview(null);
+    setImagePreviewPeers([]);
+  };
+  const imagePreviewIndex = imagePreview
+    ? imagePreviewPeers.findIndex((peer) => (peer.path || peer.previewUrl || "") === (imagePreview.path || imagePreview.url))
+    : -1;
+  // 左右切换（循环）：目标图可能还没读过原图，先经附件通道取 dataURL
+  const navigateImagePreview = (direction: -1 | 1) => {
+    const current = imagePreview;
+    if (!current || imagePreviewPeers.length < 2) return;
+    const currentKey = current.path || current.url;
+    const index = imagePreviewPeers.findIndex((peer) => (peer.path || peer.previewUrl || "") === currentKey);
+    const next = imagePreviewPeers[(Math.max(index, 0) + direction + imagePreviewPeers.length) % imagePreviewPeers.length];
+    if (!next) return;
+    void attachmentImageSource(next).then((result) => {
+      if (result.ok && result.dataUrl) setImagePreview({ url: result.dataUrl, name: next.name || "图片", path: next.path });
+    });
+  };
   // 会话内搜索：在当前会话的消息 DOM 里高亮命中并按出现位置跳转（⌘F / Ctrl+F 打开）
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
@@ -6278,15 +6334,17 @@ export function App() {
     return () => observer.disconnect();
   }, []);
 
-  // 图片预览浮层支持 Esc 关闭
+  // 图片预览浮层：Esc 关闭，多图时 ←/→ 切换
   useEffect(() => {
     if (!imagePreview) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setImagePreview(null);
+      if (event.key === "Escape") closeImagePreview();
+      else if (event.key === "ArrowLeft") navigateImagePreview(-1);
+      else if (event.key === "ArrowRight") navigateImagePreview(1);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [imagePreview]);
+  }, [imagePreview, imagePreviewPeers]);
 
   // 会话内搜索：⌘F / Ctrl+F 打开（拦截浏览器默认查找），Esc 关闭
   useEffect(() => {
@@ -7527,11 +7585,8 @@ export function App() {
         label: hasSelected ? "复制" : "复制消息",
         icon: <Copy size={15} />,
         onSelect: () => {
-          // 复制整条消息且带图片时图文一起进剪贴板；选中复制时保持纯文本
-          const action = !hasSelected && message?.attachments?.length
-            ? copyMessageWithImages(text, message.attachments)
-            : copyTextToClipboard(text);
-          void action.then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
+          // 复制一律为纯文本（图片由缩略图上的复制按钮单独复制）
+          void copyTextToClipboard(text).then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
         },
       },
     ]);
@@ -9160,8 +9215,9 @@ export function App() {
 
   const copyMessage = async (message: ChatMessage) => {
     const text = messageVisibleText(message);
-    // 带图片的消息：图文一起进剪贴板，粘贴到微信/备忘录等应用时同时出现
-    const copied = await copyMessageWithImages(text, message.attachments || []);
+    // 复制按钮只复制文本：图文混排进剪贴板时，部分粘贴目标（如输入框）会只取到图片、
+    // 丢掉文本。图片由缩略图上的复制按钮单独复制。
+    const copied = await copyTextToClipboard(text);
     setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
   };
 
@@ -10245,6 +10301,25 @@ export function App() {
                   {message.role === "system" ? null : message.role === "user" ? (
                     <>
                       <div className="user-message-stack">
+                        {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
+                        {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
+                          <div className="message-attachments">
+                            {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
+                              attachment.path || attachment.previewUrl ? (
+                                <ImageAttachmentView
+                                  key={`${message.createdAt}-${attachment.path || attachment.previewUrl}`}
+                                  attachment={attachment}
+                                  onPreview={(payload) => openImagePreview(payload, message.attachments?.filter((attachment) => attachment.isImage))}
+                                />
+                              ) : (
+                                <span key={`${message.createdAt}-${attachment.path}`}>
+                                  <FileImage size={13} />
+                                  图片
+                                </span>
+                              )
+                            ))}
+                          </div>
+                        )}
                         <div
                           className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}`}
                           onContextMenu={(event) => handleMessageContextMenu(event, message)}
@@ -10286,24 +10361,6 @@ export function App() {
                           />
                         )}
                         {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
-                        {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
-                          <div className="message-attachments">
-                            {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
-                              attachment.path || attachment.previewUrl ? (
-                                <ImageAttachmentView
-                                  key={`${message.createdAt}-${attachment.path || attachment.previewUrl}`}
-                                  attachment={attachment}
-                                  onPreview={(payload) => setImagePreview(payload)}
-                                />
-                              ) : (
-                                <span key={`${message.createdAt}-${attachment.path}`}>
-                                  <FileImage size={13} />
-                                  图片
-                                </span>
-                              )
-                            ))}
-                          </div>
-                        )}
                         </div>
                         <div className="message-actions user" aria-label="用户消息操作">
                           <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
@@ -10521,7 +10578,8 @@ export function App() {
         {imagePreview && (
           <ImageLightbox
             preview={imagePreview}
-            onClose={() => setImagePreview(null)}
+            onClose={closeImagePreview}
+            navigation={{ index: Math.max(imagePreviewIndex, 0), count: imagePreviewPeers.length, onNavigate: navigateImagePreview }}
             onCopied={(copied) => {
               if (copied) setNotice("图片已复制到剪贴板");
               else setError("图片复制失败，请重试");
@@ -10733,7 +10791,7 @@ export function App() {
                     ? (
                       <ImageAttachmentThumb
                         attachment={attachment}
-                        onPreview={(payload) => setImagePreview(payload)}
+                        onPreview={(payload) => openImagePreview(payload, attachments.filter((item) => item.isImage))}
                       />
                     )
                     : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}

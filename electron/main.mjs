@@ -1311,45 +1311,6 @@ trustedHandle("clipboard:write-image", async (event, payload) => {
 // 一次写入「文本 + 图片」：clipboard.write 会把两者放进同一剪贴板项，
 // 粘贴到微信/备忘录/Word 等应用时图文一起出现。
 // 同时写入 HTML 格式（dataURL 内嵌图片），让支持 HTML 粘贴的应用能同时拿到图文。
-trustedHandle("clipboard:write-rich", async (event, payload) => {
-  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "当前页面不允许写入剪贴板" };
-  try {
-    const text = String(payload?.text || "");
-    let image = null;
-    let html = "";
-    const dataUrl = String(payload?.dataUrl || "");
-    if (dataUrl.startsWith("data:image/")) {
-      image = nativeImage.createFromDataURL(dataUrl);
-      // 生成内嵌图片的 HTML，供支持富文本粘贴的应用使用
-      html = `<img src="${dataUrl.replace(/"/g, '&quot;')}" alt="" />${text ? `<p>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}`;
-    } else {
-      const filePath = localImagePathFromSource(payload?.path);
-      if (filePath) {
-        const content = await fs.readFile(filePath);
-        if (content.length) {
-          image = nativeImage.createFromBuffer(content);
-          // 文件路径转 file:// URL，供 HTML 引用
-          const fileUrl = `file://${filePath.replace(/ /g, "%20")}`;
-          html = `<img src="${fileUrl.replace(/"/g, '&quot;')}" alt="" />${text ? `<p>${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>` : ""}`;
-        }
-      }
-    }
-    if (image && !image.isEmpty()) {
-      const data = { text, image };
-      if (html) data.html = html;
-      clipboard.write(data);
-      return { ok: true };
-    }
-    if (text) {
-      clipboard.writeText(text);
-      return { ok: true };
-    }
-    return { ok: false, error: "没有可复制的内容" };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
-});
-
 trustedHandle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));
 
 // 提交信息由独立按钮触发、用当前主模型生成：给改动统计与 diff，按内置提交信息规范输出。

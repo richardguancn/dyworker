@@ -3753,7 +3753,8 @@ body.resizing-panels .app-shell {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  margin-top: 8px;
+  /* 图片在消息文本上方，与文本保持间距 */
+  margin: 0 0 8px;
 }
 
 .message-attachments > span {
@@ -3773,7 +3774,9 @@ body.resizing-panels .app-shell {
 }
 
 .message-attachment-image {
-  max-width: min(320px, 58vw);
+  /* 固定正方形缩略图（微信风格）：图片独立于气泡展示在上方，多图整齐排列 */
+  width: 90px;
+  height: 90px;
   margin: 0;
   overflow: hidden;
   border: 1px solid rgba(102, 105, 98, 0.14);
@@ -3783,26 +3786,23 @@ body.resizing-panels .app-shell {
 
 .message-attachment-image .attachment-preview-image {
   display: block;
-  width: auto;
-  height: auto;
-  max-width: 100%;
-  max-height: 220px;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   background: rgba(0, 0, 0, 0.04);
 }
 
 /* 图片附件：加载/失败占位与复制按钮 */
 .message-attachment-image {
   position: relative;
-  min-width: 140px;
 }
 
 .attachment-image-status {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 140px;
-  min-height: 64px;
+  width: 100%;
+  height: 100%;
   padding: 10px 14px;
   font-size: 12px;
   color: var(--muted, #76766d);
@@ -3933,6 +3933,41 @@ body.resizing-panels .app-shell {
 
 .image-lightbox-close:hover {
   background: rgba(24, 25, 22, 0.8);
+}
+
+/* 多图预览：左右切换箭头悬浮在视口两侧中点 */
+.image-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  color: #f2f3ee;
+  background: rgba(24, 25, 22, 0.55);
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.image-lightbox-nav:hover {
+  background: rgba(24, 25, 22, 0.85);
+  transform: translateY(-50%) scale(1.06);
+}
+
+.image-lightbox-nav.prev { left: 22px; }
+.image-lightbox-nav.next { right: 22px; }
+
+.image-lightbox-counter {
+  align-self: center;
+  padding: 0 4px;
+  font-size: 12.5px;
+  color: rgba(242, 243, 238, 0.85);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Codex 风格的引用 chip：浅绿图标 + 名称，内联在消息文字流中 */
@@ -12460,3 +12495,30 @@ body.resizing-panels .file-split-resizer::after {
 .browser-section-dialog .browser-clear-kind input { width: 16px; height: 16px; flex-shrink: 0; }
 .browser-section-dialog .browser-clear-button { padding: 10px; margin-top: 18px; background: transparent; cursor: pointer; }
 .browser-section-dialog .browser-clear-button:disabled { opacity: .45; cursor: default; }
+
+@media (prefers-color-scheme: dark) {
+  /* 深色模式用户气泡：深绿底白字 */
+  .user-bubble {
+    background: #2c6732;
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #f2f7f0;
+  }
+
+  /* 语音消息气泡保持无背景（语音条自带样式），不被上面的绿色覆盖 */
+  .user-bubble.voice-wrapper {
+    background: transparent;
+    border-color: transparent;
+  }
+
+  /* 气泡内的引用 chip 与图片占位在绿底上的可读性 */
+  .user-bubble .ref-chip {
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.12);
+    color: #e6efe4;
+  }
+
+  .user-bubble .message-attachment-image {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(0, 0, 0, 0.18);
+  }
+}

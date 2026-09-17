@@ -87,51 +87,8 @@ export function attachmentImageSource(attachment: Pick<Attachment, "path" | "pre
   return Promise.resolve<LocalImageReadResult>({ ok: false, error: "图片不存在或读取失败" });
 }
 
-// 优先走主进程原生剪贴板（clipboard.writeImage，粘贴到画图/聊天等应用最稳）；
-// 不可用时回退到 Web 剪贴板图片格式，再不行回退为复制文件路径。
-// 复制消息时图文一起进剪贴板：一次 clipboard.write({ text, image })，
-// 粘贴到微信/备忘录/Word 等应用时文字和图片同时出现。图片读取失败时退化为纯文本复制。
-export async function copyMessageWithImages(text: string, attachments: Array<Pick<Attachment, "path" | "previewUrl" | "isImage">>): Promise<boolean> {
-  const image = attachments.find((attachment) => attachment.isImage && (attachment.path || attachment.previewUrl));
-  const writer = window.dyworker?.writeClipboardRich;
-  if (image && writer) {
-    try {
-      const source = await attachmentImageSource(image);
-      const result = await writer({
-        text,
-        dataUrl: source.ok ? source.dataUrl : undefined,
-        path: !source.ok && image.path ? image.path : undefined,
-      });
-      if (result?.ok) return true;
-    } catch {
-      // 图片读取或写入失败时退化为纯文本复制
-    }
-  }
-  if (writer && text) {
-    try {
-      const result = await writer({ text });
-      if (result?.ok) return true;
-    } catch {
-      // 继续走纯文本回退
-    }
-  }
-  try {
-    const result = await window.dyworker?.writeClipboardText?.(text);
-    if (result?.ok) return true;
-  } catch {
-    // 渲染端回退
-  }
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // 剪贴板不可用
-  }
-  return false;
-}
-
+// 图片复制只走单图通道（缩略图上的复制按钮）；消息复制按钮只复制文本，
+// 避免图文混排进剪贴板后，部分粘贴目标（输入框等）只取到图片、丢掉文本。
 export async function copyImageToClipboard(source: LocalImageReadResult, fallbackPath?: string): Promise<void> {
   const dataUrl = source.ok && source.dataUrl ? source.dataUrl : "";
   const nativeWriter = window.dyworker?.writeClipboardImage;

@@ -665,19 +665,31 @@ test("image attachments render real previews before and after sending", () => {
   assert.doesNotMatch(styles, /\.image-lightbox img\.pannable/);
 });
 
-test("复制带图片的消息时图文一起写入剪贴板", () => {
-  // 主进程提供「文本 + 图片 + HTML」一次写入的剪贴板通道（clipboard.write({ text, image, html })），
-  // 让只认图片、只认文本、只认富文本的目标应用都能拿到可用格式
-  assert.match(main, /trustedHandle\("clipboard:write-rich"/);
-  assert.match(main, /let html = ""/);
-  assert.match(main, /data\.html = html/);
-  assert.match(main, /clipboard\.write\(data\)/);
-  assert.match(preload, /writeClipboardRich: \(payload\) => ipcRenderer\.invoke\("clipboard:write-rich"/);
-  assert.match(types, /writeClipboardRich\(payload: \{ text\?: string; dataUrl\?: string; path\?: string \}\)/);
-  // 渲染层复制消息时带上消息附件中的图片，失败时退化为纯文本
-  assert.match(imageAttachment, /export async function copyMessageWithImages/);
-  assert.match(imageAttachment, /attachment\.isImage && \(attachment\.path \|\| attachment\.previewUrl\)/);
-  assert.match(app, /copyMessageWithImages\(text, message\.attachments \|\| \[\]\)/);
+test("多图消息预览支持左右箭头与键盘切换", () => {
+  // 灯箱多图导航：左右箭头 + 序号 + 方向键循环切换
+  assert.match(app, /imagePreviewPeers/);
+  assert.match(app, /navigateImagePreview/);
+  assert.match(app, /ArrowLeft/);
+  assert.match(app, /ArrowRight/);
+  assert.match(app, /image-lightbox-nav prev/);
+  assert.match(app, /image-lightbox-nav next/);
+  assert.match(app, /image-lightbox-counter/);
+  assert.match(styles, /\.image-lightbox-nav \{/);
+  // 切换图片时重置缩放测量，避免沿用上张图尺寸
+  assert.match(app, /useEffect\(\(\) => setNaturalSize\(null\), \[preview\.url\]\)/);
+  // 图片附件独立于气泡展示在上方，固定正方形缩略图
+  assert.match(styles, /\.message-attachment-image \{[\s\S]*?width: 90px;[\s\S]*?height: 90px;/);
+});
+
+test("复制消息只复制文本，图片由缩略图单独复制", () => {
+  // 图文混排进剪贴板时，部分粘贴目标（如输入框）只取到图片、丢掉文本：
+  // 复制按钮/右键菜单一律纯文本，图片走缩略图上的复制按钮（writeClipboardImage 单图通道）
+  assert.doesNotMatch(app, /copyMessageWithImages/);
+  assert.doesNotMatch(imageAttachment, /copyMessageWithImages/);
+  assert.doesNotMatch(preload, /writeClipboardRich/);
+  assert.doesNotMatch(main, /clipboard:write-rich/);
+  assert.match(app, /const copied = await copyTextToClipboard\(text\)/);
+  assert.match(imageAttachment, /export async function copyImageToClipboard/);
 });
 
 test("title bar does not show a workspace folder chooser", () => {

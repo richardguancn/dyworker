@@ -671,7 +671,6 @@ export interface DyworkerBridge {
   readClipboardText(): Promise<string>;
   writeClipboardText(text: string): Promise<{ ok: boolean }>;
   writeClipboardImage(payload: { dataUrl?: string; path?: string }): Promise<{ ok: boolean; error?: string }>;
-  writeClipboardRich(payload: { text?: string; dataUrl?: string; path?: string }): Promise<{ ok: boolean; error?: string }>;
   readLocalImage(path: string): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   refreshWorkspace(path: string): Promise<WorkspaceEntry[]>;
   getWorkspaceContext(path: string): Promise<WorkspaceContext>;
