@@ -2590,6 +2590,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "  4. steps：{\"type\":\"steps\",\"title\":\"办理步骤\",\"current\":1,\"steps\":[{\"label\":\"准备材料\",\"description\":\"收集所需文件\"},{\"label\":\"提交审核\",\"description\":\"核对后提交\"}]}\n"
     + "- steps 的 current 表示当前进行到第几步，可省略或用 0，都会从第 1 步开始展示。\n"
     + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。\n"
+    + "- 数据统计图表用 ```echarts 代码块（内容是能过 JSON.parse 的严格 JSON，即 ECharts option，无注释、无函数）：柱状 series type 用 bar、折线用 line、占比用 pie；标题 title.text，类目轴 xAxis:{\"type\":\"category\",\"data\":[...]}，数值轴 yAxis:{\"type\":\"value\"}，系列 series:[{\"type\":\"bar\",\"name\":\"名称\",\"data\":[数值]}]。一个代码块只画一张图。流程图、时序图、关系图用 ```mermaid。语法没把握时改用 Markdown 表格，不要输出渲染不出来的半成品图表。\n"
     + "- 用户明确要求显示本地图片时，先确认图片存在，再用绝对路径写成 Markdown 图片，例如 ![现场照片](</绝对路径/现场照片.png>)；路径放在尖括号内以兼容空格，Windows 路径使用 C:/目录/图片.png 这种正斜杠写法，网络共享路径使用 file://server/share/图片.png。不要只回复图片路径，也不要把图片写进代码块。支持 png、jpg、jpeg、gif、webp、bmp。用户没有要求显示时，不要擅自嵌入本地图片。",
   ];
   const goalLine = goal

@@ -4160,6 +4160,18 @@ body.resizing-panels .app-shell {
   overflow-x: auto;
 }
 
+.echarts-diagram {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0;
+}
+
+.echarts-canvas {
+  width: 100%;
+  max-width: 680px;
+  height: 320px;
+}
+
 .mermaid-diagram svg {
   max-width: 100%;
   height: auto;

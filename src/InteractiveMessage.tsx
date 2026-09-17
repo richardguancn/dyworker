@@ -226,6 +226,10 @@ function MarkdownCode({ className, children, node: _node, ...props }: ComponentP
   if (language === "mermaid") {
     return <code {...props} className={className || "language-mermaid"}><MermaidDiagram code={text} /></code>;
   }
+  // echarts 数据图表同样懒加载：内容是严格 JSON 的 ECharts option
+  if (language === "echarts") {
+    return <code {...props} className={className || "language-echarts"}><EchartsDiagram code={text} /></code>;
+  }
   if (highlighted != null) {
     return <code {...props} className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} />;
   }
@@ -236,12 +240,20 @@ function MarkdownCode({ className, children, node: _node, ...props }: ComponentP
 let mermaidLoader: Promise<typeof import("mermaid")> | null = null;
 function loadMermaid() {
   if (!mermaidLoader) {
-    mermaidLoader = import("mermaid").then((module) => {
-      module.default.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
-      return module;
-    });
+    mermaidLoader = import("mermaid");
   }
   return mermaidLoader;
+}
+
+// 按当前主题初始化后再渲染：深色模式用 dark 主题，避免浅色图表的黑字落在深色气泡上不可读
+function mermaidForCurrentTheme() {
+  const rootTheme = document.documentElement.dataset.theme;
+  const isDark = rootTheme === "dark"
+    || (rootTheme !== "light" && Boolean(window.matchMedia?.("(prefers-color-scheme: dark)").matches));
+  return loadMermaid().then((module) => {
+    module.default.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDark ? "dark" : "default" });
+    return module;
+  });
 }
 
 // mermaid 图表渲染：流式输出期间语法尚未完整时静默等待，收尾后重渲染出图
@@ -252,7 +264,7 @@ function MermaidDiagram({ code }: { code: string }) {
     // 流式期间 code 每个 token 都变，mermaid.render 一次上百毫秒：
     // 等输入稳定 400ms 再渲染，避免逐 token 反复解析半截语法
     const timer = window.setTimeout(() => {
-      loadMermaid()
+      mermaidForCurrentTheme()
         .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
         .then((result) => {
           if (active) setState({ status: "done", svg: result.svg });
@@ -276,6 +288,61 @@ function MermaidDiagram({ code }: { code: string }) {
     );
   }
   return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: state.svg }} />;
+}
+
+// echarts 图表渲染：与 mermaid 同样的流式策略——等输入稳定 400ms 再解析渲染。
+// 内容是严格 JSON 的 ECharts option（模型生成），只经 JSON.parse，不做任何代码求值；
+// 流式期间 JSON 不完整时解析失败属正常，code 稳定后自动重试。
+function EchartsDiagram({ code }: { code: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let chart: import("echarts/core").ECharts | null = null;
+    let observer: ResizeObserver | null = null;
+    const timer = window.setTimeout(() => {
+      let option: unknown;
+      try {
+        option = JSON.parse(code);
+      } catch (parseError) {
+        if (!disposed) setError(parseError instanceof Error ? parseError.message : String(parseError));
+        return;
+      }
+      if (!option || typeof option !== "object" || Array.isArray(option)) {
+        if (!disposed) setError("图表配置必须是 JSON 对象");
+        return;
+      }
+      void import("./echarts-setup").then(({ echarts }) => {
+        if (disposed || !containerRef.current) return;
+        // 深浅色主题：深色用内置 dark 主题 + 透明底，浅色用默认主题
+        const rootTheme = document.documentElement.dataset.theme;
+        const isDark = rootTheme === "dark"
+          || (rootTheme !== "light" && Boolean(window.matchMedia?.("(prefers-color-scheme: dark)").matches));
+        chart = echarts.init(containerRef.current, isDark ? "dark" : null, { renderer: "canvas" });
+        chart.setOption({ backgroundColor: "transparent", ...(option as Record<string, unknown>) });
+        observer = new ResizeObserver(() => chart?.resize());
+        observer.observe(containerRef.current);
+        if (!disposed) setError(null);
+      }).catch((loadError) => {
+        if (!disposed) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      });
+    }, 400);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      observer?.disconnect();
+      chart?.dispose();
+    };
+  }, [code]);
+  if (error != null) {
+    return (
+      <div className="mermaid-diagram mermaid-error">
+        <p>图表渲染失败（输出未完成或语法有误）</p>
+        <div className="mermaid-error-source">{code}</div>
+      </div>
+    );
+  }
+  return <div className="echarts-diagram"><div ref={containerRef} className="echarts-canvas" /></div>;
 }
 
 // 中英文之间自动补空格（pangu 风格）：只作用于正文文本节点，
