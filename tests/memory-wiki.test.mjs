@@ -18,6 +18,7 @@ import {
   removeWikiMemory,
   selectWikiPages,
   serializeMemoryRow,
+  updateWikiMemory,
   workspacePageRelPath,
 } from "../electron/memory-wiki.mjs";
 
@@ -205,6 +206,26 @@ test("listWikiPages 返回带更新时间的页面结构", async () => {
   assert.ok(preferences);
   assert.equal(preferences.rows[0].id, "m1");
   assert.ok(preferences.updated);
+});
+
+test("updateWikiMemory 编辑已整合的记忆行", async () => {
+  const root = await makeWikiRoot();
+  await ensureWiki(root, { items: [sampleItem(), sampleItem({ id: "m2", content: "发票抬头用公司全称" })] });
+  const updated = await updateWikiMemory(root, "m1", { content: "以后汇报用中文，附数据出处", name: "汇报口径", category: "汇报偏好" });
+  assert.equal(updated, true);
+  const pages = await readWikiPages(root);
+  const rows = pages.flatMap((page) => page.rows);
+  const row = rows.find((item) => item.id === "m1");
+  assert.equal(row.content, "以后汇报用中文，附数据出处");
+  assert.equal(row.name, "汇报口径");
+  assert.equal(row.category, "汇报偏好");
+  assert.equal(row.kind, "preference", "不传 kind 时保持原类型");
+  assert.ok(rows.some((item) => item.id === "m2"), "其他行不受影响");
+  // 空内容与未知 id 都不生效
+  assert.equal(await updateWikiMemory(root, "m1", { content: "  " }), false);
+  assert.equal(await updateWikiMemory(root, "missing", { content: "x" }), false);
+  const after = await readWikiPages(root);
+  assert.equal(after.flatMap((page) => page.rows).find((item) => item.id === "m1").content, "以后汇报用中文，附数据出处");
 });
 
 test("deriveIndexContent 核心页面排在前面", () => {

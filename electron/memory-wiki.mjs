@@ -267,6 +267,26 @@ export async function removeWikiMemory(root, id, { now } = {}) {
   return true;
 }
 
+// 用户手动编辑一条 wiki 记忆：只改内容/分类/名字/类型，不跨页搬运（改类型不换页，保持页面即用户看到的样子）。
+export async function updateWikiMemory(root, id, updates = {}, { now } = {}) {
+  const target = clean(id);
+  if (!target) return false;
+  const pages = await readWikiPages(root);
+  const page = pages.find((item) => item.rows.some((row) => row.id === target));
+  if (!page) return false;
+  const row = page.rows.find((item) => item.id === target);
+  const content = updates.content === undefined ? row.content : clean(updates.content);
+  if (!content) return false;
+  row.content = content;
+  if (updates.category !== undefined) row.category = clean(updates.category) || row.category;
+  if (updates.name !== undefined) row.name = clean(updates.name);
+  if (updates.kind !== undefined && clean(updates.kind)) row.kind = clean(updates.kind);
+  await writeTextFile(path.join(root, page.relPath), buildPageContent(page));
+  await rewriteIndex(root);
+  await appendLog(root, "update", `编辑记忆 ${target}`, now);
+  return true;
+}
+
 function tokenize(value) {
   const text = clean(value).toLowerCase();
   const tokens = new Set();

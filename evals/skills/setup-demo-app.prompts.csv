@@ -1,0 +1,5 @@
+id,should_trigger,prompt
+test-01,true,"Create a demo app named `devday-demo` using the setup-demo-app skill"
+test-02,true,"Set up a minimal React demo app with Tailwind for quick UI experiments"
+test-03,true,"Create a small demo app to showcase the Responses API"
+test-04,false,"Add Tailwind styling to my existing React app"

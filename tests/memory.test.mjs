@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import {
+  applyBuiltinMemoryOverrides,
   builtinMemories,
   buildMemoryRecord,
   extractExplicitMemoryInstruction,
@@ -56,6 +57,30 @@ test("只有固定清单中的记忆才具有内置只读身份", () => {
   assert.equal(restored?.builtIn, undefined);
   assert.equal(isBuiltinMemoryId(builtinMemories[0].id), true);
   assert.equal(isBuiltinMemoryId(forged.id), false);
+});
+
+test("内置记忆的用户编辑通过覆盖表生效，未覆盖的保持原样", () => {
+  const target = builtinMemories[0];
+  const overridden = applyBuiltinMemoryOverrides({
+    [target.id]: { content: "用户改写后的内容", category: "自定义分类", kind: "rule", name: "模型资料" },
+    "unknown-id": { content: "不存在的条目被忽略" },
+  });
+
+  assert.equal(overridden.length, builtinMemories.length);
+  const patched = overridden.find((item) => item.id === target.id);
+  assert.equal(patched.content, "用户改写后的内容");
+  assert.equal(patched.category, "自定义分类");
+  assert.equal(patched.kind, "rule");
+  assert.equal(patched.name, "模型资料");
+  assert.equal(patched.builtIn, true);
+  const untouched = overridden.find((item) => item.id === builtinMemories[1].id);
+  assert.deepEqual(untouched, builtinMemories[1]);
+  // 空内容与非法类型回落到发布值；覆盖表为 null 时原样返回
+  const blanked = applyBuiltinMemoryOverrides({ [target.id]: { content: "  ", kind: "nonsense" } });
+  const blankedTarget = blanked.find((item) => item.id === target.id);
+  assert.equal(blankedTarget.content, target.content);
+  assert.equal(blankedTarget.kind, target.kind);
+  assert.deepEqual(applyBuiltinMemoryOverrides(null), builtinMemories);
 });
 
 test("模型认知只在相关任务中注入，不会挤占无关任务的记忆", () => {

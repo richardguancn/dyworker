@@ -770,8 +770,10 @@ test("assistant local image reader is exposed only to the trusted renderer", () 
 });
 
 test("built-in model knowledge is always loaded and cannot be deleted as user memory", () => {
-  // 内置认知以只读伪页面参与注入：不落盘、不进整合输入，模型无法改写
-  assert.match(main, /builtinMemories/);
+  // 内置认知以只读伪页面参与注入：不落盘、不进整合输入，模型无法改写；
+  // 用户的手动编辑通过 memory-overrides.json 覆盖表生效，不改发布内容
+  assert.match(main, /applyBuiltinMemoryOverrides/);
+  assert.match(main, /memory-overrides\.json/);
   assert.match(main, /内置模型认知/);
   assert.match(main, /if \(isBuiltinMemoryId\(id\)\)/);
 });

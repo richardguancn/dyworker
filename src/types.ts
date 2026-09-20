@@ -588,6 +588,8 @@ export interface WikiMemoryRow {
   name?: string;
   // 会话记忆所属的任务会话 id（仅"会话记忆"页的行有值）
   sessionId?: string;
+  // 内置模型认知（随应用发布）：只能编辑，不能删除
+  builtIn?: boolean;
 }
 
 export interface WikiMemoryPage {
@@ -784,11 +786,13 @@ export interface DyworkerBridge {
   onInboxFocusItem?(callback: (item: InboxItem) => void): () => void;
   onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; wakeAt?: string; reason?: string }) => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
+  updateMemory(payload: { id: string; content: string; category?: string; name?: string; kind?: string }): Promise<{ ok: boolean; error?: string }>;
   lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;
   setSkillEnabled(id: string, enabled: boolean, workspacePath?: string): Promise<{ ok: boolean }>;
   deleteSkill(id: string): Promise<{ ok: boolean; error?: string }>;
   createSkill(payload: { name: string; description: string; instructions: string }): Promise<{ ok: boolean; item?: SkillRecord; error?: string }>;
+  updateSkill(payload: { id: string; name: string; description: string; instructions: string }): Promise<{ ok: boolean; item?: SkillRecord; error?: string }>;
   searchSkillLibraries(query: string): Promise<{ ok: boolean; results: SkillLibrarySearchResult[]; warnings: string[]; error?: string }>;
   installSkillFromLibrary(payload: { libraryId: string; slug: string }): Promise<{ ok: boolean; slug?: string; targetDir?: string; error?: string }>;
   listSchedules(): Promise<ScheduleRecord[]>;

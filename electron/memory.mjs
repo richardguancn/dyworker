@@ -174,6 +174,23 @@ export function isBuiltinMemoryId(value) {
   return builtinMemoryIds.has(clean(value));
 }
 
+// 内置记忆随应用发布、不落盘；用户手动编辑的内置记忆以覆盖表（id → 字段）生效，
+// 读取与注入时都走这里，保证面板所见与模型所见一致。
+export function applyBuiltinMemoryOverrides(overrides = {}) {
+  const patches = overrides && typeof overrides === "object" ? overrides : {};
+  return builtinMemories.map((item) => {
+    const patch = patches[item.id];
+    if (!patch || typeof patch !== "object") return item;
+    return {
+      ...item,
+      content: clean(patch.content) || item.content,
+      category: clean(patch.category) || item.category,
+      kind: memoryKinds.includes(patch.kind) ? patch.kind : item.kind,
+      name: clean(patch.name),
+    };
+  });
+}
+
 export function mergeBuiltinMemories(items) {
   const builtins = normalizeMemories(builtinMemories);
   const builtinContents = new Set(builtins.map((item) => item.content));

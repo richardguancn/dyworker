@@ -85,7 +85,7 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
@@ -2463,6 +2463,203 @@ function SkillDraftDialog({
   );
 }
 
+// 设置面板里手动编辑工作模板（内置与本地模板都可编辑；文件技能提示改源文件）
+function SkillEditDialog({
+  skill,
+  onClose,
+  onSaved,
+}: {
+  skill: SkillRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(skill.name);
+  const [description, setDescription] = useState(skill.description);
+  const [instructions, setInstructions] = useState(skill.instructions);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if (!name.trim()) {
+      setError("请填写模板名称");
+      return;
+    }
+    if (!window.dyworker?.updateSkill) {
+      setError("当前预览环境没有保存技能的通道");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const result = await window.dyworker.updateSkill({
+        id: skill.id,
+        name: name.trim(),
+        description: description.trim(),
+        instructions: instructions.trim(),
+      });
+      if (!result.ok) {
+        setError(result.error || "保存失败");
+        return;
+      }
+      onSaved();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+      <div
+        className="skill-draft-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑工作模板"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h3>编辑工作模板</h3>
+        <p className="dialog-note">修改立即生效，之后的任务按新内容执行。</p>
+        <label className="skill-draft-field">
+          <span>模板名称</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
+        </label>
+        <label className="skill-draft-field">
+          <span>一句话简介</span>
+          <input value={description} onChange={(event) => setDescription(event.target.value)} />
+        </label>
+        <label className="skill-draft-field">
+          <span>执行要求</span>
+          <textarea
+            rows={10}
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            spellCheck={false}
+          />
+        </label>
+        {error && <p className="error-text skill-draft-error">{error}</p>}
+        <div className="skill-draft-actions">
+          <button type="button" className="button-secondary" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="button-primary" onClick={() => void save()} disabled={saving}>
+            {saving ? "保存中…" : "保存修改"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 设置面板里手动编辑一条记忆（内置记忆的修改以覆盖方式生效）
+const MEMORY_KIND_LABELS: Record<string, string> = {
+  preference: "偏好",
+  rule: "规则",
+  taboo: "禁忌",
+  fact: "事实",
+  experience: "经验",
+};
+
+function MemoryEditDialog({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: WikiMemoryRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(row.name || "");
+  const [category, setCategory] = useState(row.category || "");
+  const [kind, setKind] = useState(row.kind || "fact");
+  const [content, setContent] = useState(row.content);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if (!content.trim()) {
+      setError("请填写记忆内容");
+      return;
+    }
+    if (!window.dyworker?.updateMemory) {
+      setError("当前预览环境没有保存记忆的通道");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const result = await window.dyworker.updateMemory({
+        id: row.id,
+        name: name.trim(),
+        category: category.trim(),
+        kind,
+        content: content.trim(),
+      });
+      if (!result.ok) {
+        setError(result.error || "保存失败");
+        return;
+      }
+      onSaved();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+      <div
+        className="skill-draft-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑记忆"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h3>编辑记忆</h3>
+        {row.builtIn ? <p className="dialog-note">这是随应用发布的内置记忆，你的修改会覆盖默认内容。</p> : null}
+        <label className="skill-draft-field">
+          <span>名字（可选，方便按名字引用）</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：报销流程" autoFocus />
+        </label>
+        <div className="skill-draft-field">
+          <span>类型</span>
+          <div className="memory-filter-kinds" role="group" aria-label="记忆类型">
+            {Object.entries(MEMORY_KIND_LABELS).map(([value, label]) => (
+              <button
+                type="button"
+                key={value}
+                className={`memory-filter-chip${kind === value ? " active" : ""}`}
+                onClick={() => setKind(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="skill-draft-field">
+          <span>分类</span>
+          <input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="例如：用户偏好" />
+        </label>
+        <label className="skill-draft-field">
+          <span>内容</span>
+          <textarea
+            rows={6}
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            spellCheck={false}
+          />
+        </label>
+        {error && <p className="error-text skill-draft-error">{error}</p>}
+        <div className="skill-draft-actions">
+          <button type="button" className="button-secondary" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="button-primary" onClick={() => void save()} disabled={saving}>
+            {saving ? "保存中…" : "保存修改"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 从浏览器导入（对照 Codex）：选择来源浏览器 + 用户画像 + 分类开关（密码/Cookie/浏览记录）
 function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () => void; onDone: (message: string) => void; onError: (message: string) => void }) {
   const [sources, setSources] = useState<BrowserImportSource[] | null>(null);
@@ -3502,9 +3699,10 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
   );
 }
 
-function MemoriesPanel({ pages, onDelete, onLint, linting, lintMessage }: {
+function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMessage }: {
   pages: WikiMemoryPage[];
   onDelete: (id: string) => void;
+  onEdit: (row: WikiMemoryRow) => void;
   onLint: () => void;
   linting: boolean;
   lintMessage: string;
@@ -3579,10 +3777,16 @@ function MemoriesPanel({ pages, onDelete, onLint, linting, lintMessage }: {
                 {row.name ? <span className="memory-name" title={row.name}>「{row.name}」</span> : null}
                 <span className="memory-badge">{kindLabels[row.kind] || row.kind || "事实"}</span>
                 {row.category && row.category !== page.title ? <span className="memory-badge subtle">{row.category}</span> : null}
+                {row.builtIn ? <span className="memory-badge subtle">内置</span> : null}
                 {row.sessionId ? <span className="memory-badge subtle">仅本任务</span> : null}
-                <button className="icon-button subtle tiny" onClick={() => onDelete(row.id)} aria-label="删除这条记忆">
-                  <Trash2 size={13} />
+                <button className="icon-button subtle tiny" onClick={() => onEdit(row)} aria-label="编辑这条记忆">
+                  <Pencil size={13} />
                 </button>
+                {!row.builtIn && (
+                  <button className="icon-button subtle tiny" onClick={() => onDelete(row.id)} aria-label="删除这条记忆">
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
               <p>{row.content}</p>
             </div>
@@ -3597,12 +3801,14 @@ function SkillsPanel({
   items,
   onToggle,
   onDelete,
+  onEdit,
   onRefresh,
   onOpen,
 }: {
   items: SkillRecord[];
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
+  onEdit: (skill: SkillRecord) => void;
   onRefresh: () => void;
   onOpen: (skill: SkillRecord) => void;
 }) {
@@ -3680,6 +3886,11 @@ function SkillsPanel({
                 {skill.path && (
                   <button className="icon-button subtle tiny" onClick={() => onOpen(skill)} aria-label={`打开技能 ${skill.name}`}>
                     <FolderOpen size={13} />
+                  </button>
+                )}
+                {!skill.readOnly && (
+                  <button className="icon-button subtle tiny" onClick={() => onEdit(skill)} aria-label={`编辑技能 ${skill.name}`}>
+                    <Pencil size={13} />
                   </button>
                 )}
                 {!skill.readOnly && (
@@ -4764,12 +4975,14 @@ function SettingsDialog({
   onSave,
   memories,
   onDeleteMemory,
+  onEditMemory,
   onLintMemories,
   memoriesLinting,
   memoriesLintMessage,
   skills,
   onToggleSkill,
   onDeleteSkill,
+  onEditSkill,
   onRefreshSkills,
   onOpenSkill,
   schedules,
@@ -4793,12 +5006,14 @@ function SettingsDialog({
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
   memories: WikiMemoryPage[];
   onDeleteMemory: (id: string) => void;
+  onEditMemory: (row: WikiMemoryRow) => void;
   onLintMemories: () => void;
   memoriesLinting: boolean;
   memoriesLintMessage: string;
   skills: SkillRecord[];
   onToggleSkill: (id: string, enabled: boolean) => void;
   onDeleteSkill: (id: string) => void;
+  onEditSkill: (skill: SkillRecord) => void;
   onRefreshSkills: () => void;
   onOpenSkill: (skill: SkillRecord) => void;
   schedules: ScheduleRecord[];
@@ -5858,12 +6073,13 @@ function SettingsDialog({
         </div>
           </form>
         ) : tab === "memories" ? (
-          <MemoriesPanel pages={memories} onDelete={onDeleteMemory} onLint={onLintMemories} linting={memoriesLinting} lintMessage={memoriesLintMessage} />
+          <MemoriesPanel pages={memories} onDelete={onDeleteMemory} onEdit={onEditMemory} onLint={onLintMemories} linting={memoriesLinting} lintMessage={memoriesLintMessage} />
         ) : tab === "skills" ? (
           <SkillsPanel
             items={skills}
             onToggle={onToggleSkill}
             onDelete={onDeleteSkill}
+            onEdit={onEditSkill}
             onRefresh={onRefreshSkills}
             onOpen={onOpenSkill}
           />
@@ -6038,6 +6254,9 @@ export function App() {
   // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
   const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
+  // 设置面板里的手动编辑：正在编辑的记忆行 / 工作模板（非空即打开编辑对话框）
+  const [memoryEdit, setMemoryEdit] = useState<WikiMemoryRow | null>(null);
+  const [skillEdit, setSkillEdit] = useState<SkillRecord | null>(null);
   // 已导入的浏览记录：地址栏输入联想
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
@@ -11550,6 +11769,30 @@ export function App() {
         />
       )}
 
+      {skillEdit && (
+        <SkillEditDialog
+          skill={skillEdit}
+          onClose={() => setSkillEdit(null)}
+          onSaved={() => {
+            setSkillEdit(null);
+            void refreshSkills();
+            setNotice("工作模板已更新");
+          }}
+        />
+      )}
+
+      {memoryEdit && (
+        <MemoryEditDialog
+          row={memoryEdit}
+          onClose={() => setMemoryEdit(null)}
+          onSaved={() => {
+            setMemoryEdit(null);
+            void refreshMemories();
+            setNotice("记忆已更新");
+          }}
+        />
+      )}
+
       {settingsOpen && (
         <SettingsDialog
           value={settings}
@@ -11560,6 +11803,7 @@ export function App() {
             setMemories((current) => current.map((page) => ({ ...page, rows: page.rows.filter((row) => row.id !== id) })));
             void window.dyworker?.deleteMemory(id);
           }}
+          onEditMemory={(row) => setMemoryEdit(row)}
           onLintMemories={() => {
             if (!window.dyworker?.lintMemories) return;
             setMemoriesLinting(true);
@@ -11585,6 +11829,7 @@ export function App() {
             setMentionSkills((current) => current.filter((item) => item.id !== id));
             void window.dyworker?.deleteSkill(id);
           }}
+          onEditSkill={(skill) => setSkillEdit(skill)}
           onRefreshSkills={() => void refreshSkills(true)}
           onOpenSkill={(skill) => {
             if (skill.path) void window.dyworker?.openPath(skill.path);

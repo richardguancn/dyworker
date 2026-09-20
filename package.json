@@ -25,6 +25,8 @@
     "test:settings": "node --test tests/settings.test.mjs",
     "test:skills": "node --test tests/skills.test.mjs",
     "test:agent": "node --test tests/agent.test.mjs",
+    "test:evals": "node --test tests/skill-evals.test.mjs",
+    "eval:skills": "node evals/run-skill-evals.mjs",
     "test:channels": "node --test tests/channels.test.mjs",
     "test:memory": "node --test tests/memory.test.mjs",
     "package": "npm run verify && electron-builder --dir --publish never",
