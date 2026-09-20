@@ -1119,10 +1119,10 @@ body.resizing-panels .app-shell {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 40px;
+  height: 34px;
   padding: 0 11px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--card);
   color: #969a91;
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -1602,6 +1602,11 @@ body.resizing-panels .app-shell {
 }
 
 .memory-row-head .icon-button {
+  margin-left: 0;
+}
+
+/* 操作按钮组整体靠右：只让第一个按钮吃掉剩余空间，多个按钮保持相邻 */
+.memory-row-head .icon-button:first-of-type {
   margin-left: auto;
 }
 
@@ -1611,12 +1616,50 @@ body.resizing-panels .app-shell {
 }
 
 .memory-item p,
-.skill-item p {
-  margin: 6px 0 0;
-  color: #5c6057;
-  font-size: 12.5px;
-  line-height: 1.55;
+.skill-item p.skill-desc {
+  margin: 1px 0 0;
+  color: #7b7f76;
+  font-size: 11.5px;
+  line-height: 1.5;
   word-break: break-word;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.skill-item {
+  display: grid;
+  gap: 7px;
+}
+
+.skill-item-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(72, 74, 68, 0.1);
+}
+
+.skill-item-foot .skill-path {
+  min-width: 0;
+  flex: 1;
+}
+
+.skill-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.45;
+  transition: opacity 120ms ease;
+}
+
+.skill-item:hover .skill-actions,
+.skill-item:focus-within .skill-actions {
+  opacity: 1;
 }
 
 .skill-item.disabled {
@@ -1625,7 +1668,7 @@ body.resizing-panels .app-shell {
 
 .skill-item-head strong {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   color: #3f433c;
   font-size: 12.5px;
@@ -1664,6 +1707,12 @@ body.resizing-panels .app-shell {
   color: #52705c;
 }
 
+.skill-source-badge.builtin {
+  border-color: rgba(150, 117, 62, 0.2);
+  background: rgba(150, 117, 62, 0.07);
+  color: #8a7147;
+}
+
 .skill-source-badge.global {
   border-color: rgba(75, 91, 117, 0.16);
   background: rgba(75, 91, 117, 0.06);
@@ -1678,9 +1727,49 @@ body.resizing-panels .app-shell {
   white-space: nowrap;
 }
 
+.skill-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .skill-switch input {
-  accent-color: #454842;
+  position: relative;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border-radius: 999px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(72, 74, 68, 0.18);
   cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.skill-switch input::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  content: "";
+  transition: transform 140ms ease;
+}
+
+.skill-switch input:checked {
+  background: #52705c;
+}
+
+.skill-switch input:checked::after {
+  transform: translateX(12px);
+}
+
+.skill-switch input:focus-visible {
+  outline: 2px solid rgba(47, 111, 237, 0.5);
+  outline-offset: 2px;
 }
 
 .icon-button.tiny {
@@ -2647,20 +2736,6 @@ body.resizing-panels .app-shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tool-file-browser-clear {
-  margin: 0 7px 5px;
-  padding: 3px 0;
-  border: 0;
-  background: transparent;
-  color: #9a746d;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.tool-file-browser-clear:hover {
-  color: #b1574e;
 }
 
 .markdown-file-preview {
@@ -5638,6 +5713,11 @@ body.resizing-panels .app-shell {
   -webkit-backdrop-filter: blur(3px);
 }
 
+/* 二级对话框（编辑记忆/工作模板）：叠在设置面板等其他弹层之上 */
+.modal-backdrop.stacked {
+  z-index: 130;
+}
+
 .identity-backdrop {
   z-index: 110;
   background: rgba(30, 31, 28, 0.46);
@@ -8182,6 +8262,24 @@ body.resizing-panels .app-shell {
     border-color: rgba(137, 164, 210, 0.24);
     background: rgba(78, 103, 146, 0.14);
     color: #a8bde1;
+  }
+
+  .skill-source-badge.builtin {
+    border-color: rgba(209, 176, 116, 0.24);
+    background: rgba(150, 117, 62, 0.14);
+    color: #d1b074;
+  }
+
+  .skill-switch input {
+    background: rgba(225, 227, 220, 0.22);
+  }
+
+  .skill-switch input:checked {
+    background: #6b9077;
+  }
+
+  .skill-item-foot {
+    border-top-color: rgba(225, 227, 220, 0.1);
   }
 
   .skill-count-badge,

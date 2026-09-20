@@ -1972,7 +1972,6 @@ function FilesSplitPanel({
   workspaceEntries,
   workspaceOpen,
   onRefresh,
-  onClearWorkspace,
   onError,
   onInsertFile,
 }: {
@@ -1980,7 +1979,6 @@ function FilesSplitPanel({
   workspaceEntries: WorkspaceEntry[];
   workspaceOpen: boolean;
   onRefresh: () => void;
-  onClearWorkspace: () => void;
   onError: (message: string) => void;
   onInsertFile?: (entry: WorkspaceEntry) => void;
 }) {
@@ -2338,9 +2336,6 @@ function FilesSplitPanel({
             )}
           </div>
         )}
-        {workspacePath && (
-          <button className="tool-file-browser-clear" onClick={onClearWorkspace}>移除这个会话的工作目录</button>
-        )}
         {workspaceOpen && (workspaceEntries.length ? (visibleEntries.length ? (
           <div className="workspace-tree">
             {visibleEntries.map((entry) => (
@@ -2510,7 +2505,7 @@ function SkillEditDialog({
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+    <div className="modal-backdrop stacked" role="presentation" onMouseDown={() => !saving && onClose()}>
       <div
         className="skill-draft-dialog"
         role="dialog"
@@ -2606,7 +2601,7 @@ function MemoryEditDialog({
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+    <div className="modal-backdrop stacked" role="presentation" onMouseDown={() => !saving && onClose()}>
       <div
         className="skill-draft-dialog"
         role="dialog"
@@ -3776,7 +3771,10 @@ function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMessage }
               <div className="memory-row-head">
                 {row.name ? <span className="memory-name" title={row.name}>「{row.name}」</span> : null}
                 <span className="memory-badge">{kindLabels[row.kind] || row.kind || "事实"}</span>
-                {row.category && row.category !== page.title ? <span className="memory-badge subtle">{row.category}</span> : null}
+                {/* 分类徽标：与页面标题或类型徽标重复时不显示，避免出现「经验 经验」 */}
+                {row.category && row.category !== page.title && row.category !== (kindLabels[row.kind] || row.kind)
+                  ? <span className="memory-badge subtle">{row.category}</span>
+                  : null}
                 {row.builtIn ? <span className="memory-badge subtle">内置</span> : null}
                 {row.sessionId ? <span className="memory-badge subtle">仅本任务</span> : null}
                 <button className="icon-button subtle tiny" onClick={() => onEdit(row)} aria-label="编辑这条记忆">
@@ -3878,28 +3876,34 @@ function SkillsPanel({
                     <strong title={skill.description}>{skill.name}</strong>
                     <span className={`skill-source-badge ${skill.source || "saved"}`}>{skill.sourceLabel || "本地模板"}</span>
                   </div>
-                  {skill.path && <small className="skill-path" title={skill.path}>{skill.path}</small>}
+                  {skill.description && <p className="skill-desc" title={skill.description}>{skill.description}</p>}
                 </div>
                 <label className="skill-switch" title={skill.enabled ? "点击停用" : "点击启用"}>
                   <input type="checkbox" checked={skill.enabled} onChange={(event) => onToggle(skill.id, event.target.checked)} />
                 </label>
-                {skill.path && (
-                  <button className="icon-button subtle tiny" onClick={() => onOpen(skill)} aria-label={`打开技能 ${skill.name}`}>
-                    <FolderOpen size={13} />
-                  </button>
-                )}
-                {!skill.readOnly && (
-                  <button className="icon-button subtle tiny" onClick={() => onEdit(skill)} aria-label={`编辑技能 ${skill.name}`}>
-                    <Pencil size={13} />
-                  </button>
-                )}
-                {!skill.readOnly && (
-                  <button className="icon-button subtle tiny" onClick={() => onDelete(skill.id)} aria-label={`删除技能 ${skill.name}`}>
-                    <Trash2 size={13} />
-                  </button>
-                )}
               </div>
-              <p>{skill.description}</p>
+              {(skill.path || !skill.readOnly) && (
+                <div className="skill-item-foot">
+                  {skill.path ? <small className="skill-path" title={skill.path}>{skill.path}</small> : <span />}
+                  <div className="skill-actions">
+                    {skill.path && (
+                      <button className="icon-button subtle tiny" onClick={() => onOpen(skill)} aria-label={`打开技能 ${skill.name}`}>
+                        <FolderOpen size={13} />
+                      </button>
+                    )}
+                    {!skill.readOnly && (
+                      <button className="icon-button subtle tiny" onClick={() => onEdit(skill)} aria-label={`编辑技能 ${skill.name}`}>
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                    {!skill.readOnly && (
+                      <button className="icon-button subtle tiny" onClick={() => onDelete(skill.id)} aria-label={`删除技能 ${skill.name}`}>
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -11597,7 +11601,6 @@ export function App() {
                 workspaceEntries={workspaceEntries}
                 workspaceOpen={workspaceOpen}
                 onRefresh={() => void refreshWorkspace()}
-                onClearWorkspace={clearWorkspace}
                 onError={setError}
                 onInsertFile={insertFileToken}
               />
