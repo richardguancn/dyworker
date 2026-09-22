@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerCacheKey, runAgent, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -138,6 +138,11 @@ function mockFetch(scriptedMessages, calls = []) {
   return async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
+    // 「操作影响」说明是审批卡的旁路辅助调用：直接应答，不消费主线脚本，
+    // 否则每个触发人工审批的用例都要在脚本里插入一条无关响应
+    if (String(body.messages?.[0]?.content || "").includes("审批说明撰写助手")) {
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "- 会执行所述操作" } }] }) };
+    }
     const message = scriptedMessages.length > 1 ? scriptedMessages.shift() : scriptedMessages[0];
     return { ok: true, json: async () => ({ choices: [{ message }] }) };
   };
@@ -903,7 +908,7 @@ test("write_file 被用户拒绝时不写文件并反馈给模型", async () => 
   });
   assert.equal(result.status, "done");
   await assert.rejects(fs.stat(path.join(root, "a.txt")), "文件不应被创建");
-  const toolMessage = calls[1].messages.find((message) => message.role === "tool");
+  const toolMessage = calls.at(-1).messages.find((message) => message.role === "tool");
   assert.match(toolMessage.content, /用户拒绝/);
 });
 
@@ -1078,6 +1083,32 @@ test("用户批准的工作区外目录授权在本次任务内覆盖子路径",
   assert.equal(approvals.length, 1, "批准目录后,其子路径在本次任务内不应再次询问");
 });
 
+test("并行只读轮次中,先批准的目录授权覆盖同轮排队中的文件审批", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "README.md": "说明" });
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "allow-writes",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "同一轮读取外部目录及其中文件" }],
+    requestApproval: async (action) => {
+      approvals.push(action.title);
+      return true;
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [
+        toolCall("c1", "list_files", { path: outside }),
+        toolCall("c2", "read_file", { path: path.join(outside, "README.md") }),
+      ] },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1, "同一轮里排队等待的审批在出队时应重新评估,已被目录授权覆盖的不再询问");
+});
+
 test("替我审批放行的外部路径仍按单次授权,后续操作重新评估", async () => {
   const root = await makeWorkspace();
   const outside = await makeWorkspace({ "a.txt": "a", "b.txt": "b" });
@@ -1243,6 +1274,145 @@ test("替我审批:审核助手对外部路径拿不准时仍转人工", async (
   assert.equal(result.status, "done");
   assert.equal(approvals.length, 1, "审核助手转人工后应弹出审批");
   assert.match(approvals[0], /工作区外路径/);
+  assert.match(approvals[0], /审核助手无法定夺，转人工确认：无法确认是否涉及私人数据/, "转人工的审批卡应附上审核助手理由");
+});
+
+test("审核边界标注:远程传输命令的参数路径提示为远端目标,普通命令不带提示", async (t) => {
+  if (process.platform === "win32") return t.skip("仅 POSIX 语义");
+  const root = await makeWorkspace();
+  const workspace = new Workspace(root, { trustTempDirs: false });
+  const sshNote = reviewerBoundaryNote(workspace, "run_command", {
+    command: 'cd llm-gateway && python3 ssh_upload.py glm53/sshkey/gen_key_138.sh /root/gen_key_138.sh && python3 ssh_run.py "bash /root/gen_key_138.sh"',
+  });
+  assert.match(sshNote, /\/root\/gen_key_138\.sh/);
+  assert.match(sshNote, /远端机器上的目标路径/, "ssh 类命令应提示参数路径可能是远端目标而非本机文件");
+  const localNote = reviewerBoundaryNote(workspace, "run_command", { command: "cat /etc/passwd" });
+  assert.match(localNote, /\/etc\/passwd/);
+  assert.doesNotMatch(localNote, /远端机器/, "普通命令不应附加远端路径提示");
+});
+
+test("macOS per-user 临时容器的 X/C 兄弟目录同样受信任", async (t) => {
+  if (process.platform !== "darwin") return t.skip("仅 macOS 语义");
+  const root = await makeWorkspace();
+  const workspace = new Workspace(root);
+  // $TMPDIR 是 <容器>/T；Chrome 签名克隆等临时产物在同级的 X 目录
+  const container = path.dirname(os.tmpdir());
+  assert.equal(workspace.isOutside(path.join(container, "X", "com.google.Chrome.code_sign_clone")), false,
+    "临时容器 X/ 目录不应算工作区外");
+  assert.equal(workspace.isOutside(path.join(container, "C", "some-app-cache")), false,
+    "临时容器 C/ 缓存目录不应算工作区外");
+  assert.equal(workspace.isOutside(path.join(container, "0", "com.apple.launchd.data")), true,
+    "临时容器 0/ 存放系统会话数据,不在信任范围");
+});
+
+test("渠道自动执行模式:越界路径交审核助手把关,放行则不打扰用户", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "内容" });
+  let userApprovals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "auto",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "读取外部文件" }],
+    requestApproval: async () => { userApprovals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"读取的是公开资料文件"}' },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(userApprovals, 0, "auto 模式下审核助手放行越界读取不应转人工");
+});
+
+test("渠道自动执行模式:审核助手拿不准仍转人工并附理由", async () => {
+  const root = await makeWorkspace();
+  const outside = await makeWorkspace({ "a.txt": "内容" });
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "auto",
+    trustTempDirs: false,
+    conversation: [{ role: "user", content: "读取外部文件" }],
+    requestApproval: async (action) => { approvals.push(action.details); return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "read_file", { path: path.join(outside, "a.txt") })] },
+      { role: "assistant", content: '{"decision":"ask","reason":"无法确认文件是否敏感"}' },
+      { role: "assistant", content: "读取完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1, "审核助手转人工后应弹出审批");
+  assert.match(approvals[0], /审核助手无法定夺，转人工确认：无法确认文件是否敏感/);
+});
+
+test("人工审批卡附模型生成的操作影响说明", async () => {
+  const root = await makeWorkspace();
+  const approvals = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "interactive",
+    conversation: [{ role: "user", content: "部署托盘脚本" }],
+    requestApproval: async (action) => { approvals.push(action); return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "echo ok > deploy.log && echo done" })] },
+      { role: "assistant", content: "部署完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].impact, "- 会执行所述操作", "影响说明独立成结构化字段,供审批卡 Markdown 渲染（mockFetch 对影响说明调用返回固定应答）");
+  assert.doesNotMatch(approvals[0].details, /操作影响/, "details 保持原文,不掺影响说明");
+});
+
+test("影响说明生成失败时审批卡正常弹出且无影响段", async () => {
+  const root = await makeWorkspace();
+  const approvals = [];
+  const baseFetch = mockFetch([
+    { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "echo ok > deploy.log" })] },
+    { role: "assistant", content: "完成。" },
+  ]);
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "interactive",
+    conversation: [{ role: "user", content: "部署" }],
+    requestApproval: async (action) => { approvals.push(action); return true; },
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(body.messages?.[0]?.content || "").includes("审批说明撰写助手")) throw new Error("模型不可用");
+      return baseFetch(url, options);
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1, "影响说明生成失败不应阻塞审批");
+  assert.ok(!approvals[0].impact, "生成失败时不带影响字段");
+});
+
+test("summarizeApprovalImpact 剥离非要点行,异常时回退为空串", async () => {
+  // 直连内联 mock：mockFetch 对影响说明请求有固定旁路应答，这里要验证真实的要点剥离逻辑
+  const text = await summarizeApprovalImpact({
+    settings,
+    action: { kind: "run_command", title: "运行命令", details: "cp a b" },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { role: "assistant", content: "好的，以下是要点：\n- 会复制 a 到 b\n- 可能覆盖已有文件\n以上供参考。" } }] }),
+    }),
+  });
+  assert.equal(text, "- 会复制 a 到 b\n- 可能覆盖已有文件");
+  const failed = await summarizeApprovalImpact({
+    settings,
+    action: { kind: "run_command" },
+    fetchImpl: async () => { throw new Error("网络中断"); },
+  });
+  assert.equal(failed, "", "生成失败回退为空串,由调用方决定不附影响段");
+  assert.equal(isImpactSummaryEligible("run_command"), true);
+  assert.equal(isImpactSummaryEligible("delete_file"), true);
+  assert.equal(isImpactSummaryEligible("web_search"), false);
+  assert.equal(isImpactSummaryEligible("read_file"), false);
 });
 
 test("自动审核模式:读取系统临时目录不再弹审批", async () => {
@@ -1283,7 +1453,7 @@ test("自动审核模式:钩子强制审批仍直接问用户,不经过审核助
     ], calls),
   });
   assert.equal(result.status, "done");
-  assert.equal(calls.length, 2, "审核助手不应被调用");
+  assert.ok(!calls.some((call) => String(call.messages?.[0]?.content || "").includes("安全审核助手")), "审核助手不应被调用");
   assert.equal(userApprovals, 1, "钩子强制审批仍应弹人工审批");
 });
 
@@ -1529,10 +1699,16 @@ test("PATH 风格赋值按冒号拆开判断,不再拼成假路径", async (t) =
     externalPathsForTool(workspace, "run_command", { command: `export PATH="$HOME/.nvm/versions/node/v24.10.0/bin:$PATH" && cd ${root} && node --test tests/` }),
     [path.join(os.homedir(), ".nvm/versions/node/v24.10.0/bin")],
   );
-  // 外部路径仍照常上报（是否放行由审批模式/审核助手判断，不做路径白名单）
+  // 只读命令查看可执行根目录（系统 bin、版本管理器目录）不再算外部数据访问；
+  // 含变更段的复合命令整体如何审批由命令级规则/审核助手判断，路径不再额外上报
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "which nodejs npm; ls /usr/local/bin | grep -i node; ls ~/.nvm/versions/node 2>/dev/null" }),
-    ["/usr/local/bin", path.join(os.homedir(), ".nvm/versions/node")],
+    [],
+  );
+  // 用户实际场景：pkill + ls -d ~/.nvm/versions/node/*/bin/node 的复合命令不再误报外部路径
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: 'pkill -f "node server.js" 2>/dev/null; sleep 1; ls -d ~/.nvm/versions/node/*/bin/node 2>/dev/null; ps aux | grep "node server.js" | grep -v grep | head' }),
+    [],
   );
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat ~/.ssh/id_rsa" }),
@@ -1576,14 +1752,20 @@ test("解释器与技能脚本路径不再算工作区外路径", async (t) => {
     externalPathsForTool(workspace, "run_command", { command: `cd ${root} && BUN=/opt/homebrew/bin/bun && API=~/.agents/skills/foo/wechat-api.ts` }),
     [],
   );
-  // 负例:把工具/技能文件当数据读仍上报;未知根目录的二进制仍上报;普通数据路径仍上报
+  // 负例:非可执行根目录的系统文件仍上报;未知根目录的二进制仍上报;普通数据路径仍上报
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat /etc/passwd" }),
     ["/etc/passwd"],
   );
+  // 只读命令查看可执行根目录（系统 bin、版本管理器）不再算外部数据访问
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "cat /usr/bin/less" }),
-    ["/usr/bin/less"],
+    [],
+  );
+  // 变更类命令操作可执行根目录仍照常上报
+  assert.deepEqual(
+    externalPathsForTool(workspace, "run_command", { command: "rm -rf ~/.nvm/versions/node/v24.10.0" }),
+    [path.join(os.homedir(), ".nvm/versions/node/v24.10.0")],
   );
   assert.deepEqual(
     externalPathsForTool(workspace, "run_command", { command: "~/.worktools/evil run" }),
@@ -2662,6 +2844,13 @@ test("isReviewerEligible 只接管可审核的越界请求,系统破坏/本机�
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "write_file", hookRequiresApproval: true }), false);
   assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "mcp__computer-use__click" }), false);
   assert.equal(isReviewerEligible({ approvalMode: "allow-writes", name: "run_command", args: { command: "npm install" } }), false);
+  // 渠道「自动执行」(auto)：越界路径的询问交审核助手，其余询问保持转人工
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "read_file", args: { path: "/tmp/x" }, forExternalPaths: true }), true);
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "run_command", args: { command: "scp a.txt host:/tmp/" }, forExternalPaths: true }), true);
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "run_command", args: { command: "npm install" } }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "run_command", args: { command: "sudo rm -rf x" }, forExternalPaths: true }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "write_file", hookRequiresApproval: true, forExternalPaths: true }), false);
+  assert.equal(isReviewerEligible({ approvalMode: "auto", name: "mcp__computer-use__click", forExternalPaths: true }), false);
 });
 
 test("交互模式下受信只读命令自动批准并在详情中注明", async () => {
@@ -4052,7 +4241,7 @@ test("update_skill 找不到模板时作为失败反馈给模型", async () => {
     ], calls),
   });
   assert.equal(result.status, "done");
-  const toolMessage = calls[1].messages.find((message) => message.role === "tool");
+  const toolMessage = calls.at(-1).messages.find((message) => message.role === "tool");
   assert.match(toolMessage.content, /失败/);
   assert.match(toolMessage.content, /没有找到模板/);
 });

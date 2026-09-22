@@ -57,6 +57,8 @@ export interface ApprovalAction {
   kind: string;
   title: string;
   details: string;
+  // 模型生成的操作影响要点（Markdown 列表），审批卡上渲染在原始详情下方
+  impact?: string;
   suggestedRule?: StandingRuleSuggestion;
 }
 
@@ -82,6 +84,8 @@ export interface InboxItem {
   tool?: string;
   title?: string;
   details?: string;
+  // 模型生成的操作影响要点（Markdown 列表），收件箱审批卡上渲染
+  impact?: string;
   question?: string;
   options?: string[];
   createdAt: string;
@@ -402,7 +406,7 @@ export interface ModelProfile {
 // IM 消息渠道配置(见 electron/channels/):QQ 官方机器人 / 微信 ClawBot
 // 微信登录凭据不进设置(主进程单独加密落盘),渲染端只持有开关
 // modelProfileId 为空 = 渠道任务跟随桌面端当前模型;否则固定使用某个模型档案
-// approvalMode:auto(自动执行,少打扰)/ reviewer(替我审批)/ interactive(严格逐次确认)
+// approvalMode:auto(自动执行,少打扰;越界路径由审核助手把关)/ reviewer(替我审批)/ interactive(严格逐次确认)
 export interface ChannelsConfig {
   qq: { enabled: boolean; appId: string; appSecret: string };
   wechat: { enabled: boolean };

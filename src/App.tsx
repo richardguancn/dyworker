@@ -79,7 +79,7 @@ import {
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
-import { InteractiveMessage } from "./InteractiveMessage";
+import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
@@ -3367,6 +3367,12 @@ function ApprovalCard({ action, onResolve }: { action: ApprovalAction; onResolve
         <span>{action.title}</span>
       </div>
       {action.details && <pre className="approval-details">{action.details}</pre>}
+      {action.impact && (
+        <div className="approval-impact">
+          <strong>操作影响</strong>
+          <MarkdownSnippet content={action.impact} />
+        </div>
+      )}
       <div className="approval-actions">
         <button className="button-secondary" onClick={() => onResolve(false)}>拒绝</button>
         <button className="button-primary" onClick={() => onResolve(true)}>允许执行</button>
@@ -3635,6 +3641,12 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
                 <span>请求时间：{formatTime(item.createdAt)}</span>
               </div>
               {item.details && <pre className="approval-details">{item.details}</pre>}
+              {item.impact && (
+                <div className="approval-impact">
+                  <strong>操作影响</strong>
+                  <MarkdownSnippet content={item.impact} />
+                </div>
+              )}
               {item.kind === "question" && item.options && item.options.length > 0 && (
                 <div className="question-options">
                   {item.options.map((option) => (
@@ -10742,6 +10754,7 @@ export function App() {
                     kind: activeSessionPendingInboxApproval.tool || "run_command",
                     title: activeSessionPendingInboxApproval.title || "自动续跑任务申请操作",
                     details: activeSessionPendingInboxApproval.details || "",
+                    impact: activeSessionPendingInboxApproval.impact,
                   }}
                   onResolve={(approved) => {
                     void window.dyworker?.resolveInbox({ id: activeSessionPendingInboxApproval.id, approved }).then(() => {

@@ -727,6 +727,13 @@ export class Workspace {
 
 function collectTempRoots() {
   const candidates = [os.tmpdir()];
+  if (process.platform === "darwin") {
+    // macOS per-user 临时容器：$TMPDIR 是 <容器>/T，同级的 X（Chrome 签名克隆、安装器等
+    // 临时产物）与 C（应用缓存，可再生成）也是常规临时操作对象。只信任 T 会把这些误报为
+    // 工作区外路径。容器的 0/ 存放 launchd 会话数据，不在信任范围。
+    const container = path.dirname(os.tmpdir());
+    for (const sub of ["T", "X", "C"]) candidates.push(path.join(container, sub));
+  }
   if (process.platform !== "win32") candidates.push("/tmp");
   const roots = new Set();
   for (const candidate of candidates) {
@@ -1756,12 +1763,27 @@ function collectExecutableRoots() {
   if (process.platform !== "win32") {
     roots.push("/usr/bin", "/bin", "/usr/sbin", "/sbin",
       "/usr/local/bin", "/usr/local/sbin",
-      "/opt/homebrew/bin", "/opt/homebrew/sbin", "/opt/local/bin");
+      "/opt/homebrew/bin", "/opt/homebrew/sbin", "/opt/local/bin",
+      "/snap/bin", "/usr/libexec");
     const home = os.homedir();
     for (const sub of [".nvm", ".pyenv", ".volta", ".bun", ".deno",
       ".local/bin", "Library/pnpm", ".cargo/bin", ".go/bin"]) {
       roots.push(path.join(home, sub));
     }
+  } else {
+    // Windows：系统目录、Program Files、包管理器与版本管理器的 shim 目录
+    const home = os.homedir();
+    roots.push("C:\\Windows\\System32", "C:\\Windows", "C:\\Windows\\System32\\WindowsPowerShell");
+    for (const envName of ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"]) {
+      if (process.env[envName]) roots.push(process.env[envName]);
+    }
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+    const roaming = process.env.APPDATA || path.join(home, "AppData", "Roaming");
+    roots.push(path.join(localAppData, "Programs"), path.join(roaming, "npm"));
+    // scoop / chocolatey / nvm-windows / pyenv-win
+    roots.push(path.join(home, "scoop", "shims"), "C:\\ProgramData\\chocolatey\\bin");
+    if (process.env.NVM_HOME) roots.push(process.env.NVM_HOME);
+    if (process.env.PYENV) roots.push(process.env.PYENV);
   }
   for (const dir of String(process.env.PATH || "").split(process.platform === "win32" ? ";" : ":")) {
     if (dir.trim()) roots.push(dir.trim());
@@ -1785,21 +1807,6 @@ export function isExecutableRooted(word) {
 // 每个复合段（&&/||/;/| 分隔）真正运行的程序词：跳过前导的包装命令
 // （nohup/env/time 等）与环境赋值（FOO=bar），取剩下的第一个词作为该段的 argv[0]
 const commandWrapperPrograms = new Set(["nohup", "setsid", "env", "time", "nice", "xargs", "command", "builtin"]);
-function commandSegmentHeads(command) {
-  const heads = new Set();
-  for (const segment of String(command || "").split(/&&|\|\||[;|]/)) {
-    const words = shellWords(segment);
-    let index = 0;
-    while (index < words.length) {
-      const word = words[index];
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { index += 1; continue; }
-      if (commandWrapperPrograms.has(basenameOf(word))) { index += 1; continue; }
-      break;
-    }
-    if (index < words.length) heads.add(words[index]);
-  }
-  return heads;
-}
 
 function basenameOf(word) {
   const text = String(word || "");
@@ -1807,39 +1814,55 @@ function basenameOf(word) {
 }
 
 function commandPathCandidates(command, workspace) {
-  const words = shellWords(command);
-  const heads = commandSegmentHeads(command);
   const candidates = [];
-  for (let index = 0; index < words.length; index += 1) {
-    const word = words[index];
-    // 环境赋值取等号右侧；PATH=a:b:c 这类值按分隔符拆开逐项判断，
-    // 否则 `$HOME/.nvm/bin:$PATH` 会粘成一个候选被误判为工作区外路径
-    // （Windows 路径分隔符是分号且盘符含冒号，不拆）
-    const pieces = word.includes("=")
-      ? (process.platform === "win32" ? [word.slice(word.indexOf("=") + 1)] : word.slice(word.indexOf("=") + 1).split(":"))
-      : [word];
-    for (const piece of pieces) {
-      let expanded = piece;
-      if (/^~(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice(1));
-      else if (/^\$HOME(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("$HOME".length));
-      else if (/^\$\{HOME\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("${HOME}".length));
-      else if (/^\$PWD(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("$PWD".length));
-      else if (/^\$\{PWD\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("${PWD}".length));
-      // 拆开后残留的 $PATH 等未展开变量不是真实路径
-      if (!expanded || expanded.startsWith("$") || isPseudoPathWord(expanded)) continue;
-      // 豁免 A：某段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
-      // 只豁免已知根（如 /usr/bin、PATH、版本管理器、~/.local/bin）
-      if (heads.has(piece) && isExecutableRooted(expanded)) continue;
-      // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或技能脚本
-      if (index > 0 && (scriptRunnerPrograms.has(basenameOf(words[index - 1])) || shellWrapperPrograms.has(basenameOf(words[index - 1])))) {
-        if (isExecutableRooted(expanded)) continue;
-        if (isSkillPath(expanded)) continue;
+  // 逐段（&&/||/;/| 分隔）处理：每个词的上下文（所属段的 argv[0]、前一个词）都在段内判断
+  for (const segment of String(command || "").split(/&&|\|\||[;|]/)) {
+    const words = shellWords(segment);
+    // 段头：跳过前导的环境赋值（FOO=bar）与包装命令（nohup/env/time 等），取剩下的第一个词
+    let headIndex = 0;
+    while (headIndex < words.length) {
+      const word = words[headIndex];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { headIndex += 1; continue; }
+      if (commandWrapperPrograms.has(basenameOf(word))) { headIndex += 1; continue; }
+      break;
+    }
+    // 只读段（ls/cat/grep 等受信只读程序）查看可执行根目录不算访问数据——
+    // 系统 bin 与版本管理器目录里没有隐私数据，查看它们是正常开发操作
+    const readOnlySegment = headIndex < words.length && trustedReadOnlyPrograms.has(basenameOf(words[headIndex]));
+    for (let index = 0; index < words.length; index += 1) {
+      const word = words[index];
+      // 环境赋值取等号右侧；PATH=a:b:c 这类值按分隔符拆开逐项判断，
+      // 否则 `$HOME/.nvm/bin:$PATH` 会粘成一个候选被误判为工作区外路径
+      // （Windows 路径分隔符是分号且盘符含冒号，不拆）
+      const pieces = word.includes("=")
+        ? (process.platform === "win32" ? [word.slice(word.indexOf("=") + 1)] : word.slice(word.indexOf("=") + 1).split(":"))
+        : [word];
+      for (const piece of pieces) {
+        let expanded = piece;
+        if (/^~(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice(1));
+        else if (/^\$HOME(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("$HOME".length));
+        else if (/^\$\{HOME\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("${HOME}".length));
+        else if (/^\$PWD(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("$PWD".length));
+        else if (/^\$\{PWD\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("${PWD}".length));
+        // 拆开后残留的 $PATH 等未展开变量不是真实路径
+        if (!expanded || expanded.startsWith("$") || isPseudoPathWord(expanded)) continue;
+        // 豁免 A：本段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
+        // 只豁免已知根（如 /usr/bin、PATH、版本管理器、~/.local/bin）
+        if (index === headIndex && isExecutableRooted(expanded)) continue;
+        // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或技能脚本
+        if (index > 0 && (scriptRunnerPrograms.has(basenameOf(words[index - 1])) || shellWrapperPrograms.has(basenameOf(words[index - 1])))) {
+          if (isExecutableRooted(expanded)) continue;
+          if (isSkillPath(expanded)) continue;
+        }
+        // 豁免 C：环境变量赋值（如 P=/usr/local/bin/python3、BUN=/opt/homebrew/bin/bun、API=~/.agents/skills/...）指向可执行根目录或技能目录。
+        // PATH 搜索路径变量赋值不在此豁免（外部目录照常上报由审核流程判断）
+        const varName = word.includes("=") ? word.slice(0, word.indexOf("=")).trim() : "";
+        if (word.includes("=") && !/^(?:.*_)?PATH$/i.test(varName) && (isExecutableRooted(expanded) || isSkillPath(expanded))) continue;
+        // 豁免 D：只读段查看可执行根目录（如 ls -d ~/.nvm/versions/node/*​/bin/node、which 同类检查），
+        // 纯 inspection，不涉及隐私数据；删除/移动/写入段不适用，仍照常上报
+        if (readOnlySegment && isExecutableRooted(expanded)) continue;
+        candidates.push(expanded);
       }
-      // 豁免 C：环境变量赋值（如 P=/usr/local/bin/python3、BUN=/opt/homebrew/bin/bun、API=~/.agents/skills/...）指向可执行根目录或技能目录。
-      // PATH 搜索路径变量赋值不在此豁免（外部目录照常上报由审核流程判断）
-      const varName = word.includes("=") ? word.slice(0, word.indexOf("=")).trim() : "";
-      if (word.includes("=") && !/^(?:.*_)?PATH$/i.test(varName) && (isExecutableRooted(expanded) || isSkillPath(expanded))) continue;
-      candidates.push(expanded);
     }
   }
   return candidates;
@@ -2238,8 +2261,9 @@ export function evaluateApproval({
     return "ask";
   }
 
-  // 渠道「自动执行」：工作区内读写、低风险命令与联网读取直接放行，
-  // 只有越界路径、本机界面变更、危险命令与外发操作仍需人工确认。
+  // 渠道「自动执行」：工作区内读写、低风险命令与联网读取直接放行；
+  // 越界路径先交审核助手按上下文把关（见 isReviewerEligible 的 forExternalPaths），
+  // 本机界面变更、危险命令与外发操作仍需人工确认。
   if (approvalMode === "auto") {
     if (hasExternalPaths || computerUseMutation) return "ask";
     if (name === "run_command") {
@@ -2590,7 +2614,9 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "  4. steps：{\"type\":\"steps\",\"title\":\"办理步骤\",\"current\":1,\"steps\":[{\"label\":\"准备材料\",\"description\":\"收集所需文件\"},{\"label\":\"提交审核\",\"description\":\"核对后提交\"}]}\n"
     + "- steps 的 current 表示当前进行到第几步，可省略或用 0，都会从第 1 步开始展示。\n"
     + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。\n"
-    + "- 数据统计图表用 ```echarts 代码块（内容是能过 JSON.parse 的严格 JSON，即 ECharts option，无注释、无函数）：柱状 series type 用 bar、折线用 line、占比用 pie；标题 title.text，类目轴 xAxis:{\"type\":\"category\",\"data\":[...]}，数值轴 yAxis:{\"type\":\"value\"}，系列 series:[{\"type\":\"bar\",\"name\":\"名称\",\"data\":[数值]}]。一个代码块只画一张图。流程图、时序图、关系图用 ```mermaid。语法没把握时改用 Markdown 表格，不要输出渲染不出来的半成品图表。\n"
+    + "- 应用本地内置了 ECharts，```echarts 代码块会在消息里直接渲染成真实图表：凡是数据图表（统计、对比、趋势、占比、分布等）一律优先用它，不要用 ASCII 字符画、生成图片或 mermaid 来凑数据图。代码块内容是能过 JSON.parse 的严格 JSON，即 ECharts option，无注释、无函数、无多余逗号。\n"
+    + "- 本地 ECharts 是按需装配的，只支持四种图表：柱状 series type 用 bar、折线用 line、占比用 pie、散点用 scatter，其他类型（雷达、漏斗、仪表盘等）渲染不出来，不要输出。可用组件：title.text 标题、xAxis:{\"type\":\"category\",\"data\":[...]} 类目轴、yAxis:{\"type\":\"value\"} 数值轴、series:[{\"type\":\"bar\",\"name\":\"名称\",\"data\":[数值]}] 系列，以及 tooltip、legend、dataZoom、markLine。\n"
+    + "- 深浅色主题和透明背景由应用自动处理，不要设置 backgroundColor，也不用自己配色。一个代码块只画一张图。流程图、时序图、关系图用 ```mermaid。语法没把握时改用 Markdown 表格，不要输出渲染不出来的半成品图表。\n"
     + "- 用户明确要求显示本地图片时，先确认图片存在，再用绝对路径写成 Markdown 图片，例如 ![现场照片](</绝对路径/现场照片.png>)；路径放在尖括号内以兼容空格，Windows 路径使用 C:/目录/图片.png 这种正斜杠写法，网络共享路径使用 file://server/share/图片.png。不要只回复图片路径，也不要把图片写进代码块。支持 png、jpg、jpeg、gif、webp、bmp。用户没有要求显示时，不要擅自嵌入本地图片。",
   ];
   const goalLine = goal
@@ -3665,8 +3691,11 @@ const REVIEWER_HARD_BLOCK_GIT = new Set(["reset", "clean", "rebase", "gc"]);
 
 // 外部路径不再直接取消审核资格：路径的敏感性由审核助手按上下文判断（见 REVIEWER_POLICY 第 5 条），
 // 避免规则白名单永远追不完各种工具链目录。只有用户钩子强制审批与系统破坏性命令仍绕过审核。
-export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval = false, approvalMode = "" } = {}) {
-  if (approvalMode !== "reviewer" || hookRequiresApproval) return false;
+// 渠道「自动执行」(auto) 模式：只有越界路径这类"需要按上下文判断"的询问交审核助手，
+// 危险命令、本机界面变更等其余询问保持转人工，不改变自动执行模式的风险契约。
+export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval = false, approvalMode = "", forExternalPaths = false } = {}) {
+  if (hookRequiresApproval) return false;
+  if (approvalMode !== "reviewer" && !(approvalMode === "auto" && forExternalPaths)) return false;
   if (isComputerUseTool(name)) return false;
   if (name === "run_command") {
     const words = shellWords(String(args.command || ""));
@@ -3690,7 +3719,7 @@ export function parseReviewerDecision(text) {
 }
 
 // 审核请求补全工作区边界事实：小模型无法自行推断路径内外，显式标注（含已授权的外部路径——授权只免问询，不免审核确认）
-function reviewerBoundaryNote(workspace, name, args) {
+export function reviewerBoundaryNote(workspace, name, args) {
   const root = workspace?.root || "";
   if (!root) return "";
   const outside = externalPathsForTool(workspace, name, args);
@@ -3699,9 +3728,55 @@ function reviewerBoundaryNote(workspace, name, args) {
     ? [workspace.canonicalPath(pathValue)]
     : [];
   const marked = [...new Set([...outside, ...authorizedOutside])];
-  return marked.length
-    ? `【工作区边界】工作区根目录：${root}；以下路径在工作区外：${marked.join("、")}。\n`
-    : `【工作区边界】工作区根目录：${root}；操作目标均在工作区内。\n`;
+  if (!marked.length) return `【工作区边界】工作区根目录：${root}；操作目标均在工作区内。\n`;
+  // 命令参数里的绝对路径在远程传输/远程执行场景下是远端目标路径，不是本机文件访问——
+  // 静态分析无法区分，给审核助手一句确定性提示，避免把 /root/xxx 一律当本机敏感路径转人工
+  const remoteHint = name === "run_command" && /(?:ssh|scp|rsync|sftp)/i.test(String(args?.command || ""))
+    ? "；命令涉及远程传输/远程执行，参数中的绝对路径通常是远端机器上的目标路径，不是对本机文件的访问"
+    : "";
+  return `【工作区边界】工作区根目录：${root}；以下路径在工作区外：${marked.join("、")}${remoteHint}。\n`;
+}
+
+// ---- 人工审批卡的「操作影响」说明 ----
+// 逐条的影响要点（"会覆盖安装目录脚本""阈值改为 95%"）是语义判断，静态规则推不出来，
+// 由主模型读完整操作内容与任务上下文生成。生成失败或超时静默回退为无说明，不阻塞审批。
+
+// 值得生成影响说明的工具：改动文件/进程/系统状态或调用外部能力的 consequential 操作。
+// 纯查询类（搜索、读网页、读文件）影响自明，不值得一次额外模型调用。
+const impactSummaryTools = new Set([
+  "run_command", "write_file", "edit_file", "append_file", "delete_file",
+  "copy_file", "move_file", "make_directory",
+  "export_word_document", "export_excel_workbook", "save_skill", "update_skill",
+]);
+
+export function isImpactSummaryEligible(name = "") {
+  return impactSummaryTools.has(name)
+    || (isComputerUseTool(name) && needsApproval(name))
+    || name.startsWith("mcp__");
+}
+
+export async function summarizeApprovalImpact({ settings, action = {}, context = "", fetchImpl = fetch, signal = null } = {}) {
+  const request = [
+    {
+      role: "system",
+      content: "你是审批说明撰写助手。用户要决定是否批准一个操作。根据操作内容与任务上下文，用简体中文列出 2 到 5 条要点，说明这个操作实际会做什么：会创建/修改/覆盖/删除哪些文件或配置（含具体文件名、数值），会结束或启动什么进程，是否把本机数据发往外部。每条一行、以「- 」开头、不超过 40 字。只输出这些要点，不要标题、不要前后缀解释。",
+    },
+    {
+      role: "user",
+      content: `任务上下文（节选）：\n${clipped(context, 2000)}\n\n待批准操作：\n工具：${String(action.kind || "")}\n说明：${String(action.title || "")}\n详情：\n${clipped(String(action.details || ""), 3000)}`,
+    },
+  ];
+  try {
+    // 辅助调用不重试（retryLimit 0）：失败应立即回退为无说明，而不是退避 30 秒阻塞审批卡
+    const message = await requestModel({ settings, messages: request, fetchImpl, signal, tools: false, retryLimit: 0, retryBaseDelayMs: 1 });
+    const text = messageText(message).trim();
+    // 只保留要点行：模型输出前言后语时剥离，保证卡片上是干净的 bullet 列表
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    const bullets = lines.filter((line) => /^[-•*]/.test(line));
+    return (bullets.length ? bullets : lines).slice(0, 6).join("\n").slice(0, 800);
+  } catch {
+    return "";
+  }
 }
 
 export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null } = {}) {
@@ -4368,8 +4443,14 @@ export async function runAgent({
   // extraTools 中定义的工具名：工具执行时统一路由到 onExtraTool（见 default 分支）
   const extraToolNames = new Set((extraTools || []).map((tool) => tool?.function?.name).filter(Boolean));
   let approvalChain = Promise.resolve();
-  const queuedApproval = (action) => {
-    const run = approvalChain.then(() => requestApproval(action));
+  // action 可传工厂函数：审批卡出队时才生成，返回 null 表示排队期间情况已变（如先行授权
+  // 覆盖了本操作），跳过弹卡直接视为放行——并行只读轮次里靠它避免同路径重复询问
+  const queuedApproval = (actionOrFactory) => {
+    const run = approvalChain.then(async () => {
+      const action = typeof actionOrFactory === "function" ? await actionOrFactory() : actionOrFactory;
+      if (!action) return null;
+      return requestApproval(action);
+    });
     approvalChain = run.then(() => { }, () => { });
     return run;
   };
@@ -4738,6 +4819,8 @@ export async function runAgent({
         }
         // 是否由用户本人直接批准（而不是审核助手放行或规则放行），决定工作区外路径授权是否延续到任务结束
         let approvedByUser = false;
+        // 用户批准后授权立即持久化（见 askApproval），执行前不再重复登记
+        let externalAuthorizationPersisted = false;
         if (decision !== "allow") {
           let approved = decision !== "deny";
           let approvalSource = "user";
@@ -4746,18 +4829,64 @@ export async function runAgent({
           if (decision === "ask") {
             const details = approvalDetails(approvalToolName, displayArgs);
             const suggestedRule = suggestStandingRule(approvalToolName, displayArgs) || undefined;
+            // 审核助手使用的详情按初评结果生成；人工审批卡的详情在出队时按最新授权状态重算
             const detailText = externalPaths.length
               ? `工作区外路径（批准后本次任务内有效；批准的是目录时，其子路径同样有效）：\n${externalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
               : details;
-            const askApproval = async () => {
-              const userDecision = await queuedApproval({
-                id: String(toolCall.id || `approval-${Date.now()}`),
-                kind: name,
-                title: summary,
-                details: detailText,
-                suggestedRule,
+            const askApproval = async (escalationReason = "") => {
+              // 影响说明在审批排队期间并发生成，出队时多半已就绪；
+              // 生成失败或 20 秒超时静默回退为无说明，绝不阻塞审批卡本身
+              const impactPromise = isImpactSummaryEligible(approvalToolName)
+                ? Promise.race([
+                    withModelTimeout((signal) => summarizeApprovalImpact({
+                      settings, fetchImpl, signal,
+                      action: { kind: approvalToolName, title: summary, details: detailText },
+                      context: reviewerContext,
+                    })).catch(() => ""),
+                    new Promise((resolve) => {
+                      const timer = setTimeout(() => resolve(""), 20_000);
+                      timer.unref?.();
+                    }),
+                  ])
+                : Promise.resolve("");
+              const userDecision = await queuedApproval(async () => {
+                // 并行只读轮次里，本次审批排队等待期间，同轮先批准的授权可能已覆盖本操作
+                // （例如先批了目录、再轮到目录内文件）：出队时重新评估，已放行则跳过弹卡
+                const currentExternalPaths = externalPathsForTool(workspace, name, args);
+                const freshDecision = evaluateApproval({
+                  ...decisionInput,
+                  hasExternalPaths: currentExternalPaths.length > 0,
+                  standingRules: [...standingRules, ...sessionRules],
+                });
+                if (freshDecision === "allow") return null;
+                const freshDetailText = currentExternalPaths.length
+                  ? `工作区外路径（批准后本次任务内有效；批准的是目录时，其子路径同样有效）：\n${currentExternalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
+                  : details;
+                const impact = await impactPromise;
+                const sections = [];
+                if (freshDetailText) sections.push(freshDetailText);
+                // 审核助手转人工时附上理由（含"审核助手不可用"这类故障），让用户知道为什么还是问到自己
+                if (escalationReason) sections.push(`审核助手无法定夺，转人工确认：${escalationReason}`);
+                return {
+                  id: String(toolCall.id || `approval-${Date.now()}`),
+                  kind: name,
+                  title: summary,
+                  details: sections.join("\n\n"),
+                  // 影响说明独立成结构化字段：桌面端 Markdown 渲染（加粗/列表），
+                  // IM 渠道按纯文本要点附带，details 保持原文不掺格式标记
+                  ...(impact ? { impact } : {}),
+                  suggestedRule,
+                };
               });
+              // null 表示出队重评估时已无需审批（被先行授权覆盖），不算用户本人批准
+              if (userDecision === null) return true;
               approvedByUser = userDecision;
+              // 用户批准后立即持久化外部路径授权：并行只读轮次中，后续审批卡出队重评估
+              // 发生在本次执行之前，若等到执行前才登记，排队中的同路径审批仍会认为未授权
+              if (userDecision && externalPaths.length) {
+                workspace.authorizeExternalPaths(externalPaths, { persist: true });
+                externalAuthorizationPersisted = true;
+              }
               return userDecision;
             };
             // 工作区外删除是亮线规则：0.6B 审核模型实测无法稳定区分路径内外（冒烟证实），
@@ -4788,6 +4917,7 @@ export async function runAgent({
               args: displayArgs,
               hookRequiresApproval: decisionInput.hookRequiresApproval,
               approvalMode,
+              forExternalPaths: externalPaths.length > 0,
             }) && !deleteOutsideWorkspace && !touchesReviewerLogic;
             if (reviewable && reviewerState.active) {
               // 缓存命中：同一操作本次任务内已由审核助手放行过，跳过模型调用
@@ -4838,7 +4968,7 @@ export async function runAgent({
                 reviewerState.consecutiveDenials = 0;
                 auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
-                approved = await askApproval();
+                approved = await askApproval(review.reason);
               }
             } else {
               approved = await askApproval();
@@ -4882,7 +5012,7 @@ export async function runAgent({
         // 用户直接批准或完全访问模式下，授权延续到本次任务结束；
         // 审核助手放行的外部路径仍按单次授权，之后每次重新评估。
         const persistExternalAuthorization = approvedByUser || approvalMode === "full-access";
-        const releaseExternalAuthorization = externalPaths.length
+        const releaseExternalAuthorization = externalPaths.length && !externalAuthorizationPersisted
           ? workspace.authorizeExternalPaths(externalPaths, { persist: persistExternalAuthorization })
           : () => { };
 

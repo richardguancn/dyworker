@@ -60,7 +60,12 @@ test("实际任务拒绝审批后保留远程配置、分支名称和提交位�
           workspacePath: root, approvalMode, trustTempDirs: false,
           conversation: [{ role: "user", content: "检查审批保护" }],
           requestApproval: async () => { approvals += 1; return false; },
-          fetchImpl: async () => {
+          fetchImpl: async (_url, options) => {
+            // 「操作影响」说明是审批卡的旁路辅助调用：直接应答，不占主线脚本名额
+            const body = JSON.parse(options.body);
+            if (String(body.messages?.[0]?.content || "").includes("审批说明撰写助手")) {
+              return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "- 会变更 git 仓库状态" } }] }) };
+            }
             assert.ok(calls < messages.length, "不应出现额外模型请求");
             return { ok: true, json: async () => ({ choices: [{ message: messages[calls++] }] }) };
           },

@@ -393,6 +393,11 @@ test("Markdown 编辑器：行首光标透视源码，其余行隐藏语法标�
   assert.match(markdownLiveEditor, /cm-md-codeblock/);
   // 围栏代码块：光标不在块内时隐藏首尾围栏行
   assert.match(markdownLiveEditor, /fencesVisible = selectionTouches\(node\.from, node\.to\)/);
+  // GFM 表格：光标不在表格内时整块替换为真实表格，点击表格进入源码编辑
+  assert.match(markdownLiveEditor, /class TableWidget extends WidgetType/);
+  assert.match(markdownLiveEditor, /parseMarkdownTable/);
+  assert.match(markdownLiveEditor, /cm-md-table-widget/);
+  assert.match(styles, /\.cm-md-table-widget table/);
   // 「查看源代码」纯源码模式经 Compartment 热切换
   assert.match(markdownLiveEditor, /setPlainSource/);
   assert.match(markdownLiveEditor, /renderCompartment\.reconfigure/);

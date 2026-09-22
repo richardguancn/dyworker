@@ -787,3 +787,17 @@ export function InteractiveMessage({ content }: { content: string }) {
     </div>
   );
 }
+
+// 小段 Markdown 渲染（审批卡的影响说明、收件箱条目等）：与正文同一套渲染管线，
+// 去掉数学公式与交互控件解析，纯文本/列表/加粗场景够用
+export function MarkdownSnippet({ content }: { content: string }) {
+  return (
+    <div className="markdown-content">
+      <ReactMarkdown
+        components={markdownComponents}
+        remarkPlugins={[remarkGfm, remarkAutoSpace]}
+        urlTransform={markdownUrlTransform}
+      >{content}</ReactMarkdown>
+    </div>
+  );
+}

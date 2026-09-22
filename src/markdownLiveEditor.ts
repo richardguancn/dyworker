@@ -18,6 +18,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
 import { markdown } from "@codemirror/lang-markdown";
 import { GFM } from "@lezer/markdown";
+import { parseMarkdownTable } from "./markdownTable";
 
 export interface MarkdownLiveEditorOptions {
   value: string;
@@ -112,6 +113,53 @@ class ImageChipWidget extends WidgetType {
   }
   ignoreEvent() {
     return false;
+  }
+}
+
+// GFM 表格的即时渲染：光标不在表格内时整块替换为真实表格（TableWidget），
+// 点击表格或光标进入时还原为等宽源码行直接编辑。解析逻辑在 markdownTable.ts。
+class TableWidget extends WidgetType {
+  constructor(readonly source: string) {
+    super();
+  }
+  eq(other: TableWidget) {
+    return other.source === this.source;
+  }
+  toDOM(view: EditorView) {
+    const { header, alignments, body } = parseMarkdownTable(this.source);
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm-md-table-widget";
+    const table = document.createElement("table");
+    const applyRow = (row: string[], tag: "th" | "td", parent: HTMLElement) => {
+      const tr = document.createElement("tr");
+      row.forEach((cell, index) => {
+        const td = document.createElement(tag);
+        td.textContent = cell;
+        if (alignments[index]) td.style.textAlign = alignments[index];
+        tr.appendChild(td);
+      });
+      parent.appendChild(tr);
+    };
+    if (header.length) {
+      const thead = document.createElement("thead");
+      applyRow(header, "th", thead);
+      table.appendChild(thead);
+    }
+    const tbody = document.createElement("tbody");
+    for (const row of body) applyRow(row, "td", tbody);
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    // 点击表格进入源码编辑：光标移进表格范围，装饰层随即还原为可编辑的源码行
+    wrapper.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const pos = Math.min(view.posAtDOM(wrapper, 1) + 1, view.state.doc.length);
+      view.dispatch({ selection: { anchor: pos } });
+      view.focus();
+    });
+    return wrapper;
+  }
+  ignoreEvent(event: Event) {
+    return event.type === "mousedown";
   }
 }
 
@@ -300,7 +348,20 @@ function buildDecorations(view: EditorView): DecorationSet {
             return false;
           }
           case "Table": {
-            eachLine(node.from, node.to, (line) => lineDeco(line, "cm-md-table"));
+            // 光标不在表格内时整块替换为渲染好的表格；点击表格或光标进入时
+            // 还原为等宽源码行，直接逐行编辑
+            if (selectionTouches(node.from, node.to)) {
+              eachLine(node.from, node.to, (line) => lineDeco(line, "cm-md-table"));
+              return false;
+            }
+            spans.push({
+              from: node.from,
+              to: node.to,
+              deco: Decoration.replace({
+                widget: new TableWidget(doc.sliceString(node.from, node.to)),
+                block: true,
+              }),
+            });
             return false;
           }
           case "Escape": {

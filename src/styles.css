@@ -7081,6 +7081,29 @@ body.resizing-panels .app-shell {
   word-break: break-all;
 }
 
+/* 审批卡的「操作影响」说明：模型生成的 Markdown 要点，渲染在原始详情下方 */
+.approval-impact {
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(150, 137, 95, 0.18);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.35);
+  color: #6d6450;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.approval-impact > strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.approval-impact .markdown-content ul {
+  margin: 2px 0;
+  padding-left: 18px;
+}
+
 .approval-actions {
   display: flex;
   justify-content: flex-end;
@@ -8911,6 +8934,12 @@ body.resizing-panels .app-shell {
     background: rgba(0, 0, 0, 0.17);
   }
 
+  .approval-impact {
+    border-color: rgba(205, 174, 99, 0.16);
+    background: rgba(0, 0, 0, 0.1);
+    color: #b3b7ad;
+  }
+
   .approval-mode-button.warning,
   .approval-mode-menu button.warning,
   .approval-mode-menu button.warning strong,
@@ -9994,6 +10023,30 @@ html.native-window-frame .titlebar {
   font-size: 12.5px;
 }
 
+/* 渲染态表格（光标不在表格内时整块替换为真实表格） */
+.markdown-live-editor .cm-md-table-widget {
+  margin: 6px 0;
+  overflow-x: auto;
+  cursor: text;
+}
+
+.markdown-live-editor .cm-md-table-widget table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.markdown-live-editor .cm-md-table-widget th,
+.markdown-live-editor .cm-md-table-widget td {
+  border: 1px solid #d2d4cd;
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.markdown-live-editor .cm-md-table-widget th {
+  background: #edeee9;
+  font-weight: 600;
+}
+
 .markdown-live-editor .cm-md-rule {
   display: inline-block;
   width: 100%;
@@ -10049,6 +10102,15 @@ html.native-window-frame .titlebar {
 
   .markdown-live-editor .cm-md-rule {
     border-top-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .markdown-live-editor .cm-md-table-widget th,
+  .markdown-live-editor .cm-md-table-widget td {
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .markdown-live-editor .cm-md-table-widget th {
+    background: rgba(255, 255, 255, 0.06);
   }
 }
 

@@ -3164,6 +3164,7 @@ function createInboxItem(partial) {
     ...(partial.tool ? { tool: String(partial.tool) } : {}),
     ...(partial.title ? { title: String(partial.title).slice(0, 200) } : {}),
     ...(partial.details ? { details: String(partial.details).slice(0, 2000) } : {}),
+    ...(partial.impact ? { impact: String(partial.impact).slice(0, 800) } : {}),
     ...(partial.question ? { question: String(partial.question).slice(0, 1000) } : {}),
     ...(Array.isArray(partial.options) && partial.options.length ? { options: partial.options.map(String).slice(0, 5) } : {}),
     createdAt: new Date().toISOString(),
@@ -3742,6 +3743,7 @@ async function resumeWake(wake) {
           tool: action.kind,
           title: `续跑任务申请：${action.title || action.kind}`,
           details: action.details,
+          impact: action.impact,
         });
         runningScheduledTask = false;
         try {
@@ -3973,6 +3975,7 @@ async function runScheduledTask(record) {
           tool: action.kind,
           title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
           details: action.details,
+          impact: action.impact,
         });
         runningScheduledTask = false;
         try {
@@ -4659,10 +4662,13 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           tool: action.kind,
           title: `${channelLabel}消息申请：${action.title || action.kind}`,
           details: action.details,
+          impact: action.impact,
         });
         registerPending({ itemId: pending.itemId, kind: "approval" });
+        // IM 是纯文本：影响要点以纯文本列表附带，与桌面端 Markdown 渲染同一份内容
+        const impactText = action.impact ? `\n\n操作影响：\n${action.impact}` : "";
         await reply(
-          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}\n\n回复 1 允许 / 0 拒绝 / 2 停止整个任务。10 分钟未回复将自动取消。`.trim(),
+          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}${impactText}\n\n回复 1 允许 / 0 拒绝 / 2 停止整个任务。10 分钟未回复将自动取消。`.trim(),
         ).catch(() => { });
         const resolution = await awaitInboxWithTimeout(pending, "审批等待超时，已自动取消");
         clearPending();
