@@ -3,16 +3,14 @@
 // - 光标停在某一行的行首时，该行显示原始 markdown 源码（可编辑语法标记）；
 // - 光标在其余位置时，`**`、`#`、`- ` 等语法标记被隐藏并套用渲染样式，
 //   编辑插入的文本按原位写回源码，中文输入法、撤销重做均为原生行为。
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
-  ViewPlugin,
   WidgetType,
   keymap,
   placeholder,
   type DecorationSet,
-  type ViewUpdate,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { syntaxTree } from "@codemirror/language";
@@ -151,6 +149,8 @@ class TableWidget extends WidgetType {
     wrapper.appendChild(table);
     // 点击表格进入源码编辑：光标移进表格范围，装饰层随即还原为可编辑的源码行
     wrapper.addEventListener("mousedown", (event) => {
+      // 滚动条属于外层容器，拖动它时保持表格预览。
+      if (!(event.target instanceof Node) || !table.contains(event.target)) return;
       event.preventDefault();
       const pos = Math.min(view.posAtDOM(wrapper, 1) + 1, view.state.doc.length);
       view.dispatch({ selection: { anchor: pos } });
@@ -181,11 +181,9 @@ export function lineRevealsSource(
 }
 
 // 从语法树收集装饰：语法标记隐藏（零宽 replace）+ 渲染样式（mark/line 装饰）
-function buildDecorations(view: EditorView): DecorationSet {
-  const state = view.state;
+function buildDecorations(state: EditorState, focused: boolean): DecorationSet {
   const doc = state.doc;
   const ranges = state.selection.ranges;
-  const focused = view.hasFocus;
   const lines = new Map<string, Decoration>();
   const spans: Array<{ from: number; to: number; deco: Decoration }> = [];
 
@@ -350,7 +348,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           case "Table": {
             // 光标不在表格内时整块替换为渲染好的表格；点击表格或光标进入时
             // 还原为等宽源码行，直接逐行编辑
-            if (selectionTouches(node.from, node.to)) {
+            if (focused && selectionTouches(node.from, node.to)) {
               eachLine(node.from, node.to, (line) => lineDeco(line, "cm-md-table"));
               return false;
             }
@@ -375,7 +373,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   };
 
-  for (const range of view.visibleRanges) iterate(range.from, range.to);
+  iterate(0, doc.length);
 
   return Decoration.set(
     [
@@ -386,20 +384,33 @@ function buildDecorations(view: EditorView): DecorationSet {
   );
 }
 
-const liveMarkdownDecorations = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
-    }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged) {
-        this.decorations = buildDecorations(update.view);
-      }
-    }
+// 块级替换会改变布局，必须直接由状态提供，不能由依赖视口的插件提供。
+const markdownFocus = StateEffect.define<boolean>();
+const liveMarkdownState = StateField.define<{ focused: boolean; decorations: DecorationSet }>({
+  create(state) {
+    return { focused: false, decorations: buildDecorations(state, false) };
   },
-  { decorations: (plugin) => plugin.decorations },
-);
+  update(value, transaction) {
+    let focused = value.focused;
+    for (const effect of transaction.effects) {
+      if (effect.is(markdownFocus)) focused = effect.value;
+    }
+    if (transaction.docChanged || transaction.selection || focused !== value.focused
+      || syntaxTree(transaction.startState) !== syntaxTree(transaction.state)) {
+      return { focused, decorations: buildDecorations(transaction.state, focused) };
+    }
+    return value;
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
+});
+const liveMarkdownDecorations = [
+  liveMarkdownState,
+  EditorView.updateListener.of((update) => {
+    if (update.focusChanged) {
+      update.view.dispatch({ effects: markdownFocus.of(update.view.hasFocus) });
+    }
+  }),
+];
 
 // ===== 编辑器组装 =====
 

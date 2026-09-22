@@ -9906,6 +9906,8 @@ html.native-window-frame .titlebar {
 }
 
 .markdown-live-editor .cm-content {
+  min-width: 0;
+  width: 100%;
   padding: 0;
 }
 
@@ -10031,6 +10033,8 @@ html.native-window-frame .titlebar {
 }
 
 .markdown-live-editor .cm-md-table-widget table {
+  width: 100%;
+  min-width: 480px;
   border-collapse: collapse;
   font-size: 12.5px;
 }

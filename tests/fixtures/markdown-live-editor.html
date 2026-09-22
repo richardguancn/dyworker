@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Markdown 表格回归验证</title>
+<link rel="stylesheet" href="/src/styles.css">
+<style>body{display:block;padding:20px;overflow:auto}#host{width:580px;height:540px;border:1px solid #999}button{margin:8px}#status{white-space:pre-wrap}</style>
+<button id="original">原文件表格</button><button id="source">切换源代码</button><button id="narrow">窄面板</button><button id="sample">开头表格</button><button id="blur">离开编辑</button>
+<div id="host" class="markdown-live-editor"></div><pre id="status">加载中</pre>
+<script type="module">
+import { createMarkdownLiveEditor } from '/src/markdownLiveEditor.ts';
+const status = document.querySelector('#status');
+let errors = [];
+window.addEventListener('error', e => { errors.push(e.message); report(); });
+const original = await (await fetch('/docs/research/computer-use-kylin-v10.md')).text();
+let value = original;
+const host = document.querySelector('#host');
+const editor = createMarkdownLiveEditor(host, {value, onChange(text) {value=text; report();}});
+document.querySelector('#original').onclick = () => {value=original.slice(original.indexOf('## 七、'));editor.setValue(value);};
+let plain = false;
+document.querySelector('#source').onclick = () => {plain=!plain; editor.setPlainSource(plain);host.classList.toggle('plain-source',plain);};
+document.querySelector('#narrow').onclick = () => {host.style.width='320px';};
+document.querySelector('#sample').onclick = () => {value='| 项目 | 数量 |\n|:---|---:|\n| 表格测试 | 2 |\n\n## 后续标题\n\n普通段落';editor.setValue(value);};
+function report(){status.textContent=`错误：${errors.length}\n表格：${host.querySelectorAll('table').length}\n内容长度：${value.length}\n${errors.join('\n')}`;}
+new MutationObserver(report).observe(host,{childList:true,subtree:true});
+report();
+</script>
