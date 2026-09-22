@@ -216,6 +216,8 @@ export type AgentEvent =
   | { type: "skill-saved"; item: { name: string; description: string; instructions: string } }
   | { type: "skill-updated"; item: { id: string; name: string; description: string; instructions: string } }
   | { type: "loop-state"; active: boolean; iteration: number; maximum: number; status: string }
+  // 首条消息时由主进程并发生成的会话标题：渲染端仅在用户未手动重命名过时采用
+  | { type: "session-title"; title: string }
   | { type: "agent-finished"; result: AgentResult }
   // 统一轨迹事件流（trace-console）：结构化投影，与 debug-log 等旧事件并行发出
   | { type: "trace"; trace: TraceEvent };
@@ -267,6 +269,8 @@ export interface ChatMessage {
 export interface SessionRecord {
   id: string;
   title: string;
+  // 用户手动重命名过：不再被自动生成的会话标题覆盖
+  titleCustom?: boolean;
   workspacePath: string;
   // /goal 设定的长期目标：跨轮持续驱动，注入之后每个任务的系统提示
   goal?: string;

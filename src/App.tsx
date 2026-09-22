@@ -7061,6 +7061,15 @@ export function App() {
     };
     const unsubscribe = window.dyworker.onAgentEvent((sessionAgentEvent) => {
       const { sessionId, runId, event } = sessionAgentEvent;
+      // 自动会话标题在全局监听器处理（桌面与渠道运行都算）：按 sessionId 更新，
+      // 不依赖 runTask 的 runId 专属监听器，任务先结束、标题后生成也能收到
+      if (event.type === "session-title") {
+        const title = String(event.title || "").trim().slice(0, 40);
+        if (title) {
+          updateSession(sessionId, (session) => (session.titleCustom ? session : { ...session, title }));
+        }
+        return;
+      }
       // 只处理渠道运行转发的事件：桌面会话由 runTask 内注册的专属监听器处理，
       // 桌面端在渠道会话里发起的运行（信封无 channelRun 标记）也归它，这里必须跳过
       if (!isChannelRunEnvelope(sessionAgentEvent)) return;
@@ -7644,7 +7653,7 @@ export function App() {
     const trimmed = title.trim();
     setRenamingId(null);
     if (!trimmed) return;
-    updateSession(id, (session) => ({ ...session, title: trimmed.slice(0, 40) }));
+    updateSession(id, (session) => ({ ...session, title: trimmed.slice(0, 40), titleCustom: true }));
   };
 
   const workspaceFiles = useMemo(() => {

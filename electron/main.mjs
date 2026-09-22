@@ -2586,6 +2586,39 @@ async function queuedPayloadFromSession({ sessionId, runId, payload }) {
   return freshPayload;
 }
 
+// 会话首条消息触发、用当前主模型生成简短会话标题：与主任务并发执行，
+// 不阻塞任务启动；失败静默（渲染端已有用户输入截断的兜底标题）。
+async function generateSessionTitle(userText, settings) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const message = await requestModel({
+      settings,
+      tools: false,
+      fetchImpl: fetch,
+      signal: controller.signal,
+      messages: [
+        {
+          role: "system",
+          content: "你负责为用户的首条请求生成会话标题，规范如下：\n- 必须使用简体中文（用户原文为英文时可用英文）\n- 不超过 16 个字符，概括请求意图\n只输出标题本身，不要引号、句号、多余解释或 markdown。",
+        },
+        { role: "user", content: userText.slice(0, 2000) },
+      ],
+    });
+    const content = typeof message?.content === "string"
+      ? message.content
+      : Array.isArray(message?.content)
+        ? message.content.filter((part) => part?.type === "text").map((part) => String(part?.text || "")).join("\n")
+        : "";
+    const firstLine = content.split("\n").map((line) => line.trim()).filter(Boolean)[0] || "";
+    return firstLine.replace(/^[\"'「『#*`>]+|[\"'」』。…]+$/g, "").trim().slice(0, 40);
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // 一条会话消息完整执行：原 agent:send 主体。同一会话同时只能有一个在执行，
 // 其余消息进入 sessionQueue，由 drainSessionQueue 依次推进。
 async function executeAgentRun({ payload: initialPayload, sender }) {
@@ -2740,6 +2773,16 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       };
       emit({ type: "agent-finished", result: demoResult });
       return { ok: true, result: demoResult };
+    }
+
+    // 首条用户消息：并发让模型生成更友好的会话标题，就绪后经 session-title 事件回传；
+    // 渲染端只在用户未手动重命名过时采用，否则保留 shortTitle 的兜底标题
+    const isFirstUserMessage = conversation.filter((message) => message?.role === "user").length === 1
+      && !conversation.some((message) => message?.role === "assistant");
+    if (isFirstUserMessage && latestUserText.trim()) {
+      void generateSessionTitle(latestUserText, settings).then((title) => {
+        if (title) emitToSession(sender, sessionId, runId, { type: "session-title", title });
+      });
     }
 
     const loop = payload?.loop?.enabled
