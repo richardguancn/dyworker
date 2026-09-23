@@ -244,6 +244,13 @@ export interface Attachment {
   inlineRef?: boolean;
 }
 
+// 会话内选中文字的引用注释：quote 存所选文本（已归一化），comment 为可选评论
+export interface MessageAnnotation {
+  id: string;
+  quote: string;
+  comment: string;
+}
+
 export interface ChatMessage {
   id?: string;
   role: Role;
@@ -258,6 +265,8 @@ export interface ChatMessage {
   createdAt: string;
   attachments?: Attachment[];
   activities?: ActivityRecord[];
+  // 引用注释：quote/comment 已拼进 content 发给模型，气泡按 chip + 只读列表展示
+  annotations?: MessageAnnotation[];
   // 推理模型的思考过程（流式累积）：不进正文、不回传模型，仅用于界面展示
   reasoning?: string;
   changes?: FileChange[];  plan?: PlanStep[];

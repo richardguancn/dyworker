@@ -40,6 +40,7 @@ import {
   LoaderCircle,
   MessageSquarePlus,
   MessagesSquare,
+  MessageSquare,
   MessageCircleQuestion,
   Mic,
   Minus,
@@ -85,7 +86,8 @@ import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
 const now = new Date().toISOString();
@@ -1775,11 +1777,19 @@ function GitReviewPanel({ workspacePath, fallbackChanges }: { workspacePath: str
 // 当前会话作为工具数据随请求传给主进程（payload.session）：
 // 模型在回答前可按需 search/read 这一个会话，而不是把会话正文注入上下文
 
-function SideChatPanel({ settings, session }: { settings: ProviderSettings; session?: SessionRecord }) {
+function SideChatPanel({ settings, session, seed }: { settings: ProviderSettings; session?: SessionRecord; seed?: { text: string; nonce: number } | null }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 会话内容里选中文字「侧边聊天」：seed 变化时把选中文本填进草稿并聚焦
+  useEffect(() => {
+    if (!seed) return;
+    setDraft((current) => (current.trim() ? `${current}\n${seed.text}` : seed.text));
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [seed]);
 
   useEffect(() => {
     const node = listRef.current;
@@ -1836,6 +1846,7 @@ function SideChatPanel({ settings, session }: { settings: ProviderSettings; sess
       </div>
       <div className="side-chat-composer">
         <textarea
+          ref={textareaRef}
           placeholder="随心输入"
           aria-label="侧边聊天输入"
           rows={3}
@@ -4306,6 +4317,95 @@ function ContextRing({ used, limit, exact, stats }: {
   );
 }
 
+// 在容器文本节点里定位引用文本的起点：空白归一化后做多级前缀匹配，命中后映射回原始偏移。
+// 只返回 Range 用于量位置，不改动消息 DOM（React 重渲染时不会被破坏）。
+function findQuoteRange(root: ParentNode | null, quote: string): Range | null {
+  if (!root || !quote) return null;
+  const needles = [quote, quote.slice(0, 24), quote.slice(0, 12), quote.slice(0, 6)]
+    .filter((needle, index, all) => needle.length >= 6 && all.indexOf(needle) === index);
+  if (!needles.length) return null;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const raw = node.data;
+    // 归一化文本 + 每个归一化字符对应的原始下标
+    let normalized = "";
+    const map: number[] = [];
+    let pendingSpace = false;
+    for (let i = 0; i < raw.length; i++) {
+      if (/\s/.test(raw[i])) {
+        pendingSpace = normalized.length > 0;
+        continue;
+      }
+      if (pendingSpace) {
+        normalized += " ";
+        map.push(i);
+        pendingSpace = false;
+      }
+      normalized += raw[i];
+      map.push(i);
+    }
+    for (const needle of needles) {
+      const hit = normalized.indexOf(needle);
+      if (hit < 0) continue;
+      const start = map[hit];
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, Math.min(raw.length, start + 1));
+      return range;
+    }
+    node = walker.nextNode() as Text | null;
+  }
+  return null;
+}
+
+// 已发送消息里的「x 条注释」chip：hover 显示只读注释列表（不含编辑/删除）
+function MessageAnnotationChip({ annotations }: { annotations: MessageAnnotation[] }) {
+  const [open, setOpen] = useState(false);
+  // 延迟关闭：mouseleave 后留宽限，鼠标斜向移入弹层时不闪关
+  const closeTimerRef = useRef(0);
+  const handleEnter = () => {
+    window.clearTimeout(closeTimerRef.current);
+    setOpen(true);
+  };
+  const handleLeave = () => {
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setOpen(false), 200);
+  };
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
+  return (
+    <div
+      className="message-annotation-chip"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+    >
+      <span className="message-annotation-chip-label">
+        <MessageSquare size={12} />
+        <span>{annotations.length} 条注释</span>
+      </span>
+      {open && (
+        <div className="annotation-list-popup readonly" role="list">
+          {annotations.map((annotation, index) => (
+            <div className="annotation-list-item" key={annotation.id} role="listitem">
+              <span className="annotation-index">{index + 1}。</span>
+              <div className="annotation-item-main">
+                <span className="annotation-field-label">所选文本：</span>
+                <span className="annotation-quote" title={annotation.quote}>{annotation.quote}</span>
+                {annotation.comment.trim() && (
+                  <>
+                    <span className="annotation-field-label">用户评论：</span>
+                    <span className="annotation-comment" title={annotation.comment}>{annotation.comment}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 已发送消息里的折叠长粘贴块：默认收起（显示字数），点击展开查看原文
 function MessagePasteBlocks({ blocks }: { blocks: Array<{ id: string; text: string }> }) {
   const [expandedId, setExpandedId] = useState("");
@@ -6216,6 +6316,28 @@ export function App() {
   // 长粘贴折叠块：当前会话输入框中折叠的大段粘贴文本
   const [composerPastes, setComposerPastes] = useState<ComposerPasteBlock[]>([]);
   const [expandedPasteId, setExpandedPasteId] = useState("");
+  // 引用注释：会话内容里选中文字添加的注释，随消息一起发送
+  const [annotations, setAnnotations] = useState<MessageAnnotation[]>([]);
+  // 选区浮动条：选中会话内容后弹出的「添加到对话 / 侧边聊天」条
+  const [selectionQuote, setSelectionQuote] = useState<{ text: string; x: number; y: number } | null>(null);
+  // 评论编辑卡：固定定位锚点 + 目标注释 id，编辑内容用卡片局部 state
+  const [annotationEditor, setAnnotationEditor] = useState<{ id: string; x: number; y: number } | null>(null);
+  // composer 注释 chip 的 hover 弹层开关
+  const [annotationListOpen, setAnnotationListOpen] = useState(false);
+  // hover 弹层延迟关闭：mouseleave 后留短暂宽限，斜向移入弹层经过空隙时不闪关
+  const annotationListCloseTimerRef = useRef(0);
+  const openAnnotationList = () => {
+    window.clearTimeout(annotationListCloseTimerRef.current);
+    setAnnotationListOpen(true);
+  };
+  const scheduleCloseAnnotationList = () => {
+    window.clearTimeout(annotationListCloseTimerRef.current);
+    annotationListCloseTimerRef.current = window.setTimeout(() => setAnnotationListOpen(false), 200);
+  };
+  // 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
+  const voiceTargetRef = useRef<"composer" | ((text: string) => void)>("composer");
+  // 侧边聊天预填：nonce 变化时把 text 填入侧边聊天草稿
+  const [sideChatSeed, setSideChatSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
@@ -6460,30 +6582,35 @@ export function App() {
     activeIdRef.current = activeId;
   }, [activeId]);
 
-  // 会话草稿：切换会话时保留各自输入框内容与折叠的长文本块（对照 Codex 的 per-session 草稿）。
-  // composer/composerPastes 的最新值经 ref 读取，避免 activeId 变化的同一次提交里闭包取到旧值。
+  // 会话草稿：切换会话时保留各自输入框内容、折叠的长文本块与引用注释（对照 Codex 的 per-session 草稿）。
+  // composer/composerPastes/annotations 的最新值经 ref 读取，避免 activeId 变化的同一次提交里闭包取到旧值。
   const composerRef = useRef(composer);
   const composerPastesRef = useRef(composerPastes);
-  const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[] }>>({});
+  const annotationsRef = useRef(annotations);
+  const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[]; annotations: MessageAnnotation[] }>>({});
   const lastActiveIdRef = useRef(activeId);
   useEffect(() => { composerRef.current = composer; }, [composer]);
   useEffect(() => { composerPastesRef.current = composerPastes; }, [composerPastes]);
+  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
   useEffect(() => {
     sessionDraftsRef.current[lastActiveIdRef.current] = {
       text: composerRef.current,
       pastes: composerPastesRef.current,
+      annotations: annotationsRef.current,
     };
-  }, [composer, composerPastes]);
+  }, [composer, composerPastes, annotations]);
   useEffect(() => {
     if (lastActiveIdRef.current === activeId) return;
     sessionDraftsRef.current[lastActiveIdRef.current] = {
       text: composerRef.current,
       pastes: composerPastesRef.current,
+      annotations: annotationsRef.current,
     };
     lastActiveIdRef.current = activeId;
     const draft = sessionDraftsRef.current[activeId];
     setComposer(draft?.text || "");
     setComposerPastes(draft?.pastes || []);
+    setAnnotations(draft?.annotations || []);
     setExpandedPasteId("");
   }, [activeId]);
 
@@ -6863,11 +6990,31 @@ export function App() {
     }
   }, [settings?.approvalMode]);
 
+  // 切换会话（含启动加载）后贴底：图片附件、mermaid、echarts 都是异步渲染，
+  // 一次性 scrollTo 会被后续的高度增长甩开，所以窗口期内用 ResizeObserver
+  // 监听内容高度，一长高就重新贴底；用户向上滚动立即退出贴底，超时自动退出
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight });
     setAtBottom(true);
+    const pinUntil = performance.now() + 5000;
+    let cancelled = false;
+    const stick = () => {
+      if (cancelled || performance.now() > pinUntil) return;
+      viewport.scrollTo({ top: viewport.scrollHeight });
+    };
+    const column = viewport.firstElementChild;
+    const observer = new ResizeObserver(stick);
+    if (column) observer.observe(column);
+    const cancelOnWheelUp = (event: WheelEvent) => {
+      if (event.deltaY < 0) cancelled = true;
+    };
+    viewport.addEventListener("wheel", cancelOnWheelUp, { passive: true });
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("wheel", cancelOnWheelUp);
+    };
   }, [activeId, ready]);
 
   useEffect(() => {
@@ -7811,6 +7958,113 @@ export function App() {
 
   const closeContextMenu = () => setContextMenu(null);
 
+  // 会话内容区松手：有选中文本时弹出「添加到对话 / 侧边聊天」浮动条，
+  // 定位在选区上方（fixed + 边缘钳制）；composer/输入框里的选区不响应
+  const handleConversationMouseUp = () => {
+    const selection = window.getSelection();
+    const selected = selection?.toString() ?? "";
+    const anchor = selection?.anchorNode;
+    const collapsed = !selection || selection.isCollapsed || !selected.trim();
+    const inside = Boolean(
+      anchor?.nodeType === Node.TEXT_NODE
+        ? anchor.parentElement?.closest(".conversation-column")
+        : (anchor as Element | null)?.closest?.(".conversation-column"),
+    );
+    if (collapsed || !inside) {
+      setSelectionQuote(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const text = normalizeQuote(selected);
+    if (!text) {
+      setSelectionQuote(null);
+      return;
+    }
+    setSelectionQuote({ text, x: rect.left + rect.width / 2, y: rect.top });
+  };
+
+  // 浮动条「添加到对话」：注释进 composer，评论编辑卡锚到选区上方
+  const addSelectionToComposer = () => {
+    if (!selectionQuote) return;
+    const annotation: MessageAnnotation = { id: crypto.randomUUID(), quote: selectionQuote.text, comment: "" };
+    setAnnotations((current) => [...current, annotation]);
+    setAnnotationEditor({ id: annotation.id, x: selectionQuote.x, y: selectionQuote.y });
+    setSelectionQuote(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  // 浮动条「侧边聊天」：打开右栏聊天页并把选中文本预填进草稿
+  const sendSelectionToSideChat = () => {
+    if (!selectionQuote) return;
+    const text = selectionQuote.text;
+    setRightPanelOpen(true);
+    openToolPanelTab("chat");
+    setSideChatSeed({ text, nonce: Date.now() });
+    setSelectionQuote(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  // 选区浮动条的关闭时机：选区塌陷（重新选择/点空白）、Esc、视口滚动
+  useEffect(() => {
+    if (!selectionQuote) return;
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selection.toString().trim()) setSelectionQuote(null);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setSelectionQuote(null);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [selectionQuote]);
+
+  // 注释定位标记：composer 有待发送注释时，在会话内容里引用文本起点上方放编号小气泡。
+  // 只按 Range 量位置渲染绝对定位气泡，不改消息 DOM；Range 是 live 的，内容流式变化时自动跟随。
+  const [annotationMarkers, setAnnotationMarkers] = useState<Array<{ id: string; n: number; top: number; left: number }>>([]);
+  const annotationRangesRef = useRef<Array<{ id: string; n: number; range: Range }>>([]);
+  const updateAnnotationMarkers = () => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    setAnnotationMarkers(annotationRangesRef.current.flatMap(({ id, n, range }) => {
+      const rect = range.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) return [];
+      return [{
+        id,
+        n,
+        top: Math.max(2, rect.top - viewportRect.top + viewport.scrollTop - 26),
+        left: rect.left - viewportRect.left + viewport.scrollLeft,
+      }];
+    }));
+  };
+  // 注释增删或切换会话时重新定位引用文本
+  useEffect(() => {
+    annotationRangesRef.current = annotations.flatMap((annotation, index) => {
+      const range = findQuoteRange(viewportRef.current?.querySelector(".conversation-column") ?? null, annotation.quote);
+      return range ? [{ id: annotation.id, n: index + 1, range }] : [];
+    });
+    updateAnnotationMarkers();
+    // updateAnnotationMarkers 只读写 ref 与 setState，无需入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations, activeId]);
+  // 内容流式变化后按现有 Range 重新量位置（rAF 合帧，避免逐 token 重排）
+  useEffect(() => {
+    if (!annotationRangesRef.current.length) return;
+    const frame = requestAnimationFrame(updateAnnotationMarkers);
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions]);
+  useEffect(() => {
+    window.addEventListener("resize", updateAnnotationMarkers);
+    return () => window.removeEventListener("resize", updateAnnotationMarkers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 消息文本上右键：始终提供「复制」。有选中文本时复制选中内容，
   // 未选中时复制整条消息正文（跳过操作按钮、时间等非正文区域）。
   const handleMessageContextMenu = (event: MouseEvent<HTMLElement>, message?: ChatMessage) => {
@@ -8004,6 +8258,7 @@ export function App() {
       setAttachments([]);
       setActiveSkills([]);
       setComposerPastes([]);
+      setAnnotations([]);
       if (activeSession && activeSession.messages.length === 0) {
         setNotice("当前已是新会话");
         window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -8610,7 +8865,7 @@ export function App() {
     try {
       if (!window.dyworker) {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
-        setComposer((current) => `${current}${current ? "\n" : ""}请根据当前工作文件夹整理一份工作摘要。`);
+        applyVoiceText("请根据当前工作文件夹整理一份工作摘要。");
       } else {
         // 本地引擎只认 WAV：webm 录音先解码重采样成 16k 单声道；云端直接发原始格式
         const engineLocal = settings.transcriptionEngine === "local";
@@ -8622,7 +8877,7 @@ export function App() {
           audio: Array.from(audio),
           mimeType: engineLocal ? "audio/wav" : blob.type || "audio/webm",
         });
-        setComposer((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${result.text}`);
+        applyVoiceText(result.text);
       }
       setNotice("语音已转换为文字");
       window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -8631,6 +8886,17 @@ export function App() {
     } finally {
       recorderRef.current = null;
       setVoiceState("idle");
+    }
+  };
+
+  // 转写结果按目标分发：默认写进 composer，评论卡录音时由 voiceTargetRef 指向评论 setter
+  const applyVoiceText = (text: string) => {
+    const target = voiceTargetRef.current;
+    voiceTargetRef.current = "composer";
+    if (target === "composer") {
+      setComposer((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${text}`);
+    } else {
+      target(text);
     }
   };
 
@@ -8645,7 +8911,7 @@ export function App() {
       setVoiceState("transcribing");
       setNotice("正在把录音转换成文字");
       await new Promise((resolve) => window.setTimeout(resolve, 650));
-      setComposer((current) => `${current}${current ? "\n" : ""}请根据当前工作文件夹整理一份工作摘要。`);
+      applyVoiceText("请根据当前工作文件夹整理一份工作摘要。");
       setVoiceState("idle");
       setNotice("语音已转换为文字");
       return;
@@ -8698,7 +8964,7 @@ export function App() {
       return;
     }
     let content = composer.trim();
-    if ((!content && !attachments.length && !activeSkills.length && !composerPastes.length) || !activeSession) return;
+    if ((!content && !attachments.length && !activeSkills.length && !composerPastes.length && !annotations.length) || !activeSession) return;
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
     if (activeTaskRunning && !queueSupported) return;
@@ -8716,6 +8982,7 @@ export function App() {
       setAttachments([]);
       setActiveSkills([]);
       setComposerPastes([]);
+      setAnnotations([]);
       if (activeSession.messages.length === 0) {
         setNotice("当前已是新会话");
         window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -8752,6 +9019,11 @@ export function App() {
     const pastedBlocks = composerPastes;
     setComposerPastes([]);
     setExpandedPasteId("");
+    // 引用注释：引用文本与评论拼进正文发给模型，气泡只显示 chip
+    const messageAnnotations = annotations;
+    setAnnotations([]);
+    setAnnotationListOpen(false);
+    const annotationText = formatAnnotationsForPrompt(messageAnnotations);
     const pastedText = pastedBlocks.length
       ? `\n\n${pastedBlocks.map((block, index) => `【粘贴的长文本 ${index + 1}｜共 ${block.text.length} 字】\n${block.text}`).join("\n\n")}`
       : "";
@@ -8814,13 +9086,15 @@ export function App() {
       role: "user",
       runId: messageRunId,
       // content 带完整技能指令与折叠的长文本发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
-      content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : "请处理这些附件。")) + pastedText,
-      ...(selectedSkills.length || pastedBlocks.length ? {
-        displayContent: content || (selectedSkills.length ? "（按模板处理当前工作区）" : "（已折叠的粘贴长文本）"),
+      content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。")) + pastedText + annotationText,
+      ...(selectedSkills.length || pastedBlocks.length || messageAnnotations.length ? {
+        displayContent: content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "（已折叠的粘贴长文本）" : "（引用注释）"),
         ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
       // 折叠块原文存进消息：content 已发给模型，气泡按块渲染、可展开查看
       ...(pastedBlocks.length ? { pasteBlocks: pastedBlocks.map((block, index) => ({ id: `paste-${index}`, text: block.text })) } : {}),
+      // 引用注释随消息保存：气泡按 chip + 只读列表展示
+      ...(messageAnnotations.length ? { annotations: messageAnnotations } : {}),
       attachments: selectedAttachments,
       createdAt: new Date().toISOString(),
     };
@@ -9416,7 +9690,7 @@ export function App() {
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   const canSend = Boolean(
-    (composer.trim() || attachments.length || activeSkills.length || composerPastes.length)
+    (composer.trim() || attachments.length || activeSkills.length || composerPastes.length || annotations.length)
     && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
     && voiceState !== "transcribing",
   );
@@ -9599,6 +9873,8 @@ export function App() {
     setComposer(messageVisibleText(message));
     setAttachments(message.attachments ? [...message.attachments] : []);
     setActiveSkills(message.skillsUsed?.length ? skills.filter((skill) => message.skillsUsed?.includes(skill.name)) : []);
+    // 引用注释一并恢复进 composer，重发时按编辑后的版本重新编号拼进正文
+    setAnnotations(message.annotations ? message.annotations.map((annotation) => ({ ...annotation })) : []);
     setMentionMenu(null);
     setNotice("已载入消息，修改后点击发送即可替换原消息并重新处理");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -9609,6 +9885,7 @@ export function App() {
     setComposer("");
     setAttachments([]);
     setActiveSkills([]);
+    setAnnotations([]);
     setNotice("已取消编辑");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
@@ -10486,7 +10763,16 @@ export function App() {
           </nav>
         )}
 
-        <div className="conversation-viewport" ref={viewportRef} onScroll={syncAtBottom}>
+        <div
+          className="conversation-viewport"
+          ref={viewportRef}
+          onScroll={() => {
+            syncAtBottom();
+            // 选区随滚动漂移，浮动条位置不再对准选区，直接收起
+            setSelectionQuote(null);
+          }}
+          onMouseUp={handleConversationMouseUp}
+        >
           <div className="conversation-column">
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
@@ -10605,6 +10891,7 @@ export function App() {
                           />
                         )}
                         {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
+                        {Boolean(message.annotations?.length) && <MessageAnnotationChip annotations={message.annotations!} />}
                         </div>
                         <div className="message-actions user" aria-label="用户消息操作">
                           <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
@@ -10791,6 +11078,10 @@ export function App() {
               </div>
             )}
           </div>
+          {/* 注释编号小气泡：钉在引用文本起点上方，随内容滚动（定位用内容坐标） */}
+          {annotationMarkers.map((marker) => (
+            <span key={marker.id} className="annotation-marker" style={{ top: marker.top, left: marker.left }}>{marker.n}</span>
+          ))}
         </div>
 
         {debugOpen && (
@@ -11020,6 +11311,75 @@ export function App() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {annotations.length > 0 && (
+              <div
+                className="annotation-strip"
+                onMouseEnter={openAnnotationList}
+                onMouseLeave={scheduleCloseAnnotationList}
+              >
+                <span className="annotation-chip">
+                  <MessageSquare size={13} />
+                  <span>{annotations.length} 条注释</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAnnotations([]);
+                      setAnnotationListOpen(false);
+                      setAnnotationEditor(null);
+                    }}
+                    aria-label="清空全部注释"
+                    title="清空全部注释"
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+                {annotationListOpen && (
+                  <div className="annotation-list-popup" role="list">
+                    {annotations.map((annotation, index) => (
+                      <div className="annotation-list-item" key={annotation.id} role="listitem">
+                        <span className="annotation-index">{index + 1}。</span>
+                        <div className="annotation-item-main">
+                          <div className="annotation-item-head">
+                            <span className="annotation-field-label">所选文本：</span>
+                            <span className="annotation-list-actions">
+                              <button
+                                type="button"
+                                aria-label="编辑评论"
+                                title="编辑评论"
+                                onClick={(event) => {
+                                  setAnnotationListOpen(false);
+                                  setAnnotationEditor({ id: annotation.id, x: event.clientX, y: event.clientY });
+                                }}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="删除该注释"
+                                title="删除该注释"
+                                onClick={() => {
+                                  setAnnotations((current) => current.filter((item) => item.id !== annotation.id));
+                                  setAnnotationEditor((current) => current?.id === annotation.id ? null : current);
+                                }}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </span>
+                          </div>
+                          <span className="annotation-quote" title={annotation.quote}>{annotation.quote}</span>
+                          {annotation.comment.trim() && (
+                            <>
+                              <span className="annotation-field-label">用户评论：</span>
+                              <span className="annotation-comment" title={annotation.comment}>{annotation.comment}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <div
@@ -11630,7 +11990,7 @@ export function App() {
           )}
 
           {!menuPageShown && activeToolPanelKind === "chat" && (
-            <SideChatPanel settings={settings} session={activeSession} />
+            <SideChatPanel settings={settings} session={activeSession} seed={sideChatSeed} />
           )}
 
           {!menuPageShown && activeToolPanelKind === "tasks" && (
@@ -11914,6 +12274,36 @@ export function App() {
       )}
       {identitySetupOpen && <IdentitySetupDialog onChoose={chooseIdentity} />}
       {contextMenu && <ContextMenuPopup menu={contextMenu} onClose={closeContextMenu} />}
+      {selectionQuote && (
+        <SelectionQuoteBar
+          quote={selectionQuote}
+          onAddToComposer={addSelectionToComposer}
+          onSendToSideChat={sendSelectionToSideChat}
+          onClose={() => setSelectionQuote(null)}
+        />
+      )}
+      {annotationEditor && (
+        <AnnotationEditorCard
+          editor={annotationEditor}
+          annotation={annotations.find((item) => item.id === annotationEditor.id) ?? null}
+          voiceState={voiceState}
+          onVoiceStart={() => {
+            voiceTargetRef.current = (text: string) => {
+              setAnnotations((current) => current.map((item) => item.id === annotationEditor.id ? { ...item, comment: item.comment ? `${item.comment}\n${text}` : text } : item));
+            };
+            void toggleVoiceInput();
+          }}
+          onClose={() => setAnnotationEditor(null)}
+          onSave={(comment) => {
+            setAnnotations((current) => current.map((item) => item.id === annotationEditor.id ? { ...item, comment } : item));
+            setAnnotationEditor(null);
+          }}
+          onDelete={() => {
+            setAnnotations((current) => current.filter((item) => item.id !== annotationEditor.id));
+            setAnnotationEditor(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -11925,6 +12315,156 @@ type ContextMenuItem = {
   disabled?: boolean;
   onSelect: () => void;
 };
+
+// 选区浮动条：选中会话内容后弹出，固定在选区上方（水平居中 + 边缘钳制）
+function SelectionQuoteBar({
+  quote,
+  onAddToComposer,
+  onSendToSideChat,
+  onClose,
+}: {
+  quote: { text: string; x: number; y: number };
+  onAddToComposer: () => void;
+  onSendToSideChat: () => void;
+  onClose: () => void;
+}) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (barRef.current && !barRef.current.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
+
+  const BAR_WIDTH = 180;
+  const left = Math.max(8, Math.min(quote.x - BAR_WIDTH / 2, window.innerWidth - BAR_WIDTH - 8));
+  const top = Math.max(8, quote.y - 34);
+
+  return (
+    <div
+      ref={barRef}
+      className="selection-quote-bar"
+      role="toolbar"
+      aria-label="选中文字操作"
+      style={{ left, top }}
+    >
+      <button
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onAddToComposer}
+        title={quote.text}
+      >
+        <MessageSquarePlus size={12} />
+        <span>添加到对话</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onSendToSideChat}
+      >
+        <MessagesSquare size={12} />
+        <span>侧边聊天</span>
+      </button>
+    </div>
+  );
+}
+
+// 评论编辑卡：锚点坐标 + 视口钳制；取消=仅关闭，垃圾桶=删除注释，保存=写回评论
+function AnnotationEditorCard({
+  editor,
+  annotation,
+  voiceState,
+  onVoiceStart,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  editor: { id: string; x: number; y: number };
+  annotation: MessageAnnotation | null;
+  voiceState: "idle" | "recording" | "transcribing";
+  onVoiceStart: () => void;
+  onClose: () => void;
+  onSave: (comment: string) => void;
+  onDelete: () => void;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [comment, setComment] = useState(annotation?.comment ?? "");
+
+  useEffect(() => {
+    setComment(annotation?.comment ?? "");
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    // 卡片按 id 打开：同一注释再次打开时重置为已存评论
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotation?.id]);
+
+  // 语音转写直接写进注释本体（卡片外触发）：打开期间同步进编辑框，避免保存时盖掉转写结果
+  useEffect(() => {
+    setComment(annotation?.comment ?? "");
+  }, [annotation?.comment]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (cardRef.current && !cardRef.current.contains(event.target as Node)) onClose();
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
+
+  if (!annotation) return null;
+
+  const CARD_WIDTH = 320;
+  const left = Math.max(8, Math.min(editor.x, window.innerWidth - CARD_WIDTH - 8));
+  const top = Math.max(8, editor.y);
+
+  return (
+    <div ref={cardRef} className="annotation-editor-card" style={{ left, top }}>
+      <div className="annotation-editor-quote" title={annotation.quote}>{annotation.quote}</div>
+      <textarea
+        ref={textareaRef}
+        value={comment}
+        onChange={(event) => setComment(event.target.value)}
+        placeholder="添加可选评论…"
+        rows={3}
+        lang="zh-CN"
+      />
+      <div className="annotation-editor-actions">
+        <button type="button" className="annotation-editor-icon" onClick={onDelete} aria-label="删除该注释" title="删除该注释">
+          <Trash2 size={15} />
+        </button>
+        <span className="annotation-editor-spacer" />
+        <button
+          type="button"
+          className={`annotation-editor-icon${voiceState === "recording" ? " recording" : ""}`}
+          onClick={onVoiceStart}
+          disabled={voiceState === "transcribing"}
+          aria-label={voiceState === "recording" ? "结束录音" : "语音输入评论"}
+          title={voiceState === "recording" ? "正在录音，再次点击结束" : "语音输入评论"}
+        >
+          {voiceState === "transcribing" ? <LoaderCircle size={15} className="spin" /> : <Mic size={15} />}
+        </button>
+        <button type="button" className="annotation-editor-cancel" onClick={onClose}>取消</button>
+        <button type="button" className="annotation-editor-save" onClick={() => onSave(comment.trim())}>保存</button>
+      </div>
+    </div>
+  );
+}
 
 // 全局右键菜单：点击外部、滚动、失焦或按 Esc 时关闭，位置自动贴边
 function ContextMenuPopup({

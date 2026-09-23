@@ -11351,6 +11351,325 @@ body.resizing-panels .file-split-resizer::after {
   cursor: default;
 }
 
+/* ===== 引用注释（选中文字 → 浮动条 → composer chip → 消息气泡 chip）===== */
+
+/* 选区浮动条：固定在选区上方，两个操作按钮 */
+.selection-quote-bar {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  user-select: none;
+}
+
+.selection-quote-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.selection-quote-bar button:hover {
+  background: var(--sidebar-hover);
+}
+
+/* 评论编辑卡：锚点坐标 + 视口钳制 */
+.annotation-editor-card {
+  position: fixed;
+  z-index: 3000;
+  width: 320px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+}
+
+.annotation-editor-quote {
+  max-height: 60px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(127, 164, 0, 0.08);
+  color: #6f9600;
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.annotation-editor-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.annotation-editor-card textarea:focus {
+  outline: 2px solid rgba(127, 164, 0, 0.35);
+  outline-offset: -1px;
+}
+
+.annotation-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.annotation-editor-spacer {
+  flex: 1;
+}
+
+.annotation-editor-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.annotation-editor-actions button:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.annotation-editor-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.annotation-editor-actions .annotation-editor-icon.recording {
+  color: #d4380d;
+}
+
+.annotation-editor-actions .annotation-editor-save {
+  background: rgba(127, 164, 0, 0.14);
+  color: #6f9600;
+  font-weight: 560;
+}
+
+/* composer 里的注释 strip：chip + hover 弹层 */
+.annotation-strip {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  margin: 0 2px 2px;
+}
+
+/* 弹层打开时在 chip 上方铺一条隐形 hover 桥（宽度对齐弹层），
+   鼠标从 chip 上移进弹层经过空隙时不触发 mouseleave */
+.annotation-strip:has(.annotation-list-popup)::before,
+.message-annotation-chip:has(.annotation-list-popup)::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  width: 360px;
+  height: 6px;
+}
+
+.annotation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 260px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border: 1px solid rgba(127, 164, 0, 0.24);
+  border-radius: 9px;
+  color: #6f9600;
+  background: rgba(127, 164, 0, 0.08);
+  font-size: 12.5px;
+  font-weight: 560;
+}
+
+.annotation-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-chip > button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.annotation-chip > button:hover {
+  background: rgba(127, 164, 0, 0.18);
+}
+
+/* 注释列表弹层：composer chip 与消息气泡 chip 共用；readonly 无操作列 */
+.annotation-list-popup {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 2500;
+  width: 360px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 2px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  font-size: 12.5px;
+  user-select: none;
+}
+
+.annotation-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 8px;
+}
+
+.annotation-list-item + .annotation-list-item {
+  border-top: 1px solid var(--border);
+}
+
+.annotation-index {
+  flex: none;
+  min-width: 18px;
+  color: var(--ink);
+  opacity: 0.4;
+  line-height: 1.6;
+}
+
+.annotation-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.55;
+}
+
+.annotation-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.annotation-field-label {
+  color: var(--ink);
+  opacity: 0.45;
+  font-size: 12px;
+}
+
+.annotation-quote,
+.annotation-comment {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.annotation-quote,
+.annotation-comment {
+  color: var(--ink);
+}
+
+.annotation-list-actions {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.annotation-list-actions button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.annotation-list-actions button:hover {
+  background: rgba(127, 164, 0, 0.18);
+  color: #6f9600;
+  opacity: 1;
+}
+
+/* 注释编号小气泡：会话内容里引用文本起点上方，pointer-events 关闭避免挡住选区 */
+.annotation-marker {
+  position: absolute;
+  z-index: 40;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px 10px 10px 3px;
+  background: #2f8cff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(47, 140, 255, 0.4);
+}
+
+/* 已发送消息气泡里的「x 条注释」chip */
+.message-annotation-chip {
+  position: relative;
+  display: inline-flex;
+  margin: 6px 0 0;
+}
+
+.message-annotation-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid rgba(127, 164, 0, 0.24);
+  border-radius: 7px;
+  color: #6f9600;
+  background: rgba(127, 164, 0, 0.08);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.5;
+}
+
 /* ===== 轨迹控制台（trace-console：Overview 时间条 + 明细列表 + 检查器）===== */
 
 .trace-console {
