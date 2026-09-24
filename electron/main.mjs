@@ -1178,6 +1178,7 @@ trustedHandle("app:initial-state", async () => {
   const pinnedWorkspacePaths = await readJson(dataFile("workspace-pins.json"), []);
   return {
     sessions,
+    activeSessionId: await sessionArchive.getActiveId(),
     workspacePath,
     workspaceEntries: await listWorkspace(workspacePath),
     settings: await readSettings(),
@@ -1212,6 +1213,7 @@ trustedHandle("sessions:save", async (_event, payload) => {
       changed: Array.isArray(payload?.changed) ? payload.changed : [],
       removed: Array.isArray(payload?.removed) ? payload.removed : [],
       order: Array.isArray(payload?.order) ? payload.order : [],
+      activeId: typeof payload?.activeId === "string" ? payload.activeId : "",
     };
     await syncChannelSessionWorkspaces(Array.isArray(payload?.meta) ? payload.meta : channelMetaOf(delta.changed));
     await sessionArchive.applyDelta(delta);

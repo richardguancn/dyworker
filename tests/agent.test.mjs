@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -1372,7 +1372,7 @@ test("影响说明生成失败时审批卡正常弹出且无影响段", async ()
   const root = await makeWorkspace();
   const approvals = [];
   const baseFetch = mockFetch([
-    { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "echo ok > deploy.log" })] },
+    { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "xyzzy-deploy --force" })] },
     { role: "assistant", content: "完成。" },
   ]);
   const result = await runAgent({
@@ -1389,7 +1389,54 @@ test("影响说明生成失败时审批卡正常弹出且无影响段", async ()
   });
   assert.equal(result.status, "done");
   assert.equal(approvals.length, 1, "影响说明生成失败不应阻塞审批");
-  assert.ok(!approvals[0].impact, "生成失败时不带影响字段");
+  assert.ok(!approvals[0].impact, "模型失败且静态摘要无可识别事实时不带影响字段");
+});
+
+test("影响说明模型不可用时,run_command 用静态摘要兜底说明事实", async () => {
+  const root = await makeWorkspace();
+  const approvals = [];
+  const baseFetch = mockFetch([
+    { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "kill 123 2>/dev/null; rm -rf ./build; echo ok > deploy.log" })] },
+    { role: "assistant", content: "完成。" },
+  ]);
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    approvalMode: "interactive",
+    conversation: [{ role: "user", content: "停进程并清理" }],
+    requestApproval: async (action) => { approvals.push(action); return true; },
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(body.messages?.[0]?.content || "").includes("审批说明撰写助手")) throw new Error("模型不可用");
+      return baseFetch(url, options);
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(approvals.length, 1);
+  assert.match(approvals[0].impact || "", /结束进程 123/);
+  assert.match(approvals[0].impact || "", /删除 \.\/build（递归删除，不可恢复）/);
+  assert.match(approvals[0].impact || "", /覆盖写入文件 deploy\.log/);
+});
+
+test("summarizeCommandEffects 从多行复合命令提取事实（进程/重定向/只读检查）", () => {
+  const command = [
+    "echo '=== 停旧进程 1343439 ==='",
+    "kill 1343439 2>/dev/null && echo '已发送停止信号' || echo '进程不存在'",
+    "sleep 2",
+    "kill -0 1343439 2>/dev/null && { echo '仍未退出，强制结束'; kill -9 1343439; sleep 2; }",
+    "ss -tlnp 2>/dev/null | grep 18888 && echo '警告：18888 仍被占用' || echo '18888 已释放'",
+  ].join("\n");
+  const effects = summarizeCommandEffects(command);
+  assert.match(effects, /- 结束进程 1343439/);
+  assert.match(effects, /- 等待 2 秒/);
+  assert.match(effects, /- 检查进程 1343439 是否仍在运行（kill -0 只是探测，不会结束进程）/);
+  assert.match(effects, /- 强制结束进程 1343439（kill -9 不给程序清理机会）/);
+  assert.match(effects, /- 检查系统状态（ss，只读）/);
+  assert.doesNotMatch(effects, /\/dev\/null/, "设备重定向不算写文件");
+  assert.doesNotMatch(effects, /2>&1/, "fd 重定向不算写文件");
+  assert.equal(summarizeCommandEffects("xyzzy --do-thing"), "", "不可识别的命令没有静态摘要");
+  // 引号里的 > 不是重定向
+  assert.equal(summarizeCommandEffects("echo 'a > b'"), "");
 });
 
 test("summarizeApprovalImpact 剥离非要点行,异常时回退为空串", async () => {

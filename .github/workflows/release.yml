@@ -84,6 +84,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+      - name: 提取当前版本的更新说明
+        shell: bash
+        run: node electron/scripts/extract-release-notes.mjs "${GITHUB_REF_NAME#v}" RELEASE_NOTES.md > release-notes-current.md
+      - name: 把更新说明写入 latest*.yml
+        shell: bash
+        run: |
+          # 应用内升级弹窗从 latest*.yml 的 releaseNotes 字段读取 Markdown 更新说明，
+          # 避免 electron-updater 默认从 atom feed 拿到的 HTML
+          while IFS= read -r -d '' yml; do
+            printf 'releaseNotes: |\n' >> "$yml"
+            sed 's/^/  /' release-notes-current.md >> "$yml"
+          done < <(find release-assets -type f -name 'latest*.yml' -print0)
       - name: 发布到标签对应的 Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,4 +107,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
             --verify-tag \
             --title "DYWorker $GITHUB_REF_NAME" \
-            --notes-file RELEASE_NOTES.md
+            --notes-file release-notes-current.md

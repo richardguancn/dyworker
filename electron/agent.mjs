@@ -3755,6 +3755,53 @@ export function isImpactSummaryEligible(name = "") {
     || name.startsWith("mcp__");
 }
 
+// 命令的静态影响摘要（run_command 审批卡的兜底）：模型生成的影响说明不可用时，
+// 从命令里提取可确定的事实（结束哪个进程、删除/写入哪个文件），让用户至少能看懂
+// 会发生什么。只陈述事实，不做意图猜测；逐段（&&/||/;/|/换行）识别段首程序。
+export function summarizeCommandEffects(command) {
+  const effects = [];
+  const seen = new Set();
+  const add = (text) => {
+    if (effects.length >= 5 || seen.has(text)) return;
+    seen.add(text);
+    effects.push(`- ${text}`);
+  };
+  for (const segment of String(command || "").split(/&&|\|\||[;|\n]/)) {
+    // 剥掉引号内容后识别重定向目标（> 覆盖写、>> 追加；/dev/null 与 2>&1 之类不算写文件）
+    const unquoted = segment.replace(/'[^']*'|"[^"]*"/g, "");
+    for (const match of unquoted.matchAll(/\d*(>>?)\s*([^\s;|&]+)/g)) {
+      const target = match[2];
+      if (/^&/.test(target) || target.startsWith("/dev/")) continue;
+      add(`${match[1] === ">>" ? "追加写入" : "覆盖写入"}文件 ${target}`);
+    }
+    // 段内程序识别前先把重定向段剥掉，避免 `kill 123 2>/dev/null` 的参数里混进 2、/dev/null
+    const words = shellWords(segment.replace(/\d*>>?(?:\s*[^\s;|&]*)?/g, " "));
+    const program = basenameOf(words[0] || "");
+    const rest = words.slice(1).filter((word) => !word.startsWith("-"));
+    if (program === "kill" || program === "pkill" || program === "killall") {
+      const force = words.includes("-9") || words.includes("-KILL");
+      const probe = words.includes("-0");
+      if (probe) add(`检查进程 ${rest.join("、")} 是否仍在运行（kill -0 只是探测，不会结束进程）`);
+      else if (program === "kill") add(`${force ? "强制结束" : "结束"}进程 ${rest.join("、")}${force ? "（kill -9 不给程序清理机会）" : ""}`);
+      else add(`${force ? "强制结束" : "结束"}匹配「${rest.join(" ")}」的进程`);
+    } else if (program === "rm") {
+      const recursive = words.some((word) => /^-[a-z]*r/i.test(word));
+      if (rest.length) add(`删除 ${rest.join("、")}${recursive ? "（递归删除，不可恢复）" : "（不可恢复）"}`);
+    } else if (program === "cp" || program === "mv") {
+      if (rest.length >= 2) add(`${program === "cp" ? "复制" : "移动/重命名"} ${rest[0]} → ${rest[rest.length - 1]}`);
+    } else if (program === "mkdir") {
+      if (rest.length) add(`创建目录 ${rest.join("、")}`);
+    } else if (program === "sleep") {
+      if (rest[0]) add(`等待 ${rest[0]} 秒`);
+    } else if (program === "ss" || program === "lsof" || program === "ps") {
+      add(`检查系统状态（${program}，只读）`);
+    } else if (program === "grep" || program === "rg") {
+      if (rest[0]) add(`查找「${rest[0]}」（只读）`);
+    }
+  }
+  return effects.join("\n");
+}
+
 export async function summarizeApprovalImpact({ settings, action = {}, context = "", fetchImpl = fetch, signal = null } = {}) {
   const request = [
     {
@@ -4862,7 +4909,10 @@ export async function runAgent({
                 const freshDetailText = currentExternalPaths.length
                   ? `工作区外路径（批准后本次任务内有效；批准的是目录时，其子路径同样有效）：\n${currentExternalPaths.join("\n")}${details ? `\n\n操作内容：\n${details}` : ""}`
                   : details;
-                const impact = await impactPromise;
+                // 模型说明不可用时用静态摘要兜底（仅 run_command）：让用户至少看懂
+                // 会结束哪个进程、删除/写入哪个文件，而不是面对一整段 shell 脚本
+                const impact = await impactPromise
+                  || (name === "run_command" ? summarizeCommandEffects(args.command) : "");
                 const sections = [];
                 if (freshDetailText) sections.push(freshDetailText);
                 // 审核助手转人工时附上理由（含"审核助手不可用"这类故障），让用户知道为什么还是问到自己

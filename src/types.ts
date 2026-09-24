@@ -309,6 +309,8 @@ export interface SessionSavePayload {
   changed: SessionRecord[];
   removed: string[];
   order: string[];
+  // 当前选中的会话 id：随增量落盘，重启后恢复选中
+  activeId?: string;
   meta: Array<{ id: string; channel?: "qq" | "wechat"; workspacePath?: string }>;
 }
 
@@ -448,6 +450,7 @@ export interface AppUpdateStatus {
   releaseName?: string;
   releaseDate?: string;
   releaseNotes?: string;
+  updateUrl?: string;
   percent?: number;
   bytesPerSecond?: number;
   transferred?: number;
@@ -674,6 +677,8 @@ export interface DyworkerBridge {
   readonly platform: string;
   getInitialState(): Promise<{
     sessions: SessionRecord[];
+    // 渲染端上次选中的会话 id（可能已不存在，调用方需校验后回退）
+    activeSessionId?: string;
     workspacePath: string;
     workspaceEntries: WorkspaceEntry[];
     settings: ProviderSettings;

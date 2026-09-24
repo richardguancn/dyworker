@@ -168,6 +168,55 @@ test("全新安装返回空数组，写读往返不受影响", async () => {
   assert.deepEqual(loaded.map((session) => session.id), ["fresh"]);
 });
 
+test("activeId 随 applyDelta 持久化到 index.json，重启后 getActiveId 读回", async () => {
+  const dir = await tempDir();
+  const legacyFile = path.join(dir, "sessions.json");
+  const archive = createSessionArchive({ dir, legacyFile });
+  await archive.applyDelta({ changed: [makeSession("a"), makeSession("b")], removed: [], order: ["a", "b"], activeId: "b" });
+
+  const index = JSON.parse(await fs.readFile(path.join(dir, "index.json"), "utf8"));
+  assert.equal(index.activeId, "b", "index.json 应包含持久化的 activeId");
+
+  // 新实例（对应重启后）读回
+  const restarted = createSessionArchive({ dir, legacyFile });
+  assert.equal(await restarted.getActiveId(), "b");
+  assert.deepEqual((await restarted.loadAll()).map((session) => session.id), ["a", "b"]);
+});
+
+test("getActiveId 在选中会话被移除后返回空串", async () => {
+  const dir = await tempDir();
+  const legacyFile = path.join(dir, "sessions.json");
+  const archive = createSessionArchive({ dir, legacyFile });
+  await archive.applyDelta({ changed: [makeSession("a"), makeSession("b")], removed: [], order: ["a", "b"], activeId: "b" });
+  assert.equal(await archive.getActiveId(), "b");
+
+  // 删除选中会话：activeId 不再对应现存会话，读回应为空串
+  await archive.applyDelta({ changed: [], removed: ["b"], order: ["a"], activeId: "a" });
+  assert.equal(await archive.getActiveId(), "a");
+
+  await archive.applyDelta({ changed: [], removed: ["a"], order: [], activeId: "" });
+  assert.equal(await archive.getActiveId(), "");
+});
+
+test("旧格式 index.json（无 activeId 字段）读取正常，getActiveId 返回空串", async () => {
+  const dir = await tempDir();
+  const legacyFile = path.join(dir, "sessions.json");
+  // 先用存档正常落盘，再把 index.json 改回旧格式（删掉 activeId 字段）
+  await createSessionArchive({ dir, legacyFile }).saveAll([makeSession("old-1"), makeSession("old-2")]);
+  const index = JSON.parse(await fs.readFile(path.join(dir, "index.json"), "utf8"));
+  delete index.activeId;
+  await fs.writeFile(path.join(dir, "index.json"), JSON.stringify(index), "utf8");
+
+  const archive = createSessionArchive({ dir, legacyFile });
+  assert.equal(await archive.getActiveId(), "");
+  assert.deepEqual((await archive.loadAll()).map((session) => session.id), ["old-1", "old-2"]);
+
+  // 旧存档被增量更新后写入新版 index（带 activeId），往返不受影响
+  await archive.applyDelta({ changed: [], removed: [], order: ["old-1", "old-2"], activeId: "old-2" });
+  const restarted = createSessionArchive({ dir, legacyFile });
+  assert.equal(await restarted.getActiveId(), "old-2");
+});
+
 test("并发混合操作不丢数据、不产生交错损坏", async () => {
   const dir = await tempDir();
   const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });

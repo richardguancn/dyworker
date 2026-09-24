@@ -78,6 +78,7 @@ import {
   X,
 } from "lucide-react";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
@@ -4317,21 +4318,27 @@ function ContextRing({ used, limit, exact, stats }: {
   );
 }
 
-// 在容器文本节点里定位引用文本的起点：空白归一化后做多级前缀匹配，命中后映射回原始偏移。
-// 只返回 Range 用于量位置，不改动消息 DOM（React 重渲染时不会被破坏）。
+// 注释列表弹层宽度（与 .annotation-list-popup 的 width 保持一致），fixed 定位时用于水平钳制
+const ANNOTATION_POPUP_WIDTH = 360;
+
+// 在容器文本节点里定位引用文本的起点：把所有文本节点拼成一个归一化长串（记录每个字符
+// 对应的原始节点与偏移），做多级匹配后映射回 DOM。拼接匹配让跨元素边界的引用（加粗/链接
+// 把一段文字切成多个文本节点）也能命中。只返回 Range 用于量位置，不改动消息 DOM。
 function findQuoteRange(root: ParentNode | null, quote: string): Range | null {
   if (!root || !quote) return null;
   const needles = [quote, quote.slice(0, 24), quote.slice(0, 12), quote.slice(0, 6)]
     .filter((needle, index, all) => needle.length >= 6 && all.indexOf(needle) === index);
+  // 前缀全部失配时（引用起点恰好落在元素边界上），退而找引用里最长的一段连续文字
+  const anchor = quote.split(/[\s，。；：、（）()"“”'‘’「」]+/).sort((a, b) => b.length - a.length)[0] || "";
+  if (anchor.length >= 6 && !needles.includes(anchor)) needles.push(anchor);
   if (!needles.length) return null;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let normalized = "";
+  const origin: Array<{ node: Text; offset: number }> = [];
+  let pendingSpace = false;
   let node = walker.nextNode() as Text | null;
   while (node) {
     const raw = node.data;
-    // 归一化文本 + 每个归一化字符对应的原始下标
-    let normalized = "";
-    const map: number[] = [];
-    let pendingSpace = false;
     for (let i = 0; i < raw.length; i++) {
       if (/\s/.test(raw[i])) {
         pendingSpace = normalized.length > 0;
@@ -4339,42 +4346,72 @@ function findQuoteRange(root: ParentNode | null, quote: string): Range | null {
       }
       if (pendingSpace) {
         normalized += " ";
-        map.push(i);
+        origin.push({ node, offset: i });
         pendingSpace = false;
       }
       normalized += raw[i];
-      map.push(i);
-    }
-    for (const needle of needles) {
-      const hit = normalized.indexOf(needle);
-      if (hit < 0) continue;
-      const start = map[hit];
-      const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, Math.min(raw.length, start + 1));
-      return range;
+      origin.push({ node, offset: i });
     }
     node = walker.nextNode() as Text | null;
+  }
+  for (const needle of needles) {
+    const hit = normalized.indexOf(needle);
+    if (hit < 0) continue;
+    const { node: hitNode, offset } = origin[hit];
+    const range = document.createRange();
+    range.setStart(hitNode, offset);
+    range.setEnd(hitNode, Math.min(hitNode.length, offset + 1));
+    return range;
   }
   return null;
 }
 
-// 已发送消息里的「x 条注释」chip：hover 显示只读注释列表（不含编辑/删除）
+// 气泡里的「x 条注释」chip：hover 显示只读注释列表。
+// 弹层 portal 到 body：消息行有 content-visibility:auto（长会话虚拟化），其绘制裁剪会把
+// 任何超出消息行边界的子元素（含 fixed 定位）裁掉，弹层只有移出消息行 DOM 才能完整显示。
 function MessageAnnotationChip({ annotations }: { annotations: MessageAnnotation[] }) {
-  const [open, setOpen] = useState(false);
+  const chipRef = useRef<HTMLDivElement>(null);
   // 延迟关闭：mouseleave 后留宽限，鼠标斜向移入弹层时不闪关
   const closeTimerRef = useRef(0);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null);
+
+  const computePos = () => {
+    const rect = chipRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    // chip 滚出视口时直接关掉，弹层不悬空
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return null;
+    const left = Math.max(8, Math.min(rect.right - ANNOTATION_POPUP_WIDTH, window.innerWidth - ANNOTATION_POPUP_WIDTH - 8));
+    // 下方空间不足时翻转到 chip 上方（bottom 锚定贴住 chip）
+    return rect.bottom + 6 + 270 <= window.innerHeight
+      ? { top: rect.bottom + 6, left }
+      : { bottom: window.innerHeight - rect.top + 6, left };
+  };
   const handleEnter = () => {
     window.clearTimeout(closeTimerRef.current);
-    setOpen(true);
+    setPos(computePos());
   };
   const handleLeave = () => {
     window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = window.setTimeout(() => setOpen(false), 200);
+    closeTimerRef.current = window.setTimeout(() => setPos(null), 200);
   };
   useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
+  // 弹层是 fixed 定位，不随会话内容滚动：滚动/缩放时跟随 chip 重定位
+  useEffect(() => {
+    if (!pos) return;
+    const reposition = () => setPos(computePos());
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+    // computePos 只读 DOM 实时值，无需入依赖；仅在开关状态变化时挂监听
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(pos)]);
+
   return (
     <div
+      ref={chipRef}
       className="message-annotation-chip"
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
@@ -4383,8 +4420,14 @@ function MessageAnnotationChip({ annotations }: { annotations: MessageAnnotation
         <MessageSquare size={12} />
         <span>{annotations.length} 条注释</span>
       </span>
-      {open && (
-        <div className="annotation-list-popup readonly" role="list">
+      {pos && createPortal(
+        <div
+          className="annotation-list-popup floating readonly"
+          role="list"
+          style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
+          onMouseEnter={handleEnter}
+          onMouseLeave={handleLeave}
+        >
           {annotations.map((annotation, index) => (
             <div className="annotation-list-item" key={annotation.id} role="listitem">
               <span className="annotation-index">{index + 1}。</span>
@@ -4400,7 +4443,8 @@ function MessageAnnotationChip({ annotations }: { annotations: MessageAnnotation
               </div>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -4783,6 +4827,10 @@ function AppUpdateDialog({
   const isChecking = status.state === "checking";
   const isDownloading = status.state === "downloading";
   const progress = Math.round(Math.max(0, Math.min(100, status.percent || 0)));
+  const latestReleaseUrl = status.updateUrl ? `${status.updateUrl}/releases/latest` : "";
+  const openLatestRelease = () => {
+    if (latestReleaseUrl) void window.dyworker?.openBrowserExternal?.(latestReleaseUrl);
+  };
   const title = status.state === "available"
     ? "发现新版本"
     : status.state === "downloaded"
@@ -4812,7 +4860,7 @@ function AppUpdateDialog({
         {(status.state === "available" || status.state === "downloading" || status.state === "downloaded") && status.releaseNotes && (
           <div className="app-update-notes">
             <div className="app-update-notes-title">更新内容</div>
-            <div className="app-update-notes-body">{status.releaseNotes}</div>
+            <div className="app-update-notes-body"><MarkdownSnippet content={status.releaseNotes} /></div>
           </div>
         )}
         {(status.state === "available" || status.state === "downloading" || status.state === "downloaded") && !status.releaseNotes && (
@@ -4830,6 +4878,11 @@ function AppUpdateDialog({
         {status.state === "unavailable" && <p className="app-update-copy">开发环境或当前安装方式暂不检查更新。</p>}
         {status.state === "error" && <p className="app-update-copy error-text">{status.error || "暂时无法连接 GitHub，请稍后重试。"}</p>}
         <div className="dialog-actions app-update-actions">
+          {latestReleaseUrl && (
+            <button type="button" className="app-update-latest-link" onClick={openLatestRelease}>
+              下载最新版
+            </button>
+          )}
           <button type="button" className="button-secondary" onClick={onClose}>稍后</button>
           {status.state === "available" && <button type="button" className="button-primary" onClick={onDownload}>下载并安装更新</button>}
           {status.state === "downloaded" && <button type="button" className="button-primary" onClick={onInstall}>重启并安装</button>}
@@ -5853,6 +5906,15 @@ function SettingsDialog({
             {appUpdate.state === "downloaded" ? "安装更新" : appUpdate.state === "available" ? "查看更新" : "检查更新"}
           </button>
         </div>
+        {draft.updateUrl && (
+          <button
+            type="button"
+            className="app-update-latest-link"
+            onClick={() => void window.dyworker?.openBrowserExternal?.(`${draft.updateUrl}/releases/latest`)}
+          >
+            在浏览器中下载最新版本
+          </button>
+        )}
         <div className="dialog-section-title">应用更新来源</div>
         <label>
           更新地址
@@ -6904,7 +6966,9 @@ export function App() {
         setSessions(loaded);
         // 种子保存基线：首次保存不需要把整档重发一遍
         savedSessionsRef.current = new Map(loaded.map((session) => [session.id, session]));
-        setActiveId(loaded[0].id);
+        // 恢复上次选中的会话；已不存在（被删/来自旧版本存档）则回退到列表第一项
+        const restoredActiveId = loaded.some((session) => session.id === state.activeSessionId) ? state.activeSessionId : loaded[0].id;
+        setActiveId(restoredActiveId || loaded[0].id);
         // 全局工作目录可能被上次的无目录会话清空，优先用当前会话保存的目录
         setWorkspacePath(loaded[0].workspacePath || state.workspacePath);
         setWorkspaceEntries(state.workspaceEntries);
@@ -6951,6 +7015,7 @@ export function App() {
       changed,
       removed,
       order: current.map((session) => session.id),
+      activeId: activeIdRef.current,
       meta: current.map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath })),
     };
   };
@@ -6963,7 +7028,7 @@ export function App() {
     if (runningSessionIds.size) return;
     const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(buildSessionSavePayload(sessions)), 180);
     return () => window.clearTimeout(timeout);
-  }, [ready, sessions, runningSessionIds]);
+  }, [ready, sessions, activeId, runningSessionIds]);
 
   // 任务运行中的低频兜底快照：应用崩溃时最多丢这一窗口内的流式内容
   useEffect(() => {
@@ -8023,7 +8088,7 @@ export function App() {
     };
   }, [selectionQuote]);
 
-  // 注释定位标记：composer 有待发送注释时，在会话内容里引用文本起点上方放编号小气泡。
+  // 注释定位标记：composer 待发送注释与已发送消息里的注释，都在引用文本起点上方放编号小气泡。
   // 只按 Range 量位置渲染绝对定位气泡，不改消息 DOM；Range 是 live 的，内容流式变化时自动跟随。
   const [annotationMarkers, setAnnotationMarkers] = useState<Array<{ id: string; n: number; top: number; left: number }>>([]);
   const annotationRangesRef = useRef<Array<{ id: string; n: number; range: Range }>>([]);
@@ -8037,21 +8102,32 @@ export function App() {
       return [{
         id,
         n,
-        top: Math.max(2, rect.top - viewportRect.top + viewport.scrollTop - 26),
+        top: Math.max(2, rect.top - viewportRect.top + viewport.scrollTop - 24),
         left: rect.left - viewportRect.left + viewport.scrollLeft,
       }];
     }));
   };
-  // 注释增删或切换会话时重新定位引用文本
+  // 注释增删、切换会话或新消息落盘时重新定位引用文本（流式期间只按 live Range 重算位置，见下方 rAF effect）
+  const activeMessageCount = activeSession?.messages.length ?? 0;
   useEffect(() => {
-    annotationRangesRef.current = annotations.flatMap((annotation, index) => {
-      const range = findQuoteRange(viewportRef.current?.querySelector(".conversation-column") ?? null, annotation.quote);
-      return range ? [{ id: annotation.id, n: index + 1, range }] : [];
+    const column = viewportRef.current?.querySelector(".conversation-column") ?? null;
+    const quotes: Array<{ id: string; n: number; quote: string }> = [
+      ...annotations.map((annotation, index) => ({ id: annotation.id, n: index + 1, quote: annotation.quote })),
+      ...(activeSession?.messages ?? []).flatMap((message, messageIndex) =>
+        (message.annotations ?? []).map((annotation, index) => ({
+          id: `${message.id ?? messageIndex}-${annotation.id}`,
+          n: index + 1,
+          quote: annotation.quote,
+        }))),
+    ];
+    annotationRangesRef.current = quotes.flatMap((entry) => {
+      const range = findQuoteRange(column, entry.quote);
+      return range ? [{ id: entry.id, n: entry.n, range }] : [];
     });
     updateAnnotationMarkers();
-    // updateAnnotationMarkers 只读写 ref 与 setState，无需入依赖
+    // activeSession 由 sessions 派生，消息数变化已能覆盖注释落盘的时机
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, activeId]);
+  }, [annotations, activeId, activeMessageCount]);
   // 内容流式变化后按现有 Range 重新量位置（rAF 合帧，避免逐 token 重排）
   useEffect(() => {
     if (!annotationRangesRef.current.length) return;
@@ -9081,14 +9157,19 @@ export function App() {
           return `【${skill.name}】${skill.description}${location}\n执行要求:${skill.instructions}`;
         }).join("\n\n")}\n\n以下是我的任务:\n`
       : "";
+    // 用户实际输入（可能为空：纯附件/长文本/注释消息）
+    const typedContent = content;
+    // 空输入时给模型一句任务提示；气泡不显示这句占位文字
+    const modelContent = typedContent || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。");
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       runId: messageRunId,
       // content 带完整技能指令与折叠的长文本发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
-      content: skillsBlock + (content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。")) + pastedText + annotationText,
-      ...(selectedSkills.length || pastedBlocks.length || messageAnnotations.length ? {
-        displayContent: content || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "（已折叠的粘贴长文本）" : "（引用注释）"),
+      content: skillsBlock + modelContent + pastedText + annotationText,
+      ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length ? {
+        // 气泡只显示用户实际输入；空输入（纯附件/长文本/注释）不显示占位文字
+        displayContent: typedContent,
         ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
       // 折叠块原文存进消息：content 已发给模型，气泡按块渲染、可展开查看
@@ -10812,6 +10893,23 @@ export function App() {
                 const legacySkillChips = message.role === "user"
                   ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
                   : [];
+                // 纯图片消息：占位文字已去掉，气泡里没有文字/chip/粘贴块/注释/语音时整个气泡不渲染，只留图片
+                const bubbleHasContent = message.role === "user" && (
+                  isVoiceMessage(message)
+                  || Boolean(messageVisibleText(message).trim())
+                  || legacySkillChips.length > 0
+                  || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
+                  || Boolean(message.pasteBlocks?.length)
+                  || Boolean(message.annotations?.length)
+                );
+                // 气泡里只有注释 chip：不套气泡边框，chip 直接裸放（套框显得笨重）
+                const bubbleBare = message.role === "user"
+                  && Boolean(message.annotations?.length)
+                  && !isVoiceMessage(message)
+                  && !messageVisibleText(message).trim()
+                  && !legacySkillChips.length
+                  && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
+                  && !message.pasteBlocks?.length;
                 const openMessageFile = (name: string) => {
                   const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
                   void openReferencedFile(name, recorded?.path);
@@ -10850,8 +10948,9 @@ export function App() {
                             ))}
                           </div>
                         )}
+                        {bubbleHasContent && (
                         <div
-                          className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}`}
+                          className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
                           onContextMenu={(event) => handleMessageContextMenu(event, message)}
                         >
                         {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
@@ -10893,6 +10992,7 @@ export function App() {
                         {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
                         {Boolean(message.annotations?.length) && <MessageAnnotationChip annotations={message.annotations!} />}
                         </div>
+                        )}
                         <div className="message-actions user" aria-label="用户消息操作">
                           <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
                           <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">

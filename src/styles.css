@@ -3513,6 +3513,19 @@ body.resizing-panels .app-shell {
   box-shadow: 0 0 0 3px rgba(127, 164, 0, 0.1), var(--shadow-sm);
 }
 
+/* 纯注释消息：气泡里只有「x 条注释」chip，去掉气泡外框，chip 裸放 */
+.user-bubble.bare {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.user-bubble.bare .message-annotation-chip {
+  margin: 0;
+}
+
 /* 渠道语音消息（微信/QQ 风格语音条 + 下方独立 ASR 转文字卡片） */
 .user-bubble.voice-wrapper {
   background: transparent;
@@ -7258,7 +7271,6 @@ body.resizing-panels .app-shell {
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--muted);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -7330,6 +7342,20 @@ body.resizing-panels .app-shell {
 
 .app-update-actions {
   margin-top: 22px;
+}
+
+.app-update-latest-link {
+  margin-right: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.app-update-latest-link:hover {
+  text-decoration: underline;
 }
 
 .inbox-dialog {
@@ -11484,14 +11510,23 @@ body.resizing-panels .file-split-resizer::after {
 
 /* 弹层打开时在 chip 上方铺一条隐形 hover 桥（宽度对齐弹层），
    鼠标从 chip 上移进弹层经过空隙时不触发 mouseleave */
-.annotation-strip:has(.annotation-list-popup)::before,
-.message-annotation-chip:has(.annotation-list-popup)::before {
+.annotation-strip:has(.annotation-list-popup)::before {
   content: "";
   position: absolute;
   bottom: 100%;
   left: 0;
   width: 360px;
   height: 6px;
+}
+
+/* 气泡里 chip 的弹层：portal 到 body 后 fixed 定位（消息行的 content-visibility 绘制裁剪
+   会裁掉行内弹层），具体坐标由组件内联样式给出 */
+.annotation-list-popup.floating {
+  position: fixed;
+  z-index: 3000;
+  top: auto;
+  bottom: auto;
+  left: auto;
 }
 
 .annotation-chip {

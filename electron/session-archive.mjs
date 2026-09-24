@@ -52,6 +52,8 @@ export function createSessionArchive({ dir, legacyFile }) {
   let byId = new Map(); // id -> 已解析会话对象（主进程内存镜像）
   let fingerprints = new Map(); // id -> 内容指纹（saveAll 差异化写入用）
   let migrated = false;
+  // 渲染端最后选中的会话 id：随 index.json 持久化，重启后恢复选中（recoverFromDirectory 无法恢复时保持空串）
+  let activeId = "";
   let chain = Promise.resolve();
 
   const enqueue = (job) => {
@@ -63,7 +65,7 @@ export function createSessionArchive({ dir, legacyFile }) {
   const indexPath = () => path.join(dir, INDEX_NAME);
 
   const writeIndex = async () => {
-    await writeAtomic(indexPath(), JSON.stringify({ version: 1, order: entries.map((entry) => entry.id) }, null, 2));
+    await writeAtomic(indexPath(), JSON.stringify({ version: 1, order: entries.map((entry) => entry.id), activeId: activeId || undefined }, null, 2));
   };
 
   const writeSessionFile = async (session) => {
@@ -114,6 +116,7 @@ export function createSessionArchive({ dir, legacyFile }) {
     const index = await readJsonFile(indexPath(), null);
     if (index && Array.isArray(index.order)) {
       entries = index.order.map((id) => ({ id: String(id), file: encodeSessionId(id) }));
+      activeId = String(index.activeId || ""); // 旧版 index 无此字段，保持空串
       migrated = true;
       return;
     }
@@ -216,8 +219,9 @@ export function createSessionArchive({ dir, legacyFile }) {
       });
     },
 
-    // 渲染端增量：changed 原样写入、removed 删除、order 作为权威顺序
-    async applyDelta({ changed = [], removed = [], order = [] } = {}) {
+    // 渲染端增量：changed 原样写入、removed 删除、order 作为权威顺序；
+    // activeId 非空时更新持久化的选中会话（persistOrder 会重写 index.json）
+    async applyDelta({ changed = [], removed = [], order = [], activeId: nextActiveId } = {}) {
       return withArchive(async () => {
         for (const session of changed) {
           if (!session?.id) continue;
@@ -233,8 +237,14 @@ export function createSessionArchive({ dir, legacyFile }) {
           byId.delete(key);
           fingerprints.delete(key);
         }
+        if (typeof nextActiveId === "string" && nextActiveId) activeId = nextActiveId;
         await persistOrder(order.map((id) => String(id)));
       });
+    },
+
+    // 渲染端最后选中的会话：对应会话仍存在则返回它，否则空串（由调用方回退）
+    getActiveId() {
+      return withArchive(() => (entries.some((entry) => entry.id === activeId) ? activeId : ""));
     },
 
     // 窗口关闭期间计划任务的转录落盘：已存在则跳过（原 persistSessionRecord 语义）
