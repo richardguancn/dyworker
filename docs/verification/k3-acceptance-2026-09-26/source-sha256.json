@@ -1,0 +1,7 @@
+{
+  "electron/agent.mjs": "2a7abf2bf99d7590cd15ba40da196d19ef0b147f5d2270f88f7b9374b65b0d62",
+  "electron/main.mjs": "c76d10ae960d72690565990cdf63263b90ac909fdbfc3836bd0b7e6ea9953aa0",
+  "src/App.tsx": "f73f6e9e6544c1eb9c564544654c97d1d9ffe80f5601efc24e0bc3e49075e2a1",
+  "src/types.ts": "cb480be190ef58e50db9e564dd53398ea99973d2b9e1f35305e33a534d6091c5",
+  "tests/k3-audit-and-completion.test.mjs": "eef3c6876e5e0de2d5e2c5ab14d126185d0f0bca91e1971d57f5c9bd0ce5383c"
+}

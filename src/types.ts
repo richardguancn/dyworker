@@ -2,6 +2,7 @@ export type Role = "user" | "assistant" | "system";
 
 export type ActivityKind =
   | "thinking"
+  | "commentary"
   | "update_plan"
   | "list_files"
   | "read_file"
@@ -41,6 +42,8 @@ export interface ActivityRecord {
   title: string;
   detail?: string;
   status: "running" | "success" | "error";
+  durationMs?: number;
+  commentary?: string;
   // process-chain：活动挂到的计划步骤 id（plan-update 时补稳定 id）
   stepId?: string;
   // process-chain：活动阶段（plan/execute/verify/fix/deliver），失败后同目标重试打 fix
@@ -116,7 +119,7 @@ export interface FileChange {
 }
 
 export interface AgentResult {
-  status: "done" | "paused" | "cancelled" | "error" | "sleeping";
+  status: "done" | "paused" | "cancelled" | "error" | "sleeping" | "unverified";
   finalText: string;
   reason?: string;
   demo?: boolean;
@@ -125,6 +128,13 @@ export interface AgentResult {
   plan?: PlanStep[];
   memories?: Array<Omit<MemoryItem, "id" | "createdAt" | "workspacePath">>;
   workingContext?: string;
+  executedMessages?: Array<{
+    role: string;
+    content: any;
+    reasoning_content?: string;
+    tool_calls?: any[];
+    tool_call_id?: string;
+  }>;
 }
 
 export interface DebugLogEntry {
@@ -198,7 +208,7 @@ export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-a
 
 export type AgentEvent =
   | { type: "activity"; activity: ActivityRecord }
-  | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string; branch?: { parentId: string; title?: string; depth: number } }
+  | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string; durationMs?: number; commentary?: string; branch?: { parentId: string; title?: string; depth: number } }
   | { type: "assistant-text"; text: string }
   // 推理模型的思考流（reasoning_content 累积文本）：不进正文，仅用于界面实时展示思考过程
   | { type: "assistant-reasoning"; text: string }
@@ -273,6 +283,7 @@ export interface ChatMessage {
   durationMs?: number;
   taskStatus?: AgentResult["status"] | "queued";
   workingContext?: string;
+  executedMessages?: AgentResult["executedMessages"];
 }
 
 export interface SessionRecord {
@@ -395,6 +406,20 @@ export interface ImportedHistoryEntry {
   title: string;
   visits: number;
   lastVisit: number;
+}
+
+// 浏览器 Computer Use 控制状态
+export interface BrowserControlState {
+  status: "idle" | "acquiring" | "running" | "awaiting_approval" | "human_control" | "paused" | "completed" | "stopped" | "failed";
+  controlSessionId: string;
+  ownerSessionId: string;
+  runId: string;
+  tabId: string;
+  webContentsId: number;
+  leaseEpoch: number;
+  actionText: string;
+  pauseReason: string;
+  elapsedMs: number;
 }
 
 export interface McpServerConfig {
@@ -741,6 +766,18 @@ export interface DyworkerBridge {
   /** 内置浏览器下载进度广播 */
   onBrowserDownloadProgress?(callback: (record: { id: string; filename: string; path: string; received: number; total: number; state: "progressing" | "interrupted" | "completed" | "cancelled"; startedAt: number }) => void): () => void;
   onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string }) => void): () => void;
+  /** 浏览器 Computer Use：用户主动接管控制权 */
+  takeoverBrowserControl?(): Promise<{ ok: boolean; status?: string; result?: string }>;
+  /** 浏览器 Computer Use：用户交还控制权让助手继续 */
+  resumeBrowserControl?(payload?: { ownerSessionId?: string; runId?: string }): Promise<{ ok: boolean; status?: string; result?: string }>;
+  /** 浏览器 Computer Use：停止当前操作 */
+  stopBrowserControl?(): Promise<{ ok: boolean; status?: string; result?: string }>;
+  /** 浏览器 Computer Use：获取当前控制状态 */
+  getBrowserControlStatus?(): Promise<BrowserControlState>;
+  /** 浏览器 Computer Use：监听控制状态广播 */
+  onBrowserControlState?(callback: (state: BrowserControlState) => void): () => void;
+  /** 浏览器 Computer Use：监听控制恢复广播（用于自动触发续跑任务） */
+  onBrowserControlResumed?(callback: (payload: { ownerSessionId?: string; runId?: string; tabId?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;
   /** 拉取同一服务地址 + 密钥下的可用模型列表（GET /models），用于模型名称下拉切换 */

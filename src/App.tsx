@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bell,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -85,9 +86,10 @@ import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
+import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 
@@ -2990,14 +2992,7 @@ function filterWorkspaceEntries(entries: WorkspaceEntry[], query: string): Works
 
 function completedPlanForMessage(message: ChatMessage) {
   if (!message.plan?.length) return undefined;
-  if (message.taskStatus === "done") {
-    return message.plan.map((step) => ({ ...step, status: "completed" as const }));
-  }
-  // 兼容修复前已经保存的消息：有耗时且没有暂停、挂起、停止或报错提示时，视为正常完成。
-  if (message.taskStatus || !message.durationMs || /已暂停|已主动挂起|已按你的要求停止|任务执行出错|任务失败|任务错误/.test(message.content)) {
-    return message.plan;
-  }
-  return message.plan.map((step) => ({ ...step, status: "completed" as const }));
+  return message.plan;
 }
 
 // Codex 风格的文件变更摘要卡片：数据来自 agent 的 file-change 事件（真实 +N/-M 统计，可展开 unified diff）
@@ -3109,10 +3104,28 @@ function formatDuration(ms?: number) {
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
 
+function formatDurationCodex(ms?: number): string {
+  if (ms == null) return "";
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSec = seconds % 60;
+  if (minutes < 60) {
+    return remainingSec > 0 ? `${minutes}m ${remainingSec}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMin = minutes % 60;
+  return remainingMin > 0 ? `${hours}h ${remainingMin}m` : `${hours}h`;
+}
+
 function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
   if (String(kind).startsWith("browser__")) return <Globe size={14} />;
   if (String(kind).startsWith("mcp__computer-use__")) return <Monitor size={14} />;
   switch (kind) {
+    case "thinking":
+      return <Brain size={14} />;
+    case "commentary":
+      return <Sparkles size={14} />;
     case "update_plan":
       return <ListTodo size={14} />;
     case "list_files":
@@ -3224,16 +3237,22 @@ function appendBranchActivity(list: ActivityRecord[], activity: ActivityRecord):
 }
 
 // 按 id 不可变更新活动状态/详情（同时覆盖主活动与子代理 children 嵌套层），主/子活动共用
-function patchActivityTree(list: ActivityRecord[], id: string, status: ActivityRecord["status"], detail: string | undefined): ActivityRecord[] {
+function patchActivityTree(list: ActivityRecord[], id: string, status: ActivityRecord["status"], detail: string | undefined, durationMs?: number, commentary?: string): ActivityRecord[] {
   return list.map((activity) => {
     if (activity.id === id) {
-      return { ...activity, status, detail: detail ?? activity.detail };
+      return {
+        ...activity,
+        status,
+        detail: detail ?? activity.detail,
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        ...(commentary !== undefined ? { commentary } : {}),
+      };
     }
     if (activity.children?.some((child) => child.id === id)) {
       return {
         ...activity,
         children: (activity.children || []).map((child) =>
-          child.id === id ? { ...child, status, detail: detail ?? child.detail } : child),
+          child.id === id ? { ...child, status, detail: detail ?? child.detail, ...(durationMs !== undefined ? { durationMs } : {}), ...(commentary !== undefined ? { commentary } : {}) } : child),
       };
     }
     return activity;
@@ -3356,6 +3375,221 @@ function ActivityList({ activities }: { activities: ActivityRecord[] }) {
   return (
     <div className={`activity-list ${commandOnly ? "command-list" : ""}`}>
       {activities.map((activity) => <ActivityRow key={activity.id} activity={activity} />)}
+    </div>
+  );
+}
+
+function ProcessThoughtItem({ text, durationMs, streaming }: { text: string; durationMs?: number; streaming?: boolean }) {
+  const [open, setOpen] = useState(Boolean(streaming));
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (streaming && contentRef.current) {
+      contentRef.current.scrollTop = contentRef.current.scrollHeight;
+    }
+  }, [text, streaming]);
+
+  const duration = durationMs ? formatDurationCodex(durationMs) : "";
+  return (
+    <div className={`process-thought-item ${streaming ? "streaming" : ""}`}>
+      <button
+        type="button"
+        className="process-thought-header"
+        onClick={() => setOpen((val) => !val)}
+      >
+        <Brain size={14} className="process-thought-icon" />
+        <span className="process-thought-title">
+          {streaming ? "正在深度思考…" : "思考过程"}
+          {duration ? ` · ${duration}` : ""}
+        </span>
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      {open && (
+        <div className="process-thought-body" ref={contentRef}>
+          <div className="process-thought-text">{text || (streaming ? "思考中..." : "")}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProcessCommentaryItem({ text }: { text: string }) {
+  if (!text.trim()) return null;
+  return (
+    <div className="process-commentary-item">
+      <MarkdownSnippet content={text} />
+    </div>
+  );
+}
+
+function ProcessSubagentItem({ activity }: { activity: ActivityRecord }) {
+  const [open, setOpen] = useState(false);
+  const childCount = activity.children?.length || 0;
+  const isRunning = activity.status === "running" || Boolean(activity.children?.some((c) => c.status === "running"));
+  const taskTitle = activity.title.replace(/^派发子任务[：:]\s*/, "") || "子智能体任务";
+
+  return (
+    <div className={`process-subagent-item ${isRunning ? "running" : "completed"}`}>
+      <button
+        type="button"
+        className="process-subagent-header"
+        onClick={() => (childCount > 0 || activity.detail) && setOpen((val) => !val)}
+        disabled={childCount === 0 && !activity.detail}
+      >
+        <span className="process-subagent-badge">
+          {isRunning ? <LoaderCircle className="spin" size={13} /> : <Sparkles size={13} />}
+        </span>
+        <span className="process-subagent-text">
+          {isRunning ? `正在执行：${taskTitle}` : `${taskTitle} 已完成`}
+        </span>
+        {childCount > 0 && <span className="process-subagent-count">{childCount} 步</span>}
+        {(childCount > 0 || activity.detail) && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
+      </button>
+      {open && activity.detail && (
+        <div className="process-subagent-detail">
+          <pre>{activity.detail}</pre>
+        </div>
+      )}
+      {open && childCount > 0 && (
+        <div className="process-subagent-children">
+          <ActivityList activities={activity.children || []} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProcessActionItem({ activity }: { activity: ActivityRecord }) {
+  const [open, setOpen] = useState(false);
+  const expandable = Boolean(activity.detail);
+  const isEdit = ["write_file", "edit_file", "append_file", "delete_file"].includes(activity.kind);
+  const isCommand = activity.kind === "run_command";
+
+  return (
+    <div className={`process-action-item ${activity.status}`}>
+      <button
+        type="button"
+        className="process-action-header"
+        onClick={() => expandable && setOpen((val) => !val)}
+        disabled={!expandable}
+      >
+        <span className="process-action-icon">
+          {activity.status === "running" ? (
+            <LoaderCircle className="spin" size={13} />
+          ) : activity.status === "error" ? (
+            <X size={13} />
+          ) : isEdit ? (
+            <Pencil size={13} />
+          ) : isCommand ? (
+            <SquareTerminal size={14} />
+          ) : (
+            <Check size={13} />
+          )}
+        </span>
+        <span className="process-action-title">{activityDisplayTitle(activity)}</span>
+        {expandable && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
+      </button>
+      {open && activity.detail && (
+        <pre className="process-action-detail">{activity.detail}</pre>
+      )}
+    </div>
+  );
+}
+
+function ProcessTimeline({
+  message,
+  messageIndex,
+  isStreaming,
+  collapsedActivities,
+  onToggleCollapse,
+}: {
+  message: ChatMessage;
+  messageIndex: number;
+  isStreaming: boolean;
+  collapsedActivities: Set<string>;
+  onToggleCollapse: (messageKey: string, nextCollapsed: boolean) => void;
+}) {
+  const activities = message.activities || [];
+  const hasReasoning = Boolean(message.reasoning?.trim());
+  const hasProcess = activities.length > 0 || hasReasoning || isStreaming;
+  if (!hasProcess) return null;
+
+  const messageKey = message.id || `${message.createdAt}-${messageIndex}`;
+  const userCollapsed = collapsedActivities.has(messageKey);
+  const userExpanded = collapsedActivities.has(`${messageKey}:expanded`);
+  // 核心规则：执行中默认展开，执行完成默认收起为单行“用时 XX 〉”；若用户主动点击则记忆其选择
+  const collapsed = userCollapsed ? true : userExpanded ? false : !isStreaming;
+
+  const durationText = message.durationMs ? formatDurationCodex(message.durationMs) : "";
+  const triggerLabel = durationText
+    ? `用时 ${durationText}`
+    : isStreaming
+      ? "正在处理任务"
+      : "用时已记录";
+
+  return (
+    <div className="process-collapse-container">
+      <button
+        type="button"
+        className="process-collapse-trigger"
+        onClick={() => onToggleCollapse(messageKey, !collapsed)}
+        aria-expanded={!collapsed}
+        title={collapsed ? "点击展开执行过程" : "点击收起执行过程"}
+      >
+        <span className="process-trigger-label">{triggerLabel}</span>
+        {collapsed ? (
+          <ChevronRight size={14} className="process-trigger-icon" />
+        ) : (
+          <ChevronDown size={14} className="process-trigger-icon" />
+        )}
+      </button>
+      {!collapsed && (
+        <div className="process-timeline-content">
+          {/* 旧消息兼容：如果 activities 中没有 thinking 项，但 message.reasoning 存在，在此渲染思考 */}
+          {Boolean(hasReasoning && !activities.some((a) => a.kind === "thinking" && a.detail)) && (
+            <ProcessThoughtItem
+              text={message.reasoning!}
+              streaming={isStreaming && !message.content}
+            />
+          )}
+          {/* 实时思考：如果正在流式中且当前还没有 thinking activity 在跑 */}
+          {Boolean(isStreaming && message.reasoning && !activities.some((a) => a.kind === "thinking" && a.status === "running")) && (
+            <ProcessThoughtItem
+              text={message.reasoning!}
+              streaming={true}
+            />
+          )}
+          {/* 按时序遍历各项活动 */}
+          {activities.map((activity) => {
+            if (activity.kind === "commentary") {
+              return <ProcessCommentaryItem key={activity.id} text={activity.detail || activity.title} />;
+            }
+            if (activity.kind === "thinking") {
+              const showThought = Boolean(activity.detail) || (activity.status === "running" && isStreaming);
+              const showCommentary = Boolean(activity.commentary);
+              if (!showThought && !showCommentary) return null;
+              return (
+                <div key={activity.id} className="process-thinking-group">
+                  {showThought && (
+                    <ProcessThoughtItem
+                      text={activity.detail || (isStreaming ? message.reasoning || "" : "")}
+                      durationMs={activity.durationMs}
+                      streaming={activity.status === "running"}
+                    />
+                  )}
+                  {showCommentary && (
+                    <ProcessCommentaryItem text={activity.commentary!} />
+                  )}
+                </div>
+              );
+            }
+            if (activity.kind === "dispatch_agent") {
+              return <ProcessSubagentItem key={activity.id} activity={activity} />;
+            }
+            return <ProcessActionItem key={activity.id} activity={activity} />;
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -6577,6 +6811,7 @@ export function App() {
   // 不可变替换，比较引用即可零成本找出「变化的会话」，保存只发增量
   const savedSessionsRef = useRef<Map<string, SessionRecord>>(new Map());
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
+  const sessionErrorTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef(activeId);
@@ -6605,6 +6840,8 @@ export function App() {
   const [browserDownloads, setBrowserDownloads] = useState<BrowserDownloadRecord[]>([]);
   // 页面提交了登录表单后询问是否保存密码（密码只暂存在内存里，用户确认才落盘）
   const [browserPasswordPrompt, setBrowserPasswordPrompt] = useState<{ tabId: string; origin: string; username: string; password: string } | null>(null);
+  // 浏览器 Computer Use 控制状态
+  const [browserControlState, setBrowserControlState] = useState<BrowserControlState | null>(null);
   // 密码和自动填充管理对话框
   const [browserPasswordsOpen, setBrowserPasswordsOpen] = useState(false);
   const [browserClearKinds, setBrowserClearKinds] = useState({ cookies: true, cache: true, siteData: false });
@@ -6622,6 +6859,34 @@ export function App() {
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
   };
 
+  const clearSessionNotice = (sessionId: string) => {
+    const previous = sessionNoticeTimersRef.current.get(sessionId);
+    if (previous) {
+      window.clearTimeout(previous);
+      sessionNoticeTimersRef.current.delete(sessionId);
+    }
+    setSessionNotices((current) => {
+      if (!current[sessionId]) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
+  const clearSessionError = (sessionId: string) => {
+    const previous = sessionErrorTimersRef.current.get(sessionId);
+    if (previous) {
+      window.clearTimeout(previous);
+      sessionErrorTimersRef.current.delete(sessionId);
+    }
+    setSessionErrors((current) => {
+      if (!current[sessionId]) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
   const showSessionNotice = (sessionId: string, message: string) => {
     setSessionNotices((current) => ({ ...current, [sessionId]: message }));
     const previous = sessionNoticeTimersRef.current.get(sessionId);
@@ -6636,6 +6901,22 @@ export function App() {
       sessionNoticeTimersRef.current.delete(sessionId);
     }, 3200);
     sessionNoticeTimersRef.current.set(sessionId, timeout);
+  };
+
+  const showSessionError = (sessionId: string, message: string, duration = 5000) => {
+    setSessionErrors((current) => ({ ...current, [sessionId]: message }));
+    const previous = sessionErrorTimersRef.current.get(sessionId);
+    if (previous) window.clearTimeout(previous);
+    const timeout = window.setTimeout(() => {
+      setSessionErrors((current) => {
+        if (current[sessionId] !== message) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      sessionErrorTimersRef.current.delete(sessionId);
+    }, duration);
+    sessionErrorTimersRef.current.set(sessionId, timeout);
   };
 
   // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
@@ -7098,6 +7379,12 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  useEffect(() => {
+    if (!error) return;
+    const timeout = window.setTimeout(() => setError(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
+
   useEffect(() => () => {
     recorderRef.current?.stop();
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -7105,6 +7392,8 @@ export function App() {
     agentUnsubscribeRefs.current.clear();
     for (const timeout of sessionNoticeTimersRef.current.values()) window.clearTimeout(timeout);
     sessionNoticeTimersRef.current.clear();
+    for (const timeout of sessionErrorTimersRef.current.values()) window.clearTimeout(timeout);
+    sessionErrorTimersRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -7309,7 +7598,7 @@ export function App() {
       } else if (event.type === "activity-update") {
         patchChannelAssistant(sessionId, (current) => ({
           ...current,
-          activities: patchActivityTree(current.activities || [], event.id, event.status, event.detail),
+          activities: patchActivityTree(current.activities || [], event.id, event.status, event.detail, event.durationMs, event.commentary),
         }));
       } else if (event.type === "assistant-text") {
         ensureChannelAssistant(sessionId, runId);
@@ -7339,16 +7628,13 @@ export function App() {
         const result = event.result;
         patchChannelAssistant(sessionId, (current) => {
           const plan = result.plan?.length ? result.plan : current.plan;
-          const completedPlan = result.status === "done" && plan?.length
-            ? plan.map((step) => ({ ...step, status: "completed" as const }))
-            : plan;
           return {
             ...current,
             content: result.finalText || current.content,
             // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
             createdAt: new Date().toISOString(),
             changes: result.changes?.length ? result.changes : current.changes,
-            plan: completedPlan,
+            plan,
             durationMs: (result as { durationMs?: number }).durationMs,
             taskStatus: result.status,
           };
@@ -8841,6 +9127,19 @@ export function App() {
   }), []);
   const browserActiveDownloadCount = browserDownloads.filter((entry) => entry.state === "progressing" || entry.state === "interrupted").length;
 
+  // ===== 浏览器 Computer Use 控制状态广播 =====
+  useEffect(() => {
+    window.dyworker?.getBrowserControlStatus?.().then((initial) => {
+      if (initial) setBrowserControlState(initial);
+    }).catch(() => {});
+    const unsubscribe = window.dyworker?.onBrowserControlState?.((state) => {
+      setBrowserControlState(state);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   // ===== 密码：保存提示 / 填充 =====
   const dismissBrowserPasswordPrompt = () => setBrowserPasswordPrompt(null);
   const saveBrowserPasswordPrompt = async () => {
@@ -9034,115 +9333,122 @@ export function App() {
     setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
   };
 
-  const sendMessage = async () => {
+  const sendMessage = async (overridePrompt?: string, overrideSessionId?: string, overrideRunId?: string) => {
     if (!settings.identity) {
       setNotice("请先选择 DYWorker 的使用身份");
       return;
     }
-    let content = composer.trim();
-    if ((!content && !attachments.length && !activeSkills.length && !composerPastes.length && !annotations.length) || !activeSession) return;
+    const isOverride = typeof overridePrompt === "string";
+    const targetSession = overrideSessionId
+      ? sessions.find((session) => session.id === overrideSessionId) || activeSession
+      : activeSession;
+    if (!targetSession) return;
+
+    let content = isOverride ? overridePrompt.trim() : composer.trim();
+    if (!isOverride && (!content && !attachments.length && !activeSkills.length && !composerPastes.length && !annotations.length)) return;
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
     if (activeTaskRunning && !queueSupported) return;
-    const editingTarget = editingMessage?.sessionId === activeSession.id
-      ? activeSession.messages[editingMessage.messageIndex]
+    const editingTarget = !isOverride && editingMessage?.sessionId === targetSession.id
+      ? targetSession.messages[editingMessage.messageIndex]
       : null;
     // 排队中的消息允许编辑：保留原 runId，主进程开始执行时按 runId 取会话里最新内容
     const editingQueuedRunId = editingTarget?.runId && queuedRunIds.has(editingTarget.runId)
       ? editingTarget.runId
       : undefined;
-    // /new：开启全新会话（对齐渠道快捷指令与斜杠菜单）
-    const isPureNewSession = /^(?:\/new|\/reset|new|reset|新建会话|新会话|新任务|重置会话|重置对话|清空上下文)[。.!！?？\s]*$/i.test(content);
-    if (isPureNewSession) {
+
+    let goalDriven = false;
+    let pastedBlocks = composerPastes;
+    let messageAnnotations = annotations;
+    let annotationText = "";
+    let pastedText = "";
+    let selectedAttachments: Attachment[] = [];
+    let selectedSkills = activeSkills;
+
+    if (!isOverride) {
+      // /new：开启全新会话（对齐渠道快捷指令与斜杠菜单）
+      const isPureNewSession = /^(?:\/new|\/reset|new|reset|新建会话|新会话|新任务|重置会话|重置对话|清空上下文)[。.!！?？\s]*$/i.test(content);
+      if (isPureNewSession) {
+        setComposer("");
+        setAttachments([]);
+        setActiveSkills([]);
+        setComposerPastes([]);
+        setAnnotations([]);
+        if (targetSession.messages.length === 0) {
+          setNotice("当前已是新会话");
+          window.setTimeout(() => textareaRef.current?.focus(), 0);
+        } else {
+          createTask();
+          setNotice("已开启新会话");
+        }
+        return;
+      }
+      // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
+      const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
+      if (goalMatch) {
+        const argument = (goalMatch[1] || "").trim();
+        if (!argument) {
+          setNotice(targetSession.goal ? `当前目标：${targetSession.goal}（输入 /goal 取消 可解除）` : "用法：/goal 目标描述，例如 /goal 本周五前完成季度总结初稿");
+          setComposer("");
+          return;
+        }
+        if (["取消", "清除", "clear"].includes(argument)) {
+          updateSession(targetSession.id, (session) => ({ ...session, goal: undefined }));
+          setNotice("已解除长期目标");
+          setComposer("");
+          return;
+        }
+        setNotice(`已设定长期目标：${argument}，将跨轮持续对照直到达成`);
+        content = argument;
+        goalDriven = true;
+      }
+      setError("");
       setComposer("");
+      setComposerPastes([]);
+      setExpandedPasteId("");
+      setAnnotations([]);
+      setAnnotationListOpen(false);
+      annotationText = formatAnnotationsForPrompt(messageAnnotations);
+      pastedText = pastedBlocks.length
+        ? `\n\n${pastedBlocks.map((block, index) => `【粘贴的长文本 ${index + 1}｜共 ${block.text.length} 字】\n${block.text}`).join("\n\n")}`
+        : "";
+      const tokenAttachments: Attachment[] = [];
+      const seenTokenPaths = new Set<string>();
+      FILE_TOKEN_REGEX.lastIndex = 0;
+      let tokenMatch: RegExpExecArray | null;
+      while ((tokenMatch = FILE_TOKEN_REGEX.exec(content))) {
+        const file = resolveTokenFile(tokenMatch[1]);
+        if (file && !seenTokenPaths.has(file.path)) {
+          seenTokenPaths.add(file.path);
+          tokenAttachments.push({ ...workspaceFileAttachment(file), inlineRef: true });
+        }
+      }
+      mentionTokenPathsRef.current.clear();
+      selectedAttachments = [
+        ...tokenAttachments,
+        ...attachments.filter((attachment) => !seenTokenPaths.has(attachment.path)),
+      ];
       setAttachments([]);
       setActiveSkills([]);
-      setComposerPastes([]);
-      setAnnotations([]);
-      if (activeSession.messages.length === 0) {
-        setNotice("当前已是新会话");
-        window.setTimeout(() => textareaRef.current?.focus(), 0);
-      } else {
-        createTask();
-        setNotice("已开启新会话");
-      }
-      return;
+      setMentionMenu(null);
+    } else {
+      pastedBlocks = [];
+      messageAnnotations = [];
+      selectedAttachments = [];
+      selectedSkills = [];
     }
-    // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
-    const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
-    let goalDriven = false;
-    if (goalMatch) {
-      const argument = (goalMatch[1] || "").trim();
-      if (!argument) {
-        setNotice(activeSession.goal ? `当前目标：${activeSession.goal}（输入 /goal 取消 可解除）` : "用法：/goal 目标描述，例如 /goal 本周五前完成季度总结初稿");
-        setComposer("");
-        return;
-      }
-      if (["取消", "清除", "clear"].includes(argument)) {
-        updateSession(activeSession.id, (session) => ({ ...session, goal: undefined }));
-        setNotice("已解除长期目标");
-        setComposer("");
-        return;
-      }
-      // 设定目标并立即以目标驱动模式开始推进（强制持续执行）
-      setNotice(`已设定长期目标：${argument}，将跨轮持续对照直到达成`);
-      content = argument;
-      goalDriven = true;
-    }
-    setError("");
-    setComposer("");
-    // 折叠的长粘贴块：正文里带标记发给模型，气泡只显示用户输入（对齐长粘贴折叠呈现）
-    const pastedBlocks = composerPastes;
-    setComposerPastes([]);
-    setExpandedPasteId("");
-    // 引用注释：引用文本与评论拼进正文发给模型，气泡只显示 chip
-    const messageAnnotations = annotations;
-    setAnnotations([]);
-    setAnnotationListOpen(false);
-    const annotationText = formatAnnotationsForPrompt(messageAnnotations);
-    const pastedText = pastedBlocks.length
-      ? `\n\n${pastedBlocks.map((block, index) => `【粘贴的长文本 ${index + 1}｜共 ${block.text.length} 字】\n${block.text}`).join("\n\n")}`
-      : "";
-    // 正文里的 @文件名 token 按出现顺序解析成附件（内联引用），后面跟上手动添加的附件
-    const tokenAttachments: Attachment[] = [];
-    const seenTokenPaths = new Set<string>();
-    FILE_TOKEN_REGEX.lastIndex = 0;
-    let tokenMatch: RegExpExecArray | null;
-    while ((tokenMatch = FILE_TOKEN_REGEX.exec(content))) {
-      const file = resolveTokenFile(tokenMatch[1]);
-      if (file && !seenTokenPaths.has(file.path)) {
-        seenTokenPaths.add(file.path);
-        tokenAttachments.push({ ...workspaceFileAttachment(file), inlineRef: true });
-      }
-    }
-    mentionTokenPathsRef.current.clear();
-    const selectedAttachments = [
-      ...tokenAttachments,
-      ...attachments.filter((attachment) => !seenTokenPaths.has(attachment.path)),
-    ];
-    const selectedSkills = activeSkills;
-    setAttachments([]);
-    setActiveSkills([]);
-    setMentionMenu(null);
-    const taskSessionId = activeSession.id;
+
+    const taskSessionId = targetSession.id;
     newTaskGuardRef.current = false;
-    const taskRunId = crypto.randomUUID();
+    const taskRunId = overrideRunId || crypto.randomUUID();
     let queuedResponse = false;
-    const messageRunId = editingQueuedRunId || taskRunId;
+    const messageRunId = editingQueuedRunId || overrideRunId || taskRunId;
+    const targetTaskRunning = Boolean(targetSession.id && runningSessionIds.has(targetSession.id));
     const isQueuedEdit = Boolean(editingQueuedRunId);
-    const queuedNow = isQueuedEdit || (!editingTarget && activeTaskRunning && queueSupported);
-    // 桌面版当前正在执行的 runId 由主进程 queue-start 事件维护；预览模式无事件，这里直接记录
+    const queuedNow = isQueuedEdit || (!editingTarget && targetTaskRunning && queueSupported);
     if (!queueSupported) runningRunIdsRef.current.set(taskSessionId, taskRunId);
-    setSessionErrors((current) => {
-      const next = { ...current };
-      delete next[taskSessionId];
-      return next;
-    });
-    setSessionNotices((current) => {
-      const next = { ...current };
-      delete next[taskSessionId];
-      return next;
-    });
+    clearSessionError(taskSessionId);
+    clearSessionNotice(taskSessionId);
     setRunningSessionIds((current) => {
       const next = new Set(current);
       next.add(taskSessionId);
@@ -9152,47 +9458,38 @@ export function App() {
     shouldScrollToBottomRef.current = taskSessionId;
     const skillsBlock = selectedSkills.length
       ? `请按照以下技能执行：\n${selectedSkills.map((skill) => {
-          // 文件型技能带上目录位置:技能正文里"读取同目录的 xx.md"这类指引才能直接执行,不用再全盘搜索
           const location = skill.path ? `\n技能目录:${pathDirname(skill.path)}(入口文件:${skill.path})` : "";
           return `【${skill.name}】${skill.description}${location}\n执行要求:${skill.instructions}`;
         }).join("\n\n")}\n\n以下是我的任务:\n`
       : "";
-    // 用户实际输入（可能为空：纯附件/长文本/注释消息）
     const typedContent = content;
-    // 空输入时给模型一句任务提示；气泡不显示这句占位文字
     const modelContent = typedContent || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。");
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       runId: messageRunId,
-      // content 带完整技能指令与折叠的长文本发给模型;气泡只显示用户输入与 /技能 标签(对齐 Codex/Kimi 的引用呈现)
       content: skillsBlock + modelContent + pastedText + annotationText,
       ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length ? {
-        // 气泡只显示用户实际输入；空输入（纯附件/长文本/注释）不显示占位文字
         displayContent: typedContent,
         ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
-      // 折叠块原文存进消息：content 已发给模型，气泡按块渲染、可展开查看
       ...(pastedBlocks.length ? { pasteBlocks: pastedBlocks.map((block, index) => ({ id: `paste-${index}`, text: block.text })) } : {}),
-      // 引用注释随消息保存：气泡按 chip + 只读列表展示
       ...(messageAnnotations.length ? { annotations: messageAnnotations } : {}),
       attachments: selectedAttachments,
       createdAt: new Date().toISOString(),
     };
     const baseMessages = editingTarget && editingMessage
       ? activeSession.messages.slice(0, editingMessage.messageIndex)
-      : activeSession.messages;
-    // 编辑排队消息时保留原 assistant 占位（runId 不变），让已注册的事件监听器继续更新它
+      : targetSession.messages;
     const editingQueuedAssistant = isQueuedEdit && editingTarget && editingMessage
-      ? activeSession.messages[editingMessage.messageIndex + 1]
+      ? targetSession.messages[editingMessage.messageIndex + 1]
       : null;
     const updatedSession: SessionRecord = {
-      ...activeSession,
+      ...targetSession,
       ...(goalDriven ? { goal: content } : {}),
       ...(editingTarget ? { workingContext: undefined } : {}),
-      title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : activeSession.title,
-      // 不能用空的全局值冲掉会话自己保存的工作目录（重启后全局值可能为空）
-      workspacePath: workspacePath || activeSession.workspacePath || "",
+      title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : targetSession.title,
+      workspacePath: workspacePath || targetSession.workspacePath || "",
       updatedAt: new Date().toISOString(),
       messages: [
         ...baseMessages,
@@ -9201,9 +9498,8 @@ export function App() {
       ],
     };
     setEditingMessage(null);
-    setSessions((current) => current.map((session) => session.id === activeSession.id ? updatedSession : session));
+    setSessions((current) => current.map((session) => session.id === targetSession.id ? updatedSession : session));
 
-    // 编辑排队消息：不重新入队，只更新会话内容；主进程开始执行时会读到新内容
     if (isQueuedEdit) {
       setNotice("排队中的消息已更新，将在当前任务结束后按新内容执行");
       return;
@@ -9214,14 +9510,12 @@ export function App() {
         const assistantId = crypto.randomUUID();
         const taskStartedAt = Date.now();
         const patchAssistant = (updater: (current: ChatMessage) => ChatMessage) => {
-          // 注意：这里不能重置滚动锚点标记——流式期间每个分片都会走到这里，
-          // 会让会话视口反复平滑滚回底部，跟用户抢滚动条；提交时的滚动由上方一次性触发。
-          updateSession(activeSession.id, (session) => ({
+          updateSession(targetSession.id, (session) => ({
             ...session,
             messages: session.messages.map((current) => current.id === assistantId ? updater(current) : current),
           }));
         };
-        updateSession(activeSession.id, (session) => ({
+        updateSession(targetSession.id, (session) => ({
           ...session,
           messages: [...session.messages, {
             id: assistantId,
@@ -9247,23 +9541,23 @@ export function App() {
               content = result.reason || content || "任务执行出错";
             }
             const plan = result.plan?.length ? result.plan : current.plan;
-            const completedPlan = result.status === "done" && plan?.length
-              ? plan.map((step) => ({ ...step, status: "completed" as const }))
-              : plan;
             return {
               ...current,
               content,
               // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
               createdAt: new Date().toISOString(),
               changes: result.changes?.length ? result.changes : current.changes,
-              plan: completedPlan,
+              plan,
               durationMs: Date.now() - taskStartedAt,
               taskStatus: result.status,
+              ...(Array.isArray(result.executedMessages) && result.executedMessages.length
+                ? { executedMessages: result.executedMessages }
+                : {}),
               ...(result.workingContext !== undefined ? { workingContext: result.workingContext } : {}),
             };
           });
           if (result.workingContext !== undefined) {
-            updateSession(activeSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
+            updateSession(targetSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
           }
           // 非当前会话在后台完成时标记未读（列表小绿点），点开会话即清除
           if ((result.status === "done" || result.status === "error") && taskSessionId !== activeIdRef.current) {
@@ -9299,7 +9593,7 @@ export function App() {
             // patchActivityTree 同时覆盖主活动与子代理 children，branch 标记无需区分
             patchAssistant((current) => ({
               ...current,
-              activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail),
+              activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail, agentEvent.durationMs, agentEvent.commentary),
             }));
           } else if (agentEvent.type === "trace") {
             traceEventsRef.current.push(agentEvent.trace);
@@ -9499,7 +9793,7 @@ export function App() {
       }
     } catch (requestError) {
       const detail = requestError instanceof Error ? requestError.message : String(requestError);
-      setSessionErrors((current) => ({ ...current, [taskSessionId]: detail }));
+      showSessionError(taskSessionId, detail);
       updateSession(activeSession.id, (session) => ({
         ...session,
         messages: [...session.messages, {
@@ -9540,6 +9834,39 @@ export function App() {
       }
     }
   };
+
+  // 浏览器 Computer Use 控制：响应“继续交给助手”广播，真正恢复任务执行 (F4 / 补充要求 4)
+  const browserResumeGuardRef = useRef(false);
+  useEffect(() => {
+    const unsubscribe = window.dyworker?.onBrowserControlResumed?.(async (payload) => {
+      if (browserResumeGuardRef.current) return;
+      browserResumeGuardRef.current = true;
+      try {
+        const targetSessionId = payload?.ownerSessionId || activeId;
+        if (!targetSessionId) return;
+
+        // 如果该会话已有任务正在运行，不重复发起
+        if (runningSessionIds.has(targetSessionId)) return;
+
+        // 生成新代次 runId，并同步给主进程控制管理器，彻底解决 runId 代次过期问题 (F5)
+        const nextRunId = payload?.runId || crypto.randomUUID();
+        await window.dyworker?.resumeBrowserControl?.({
+          ownerSessionId: targetSessionId,
+          runId: nextRunId
+        });
+
+        const resumePrompt = "我已完成手动接管操作。请先调用 browser__observe（或 browser__snapshot）重新观察当前网页的最新状态与控件编号，然后继续完成原定任务。";
+        await sendMessage(resumePrompt, targetSessionId, nextRunId);
+      } finally {
+        window.setTimeout(() => {
+          browserResumeGuardRef.current = false;
+        }, 1200);
+      }
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, [activeId, runningSessionIds, sessions, settings, workspacePath]);
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -11009,49 +11336,25 @@ export function App() {
                   ) : (
                     <div className="assistant-message" onContextMenu={(event) => handleMessageContextMenu(event, message)}>
                       {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
-                      {(() => {
-                        const visibleActivities = (message.activities || []).filter((activity) => activity.kind !== "thinking");
-                        if (!visibleActivities.length) return null;
-                        const messageKey = message.id || `${message.createdAt}-${index}`;
-                        // 默认：执行中展开，完成后收起；用户点击后记住选择
-                        // messageKey = 用户选择收起；messageKey:expanded = 用户选择展开；都没有则按默认
-                        const collapsed = collapsedActivities.has(messageKey)
-                          ? true
-                          : collapsedActivities.has(`${messageKey}:expanded`)
-                            ? false
-                            : Boolean(message.durationMs);
-                        const duration = formatDuration(message.durationMs);
-                        const commandOnly = visibleActivities.every((activity) => activity.kind === "run_command");
-                        return (
-                          <>
-                            <button
-                              className={`activity-divider clickable ${commandOnly ? "command-summary" : ""}`}
-                              onClick={() => setCollapsedActivities((current) => {
-                                const next = new Set(current);
-                                if (collapsed) {
-                                  next.delete(messageKey);
-                                  next.add(`${messageKey}:expanded`);
-                                } else {
-                                  next.delete(`${messageKey}:expanded`);
-                                  next.add(messageKey);
-                                }
-                                return next;
-                              })}
-                              aria-expanded={!collapsed}
-                            >
-                              {commandOnly && <SquareTerminal className="activity-summary-icon" size={16} />}
-                              {!commandOnly && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
-                              <span className="activity-summary-label">
-                                {commandOnly ? "运行了命令" : "已处理"}
-                                {duration ? ` · 用时 ${duration}` : ""}
-                                {collapsed ? ` · ${visibleActivities.length} 步` : ""}
-                              </span>
-                              {commandOnly && (collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />)}
-                            </button>
-                            {!collapsed && <ActivityList activities={visibleActivities} />}
-                          </>
-                        );
-                      })()}
+                      <ProcessTimeline
+                        message={message}
+                        messageIndex={index}
+                        isStreaming={activeTaskRunning && !message.taskStatus && index === streamingAssistantIndex}
+                        collapsedActivities={collapsedActivities}
+                        onToggleCollapse={(messageKey, nextCollapsed) => {
+                          setCollapsedActivities((current) => {
+                            const next = new Set(current);
+                            if (nextCollapsed) {
+                              next.delete(`${messageKey}:expanded`);
+                              next.add(messageKey);
+                            } else {
+                              next.delete(messageKey);
+                              next.add(`${messageKey}:expanded`);
+                            }
+                            return next;
+                          });
+                        }}
+                      />
                       {Boolean(message.changes?.length) && (
                         <ChangesSummary
                           changes={message.changes!}
@@ -11064,7 +11367,6 @@ export function App() {
                           }}
                         />
                       )}
-                      {message.reasoning && <ReasoningBlock text={message.reasoning} streaming={!message.taskStatus} />}
                       {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
@@ -11224,9 +11526,39 @@ export function App() {
         )}
 
         <div className="composer-dock" ref={composerDockRef}>
-          {(error || activeSessionError) && <div className="status-toast error" role="alert">{error || activeSessionError}</div>}
+          {(error || activeSessionError) && (
+            <div className="status-toast error" role="alert">
+              <span className="status-toast-text">{error || activeSessionError}</span>
+              <button
+                type="button"
+                className="status-toast-dismiss"
+                onClick={() => {
+                  setError("");
+                  if (activeSession?.id) clearSessionError(activeSession.id);
+                }}
+                title="关闭提示"
+                aria-label="关闭提示"
+              >
+                ×
+              </button>
+            </div>
+          )}
           {(notice || activeSessionNotice) && (
-            <div className="status-toast" role="status">{notice || activeSessionNotice}</div>
+            <div className="status-toast" role="status">
+              <span className="status-toast-text">{notice || activeSessionNotice}</span>
+              <button
+                type="button"
+                className="status-toast-dismiss"
+                onClick={() => {
+                  setNotice("");
+                  if (activeSession?.id) clearSessionNotice(activeSession.id);
+                }}
+                title="关闭提示"
+                aria-label="关闭提示"
+              >
+                ×
+              </button>
+            </div>
           )}
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
@@ -12013,6 +12345,10 @@ export function App() {
                 </div>
               )}
               <div className="browser-content">
+                <BrowserControlOverlay
+                  controlState={browserControlState}
+                  activeTabId={activeToolPanelTabId}
+                />
                 {activeToolPanelTab.fillHint && !activeToolPanelTab.loading && activeToolPanelTab.loadedUrl && (
                   <button className="browser-fill-chip" onClick={() => void fillSavedPassword()} title="自动填写此站点已保存的用户名和密码">
                     <KeyRound size={12} />

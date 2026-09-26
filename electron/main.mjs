@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
+import { BrowserControlManager } from "./browser-control.mjs";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, verifyChannelMediaPath } from "./channels/media-tools.mjs";
 import { parseApprovalReply } from "./channels/qq-bot.mjs";
@@ -1029,6 +1030,18 @@ app.on("web-contents-created", (_event, contents) => {
     if (!isSafeBrowserUrl(url).ok) event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // 键盘输入拦截屏障（补充要求 6）：助手自动操作期间，拦截落入网页的原生按键并触发用户接管
+  contents.on("before-input-event", (event, input) => {
+    if (
+      browserControlManager.getStatus().status === "running" &&
+      browserControlManager.session?.webContentsId === contents.id
+    ) {
+      if (input.type === "keyDown" && !input.isAutoRepeat) {
+        event.preventDefault();
+        browserControlManager.takeover({ reason: "检测到用户键盘按键，已由你接管" });
+      }
+    }
+  });
   // 下载进度跟踪：保存位置仍由 BrowserAgent 决定（工作区“下载”目录），
   // 这里只观察并广播给面板展示。持久分区所有 webview 共享，只挂一次。
   if (!contents.session.__dyworkerDownloadTracker) {
@@ -1071,7 +1084,15 @@ function activeEmbeddedBrowserContents() {
     || null;
 }
 
-function waitForEmbeddedBrowser(sender, url) {
+const browserControlManager = new BrowserControlManager({
+  onStateChange: (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("browser-control:state", state);
+    }
+  },
+});
+
+function waitForEmbeddedBrowser(sender, url, tabId) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     const previousUrl = activeEmbeddedBrowserContents()?.getURL?.() || "";
@@ -1132,7 +1153,7 @@ function waitForEmbeddedBrowser(sender, url) {
     };
 
     try {
-      sender.send("browser:panel-request", { action: "open", url });
+      sender.send("browser:panel-request", { action: "open", url, tabId });
     } catch (error) {
       finish({ ok: false, result: `无法打开右侧浏览器面板：${error instanceof Error ? error.message : String(error)}` });
       return;
@@ -1612,8 +1633,30 @@ ipcMain.on("browser:active-contents", (event, webContentsId) => {
   const id = Number(webContentsId) || 0;
   // 只接受登记过的 webview，防止渲染进程指向任意页面
   if (id && !embeddedBrowserContentsById.has(id)) return;
+  const previousId = activeEmbeddedBrowserContentsId;
   activeEmbeddedBrowserContentsId = id;
+
+  // 若当前正在自动操作且显示的标签页被切走，主动暂停控制
+  if (previousId && id !== previousId && browserControlManager.getStatus().status === "running") {
+    browserControlManager.pause({ reason: "页面已切换，操作已暂停" });
+  }
 });
+
+// 浏览器 Computer Use 控制 IPC
+trustedHandle("browser-control:takeover", () => browserControlManager.takeover());
+trustedHandle("browser-control:resume", (_event, payload) => {
+  const result = browserControlManager.resume(payload);
+  if (result.ok && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("browser-control:resumed", {
+      ownerSessionId: browserControlManager.session?.ownerSessionId,
+      runId: browserControlManager.session?.runId,
+      tabId: browserControlManager.session?.tabId,
+    });
+  }
+  return result;
+});
+trustedHandle("browser-control:stop", () => browserControlManager.stop());
+trustedHandle("browser-control:status", () => browserControlManager.getStatus());
 
 // 在系统默认浏览器打开（仅 http/https，复用内置浏览器的地址白名单）
 trustedHandle("browser:open-external", async (event, rawUrl) => {
@@ -2543,13 +2586,20 @@ function agentExtraTools(mcpTools) {
   return [...mcpTools, ...browserToolDefinitions(), ...sessionToolDefinitions()];
 }
 
-function createExtraToolRouter(settings, workspacePath, { signal, renderer } = {}) {
+function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "" } = {}) {
   const browserAgent = new BrowserAgent({
-    openPanel: renderer ? (url) => waitForEmbeddedBrowser(renderer, url) : undefined,
+    openPanel: renderer ? (url, tabId) => waitForEmbeddedBrowser(renderer, url, tabId) : undefined,
     closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer) : undefined,
     getContents: () => activeEmbeddedBrowserContents(),
+    controlManager: browserControlManager,
   });
+  browserAgent.setContext({ ownerSessionId: sessionId, runId });
   browserAgent.setWorkspace(workspacePath);
+  if (signal) {
+    signal.addEventListener("abort", () => {
+      browserControlManager.pause({ reason: "任务已取消或中断" });
+    });
+  }
   const route = async (name, args) => {
     // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
     if (SESSION_TOOL_NAMES.has(String(name))) {
@@ -2795,11 +2845,37 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     // 每个任务结束前都做一次轻量判断；没有稳定价值的信息时不会保存。
     // 这样也覆盖同一会话切换话题的边界，不再依赖“每三轮”这种偶然触发。
     const memoryReviewDue = true;
-    // 附件（图片/文本）展开为模型可读的多模态内容，与 chat:complete 同一套逻辑
-    const agentConversation = await Promise.all(conversation.map(async (message) => ({
-      role: message?.role,
-      content: await providerMessageContent(message),
-    })));
+    // 附件（图片/文本）展开为模型可读的多模态内容，同时保留思考与工具执行链
+    const agentConversation = [];
+    for (const message of conversation) {
+      if (message?.role === "assistant" && Array.isArray(message.executedMessages) && message.executedMessages.length > 0) {
+        for (const m of message.executedMessages) {
+          agentConversation.push({
+            role: m.role,
+            content: m.content || "",
+            ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
+            ...(Array.isArray(m.tool_calls) && m.tool_calls.length ? { tool_calls: m.tool_calls } : {}),
+            ...(m.role === "tool" && m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+          });
+        }
+      } else {
+        const entry = {
+          role: message?.role,
+          content: await providerMessageContent(message),
+        };
+        if (message?.role === "assistant") {
+          const reasoning = String(message?.reasoning || message?.reasoning_content || "").trim();
+          if (reasoning) entry.reasoning_content = reasoning;
+          if (Array.isArray(message?.tool_calls) && message.tool_calls.length) {
+            entry.tool_calls = message.tool_calls;
+          }
+        }
+        if (message?.role === "tool" && message?.tool_call_id) {
+          entry.tool_call_id = message.tool_call_id;
+        }
+        agentConversation.push(entry);
+      }
+    }
     const approvalMode = normalizeApprovalMode(payload?.approvalMode);
     // 服务器自报的实际上限（vLLM 等在 /models 里带 max_model_len）：本地/自建模型常远小于
     // 渲染端静态表的 128k 默认值，按默认值累积上下文会把超限请求发出去，甚至打垮引擎。
@@ -2809,7 +2885,12 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       console.log(`[agent] 服务器自报上下文上限 ${serverContextLimit}（${settings.model} @ ${settings.endpoint}），按此钳制`);
     }
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
-    routeExtraTool = createExtraToolRouter(settings, workspacePath, { signal: abortController.signal, renderer: sender });
+    routeExtraTool = createExtraToolRouter(settings, workspacePath, {
+      signal: abortController.signal,
+      renderer: sender,
+      sessionId,
+      runId,
+    });
     if (agentState.cancelled) return cancelledResponse();
     let iterationMessages = agentConversation;
     let finalResult = null;
@@ -2896,12 +2977,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         { role: "user", content: "请继续推进任务：实际检查结果，完成剩余工作，全部满足验收条件后再交付。" },
       ];
     }
-    if (finalResult?.status === "done" && Array.isArray(finalResult.plan) && finalResult.plan.length) {
-      const completedPlan = finalResult.plan.map((step) => ({ ...step, status: "completed" }));
-      finalResult = { ...finalResult, plan: completedPlan };
-      emit({ type: "plan-update", steps: completedPlan });
-    }
-    emit({ type: "loop-state", active: false, iteration: loop.iteration, maximum: loop.maximum, status: finalResult.status === "done" ? "已完成" : "已停止" });
+    emit({ type: "loop-state", active: false, iteration: loop.iteration, maximum: loop.maximum, status: finalResult.status === "done" ? "已完成" : finalResult.status === "unverified" ? "未验证" : "已停止" });
     emit({ type: "agent-finished", result: finalResult });
     return { ok: true, result: finalResult };
   } catch (agentError) {
@@ -3710,9 +3786,18 @@ async function visibleConversationForSession(sessionId, fallbackPrompt, fallback
   const sessions = await readAllSessions();
   const session = Array.isArray(sessions) ? sessions.find((item) => String(item?.id) === String(sessionId)) : null;
   const visible = (session?.messages || [])
-    .filter((message) => message?.role === "user" || message?.role === "assistant")
-    .map((message) => ({ role: message.role, content: String(message.content || "") }))
-    .filter((message) => message.content.trim())
+    .filter((message) => message?.role === "user" || message?.role === "assistant" || message?.role === "tool")
+    .map((message) => {
+      const entry = { role: message.role, content: String(message.content || "") };
+      if (message.role === "assistant") {
+        const reasoning = String(message.reasoning || message.reasoning_content || "").trim();
+        if (reasoning) entry.reasoning_content = reasoning;
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length) entry.tool_calls = message.tool_calls;
+      }
+      if (message.role === "tool" && message.tool_call_id) entry.tool_call_id = message.tool_call_id;
+      return entry;
+    })
+    .filter((message) => message.content.trim() || message.reasoning_content || message.tool_calls)
     .slice(-20);
   if (visible.length) return visible;
   const fallback = [];
@@ -3957,9 +4042,7 @@ function createTranscriptCollector() {
     changes: () => changes,
     plan: () => plan,
     buildMessages(userText, result, assistantContent) {
-      const finalPlan = result?.status === "done" && plan?.length
-        ? plan.map((step) => ({ ...step, status: "completed" }))
-        : plan;
+      const finalPlan = plan;
       return [
         { role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
         {
@@ -3972,6 +4055,7 @@ function createTranscriptCollector() {
           ...(reasoning ? { reasoning } : {}),
           ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
           ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
+          ...(Array.isArray(result?.executedMessages) && result.executedMessages.length ? { executedMessages: result.executedMessages } : {}),
           ...(result?.workingContext ? { workingContext: result.workingContext } : {}),
         },
       ];

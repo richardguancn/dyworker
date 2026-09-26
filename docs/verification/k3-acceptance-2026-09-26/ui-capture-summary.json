@@ -1,0 +1,75 @@
+[
+  {
+    "user": "只写提纲，先不上传",
+    "result_status": "unverified",
+    "requests": [
+      {
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user"
+        ],
+        "tool_call_count": 0,
+        "tool_result_count": 0,
+        "reasoning_count": 0
+      }
+    ]
+  },
+  {
+    "user": "查询当前时间",
+    "result_status": "done",
+    "requests": [
+      {
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "user"
+        ],
+        "tool_call_count": 0,
+        "tool_result_count": 0,
+        "reasoning_count": 0
+      },
+      {
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "tool"
+        ],
+        "tool_call_count": 1,
+        "tool_result_count": 1,
+        "reasoning_count": 1
+      }
+    ]
+  },
+  {
+    "user": "继续",
+    "result_status": "done",
+    "requests": [
+      {
+        "roles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "user",
+          "user"
+        ],
+        "tool_call_count": 0,
+        "tool_result_count": 0,
+        "reasoning_count": 0
+      }
+    ]
+  }
+]
