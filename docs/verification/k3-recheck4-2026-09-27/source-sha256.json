@@ -1,0 +1,6 @@
+{
+  "electron/agent.mjs": "7bbec1eda71ce9f48e072eb1dedc794cedd843b70363ab8b628b094a5d53b056",
+  "electron/main.mjs": "2de1b5f133e90fba6b139d79b6cb13c033b5415f488a9a761066542fc0886ba8",
+  "src/App.tsx": "638b7c2939c1d68afe3583a5309022f77faa9672c3d1296e3583b0c9d47c005f",
+  "src/types.ts": "1e64b3787a01b8c3bd4d488d5abab671532d1dd8da7fe5b2362a123c0f203bea"
+}

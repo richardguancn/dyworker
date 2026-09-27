@@ -4173,6 +4173,227 @@ function memoriesAsPagesFallback(items) {
     });
 }
 
+// 命令解析：轻量词法分词，识别单双引号内外状态，精确拆分语句（|、;、&&、||）与重定向（>、>>）
+function parseCommandStatements(cmdStr) {
+  const statements = [];
+  let currentCmd = [];
+  let currentWord = "";
+  let inSingle = false;
+  let inDouble = false;
+  let hasQuotes = false;
+  const redirections = [];
+  const s = String(cmdStr || "");
+  let i = 0;
+  const len = s.length;
+
+  const pushWord = () => {
+    if (currentWord || hasQuotes) {
+      currentCmd.push(currentWord);
+      currentWord = "";
+      hasQuotes = false;
+    }
+  };
+
+  const endStatement = () => {
+    pushWord();
+    if (currentCmd.length || redirections.length) {
+      statements.push({ args: currentCmd, redirections: [...redirections] });
+      currentCmd = [];
+      redirections.length = 0;
+    }
+  };
+
+  while (i < len) {
+    const ch = s[i];
+    if (ch === "\\" && !inSingle) {
+      if (i + 1 < len) {
+        currentWord += s[i + 1];
+        i += 2;
+        continue;
+      }
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      hasQuotes = true;
+      i++;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      hasQuotes = true;
+      i++;
+      continue;
+    }
+    if (inSingle || inDouble) {
+      currentWord += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === ">") {
+      pushWord();
+      let isAppend = false;
+      if (i + 1 < len && s[i + 1] === ">") {
+        isAppend = true;
+        i++;
+      }
+      i++;
+      while (i < len && /\s/.test(s[i])) i++;
+      let targetWord = "";
+      let targetInSingle = false;
+      let targetInDouble = false;
+      let targetHasQuotes = false;
+      while (i < len) {
+        const tc = s[i];
+        if (tc === "\\" && !targetInSingle) {
+          if (i + 1 < len) { targetWord += s[i + 1]; i += 2; continue; }
+        }
+        if (tc === "'" && !targetInDouble) {
+          targetInSingle = !targetInSingle;
+          targetHasQuotes = true;
+          i++;
+          continue;
+        }
+        if (tc === '"' && !targetInSingle) {
+          targetInDouble = !targetInDouble;
+          targetHasQuotes = true;
+          i++;
+          continue;
+        }
+        if (!targetInSingle && !targetInDouble && /[\s;&|<>]/.test(tc)) {
+          break;
+        }
+        targetWord += tc;
+        i++;
+      }
+      if (targetWord || targetHasQuotes) {
+        redirections.push({ type: isAppend ? ">>" : ">", target: targetWord });
+      }
+      continue;
+    }
+
+    if (/[\s]/.test(ch)) {
+      pushWord();
+      i++;
+      continue;
+    }
+
+    if (/[;&|]/.test(ch)) {
+      endStatement();
+      i++;
+      continue;
+    }
+
+    currentWord += ch;
+    i++;
+  }
+
+  endStatement();
+  return statements;
+}
+
+// 规范化相对路径
+function normalizeRelPath(p) {
+  return String(p || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "")
+    .toLowerCase();
+}
+
+// 判定命令是否属于外部上传/发布操作（排除 cat、grep、printf、echo 等只读或打印命令）
+function isUploadCommand(cmdStr) {
+  if (!cmdStr) return false;
+  const statements = parseCommandStatements(cmdStr);
+  if (!statements.length) return false;
+
+  let hasExternalUpload = false;
+  for (const stmt of statements) {
+    const rawCmd = stmt.args[0] || "";
+    const cmdName = path.basename(rawCmd).toLowerCase();
+    if (!cmdName) continue;
+
+    // 网络传输工具
+    if (["curl", "wget", "http", "fetch"].includes(cmdName)) {
+      hasExternalUpload = true;
+      continue;
+    }
+    // 脚本解释器执行上传/发布脚本
+    if (["python", "python3", "node", "bash", "sh", "zsh", "deno", "bun", "ruby", "perl"].includes(cmdName)) {
+      const scriptOrArgs = stmt.args.slice(1).join(" ").toLowerCase();
+      if (/(upload|publish|post|sync|draft)/.test(scriptOrArgs)) {
+        hasExternalUpload = true;
+        continue;
+      }
+    }
+    // 自定义二进制/命令名带有上传意图
+    if (/(upload|publish|post|sync)/.test(cmdName)) {
+      hasExternalUpload = true;
+      continue;
+    }
+  }
+
+  return hasExternalUpload;
+}
+
+// 上传回执判定：命令文本本身不是完成凭据（printf 'upload success' 只是打印字符串），
+// 只有输出中带可解析的结构化成功回执（JSON 含 media_id/draft_id/errcode:0/success:true）才算
+function hasUploadReceipt(result) {
+  const text = String(result || "");
+  const block = text.match(/\{[\s\S]*\}/);
+  if (!block) return false;
+  try {
+    const parsed = JSON.parse(block[0]);
+    if (!parsed || typeof parsed !== "object") return false;
+    const payloads = [parsed, ...(parsed.data && typeof parsed.data === "object" ? [parsed.data] : [])];
+    return payloads.some((p) => Number(p.errcode) === 0 || p.success === true || Boolean(p.media_id) || Boolean(p.draft_id));
+  } catch {
+    return false;
+  }
+}
+
+// 逐项正向凭证核查：必须具备确凿的正向成功标识（media_id/draft_id/article_id/id，或 success: true / errcode: 0 / status: success|ok）
+function isSuccessItem(item) {
+  if (!item || typeof item !== "object") return false;
+  if (Boolean(item.media_id || item.draft_id || item.article_id || item.item_id || item.id)) return true;
+  if (item.success === true) return true;
+  if (item.errcode !== undefined && Number(item.errcode) === 0) return true;
+  if (typeof item.status === "string" && ["success", "ok", "published", "done"].includes(item.status.toLowerCase())) return true;
+  return false;
+}
+
+// 上传篇数计数：一次批量调用可能成功上传多篇（如一次返回四篇草稿编号），
+// 按回执中的逐篇正向凭据计数，而不是按工具调用次数；空白对象不计为成功
+function countUploadReceipts(tool) {
+  const text = String(tool?.result || "");
+  try {
+    const parsed = JSON.parse(text);
+    const containers = [parsed, ...(parsed && typeof parsed.data === "object" && parsed.data ? [parsed.data] : [])];
+    for (const container of containers) {
+      if (!container || typeof container !== "object") continue;
+      for (const key of ["articles", "drafts", "items", "results", "list"]) {
+        const list = Array.isArray(container[key]) ? container[key] : null;
+        if (list) {
+          return list.filter(isSuccessItem).length;
+        }
+      }
+      if (Number.isFinite(container.count) && container.count >= 1 && (Number(container.errcode) === 0 || container.success === true)) {
+        return Math.floor(container.count);
+      }
+    }
+    if (parsed && typeof parsed === "object") {
+      if (isSuccessItem(parsed)) return 1;
+    }
+  } catch {
+    // 非 JSON 回执落到下方的 ID 计数
+  }
+  // 非结构化回执：按出现的不同媒体/草稿 ID 计数
+  const ids = new Set([...text.matchAll(/(?:media_id|draft_id)["'\s:：]*["']?([0-9a-zA-Z_-]{3,})/gi)].map((m) => m[1]));
+  if (ids.size > 0) return ids.size;
+  if (tool?.status === "success" && !text.includes("articles") && !text.includes("drafts")) return 1;
+  return 0;
+}
+
 // 任务完成证据核验：检查模型声称的完成是否具备真实工具执行凭据
 export function verifyTaskEvidence({
   finalText = "",
@@ -4204,22 +4425,26 @@ export function verifyTaskEvidence({
   }
 
   // 2. 区分否定/如实陈述与正面完成声明
-  // 必须按子句独立判定：某项“尚未上传”不能掩盖另一项“已上传”的成功声明
-  const clauses = text.split(/[，,；;。！!\n\r]+/).map((s) => s.trim()).filter(Boolean);
+  // 按子句独立判定：除标点外，还在“但/但是/然而/不过/却”等转折连接词处拆开，
+  // “A已上传但B尚未上传”两侧分别核对，未完成的 B 不能掩盖虚报的 A
+  const clauses = text.split(/[，,；;。！!\n\r]+|但(?:是)?|然而|不过|却/).map((s) => s.trim()).filter(Boolean);
   const isPositiveUploadClause = (clause) => {
     const hasPos = /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(clause);
     const hasNeg = /(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(clause);
     return hasPos && !hasNeg;
   };
-  const claimsUpload = clauses.some(isPositiveUploadClause)
-    || (/(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(text)
-        && !/(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(text));
+  const claimsUpload = clauses.some(isPositiveUploadClause);
 
   // 正面文件写入/创建声明（支持包含中文字符的文件名，如“已创建 result.txt”、“已生成 报告.txt”、“写入 分析.xlsx”）
-  const fileActionMatch = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)(?:了)?(?:文件)?|文件)\s*[`'"]?([a-zA-Z0-9_\u4e00-\u9fa5./-]+\.[a-zA-Z0-9]+)[`'"]?/gi;
-  const claimedFiles = [...text.matchAll(fileActionMatch)].map((m) => m[1]);
-  const hasGenericFileWrite = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)文件|文件已(?:创建|写入|保存|生成)|已导出|导出成功)/i.test(text);
-  const claimsFileWrite = (claimedFiles.length > 0 || hasGenericFileWrite) && !/(?:尚未|未|暂未|没有)\s*(?:创建|写入|保存|生成|导出)/i.test(text);
+  // 必须带写入动词才算声明——“文件 notes.txt 的用途是记录笔记”这类普通提及不算；
+  // 含“尚未生成”等否定的子句整句剔除（不提取其中的文件名），不能掩盖其他子句的正面声明
+  const fileActionMatch = /已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)(?:了)?(?:文件)?\s*[`'"]?([a-zA-Z0-9_\u4e00-\u9fa5./-]+\.[a-zA-Z0-9]+)[`'"]?/gi;
+  const genericFileWritePattern = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)文件|文件已(?:创建|写入|保存|生成)|已导出|导出成功)/i;
+  const fileNegationPattern = /(?:尚未|未|暂未|没有|暂不|先不)\s*(?:创建|写入|保存|生成|导出)/i;
+  const positiveFileText = clauses.filter((clause) => !fileNegationPattern.test(clause)).join("\n");
+  const claimedFiles = [...positiveFileText.matchAll(fileActionMatch)].map((m) => m[1]);
+  const hasGenericFileWrite = genericFileWritePattern.test(positiveFileText);
+  const claimsFileWrite = claimedFiles.length > 0 || hasGenericFileWrite;
 
   // 纯文本普通问答、咨询、方案草拟、如实陈述等：直接放行
   if (!claimsUpload && !claimsFileWrite && !isExplicitFinish) {
@@ -4242,12 +4467,9 @@ export function verifyTaskEvidence({
       if (/upload|publish|post|create_draft|save_draft|mp__/.test(name)) return true;
       if (name.includes("draft") && !name.includes("get") && !name.includes("read") && !name.includes("list")) return true;
       if (name === "run_command") {
-        const cmd = String(tool?.args?.command || "").trim().toLowerCase();
-        // 排除只读查看类命令
-        if (/^(cat|head|tail|less|more|grep|egrep|fgrep|view|strings|ls|find)\b/i.test(cmd)) {
-          return false;
-        }
-        return /(upload|publish|draft|mp\/)/.test(cmd);
+        // 命令必须真实具备外部网络上传或发布执行特征，绝不能是只读或纯打印命令
+        if (!isUploadCommand(tool?.args?.command)) return false;
+        return hasUploadReceipt(tool?.result);
       }
       return false;
     });
@@ -4293,11 +4515,13 @@ export function verifyTaskEvidence({
       const rawNum = qtyMatch[1] || qtyMatch[2];
       claimedQuantity = zhNumMap[rawNum] || Number(rawNum);
     }
-    if (claimedQuantity && Number.isFinite(claimedQuantity) && successfulUploads.length < claimedQuantity) {
+    // 一次批量调用可能成功上传多篇：按成功回执中的逐篇凭据计数，而不是按工具调用次数
+    const successfulReceipts = successfulUploads.reduce((sum, tool) => sum + countUploadReceipts(tool), 0);
+    if (claimedQuantity && Number.isFinite(claimedQuantity) && successfulReceipts < claimedQuantity) {
       return {
         verified: false,
         verdict: "unverified",
-        reason: `声称上传完成 ${claimedQuantity} 篇，但实际成功执行上传仅 ${successfulUploads.length} 次，数量不符`,
+        reason: `声称上传完成 ${claimedQuantity} 篇，但实际成功回执仅 ${successfulReceipts} 篇，数量不符`,
         code: "QUANTITY_MISMATCH",
       };
     }
@@ -4373,13 +4597,50 @@ export function verifyTaskEvidence({
       }
     };
 
-    // 检查是否有针对具体文件的命令写入特征（包含重定向或写命令，排除 date、cat 等无副作用命令）
+    // 检查是否有针对具体文件的命令写入特征（重定向/写入命令）。
+    // 基于词法状态机精确解析 shell 语句：引号外部的 > 或 >>，或 touch/tee/cp/mv/sed -i 等写命令；
+    // 引号内的纯字符串（如 printf '> result.txt'）不触发重定向
     const commandWritesFile = (cmdStr, fileName) => {
       if (!cmdStr) return false;
-      const base = path.basename(fileName);
-      if (!cmdStr.includes(base)) return false;
-      const regex = new RegExp(`(?:>|>>|tee\\s+|cp\\s+.*|mv\\s+.*|touch\\s+|sed\\s+-i.*)\\s*['"]?(?:[.\\/a-zA-Z0-9_\u4e00-\u9fa5-]*\\/)?${base}['"]?`, "i");
-      return regex.test(cmdStr);
+      const targetNorm = normalizeRelPath(fileName);
+      const rawBase = path.basename(fileName);
+      const statements = parseCommandStatements(cmdStr);
+
+      for (const stmt of statements) {
+        // 1. 引号外的重定向 > 或 >>
+        for (const r of stmt.redirections) {
+          const rNorm = normalizeRelPath(r.target);
+          if (rNorm === targetNorm || path.basename(r.target) === rawBase) {
+            if (targetNorm.includes("/")) {
+              if (rNorm === targetNorm) return true;
+            } else {
+              if (!rNorm.includes("/") || rNorm === targetNorm) return true;
+            }
+          }
+        }
+        // 2. 检查特定文件写命令：touch, tee, cp, mv, sed -i 等
+        const cmdName = (stmt.args[0] || "").toLowerCase();
+        if (["touch", "tee"].includes(cmdName)) {
+          for (const arg of stmt.args.slice(1)) {
+            const aNorm = normalizeRelPath(arg);
+            if (aNorm === targetNorm || (!targetNorm.includes("/") && !aNorm.includes("/") && path.basename(arg) === rawBase)) return true;
+          }
+        }
+        if (["cp", "mv"].includes(cmdName)) {
+          const dest = stmt.args[stmt.args.length - 1];
+          if (dest) {
+            const dNorm = normalizeRelPath(dest);
+            if (dNorm === targetNorm || (!targetNorm.includes("/") && !dNorm.includes("/") && path.basename(dest) === rawBase)) return true;
+          }
+        }
+        if (cmdName === "sed" && stmt.args.some((a) => a.startsWith("-i"))) {
+          for (const arg of stmt.args.slice(1)) {
+            const aNorm = normalizeRelPath(arg);
+            if (aNorm === targetNorm || (!targetNorm.includes("/") && !aNorm.includes("/") && path.basename(arg) === rawBase)) return true;
+          }
+        }
+      }
+      return false;
     };
 
     const hasCommandSuccess = executedTools.some((t) => t.name === "run_command" && t.status === "success");
@@ -4391,11 +4652,9 @@ export function verifyTaskEvidence({
     if (claimedFiles.length > 0) {
       for (const claimed of claimedFiles) {
         const normClaimed = normalizeRelPath(claimed);
-        const hasDir = normClaimed.includes("/");
-        // 若声称指定了目录结构（如 a/result.txt），必须严格匹配全相对路径；无目录结构时才允许匹配文件名
-        const inRecorded = hasDir
-          ? recordedPaths.has(normClaimed)
-          : [...recordedPaths].some((p) => p === normClaimed || path.basename(p) === normClaimed);
+        // 目标解析为工作区内明确相对路径后精确匹配：
+        // 缺省目录时不再按文件名模糊匹配（sub/result.txt 不能冒充根目录 result.txt）
+        const inRecorded = recordedPaths.has(normClaimed);
         const physicallyExists = checkPhysicalFile(claimed);
         const commandWrote = checkCommandWroteFile(claimed);
 
