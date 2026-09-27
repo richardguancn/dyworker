@@ -2782,7 +2782,25 @@ async function postChat({ settings, payload, fetchImpl, signal, endpoint = null,
     // 给出客观指引并脱敏端点，避免武断判定
     if (/content_filter|considered high risk|data_inspection_failed|risk_control/i.test(detail)) {
       const sanitizedTarget = sanitizeEndpointUrl(endpoint || settings?.endpoint);
-      let safeDetail = detail.replace(/(api[_-]?key|token|secret|password|auth|authorization|credential)\s*([:=]|\s+)\s*([^\s&"',;]+)/gi, "$1$2[REDACTED]");
+      let safeDetail = detail;
+      try {
+        const parsed = JSON.parse(detail);
+        const redactObj = (obj) => {
+          if (!obj || typeof obj !== "object") return;
+          for (const key of Object.keys(obj)) {
+            if (/(api[_-]?key|token|secret|password|auth|authorization|credential)/i.test(key)) {
+              obj[key] = "[REDACTED]";
+            } else if (typeof obj[key] === "object") {
+              redactObj(obj[key]);
+            }
+          }
+        };
+        redactObj(parsed);
+        safeDetail = JSON.stringify(parsed);
+      } catch {
+        // 非标准 JSON 走正则
+      }
+      safeDetail = safeDetail.replace(/(["']?(?:api[_-]?key|token|secret|password|auth|authorization|credential)["']?\s*[:=]\s*)(["'][^"']+["']|[^\s,;}{]+)/gi, "$1\"[REDACTED]\"");
       safeDetail = safeDetail.replace(/[a-zA-Z0-9_-]{20,}/g, "[REDACTED]").slice(0, 300);
       const error = new Error(
         `服务商内容安全审核拒绝了本次请求（输入提示词、历史上下文或模型生成内容均可能触发审核）。`
@@ -4186,15 +4204,19 @@ export function verifyTaskEvidence({
   }
 
   // 2. 区分否定/如实陈述与正面完成声明
-  // 检查是否存在否定修饰语（如“尚未上传”、“未执行上传”、“未上传”、“暂未发布”等）
-  const hasNegativeUpload = /(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(text);
+  // 必须按子句独立判定：某项“尚未上传”不能掩盖另一项“已上传”的成功声明
+  const clauses = text.split(/[，,；;。！!\n\r]+/).map((s) => s.trim()).filter(Boolean);
+  const isPositiveUploadClause = (clause) => {
+    const hasPos = /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(clause);
+    const hasNeg = /(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(clause);
+    return hasPos && !hasNeg;
+  };
+  const claimsUpload = clauses.some(isPositiveUploadClause)
+    || (/(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(text)
+        && !/(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(text));
 
-  // 正面上传声明（排除被否定修饰的情况）
-  const hasPositiveUpload = /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(text);
-  const claimsUpload = hasPositiveUpload && !hasNegativeUpload;
-
-  // 正面文件写入/创建声明（识别具体文件名，如“已创建 result.txt”、“已创建文件 target.txt”、“写入 result.txt”）
-  const fileActionMatch = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)(?:了)?(?:文件)?|文件)\s*[`'"]?([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+)[`'"]?/gi;
+  // 正面文件写入/创建声明（支持包含中文字符的文件名，如“已创建 result.txt”、“已生成 报告.txt”、“写入 分析.xlsx”）
+  const fileActionMatch = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)(?:了)?(?:文件)?|文件)\s*[`'"]?([a-zA-Z0-9_\u4e00-\u9fa5./-]+\.[a-zA-Z0-9]+)[`'"]?/gi;
   const claimedFiles = [...text.matchAll(fileActionMatch)].map((m) => m[1]);
   const hasGenericFileWrite = /(?:已(?:经)?(?:成功)?(?:创建|写入|保存|生成|导出)文件|文件已(?:创建|写入|保存|生成)|已导出|导出成功)/i.test(text);
   const claimsFileWrite = (claimedFiles.length > 0 || hasGenericFileWrite) && !/(?:尚未|未|暂未|没有)\s*(?:创建|写入|保存|生成|导出)/i.test(text);
@@ -4210,10 +4232,15 @@ export function verifyTaskEvidence({
 
   // 3. 检查上传发布证据
   if (claimsUpload) {
-    // 过滤出真正的上传操作工具：排除只读查看命令（如 cat, head, tail, grep 等）
+    // 过滤出真正的上传操作工具：排除只读查询工具与查看命令
     const uploadTools = executedTools.filter((tool) => {
+      // 1. 明确标记为只读的工具，绝不能算上传写操作
+      if (tool?.isReadOnly === true) return false;
       const name = String(tool?.name || "").toLowerCase();
-      if (/upload|publish|post|draft|wechat|mp__/.test(name)) return true;
+      // 2. 排除纯读取/查询/获取类工具（如 wechat_get_draft, get_draft, list_drafts 等）
+      if (/^(wechat_)?(get_|read_|list_|fetch_|search_|query_|check_)/.test(name)) return false;
+      if (/upload|publish|post|create_draft|save_draft|mp__/.test(name)) return true;
+      if (name.includes("draft") && !name.includes("get") && !name.includes("read") && !name.includes("list")) return true;
       if (name === "run_command") {
         const cmd = String(tool?.args?.command || "").trim().toLowerCase();
         // 排除只读查看类命令
@@ -4258,6 +4285,23 @@ export function verifyTaskEvidence({
       };
     }
 
+    // 核验声称的具体数量与实际成功数量
+    const zhNumMap = { "一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
+    let claimedQuantity = null;
+    const qtyMatch = text.match(/(?:(\d+|[一两二三四五六七八九十])\s*篇(?:全部)?|全部\s*(\d+|[一两二三四五六七八九十])\s*篇)/i);
+    if (qtyMatch) {
+      const rawNum = qtyMatch[1] || qtyMatch[2];
+      claimedQuantity = zhNumMap[rawNum] || Number(rawNum);
+    }
+    if (claimedQuantity && Number.isFinite(claimedQuantity) && successfulUploads.length < claimedQuantity) {
+      return {
+        verified: false,
+        verdict: "unverified",
+        reason: `声称上传完成 ${claimedQuantity} 篇，但实际成功执行上传仅 ${successfulUploads.length} 次，数量不符`,
+        code: "QUANTITY_MISMATCH",
+      };
+    }
+
     // 提取正文及表格中的草稿编号/文章 ID
     const claimedNumbers = new Set();
     // A. 键值对提取
@@ -4299,15 +4343,23 @@ export function verifyTaskEvidence({
 
   // 4. 检查写入文件证据
   if (claimsFileWrite) {
-    // 收集所有成功写入记录的文件路径
-    const recordedFiles = new Set();
+    const normalizeRelPath = (p) => {
+      return String(p || "")
+        .replace(/\\/g, "/")
+        .replace(/^\.\//, "")
+        .replace(/^\/+/, "")
+        .toLowerCase();
+    };
+
+    // 收集所有成功写入记录的规范化相对路径
+    const recordedPaths = new Set();
     for (const t of executedTools) {
       if (t.status === "success" && ["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook"].includes(t.name)) {
-        if (t.args?.path) recordedFiles.add(path.basename(String(t.args.path)));
+        if (t.args?.path) recordedPaths.add(normalizeRelPath(t.args.path));
       }
     }
     for (const fc of fileChanges) {
-      if (fc.path) recordedFiles.add(path.basename(String(fc.path)));
+      if (fc.path) recordedPaths.add(normalizeRelPath(fc.path));
     }
 
     // 物理检查：如果提供了 workspacePath，检查工作区物理文件是否存在
@@ -4321,17 +4373,34 @@ export function verifyTaskEvidence({
       }
     };
 
-    // 命令执行检查：是否有成功的 run_command 执行
-    const hasCommandSuccess = executedTools.some((t) => t.name === "run_command" && t.status === "success");
+    // 检查是否有针对具体文件的命令写入特征（包含重定向或写命令，排除 date、cat 等无副作用命令）
+    const commandWritesFile = (cmdStr, fileName) => {
+      if (!cmdStr) return false;
+      const base = path.basename(fileName);
+      if (!cmdStr.includes(base)) return false;
+      const regex = new RegExp(`(?:>|>>|tee\\s+|cp\\s+.*|mv\\s+.*|touch\\s+|sed\\s+-i.*)\\s*['"]?(?:[.\\/a-zA-Z0-9_\u4e00-\u9fa5-]*\\/)?${base}['"]?`, "i");
+      return regex.test(cmdStr);
+    };
 
-    // 若提取到了声称的目标文件名（例如 target.txt、result.txt）
+    const hasCommandSuccess = executedTools.some((t) => t.name === "run_command" && t.status === "success");
+    const checkCommandWroteFile = (fileName) => {
+      return executedTools.some((t) => t.name === "run_command" && t.status === "success" && commandWritesFile(t.args?.command, fileName));
+    };
+
+    // 若提取到了声称的目标文件名（例如 target.txt、a/result.txt、报告.txt）
     if (claimedFiles.length > 0) {
       for (const claimed of claimedFiles) {
-        const base = path.basename(claimed);
-        const inRecorded = recordedFiles.has(base);
+        const normClaimed = normalizeRelPath(claimed);
+        const hasDir = normClaimed.includes("/");
+        // 若声称指定了目录结构（如 a/result.txt），必须严格匹配全相对路径；无目录结构时才允许匹配文件名
+        const inRecorded = hasDir
+          ? recordedPaths.has(normClaimed)
+          : [...recordedPaths].some((p) => p === normClaimed || path.basename(p) === normClaimed);
         const physicallyExists = checkPhysicalFile(claimed);
-        // 如果文件既没有被写入工具记录，物理上也不存在（或虽然物理存在但没有任何写入工具也没有执行命令）
-        if (!inRecorded && !(physicallyExists && hasCommandSuccess)) {
+        const commandWrote = checkCommandWroteFile(claimed);
+
+        // 如果文件既没有被写入工具记录，也不是（物理存在且被本次命令明确写入）
+        if (!inRecorded && !(physicallyExists && commandWrote)) {
           return {
             verified: false,
             verdict: "unverified",
@@ -4341,8 +4410,8 @@ export function verifyTaskEvidence({
         }
       }
     } else {
-      // 未指明具体文件名，但声称写文件：检查是否有任一写入工具、变更或物理文件
-      const hasAnyWrite = recordedFiles.size > 0 || (hasCommandSuccess && workspacePath);
+      // 未指明具体文件名，但声称写文件：检查是否有任一写入工具、变更或物理文件写入
+      const hasAnyWrite = recordedPaths.size > 0 || (hasCommandSuccess && workspacePath);
       if (!hasAnyWrite) {
         return {
           verified: false,

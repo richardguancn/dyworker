@@ -3793,11 +3793,12 @@ async function visibleConversationForSession(sessionId, fallbackPrompt, fallback
         const reasoning = String(message.reasoning || message.reasoning_content || "").trim();
         if (reasoning) entry.reasoning_content = reasoning;
         if (Array.isArray(message.tool_calls) && message.tool_calls.length) entry.tool_calls = message.tool_calls;
+        if (Array.isArray(message.executedMessages) && message.executedMessages.length) entry.executedMessages = message.executedMessages;
       }
       if (message.role === "tool" && message.tool_call_id) entry.tool_call_id = message.tool_call_id;
       return entry;
     })
-    .filter((message) => message.content.trim() || message.reasoning_content || message.tool_calls)
+    .filter((message) => message.content.trim() || message.reasoning_content || message.tool_calls || message.executedMessages?.length)
     .slice(-20);
   if (visible.length) return visible;
   const fallback = [];
