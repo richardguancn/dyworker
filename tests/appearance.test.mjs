@@ -229,12 +229,24 @@ test("保存失败后旧文件仍可读取", async (t) => {
   const file = path.join(dir, "appearance.json");
   const first = await saveAppearance(file, { theme: "dark" });
   assert.equal(first.ok, true);
-  // 只读目录让临时文件写入失败，rename 前的原文件应保持完整
+  // 只读目录让 POSIX 下临时文件写入失败；
+  // Windows 下 chmod 目录无效，通过只读属性与文件句柄锁定使原子替换失败
+  let lockHandle;
   await fs.chmod(dir, 0o555);
+  if (process.platform === "win32") {
+    try { await fs.chmod(file, 0o444); } catch {}
+    try { lockHandle = await fs.open(file, "r+"); } catch {}
+  }
   let saved;
   try {
     saved = await saveAppearance(file, { theme: "light" });
   } finally {
+    if (lockHandle) {
+      try { await lockHandle.close(); } catch {}
+    }
+    if (process.platform === "win32") {
+      try { await fs.chmod(file, 0o666); } catch {}
+    }
     await fs.chmod(dir, 0o755);
   }
   assert.equal(saved.ok, false);

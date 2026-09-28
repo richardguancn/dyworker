@@ -134,7 +134,23 @@ export function toolCallsOf(traces, toolName) {
 
 export function skillWasTriggered(traces, skill) {
   if (!skill) return false;
-  return toolCallsOf(traces, "load_skill").some((trace) => String(trace.content || "").includes(String(skill.id)));
+  const targetId = String(skill.id || "").trim();
+  const normalizedTarget = targetId.replace(/\\/g, "/");
+  return toolCallsOf(traces, "load_skill").some((trace) => {
+    const raw = String(trace.content || "");
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        const calledId = String(parsed.skill_id || "").trim();
+        if (calledId === targetId || calledId.replace(/\\/g, "/") === normalizedTarget) {
+          return true;
+        }
+      }
+    } catch {
+      // 容错降级
+    }
+    return raw.includes(targetId) || raw.replace(/\\\\/g, "/").replace(/\\/g, "/").includes(normalizedTarget);
+  });
 }
 
 // extraChecks: [{ id, run({ result, traces, workspaceDir, targetSkill }) => boolean | { pass, notes } }]
