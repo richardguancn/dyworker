@@ -283,6 +283,9 @@ test("应用更新基于 GitHub 标签，并贯通界面、预加载和主进程
   // 旧版本签名校验过旧无法自动升级时，给出可操作的指引而不是原始英文报错
   assert.match(appUpdater, /did not pass validation/);
   assert.match(appUpdater, /手动安装一次后，之后的版本即可正常自动更新/);
+  // Linux deb 更新 pkexec 提权失败（126/127：无 polkit 认证代理或授权取消）时，给出可操作的指引
+  assert.match(appUpdater, /exited with code 12\[67\]/);
+  assert.match(appUpdater, /polkit 认证代理/);
   // 更新错误常带无空格的长 URL/路径，对话框文本必须允许任意位置断行，否则会撑出窗口
   assert.match(styles, /\.app-update-copy[\s\S]*?overflow-wrap:\s*anywhere/);
 });

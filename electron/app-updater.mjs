@@ -19,6 +19,11 @@ function errorMessage(error) {
   if (/did not pass validation|代码要求|code signature/i.test(raw)) {
     return "当前安装版本的签名校验过旧，无法直接自动升级。请前往 GitHub 仓库 Releases 页面下载最新安装包，手动安装一次后，之后的版本即可正常自动更新。";
   }
+  // Linux deb 更新通过 pkexec 提权执行 dpkg -i；退出码 126/127 多为桌面会话缺少
+  // polkit 认证代理或用户取消了授权，不是安装包损坏。给出可操作的指引。
+  if (/Command\s+\S*pkexec\S*\s+exited with code 12[67]/i.test(raw)) {
+    return "自动安装需要系统授权（polkit）但未能完成：可能是当前桌面环境没有运行认证代理，或授权被取消。可尝试：1）安装并启动 polkit 认证代理（如 policykit-1-gnome）后重试；2）或前往 GitHub 仓库 Releases 页面下载最新 deb 包，用 sudo dpkg -i 手动安装。";
+  }
   return raw;
 }
 
