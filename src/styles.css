@@ -3262,6 +3262,13 @@ body.resizing-panels .app-shell {
   margin-bottom: 34px;
 }
 
+/* Linux 上 Chromium 合成器对 content-visibility 子树有绘制偏移 bug，
+   表现为切换会话后整个界面左移、再切换又恢复，故在 Linux 关闭该虚拟化 */
+.platform-linux .message-row {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .tool-summary {
   overflow: hidden;
   border: 1px solid var(--border);
