@@ -5092,7 +5092,7 @@ function AppUpdateDialog({
         </div>
         <p className="app-update-version">当前版本 {status.currentVersion || "未知"}{status.version ? ` · 新版本 ${status.version}` : ""}</p>
         {status.state === "available" && (
-          <p className="app-update-copy">GitHub 已发布新版本，下载完成后重启应用即可完成更新。</p>
+          <p className="app-update-copy">DYWorker 已发布新版本，下载完成后重启应用即可完成更新。</p>
         )}
         {(status.state === "available" || status.state === "downloading" || status.state === "downloaded") && status.releaseNotes && (
           <div className="app-update-notes">
