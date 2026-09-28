@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 
 const app = readSource(new URL("../src/App.tsx", import.meta.url));
+const appearanceController = readSource(new URL("../src/appearance/controller.ts", import.meta.url));
+const appearancePanel = readSource(new URL("../src/appearance/AppearanceSettingsPanel.tsx", import.meta.url));
+const appearanceTokens = readSource(new URL("../src/appearance/tokens.ts", import.meta.url));
+const appearanceCss = readSource(new URL("../src/appearance/appearance.css", import.meta.url));
 const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
 const imageAttachment = readSource(new URL("../src/ImageAttachment.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
@@ -895,7 +899,7 @@ test("context ring exposes used tokens, total capacity, and percentage", () => {
 test("linux launch includes the white-screen compatibility fallback", () => {
   assert.match(main, /process\.platform === "linux"/);
   assert.match(main, /app\.disableHardwareAcceleration\(\)/);
-  assert.match(main, /Menu\.setApplicationMenu\(null\)/);
+  assert.match(main, /mainWindow\.setMenuBarVisibility\(false\)/);
 });
 
 test("linux wayland sessions use X11 and show the window without waiting for renderer paint", () => {
@@ -919,6 +923,45 @@ test("desktop theme follows the macOS and Linux system appearance", () => {
   assert.match(styles, /color-scheme:\s*light dark/);
   assert.match(styles, /@media \(prefers-color-scheme:\s*dark\)/);
   assert.match(html, /name="color-scheme" content="light dark"/);
+});
+
+test("外观自定义链路贯穿渲染端、preload 与主进程", () => {
+  // 桥接三端契约（resetAppearance 仅供主进程菜单应急入口直连，渲染端经 onAppearanceReset 同步，见下）
+  for (const action of ["getAppearance", "saveAppearance", "getAppearanceCapabilities", "importAppearanceImage", "readAppearanceImage", "previewAppearance", "cancelAppearancePreview", "onAppearanceReset"]) {
+    assert.match(appearanceController + appearancePanel, new RegExp(`(dyworker|bridge)\\??\\.${action}`), `渲染端缺少 ${action}`);
+    assert.match(preload, new RegExp(`${action}:`), `preload 缺少 ${action}`);
+    assert.match(types, new RegExp(`${action}\\?`), `types 缺少 ${action}`);
+  }
+  assert.match(preload, /resetAppearance:/);
+  assert.match(types, /resetAppearance\?/);
+  for (const channel of ["appearance:get", "appearance:save", "appearance:capabilities", "appearance:import-image", "appearance:read-image", "appearance:preview", "appearance:cancel-preview", "appearance:reset"]) {
+    assert.match(main, new RegExp(`trustedHandle\\("${channel}"`), `主进程缺少 ${channel}`);
+  }
+  // 独立存储：外观不进入模型设置整包序列化
+  assert.match(main, /dataFile\("appearance\.json"\)/);
+  assert.match(main, /dataFile\("appearance-assets"\)/);
+  assert.doesNotMatch(types.match(/export interface ProviderSettings \{[\s\S]*?\n\}/)[0], /appearance|theme/i);
+  // 主题受控：显式 data-theme + 主题事件不再无条件覆盖用户选择
+  assert.match(appearanceController, /dataset\.theme|data-theme/);
+  assert.match(main, /syncNativeThemeSource/);
+  assert.match(styles, /html\[data-theme="dark"\]/);
+  // 字号/字体走变量，不用整页缩放
+  assert.match(styles, /--font-ui-scale/);
+  assert.match(appearanceCss, /--font-content-scale/);
+  assert.doesNotMatch(appearanceCss + appearanceController, /zoom/);
+  // 背景层不进入交互命中
+  assert.match(appearanceCss, /\.appearance-backdrop/);
+  assert.match(appearanceCss, /pointer-events:\s*none/);
+  // 应急入口：应用菜单恢复默认外观
+  assert.match(main, /恢复默认外观/);
+  assert.match(main, /appearance:reset/);
+  // 本机字体权限只放行主窗口，不向其他页面开放
+  assert.match(main, /font-access/);
+  assert.match(main, /webContents === mainWindow\?\.webContents/);
+  // 浏览器预览缺少桥接时不谎报保存成功
+  assert.match(appearanceController, /previewOnly/);
+  // 透明度只作用于面板背景，不使用整体 opacity 变淡
+  assert.doesNotMatch(appearanceController, /setOpacity/);
 });
 
 test("Windows 保留自绘标题栏，mac 用原生隐藏标题栏 + 红绿灯内嵌工具栏", () => {

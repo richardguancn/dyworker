@@ -15,8 +15,15 @@ export const toolsNeedingApproval = new Set(["write_file", "edit_file", "make_di
 export const workspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
 export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
 
-// 浏览器协作中的只读操作（打开网页、点击、输入、截图都可能产生对外影响，需确认）
-export const browserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);
+// 浏览器协作中的只读操作（打开网页、点击、输入、动作等可能产生对外影响，需确认；观察、等待、交接属于只读）
+export const browserReadOnlyTools = new Set([
+  "browser__read",
+  "browser__snapshot",
+  "browser__close",
+  "browser__observe",
+  "browser__wait",
+  "browser__handoff",
+]);
 
 // 本机界面操作是否属于变更（变更操作即使在完全访问模式下也必须逐次确认，
 // 避免误点付款、删除、安全设置等高风险控件）。读取应用状态属于只读操作；

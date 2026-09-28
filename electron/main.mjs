@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, suggestStandingRule } from "./agent.mjs";
+import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, sanitizeToolCalls, suggestStandingRule } from "./agent.mjs";
 import { createAuditLog } from "./audit.mjs";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mjs";
 import { BrowserControlManager } from "./browser-control.mjs";
@@ -36,6 +36,8 @@ import { createSessionArchive } from "./session-archive.mjs";
 import { enforceDirTotalSize, halveFileIfOversized } from "./log-rotation.mjs";
 import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mjs";
 import { backgroundTasksManager } from "./background-tasks.mjs";
+import { collectOrphanAssets, commitStagedImage, defaultAppearance, discardStagedImage, importAppearanceImage, normalizeAppearance, readAppearance, readAppearanceImage, removeAppearanceImage, saveAppearance } from "./appearance.mjs";
+import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "./appearance-platform.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -141,20 +143,47 @@ function trustedHandle(channel, handler) {
 }
 
 app.setName("DYWorker");
+// 测试/验收可用独立数据目录并行启动，避免与正在运行的正式实例共用 userData
+if (process.env.DYWORKER_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.DYWORKER_USER_DATA_DIR));
+}
 nativeTheme.themeSource = "system";
 if (process.platform === "linux") {
   app.disableHardwareAcceleration();
 }
 
-function systemWindowBackground() {
-  return nativeTheme.shouldUseDarkColors ? "#181916" : "#f7f7f4";
+// ---- 外观自定义：已保存值 + 平台能力 + 实际效果状态（与用户选择分开记录）----
+const appearanceFile = dataFile("appearance.json");
+const appearanceAssetsDir = dataFile("appearance-assets");
+const appearanceCapabilities = getAppearanceCapabilities({
+  hwAcceleration: process.platform !== "linux",
+});
+let appearanceState = { settings: defaultAppearance(), revision: 0 };
+let appearanceEffective = { applied: "none", reason: null };
+
+function resolvedAppearanceTheme(settings = appearanceState.settings) {
+  if (settings.theme === "dark" || settings.theme === "light") return settings.theme;
+  return nativeTheme.shouldUseDarkColors ? "dark" : "light";
+}
+
+// 显式主题下把 themeSource 固定为用户选择，系统主题事件不再改变窗口底色
+function syncNativeThemeSource() {
+  const theme = appearanceState.settings.theme;
+  nativeTheme.themeSource = theme === "system" ? "system" : theme;
+}
+
+function applyWindowAppearance() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  appearanceEffective = applyWindowBackdrop(mainWindow, appearanceState.settings, appearanceCapabilities);
+  const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
+  mainWindow.setBackgroundColor(windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
+  mainWindow.webContents?.invalidate?.();
 }
 
 // Linux 使用系统边框与阴影，不再为自绘阴影扩大应用的输入区域。
+// 系统主题变化只在「跟随系统」时生效：显式主题下 themeSource 已固定，此事件不会因系统明暗切换而触发。
 nativeTheme.on("updated", () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setBackgroundColor(systemWindowBackground());
-  }
+  applyWindowAppearance();
 });
 
 function dataFile(name) {
@@ -822,16 +851,12 @@ function transcriptionEndpoint(settings) {
 }
 
 function createWindow() {
-  if (process.platform === "linux") {
-    Menu.setApplicationMenu(null);
-  }
-
   const windowOptions = {
     width: 1184,
     height: 736,
     minWidth: 980,
     minHeight: 660,
-    backgroundColor: systemWindowBackground(),
+    backgroundColor: windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
     show: process.platform === "linux",
     title: "DYWorker",
     frame: process.platform === "linux",
@@ -850,6 +875,26 @@ function createWindow() {
   };
 
   mainWindow = new BrowserWindow(windowOptions);
+  applyWindowAppearance();
+  if (process.platform === "linux") {
+    // Linux 下默认隐藏顶部菜单栏以保持界面纯净，但保留应用菜单及全局恢复入口
+    mainWindow.setMenuBarVisibility(false);
+    mainWindow.autoHideMenuBar = true;
+  }
+  // 注册按键级应急恢复外观监听（CmdOrCtrl+Alt+R），独立于菜单显示状态，界面字号过大时仍可触发
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const isCmdOrCtrl = process.platform === "darwin" ? input.meta : input.control;
+    if (isCmdOrCtrl && input.alt && input.key?.toLowerCase() === "r" && input.type === "keyDown") {
+      // 阻止同一按键继续触发菜单 accelerator；长按也只恢复一次。
+      event.preventDefault();
+      if (input.isAutoRepeat) return;
+      void performAppearanceReset().then((snapshot) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("appearance:reset", snapshot);
+        }
+      });
+    }
+  });
   // 最大化/还原时确保窗口始终接收鼠标输入。
   mainWindow.on("maximize", () => {
     mainWindow?.setIgnoreMouseEvents(false);
@@ -954,9 +999,15 @@ function createWindow() {
   mainWindow.once("closed", () => {
     mainWindow = undefined;
   });
-  mainWindow.webContents.session.setPermissionCheckHandler((_webContents, permission) => permission === "media");
-  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === "media");
+  // 主窗口权限：media 沿用现有放行；本机字体枚举仅放行主窗口自身，内嵌网页不开放
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) =>
+    permission === "media" ||
+    ((permission === "font-access" || permission === "local-fonts") && webContents === mainWindow?.webContents));
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(
+      permission === "media" ||
+      ((permission === "font-access" || permission === "local-fonts") && webContents === mainWindow?.webContents),
+    );
   });
   if (process.platform !== "linux") mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1079,42 +1130,73 @@ app.on("web-contents-created", (_event, contents) => {
 
 // 当前显示的内置浏览器页面：优先渲染进程上报的激活 webview
 function activeEmbeddedBrowserContents() {
-  return embeddedBrowserContentsById.get(activeEmbeddedBrowserContentsId)
+  const contents = embeddedBrowserContentsById.get(activeEmbeddedBrowserContentsId)
     || embeddedBrowserContentsById.get(fallbackEmbeddedBrowserContentsId)
     || null;
+  if (!contents || contents.isDestroyed?.()) return null;
+  return contents;
 }
 
 const browserControlManager = new BrowserControlManager({
   onStateChange: (state) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("browser-control:state", state);
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("browser-control:state", state);
+      }
+    } catch {
+      // 忽略主窗口销毁期间广播失败
     }
   },
 });
 
-function waitForEmbeddedBrowser(sender, url, tabId) {
+function waitForEmbeddedBrowser(sender, url, tabId, { validate } = {}) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    const previousUrl = activeEmbeddedBrowserContents()?.getURL?.() || "";
+    let previousUrl = "";
+    try {
+      const active = activeEmbeddedBrowserContents();
+      if (active && !active.isDestroyed?.()) {
+        previousUrl = active.getURL?.() || "";
+      }
+    } catch {
+      // 忽略已销毁对象取 URL 异常
+    }
     let observedContents = null;
     let timer = null;
     let settled = false;
+
+    // 打开请求可能携带取消凭据：预占被接管、停止、过期或被新请求接替后，
+    // 旧请求严禁再发起导航或确认成功 (C2_expired_open_stays_revoked)
+    const stillValid = () => (typeof validate === "function" ? validate() : true);
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (observedContents) {
-        observedContents.removeListener("did-stop-loading", onStop);
-        observedContents.removeListener("did-fail-load", onFail);
-        observedContents.removeListener("destroyed", onDestroyed);
+        try {
+          observedContents.removeListener("did-stop-loading", onStop);
+          observedContents.removeListener("did-fail-load", onFail);
+          observedContents.removeListener("destroyed", onDestroyed);
+        } catch {
+          // 忽略
+        }
       }
       resolve(result);
     };
     const onStop = () => {
       const contents = observedContents;
       if (!contents || contents.isDestroyed()) return;
-      const currentUrl = contents.getURL();
+      if (!stillValid()) {
+        finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
+        return;
+      }
+      let currentUrl = "";
+      try {
+        currentUrl = contents.getURL();
+      } catch {
+        return;
+      }
       if (!currentUrl || currentUrl === "about:blank" || currentUrl === previousUrl) return;
       finish({ ok: true, contents });
     };
@@ -1127,6 +1209,10 @@ function waitForEmbeddedBrowser(sender, url, tabId) {
     };
     const poll = () => {
       if (settled) return;
+      if (!stillValid()) {
+        finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
+        return;
+      }
       if (!sender || sender.isDestroyed()) {
         finish({ ok: false, result: "当前任务窗口已关闭" });
         return;
@@ -1139,18 +1225,35 @@ function waitForEmbeddedBrowser(sender, url, tabId) {
       if (contents && !contents.isDestroyed()) {
         if (observedContents !== contents) {
           observedContents = contents;
-          contents.once("did-stop-loading", onStop);
-          contents.once("did-fail-load", onFail);
-          contents.once("destroyed", onDestroyed);
+          try {
+            contents.once("did-stop-loading", onStop);
+            contents.once("did-fail-load", onFail);
+            contents.once("destroyed", onDestroyed);
+          } catch {
+            // 忽略
+          }
         }
-        const currentUrl = contents.getURL();
-        if (currentUrl === url && !contents.isLoading()) {
+        let currentUrl = "";
+        let loading = false;
+        try {
+          currentUrl = contents.getURL();
+          loading = contents.isLoading();
+        } catch {
+          return;
+        }
+        if (currentUrl === url && !loading) {
           finish({ ok: true, contents });
           return;
         }
       }
       timer = setTimeout(poll, 50);
     };
+
+    // 实际发起导航前最后一次核验取消凭据：已撤销的请求不得触发页面跳转 (C2)
+    if (!stillValid()) {
+      finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
+      return;
+    }
 
     try {
       sender.send("browser:panel-request", { action: "open", url, tabId });
@@ -1163,8 +1266,12 @@ function waitForEmbeddedBrowser(sender, url, tabId) {
 }
 
 function requestCloseEmbeddedBrowser(sender) {
-  if (!sender || sender.isDestroyed()) return;
-  sender.send("browser:panel-request", { action: "close" });
+  try {
+    if (!sender || sender.isDestroyed()) return;
+    sender.send("browser:panel-request", { action: "close" });
+  } catch {
+    // 忽略
+  }
 }
 
 registerLocalImageIpc(ipcMain, {
@@ -1814,6 +1921,154 @@ trustedHandle("settings:save", async (_event, settings) => {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
+
+// ===== 外观自定义（独立存储 userData/appearance.json，不随模型设置整包覆盖）=====
+function appearanceSnapshot(extra = {}) {
+  return {
+    ok: true,
+    settings: appearanceState.settings,
+    revision: appearanceState.revision,
+    effective: appearanceEffective,
+    capabilities: { ...appearanceCapabilities, platform: process.platform },
+    ...extra,
+  };
+}
+
+// nativeImage 重编码：按 EXIF 方向归一、最长边压到 3840、剥离元数据。
+// 所有格式统一进行 nativeImage 解码检查；WebP 转换为受控无损 PNG 存储。
+function processAppearanceImageBuffer(buffer, { format }) {
+  const image = nativeImage.createFromBuffer(buffer);
+  if (image.isEmpty()) throw new Error("图片解码失败");
+  const { width, height } = image.getSize();
+  const longest = Math.max(width, height);
+  const scaled = longest > 3840
+    ? image.resize({
+        width: Math.max(1, Math.round((width * 3840) / longest)),
+        height: Math.max(1, Math.round((height * 3840) / longest)),
+        quality: "good",
+      })
+    : image;
+  return format === "jpeg" ? scaled.toJPEG(92) : scaled.toPNG();
+}
+
+async function applySavedAppearanceResult(result, previousImageId) {
+  appearanceState = { settings: result.settings, revision: result.revision };
+  syncNativeThemeSource();
+  applyWindowAppearance();
+  const nextImageId = result.settings.background.imageId;
+  // 保存成功后才把暂存图片转正、回收旧图，避免取消预览时误删
+  if (nextImageId && nextImageId !== previousImageId) {
+    await commitStagedImage(appearanceAssetsDir, nextImageId).catch(() => {});
+  }
+  if (previousImageId && previousImageId !== nextImageId) {
+    await removeAppearanceImage(appearanceAssetsDir, previousImageId).catch(() => {});
+  }
+}
+
+trustedHandle("appearance:get", async () => appearanceSnapshot());
+
+trustedHandle("appearance:capabilities", async () => ({ ...appearanceCapabilities, platform: process.platform }));
+
+trustedHandle("appearance:save", async (_event, payload) => {
+  const previousImageId = appearanceState.settings.background.imageId;
+  const result = await saveAppearance(appearanceFile, payload?.settings, Number(payload?.revision));
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.error,
+      stale: result.stale === true,
+      unknownVersion: result.unknownVersion === true,
+      settings: result.settings || appearanceState.settings,
+      revision: result.revision ?? appearanceState.revision,
+    };
+  }
+  await applySavedAppearanceResult(result, previousImageId);
+  return appearanceSnapshot();
+});
+
+trustedHandle("appearance:import-image", async () => {
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: "选择背景图片",
+    properties: ["openFile"],
+    filters: [{ name: "图片 (PNG/JPEG/WebP)", extensions: ["png", "jpg", "jpeg", "webp"] }],
+  });
+  if (picked.canceled || !picked.filePaths[0]) return { ok: true, canceled: true };
+  return importAppearanceImage(appearanceAssetsDir, picked.filePaths[0], { process: processAppearanceImageBuffer });
+});
+
+trustedHandle("appearance:read-image", async (_event, imageId) => {
+  const result = await readAppearanceImage(appearanceAssetsDir, String(imageId || ""));
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, bytes: result.data, mime: result.mime };
+});
+
+function resolveNormalizedSettings(raw) {
+  const normalized = normalizeAppearance(raw);
+  return (normalized && typeof normalized === "object" && "settings" in normalized)
+    ? normalized.settings
+    : normalized;
+}
+
+// 原生预览只覆盖窗口底色/系统材质；纯页面样式预览在渲染端完成
+trustedHandle("appearance:preview", async (_event, raw) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+  const settings = resolveNormalizedSettings(raw);
+  const previewTheme = settings?.theme || "system";
+  nativeTheme.themeSource = previewTheme === "system" ? "system" : previewTheme;
+  appearanceEffective = applyWindowBackdrop(mainWindow, settings, appearanceCapabilities);
+  const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
+  mainWindow.setBackgroundColor(windowBackgroundFor(settings, resolvedAppearanceTheme(settings), isBackdropActive));
+  mainWindow.webContents?.invalidate?.();
+  return { ok: true, effective: appearanceEffective };
+});
+
+trustedHandle("appearance:cancel-preview", async (_event, payload) => {
+  syncNativeThemeSource();
+  applyWindowAppearance();
+  // 取消时回收草稿引用过但未保存的暂存图片；已保存配置引用的绝不在此删除
+  for (const id of Array.isArray(payload?.discardStaged) ? payload.discardStaged : []) {
+    if (id && id !== appearanceState.settings.background.imageId) {
+      await discardStagedImage(appearanceAssetsDir, String(id)).catch(() => {});
+    }
+  }
+  return { ok: true, effective: appearanceEffective };
+});
+
+async function performAppearanceReset() {
+  const previousImageId = appearanceState.settings.background.imageId;
+  const defaults = defaultAppearance();
+  defaults.glass.lightweight = appearanceCapabilities.glassDefault === "lightweight";
+  const result = await saveAppearance(appearanceFile, defaults, appearanceState.revision);
+  if (result.ok) await applySavedAppearanceResult(result, previousImageId);
+  return result.ok ? appearanceSnapshot() : { ok: false, error: result.error, settings: appearanceState.settings, revision: appearanceState.revision };
+}
+
+trustedHandle("appearance:reset", async () => performAppearanceReset());
+
+// 应用菜单「恢复默认外观」应急入口：设置被不合适字号挤压时仍可恢复
+function installApplicationMenu() {
+  const template = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    {
+      label: "外观",
+      submenu: [
+        {
+          label: "恢复默认外观",
+          accelerator: "CmdOrCtrl+Alt+R",
+          click: () => {
+            void performAppearanceReset().then((snapshot) => {
+              if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("appearance:reset", snapshot);
+            });
+          },
+        },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 // 凭证预检（auth check）：设置页保存 API Key 后立即验证可用性，避免运行任务时才发现配错。
 // 发一个最小 chat 请求：200 = 通过；401/403 = 密钥无效；404 = 地址或模型名不对；其余按状态码归类。
@@ -2588,7 +2843,14 @@ function agentExtraTools(mcpTools) {
 
 function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "" } = {}) {
   const browserAgent = new BrowserAgent({
-    openPanel: renderer ? (url, tabId) => waitForEmbeddedBrowser(renderer, url, tabId) : undefined,
+    openPanel: renderer
+      ? (url, tabId, credential) =>
+          waitForEmbeddedBrowser(renderer, url, tabId, {
+            validate: credential?.token
+              ? () => browserControlManager.isOpenReservationValid(credential.token)
+              : undefined
+          })
+      : undefined,
     closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer) : undefined,
     getContents: () => activeEmbeddedBrowserContents(),
     controlManager: browserControlManager,
@@ -2614,8 +2876,12 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
 }
 
 function emitToSession(sender, sessionId, runId, agentEvent) {
-  if (!sender || sender.isDestroyed()) return;
-  sender.send("agent:event", { sessionId, runId, event: agentEvent });
+  try {
+    if (!sender || sender.isDestroyed()) return;
+    sender.send("agent:event", { sessionId, runId, event: agentEvent });
+  } catch {
+    // 渲染进程被销毁时不向外抛错
+  }
 }
 
 // 执行排队消息时，从会话存档取该条消息的最新内容（用户可能已编辑），
@@ -2892,7 +3158,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       runId,
     });
     if (agentState.cancelled) return cancelledResponse();
-    let iterationMessages = agentConversation;
+    let iterationMessages = sanitizeToolCalls(agentConversation);
     let finalResult = null;
     while (true) {
       emit({ type: "loop-state", active: loop.enabled, iteration: loop.iteration, maximum: loop.maximum, status: "正在执行" });
@@ -3002,11 +3268,19 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         }
       })();
     }
-    routeExtraTool?.dispose();
+    try {
+      routeExtraTool?.dispose();
+    } catch (disposeError) {
+      console.warn("[agent] routeExtraTool.dispose failed:", disposeError);
+    }
     trackTaskEnd();
     if (activeAgents.get(sessionId) === agentState) {
       activeAgents.delete(sessionId);
-      drainSessionQueue(sessionId);
+      try {
+        drainSessionQueue(sessionId);
+      } catch (drainError) {
+        console.warn("[agent] drainSessionQueue failed:", drainError);
+      }
     }
   }
 }
@@ -3028,17 +3302,22 @@ function drainSessionQueue(sessionId) {
 }
 
 trustedHandle("agent:send", async (event, payload) => {
-  if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
-  if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "任务请求来源无效" };
-  const sessionId = String(payload?.sessionId || "").trim();
-  const runId = String(payload?.runId || "").trim();
-  if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
-  if (activeAgents.has(sessionId)) {
-    const count = sessionQueue.push({ sessionId, runId, payload, sender: event.sender });
-    emitToSession(event.sender, sessionId, runId, { type: "queued", count });
-    return { ok: true, queued: true, runId };
+  try {
+    if (mcpShuttingDown) return { status: "cancelled", reason: "应用正在退出" };
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) return { ok: false, error: "任务请求来源无效" };
+    const sessionId = String(payload?.sessionId || "").trim();
+    const runId = String(payload?.runId || "").trim();
+    if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
+    if (activeAgents.has(sessionId)) {
+      const count = sessionQueue.push({ sessionId, runId, payload, sender: event.sender });
+      emitToSession(event.sender, sessionId, runId, { type: "queued", count });
+      return { ok: true, queued: true, runId };
+    }
+    return await executeAgentRun({ payload, sender: event.sender });
+  } catch (agentError) {
+    const reason = agentError instanceof Error ? agentError.message : String(agentError);
+    return { ok: false, error: reason };
   }
-  return executeAgentRun({ payload, sender: event.sender });
 });
 
 trustedHandle("agent:remove-queued", (_event, payload) => {
@@ -3960,7 +4239,9 @@ async function resumeWake(wake) {
       await persistSessionAppend(wake.sessionId, failureMessages);
     }
   } finally {
-    routeExtraTool?.dispose();
+    try {
+      routeExtraTool?.dispose();
+    } catch {}
     trackTaskEnd();
     runningScheduledTask = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -4202,7 +4483,9 @@ async function runScheduledTask(record) {
   } catch (error) {
     await markScheduleFinished(record.id, false, error instanceof Error ? error.message : String(error), scheduleSessionId);
   } finally {
-    routeExtraTool?.dispose();
+    try {
+      routeExtraTool?.dispose();
+    } catch {}
     trackTaskEnd();
     runningScheduledTask = false;
     broadcastSchedulesChanged();
@@ -4927,7 +5210,9 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       result: { status: "error", reason: message, durationMs: Date.now() - taskStartedAt },
     });
   } finally {
-    routeExtraTool?.dispose();
+    try {
+      routeExtraTool?.dispose();
+    } catch {}
     clearPending();
     trackTaskEnd();
     runningChannelTaskCount = Math.max(0, runningChannelTaskCount - 1);
@@ -5039,6 +5324,19 @@ app.whenReady().then(async () => {
   const storedSettings = await readSettings();
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
+  // 外观先读取再建窗，窗口底色/主题从启动即与用户选择一致，避免默认色闪烁
+  const storedAppearance = await readAppearance(appearanceFile);
+  appearanceState = { settings: storedAppearance.settings, revision: storedAppearance.revision };
+  if (storedAppearance.source === "default" && appearanceCapabilities.glassDefault === "lightweight") {
+    appearanceState.settings.glass.lightweight = true;
+  }
+  syncNativeThemeSource();
+  installApplicationMenu();
+  // 启动时清理未被已保存配置引用的暂存/孤儿图片（不误删当前引用）
+  void collectOrphanAssets(
+    appearanceAssetsDir,
+    [appearanceState.settings.background.imageId].filter(Boolean),
+  ).catch(() => {});
   createWindow();
   backgroundTasksManager.setBroadcastCallback((event) => {
     if (mainWindow && !mainWindow.isDestroyed()) {

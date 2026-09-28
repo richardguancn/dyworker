@@ -64,7 +64,35 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("browser:panel-request", listener);
     return () => ipcRenderer.removeListener("browser:panel-request", listener);
   },
+  takeoverBrowserControl: () => ipcRenderer.invoke("browser-control:takeover"),
+  resumeBrowserControl: (payload) => ipcRenderer.invoke("browser-control:resume", payload),
+  stopBrowserControl: () => ipcRenderer.invoke("browser-control:stop"),
+  getBrowserControlStatus: () => ipcRenderer.invoke("browser-control:status"),
+  onBrowserControlState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("browser-control:state", listener);
+    return () => ipcRenderer.removeListener("browser-control:state", listener);
+  },
+  onBrowserControlResumed: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("browser-control:resumed", listener);
+    return () => ipcRenderer.removeListener("browser-control:resumed", listener);
+  },
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  // ---- 外观自定义：独立存储， trustedHandle 在主进程校验来源 ----
+  getAppearance: () => ipcRenderer.invoke("appearance:get"),
+  saveAppearance: (payload) => ipcRenderer.invoke("appearance:save", payload),
+  getAppearanceCapabilities: () => ipcRenderer.invoke("appearance:capabilities"),
+  importAppearanceImage: () => ipcRenderer.invoke("appearance:import-image"),
+  readAppearanceImage: (imageId) => ipcRenderer.invoke("appearance:read-image", imageId),
+  previewAppearance: (settings) => ipcRenderer.invoke("appearance:preview", settings),
+  cancelAppearancePreview: (payload) => ipcRenderer.invoke("appearance:cancel-preview", payload),
+  resetAppearance: () => ipcRenderer.invoke("appearance:reset"),
+  onAppearanceReset: (callback) => {
+    const listener = (_event, snapshot) => callback(snapshot);
+    ipcRenderer.on("appearance:reset", listener);
+    return () => ipcRenderer.removeListener("appearance:reset", listener);
+  },
   probeCredentials: (payload) => ipcRenderer.invoke("settings:probe-credentials", payload),
   // 拉取同一密钥下的可用模型列表（GET /models），设置页下拉切换模型用
   listModels: (payload) => ipcRenderer.invoke("settings:list-models", payload),

@@ -3512,7 +3512,76 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
   throw modelTransportError("模型流式响应意外中断，未收到终止事件", "MODEL_STREAM_INTERRUPTED");
 }
 
+/**
+ * 校验并修复发送给模型的 messages 中的 tool_calls 与 tool 消息配对关系：
+ * 1. 严格确保每一个 assistant 消息中的每个 tool_call (call.id) 在随后的消息中都有对应的 role: "tool" (tool_call_id === call.id)
+ * 2. 如果缺少 tool 回复（例如前序任务异常、取消、finish_task 未回填或历史记录被截断）：
+ *    - 自动为缺失的 tool_call_id 补齐占位回复：role: "tool", tool_call_id: id, content: "（操作已结束或未产生输出）"
+ * 3. 严格确保每一个 role: "tool" 消息前面，必须有对应的 assistant 消息且其 tool_calls 包含该 id；
+ *    - 剔除孤立的、没有匹配的 tool 消息，防止端点报错 unexpected tool response。
+ * 4. 剔除空 tool_calls 属性（tool_calls: []），避免部分服务端 400。
+ */
+export function sanitizeToolCalls(messages) {
+  if (!Array.isArray(messages)) return [];
+  const result = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") continue;
+
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      const copy = { ...msg };
+      const callIds = new Set(msg.tool_calls.map((c) => String(c?.id || "")).filter(Boolean));
+      result.push(copy);
+
+      // 收集接下来的 tool 消息，直到下一个 assistant 或 user
+      const existingToolCallIds = new Set();
+      let j = i + 1;
+      while (j < messages.length && messages[j]?.role === "tool") {
+        const toolMsg = messages[j];
+        const callId = String(toolMsg?.tool_call_id || "");
+        if (callIds.has(callId)) {
+          existingToolCallIds.add(callId);
+          result.push(toolMsg);
+        }
+        j++;
+      }
+      i = j - 1; // 跳过已处理的 tool 消息
+
+      // 检查是否有缺失的 tool_call，自动补齐占位
+      for (const call of msg.tool_calls) {
+        const id = String(call?.id || "");
+        if (id && !existingToolCallIds.has(id)) {
+          result.push({
+            role: "tool",
+            tool_call_id: id,
+            content: "（操作已结束或未产生输出）",
+          });
+        }
+      }
+      continue;
+    }
+
+    if (msg.role === "tool") {
+      // 孤立的 tool 消息（前面没有匹配的 assistant tool_calls），丢弃以防服务端报错
+      continue;
+    }
+
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length === 0) {
+      const copy = { ...msg };
+      delete copy.tool_calls;
+      result.push(copy);
+      continue;
+    }
+
+    result.push(msg);
+  }
+
+  return result;
+}
+
 export function adaptMessagesForModel(messages, settings) {
+  const sanitized = sanitizeToolCalls(messages);
   const providerId = detectProvider(settings?.endpoint);
   const modelName = bareModelName(settings?.model).toLowerCase();
   // 识别已知明确支持或要求 reasoning_content 的场景：
@@ -3528,13 +3597,13 @@ export function adaptMessagesForModel(messages, settings) {
     /k3|r1|reasoner|reasoning|thinking|qwq/i.test(modelName);
 
   if (isThinkingModelOrEndpoint) {
-    return messages;
+    return sanitized;
   }
 
   // 对于已知标准严格的外部接口（如 OpenAI 官方端点、Gemini、xAI、MiniMax 等非思考端点），
   // 在浅拷贝副本中临时剔除 reasoning_content，避免服务端校验报 400 额外参数错误。
   // 注意：这只影响发送给服务端的临时 payload，不影响持久化和跨轮历史存储。
-  return messages.map((message) => {
+  return sanitized.map((message) => {
     if (message?.role === "assistant" && Object.prototype.hasOwnProperty.call(message, "reasoning_content")) {
       const copy = { ...message };
       delete copy.reasoning_content;
@@ -4301,43 +4370,8 @@ function normalizeRelPath(p) {
     .toLowerCase();
 }
 
-// 判定命令是否属于外部上传/发布操作（排除 cat、grep、printf、echo 等只读或打印命令）
-function isUploadCommand(cmdStr) {
-  if (!cmdStr) return false;
-  const statements = parseCommandStatements(cmdStr);
-  if (!statements.length) return false;
-
-  let hasExternalUpload = false;
-  for (const stmt of statements) {
-    const rawCmd = stmt.args[0] || "";
-    const cmdName = path.basename(rawCmd).toLowerCase();
-    if (!cmdName) continue;
-
-    // 网络传输工具
-    if (["curl", "wget", "http", "fetch"].includes(cmdName)) {
-      hasExternalUpload = true;
-      continue;
-    }
-    // 脚本解释器执行上传/发布脚本
-    if (["python", "python3", "node", "bash", "sh", "zsh", "deno", "bun", "ruby", "perl"].includes(cmdName)) {
-      const scriptOrArgs = stmt.args.slice(1).join(" ").toLowerCase();
-      if (/(upload|publish|post|sync|draft)/.test(scriptOrArgs)) {
-        hasExternalUpload = true;
-        continue;
-      }
-    }
-    // 自定义二进制/命令名带有上传意图
-    if (/(upload|publish|post|sync)/.test(cmdName)) {
-      hasExternalUpload = true;
-      continue;
-    }
-  }
-
-  return hasExternalUpload;
-}
-
-// 上传回执判定：命令文本本身不是完成凭据（printf 'upload success' 只是打印字符串），
-// 只有输出中带可解析的结构化成功回执（JSON 含 media_id/draft_id/errcode:0/success:true）才算
+// 只解析专门上传工具的返回值。通用命令的输出即使包含同样字段，也可能
+// 来自旧文件、打印语句或失败命令之后的其他操作，不参与完成核验。
 function hasUploadReceipt(result) {
   const text = String(result || "");
   const block = text.match(/\{[\s\S]*\}/);
@@ -4363,7 +4397,8 @@ function isSuccessItem(item) {
 }
 
 // 上传篇数计数：一次批量调用可能成功上传多篇（如一次返回四篇草稿编号），
-// 按回执中的逐篇正向凭据计数，而不是按工具调用次数；空白对象不计为成功
+// 按回执中的逐篇正向凭据计数，而不是按工具调用次数；空白对象不计为成功；
+// 重复的草稿/文章编号不能重复计为不同文章
 function countUploadReceipts(tool) {
   const text = String(tool?.result || "");
   try {
@@ -4374,7 +4409,25 @@ function countUploadReceipts(tool) {
       for (const key of ["articles", "drafts", "items", "results", "list"]) {
         const list = Array.isArray(container[key]) ? container[key] : null;
         if (list) {
-          return list.filter(isSuccessItem).length;
+          const successfulItems = list.filter(isSuccessItem);
+          if (successfulItems.length === 0) return 0;
+          const seenIds = new Set();
+          let uniqueCount = 0;
+          for (const item of successfulItems) {
+            const id = item.media_id || item.draft_id || item.article_id || item.item_id || item.id;
+            if (id !== undefined && id !== null && String(id).trim() !== "") {
+              const idStr = String(id).trim();
+              if (seenIds.has(idStr)) {
+                // 重复编号，不计为不同文章
+                continue;
+              }
+              seenIds.add(idStr);
+              uniqueCount++;
+            } else {
+              uniqueCount++;
+            }
+          }
+          return uniqueCount;
         }
       }
       if (Number.isFinite(container.count) && container.count >= 1 && (Number(container.errcode) === 0 || container.success === true)) {
@@ -4457,52 +4510,51 @@ export function verifyTaskEvidence({
 
   // 3. 检查上传发布证据
   if (claimsUpload) {
-    // 过滤出真正的上传操作工具：排除只读查询工具与查看命令
+    // 只有专门的上传/发布工具能提供操作凭据。通用命令的标准输出可以来自
+    // 旧文件、打印语句或命令链中另一段操作，不能证明本次向目标平台写入。
     const uploadTools = executedTools.filter((tool) => {
-      // 1. 明确标记为只读的工具，绝不能算上传写操作
       if (tool?.isReadOnly === true) return false;
       const name = String(tool?.name || "").toLowerCase();
-      // 2. 排除纯读取/查询/获取类工具（如 wechat_get_draft, get_draft, list_drafts 等）
-      if (/^(wechat_)?(get_|read_|list_|fetch_|search_|query_|check_)/.test(name)) return false;
-      if (/upload|publish|post|create_draft|save_draft|mp__/.test(name)) return true;
-      if (name.includes("draft") && !name.includes("get") && !name.includes("read") && !name.includes("list")) return true;
-      if (name === "run_command") {
-        // 命令必须真实具备外部网络上传或发布执行特征，绝不能是只读或纯打印命令
-        if (!isUploadCommand(tool?.args?.command)) return false;
-        return hasUploadReceipt(tool?.result);
-      }
-      return false;
+      if (name === "run_command") return false;
+      if (/(?:^|[_-])(?:get|read|list|fetch|search|query|check)(?:[_-]|$)/.test(name)) return false;
+      return /(?:^|[_-])(?:upload|publish|post|create_draft|save_draft|draft_add|add_draft)(?:[_-]|$)/.test(name);
     });
 
     if (!uploadTools.length) {
+      const hasCommand = executedTools.some((tool) => tool?.name === "run_command");
       return {
         verified: false,
         verdict: "unverified",
-        reason: "未检测到真实上传操作执行记录（仅有只读操作或零操作），声明未经验证",
+        reason: hasCommand
+          ? "命令输出不能单独证明外部平台已上传，尚无可核对的平台操作回执"
+          : "未检测到真实上传操作执行记录（仅有只读操作或零操作），声明未经验证",
         code: "NO_UPLOAD_ACTION",
       };
     }
 
     const failedUploads = uploadTools.filter((t) => t.status === "error" || /errcode\D*[1-9]|ip.*white|白名单|failed|error|失败/i.test(String(t.result || "")));
-    const successfulUploads = uploadTools.filter((t) => t.status !== "error" && !failedUploads.includes(t));
+    const successfulUploads = uploadTools.filter((t) => t.status === "success" && !failedUploads.includes(t) && hasUploadReceipt(t.result));
 
     // 如果没有成功的上传工具
     if (!successfulUploads.length) {
+      const allFailed = uploadTools.every((t) => t.status === "error" || failedUploads.includes(t));
       return {
         verified: false,
-        verdict: "failed",
-        reason: "上传操作实际执行失败，但回复声称成功，与事实不符",
-        code: "FAILED_CLAIMED_SUCCESS",
+        verdict: allFailed ? "failed" : "unverified",
+        reason: allFailed
+          ? "上传操作实际执行失败，但回复声称成功，与事实不符"
+          : "上传操作没有返回可核对的成功凭据，不能确认已经上传",
+        code: allFailed ? "FAILED_CLAIMED_SUCCESS" : "NO_UPLOAD_RECEIPT",
       };
     }
 
     // 若声称全部/所有文章成功，但实际上有失败项
     const claimsAll = /(全部|所有|均已|都已|\b\d+篇全部)/i.test(text);
-    if (claimsAll && failedUploads.length > 0) {
+    if (claimsAll && successfulUploads.length !== uploadTools.length) {
       return {
         verified: false,
         verdict: "unverified",
-        reason: `上传操作存在失败项（${failedUploads.length} 项失败），但回复声称全部成功，与事实不符`,
+        reason: "上传操作存在失败项或缺少有效回执，但回复声称全部成功，与事实不符",
         code: "PARTIAL_OR_FAILED",
       };
     }
@@ -5200,13 +5252,14 @@ export async function runAgent({
       }
     }
 
-    const executedMessages = messages.slice(initialMessageCount).map((msg) => ({
+    const rawExecuted = messages.slice(initialMessageCount).map((msg) => ({
       role: msg.role,
       content: msg.content ?? "",
       ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
       ...(Array.isArray(msg.tool_calls) && msg.tool_calls.length ? { tool_calls: msg.tool_calls } : {}),
       ...(msg.role === "tool" && msg.tool_call_id ? { tool_call_id: msg.tool_call_id } : {}),
     }));
+    const executedMessages = sanitizeToolCalls(rawExecuted);
 
     return {
       ...result,
@@ -5500,7 +5553,14 @@ export async function runAgent({
           const evidence = String(args.evidence || "");
           const activityId = startActivity("finish", summary, evidence);
           finishActivity(activityId, "success", evidence);
-          return { finished: args };
+          return {
+            finished: args,
+            message: {
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: evidence ? `任务完成：${evidence}` : "任务已完成",
+            },
+          };
         }
 
         // 工具钩子（借鉴 Claude Code hooks）:block 直接阻止;require_approval 在任何模式下都强制审批
@@ -6202,20 +6262,43 @@ export async function runAgent({
         replaceInterfaceImagesWithText(messages, true);
       } else {
         const outcomes = [];
-        for (const toolCall of toolCalls) {
-          if (isCancelled()) return withChanges({ status: "cancelled", finalText });
+        for (let idx = 0; idx < toolCalls.length; idx++) {
+          const toolCall = toolCalls[idx];
+          if (isCancelled()) {
+            for (let rem = idx; rem < toolCalls.length; rem++) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCalls[rem].id,
+                content: "操作已取消",
+              });
+            }
+            return withChanges({ status: "cancelled", finalText });
+          }
           const outcome = await executeToolCall(toolCall);
+          if (outcome?.message) {
+            messages.push(outcome.message);
+          }
           if (outcome?.finished) {
+            for (let rem = idx + 1; rem < toolCalls.length; rem++) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCalls[rem].id,
+                content: "任务已结束，操作未执行",
+              });
+            }
             return withChanges({ status: "done", finalText: finalText || String(outcome.finished.summary || "任务已完成"), memory: savedMemory, finish: outcome.finished });
           }
           if (outcome?.sleeping) {
-            // 主动挂起（openworker self-wake）：run 立即结束，由主进程落盘唤醒记录、到点重新拉起
+            for (let rem = idx + 1; rem < toolCalls.length; rem++) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCalls[rem].id,
+                content: "任务已挂起，操作未执行",
+              });
+            }
             return withChanges({ status: "sleeping", finalText, wake: outcome.sleeping });
           }
           outcomes.push(outcome);
-        }
-        for (const outcome of outcomes) {
-          if (outcome?.message) messages.push(outcome.message);
         }
         if (outcomes.some((outcome) => outcome?.invalidateInterfaceImages)) {
           replaceInterfaceImagesWithText(messages);

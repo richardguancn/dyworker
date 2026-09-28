@@ -44,7 +44,10 @@ for (const platform of ["linux", "darwin", "win32"]) {
     const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
     const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
       process: { platform },
-      systemWindowBackground: () => "#f7f7f4",
+      // 外观接入后窗口底色来自已保存外观，此处桩为默认浅色
+      windowBackgroundFor: () => "#f7f7f4",
+      appearanceState: { settings: { theme: "system" } },
+      resolvedAppearanceTheme: () => "light",
       path: { join: (...parts) => parts.join("/") },
       here: "/app/electron",
     });

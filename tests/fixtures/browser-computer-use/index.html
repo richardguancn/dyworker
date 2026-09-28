@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>DYWorker 浏览器 Computer Use 验收测试页</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      margin: 20px;
+      color: #333;
+      background: #fafafa;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    h1 {
+      font-size: 20px;
+      margin-top: 0;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 12px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    input[type="text"], select, textarea {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .btn {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn:hover {
+      background: #059669;
+    }
+    .result-box {
+      margin-top: 20px;
+      padding: 12px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 4px;
+      min-height: 40px;
+    }
+    canvas {
+      border: 1px dashed #999;
+      background: #fff;
+      display: block;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>DYWorker 浏览器 Computer Use 自动化与人工验收页</h1>
+
+    <form id="test-form" onsubmit="event.preventDefault(); handleSubmit();">
+      <div class="form-group">
+        <label for="username">姓名 / 申请人：</label>
+        <input type="text" id="username" name="username" placeholder="请输入真实中文姓名" required />
+      </div>
+
+      <div class="form-group">
+        <label for="category">申请类别：</label>
+        <select id="category" name="category">
+          <option value="">-- 请选择 --</option>
+          <option value="tech">技术研发</option>
+          <option value="design">体验设计</option>
+          <option value="operation">行政运营</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>
+          <input type="checkbox" id="agreement" name="agreement" />
+          本人已仔细阅读并确认所有条款有效
+        </label>
+      </div>
+
+      <div class="form-group">
+        <button type="submit" id="submit-btn" class="btn">提交申请表单</button>
+        <button type="button" id="reset-btn" class="btn" style="background:#64748b; margin-left: 8px;" onclick="handleReset()">重置</button>
+      </div>
+    </form>
+
+    <div class="result-box" id="result-display">
+      等待提交...
+    </div>
+
+    <div class="form-group" style="margin-top: 24px;">
+      <label>电子签名 / 互动画布（测试坐标点击与拖拽）：</label>
+      <canvas id="sign-canvas" width="400" height="120"></canvas>
+      <span id="canvas-status" style="font-size: 12px; color: #666;">（点击或拖动在画布上留下标记）</span>
+    </div>
+  </div>
+
+  <script>
+    function handleSubmit() {
+      const username = document.getElementById("username").value;
+      const category = document.getElementById("category").value;
+      const agreement = document.getElementById("agreement").checked;
+
+      const resultBox = document.getElementById("result-display");
+      resultBox.innerHTML = `<strong>提交成功！</strong> 申请人：${username} | 类别：${category} | 条款已同意：${agreement ? "是" : "否"}`;
+    }
+
+    function handleReset() {
+      document.getElementById("test-form").reset();
+      document.getElementById("result-display").innerText = "已重置。";
+    }
+
+    // 画布简易涂鸦响应
+    const canvas = document.getElementById("sign-canvas");
+    const ctx = canvas.getContext("2d");
+    let drawing = false;
+
+    canvas.addEventListener("mousedown", (e) => {
+      drawing = true;
+      ctx.beginPath();
+      ctx.arc(e.offsetX, e.offsetY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#2563eb";
+      ctx.fill();
+      document.getElementById("canvas-status").innerText = `已在 (${e.offsetX}, ${e.offsetY}) 绘制点`;
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (!drawing) return;
+      ctx.lineTo(e.offsetX, e.offsetY);
+      ctx.strokeStyle = "#2563eb";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (drawing) {
+        drawing = false;
+        document.getElementById("canvas-status").innerText = "已完成画布笔划绘制";
+      }
+    });
+  </script>
+</body>
+</html>

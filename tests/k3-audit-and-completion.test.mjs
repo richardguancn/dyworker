@@ -8,6 +8,43 @@ import {
   runAgent,
 } from "../electron/agent.mjs";
 
+test("通用命令输出草稿编号仍不能证明本次上传", () => {
+  const check = verifyTaskEvidence({
+    finalText: "新文章已上传，草稿编号：OLD-DRAFT-1234",
+    executedTools: [{
+      name: "run_command",
+      args: { command: "curl -X POST http://127.0.0.1:1 -d '{}' ; cat old.json" },
+      status: "success",
+      result: '{"media_id":"OLD-DRAFT-1234"}',
+    }],
+  });
+  assert.equal(check.verified, false);
+  assert.equal(check.code, "NO_UPLOAD_ACTION");
+  assert.match(check.reason, /命令输出不能单独证明/);
+});
+
+test("只有专门上传工具的有效回执才能支持上传成功", () => {
+  const finalText = "新文章已上传，草稿编号：REAL-DRAFT-1234";
+  const readOnly = verifyTaskEvidence({
+    finalText,
+    executedTools: [{ name: "mp__list_drafts", status: "success", result: '{"media_id":"REAL-DRAFT-1234"}' }],
+  });
+  assert.equal(readOnly.verified, false);
+
+  const noReceipt = verifyTaskEvidence({
+    finalText,
+    executedTools: [{ name: "mp__upload_draft", status: "success", result: "上传完成" }],
+  });
+  assert.equal(noReceipt.verified, false);
+  assert.equal(noReceipt.code, "NO_UPLOAD_RECEIPT");
+
+  const uploaded = verifyTaskEvidence({
+    finalText,
+    executedTools: [{ name: "mp__upload_draft", status: "success", result: '{"errcode":0,"media_id":"REAL-DRAFT-1234"}' }],
+  });
+  assert.equal(uploaded.verified, true);
+});
+
 test("场景 1：没有操作，却声称上传完成（零工具调用虚报）", () => {
   const check = verifyTaskEvidence({
     finalText: "6 篇全部上传成功！草稿箱已经就绪。",
@@ -414,6 +451,5 @@ test("场景 13：跨轮传递 executedMessages 时，模型下一轮请求中�
   assert.equal(toolMessage.tool_call_id, "call-previous-1");
   assert.match(toolMessage.content, /2026-09-26 23:55:00/);
 });
-
 
 

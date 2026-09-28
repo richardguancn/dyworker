@@ -16,6 +16,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
 import { localImagePathFromSource } from "../electron/local-image-path.mjs";
+import { useResolvedTheme } from "./appearance/controller";
 
 const localImageMarker = "dyworker-local-image:";
 
@@ -245,11 +246,9 @@ function loadMermaid() {
   return mermaidLoader;
 }
 
-// 按当前主题初始化后再渲染：深色模式用 dark 主题，避免浅色图表的黑字落在深色气泡上不可读
-function mermaidForCurrentTheme() {
-  const rootTheme = document.documentElement.dataset.theme;
-  const isDark = rootTheme === "dark"
-    || (rootTheme !== "light" && Boolean(window.matchMedia?.("(prefers-color-scheme: dark)").matches));
+// 按当前主题初始化后再渲染：深色模式用 dark 主题，避免浅色图表的黑字落在深色气泡上不可读。
+// 主题由 controller 的 useResolvedTheme 提供并加入 effect 依赖，切换主题时图表按新主题重建。
+function mermaidForTheme(isDark: boolean) {
   return loadMermaid().then((module) => {
     module.default.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDark ? "dark" : "default" });
     return module;
@@ -259,12 +258,13 @@ function mermaidForCurrentTheme() {
 // mermaid 图表渲染：流式输出期间语法尚未完整时静默等待，收尾后重渲染出图
 function MermaidDiagram({ code }: { code: string }) {
   const [state, setState] = useState<{ status: "loading" } | { status: "done"; svg: string } | { status: "error"; message: string }>({ status: "loading" });
+  const resolvedTheme = useResolvedTheme();
   useEffect(() => {
     let active = true;
     // 流式期间 code 每个 token 都变，mermaid.render 一次上百毫秒：
     // 等输入稳定 400ms 再渲染，避免逐 token 反复解析半截语法
     const timer = window.setTimeout(() => {
-      mermaidForCurrentTheme()
+      mermaidForTheme(resolvedTheme === "dark")
         .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
         .then((result) => {
           if (active) setState({ status: "done", svg: result.svg });
@@ -277,7 +277,7 @@ function MermaidDiagram({ code }: { code: string }) {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [code]);
+  }, [code, resolvedTheme]);
   if (state.status === "loading") return <div className="mermaid-diagram mermaid-pending">图表渲染中…</div>;
   if (state.status === "error") {
     return (
@@ -297,6 +297,7 @@ function MermaidDiagram({ code }: { code: string }) {
 function EchartsDiagram({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const resolvedTheme = useResolvedTheme();
   useEffect(() => {
     let disposed = false;
     let chart: import("echarts/core").ECharts | null = null;
@@ -315,11 +316,9 @@ function EchartsDiagram({ code }: { code: string }) {
       }
       void import("./echarts-setup").then(({ echarts }) => {
         if (disposed || !containerRef.current) return;
-        // 深浅色主题：深色用内置 dark 主题 + 透明底，浅色用默认主题
-        const rootTheme = document.documentElement.dataset.theme;
-        const isDark = rootTheme === "dark"
-          || (rootTheme !== "light" && Boolean(window.matchMedia?.("(prefers-color-scheme: dark)").matches));
-        chart = echarts.init(containerRef.current, isDark ? "dark" : null, { renderer: "canvas" });
+        // 深浅色主题：深色用内置 dark 主题 + 透明底，浅色用默认主题；
+        // echarts 主题只能在 init 时指定，主题变化靠 effect 依赖重建（ResizeObserver 一并重建）
+        chart = echarts.init(containerRef.current, resolvedTheme === "dark" ? "dark" : null, { renderer: "canvas" });
         chart.setOption({ backgroundColor: "transparent", ...(option as Record<string, unknown>) });
         observer = new ResizeObserver(() => chart?.resize());
         observer.observe(containerRef.current);
@@ -334,7 +333,7 @@ function EchartsDiagram({ code }: { code: string }) {
       observer?.disconnect();
       chart?.dispose();
     };
-  }, [code]);
+  }, [code, resolvedTheme]);
   return (
     <div className="echarts-diagram">
       {error != null ? (

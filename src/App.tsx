@@ -50,6 +50,7 @@ import {
   MoreHorizontal,
   MoreVertical,
   Package,
+  Palette,
   PanelRight,
   PanelRightClose,
   Paperclip,
@@ -92,6 +93,8 @@ import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
+import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
+import { beginSession, discardSession } from "./appearance/controller";
 
 const now = new Date().toISOString();
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
@@ -5130,10 +5133,10 @@ function AppUpdateDialog({
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "channels" | "identity" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
-const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings }[] }[] = [
+const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings; keywords?: string[] }[] }[] = [
   { group: "服务", items: [
     { id: "model", label: "模型服务", icon: Settings },
     { id: "voice", label: "语音转写", icon: Mic },
@@ -5142,6 +5145,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
   ] },
   { group: "偏好", items: [
     { id: "identity", label: "助手身份", icon: UserRound },
+    { id: "appearance", label: "外观", icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "theme", "font"] },
     { id: "power", label: "电源", icon: Moon },
     { id: "updates", label: "应用更新", icon: RefreshCw },
     { id: "mcp", label: "MCP 工具", icon: Bot },
@@ -5458,6 +5462,22 @@ function SettingsDialog({
   const [modelsFetching, setModelsFetching] = useState(false);
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
   const [modelsError, setModelsError] = useState("");
+
+  // 外观会话：弹窗打开创建草稿（预览改动），关闭（取消/Esc/点遮罩/×）恢复已保存外观。
+  // 放在弹窗层级而不是外观面板内：在设置内部切换栏目保留草稿。begin/discard 均幂等。
+  useEffect(() => {
+    beginSession();
+    return () => discardSession();
+  }, []);
+
+  // Esc 关闭设置（与现有弹窗一致；菜单的 Esc 监听只在菜单打开时挂载，互不干扰）
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   const runCredentialProbe = async () => {
     if (!draft.endpoint.trim() || !draft.model.trim()) {
@@ -5813,7 +5833,10 @@ function SettingsDialog({
             <input value={navQuery} placeholder="搜索设置…" onChange={(event) => setNavQuery(event.target.value)} />
           </div>
           {settingsNav.map((group) => {
-            const items = group.items.filter((item) => !navQuery.trim() || item.label.toLowerCase().includes(navQuery.trim().toLowerCase()));
+            const query = navQuery.trim().toLowerCase();
+            const items = group.items.filter((item) => !query
+              || item.label.toLowerCase().includes(query)
+              || (item.keywords ?? []).some((keyword) => keyword.toLowerCase().includes(query)));
             if (!items.length) return null;
             return (
               <div key={group.group}>
@@ -5855,6 +5878,8 @@ function SettingsDialog({
               return saved;
             }}
           />
+        ) : tab === "appearance" ? (
+          <AppearanceSettingsPanel />
         ) : ["model", "voice", "search", "power", "updates", "mcp"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
@@ -10657,6 +10682,9 @@ export function App() {
   );
 
   return (
+    <>
+    {/* 外观背景装饰层：背景色 → 背景图 → 遮罩，pointer-events/aria-hidden 保证不占交互 */}
+    <div className="appearance-backdrop" aria-hidden="true" />
     <div
       className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
       style={panelStyle}
@@ -12741,6 +12769,7 @@ export function App() {
         />
       )}
     </div>
+    </>
   );
 }
 

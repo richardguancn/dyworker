@@ -611,6 +611,65 @@ export interface ProviderSettings {
   enableWebSearchBuiltin: boolean;
 }
 
+// ---- 外观自定义（独立存储于 userData/appearance.json，不随模型设置整包覆盖）----
+export type AppearanceTheme = "system" | "light" | "dark";
+export type AppearanceImageFit = "cover" | "contain" | "tile";
+export type AppearanceGlassStrength = "subtle" | "standard" | "strong";
+
+export interface AppearanceSettings {
+  version: 1;
+  theme: AppearanceTheme;
+  background: {
+    // null = 使用该主题默认底色
+    lightColor: string | null;
+    darkColor: string | null;
+    // 面板对应用背景的透明度 0..70（百分比），文字不随其变淡
+    transparency: number;
+    // 应用管理的资源 ID（appearance-assets 内文件名），非任意路径
+    imageId: string | null;
+    imageFit: AppearanceImageFit;
+    // 图片遮罩 0..80（百分比）
+    overlay: number;
+  };
+  glass: {
+    enabled: boolean;
+    strength: AppearanceGlassStrength;
+    lightweight: boolean;
+    // 透出桌面（macOS vibrancy / Windows 背景材质），平台不支持时自动降级
+    systemBackdrop: boolean;
+  };
+  typography: {
+    // system / sans-serif / serif / 本机字体家族名（主进程已校验）
+    family: string;
+    uiSize: 13 | 14 | 16 | 18;
+    contentSize: number;
+  };
+}
+
+// 平台能力：available 仅表示"可尝试"，不代表已生效
+export interface AppearanceCapabilities {
+  systemBackdrop: { available: boolean; kind: "vibrancy" | "background-material" | null; reason: string | null };
+  glassDefault: "standard" | "lightweight";
+  backdropFilter: boolean;
+  platform: string;
+}
+
+// 本机实际效果状态（与用户选择分开，不持久化）
+export interface AppearanceEffectiveState {
+  applied: "vibrancy" | "background-material" | "none";
+  reason?: string | null;
+}
+
+export interface AppearanceSnapshot {
+  ok: boolean;
+  settings: AppearanceSettings;
+  revision: number;
+  effective?: AppearanceEffectiveState;
+  capabilities?: AppearanceCapabilities;
+  error?: string;
+  stale?: boolean;
+}
+
 export interface MemoryItem {
   id: string;
   category: string;
@@ -779,6 +838,21 @@ export interface DyworkerBridge {
   /** 浏览器 Computer Use：监听控制恢复广播（用于自动触发续跑任务） */
   onBrowserControlResumed?(callback: (payload: { ownerSessionId?: string; runId?: string; tabId?: string }) => void): () => void;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
+  // ---- 外观自定义（独立于模型设置存储；浏览器预览环境无此桥接，调用方需按 undefined 降级） ----
+  getAppearance?(): Promise<AppearanceSnapshot>;
+  saveAppearance?(payload: { settings: AppearanceSettings; revision: number }): Promise<AppearanceSnapshot>;
+  getAppearanceCapabilities?(): Promise<AppearanceCapabilities>;
+  /** 打开系统文件选择器导入背景图，返回暂存资源 ID；保存外观后才成为正式引用 */
+  importAppearanceImage?(): Promise<{ ok: boolean; canceled?: boolean; imageId?: string; width?: number; height?: number; error?: string }>;
+  /** 按资源 ID 读取已校验图片字节，渲染端创建 Blob URL 显示 */
+  readAppearanceImage?(imageId: string): Promise<{ ok: boolean; bytes?: Uint8Array; mime?: string; error?: string }>;
+  /** 仅窗口底色/系统材质类预览；纯页面样式预览留在渲染端 */
+  previewAppearance?(settings: AppearanceSettings): Promise<{ ok: boolean; effective?: AppearanceEffectiveState }>;
+  /** 取消原生预览，恢复到最后保存状态；discardStaged 回收草稿引用但未保存的暂存图片 */
+  cancelAppearancePreview?(payload?: { discardStaged?: string[] }): Promise<{ ok: boolean; effective?: AppearanceEffectiveState }>;
+  resetAppearance?(): Promise<AppearanceSnapshot>;
+  /** 应用菜单"恢复默认外观"应急入口触发时广播 */
+  onAppearanceReset?(callback: (snapshot: AppearanceSnapshot) => void): () => void;
   probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;
   /** 拉取同一服务地址 + 密钥下的可用模型列表（GET /models），用于模型名称下拉切换 */
   listModels(payload: { endpoint: string; apiKey: string }): Promise<{ ok: boolean; count?: number; models?: Array<{ id: string; contextLimit?: number }>; error?: string }>;

@@ -1,0 +1,501 @@
+/* ---- 外观自定义：背景层 / 玻璃材质 / 正文字号 ----
+   背景层叠放顺序（§4.3 由下至上）：窗口底色（主进程）→ 应用背景色 → 背景图 → 图片遮罩 →
+   面板材质 → 文字与交互层。本文件只新增规则，不改动 styles.css 既有规则。 */
+
+/* 背景装饰层：不占布局、不参与命中；z-index -1 让它位于应用内容之下、窗口底色之上 */
+.appearance-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--bg-color, transparent);
+}
+
+/* 背景图层 */
+.appearance-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  background-image: var(--bg-image, none);
+  background-repeat: var(--bg-repeat, no-repeat);
+  background-position: center;
+  background-size: var(--bg-size, cover);
+  transition: filter 200ms ease, transform 200ms ease;
+}
+
+/* 背景图启用时提供优雅的底图微景深柔化（玻璃开启时深度柔化），彻底抹平刺眼的高频线条 */
+html[data-has-bg-image="true"] .appearance-backdrop::before {
+  filter: blur(var(--bg-image-blur, 3px));
+  transform: scale(1.03);
+}
+
+html[data-has-bg-image="true"][data-glass]:not([data-glass="off"]) .appearance-backdrop::before {
+  --bg-image-blur: 10px;
+}
+
+/* 图片遮罩：仅在设置背景图时生效；浅色用白遮罩、深色用黑遮罩，透明度 var(--bg-overlay) */
+.appearance-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+html[data-has-bg-image="true"] .appearance-backdrop::after {
+  opacity: var(--bg-overlay, 0.2);
+}
+
+html[data-theme="dark"][data-has-bg-image="true"] .appearance-backdrop::after {
+  background: #000;
+}
+
+/* body/#root 保持透明链：窗口底色由主进程设置，页面层不盖不透明色 */
+body,
+#root {
+  background: transparent;
+}
+
+/* 系统背景材质（macOS Vibrancy / Windows Mica/Acrylic）透出：
+   html 与 .appearance-backdrop 背景必须透明，窗口底色已由主进程置为透明。
+   同时：仅在未设置自定义背景图时禁用页面内部 CSS backdrop-filter，
+   避免与系统 WindowServer 发生离屏 FBO 冲突（Electron Issue #44720）。
+   当用户设置了背景图时，必须启用 CSS 液态毛玻璃虚化背景，保证文本极佳可读性。 */
+html[data-system-backdrop="true"],
+html[data-system-backdrop="true"] .appearance-backdrop {
+  background: transparent !important;
+}
+
+html[data-system-backdrop="true"]:not([data-has-bg-image="true"]) *,
+html[data-system-backdrop="true"]:not([data-has-bg-image="true"]) *::before,
+html[data-system-backdrop="true"]:not([data-has-bg-image="true"]) *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ---- 面板透出背景层：自定义色/透明度/背景图/玻璃任一启用（data-translucent）----
+   面板底色统一由 var 驱动（透明度经 --surface 等变量的 alpha 生效，文字不受影响）；
+   正文阅读区用 --surface-strong（同色调、回收一部分透明度，保持阅读稳定）。 */
+html[data-translucent="true"] .app-shell {
+  background: transparent;
+}
+
+html[data-translucent="true"] .sidebar {
+  background: var(--sidebar);
+  border-right-color: var(--border);
+}
+
+html[data-translucent="true"] .sidebar-search,
+html[data-translucent="true"] .sidebar-search input {
+  background: var(--surface);
+}
+
+html[data-translucent="true"] .main-panel {
+  background: var(--surface-strong, var(--surface));
+}
+
+html[data-translucent="true"] .tool-panel,
+html[data-translucent="true"] .tool-panel.browser-mode {
+  background: var(--surface);
+  border-left-color: var(--border);
+}
+
+html[data-translucent="true"] .composer-card {
+  background: var(--card);
+}
+
+html[data-translucent="true"] .topbar,
+html[data-theme="dark"][data-translucent="true"] .topbar,
+html[data-translucent="true"] .titlebar,
+html[data-theme="dark"][data-translucent="true"] .titlebar {
+  background: var(--surface);
+  border-bottom-color: var(--border);
+}
+
+/* ---- 正文字号：聊天/Markdown 正文与右侧编辑器独立于界面字号 ---- */
+
+.markdown-content,
+.user-bubble,
+.markdown-live-editor {
+  --font-ui-scale: var(--font-content-scale, 1);
+}
+
+.markdown-content {
+  font-size: calc(16px * var(--font-content-scale, 1));
+  line-height: 1.72;
+}
+
+.user-bubble {
+  font-size: calc(16px * var(--font-content-scale, 1));
+  line-height: 1.62;
+}
+
+.markdown-live-editor {
+  font-size: calc(16px * var(--font-content-scale, 1));
+  line-height: 1.65;
+}
+
+/* ---- 液态玻璃风格材质（应用内实现，不宣称等同 Apple 原生 Liquid Glass）----
+   填充色沿用 var 面板色（玻璃开启时 derivePalette 强制面板保留透出），
+   玻璃专属的是背景模糊、边缘高光与层次阴影。 */
+
+/* 玻璃边缘高光 + 层次阴影（inset 高光为主，赋予 macOS 玻璃边缘晶莹感） */
+html[data-glass]:not([data-glass="off"]) .sidebar,
+html[data-glass]:not([data-glass="off"]) .topbar,
+html[data-glass]:not([data-glass="off"]) .main-panel,
+html[data-glass]:not([data-glass="off"]) .tool-panel,
+html[data-glass]:not([data-glass="off"]) .composer-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 6px 22px rgba(34, 35, 31, 0.08);
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    backdrop-filter 160ms ease;
+}
+
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .sidebar,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .topbar,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .main-panel,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .tool-panel,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .composer-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 6px 22px rgba(0, 0, 0, 0.24);
+}
+
+/* 标准模式：背景模糊 + 饱和增强。将主内容区 .main-panel 一同虚化为液态毛玻璃 */
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .topbar,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .sidebar,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .main-panel,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .tool-panel,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .composer-card {
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.25);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.25);
+}
+
+/* ---- 背景图下的文本可读性增强（macOS 风格液态玻璃微托底与文本微光）----
+   有背景图时，文字增加微弱柔和阴影，卡片与气泡增加自适应毛玻璃衬托，彻底解决背景图吃文字问题 */
+html[data-has-bg-image="true"] .markdown-content {
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.55);
+}
+
+html[data-theme="dark"][data-has-bg-image="true"] .markdown-content {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+html[data-has-bg-image="true"] .user-bubble {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+html[data-has-bg-image="true"] .tool-summary {
+  background: var(--card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* 减少动态效果：禁用玻璃相关过渡 */
+@media (prefers-reduced-motion: reduce) {
+  html[data-glass]:not([data-glass="off"]) .sidebar,
+  html[data-glass]:not([data-glass="off"]) .topbar,
+  html[data-glass]:not([data-glass="off"]) .tool-panel,
+  html[data-glass]:not([data-glass="off"]) .composer-card,
+  .appearance-backdrop::after {
+    transition: none;
+  }
+}
+
+/* ---- 外观设置面板（复用 dialog-section-title / dialog-note / mcp-server-row 等现有类）---- */
+
+.appearance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 4px;
+}
+
+.appearance-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.appearance-row-label {
+  flex: none;
+  color: var(--ink);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 590;
+}
+
+.appearance-row-label small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-weight: 400;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.appearance-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bubble);
+}
+
+.appearance-segmented button {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 11px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.appearance-segmented button:hover {
+  color: var(--ink);
+}
+
+.appearance-segmented button.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs);
+}
+
+.appearance-preset {
+  border: 1px dashed var(--border-strong);
+  border-radius: 9px;
+  padding: 4px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.appearance-preset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.appearance-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.appearance-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--swatch-color);
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+
+.appearance-swatch:hover {
+  transform: scale(1.08);
+}
+
+.appearance-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.appearance-swatch.clear {
+  background: transparent;
+  color: var(--quiet);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 颜色行：标签 + 色板（自适应换行）+ 取色块 + hex + 提示 */
+.appearance-color-row {
+  row-gap: 8px;
+}
+
+.appearance-color-row .appearance-swatches {
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+
+.appearance-color-label {
+  flex: none;
+  min-width: 68px;
+  color: var(--ink);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 590;
+}
+
+.appearance-color-hint {
+  flex: none;
+  color: var(--quiet);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.appearance-color-row .appearance-status.error {
+  flex-basis: 100%;
+}
+
+/* 取色块：伪装成色板的原生取色器 */
+.appearance-swatch-picker {
+  position: relative;
+  overflow: hidden;
+  flex: none;
+  background: conic-gradient(#e5645c, #e8c558, #78b56a, #5aa7d6, #9a7fd0, #e5645c);
+}
+
+.appearance-swatch-picker input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 覆盖设置页通用 input 100% 宽度规则，hex 输入保持紧凑（特异性需压过带元素选择器的原规则） */
+.settings-dialog .settings-content input.appearance-hex-input {
+  width: 96px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-family: var(--font-mono, monospace);
+}
+
+.appearance-hex-input.invalid {
+  border-color: #b94b42;
+}
+
+.appearance-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.appearance-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+}
+
+.appearance-slider-value {
+  flex: none;
+  min-width: 44px;
+  color: var(--ink);
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  text-align: right;
+}
+
+.appearance-image-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.appearance-image-thumb {
+  width: 96px;
+  height: 60px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bubble) center / cover no-repeat;
+}
+
+.appearance-image-thumb.empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--quiet);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.appearance-sample {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.appearance-sample-content {
+  font-size: calc(16px * var(--font-content-scale, 1));
+}
+
+.appearance-font-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.appearance-font-list button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.appearance-font-list button:hover,
+.appearance-font-list button.active {
+  background: var(--sidebar-active);
+}
+
+.appearance-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px -4px -4px;
+  padding: 10px 4px 2px;
+  background: linear-gradient(transparent, var(--card) 30%);
+}
+
+.appearance-actions .spacer {
+  flex: 1;
+}
+
+.appearance-status {
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.appearance-status.ok {
+  color: #4e7c1e;
+}
+
+.appearance-status.error {
+  color: #a24d45;
+}
+
+html[data-theme="dark"] .appearance-status.ok {
+  color: #9ec46a;
+}

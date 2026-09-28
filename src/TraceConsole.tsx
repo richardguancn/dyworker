@@ -6,7 +6,7 @@
 // 老会话降级：无轨迹数据时切换「日志」视图显示原有四类 debug-log 扁平列表。
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Clock, Hash, History, Layers, Search, Terminal, Trash2, X } from "lucide-react";
+import { Check, Clock, Copy, Hash, History, Layers, Maximize2, Minimize2, Search, Terminal, Trash2, X } from "lucide-react";
 import type { DebugLogEntry, TraceEvent } from "./types";
 
 export interface TraceConsoleProps {
@@ -282,7 +282,7 @@ function LaneTimeline({ items, mode, selectedKey, searchMatchedKeys, onPick, onR
 
 // —— 列表行（虚拟化：固定行高，只挂载可见行）——
 
-const ROW_H = 30;
+const ROW_H = 32;
 const TURN_ROW_H = 26;
 
 interface FlatRow {
@@ -333,13 +333,15 @@ function prettyMaybeJson(content: string): string {
   }
 }
 
-function TraceInspector({ trace, pairs, byKey, onClose }: {
+function TraceInspector({ trace, pairs, byKey, width, onClose }: {
   trace: TraceEvent;
   pairs: Map<string, TraceEvent>;
   byKey: Map<string, TraceEvent>;
+  width: number;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<InspectorTab>("summary");
+  const [copied, setCopied] = useState(false);
   // 耗时：发起端（请求/调用）取配对结束端差值；结束端（响应/结果）反查发起端差值
   const paired = pairs.get(traceKey(trace));
   const parent = trace.parentSeq !== undefined ? byKey.get(`${trace.runId || ""}:${trace.parentSeq}`) : undefined;
@@ -363,11 +365,38 @@ function TraceInspector({ trace, pairs, byKey, onClose }: {
     ...(trace.parentSeq !== undefined ? [{ label: "关联", value: `← #${trace.parentSeq}` }] : []),
     ...(trace.runId ? [{ label: "Run", value: trace.runId }] : []),
   ];
+
+  const handleCopy = async () => {
+    let textToCopy = "";
+    if (tab === "summary") {
+      textToCopy = `${trace.title || "（无标题）"}\n\n` + fields.map((f) => `${f.label}: ${f.value}`).join("\n");
+    } else if (tab === "preview") {
+      textToCopy = trace.content ? prettyMaybeJson(trace.content) : "";
+    } else {
+      textToCopy = JSON.stringify(trace, null, 2);
+    }
+    if (!textToCopy) return;
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {}
+  };
+
   return (
-    <div className="trace-side">
+    <div className="trace-side" style={{ width: `${width}px` }}>
       <div className="trace-side-head">
         <span className={`trace-kind-badge kind-${trace.kind}`}>{TRACE_KIND_LABEL[trace.kind]}</span>
         <span className="trace-side-sub">第 {trace.turn} 轮 · {TRACE_TARGET_LABEL[trace.target]}</span>
+        <button
+          type="button"
+          className="icon-button subtle tiny"
+          aria-label={copied ? "已复制" : "复制当前内容"}
+          title={copied ? "已复制" : "复制当前内容"}
+          onClick={() => void handleCopy()}
+        >
+          {copied ? <Check size={13} style={{ color: "#3fb27f" }} /> : <Copy size={13} />}
+        </button>
         <button type="button" className="icon-button subtle tiny" aria-label="关闭详情" onClick={onClose}><X size={13} /></button>
       </div>
       <div className="trace-side-tabs" role="tablist">
@@ -430,6 +459,80 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   tracesRef.current = traces;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
+
+  // 抽屉高度管理（支持拖拽与持久化）
+  const [consoleHeight, setConsoleHeight] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem("dyworker_trace_height"));
+      if (saved >= 240 && saved <= 1400) return saved;
+    } catch {}
+    return 480;
+  });
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  // 检查器宽度管理（支持拖拽与持久化）
+  const [inspectorWidth, setInspectorWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem("dyworker_trace_inspector_width"));
+      if (saved >= 260 && saved <= 800) return saved;
+    } catch {}
+    return 360;
+  });
+
+  const handleHeightResizeStart = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = consoleHeight;
+    setIsMaximized(false);
+
+    const onMove = (moveEvt: PointerEvent) => {
+      const deltaY = startY - moveEvt.clientY;
+      const maxH = Math.floor(window.innerHeight * 0.9);
+      const nextH = Math.max(240, Math.min(maxH, startH + deltaY));
+      setConsoleHeight(nextH);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      try {
+        setConsoleHeight((curr) => {
+          localStorage.setItem("dyworker_trace_height", String(curr));
+          return curr;
+        });
+      } catch {}
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const handleInspectorResizeStart = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = inspectorWidth;
+
+    const onMove = (moveEvt: PointerEvent) => {
+      const deltaX = startX - moveEvt.clientX;
+      const maxW = Math.min(720, Math.floor(window.innerWidth * 0.65));
+      const nextW = Math.max(260, Math.min(maxW, startW + deltaX));
+      setInspectorWidth(nextW);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      try {
+        setInspectorWidth((curr) => {
+          localStorage.setItem("dyworker_trace_inspector_width", String(curr));
+          return curr;
+        });
+      } catch {}
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   const pairs = useMemo(() => buildPairs(traces), [traces]);
   const byKey = useMemo(() => new Map(traces.map((trace) => [traceKey(trace), trace])), [traces]);
@@ -554,7 +657,18 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
   }, [traces.length, view]);
 
   return (
-    <div className="trace-console">
+    <div
+      className="trace-console"
+      style={{
+        height: isMaximized ? "calc(100% - var(--topbar-height, 54px))" : `${consoleHeight}px`,
+      }}
+    >
+      <div
+        className="trace-resize-handle"
+        onPointerDown={handleHeightResizeStart}
+        onDoubleClick={() => setIsMaximized((v) => !v)}
+        title="拖动调整控制台高度，双击最大化/还原"
+      />
       <div className="trace-console-header">
         <Terminal size={14} />
         <strong>轨迹控制台</strong>
@@ -586,8 +700,17 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
             <History size={13} />
           </button>
         )}
-        <button type="button" className="icon-button subtle tiny" aria-label="清空控制台" onClick={onClear}><Trash2 size={13} /></button>
-        <button type="button" className="icon-button subtle tiny" aria-label="关闭控制台" onClick={onClose}><X size={14} /></button>
+        <button type="button" className="icon-button subtle tiny" aria-label="清空控制台" title="清空控制台记录" onClick={onClear}><Trash2 size={13} /></button>
+        <button
+          type="button"
+          className="icon-button subtle tiny"
+          aria-label={isMaximized ? "还原高度" : "最大化面板"}
+          title={isMaximized ? "还原高度" : "最大化面板"}
+          onClick={() => setIsMaximized((v) => !v)}
+        >
+          {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </button>
+        <button type="button" className="icon-button subtle tiny" aria-label="关闭控制台" title="关闭控制台" onClick={onClose}><X size={14} /></button>
       </div>
 
       {view === "trace" ? (
@@ -668,12 +791,13 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                       }
                       const trace = row.trace!;
                       const selectedRow = traceKey(trace) === selectedKey;
+                      const isErr = traceIsError(trace);
                       // 工具调用行内联预览配对结果（参考 UI 的 bash {...} → 结果 样式）
                       const resultPreview = trace.kind === "tool-call" ? pairs.get(traceKey(trace)) : undefined;
                       return (
                         <button
                           type="button"
-                          className={`trace-row ${selectedRow ? "selected" : ""}`}
+                          className={`trace-row ${selectedRow ? "selected" : ""} ${isErr ? "is-error" : ""}`}
                           key={traceKey(trace)}
                           style={{ height: ROW_H, top: rowOffsets[index], position: "absolute", left: 0, right: 0 }}
                           onClick={() => setSelectedKey(traceKey(trace))}
@@ -681,6 +805,7 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                         >
                           <span className="trace-indent" style={{ width: Math.min(48, (trace.depth || 0) * 14) }} />
                           {trace.parentSeq !== undefined && <span className="trace-child-mark">↳</span>}
+                          {isErr && <span className="trace-row-error-dot" title="该记录发生错误" />}
                           <span className={`trace-kind-badge kind-${trace.kind}`}>{TRACE_KIND_LABEL[trace.kind]}</span>
                           <span className="trace-direction">{trace.direction === "in" ? "↓" : "↑"}</span>
                           <span className="trace-row-title">{trace.title || "(无标题)"}</span>
@@ -693,7 +818,20 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
                   </div>
                 </div>
                 {selected && (
-                  <TraceInspector trace={selected} pairs={pairs} byKey={byKey} onClose={() => setSelectedKey(undefined)} />
+                  <>
+                    <div
+                      className="trace-side-resizer"
+                      onPointerDown={handleInspectorResizeStart}
+                      title="拖动调整检查器宽度"
+                    />
+                    <TraceInspector
+                      trace={selected}
+                      pairs={pairs}
+                      byKey={byKey}
+                      width={inspectorWidth}
+                      onClose={() => setSelectedKey(undefined)}
+                    />
+                  </>
                 )}
               </div>
             </>

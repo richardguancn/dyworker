@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
+import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
 import { McpClient } from "../electron/mcp.mjs";
@@ -5875,4 +5875,73 @@ test("子代理事件走分支通道：活动带 branch 标记、trace depth 加
   assert.ok(deepActivityTraces.some((event) => event.trace.branch && typeof event.trace.branch.parentId === "string"), "子代理 activity trace 应带 branch.parentId");
   // 主活动流仍有不带 branch 的活动（如 thinking），未被分支事件污染
   assert.ok(events.some((event) => event.type === "activity" && !event.activity?.branch), "主活动流应保留无分支活动");
+});
+
+test("sanitizeToolCalls: 自动修复未闭合的 tool_calls，防止模型服务端报 400 invalid_request_error", () => {
+  // 1. 缺失工具响应的 assistant 消息自动补齐 tool 占位回执
+  const unclosed = [
+    { role: "user", content: "请排版" },
+    {
+      role: "assistant",
+      content: "正在上传草稿箱...",
+      tool_calls: [
+        { id: "call_00_ET_Hm7AAVcSr8scKzMNTAzN9384", type: "function", function: { name: "finish_task", arguments: "{}" } }
+      ]
+    },
+    { role: "user", content: "好的，请继续" }
+  ];
+
+  const sanitized = sanitizeToolCalls(unclosed);
+  assert.equal(sanitized.length, 4, "应在 assistant 和下一个 user 之间自动插入补齐的 tool 消息");
+  assert.equal(sanitized[1].role, "assistant");
+  assert.equal(sanitized[2].role, "tool");
+  assert.equal(sanitized[2].tool_call_id, "call_00_ET_Hm7AAVcSr8scKzMNTAzN9384");
+  assert.match(sanitized[2].content, /操作已结束|未产生输出/);
+  assert.equal(sanitized[3].role, "user");
+
+  // 2. 部分工具已响应、部分工具缺失：只对缺失的工具补齐，已响应的保持原样
+  const partial = [
+    {
+      role: "assistant",
+      content: "执行两项操作",
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "tool_1", arguments: "{}" } },
+        { id: "call_2", type: "function", function: { name: "tool_2", arguments: "{}" } }
+      ]
+    },
+    { role: "tool", tool_call_id: "call_1", content: "成功\n完成了第一项" },
+    { role: "user", content: "下一步" }
+  ];
+
+  const sanitizedPartial = sanitizeToolCalls(partial);
+  assert.equal(sanitizedPartial.length, 4);
+  assert.equal(sanitizedPartial[1].tool_call_id, "call_1");
+  assert.equal(sanitizedPartial[1].content, "成功\n完成了第一项");
+  assert.equal(sanitizedPartial[2].tool_call_id, "call_2");
+  assert.match(sanitizedPartial[2].content, /操作已结束|未产生输出/);
+  assert.equal(sanitizedPartial[3].role, "user");
+
+  // 3. 孤立的 tool 消息（前面没有匹配的 assistant）被剔除
+  const orphanTool = [
+    { role: "user", content: "你好" },
+    { role: "tool", tool_call_id: "call_ghost", content: "幽灵响应" },
+    { role: "assistant", content: "你好呀" }
+  ];
+  const sanitizedOrphan = sanitizeToolCalls(orphanTool);
+  assert.equal(sanitizedOrphan.length, 2);
+  assert.equal(sanitizedOrphan[0].role, "user");
+  assert.equal(sanitizedOrphan[1].role, "assistant");
+
+  // 4. 空的 tool_calls: [] 属性被清理
+  const emptyCalls = [
+    { role: "assistant", content: "纯文本", tool_calls: [] }
+  ];
+  const sanitizedEmpty = sanitizeToolCalls(emptyCalls);
+  assert.equal("tool_calls" in sanitizedEmpty[0], false);
+
+  // 5. adaptMessagesForModel 集成生效
+  const adapted = adaptMessagesForModel(unclosed, { endpoint: "https://api.openai.com/v1" });
+  assert.equal(adapted.length, 4);
+  assert.equal(adapted[2].role, "tool");
+  assert.equal(adapted[2].tool_call_id, "call_00_ET_Hm7AAVcSr8scKzMNTAzN9384");
 });
