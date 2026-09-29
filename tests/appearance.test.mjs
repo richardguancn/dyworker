@@ -443,10 +443,10 @@ test("防残影保护：系统背景下未设置背景图时通配禁用页面�
   assert.match(mainSrc, /applyWindowAppearance[\s\S]*?mainWindow\.webContents\?\.invalidate\?\.\(\)/);
 });
 
-test("顶栏与标题栏背景随透明度与面板色联动（data-translucent 下使用 var(--surface)）", async () => {
+test("顶栏与标题栏背景随透明度与面板色联动（data-translucent 下与侧栏一致使用 var(--sidebar)）", async () => {
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
-  assert.match(css, /html\[data-translucent="true"\]\s*\.topbar[\s\S]*?background:\s*var\(--surface\)/);
-  assert.match(css, /html\[data-translucent="true"\]\s*\.titlebar[\s\S]*?background:\s*var\(--surface\)/);
+  assert.match(css, /html\[data-translucent="true"\]\s*\.topbar[\s\S]*?background:\s*var\(--sidebar\)/);
+  assert.match(css, /html\[data-translucent="true"\]\s*\.titlebar[\s\S]*?background:\s*var\(--sidebar\)/);
 });
 
 test("macOS 液态玻璃效果：main-panel 参与毛玻璃模糊，背景图带有景深平滑与文本可读性微阴影", async () => {

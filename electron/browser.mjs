@@ -121,7 +121,9 @@ export class BrowserAgent {
       return null;
     }
 
-    const candidate = this.getContents?.();
+    // 候选页面按调用方归属过滤：当前激活 webview 若已归属其他会话（用户切换了
+    // 会话），返回 null，本任务不得重新 acquire 到别人的页面上（跨会话穿透）
+    const candidate = this.getContents?.(this.currentContext.ownerSessionId);
     if (!candidate || candidate.isDestroyed?.()) {
       return null;
     }

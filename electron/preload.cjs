@@ -40,8 +40,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   openPath: (path) => ipcRenderer.invoke("workspace:open", path),
   revealInFolder: (path) => ipcRenderer.invoke("workspace:reveal", path),
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
-  // 上报当前显示的内置浏览器 webview：agent 的 browser__* 工具只作用于可见页面
-  setActiveBrowserContents: (webContentsId) => ipcRenderer.send("browser:active-contents", webContentsId),
+  // 上报当前显示的内置浏览器 webview 及其所属激活会话：agent 的 browser__* 工具只作用于可见页面
+  setActiveBrowserContents: (webContentsId, ownerSessionId) => ipcRenderer.send("browser:active-contents", webContentsId, ownerSessionId),
   // 在系统默认浏览器打开网址
   openBrowserExternal: (url) => ipcRenderer.invoke("browser:open-external", url),
   // 设备模拟（手机/平板视图）：width/height 为 0 时关闭

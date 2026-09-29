@@ -9,7 +9,7 @@ import {
   ListChecks,
   SlidersHorizontal,
 } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -763,7 +763,9 @@ function InteractiveBlock({ widget }: { widget: InteractiveWidget }) {
   return <StepsView widget={widget} />;
 }
 
-export function InteractiveMessage({ content }: { content: string }) {
+// memo + 上游 stripControlMarkersCached 的稳定引用：已完成消息在 App 整树重渲染时
+// 不再重新执行 remark/rehype 解析；流式消息的 content 每帧都变，仍按原频率更新。
+export const InteractiveMessage = memo(function InteractiveMessage({ content }: { content: string }) {
   // 流式期间 content 每个 token 都是新字符串：用 deferred 值驱动整段
   // remark(gfm+math+autospace)→rehype-katex 解析，让 React 在高频更新下合并中间帧，
   // 空闲时立即追上最新内容（长回复下避免逐 token 全量重解析主线程卡顿）
@@ -785,7 +787,7 @@ export function InteractiveMessage({ content }: { content: string }) {
       ) : null)}
     </div>
   );
-}
+});
 
 // 小段 Markdown 渲染（审批卡的影响说明、收件箱条目等）：与正文同一套渲染管线，
 // 去掉数学公式与交互控件解析，纯文本/列表/加粗场景够用

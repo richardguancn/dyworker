@@ -595,12 +595,12 @@ test("内置浏览器为 Codex 式多标签：webview 常驻、导航状态同�
   assert.match(preload, /browser:open-external/);
   assert.match(main, /trustedHandle\("browser:open-external"/);
   assert.match(main, /shell\.openExternal/);
-  // agent 的 browser__* 工具路由到当前显示的 webview
+  // agent 的 browser__* 工具路由到当前显示的 webview（按调用会话归属过滤）
   assert.match(app, /setActiveBrowserContents/);
   assert.match(preload, /browser:active-contents/);
   assert.match(main, /ipcMain\.on\("browser:active-contents"/);
   assert.match(main, /function activeEmbeddedBrowserContents/);
-  assert.match(main, /getContents: \(\) => activeEmbeddedBrowserContents\(\)/);
+  assert.match(main, /getContents: \(ownerSessionId\) => activeEmbeddedBrowserContents\(\{ forOwnerSessionId: ownerSessionId \}\)/);
 });
 
 test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设备视图", () => {
@@ -760,6 +760,39 @@ test("模型浏览器工具复用当前任务的右侧浏览器面板", () => {
   assert.match(browserSource, /openPanel/);
   assert.match(browserSource, /右侧浏览器面板/);
   assert.doesNotMatch(browserSource, /new BrowserWindow/);
+});
+
+test("切换会话不穿透：面板按会话隔离，后台浏览器操作只作用于归属会话", () => {
+  // ===== 渲染端：面板布局按会话隔离 =====
+  // 目标会话没有保存布局时清空当前 tabs，上一会话的浏览器标签页与 webview
+  // 不得原样留在本会话界面（后台任务还会继续操作它）
+  assert.match(app, /PANEL_LAYOUT_PREFIX/);
+  assert.match(app, /setToolPanelTabs\(\[\]\)/);
+  // 恢复布局时统一重映射 tab id：各会话独立编号的 id（如都叫 browser-1）会
+  // 与当前已挂载的 webview 撞 React key，导致跨会话复用同一个有状态页面
+  assert.match(app, /idMap\.set\(tab\.id, nextId\)/);
+  assert.match(app, /toolPanelTabSequenceRef\.current\+\+/);
+  // ===== 激活 webview 归属上报 =====
+  // 渲染端上报激活 webview 时带上当前激活会话，主进程据此判定页面归属
+  assert.match(app, /setActiveBrowserContents\?\.\(id, activeIdRef\.current\)/);
+  assert.match(preload, /"browser:active-contents", webContentsId, ownerSessionId/);
+  assert.match(main, /ipcMain\.on\("browser:active-contents", \(event, webContentsId, ownerSessionId\)/);
+  assert.match(main, /activeEmbeddedBrowserOwnerSessionId = id \? String\(ownerSessionId \|\| ""\) : ""/);
+  // 激活页归属切到他人会话时暂停自动控制（纵深防御：页面没换但已是别人在看）
+  assert.match(main, /ownerChangedToOther/);
+  // ===== 主进程：按归属过滤候选页面 =====
+  // A 会话的后台任务不得重新 acquire 到 B 会话正在看的页面
+  assert.match(main, /function activeEmbeddedBrowserContents\(\{ forOwnerSessionId \} = \{\}\)/);
+  assert.match(browserSource, /this\.getContents\?\.\(this\.currentContext\.ownerSessionId\)/);
+  // ===== panel-request 归属校验 =====
+  // 打开/关闭面板请求都带 ownerSessionId；渲染端只处理归属当前激活会话的请求
+  assert.match(main, /browser:panel-request", \{ action: "open", url, tabId, ownerSessionId/);
+  assert.match(main, /browser:panel-request", \{ action: "close", ownerSessionId/);
+  assert.match(main, /requestCloseEmbeddedBrowser\(renderer, sessionId\)/);
+  assert.match(app, /const requestOwner = String\(request\.ownerSessionId \|\| ""\)/);
+  assert.match(app, /requestOwner !== String\(activeIdRef\.current \|\| ""\)/);
+  // 面板激活页已归属他人时，后台会话的打开请求立即失败，不空等也不打在别人面板上
+  assert.match(main, /当前浏览器面板正显示其他会话的页面/);
 });
 
 test("assistant local images only stay loaded near the viewport and share in-flight reads", () => {

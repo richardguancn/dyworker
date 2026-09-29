@@ -113,6 +113,7 @@ let mainWindow;
 // agent 的 browser__* 工具只作用于渲染进程上报的「当前显示」那个（无上报时回退最后创建的）
 const embeddedBrowserContentsById = new Map();
 let activeEmbeddedBrowserContentsId = 0;
+let activeEmbeddedBrowserOwnerSessionId = "";
 let embeddedBrowserContents = null;
 // 渲染进程未上报（旧版本/预览环境）时的回退目标
 let fallbackEmbeddedBrowserContentsId = 0;
@@ -1128,12 +1129,18 @@ app.on("web-contents-created", (_event, contents) => {
   }
 });
 
-// 当前显示的内置浏览器页面：优先渲染进程上报的激活 webview
-function activeEmbeddedBrowserContents() {
+// 当前显示的内置浏览器页面：优先渲染进程上报的激活 webview。
+// forOwnerSessionId：调用方（某会话的任务）要求的归属；激活 webview 已上报归属
+// 且归属他人时返回 null，防止 A 会话的后台任务拿到 B 会话正在看的页面（穿透）。
+function activeEmbeddedBrowserContents({ forOwnerSessionId } = {}) {
   const contents = embeddedBrowserContentsById.get(activeEmbeddedBrowserContentsId)
     || embeddedBrowserContentsById.get(fallbackEmbeddedBrowserContentsId)
     || null;
   if (!contents || contents.isDestroyed?.()) return null;
+  const owner = String(forOwnerSessionId || "");
+  if (owner && activeEmbeddedBrowserOwnerSessionId && activeEmbeddedBrowserOwnerSessionId !== owner) {
+    return null;
+  }
   return contents;
 }
 
@@ -1149,12 +1156,12 @@ const browserControlManager = new BrowserControlManager({
   },
 });
 
-function waitForEmbeddedBrowser(sender, url, tabId, { validate } = {}) {
+function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId = "" } = {}) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let previousUrl = "";
     try {
-      const active = activeEmbeddedBrowserContents();
+      const active = activeEmbeddedBrowserContents({ forOwnerSessionId: ownerSessionId });
       if (active && !active.isDestroyed?.()) {
         previousUrl = active.getURL?.() || "";
       }
@@ -1221,7 +1228,14 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate } = {}) {
         finish({ ok: false, result: "右侧浏览器面板加载超时" });
         return;
       }
-      const contents = activeEmbeddedBrowserContents();
+      // 面板激活页已归属其他会话（用户切走了）：本会话的打开请求立即失败，
+      // 不能把网页打在别的会话正在看的面板上，也不再空等 20 秒
+      const owner = String(ownerSessionId || "");
+      if (owner && activeEmbeddedBrowserOwnerSessionId && activeEmbeddedBrowserOwnerSessionId !== owner) {
+        finish({ ok: false, result: "当前浏览器面板正显示其他会话的页面，已取消本次打开" });
+        return;
+      }
+      const contents = activeEmbeddedBrowserContents({ forOwnerSessionId: owner });
       if (contents && !contents.isDestroyed()) {
         if (observedContents !== contents) {
           observedContents = contents;
@@ -1256,7 +1270,7 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate } = {}) {
     }
 
     try {
-      sender.send("browser:panel-request", { action: "open", url, tabId });
+      sender.send("browser:panel-request", { action: "open", url, tabId, ownerSessionId: String(ownerSessionId || "") });
     } catch (error) {
       finish({ ok: false, result: `无法打开右侧浏览器面板：${error instanceof Error ? error.message : String(error)}` });
       return;
@@ -1265,10 +1279,10 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate } = {}) {
   });
 }
 
-function requestCloseEmbeddedBrowser(sender) {
+function requestCloseEmbeddedBrowser(sender, ownerSessionId = "") {
   try {
     if (!sender || sender.isDestroyed()) return;
-    sender.send("browser:panel-request", { action: "close" });
+    sender.send("browser:panel-request", { action: "close", ownerSessionId: String(ownerSessionId || "") });
   } catch {
     // 忽略
   }
@@ -1734,17 +1748,26 @@ trustedHandle("browser:open", async (event, payload) => {
   return { ok: true, url: check.url.toString(), result: "已在当前浏览器标签页打开网页" };
 });
 
-// 渲染进程上报当前显示的内置浏览器 webview：agent 的 browser__* 工具只作用于可见页面
-ipcMain.on("browser:active-contents", (event, webContentsId) => {
+// 渲染进程上报当前显示的内置浏览器 webview（及其所属激活会话）：
+// agent 的 browser__* 工具只作用于可见页面
+ipcMain.on("browser:active-contents", (event, webContentsId, ownerSessionId) => {
   if (!isTrustedRendererUrl(event.senderFrame?.url)) return;
   const id = Number(webContentsId) || 0;
   // 只接受登记过的 webview，防止渲染进程指向任意页面
   if (id && !embeddedBrowserContentsById.has(id)) return;
   const previousId = activeEmbeddedBrowserContentsId;
   activeEmbeddedBrowserContentsId = id;
+  activeEmbeddedBrowserOwnerSessionId = id ? String(ownerSessionId || "") : "";
 
-  // 若当前正在自动操作且显示的标签页被切走，主动暂停控制
-  if (previousId && id !== previousId && browserControlManager.getStatus().status === "running") {
+  // 若当前正在自动操作且显示的标签页被切走（换了页面，或页面还在但已归属
+  // 其他会话），主动暂停控制，避免后台任务继续操作别的会话正在看的页面
+  const runningOwner = browserControlManager.session?.ownerSessionId;
+  const ownerChangedToOther = Boolean(
+    activeEmbeddedBrowserOwnerSessionId &&
+    runningOwner &&
+    activeEmbeddedBrowserOwnerSessionId !== runningOwner
+  );
+  if (browserControlManager.getStatus().status === "running" && (ownerChangedToOther || (previousId && id !== previousId))) {
     browserControlManager.pause({ reason: "页面已切换，操作已暂停" });
   }
 });
@@ -2846,13 +2869,14 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     openPanel: renderer
       ? (url, tabId, credential) =>
           waitForEmbeddedBrowser(renderer, url, tabId, {
+            ownerSessionId: sessionId,
             validate: credential?.token
               ? () => browserControlManager.isOpenReservationValid(credential.token)
               : undefined
           })
       : undefined,
-    closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer) : undefined,
-    getContents: () => activeEmbeddedBrowserContents(),
+    closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer, sessionId) : undefined,
+    getContents: (ownerSessionId) => activeEmbeddedBrowserContents({ forOwnerSessionId: ownerSessionId }),
     controlManager: browserControlManager,
   });
   browserAgent.setContext({ ownerSessionId: sessionId, runId });

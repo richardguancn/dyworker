@@ -127,15 +127,17 @@ export function derivePalette(
   if (custom && !parseHexColor(custom)) return null;
   let alpha = 1 - transparency / 100;
   if (glass) alpha = Math.min(alpha, 0.78);
-  // 阅读区回收 50% 透明度且保底 0.65，防止高反差背景图案横穿正文；卡片输入区回收 40%
+  // 阅读区回收 50% 透明度且保底 0.65，防止高反差背景图案横穿正文；
+  // 卡片回收 30%、保底 0.6，让卡片透出下层色调，避免在半透明面板上呈不透明的"黑板"
   const strongAlpha = Math.min(1, Math.max(0.65, alpha + (1 - alpha) * 0.5));
-  const cardAlpha = Math.min(1, Math.max(0.72, alpha + (1 - alpha) * 0.4));
+  const cardAlpha = Math.min(1, Math.max(0.6, alpha + (1 - alpha) * 0.3));
   const entries: Array<[string, string | null, number]> = [
     ["--surface", mixColor(baseHex, defaults.surface, 0.5), alpha],
     ["--surface-strong", mixColor(baseHex, defaults.surface, 0.5), strongAlpha],
     ["--sidebar", mixColor(baseHex, defaults.sidebar, 0.35), alpha],
     ["--sidebar-active", mixColor(baseHex, defaults.sidebarActive, 0.3), alpha],
-    ["--card", mixColor(baseHex, defaults.card, 0.55), cardAlpha],
+    // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致
+    ["--card", mixColor(baseHex, defaults.card, 0.42), cardAlpha],
     ["--bubble", mixColor(baseHex, defaults.bubble, 0.5), alpha],
   ];
   const palette: Record<string, string> = {};

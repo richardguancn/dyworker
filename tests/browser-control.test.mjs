@@ -231,6 +231,51 @@ test("BrowserAgent 端到端闭环：打开页面、观察、填写、选择与�
   agent.dispose();
 });
 
+test("BrowserAgent: 会话切换后激活 webview 归属他人，后台任务不得接管别人的页面（跨会话穿透）", async () => {
+  const ownContents = createMockWebContents();
+  const foreignContents = createMockWebContents();
+  foreignContents.id = 202;
+  // 复刻 main.mjs activeEmbeddedBrowserContents({ forOwnerSessionId }) 的归属过滤语义：
+  // 激活 webview 已上报归属且归属他人时返回 null，否则返回当前激活页面
+  let activeOwner = "";
+  const manager = new BrowserControlManager();
+  const agent = new BrowserAgent({
+    openPanel: async () => ({ ok: true, contents: ownContents }),
+    closePanel: async () => {},
+    getContents: (ownerSessionId) => {
+      const owner = String(ownerSessionId || "");
+      if (owner && activeOwner && activeOwner !== owner) return null;
+      return foreignContents;
+    },
+    controlManager: manager
+  });
+  agent.setContext({ ownerSessionId: "session-A", runId: "run-A" });
+
+  // 会话 A 正常打开并建立控制权
+  const openRes = await agent.handle("browser__open", { url: "https://example.com/form" });
+  assert.equal(openRes.ok, true);
+  assert.equal(manager.session.webContentsId, ownContents.id);
+
+  // 用户切到会话 B：A 的 webview 随面板清理被卸载销毁，激活 webview 归属变为 B
+  ownContents.isDestroyed = () => true;
+  activeOwner = "session-B";
+
+  // A 的后台任务继续观察：候选页面按归属过滤后为 null，只能失败，
+  // 绝不能把控制权重新 acquire 到 B 会话正在看的页面上
+  const obsRes = await agent.handle("browser__observe");
+  assert.equal(obsRes.ok, false);
+  assert.match(obsRes.result, /尚未打开网页/);
+  assert.equal(manager.session.webContentsId, ownContents.id);
+  assert.notEqual(manager.session.webContentsId, foreignContents.id);
+
+  // 对照：归属信息缺失（上报竞态等）时退回既有行为——作用于当前可见页面
+  activeOwner = "";
+  const fallbackObs = await agent.handle("browser__observe");
+  assert.equal(fallbackObs.ok, true);
+  assert.equal(manager.session.webContentsId, foreignContents.id);
+
+  agent.dispose();
+});
 
 test("BrowserControlManager: 打开预占绑定唯一凭据，过期接替后旧凭据失效 (D2)", () => {
   const manager = new BrowserControlManager();

@@ -105,11 +105,32 @@ html[data-translucent="true"] .composer-card {
   background: var(--card);
 }
 
+/* 浮层菜单/预览/toast 统一卡片色：深色下原为硬编码中性黑，
+   着色或半透明时会与面板色调脱节 */
+html[data-translucent="true"] .add-menu,
+html[data-translucent="true"] .model-menu,
+html[data-translucent="true"] .approval-mode-menu,
+html[data-translucent="true"] .branch-menu,
+html[data-translucent="true"] .commit-panel,
+html[data-translucent="true"] .status-toast,
+html[data-translucent="true"] .tool-panel-menu,
+html[data-translucent="true"] .tool-panel-menu::before,
+html[data-translucent="true"] .conversation-turn-preview,
+html[data-translucent="true"] .conversation-turn-preview::before {
+  background: var(--card);
+}
+
+/* 模态对话框沿用正文阅读面（surface-strong），深浅两态都与面板协调 */
+html[data-translucent="true"] .settings-dialog,
+html[data-translucent="true"] .identity-dialog {
+  background: var(--surface-strong, var(--surface));
+}
+
 html[data-translucent="true"] .topbar,
 html[data-theme="dark"][data-translucent="true"] .topbar,
 html[data-translucent="true"] .titlebar,
 html[data-theme="dark"][data-translucent="true"] .titlebar {
-  background: var(--surface);
+  background: var(--sidebar);
   border-bottom-color: var(--border);
 }
 

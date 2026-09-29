@@ -79,7 +79,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, memo, useCallback, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
@@ -473,8 +473,24 @@ function stripControlMarkers(text: string) {
   return stripped || String(text || "").trim();
 }
 
+// 渲染路径的缓存版：同一输入引用直接复用结果，保证传给 InteractiveMessage
+// 等子组件的 props 引用稳定（否则每个流式事件都会触发全部消息重新解析 Markdown）。
+// 清洗是纯函数，按字符串值缓存即正确；容量封顶防长会话下无界增长。
+const STRIP_CACHE_LIMIT = 400;
+const strippedTextCache = new Map<string, string>();
+
+function stripControlMarkersCached(text: string) {
+  const source = String(text || "");
+  const hit = strippedTextCache.get(source);
+  if (hit !== undefined) return hit;
+  const stripped = stripControlMarkers(source);
+  if (strippedTextCache.size >= STRIP_CACHE_LIMIT) strippedTextCache.clear();
+  strippedTextCache.set(source, stripped);
+  return stripped;
+}
+
 function messageVisibleText(message: ChatMessage) {
-  return stripControlMarkers(message.displayContent ?? message.content);
+  return stripControlMarkersCached(message.displayContent ?? message.content);
 }
 
 // 长消息折叠（Codex 风格“显示更多/收起”）：内容过长时默认收起，
@@ -3499,7 +3515,10 @@ function ProcessActionItem({ activity }: { activity: ActivityRecord }) {
   );
 }
 
-function ProcessTimeline({
+// memo：已完成消息的 message 引用在流式期间不变，收起状态下整棵子树
+// （含最多上百条 activities 的 map）在 App 重渲染时直接跳过。
+// 依赖调用方传入稳定的 onToggleCollapse（见 transcript 渲染处的 useCallback）。
+const ProcessTimeline = memo(function ProcessTimeline({
   message,
   messageIndex,
   isStreaming,
@@ -3595,6 +3614,22 @@ function ProcessTimeline({
       )}
     </div>
   );
+});
+
+// 任务运行状态行：耗时数字自持 1s 定时器，只重渲染这一行，
+// 不再驱动整个 App 每秒重渲染（原 elapsedTick 方案）
+function RunningStatusLabel({ loopState, startedAt }: { loopState: { iteration: number; maximum: number; status: string } | null; startedAt?: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!startedAt || loopState) return;
+    const timer = window.setInterval(() => setTick((tick) => tick + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt, loopState]);
+  if (loopState) {
+    return <span>{`持续执行 第 ${loopState.iteration}/${loopState.maximum} 轮 · ${loopState.status}`}</span>;
+  }
+  const elapsedSeconds = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+  return <span>{`正在处理任务${elapsedSeconds > 1 ? ` · ${formatDuration(elapsedSeconds * 1000)}` : ""}`}</span>;
 }
 
 function ApprovalCard({ action, onResolve }: { action: ApprovalAction; onResolve: (approved: boolean) => void }) {
@@ -6753,12 +6788,39 @@ export function App() {
   const [mentionSkills, setMentionSkills] = useState<SkillRecord[]>([]);
   const [activeSkills, setActiveSkills] = useState<SkillRecord[]>([]);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
+  // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
+  // 每条消息都会因新函数引用而击穿 memo
+  const toggleActivityCollapse = useCallback((messageKey: string, nextCollapsed: boolean) => {
+    setCollapsedActivities((current) => {
+      const next = new Set(current);
+      if (nextCollapsed) {
+        next.delete(`${messageKey}:expanded`);
+        next.add(messageKey);
+      } else {
+        next.delete(messageKey);
+        next.add(`${messageKey}:expanded`);
+      }
+      return next;
+    });
+  }, []);
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
-  const [, setElapsedTick] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  // debug-log 事件频率与模型流式对齐，逐条 setState 会让整个 App 高频重渲染；
+  // 先进 ref 缓冲，1 秒合并刷入一次（TraceConsole 是诊断视图，秒级延迟无感知）
+  const pendingDebugLogsRef = useRef<DebugLogEntry[]>([]);
+  const debugLogFlushTimerRef = useRef<number | null>(null);
+  const queueDebugLog = useCallback((entry: DebugLogEntry) => {
+    pendingDebugLogsRef.current.push(entry);
+    if (debugLogFlushTimerRef.current !== null) return;
+    debugLogFlushTimerRef.current = window.setTimeout(() => {
+      debugLogFlushTimerRef.current = null;
+      const pending = pendingDebugLogsRef.current.splice(0);
+      if (pending.length) setDebugLogs((logs) => [...logs, ...pending].slice(-300));
+    }, 1000);
+  }, []);
   // 统一轨迹事件流（trace-console）：当前 run 的 trace 缓存（含子代理分支，depth 区分），
   // 供轨迹控制台与「需求→实现」链路视图使用；内存上限 5000 条，历史靠 userData 落盘回放
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
@@ -7007,9 +7069,25 @@ export function App() {
     } catch {
       saved = null;
     }
-    if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) return;
-    setToolPanelTabs(saved.tabs);
-    setActiveToolPanelTabId(saved.tabs.some((tab) => tab.id === saved.activeTabId) ? saved.activeTabId! : "");
+    if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) {
+      // 目标会话没有自己的面板布局：清空当前 tabs，避免上一会话的浏览器
+      // 标签页和 webview 原样穿透到本会话界面（后台任务还会继续操作它）
+      setToolPanelTabs([]);
+      setActiveToolPanelTabId("");
+      return;
+    }
+    // 恢复的 tab id 是各会话独立编号的（如都叫 browser-1），直接使用会与当前
+    // 已挂载的 webview 撞 React key 导致跨会话复用同一个有状态页面；统一重映射
+    // 为本次运行的全局唯一 id，并同步 activeTabId
+    const idMap = new Map<string, string>();
+    const remappedTabs = saved.tabs.map((tab) => {
+      const nextId = `${tab.kind}-${toolPanelTabSequenceRef.current++}`;
+      idMap.set(tab.id, nextId);
+      return { ...tab, id: nextId };
+    });
+    setToolPanelTabs(remappedTabs);
+    const savedActiveWasValid = saved.tabs.some((tab) => tab.id === saved.activeTabId);
+    setActiveToolPanelTabId(savedActiveWasValid ? idMap.get(saved.activeTabId!)! : "");
     if (typeof saved.width === "number" && saved.width >= 300) setToolPanelWidth(saved.width);
     if (typeof saved.open === "boolean") setRightPanelOpen(saved.open);
   }, [ready, activeId]);
@@ -7166,6 +7244,11 @@ export function App() {
   // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
   useEffect(() => {
     const unsubscribe = window.dyworker?.onBrowserPanelRequest((request) => {
+      // 归属校验：后台会话的面板请求（打开或关闭）只在它正是当前激活会话时
+      // 处理，否则会把别的会话要开的网页打在、或把它要关的面板收在用户
+      // 正在看的其他会话界面上（穿透）
+      const requestOwner = String(request.ownerSessionId || "");
+      if (requestOwner && requestOwner !== String(activeIdRef.current || "")) return;
       if (request.action === "close") {        setRightPanelOpen(false);
         return;
       }
@@ -7696,14 +7779,8 @@ export function App() {
     const items = await window.dyworker.listSkills(workspacePath);
     setSkills(items);
     setMentionSkills(items);
-    if (announce) setNotice(`已刷新技能，共发现 ${items.length} 个`);
+    if (announce) setNotice(`已刷新技能，共发现 ${skills.length} 个`);
   };
-
-  useEffect(() => {
-    if (!runningSessionIds.size) return;
-    const timer = window.setInterval(() => setElapsedTick((tick) => tick + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [runningSessionIds]);
 
   const syncAtBottom = () => {
     const viewport = viewportRef.current;
@@ -7966,9 +8043,6 @@ export function App() {
   const activePendingApproval = activeSession?.id ? pendingApprovals[activeSession.id] || null : null;
   const activePendingQuestion = activeSession?.id ? pendingQuestions[activeSession.id] || null : null;
   const activeLoopState = activeSession?.id ? loopStates[activeSession.id] || null : null;
-  const activeElapsedSeconds = activeSession?.id && runningStartedAt[activeSession.id]
-    ? Math.floor((Date.now() - runningStartedAt[activeSession.id]) / 1000)
-    : 0;
   const inboxPendingCount = inboxItems.filter((item) => item.status === "pending").length;
   const sessionPendingInboxCount = (sessionId: string) =>
     inboxItems.filter((item) => item.status === "pending" && item.sessionId === sessionId).length;
@@ -8815,7 +8889,7 @@ export function App() {
     const webview = browserWebviewsRef.current.get(activeToolPanelTabIdRef.current);
     try {
       const id = webview?.getWebContentsId?.();
-      if (id) window.dyworker?.setActiveBrowserContents?.(id);
+      if (id) window.dyworker?.setActiveBrowserContents?.(id, activeIdRef.current);
     } catch {
       // webview 尚未 attach：did-attach 后会再报一次
     }
@@ -8933,7 +9007,7 @@ export function App() {
           bindBrowserWebview(tabId, node);
         } else {
           browserWebviewsRef.current.delete(tabId);
-          if (activeToolPanelTabIdRef.current === tabId) window.dyworker?.setActiveBrowserContents?.(0);
+          if (activeToolPanelTabIdRef.current === tabId) window.dyworker?.setActiveBrowserContents?.(0, activeIdRef.current);
         }
       };
       browserWebviewRefCallbacks.current.set(tabId, callback);
@@ -9677,7 +9751,7 @@ export function App() {
             void refreshSkills();
             showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已改进`);
           } else if (agentEvent.type === "debug-log") {
-            setDebugLogs((logs) => [...logs.slice(-299), agentEvent.entry]);
+            queueDebugLog(agentEvent.entry);
           } else if (agentEvent.type === "context-usage") {
             const total = agentEvent.total ?? agentEvent.used + agentEvent.completion;
             updateSession(updatedSession.id, (session) => ({
@@ -11364,24 +11438,12 @@ export function App() {
                   ) : (
                     <div className="assistant-message" onContextMenu={(event) => handleMessageContextMenu(event, message)}>
                       {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
-                      <ProcessTimeline
+                        <ProcessTimeline
                         message={message}
                         messageIndex={index}
                         isStreaming={activeTaskRunning && !message.taskStatus && index === streamingAssistantIndex}
                         collapsedActivities={collapsedActivities}
-                        onToggleCollapse={(messageKey, nextCollapsed) => {
-                          setCollapsedActivities((current) => {
-                            const next = new Set(current);
-                            if (nextCollapsed) {
-                              next.delete(`${messageKey}:expanded`);
-                              next.add(messageKey);
-                            } else {
-                              next.delete(messageKey);
-                              next.add(`${messageKey}:expanded`);
-                            }
-                            return next;
-                          });
-                        }}
+                        onToggleCollapse={toggleActivityCollapse}
                       />
                       {Boolean(message.changes?.length) && (
                         <ChangesSummary
@@ -11395,7 +11457,7 @@ export function App() {
                           }}
                         />
                       )}
-                      {message.content && <InteractiveMessage content={stripControlMarkers(message.content)} />}
+                      {message.content && <InteractiveMessage content={stripControlMarkersCached(message.content)} />}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           {Boolean(messageVisibleText(message).trim()) && (
@@ -11433,7 +11495,7 @@ export function App() {
               <div className="message-row assistant">
                 <div className="assistant-working">
                   <LoaderCircle className="spin" size={17} />
-                  <span>{activeLoopState ? `持续执行 第 ${activeLoopState.iteration}/${activeLoopState.maximum} 轮 · ${activeLoopState.status}` : `正在处理任务${activeElapsedSeconds > 1 ? ` · ${formatDuration(activeElapsedSeconds * 1000)}` : ""}`}</span>
+                  <RunningStatusLabel loopState={activeLoopState} startedAt={activeSession?.id ? runningStartedAt[activeSession.id] : undefined} />
                 </div>
               </div>
             )}
@@ -11523,6 +11585,11 @@ export function App() {
               traceEventsRef.current = [];
               setTraceEvents([]);
               runTraceEventsRef.current.clear();
+              pendingDebugLogsRef.current = [];
+              if (debugLogFlushTimerRef.current !== null) {
+                window.clearTimeout(debugLogFlushTimerRef.current);
+                debugLogFlushTimerRef.current = null;
+              }
               setDebugLogs([]);
             }}
             onClose={() => setDebugOpen(false)}
