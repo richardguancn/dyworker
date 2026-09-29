@@ -4654,7 +4654,7 @@ body.resizing-panels .app-shell {
 .markdown-content tr:last-child td { border-bottom: 0; }
 .markdown-content th:last-child,
 .markdown-content td:last-child { border-right: 0; }
-.markdown-content th { background: #eeefea; }
+.markdown-content th { background: var(--table-head, #eeefea); }
 
 /* 长消息折叠（Codex 风格“显示更多/收起”） */
 .user-bubble {
@@ -8978,7 +8978,7 @@ html:not([data-theme]) .markdown-content td {
 
 
   html:not([data-theme]) .markdown-content th {
-    background: #292a26;
+    background: var(--table-head, #292a26);
   }
 
 
@@ -10515,7 +10515,7 @@ html[data-theme="dark"] .markdown-content td {
 
 
   html[data-theme="dark"] .markdown-content th {
-    background: #292a26;
+    background: var(--table-head, #292a26);
   }
 
 

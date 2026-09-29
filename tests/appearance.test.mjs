@@ -443,9 +443,9 @@ test("防残影保护：系统背景下未设置背景图时通配禁用页面�
   assert.match(mainSrc, /applyWindowAppearance[\s\S]*?mainWindow\.webContents\?\.invalidate\?\.\(\)/);
 });
 
-test("顶栏与标题栏背景随透明度与面板色联动（data-translucent 下与侧栏一致使用 var(--sidebar)）", async () => {
+test("顶栏与标题栏背景随透明度与面板色联动（data-translucent 下避免重复叠加底色）", async () => {
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
-  assert.match(css, /html\[data-translucent="true"\]\s*\.topbar[\s\S]*?background:\s*var\(--sidebar\)/);
+  assert.match(css, /html\[data-translucent="true"\]\s*\.topbar[\s\S]*?background:\s*transparent/);
   assert.match(css, /html\[data-translucent="true"\]\s*\.titlebar[\s\S]*?background:\s*var\(--sidebar\)/);
 });
 
@@ -454,4 +454,16 @@ test("macOS 液态玻璃效果：main-panel 参与毛玻璃模糊，背景图带
   assert.match(css, /html\[data-glass\][\s\S]*?\.main-panel[\s\S]*?backdrop-filter:\s*blur/);
   assert.match(css, /html\[data-has-bg-image="true"\]\s*\.appearance-backdrop::before[\s\S]*?filter:\s*blur/);
   assert.match(css, /html\[data-has-bg-image="true"\]\s*\.markdown-content[\s\S]*?text-shadow/);
+});
+
+test("透明卡片不嵌套毛玻璃，避免系统材质和背景图组合下重新出现实色块", async () => {
+  const css = (await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
+  const inner = /\.(?:topbar|composer-card|new-task-button|plan-card|tool-summary)\b/;
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]+)\}/g)];
+  const blurred = rules.filter(([, , body]) => /backdrop-filter:\s*blur/.test(body));
+  assert.ok(blurred.some(([, selector]) => selector.includes(".main-panel")));
+  assert.ok(blurred.every(([, selector]) => !inner.test(selector)), "内层控件不能再次模糊父面板");
+  for (const name of ["topbar", "composer-card", "new-task-button", "plan-card", "tool-summary"]) {
+    assert.ok(rules.some(([, selector, body]) => selector.includes(`html[data-translucent="true"] .${name}`) && /backdrop-filter:\s*none/.test(body)), `${name} 应取消默认毛玻璃`);
+  }
 });

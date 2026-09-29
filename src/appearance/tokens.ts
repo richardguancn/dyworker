@@ -104,14 +104,15 @@ export function normalizeHex(input: unknown): string | null {
 // 面板色派生的 CSS 变量映射。无自定义色、透明度为 0 且玻璃关闭时返回 null
 //（controller 移除内联变量、回退样式表默认，老用户观感不变）。文字色（ink/muted/quiet）
 // 与 accent 保持主题默认。
-export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--bubble"] as const;
+export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--bubble", "--table-head"] as const;
 
 /**
  * 派生规则：自定义色与主题默认面板色混合，得到协调的导航/面板底色；
  * sidebar 系列混入比例更低（更贴近自定义色 → 相对 surface 略深/略饱和），
  * card 更贴近主题默认（更中性的承载面）。transparency 把面板底色整体转为 rgba，
- * alpha = 1 - t/100，文字与图标不受影响。--surface-strong 是正文阅读区用的更稳底色
- * （同色调、回收一部分透明度）。玻璃开启时强制面板至少保留 22% 透出，模糊才可见。
+ * alpha = 1 - t/100，文字与图标不受影响。全部面板（侧边栏/正文区/标题栏/
+ * 输入框/新建任务/工作计划/改动卡片/表格标题栏）共用同一 alpha，全界面透明度
+ * 与左侧面板统一。玻璃开启时强制面板至少保留 22% 透出，模糊才可见。
  */
 export function derivePalette(
   settings: Pick<AppearanceSettings, "background">,
@@ -127,18 +128,18 @@ export function derivePalette(
   if (custom && !parseHexColor(custom)) return null;
   let alpha = 1 - transparency / 100;
   if (glass) alpha = Math.min(alpha, 0.78);
-  // 阅读区回收 50% 透明度且保底 0.65，防止高反差背景图案横穿正文；
-  // 卡片回收 30%、保底 0.6，让卡片透出下层色调，避免在半透明面板上呈不透明的"黑板"
-  const strongAlpha = Math.min(1, Math.max(0.65, alpha + (1 - alpha) * 0.5));
-  const cardAlpha = Math.min(1, Math.max(0.6, alpha + (1 - alpha) * 0.3));
+  // 全部面板共用同一 alpha：侧边栏、正文区（surface-strong）与卡片级表面透明度统一，
+  // 避免卡片叠在更实的正文区上时视觉透明度与侧边栏脱节
   const entries: Array<[string, string | null, number]> = [
     ["--surface", mixColor(baseHex, defaults.surface, 0.5), alpha],
-    ["--surface-strong", mixColor(baseHex, defaults.surface, 0.5), strongAlpha],
+    ["--surface-strong", mixColor(baseHex, defaults.surface, 0.5), alpha],
     ["--sidebar", mixColor(baseHex, defaults.sidebar, 0.35), alpha],
     ["--sidebar-active", mixColor(baseHex, defaults.sidebarActive, 0.3), alpha],
-    // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致
-    ["--card", mixColor(baseHex, defaults.card, 0.42), cardAlpha],
+    // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致；alpha 与侧边栏一致
+    ["--card", mixColor(baseHex, defaults.card, 0.42), alpha],
     ["--bubble", mixColor(baseHex, defaults.bubble, 0.5), alpha],
+    // 表格标题栏：色调与 bubble 一致，alpha 与侧边栏/卡片同一层级
+    ["--table-head", mixColor(baseHex, defaults.bubble, 0.5), alpha],
   ];
   const palette: Record<string, string> = {};
   for (const [name, hex, a] of entries) {
