@@ -36,6 +36,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cordis": "4.0.0-rc.10",
     "echarts": "^6.1.0",
     "electron-updater": "^6.8.9",
     "node-llama-cpp": "^3.20.0",
