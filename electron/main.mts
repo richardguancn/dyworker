@@ -3,8 +3,8 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createHost, disposeHost } from "./host/context.mts";
 import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, sanitizeToolCalls, suggestStandingRule } from "./agent.mts";
-import { createAuditLog } from "./audit.mts";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mts";
 import { BrowserControlManager } from "./browser-control.mts";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mts";
@@ -15,7 +15,7 @@ import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComput
 import { applyBuiltinMemoryOverrides, buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, normalizeMemoryItem, normalizeMemories } from "./memory.mts";
 import { applyConsolidation, buildConsolidationMessages, ensureWiki, integrateItems, listWikiPages, parseConsolidationResult, readWikiPages, removeWikiMemory, serializeMemoryRow, updateWikiMemory } from "./memory-wiki.mts";
 import { McpClient } from "./mcp.mts";
-import { countUndecryptableSecrets, decryptChannelSecret, deserializeSettings, encryptChannelSecret, needsSecretMigration, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, preserveUndecryptableSecrets, serializeSettings } from "./settings.mts";
+import { countUndecryptableSecrets, decryptChannelSecret, encryptChannelSecret, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine } from "./settings.mts";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mts";
 import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "./session-tools.mts";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mts";
@@ -31,10 +31,8 @@ import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMar
 import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mts";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mts";
 import { SessionQueue } from "./session-queue.mts";
-import { createCoalescedWriter } from "./session-store.mts";
-import { createSessionArchive } from "./session-archive.mts";
 import { enforceDirTotalSize, halveFileIfOversized } from "./log-rotation.mts";
-import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseGithubUpdateUrl } from "./app-updater.mts";
+import { DEFAULT_UPDATE_URL, createUpdaterController } from "./app-updater.mts";
 import { backgroundTasksManager } from "./background-tasks.mts";
 import { collectOrphanAssets, commitStagedImage, defaultAppearance, discardStagedImage, importAppearanceImage, normalizeAppearance, readAppearance, readAppearanceImage, removeAppearanceImage, saveAppearance } from "./appearance.mts";
 import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "./appearance-platform.mts";
@@ -228,14 +226,19 @@ function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
 
-// 会话存档：按会话拆分为 sessions/<id>.json + index.json（迁移见
-// session-archive.mjs）。渲染端正常只发「变化的会话」增量；旧渲染端
-// 仍可能发整档数组，由合并写入器承接（整档写盘按间隔合并，防写放大）。
-const sessionArchive = createSessionArchive({ dir: path.join(app.getPath("userData"), "sessions"), legacyFile: dataFile("sessions.json") });
-const sessionArchiveStore = createCoalescedWriter({
-  minIntervalMs: 2000,
-  write: (sessions) => sessionArchive.saveAll(sessions),
+// Cordis 宿主：主进程核心服务（审计/设置/会话存档）统一挂入插件生命周期。
+// safeStorage 与领域修正回调在此注入；顶层 await 等待根 fiber 激活，
+// 之后的模块级常量（sessionArchive/auditLog）即可同步访问服务。
+const ctx = await createHost({
+  userDataDir: app.getPath("userData"),
+  safeStorage,
+  settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings],
 });
+
+// 会话存档：按会话拆分为 sessions/<id>.json + index.json（迁移见
+// session-archive.mts）。读路径走 ctx.sessions，写路径经合并写入器承接
+// （整档写盘按间隔合并，防写放大），dispose 时统一 flush。
+const sessionArchive = ctx.sessions;
 // 各只读消费方（历史检索、会话工具、渠道工作区推导等）统一入口
 function readAllSessions() {
   return sessionArchive.loadAll();
@@ -293,8 +296,9 @@ trustedHandle("app-update:install", () => appUpdater?.install() || {
   error: "更新服务尚未准备好",
 });
 
-// 审计日志（audit.jsonl）：有副作用的工具调用，审批决策与执行结果逐条落盘
-const auditLog = createAuditLog({ filePath: path.join(app.getPath("userData"), "audit.jsonl") });
+// 审计日志（audit.jsonl）：有副作用的工具调用，审批决策与执行结果逐条落盘。
+// 由 cordis 宿主的 ctx.audit 服务承接（createHost 内按 userDataDir 装配）。
+const auditLog = ctx.audit;
 
 // ---- 内置本地审核模型（Qwen3-0.6B，llama.cpp 推理）----
 // 模型默认存 userData/models/reviewer/，设置里可自定义保存目录、一键下载（ModelScope 优先）
@@ -733,29 +737,13 @@ function defaultSessions() {
 }
 
 async function readSettings() {
-  const stored = await readJson(dataFile("settings.json"), {});
-  const settings = deserializeSettings(stored, safeStorage);
-  applyReviewerModelDir(settings);
-  // 语音模型目录与审核模型同款策略：每次读设置都应用最新目录，改路径保存后立即生效
-  applyAsrSettings(settings);
-  applyTtsSettings(settings);
-  const approvalModeMigrated = stored?.approvalMode !== settings.approvalMode
-    || stored?.channels?.approvalMode === "allow-writes";
-  const updateUrlMigrated = stored?.updateUrl !== settings.updateUrl;
-  if (needsSecretMigration(stored) || approvalModeMigrated || updateUrlMigrated) {
-    // 解不开的密钥密文必须原样保留（签名变化导致暂时解不开时，写空值会永久毁掉密钥）
-    await writeJson(dataFile("settings.json"), preserveUndecryptableSecrets(serializeSettings(settings, safeStorage), stored, safeStorage));
-  }
-  return settings;
+  // 持久化/解密/migrator/密文回写逻辑在 ctx.settings 服务（host/services/settings.mts）
+  return ctx.settings.read();
 }
 
 async function saveSettings(settings) {
-  const rawUpdateUrl = String(settings?.updateUrl || DEFAULT_UPDATE_URL).trim() || DEFAULT_UPDATE_URL;
-  parseGithubUpdateUrl(rawUpdateUrl);
-  const updateUrl = normalizeUpdateUrl(rawUpdateUrl);
-  const nextSettings = { ...settings, updateUrl };
-  const stored = await readJson(dataFile("settings.json"), {});
-  await writeJson(dataFile("settings.json"), preserveUndecryptableSecrets(serializeSettings(nextSettings, safeStorage), stored, safeStorage));
+  // 落盘与 updateUrl 规范化在服务内完成；appUpdater 联动属于壳层反应，留在 main
+  const updateUrl = await ctx.settings.write(settings);
   if (appUpdater && appUpdater.getUpdateUrl() !== updateUrl) appUpdater.configure(updateUrl);
   return updateUrl;
 }
@@ -1399,7 +1387,7 @@ trustedHandle("sessions:save", async (_event, payload) => {
     if (Array.isArray(payload)) {
       // 旧渲染端整档快照：走合并写入器（2 秒间隔尾沿落盘，防写放大）
       await syncChannelSessionWorkspaces(channelMetaOf(payload));
-      sessionArchiveStore.requestSave(payload);
+      sessionArchive.requestSave(payload);
       return { ok: true };
     }
     // 新渲染端增量：只含变化的会话/删除的 id/权威顺序，直接落盘。
@@ -5538,8 +5526,8 @@ app.on("before-quit", (event) => {
   mcpShutdownStarted = true;
   mcpShuttingDown = true;
   event.preventDefault();
-  // 会话存档合并窗口内可能还有积压快照，退出前立即落盘
-  void sessionArchiveStore.flush();
+  // Cordis 宿主 dispose：会话存档合并窗口内的积压快照在服务清理中 flush 落盘
+  void disposeHost(ctx);
   // 用量统计的防抖写也立即落盘，避免丢失最后一秒的记录
   if (usageStatsWriteTimer) {
     clearTimeout(usageStatsWriteTimer);

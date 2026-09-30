@@ -15,6 +15,10 @@ const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", i
 const imageAttachment = readSource(new URL("../src/ImageAttachment.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
 const main = readSource(new URL("../electron/main.mts", import.meta.url));
+const hostContext = readSource(new URL("../electron/host/context.mts", import.meta.url));
+const hostAuditService = readSource(new URL("../electron/host/services/audit.mts", import.meta.url));
+const hostSettingsService = readSource(new URL("../electron/host/services/settings.mts", import.meta.url));
+const hostSessionsService = readSource(new URL("../electron/host/services/session-archive.mts", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
@@ -127,7 +131,8 @@ test("首次启动必须选择身份,并可在设置中重新选择", () => {
   assert.match(settingsStorage, /identity: normalized\.identity/);
   // 签名身份变化导致密钥暂时解不开时，迁移/保存都必须保留旧密文而非写空值（否则密钥永久丢失）
   assert.match(settingsStorage, /preserveUndecryptableSecrets/);
-  assert.match(main, /preserveUndecryptableSecrets\(serializeSettings/);
+  // 该回写逻辑已收编进 cordis 宿主的 SettingsService（main 经 ctx.settings 消费）
+  assert.match(hostSettingsService, /preserveUndecryptableSecrets\(serializeSettings/);
 });
 
 test("身份会切换代理的默认工作语境", () => {
@@ -1224,9 +1229,9 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(app, /删除后会立即生效/);
   assert.match(app, /activateModelProfile/);
   assert.match(app, /model-menu/);
-  assert.match(main, /serializeSettings/);
-  assert.match(main, /deserializeSettings/);
-  assert.match(main, /needsSecretMigration/);
+  assert.match(hostSettingsService, /serializeSettings/);
+  assert.match(hostSettingsService, /deserializeSettings/);
+  assert.match(hostSettingsService, /needsSecretMigration/);
   assert.match(settingsStorage, /profiles: normalized\.profiles\.map/);
   assert.match(settingsStorage, /encryptSecret\(profile\.apiKey/);
   // 长期记忆：普通任务和定时任务都复盘；定时任务完成后同步刷新设置页记忆
@@ -1298,10 +1303,12 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(app, /始终允许/);
   assert.match(app, /suggestedRule/);
 
-  // 3. 审计日志:audit.mjs 追加+轮转,agent 决策点上报,渲染端可打开
+  // 3. 审计日志:audit.mts 追加+轮转（createAuditLog 由 host 的 AuditService 包装，
+  //    main 经 cordis 服务 ctx.audit 消费）,agent 决策点上报,渲染端可打开
   assert.match(auditSource, /export function createAuditLog/);
   assert.match(agent, /auditRecord\(/);
-  assert.match(main, /createAuditLog/);
+  assert.match(hostAuditService, /createAuditLog/);
+  assert.match(main, /const auditLog = ctx\.audit/);
   assert.match(main, /audit\.jsonl/);
   assert.match(main, /trustedHandle\("audit:open"/);
   assert.match(preload, /openAuditLog:/);
@@ -1612,13 +1619,17 @@ test("消息文本右键可复制选中内容,输入框右键支持复制/剪切
 test("会话存档保存链路做写放大治理：流式暂停常规保存 + 主进程合并写入", () => {
   // 主进程：sessions 存档按会话拆分（sessions/<id>.json + index.json），
   // 旧渲染端整档数组走合并写入器（2 秒间隔尾沿落盘）；增量直接 applyDelta。
-  // 退出前 flush，保证合并窗口内的最终快照不丢
-  assert.match(main, /createSessionArchive\(\{\s*dir: path\.join\(app\.getPath\("userData"\), "sessions"\), legacyFile: dataFile\("sessions\.json"\)/);
-  assert.match(main, /const sessionArchiveStore = createCoalescedWriter\(\{/);
-  assert.match(main, /sessionArchiveStore\.requestSave\(payload\)/);
+  // 退出前 dispose 宿主（effect 中 flush），保证合并窗口内的最终快照不丢。
+  // 装配已从 main 收敛到 cordis 宿主（host/context.mts + SessionsService）。
+  assert.match(hostContext, /new SessionsService\(ctx, \{\s*dir: path\.join\(options\.userDataDir, "sessions"\),\s*legacyFile: path\.join\(options\.userDataDir, "sessions\.json"\)/);
+  assert.match(hostSessionsService, /createCoalescedWriter\(\{/);
+  assert.match(hostSessionsService, /minIntervalMs: 2000/);
+  assert.match(hostSessionsService, /write: \(sessions\) => this\.archive\.saveAll\(sessions\)/);
+  assert.match(hostSessionsService, /ctx\.effect\(\(\) => \(\) => this\.writer\.flush\(\)\)/);
+  assert.match(main, /sessionArchive\.requestSave\(payload\)/);
   assert.match(main, /await sessionArchive\.applyDelta\(delta\)/);
   assert.doesNotMatch(main, /writeJson\(dataFile\("sessions\.json"\)/);
-  assert.match(main, /app\.on\("before-quit"[\s\S]{0,600}sessionArchiveStore\.flush\(\)/);
+  assert.match(main, /app\.on\("before-quit"[\s\S]{0,600}disposeHost\(ctx\)/);
   // 渲染端：按引用身份构建增量载荷（changed/removed/order/meta），不再整档重发
   assert.match(app, /buildSessionSavePayload/);
   assert.match(app, /savedSessionsRef\.current = new Map\(loaded\.map\(\(session\) => \[session\.id, session\]\)\)/);

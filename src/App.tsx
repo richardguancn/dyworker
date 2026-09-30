@@ -7640,8 +7640,8 @@ export function App() {
       if (viewport.scrollHeight === lastHeight && d > lastDist) {
         // 内容高度没变而距离变大：用户在上滚（滚动条拖动/按键），退出跟随
         pinned = false;
-      } else if (d <= 24) {
-        // 贴回底部恢复跟随；贴底期间的锚定抖动（高度在变）也在此保持跟随
+      } else if (d <= 48) {
+        // 贴回底部恢复跟随（48 与跳底按钮的贴底语义一致）；贴底期间的锚定抖动也在此保持跟随
         pinned = true;
       } else if (d < lastDist - 100 && d <= 200) {
         // 大幅下滚且落点接近底部：视为回底。事件里的落点可能带过冲——落点处的
@@ -7658,7 +7658,7 @@ export function App() {
     const endInteraction = () => {
       if (!interacting) return;
       interacting = false;
-      if (dist() <= 24) pinned = true;
+      if (dist() <= 48) pinned = true;
     };
     const onWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) upGestureUntil = performance.now() + 400;
@@ -7674,7 +7674,7 @@ export function App() {
         return;
       }
       // 贴底（含刚滚回底部）即恢复跟随：不依赖 scroll 事件曾把 pinned 置回
-      if (d <= 24) pinned = true;
+      if (d <= 48) pinned = true;
       if (!pinned) return;
       viewport.scrollTo({ top: viewport.scrollHeight });
       lastDist = 0;
