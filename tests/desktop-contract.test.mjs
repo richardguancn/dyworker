@@ -1195,8 +1195,12 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(app, /builtin:goal/);
   assert.match(app, /goalDriven/);
   assert.match(app, /goal-banner/);
+  // 达成闭环:finish_task 带 goalAchieved → 结果回传 → 渲染端解除目标;横幅可手动标记达成
+  assert.match(app, /goal-banner-done/);
+  assert.match(app, /result\.goalAchieved/);
   assert.match(main, /payload\?\.goal/);
   assert.match(agent, /长期目标是/);
+  assert.match(agent, /goalAchieved/);
   // 防止休眠:prevent-app-suspension(屏幕照常锁屏)、任务计数跟踪、三档设置
   assert.match(main, /powerSaveBlocker/);
   assert.match(main, /prevent-app-suspension/);

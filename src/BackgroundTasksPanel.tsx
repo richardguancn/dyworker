@@ -10,19 +10,16 @@ import {
   Globe,
   LoaderCircle,
   Play,
-  Plus,
   Radio,
   RefreshCw,
   Square,
   Terminal,
-  Trash2,
   X,
 } from "lucide-react";
 import type { BackgroundTaskRecord } from "./types";
 
 export interface BackgroundTasksPanelProps {
   sessionId?: string;
-  sessionTitle?: string;
   workspacePath?: string;
   onOpenUrl?: (url: string) => void;
   onNotice?: (message: string) => void;
@@ -45,7 +42,6 @@ function formatDuration(startTime: string, endTime?: string | null): string {
 
 export function BackgroundTasksPanel({
   sessionId,
-  sessionTitle,
   workspacePath,
   onOpenUrl,
   onNotice,
@@ -58,12 +54,15 @@ export function BackgroundTasksPanel({
   const [starting, setStarting] = useState(false);
   const [armStopAll, setArmStopAll] = useState(false);
   const [, setTick] = useState(0);
+  const armStopAllTimer = useRef<number | undefined>(undefined);
 
   // 定时刷新时长
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => () => window.clearTimeout(armStopAllTimer.current), []);
 
   // 刷新任务列表
   const refreshTasks = async () => {
@@ -138,7 +137,7 @@ export function BackgroundTasksPanel({
     }
   };
 
-  // 全部停止
+  // 全部停止（二次确认：先点亮，4 秒内再点才执行）
   const handleStopAll = async () => {
     if (!window.dyworker?.stopBackgroundTask) return;
     const toStop = runningTasks;
@@ -150,6 +149,16 @@ export function BackgroundTasksPanel({
     } catch (err) {
       onError?.(`停止全部服务失败: ${err instanceof Error ? err.message : String(err)}`);
     }
+  };
+
+  const armStopAllOnce = () => {
+    if (armStopAll) {
+      void handleStopAll();
+      return;
+    }
+    setArmStopAll(true);
+    window.clearTimeout(armStopAllTimer.current);
+    armStopAllTimer.current = window.setTimeout(() => setArmStopAll(false), 4000);
   };
 
   // 手动启动后台服务
@@ -178,17 +187,25 @@ export function BackgroundTasksPanel({
 
   return (
     <div className="background-tasks-container">
-      {/* 顶部标题与控制栏 */}
+      {/* 单行头部：标题 + 运行数 + 作用域；全部停止仅在多个任务同时运行时出现 */}
       <div className="bt-header">
         <Radio size={14} className={runningTasks.length > 0 ? "bt-spin" : ""} />
-        <strong>后台任务与服务</strong>
-        <span className="bt-header-title" title={sessionTitle}>
-          {scope === "current" ? (sessionTitle || "当前会话") : "全部会话"}
-        </span>
-
+        <strong>后台任务</strong>
+        {runningTasks.length > 0 && (
+          <span className="bt-meta bt-meta-run">{runningTasks.length} 个运行中</span>
+        )}
         <span className="bt-header-spacer" />
-
-        {/* 作用域切换 */}
+        {runningTasks.length > 1 && (
+          <button
+            type="button"
+            className={`code-open-external bt-cancel ${armStopAll ? "bt-cancel-armed" : ""}`}
+            onClick={armStopAllOnce}
+            title="停止并释放所有运行中的服务"
+          >
+            {armStopAll ? <AlertTriangle size={13} /> : <Square size={13} />}
+            {armStopAll ? "确认停止" : "全部停止"}
+          </button>
+        )}
         <div className="bt-scope-toggle">
           <button
             type="button"
@@ -196,7 +213,7 @@ export function BackgroundTasksPanel({
             onClick={() => setScope("current")}
             title="仅展示当前会话启动的后台服务"
           >
-            当前会话
+            当前
           </button>
           <button
             type="button"
@@ -207,52 +224,7 @@ export function BackgroundTasksPanel({
             全部
           </button>
         </div>
-
-        {runningTasks.length > 0 && (
-          <span className="bt-meta bt-meta-run">
-            {runningTasks.length} 个运行中
-          </span>
-        )}
-
-        {runningTasks.length > 0 && (
-          <button
-            type="button"
-            className={`code-open-external bt-cancel ${armStopAll ? "bt-cancel-armed" : ""}`}
-            onClick={() => {
-              if (armStopAll) {
-                void handleStopAll();
-              } else {
-                setArmStopAll(true);
-                setTimeout(() => setArmStopAll(false), 4000);
-              }
-            }}
-            title="停止并释放所有运行中的服务"
-          >
-            {armStopAll ? <AlertTriangle size={13} /> : <Square size={13} />}
-            {armStopAll ? "确认全部停止" : "全部停止"}
-          </button>
-        )}
       </div>
-
-      {/* 类似图一：运行中任务指示条（图一风格组件） */}
-      {runningTasks.length > 0 && (
-        <div className="bt-running-banner">
-          <div className="bt-banner-title">
-            <span>{runningTasks.length} tasks running</span>
-          </div>
-          <div className="bt-banner-list">
-            {runningTasks.map((t) => (
-              <div key={t.id} className="bt-banner-item">
-                <LoaderCircle size={13} className="bt-spin spin" />
-                <span className="bt-banner-cmd">{t.name || t.command}</span>
-                {t.ports && t.ports.length > 0 && (
-                  <span className="bt-banner-port">:{t.ports.join(", :")}</span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* 快捷启动输入栏 */}
       <form className="bt-quick-launch" onSubmit={handleStartCommand}>
@@ -261,17 +233,13 @@ export function BackgroundTasksPanel({
           <input
             type="text"
             className="bt-cmd-input"
-            placeholder="启动后台服务，例如：python3 -m http.server 8080"
+            placeholder="启动后台服务…"
             value={newCommand}
             onChange={(e) => setNewCommand(e.target.value)}
             disabled={starting}
           />
         </div>
-        <button
-          type="submit"
-          className="code-open-external bt-launch-btn"
-          disabled={!newCommand.trim() || starting}
-        >
+        <button type="submit" className="button-primary bt-launch-btn" disabled={!newCommand.trim() || starting}>
           {starting ? <LoaderCircle size={13} className="spin" /> : <Play size={13} />}
           启动
         </button>
@@ -283,11 +251,8 @@ export function BackgroundTasksPanel({
           <div className="bt-empty">
             <Radio size={40} />
             <strong>{scope === "current" ? "当前会话暂无后台任务" : "暂无任何后台任务"}</strong>
-            <span>
-              当会话中开启了 HTTP 服务（如 python3 -m http.server）、本地开发服务器或长驻后台命令时，将在此显示，便于随时查看状态、访问地址与关闭释放端口。
-            </span>
+            <span>会话里启动的本地服务或长驻命令会显示在这里，可查看状态、打开地址与停止。</span>
             <div className="bt-empty-suggestions">
-              <span className="bt-sug-title">常用快捷命令示例：</span>
               <button
                 type="button"
                 className="bt-sug-item"
@@ -347,7 +312,6 @@ export function BackgroundTasksPanel({
                   {task.urls && task.urls.length > 0 && (
                     <div className="bt-card-urls">
                       <Globe size={13} className="bt-url-icon" />
-                      <span className="bt-url-label">服务入口:</span>
                       {task.urls.map((url) => (
                         <button
                           key={url}

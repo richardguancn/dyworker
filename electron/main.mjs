@@ -38,6 +38,8 @@ import { DEFAULT_UPDATE_URL, createUpdaterController, normalizeUpdateUrl, parseG
 import { backgroundTasksManager } from "./background-tasks.mjs";
 import { collectOrphanAssets, commitStagedImage, defaultAppearance, discardStagedImage, importAppearanceImage, normalizeAppearance, readAppearance, readAppearanceImage, removeAppearanceImage, saveAppearance } from "./appearance.mjs";
 import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "./appearance-platform.mjs";
+import { createTelemetryController } from "./telemetry.mjs";
+import { createRemoteMessagesManager } from "./remote-messages.mjs";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -120,6 +122,41 @@ let fallbackEmbeddedBrowserContentsId = 0;
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
+// 运营统计与消息中心：服务端故障不影响本地工作，全部后台静默降级
+let telemetryController = null;
+let remoteMessages = null;
+
+function broadcastSystemMessagesChanged() {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("system-messages:changed");
+    }
+  } catch {
+    // 主窗口销毁期间忽略
+  }
+}
+
+// 系统通知展示能力取决于平台和安装配置；不支持时消息中心仍可查，不虚报状态
+function showRemoteMessageNotification(message, onClick) {
+  if (typeof Notification !== "function" || !Notification.isSupported()) return;
+  try {
+    const notification = new Notification({
+      title: String(message.title || "DYWorker 系统消息").slice(0, 80),
+      body: String(message.body || "").replace(/\s+/g, " ").slice(0, 120),
+    });
+    notification.on("click", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send("system-messages:focus", { messageId: message.message_id });
+      }
+      onClick?.();
+    });
+    notification.show();
+  } catch {
+    // 通知失败不影响消息入库
+  }
+}
 function isTrustedRendererUrl(rawUrl) {
   try {
     const actual = new URL(String(rawUrl || ""));
@@ -905,6 +942,19 @@ function createWindow() {
     mainWindow?.setIgnoreMouseEvents(false);
     mainWindow?.webContents.send("window:maximized-changed", false);
   });
+  // 使用统计的窗口状态信号：后台/最小化/失焦立即封口当前使用区间。
+  // 关闭窗口（macOS 进程仍在）同样视为不可计时状态。
+  const noteTelemetryWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    telemetryController?.noteWindowState({
+      visible: mainWindow.isVisible(),
+      minimized: mainWindow.isMinimized(),
+      focused: mainWindow.isFocused(),
+    });
+  };
+  for (const stateEvent of ["focus", "blur", "show", "hide", "minimize", "restore", "close"]) {
+    mainWindow.on(stateEvent, noteTelemetryWindowState);
+  }
   // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
   // 被送到上一个窗口（X11/XWayland 无边框窗口的常见问题）。
   if (process.platform === "linux") {
@@ -1153,6 +1203,10 @@ const browserControlManager = new BrowserControlManager({
     } catch {
       // 忽略主窗口销毁期间广播失败
     }
+    // 电脑操控进行期间保守暂停人工计时，避免把自动输入算成人工
+    telemetryController?.setAutomationActive(
+      state?.status === "running" || state?.status === "acquiring",
+    );
   },
 });
 
@@ -1939,11 +1993,25 @@ trustedHandle("settings:save", async (_event, settings) => {
     applyTtsSettings(settings);
     // 渠道配置热生效:按新设置 diff 启停 QQ/微信连接
     await reconcileChannels();
+    // 统计/消息设置热生效：开关、服务地址、免打扰等即时应用
+    await applyTelemetrySettings(settings);
     return { ok: true, updateUrl };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
+
+// 统计与消息设置应用：登记/启停采集、同步授权代次、重建订阅。
+// 开发环境默认不连接运营服务（测试设备单独标记；本地联调用 DYWORKER_TELEMETRY_DEV=1 打开）
+async function applyTelemetrySettings(settings) {
+  if (!telemetryController) return;
+  const devEnabled = process.env.DYWORKER_TELEMETRY_DEV === "1";
+  const effective = !isDevelopment || devEnabled
+    ? settings
+    : { ...settings, telemetry: { ...(settings?.telemetry || {}), statsEnabled: false, messagesEnabled: false } };
+  await telemetryController.configure(effective);
+  if (remoteMessages) await remoteMessages.configure(effective?.telemetry || {});
+}
 
 // ===== 外观自定义（独立存储 userData/appearance.json，不随模型设置整包覆盖）=====
 function appearanceSnapshot(extra = {}) {
@@ -3780,6 +3848,41 @@ trustedHandle("usage:clear", async () => {
   return { ok: true };
 });
 
+// ---- 使用统计与运营消息（受信 IPC：不暴露设备凭据，凭据只在主进程保存）----
+
+// 渲染端人工活动信号（点击/按键/滚动节流后 fire-and-forget）：只记录发生时间
+ipcMain.on("telemetry:activity", (event) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return;
+  telemetryController?.noteUserActivity();
+});
+
+trustedHandle("telemetry:status", async () => telemetryController?.status() || {
+  configured: false,
+  statsEnabled: false,
+  messagesEnabled: false,
+  registered: false,
+});
+
+// 「删除此安装已上传数据」：撤销凭据并触发服务端删除流程，本地队列一并清除
+trustedHandle("telemetry:delete-data", async () => {
+  if (!telemetryController) return { ok: false, error: "运营服务尚未初始化" };
+  try {
+    return await telemetryController.deleteInstallationData();
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+trustedHandle("system-messages:list", () => remoteMessages?.listMessages() || []);
+
+// 只有用户实际打开对应消息才记「已读」
+trustedHandle("system-messages:mark-read", (_event, messageId) =>
+  remoteMessages?.markRead(String(messageId || "")) || Promise.resolve({ ok: false }));
+
+// 用户点击消息内的跳转才记「已点击」；跳转仅允许 https 白名单地址（openBrowserExternal 校验）
+trustedHandle("system-messages:mark-clicked", (_event, messageId) =>
+  remoteMessages?.markClicked(String(messageId || "")) || Promise.resolve({ ok: false }));
+
 trustedHandle("memories:delete", async (_event, id) => {
   if (isBuiltinMemoryId(id)) return { ok: false, error: "内置记忆不能删除" };
   await memoryWikiReady();
@@ -5379,6 +5482,42 @@ app.whenReady().then(async () => {
   });
   await expireOrphanedInboxItems();
   startScheduler();
+  // 使用统计与运营消息：初始化后按设置决定是否登记/采集/订阅；服务不可用时静默降级
+  telemetryController = createTelemetryController({
+    userDataDir: app.getPath("userData"),
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    releaseChannel: app.isPackaged ? "stable" : "dev",
+    secretStorage: safeStorage,
+    onRegistered: () => {
+      // 设备登记完成后立即补拉消息并建立实时订阅
+      remoteMessages?.noteOnline();
+    },
+  });
+  remoteMessages = createRemoteMessagesManager({
+    file: dataFile("system-messages.json"),
+    client: telemetryController.getClient(),
+    showNotification: showRemoteMessageNotification,
+    onChanged: broadcastSystemMessagesChanged,
+  });
+  await applyTelemetrySettings(storedSettings);
+  telemetryController.start();
+  remoteMessages.start();
+  // 电源事件：睡眠/锁屏立即封口使用区间（区间恢复后不补记）；恢复/解锁后补拉消息
+  if (typeof powerMonitor?.on === "function") {
+    powerMonitor.on("suspend", () => telemetryController?.noteSuspend());
+    powerMonitor.on("resume", () => {
+      telemetryController?.noteResume();
+      remoteMessages?.noteOnline();
+    });
+    // lock-screen/unlock-screen 仅 macOS/Windows 支持；Linux 靠窗口状态与输入超时保守处理
+    powerMonitor.on("lock-screen", () => telemetryController?.noteLocked());
+    powerMonitor.on("unlock-screen", () => {
+      telemetryController?.noteUnlocked();
+      remoteMessages?.noteOnline();
+    });
+  }
   // IM 渠道(QQ/微信)按设置启动;失败不影响主程序
   void reconcileChannels().catch(() => { });
   app.on("activate", () => {
@@ -5418,7 +5557,18 @@ app.on("before-quit", (event) => {
   }
   void expireAllPendingInbox("应用在等待处理期间关闭，任务已终止")
     .catch(() => { })
-    .finally(() => channelManager.stopAll()
-      .catch(() => { })
-      .finally(() => closeAllMcpClients().finally(() => app.quit())));
+    .finally(() => Promise.race([
+      // 运营功能退出收尾：先本地落盘，网络尝试最长 1 秒，不阻塞退出
+      Promise.all([
+        telemetryController?.shutdown() || Promise.resolve(),
+        Promise.resolve(remoteMessages?.stop()),
+      ]),
+      new Promise((resolve) => {
+        const timer = setTimeout(resolve, 1_500);
+        timer.unref?.();
+      }),
+    ])
+      .finally(() => channelManager.stopAll()
+        .catch(() => { })
+        .finally(() => closeAllMcpClients().finally(() => app.quit()))));
 });

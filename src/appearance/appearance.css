@@ -144,16 +144,6 @@ html[data-translucent="true"] .markdown-content th {
   background: transparent;
 }
 
-/* 输入区透明时，滚动正文在输入区上方截止，避免两层文字交叠。
-   使用现有动态高度，输入多行及附件改变高度时同步生效。 */
-html[data-translucent="true"] .conversation-viewport {
-  bottom: var(--composer-height, 172px);
-}
-
-html[data-translucent="true"] .conversation-column {
-  padding-bottom: 14px;
-}
-
 html[data-translucent="true"] .new-task-button:hover {
   background: var(--sidebar-hover);
 }
@@ -553,4 +543,51 @@ html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
 
 html[data-theme="dark"] .appearance-status.ok {
   color: #9ec46a;
+}
+
+/* ---- 半透明模式：面板内粘性条与满铺面板不再叠 surface 层 ----
+   review 头部/文件条、文件面板头部、后台任务容器此前用 --surface/--card
+   填充，叠在同为半透明的面板上会变成更深的色带；改为透明，由所在面板的
+   材质统一承载（半透明与普通模式观感分别由面板层保证）。 */
+html[data-translucent="true"] .review-header,
+html[data-translucent="true"] .review-diff-filebar,
+html[data-translucent="true"] .review-file-list,
+html[data-translucent="true"] .code-panel-header,
+html[data-translucent="true"] .background-tasks,
+html[data-translucent="true"] .background-tasks-container {
+  background: transparent;
+}
+
+/* ---- 半透明模式：浮层菜单成为玻璃浮层 ----
+   菜单底色已是 var(--card)（低透明度），补上背景模糊与提饱和，深色下不再
+   是死黑块。系统背景材质且无背景图时，既有规则会自动禁用 backdrop-filter，
+   此处无需重复处理。 */
+html[data-translucent="true"] .add-menu,
+html[data-translucent="true"] .model-menu,
+html[data-translucent="true"] .approval-mode-menu,
+html[data-translucent="true"] .branch-menu,
+html[data-translucent="true"] .commit-panel,
+html[data-translucent="true"] .session-menu,
+html[data-translucent="true"] .mention-menu,
+html[data-translucent="true"] .tool-panel-menu,
+html[data-translucent="true"] .status-toast,
+html[data-translucent="true"] .conversation-turn-preview {
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+}
+
+/* ---- 半透明模式：轨迹控制台从专用实色改为面板同源玻璃底 ----
+   轨迹控制台原先无条件使用 100% 实色 --trace-*，半透明下是一整块与面板
+   脱节的黑/白板。改为：底色走面板 surface（稀释到 75%，叠在半透明面板上
+   不会比面板本身黑一大截），加背景模糊与内部次级面的白色微叠加（深色，
+   与 styles.css 深色胶囊同一语言）；浅色沿用近白实色。 */
+html[data-translucent="true"] .trace-console {
+  --trace-bg: color-mix(in srgb, var(--surface) 75%, transparent);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+}
+
+html[data-theme="dark"][data-translucent="true"] .trace-console {
+  --trace-bg-subtle: rgba(255, 255, 255, 0.04);
+  --trace-bg-elevated: rgba(255, 255, 255, 0.08);
 }

@@ -87,10 +87,11 @@ import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
+import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
@@ -264,6 +265,16 @@ const defaultSettings: ProviderSettings = {
   enableNativeTools: true,
   nativeToolsDisabled: ["memory", "excel"],
   enableWebSearchBuiltin: false,
+  // 使用统计默认关闭；消息订阅与统计分别开关；服务地址留空表示完全关闭
+  telemetry: {
+    statsEnabled: false,
+    messagesEnabled: false,
+    serviceUrl: "",
+    notifyNewMessages: true,
+    notifyMarketing: false,
+    quietHours: "",
+    dailyPopupLimit: 3,
+  },
   approvalMode: "reviewer",
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
@@ -330,7 +341,7 @@ const builtinCommands = [
   {
     id: "builtin:goal",
     title: "/goal",
-    detail: "设定长期目标，跨轮持续驱动直到达成（/goal 取消 可解除）",
+    detail: "设定会话长期目标：本次任务最多自动推进 10 轮，之后每个任务交付前对照目标自检（/goal 取消 可解除）",
     prompt: "/goal ",
   },
   {
@@ -3849,12 +3860,16 @@ function ImageLightbox({ preview, onClose, onCopied, navigation }: {
   );
 }
 
-function InboxDialog({ items, onClose, onResolve, onDismiss }: {
+function InboxDialog({ items, onClose, onResolve, onDismiss, initialTab = "inbox", focusMessageId = "", onFocusConsumed }: {
   items: InboxItem[];
   onClose: () => void;
   onResolve: (item: InboxItem, resolution: { approved?: boolean; answer?: string }) => void;
   onDismiss: (id: string) => void;
+  initialTab?: "inbox" | "messages";
+  focusMessageId?: string;
+  onFocusConsumed?: () => void;
 }) {
+  const [tab, setTab] = useState<"inbox" | "messages">(initialTab);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
@@ -3885,13 +3900,30 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
         <div className="dialog-header">
           <div>
             <span className="dialog-kicker">收件箱</span>
-            <h2>审批收件箱</h2>
+            <h2>{tab === "messages" ? "系统消息" : "审批收件箱"}</h2>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
             <X size={18} />
           </button>
         </div>
         <div className="inbox-toolbar">
+          <div className="inbox-tabs" role="tablist" aria-label="收件箱分类">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "inbox"}
+              className={`inbox-tab ${tab === "inbox" ? "active" : ""}`}
+              onClick={() => setTab("inbox")}
+            >任务待办</button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "messages"}
+              className={`inbox-tab ${tab === "messages" ? "active" : ""}`}
+              onClick={() => setTab("messages")}
+            >系统消息</button>
+          </div>
+          {tab === "inbox" && (
           <div className="inbox-search">
             <Search size={13} />
             <input
@@ -3906,8 +3938,13 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
               </button>
             )}
           </div>
+          )}
         </div>
         <div className="inbox-dialog-body">
+          {tab === "messages" ? (
+            <SystemMessagesPanel focusMessageId={focusMessageId} onFocusConsumed={onFocusConsumed} />
+          ) : (
+          <>
           {!pending.length && (
             <p className="panel-empty">
               {queryText
@@ -3983,6 +4020,8 @@ function InboxDialog({ items, onClose, onResolve, onDismiss }: {
                 </div>
               ))}
             </>
+          )}
+          </>
           )}
         </div>
       </div>
@@ -5168,7 +5207,7 @@ function AppUpdateDialog({
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
 const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings; keywords?: string[] }[] }[] = [
@@ -5193,6 +5232,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
   ] },
   { group: "高级", items: [
     { id: "usage", label: "用量统计", icon: BarChart3 },
+    { id: "telemetry", label: "统计与消息", icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"] },
     { id: "hooks", label: "权限规则", icon: ShieldAlert },
   ] },
 ];
@@ -5259,6 +5299,129 @@ function HooksPanel() {
       <p className="dialog-note">
         工作区级规则放在当前工作区的 .dyworker/hooks.json，只对该工作区生效。规则格式：{'{ "tool": "delete_file", "path": "*.docx", "action": "block", "message": "说明" }'}；action 支持 block（直接阻止）和 require_approval（任何模式下都强制人工确认）。
       </p>
+    </div>
+  );
+}
+
+// 使用统计与运营消息设置：统计默认关闭，开启需先配置受控服务地址；
+// 状态与覆盖缺口就地自动展示（打开本栏目时拉取一次，保存后重新打开可刷新）
+function TelemetrySettingsSection({ draft, setDraft }: {
+  draft: ProviderSettings;
+  setDraft: (next: ProviderSettings) => void;
+}) {
+  const telemetry = draft.telemetry || defaultSettings.telemetry;
+  const [status, setStatus] = useState<TelemetryStatus | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState("");
+
+  useEffect(() => {
+    void window.dyworker?.getTelemetryStatus?.().then((next) => setStatus(next || null));
+  }, []);
+
+  const patch = (partial: Partial<TelemetrySettings>) => {
+    setDraft({ ...draft, telemetry: { ...telemetry, ...partial } });
+  };
+
+  const deleteData = () => {
+    if (!window.confirm("将删除此安装已上传的使用统计数据、消息回执与联网观察记录，并撤销设备凭据。确定继续吗？")) return;
+    setDeleting(true);
+    setDeleteResult("");
+    void window.dyworker?.deleteTelemetryData?.()
+      .then((result) => {
+        setDeleteResult(result?.ok ? "删除请求已受理，本地队列与凭据已清除。" : `删除失败：${result?.error || "未知错误"}`);
+        void window.dyworker?.getTelemetryStatus?.().then((next) => setStatus(next || null));
+      })
+      .catch(() => setDeleteResult("删除失败：网络异常"))
+      .finally(() => setDeleting(false));
+  };
+
+  return (
+    <div className="telemetry-settings">
+      <div className="dialog-section-title">运营服务</div>
+      <label>
+        服务地址
+        <input
+          type="url"
+          value={telemetry.serviceUrl}
+          placeholder="https://运营服务地址（由管理员提供；留空表示完全关闭）"
+          onChange={(event) => patch({ serviceUrl: event.target.value })}
+        />
+      </label>
+      <p className="dialog-note">使用统计与运营消息连接安全监管平台提供的受控接口。政府或内网部署填写对应内部地址即可；留空时两项功能都不联网。开启任一项后会用随机安装标识登记设备（不采集 MAC 地址、硬盘序列号、主机名和系统用户名）。</p>
+      <div className="dialog-section-title">使用统计</div>
+      <label className="dialog-check">
+        <input
+          type="checkbox"
+          checked={telemetry.statsEnabled}
+          onChange={(event) => patch({ statsEnabled: event.target.checked })}
+        />
+        上报使用统计（默认关闭）
+      </label>
+      <p className="dialog-note">开启后本机记录前台有效使用区间：只在窗口处于前台且近期有人工操作时计时，连续 120 秒无操作即停止；断网时先存本地（最多 7 天或 20MB），恢复后自动补传并去重。只上传使用元数据（日期、时长、应用版本、平台），不上传聊天内容、文件、提示词、模型地址与密钥。关闭后立即停止采集并清空待传队列。</p>
+      <div className="dialog-section-title">运营消息</div>
+      <label className="dialog-check">
+        <input
+          type="checkbox"
+          checked={telemetry.messagesEnabled}
+          onChange={(event) => patch({ messagesEnabled: event.target.checked })}
+        />
+        订阅公告、版本提醒与维护通知
+      </label>
+      <p className="dialog-note">与使用统计互不影响：关闭统计仍可接收消息。在线时实时提醒，离线期间的消息在下次打开或恢复联网后补收；退出应用期间不承诺即时提醒。</p>
+      <label className="dialog-check">
+        <input
+          type="checkbox"
+          checked={telemetry.notifyNewMessages}
+          onChange={(event) => patch({ notifyNewMessages: event.target.checked })}
+        />
+        收到新消息时显示系统通知
+      </label>
+      <label className="dialog-check">
+        <input
+          type="checkbox"
+          checked={telemetry.notifyMarketing}
+          onChange={(event) => patch({ notifyMarketing: event.target.checked })}
+        />
+        营销类消息也弹系统通知（默认只进消息中心）
+      </label>
+      <label>
+        免打扰时段（可选）
+        <input
+          value={telemetry.quietHours}
+          placeholder="例如 22:00-08:00；留空关闭。时段内新消息只进消息中心，不弹系统通知"
+          onChange={(event) => patch({ quietHours: event.target.value })}
+        />
+      </label>
+      <label>
+        每日系统弹窗上限
+        <input
+          type="number"
+          min={0}
+          max={50}
+          value={telemetry.dailyPopupLimit}
+          onChange={(event) => patch({ dailyPopupLimit: Number(event.target.value) })}
+        />
+      </label>
+      {status && (
+        <>
+          <div className="dialog-section-title">本机状态</div>
+          <p className="dialog-note">
+            设备登记：{status.registered ? "已完成" : "未登记"}
+            {status.registered ? `（凭据${status.credentialMode === "safe-storage" ? "已加密保存" : status.credentialMode === "session" ? "仅本次会话保存（系统安全存储不可用）" : "已撤销"}）` : ""}
+            {status.queue ? ` · 待上传 ${status.queue.pending} 条` : ""}
+            {status.queue?.droppedOverflow ? ` · 队列超限丢弃 ${status.queue.droppedOverflow} 条（报表覆盖有缺口）` : ""}
+            {status.lastSyncAt ? ` · 最近同步 ${new Date(status.lastSyncAt).toLocaleString("zh-CN")}` : ""}
+            {status.clockOffsetMs ? ` · 本机时钟偏差约 ${Math.round(status.clockOffsetMs / 1000)} 秒（已标记待审）` : ""}
+            {status.lastError ? ` · 最近错误：${status.lastError}` : ""}
+          </p>
+        </>
+      )}
+      <div className="dialog-actions" style={{ justifyContent: "flex-start" }}>
+        <button type="button" className="button-secondary" disabled={deleting} onClick={deleteData}>
+          {deleting ? "删除中…" : "删除此安装已上传数据"}
+        </button>
+      </div>
+      {deleteResult && <p className="dialog-note">{deleteResult}</p>}
     </div>
   );
 }
@@ -5915,7 +6078,7 @@ function SettingsDialog({
           />
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
-        ) : ["model", "voice", "search", "power", "updates", "mcp"].includes(tab) ? (
+        ) : ["model", "voice", "search", "power", "updates", "telemetry", "mcp"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
         <div className="dialog-section-title">已保存的模型</div>
@@ -6221,6 +6384,9 @@ function SettingsDialog({
         </label>
         <p className="dialog-note">默认使用 DYWorker 的 GitHub 仓库。你也可以改成自己的 GitHub 仓库；应用会按 v + 版本号的标签检查发布版本，例如 v0.1.17。</p>
         </>)}
+        {tab === "telemetry" && (
+          <TelemetrySettingsSection draft={draft} setDraft={setDraft} />
+        )}
         {tab === "search" && (<>
         <div className="dialog-section-title">搜索（可选）</div>
         <label>
@@ -6772,6 +6938,10 @@ export function App() {
   const [pendingQuestions, setPendingQuestions] = useState<Record<string, QuestionRequest>>({});
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
+  // 收件箱分类页签（任务待办 / 系统消息）与系统消息未读、通知点击定位
+  const [inboxTab, setInboxTab] = useState<"inbox" | "messages">("inbox");
+  const [systemMessageFocusId, setSystemMessageFocusId] = useState("");
+  const [systemMessagesUnread, setSystemMessagesUnread] = useState(0);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("reviewer");
   const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
   const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
@@ -7619,6 +7789,36 @@ export function App() {
       }
       setInboxOpen(true);
     });
+    // 运营消息：未读数随主进程消息中心变化自动刷新；系统通知点击后定位到对应消息
+    const refreshSystemUnread = () => {
+      void window.dyworker?.listSystemMessages?.().then((items) => {
+        const now = Date.now();
+        setSystemMessagesUnread((items || []).filter((message) =>
+          !message.read_at && !message.revoked
+          && !(message.expires_at && Number.isFinite(Date.parse(message.expires_at)) && Date.parse(message.expires_at) <= now),
+        ).length);
+      });
+    };
+    const offSystemMessages = window.dyworker?.onSystemMessagesChanged?.(refreshSystemUnread);
+    const offSystemMessagesFocus = window.dyworker?.onSystemMessagesFocus?.(({ messageId }) => {
+      setInboxTab("messages");
+      setSystemMessageFocusId(String(messageId || ""));
+      setInboxOpen(true);
+    });
+    refreshSystemUnread();
+    // 人工活动信号：应用内点击/按键/滚动节流上报主进程，只记录发生时间（用于前台有效使用
+    // 时长统计；不读取键盘内容、剪贴板或页面正文），统计关闭时主进程直接忽略
+    let lastActivityReport = 0;
+    const reportActivity = () => {
+      const stamp = Date.now();
+      if (stamp - lastActivityReport < 1000) return;
+      lastActivityReport = stamp;
+      window.dyworker?.reportUserActivity?.();
+    };
+    const activityOptions = { capture: true, passive: true } as AddEventListenerOptions;
+    window.addEventListener("pointerdown", reportActivity, activityOptions);
+    window.addEventListener("keydown", reportActivity, activityOptions);
+    window.addEventListener("wheel", reportActivity, activityOptions);
     void window.dyworker?.listInbox?.().then(setInboxItems);
     return () => {
       offSchedules?.();
@@ -7627,6 +7827,11 @@ export function App() {
       offInbox?.();
       offWakeStatus?.();
       offInboxFocus?.();
+      offSystemMessages?.();
+      offSystemMessagesFocus?.();
+      window.removeEventListener("pointerdown", reportActivity, activityOptions);
+      window.removeEventListener("keydown", reportActivity, activityOptions);
+      window.removeEventListener("wheel", reportActivity, activityOptions);
     };
   }, []);
 
@@ -9497,7 +9702,7 @@ export function App() {
           setComposer("");
           return;
         }
-        setNotice(`已设定长期目标：${argument}，将跨轮持续对照直到达成`);
+        setNotice(`已设定长期目标：${argument}，本任务会自动多轮推进，之后每个任务交付前对照它自检`);
         content = argument;
         goalDriven = true;
       }
@@ -9667,6 +9872,11 @@ export function App() {
             showSessionNotice(taskSessionId, "任务已完成");
           } else if (result.status === "sleeping" && result.wake) {
             showSessionNotice(taskSessionId, `已挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续`);
+          }
+          // 模型在 finish_task 中明确报告长期目标已达成：自动解除，避免已结束的目标继续干扰后续任务
+          if (result.goalAchieved) {
+            updateSession(taskSessionId, (session) => (session.goal ? { ...session, goal: undefined } : session));
+            showSessionNotice(taskSessionId, "长期目标已达成并解除（如实际未达成可重新 /goal 设定）");
           }
         };
         let finishedEventSeen = false;
@@ -11103,8 +11313,8 @@ export function App() {
             )}
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
-              aria-label="审批收件箱"
-              title="审批收件箱：无人值守任务的审批与提问在这里处理"
+              aria-label="收件箱"
+              title="收件箱：任务待办的审批与提问、系统消息（公告/版本提醒/维护通知）"
               onClick={() => {
                 setInboxOpen(true);
                 // 打开时重新拉取：主进程会顺带把孤儿 pending 条目判为失效，过期卡片不再滞留待处理区
@@ -11112,7 +11322,11 @@ export function App() {
               }}
             >
               <Bell size={17} />
-              {inboxPendingCount > 0 && <span className="inbox-badge">{inboxPendingCount > 9 ? "9+" : inboxPendingCount}</span>}
+              {(inboxPendingCount > 0 || systemMessagesUnread > 0) && (
+                <span className="inbox-badge">
+                  {(inboxPendingCount + systemMessagesUnread) > 9 ? "9+" : (inboxPendingCount + systemMessagesUnread)}
+                </span>
+              )}
             </button>
             <button
               className={`icon-button subtle ${usageStatsOpen ? "active" : ""}`}
@@ -11605,6 +11819,9 @@ export function App() {
             onDismiss={(id) => {
               void window.dyworker?.dismissInbox(id).then(() => window.dyworker?.listInbox().then(setInboxItems));
             }}
+            initialTab={inboxTab}
+            focusMessageId={systemMessageFocusId}
+            onFocusConsumed={() => setSystemMessageFocusId("")}
           />
         )}
 
@@ -11769,6 +11986,17 @@ export function App() {
                     推进中 {activeLoopState.iteration}/{activeLoopState.maximum} 轮
                   </span>
                 )}
+                <button
+                  className="goal-banner-done"
+                  aria-label="标记长期目标已达成"
+                  title="标记目标已达成并解除"
+                  onClick={() => {
+                    updateSession(activeSession.id, (session) => ({ ...session, goal: undefined }));
+                    setNotice("已标记长期目标达成并解除");
+                  }}
+                >
+                  <Check size={12} />
+                </button>
                 <button
                   className="goal-banner-close"
                   aria-label="解除长期目标"
@@ -12528,7 +12756,6 @@ export function App() {
             <section className="tool-panel-tasks">
               <BackgroundTasksPanel
                 sessionId={activeSession?.id}
-                sessionTitle={activeSession?.title}
                 workspacePath={activeSession?.workspacePath || workspacePath}
                 onOpenUrl={(url) => {
                   setRightPanelOpen(true);

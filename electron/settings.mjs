@@ -3,6 +3,39 @@ import { DEFAULT_UPDATE_URL, normalizeUpdateUrl } from "./app-updater.mjs";
 import { normalizeSkillLibraries } from "./skill-libraries.mjs";
 import { normalizeAsrModelId } from "./local-asr.mjs";
 import { normalizeTtsModelId } from "./local-tts.mjs";
+import { parseQuietHours } from "./remote-messages.mjs";
+
+// 运营服务地址：只接受 HTTPS（受控运营接口地址；政府/内网版本由用户配置
+// 对应内部部署地址，留空表示完全关闭）。允许带端口与路径前缀，去掉尾部斜杠。
+export function normalizeTelemetryServiceUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.search || url.hash || url.username || url.password) return "";
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "";
+  }
+}
+
+// 使用统计与运营消息设置：统计默认关闭，由用户说明字段用途后开启；
+// 统计上传与消息订阅分别开关，关闭统计不强制关闭消息。
+export function normalizeTelemetrySettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const quiet = parseQuietHours(source.quietHours);
+  const limit = Math.floor(Number(source.dailyPopupLimit));
+  return {
+    statsEnabled: source.statsEnabled === true,
+    messagesEnabled: source.messagesEnabled === true,
+    serviceUrl: normalizeTelemetryServiceUrl(source.serviceUrl),
+    notifyNewMessages: source.notifyNewMessages !== false,
+    notifyMarketing: source.notifyMarketing === true,
+    quietHours: quiet ? quiet.raw : "",
+    dailyPopupLimit: Number.isFinite(limit) ? Math.max(0, Math.min(50, limit)) : 3,
+  };
+}
+
 
 export function normalizePreventSleep(value) {
   return ["off", "tasks", "always"].includes(value) ? value : "tasks";
@@ -283,6 +316,7 @@ export function deserializeSettings(stored, secretStorage) {
     enableNativeTools: source.enableNativeTools !== false,
     nativeToolsDisabled: Array.isArray(source.nativeToolsDisabled) ? source.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
+    telemetry: normalizeTelemetrySettings(source.telemetry),
   };
 }
 
@@ -337,6 +371,7 @@ export function serializeSettings(settings, secretStorage) {
     enableNativeTools: settings?.enableNativeTools !== false,
     nativeToolsDisabled: Array.isArray(settings?.nativeToolsDisabled) ? settings.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: settings?.enableWebSearchBuiltin === true,
+    telemetry: normalizeTelemetrySettings(settings?.telemetry),
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);

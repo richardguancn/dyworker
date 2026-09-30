@@ -1646,10 +1646,11 @@ export function toolDefinitions() {
         reason: stringProperty("挂起原因，唤醒时会带回给你"),
       },
       ["reason"]),
-    functionTool("finish_task", "确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。",
+    functionTool("finish_task", "确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
       {
-        summary: stringProperty("用普通用户能看懂的语言说明完成了什么"),
-        evidence: stringProperty("说明做过哪些结果检查")
+        summary: stringProperty("用普通用户能看懂的语言完整说明完成了什么；这段话会直接作为任务结果展示给用户，必须完整、能独立阅读，不要只写标题式或半句引子"),
+        evidence: stringProperty("说明做过哪些结果检查"),
+        goalAchieved: { type: "boolean", description: "会话设有长期目标（系统提示会说明）时使用：确认长期目标已达成设为 true；未达成或不确定则省略" }
       },
       ["summary", "evidence"]),
   ];
@@ -1932,10 +1933,11 @@ const curlUploadFlags = new Set([
 ]);
 const curlMutatingMethods = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
-export function isSafeCurlInvocation(words = [], allWords = words) {
-  // 禁止管道流向执行环境（curl ... | bash / sh / python 等任意解释器与脚本包装器）
+export function isSafeCurlInvocation(words = [], downstreamWords = words) {
+  // 禁止管道流向执行环境（curl ... | bash / sh / python 等任意解释器与脚本包装器）。
+  // downstreamWords 只包含同管道的后续级——兄弟命令（&& python3 p.py）不是消费者
   const dangerousExecutors = new Set([...shellWrapperPrograms, ...interpreterPrograms, ...dangerousOnlyAsCommand]);
-  if (allWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
+  if (downstreamWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
     return false;
   }
   let hasUrl = false;
@@ -1961,9 +1963,9 @@ const wgetUploadFlags = new Set([
   "--http-user", "--http-password", "--user", "--password",
 ]);
 
-export function isSafeWgetInvocation(words = [], allWords = words) {
+export function isSafeWgetInvocation(words = [], downstreamWords = words) {
   const dangerousExecutors = new Set([...shellWrapperPrograms, ...interpreterPrograms, ...dangerousOnlyAsCommand]);
-  if (allWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
+  if (downstreamWords.some((token) => dangerousExecutors.has(basenameOf(token)))) {
     return false;
   }
   let hasUrl = false;
@@ -2178,21 +2180,47 @@ function isGitSegmentRisky(words) {
   return false;
 }
 
+// 下载器（curl/wget）写出文件的落盘名：用于识别「下载后由兄弟段执行」的两步 RCE。
+// curl：-o VALUE / -oVALUE / --output=VALUE / --output VALUE，-O 表示取远端名（本地不可知）；
+// wget：-O VALUE / --output-document(=VALUE)，缺省时取远端名。
+// 远端落盘名本地不可知返回 null（无法关联时不强拦，见下方判定注释）
+function downloaderOutputFile(words, program) {
+  for (let i = 0; i < words.length; i += 1) {
+    const token = words[i];
+    if (program === "curl" && token === "-O") return null;
+    if (token === "-o" || token === "--output" || (program === "wget" && token === "-O") || token === "--output-document") {
+      const value = words[i + 1];
+      return value && !String(value).startsWith("-") ? String(value) : null;
+    }
+    if (token.startsWith("-o") && token.length > 2) return token.slice(2);
+    if (token.startsWith("--output=")) return token.slice(9);
+    if (token.startsWith("--output-document=")) return token.slice(18);
+  }
+  return program === "wget" ? null : undefined;
+}
+
+const normalizeRefToken = (token) => String(token).replace(/^\.\//, "");
+
 function isSingleLineLowRiskCommand(line) {
   const text = String(line || "").trim();
   if (!text || text.includes("`")) return false;
-  // 按 &&/||/;/| 切段：每段第一个词才是命令位置——
-  // `.`/`source`/`eval`/`exec` 只在命令位置危险，`git add .` 里的点只是参数
-  const segments = text.split(/&&|\|\||[;|]/);
+  // 先按 &&/||/; 拆串行命令，再在命令内按 | 拆管道级：curl/wget 的输出只流向
+  // 同管道的后续级。「curl -o f.json && python3 p.py」里兄弟段的解释器不消费
+  // 其输出，不能因它出现就整行拒批；真正的管道消费者（curl … | python3 -）仍拦。
+  // （2026-09-29 误伤修正：此前把整行所有词当下游，抓取+本地脚本处理的常见链路全部误判）
+  const commands = text.split(/&&|\|\||;/);
   const allWords = [];
-  for (const segment of segments) {
-    const words = shellWords(segment);
-    if (!words.length) continue;
-    allWords.push(...words);
+  const stages = [];
+  for (const command of commands) {
+    const pipeline = command.split("|");
+    for (let stageIndex = 0; stageIndex < pipeline.length; stageIndex += 1) {
+      const words = shellWords(pipeline[stageIndex]);
+      if (!words.length) continue;
+      allWords.push(...words);
+      stages.push({ words, pipeline, stageIndex });
+    }
   }
-  for (const segment of segments) {
-    const words = shellWords(segment);
-    if (!words.length) continue;
+  for (const { words, pipeline, stageIndex } of stages) {
     if (isGitSegmentRisky(words)) return false;
     for (let index = 0; index < words.length; index += 1) {
       const word = words[index];
@@ -2200,12 +2228,15 @@ function isSingleLineLowRiskCommand(line) {
       const base = word.includes("/") ? word.slice(word.lastIndexOf("/") + 1) : word;
       if (dangerousCommandPrograms.has(word) || dangerousCommandPrograms.has(base)) return false;
       if (index === 0 && (dangerousOnlyAsCommand.has(word) || dangerousOnlyAsCommand.has(base))) return false;
-      // curl / wget：安全的公开只读请求（GET、无上传标志、不流向 shell）视为低风险，放行
+      // curl / wget：安全的公开只读请求（GET、无上传标志、不流向 shell）视为低风险，放行。
+      // 下游只算同管道的后续级；下载文件再由兄弟段处理（python3 p.py）不属管道消费
       if (word === "curl" || base === "curl") {
-        if (!isSafeCurlInvocation(words, allWords)) return false;
+        const downstream = pipeline.slice(stageIndex + 1).flatMap((stage) => shellWords(stage));
+        if (!isSafeCurlInvocation(words, downstream)) return false;
       }
       if (word === "wget" || base === "wget") {
-        if (!isSafeWgetInvocation(words, allWords)) return false;
+        const downstream = pipeline.slice(stageIndex + 1).flatMap((stage) => shellWords(stage));
+        if (!isSafeWgetInvocation(words, downstream)) return false;
       }
       if (["npm", "pnpm", "yarn", "bun"].includes(word) && devBlockedPublishSubcommands.has(words[index + 1] || "")) return false;
       // 解释器内联代码（python3 -c / node -e）等同任意代码，脚本文件则放行
@@ -2217,6 +2248,28 @@ function isSingleLineLowRiskCommand(line) {
   if (allWords.includes("git") && allWords.some((token) => riskyGitFlags.test(token))) return false;
   // osascript 包一层 shell 等同任意命令；纯界面脚本交给本机界面操作的审批通道
   if (allWords.includes("osascript")) return false;
+  // 两步 RCE 护栏：下载器写出的文件若被本行任何解释器/shell 段当作脚本执行
+  // （curl -o i.sh URL && bash i.sh），视同「curl | bash」直接拒绝。
+  // 仅按词面关联（去掉 ./ 前缀后全等）；-O/远端默认落盘名不可知，无法关联则不强拦，
+  // 由直接管道拦截与审核助手兜底。
+  const downloaderOutputs = stages
+    .map(({ words }) => {
+      const token = words.find((w) => ["curl", "wget"].includes(basenameOf(w)));
+      return token ? downloaderOutputFile(words, basenameOf(token)) : undefined;
+    })
+    .filter((value) => value);
+  if (downloaderOutputs.length) {
+    const outputs = new Set(downloaderOutputs.map(normalizeRefToken));
+    for (const { words } of stages) {
+      const program = words[0] ? basenameOf(words[0]) : "";
+      const runsScript = scriptRunnerPrograms.has(program) || shellWrapperPrograms.has(program);
+      if (!runsScript) continue;
+      for (let i = 1; i < words.length; i += 1) {
+        const arg = words[i];
+        if (arg && !arg.startsWith("-") && outputs.has(normalizeRefToken(arg))) return false;
+      }
+    }
+  }
   return true;
 }
 
@@ -2646,7 +2699,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 用户明确要求显示本地图片时，先确认图片存在，再用绝对路径写成 Markdown 图片，例如 ![现场照片](</绝对路径/现场照片.png>)；路径放在尖括号内以兼容空格，Windows 路径使用 C:/目录/图片.png 这种正斜杠写法，网络共享路径使用 file://server/share/图片.png。不要只回复图片路径，也不要把图片写进代码块。支持 png、jpg、jpeg、gif、webp、bmp。用户没有要求显示时，不要擅自嵌入本地图片。",
   ];
   const goalLine = goal
-    ? `本任务的长期目标是：${goal}。把它当作最高优先级：每轮交付前对照目标自检——已达成则在 finish_task 中明确说明目标已达成；未达成就继续推进下一步，不得提前宣布完成。目标在达成前持续有效。`
+    ? `本会话的长期目标是：${goal}。它是贯穿各任务的背景约束，不是压过用户当前消息的更高指令：用户当前要求与它冲突时，以用户当前要求为准。每轮交付前对照目标自检——确认已达成时，调用 finish_task 并把 goalAchieved 设为 true；尚未达成就如实说明本轮进展，不要宣称目标已达成。`
     : "";
   const workspaceLine = workspacePath
     ? `当前工作区是：${workspacePath}。你可以自动查看工作区目录，并读取文本、PDF、Word、Excel（含老式 .xls）、PPT、RTF 文件中的文字内容。写文件、创建文件夹、运行程序会由应用按当前审批设置处理。`
@@ -6286,7 +6339,14 @@ export async function runAgent({
                 content: "任务已结束，操作未执行",
               });
             }
-            return withChanges({ status: "done", finalText: finalText || String(outcome.finished.summary || "任务已完成"), memory: savedMemory, finish: outcome.finished });
+            // 交付正文口径：只有与 finish_task 同轮的正文才算模型的收尾汇报；
+            // 更早轮次遗留的 finalText 是过程旁白（如「上传并核对：」半句），拿它当
+            // 交付结果会让消息里看不到交付内容，只能去过程节点里找。
+            // 同轮无正文、或正文以冒号收尾（引出下文的半截话）时，用工具契约里面向
+            // 用户的 summary 作为交付正文；再退回遗留正文，最后兜底固定文案。
+            const roundReport = /[:：]\s*$/.test(text) ? "" : text;
+            const summaryText = String(outcome.finished.summary || "").trim();
+            return withChanges({ status: "done", finalText: roundReport || summaryText || finalText || "任务已完成", memory: savedMemory, finish: outcome.finished, ...(goal && outcome.finished?.goalAchieved ? { goalAchieved: true } : {}) });
           }
           if (outcome?.sleeping) {
             for (let rem = idx + 1; rem < toolCalls.length; rem++) {

@@ -155,6 +155,23 @@ contextBridge.exposeInMainWorld("dyworker", {
   listInbox: () => ipcRenderer.invoke("inbox:list"),
   resolveInbox: (payload) => ipcRenderer.invoke("inbox:resolve", payload),
   dismissInbox: (id) => ipcRenderer.invoke("inbox:dismiss", id),
+  // ---- 使用统计与运营消息（不暴露设备凭据；凭据只在主进程保存）----
+  reportUserActivity: () => ipcRenderer.send("telemetry:activity"),
+  getTelemetryStatus: () => ipcRenderer.invoke("telemetry:status"),
+  deleteTelemetryData: () => ipcRenderer.invoke("telemetry:delete-data"),
+  listSystemMessages: () => ipcRenderer.invoke("system-messages:list"),
+  markSystemMessageRead: (messageId) => ipcRenderer.invoke("system-messages:mark-read", messageId),
+  markSystemMessageClicked: (messageId) => ipcRenderer.invoke("system-messages:mark-clicked", messageId),
+  onSystemMessagesChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("system-messages:changed", listener);
+    return () => ipcRenderer.removeListener("system-messages:changed", listener);
+  },
+  onSystemMessagesFocus: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("system-messages:focus", listener);
+    return () => ipcRenderer.removeListener("system-messages:focus", listener);
+  },
   resolveQuestion: (sessionId, requestId, answer) => ipcRenderer.invoke("agent:resolve-question", { sessionId, requestId, answer }),
   onInboxChanged: (callback) => {
     const listener = () => callback();

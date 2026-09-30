@@ -123,6 +123,8 @@ export interface AgentResult {
   finalText: string;
   reason?: string;
   demo?: boolean;
+  // 会话设有 /goal 长期目标且模型在 finish_task 中明确报告已达成时为 true；渲染端据此自动解除目标
+  goalAchieved?: boolean;
   wake?: { wakeAt: string; reason: string };
   changes?: FileChange[];
   plan?: PlanStep[];
@@ -292,7 +294,8 @@ export interface SessionRecord {
   // 用户手动重命名过：不再被自动生成的会话标题覆盖
   titleCustom?: boolean;
   workspacePath: string;
-  // /goal 设定的长期目标：跨轮持续驱动，注入之后每个任务的系统提示
+  // /goal 设定的长期目标：注入会话内每个任务的系统提示，交付前对照自检；
+  // 模型在 finish_task 中报告达成或用户在横幅确认后解除，不达成不自动消失
   goal?: string;
   // 上一轮实际读取和操作得到的工作资料，作为下一轮的隐藏上下文保存
   workingContext?: string;
@@ -609,6 +612,61 @@ export interface ProviderSettings {
   nativeToolsDisabled: string[];
   // 是否启用厂商内置联网搜索（如 Kimi 内置 $web_search），默认关闭
   enableWebSearchBuiltin: boolean;
+  // 使用统计与运营消息设置：统计默认关闭；统计上传与消息订阅分别开关
+  telemetry: TelemetrySettings;
+}
+
+// ---- 使用统计与运营消息（方案《APP使用统计与消息推送实施方案-2026-09-24》）----
+export interface TelemetrySettings {
+  // 使用统计开关：默认关闭，开启后本地采集前台有效使用区间并批量上报
+  statsEnabled: boolean;
+  // 运营消息订阅开关：与统计互不影响，关闭统计仍可接收消息
+  messagesEnabled: boolean;
+  // 受控运营服务地址（HTTPS）；留空表示完全关闭；政府/内网版本配置内部部署地址
+  serviceUrl: string;
+  // 收到新消息时是否尝试系统通知（消息中心始终可查）
+  notifyNewMessages: boolean;
+  // 营销类消息是否弹系统通知（默认关闭，仅入中心）
+  notifyMarketing: boolean;
+  // 免打扰时段（本地时间 HH:mm-HH:mm，支持跨零点；空串关闭）
+  quietHours: string;
+  // 普通消息每日系统弹窗上限（0 = 不弹）
+  dailyPopupLimit: number;
+}
+
+export interface TelemetryStatus {
+  configured: boolean;
+  serviceUrl: string;
+  statsEnabled: boolean;
+  messagesEnabled: boolean;
+  registered: boolean;
+  // safe-storage = 安全存储落盘 / session = 仅会话内（安全存储不可用）/ none
+  credentialMode: "safe-storage" | "session" | "none";
+  installationId: string;
+  consentGeneration: number;
+  queue: { pending: number; droppedOverflow: number; lastDroppedAt: string };
+  lastSyncAt: string;
+  lastError: string;
+  clockOffsetMs: number | null;
+  collecting: boolean;
+}
+
+// 运营消息（公告 announcement / 版本提醒 version / 维护通知 maintenance / 营销 marketing）
+export interface SystemMessage {
+  message_id: string;
+  category: string;
+  title: string;
+  // 纯文本正文（服务端只允许纯文本或经清理的有限 Markdown）
+  body: string;
+  // 跳转仅允许 https 地址；空串表示无跳转
+  link: string;
+  published_at: string;
+  expires_at: string;
+  revoked: boolean;
+  received_at: string;
+  read_at: string;
+  clicked_at: string;
+  notified: boolean;
 }
 
 // ---- 外观自定义（独立存储于 userData/appearance.json，不随模型设置整包覆盖）----
@@ -914,6 +972,17 @@ export interface DyworkerBridge {
   listInbox(): Promise<InboxItem[]>;
   resolveInbox(payload: { id: string; approved?: boolean; answer?: string }): Promise<{ ok: boolean; error?: string }>;
   dismissInbox(id: string): Promise<{ ok: boolean; error?: string }>;
+  // ---- 使用统计与运营消息（不暴露设备凭据；凭据只在主进程保存）----
+  /** 渲染端人工活动信号（点击/按键/滚动节流后 fire-and-forget），只记录发生时间 */
+  reportUserActivity(): void;
+  getTelemetryStatus(): Promise<TelemetryStatus>;
+  /** 删除此安装已上传数据：撤销凭据并触发服务端删除流程 */
+  deleteTelemetryData(): Promise<{ ok: boolean; deleted?: boolean; error?: string }>;
+  listSystemMessages(): Promise<SystemMessage[]>;
+  markSystemMessageRead(messageId: string): Promise<{ ok: boolean }>;
+  markSystemMessageClicked(messageId: string): Promise<{ ok: boolean }>;
+  onSystemMessagesChanged(callback: () => void): () => void;
+  onSystemMessagesFocus(callback: (payload: { messageId: string }) => void): () => void;
   resolveQuestion(sessionId: string, requestId: string, answer: string): Promise<{ ok: boolean }>;
   onInboxChanged(callback: () => void): () => void;
   onInboxFocusItem?(callback: (item: InboxItem) => void): () => void;

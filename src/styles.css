@@ -7763,6 +7763,117 @@ body.resizing-panels .app-shell {
   color: var(--muted, #76766d);
 }
 
+/* 收件箱「任务待办 / 系统消息」页签 */
+.inbox-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.inbox-tab {
+  border: 0;
+  border-radius: 7px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--muted, #76766d);
+  font: inherit;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.inbox-tab.active {
+  background: var(--card, #fff);
+  color: inherit;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* 系统消息中心 */
+.system-message-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-message-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #e2574c;
+}
+
+.system-message-chevron {
+  flex: none;
+  color: var(--muted, #76766d);
+  transition: transform 0.15s ease;
+}
+
+.system-message-chevron.open {
+  transform: rotate(90deg);
+}
+
+.system-message-body {
+  padding: 0 12px 10px;
+}
+
+.system-message-text {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.08);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: inherit;
+}
+
+.system-message-note {
+  margin: 0 0 8px;
+  color: var(--muted, #76766d);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.system-message-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.system-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: var(--muted, #76766d);
+}
+
+.inbox-kind.version {
+  background: #e8f4ea;
+  color: #3f7a4c;
+}
+
+.inbox-kind.maintenance {
+  background: #e6eefb;
+  color: #41619b;
+}
+
+/* 设置：使用统计与运营消息 */
+.telemetry-settings label {
+  display: block;
+}
+
 .approval-mode-wrap {
   position: relative;
 }
@@ -8068,7 +8179,8 @@ body.resizing-panels .app-shell {
   white-space: nowrap;
 }
 
-.goal-banner-close {
+.goal-banner-close,
+.goal-banner-done {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -8083,7 +8195,8 @@ body.resizing-panels .app-shell {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.goal-banner-close:hover {
+.goal-banner-close:hover,
+.goal-banner-done:hover {
   background: rgba(127, 164, 0, 0.18);
   color: #4e5c0f;
 }
@@ -15035,7 +15148,7 @@ html[data-theme="dark"] {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  background: transparent;
 }
 
 .bt-header {
@@ -15054,16 +15167,6 @@ html[data-theme="dark"] {
   font-size: calc(13px * var(--font-ui-scale, 1));
 }
 
-.bt-header-title {
-  min-width: 0;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--quiet);
-  font-size: calc(11.5px * var(--font-ui-scale, 1));
-}
-
 .bt-header-spacer {
   flex: 1;
 }
@@ -15079,16 +15182,17 @@ html[data-theme="dark"] {
 .bt-scope-btn {
   border: 0;
   background: transparent;
-  padding: 2px 8px;
+  padding: 2px 9px;
   border-radius: 4px;
   font-size: calc(11px * var(--font-ui-scale, 1));
   color: var(--muted);
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .bt-scope-btn.active {
-  background: var(--panel);
+  background: var(--card);
   color: var(--ink);
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -15117,7 +15221,7 @@ html[data-theme="dark"] {
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
@@ -15128,62 +15232,13 @@ html[data-theme="dark"] {
   background: rgba(224, 91, 155, 0.1);
 }
 
-/* 类似图一：运行中任务条（Running Tasks Banner） */
-.bt-running-banner {
-  margin: 10px 14px 4px;
-  padding: 10px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
-}
-
-.bt-banner-title {
-  font-size: calc(12px * var(--font-ui-scale, 1));
-  font-weight: 600;
-  color: var(--ink);
-  margin-bottom: 6px;
-}
-
-.bt-banner-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.bt-banner-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(12px * var(--font-ui-scale, 1));
-  font-family: var(--font-mono, monospace);
-  color: var(--ink);
-}
-
-.bt-banner-cmd {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bt-banner-port {
-  color: var(--accent);
-  font-weight: 600;
-  background: rgba(47, 111, 237, 0.1);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: calc(11px * var(--font-ui-scale, 1));
-}
-
 /* 快捷启动栏 */
 .bt-quick-launch {
   display: flex;
   gap: 8px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  background: transparent;
   align-items: center;
 }
 
@@ -15192,7 +15247,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--bg);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 10px;
@@ -15218,23 +15273,16 @@ html[data-theme="dark"] {
   font-family: inherit;
 }
 
+/* 启动按钮的配色由 .button-primary 提供，这里只管尺寸 */
 .bt-launch-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 5px 12px;
   font-size: calc(12px * var(--font-ui-scale, 1));
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
-}
-
-.bt-launch-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* 任务列表滚动区 */
@@ -15254,7 +15302,7 @@ html[data-theme="dark"] {
 
 /* 单个任务卡片 */
 .bt-task-card {
-  background: var(--panel);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;
@@ -15361,17 +15409,11 @@ html[data-theme="dark"] {
   color: var(--accent);
 }
 
-.bt-url-label {
-  font-size: calc(11px * var(--font-ui-scale, 1));
-  color: var(--muted);
-  font-weight: 500;
-}
-
 .bt-url-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--panel);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 8px;
@@ -15407,8 +15449,9 @@ html[data-theme="dark"] {
   border-radius: 6px;
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: transparent;
   color: var(--ink);
+  white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -15498,14 +15541,9 @@ html[data-theme="dark"] {
   gap: 6px;
 }
 
-.bt-sug-title {
-  font-size: calc(11px * var(--font-ui-scale, 1));
-  color: var(--quiet);
-}
-
 .bt-sug-item {
   border: 1px dashed var(--border-strong);
-  background: var(--panel);
+  background: transparent;
   border-radius: 6px;
   padding: 4px 10px;
   font-size: calc(11px * var(--font-ui-scale, 1));
@@ -15996,3 +16034,103 @@ html[data-theme="dark"] {
     border-color: rgba(160, 165, 156, 0.2);
     color: #9ea39a;
   }
+
+/* ===== 深色模式：面板内胶囊/选中态/输入框改用白色微叠加 =====
+   半透明/玻璃模式下，面板底色本身已是低透明度深色（--surface 系 rgba）；
+   内部控件若沿用 --card / --sidebar-active 这类深色填充，两层叠加后成为
+   近乎纯黑的色块（侧栏选中项、分支胶囊、筛选框等）。深色主题统一改用与
+   --sidebar-hover 同一语言的「白色微叠加」：普通深色观感不变，半透明下
+   不再叠黑。浅色主题的浅色叠加天然协调，不在此列。 */
+
+html[data-theme="dark"] .session-item.active,
+html[data-theme="dark"] .session-item-wrap.active .session-item {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .sidebar-tabs button.active {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .session-rename-input {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+html[data-theme="dark"] .branch-button {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .tool-file-filter {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+html[data-theme="dark"] .review-file-row.active,
+html[data-theme="dark"] .review-tree-row.file.active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+html[data-theme="dark"] .side-chat-composer {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 禁用态发送按钮：深色下不再用近实色深灰（半透明下成黑点），改白色微叠加 */
+html[data-theme="dark"] .send-button:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(231, 233, 226, 0.45);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .bt-scope-btn.active {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .bt-card-command {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* 预水合闪现态（data-theme 未设置 + 系统深色）保持同一观感 */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .session-item.active,
+  html:not([data-theme]) .session-item-wrap.active .session-item {
+    background: rgba(255, 255, 255, 0.075);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
+  }
+
+  html:not([data-theme]) .sidebar-tabs button.active {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+  }
+
+  html:not([data-theme]) .session-rename-input {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  html:not([data-theme]) .branch-button {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  html:not([data-theme]) .tool-file-filter {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  html:not([data-theme]) .review-file-row.active,
+  html:not([data-theme]) .review-tree-row.file.active {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  html:not([data-theme]) .side-chat-composer {
+    background: rgba(255, 255, 255, 0.055);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  html:not([data-theme]) .send-button:disabled {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(231, 233, 226, 0.45);
+    box-shadow: none;
+  }
+}
