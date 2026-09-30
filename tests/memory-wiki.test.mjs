@@ -20,7 +20,7 @@ import {
   serializeMemoryRow,
   updateWikiMemory,
   workspacePageRelPath,
-} from "../electron/memory-wiki.mjs";
+} from "../electron/memory-wiki.mts";
 
 async function makeWikiRoot() {
   return await fsp.mkdtemp(path.join(os.tmpdir(), "memory-wiki-"));

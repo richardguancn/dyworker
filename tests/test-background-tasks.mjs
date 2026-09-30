@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { backgroundTasksManager } from "../electron/background-tasks.mjs";
+import { backgroundTasksManager } from "../electron/background-tasks.mts";
 
 async function runTests() {
   console.log("▶ 开始测试 background-tasks 模块...");

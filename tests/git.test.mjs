@@ -1,11 +1,11 @@
-// electron/git.mjs 的分支管理与提交推送测试（真实临时仓库）
+// electron/git.mts 的分支管理与提交推送测试（真实临时仓库）
 import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "../electron/git.mjs";
+import { gitCheckout, gitCommit, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "../electron/git.mts";
 
 async function makeRepo() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-git-"));

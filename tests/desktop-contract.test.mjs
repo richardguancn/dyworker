@@ -14,14 +14,14 @@ const appearanceCss = readSource(new URL("../src/appearance/appearance.css", imp
 const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
 const imageAttachment = readSource(new URL("../src/ImageAttachment.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
-const main = readSource(new URL("../electron/main.mjs", import.meta.url));
-const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
-const browserSource = readSource(new URL("../electron/browser.mjs", import.meta.url));
-const browserImport = readSource(new URL("../electron/browser-import.mjs", import.meta.url));
-const localstorageImport = readSource(new URL("../electron/localstorage-import.mjs", import.meta.url));
-const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mjs", import.meta.url));
-const settingsStorage = readSource(new URL("../electron/settings.mjs", import.meta.url));
-const appUpdater = readSource(new URL("../electron/app-updater.mjs", import.meta.url));
+const main = readSource(new URL("../electron/main.mts", import.meta.url));
+const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
+const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
+const localstorageImport = readSource(new URL("../electron/localstorage-import.mts", import.meta.url));
+const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mts", import.meta.url));
+const settingsStorage = readSource(new URL("../electron/settings.mts", import.meta.url));
+const appUpdater = readSource(new URL("../electron/app-updater.mts", import.meta.url));
 const releaseWorkflow = readSource(new URL("../.github/workflows/release.yml", import.meta.url));
 const afterPack = readSource(new URL("../build/afterPack.cjs", import.meta.url));
 const packageJson = readSource(new URL("../package.json", import.meta.url));
@@ -131,7 +131,7 @@ test("首次启动必须选择身份,并可在设置中重新选择", () => {
 });
 
 test("身份会切换代理的默认工作语境", () => {
-  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
+  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
   assert.match(agent, /settings\?\.identity/);
   assert.match(agent, /面向个人、企业、开发者和各类组织/);
   assert.match(agent, /governmentMode/);
@@ -610,7 +610,7 @@ test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设�
   assert.match(webviewPreload, /contextBridge\.exposeInMainWorld\("dyworkerPage"/);
   assert.match(webviewPreload, /sendToHost\("dyworker:password-submit"/);
   assert.doesNotMatch(webviewPreload, /require\("electron"\)\.ipcRenderer(?!\))/);
-  assert.match(main, /webPreferences\.preload = path\.join\(__dirname, "webview-preload\.cjs"\)/);
+  assert.match(main, /webPreferences\.preload = path\.join\(here, "webview-preload\.cjs"\)/);
   assert.match(main, /webPreferences\.nodeIntegration = false/);
   // 保存/列表/解密/删除：列表不含明文，safeStorage 加密与导入密码同库
   assert.match(main, /trustedHandle\("browser:save-password"/);
@@ -782,7 +782,7 @@ test("切换会话不穿透：面板按会话隔离，后台浏览器操作只�
   assert.match(main, /ownerChangedToOther/);
   // ===== 主进程：按归属过滤候选页面 =====
   // A 会话的后台任务不得重新 acquire 到 B 会话正在看的页面
-  assert.match(main, /function activeEmbeddedBrowserContents\(\{ forOwnerSessionId \} = \{\}\)/);
+  assert.match(main, /function activeEmbeddedBrowserContents\(\{ forOwnerSessionId \} = \{\} as any\)/);
   assert.match(browserSource, /this\.getContents\?\.\(this\.currentContext\.ownerSessionId\)/);
   // ===== panel-request 归属校验 =====
   // 打开/关闭面板请求都带 ownerSessionId；渲染端只处理归属当前激活会话的请求
@@ -1049,7 +1049,7 @@ test("linux 保留窗口诊断与空白重载", () => {
 });
 
 test("codex alignment surfaces are wired end to end", () => {
-  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
+  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
   // AGENTS.md 项目指令、edit_file 局部编辑、update_plan 计划、file-change 变更事件
   assert.match(agent, /loadProjectInstructions/);
   assert.match(agent, /AGENTS\.md/);
@@ -1084,7 +1084,7 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.ok(fs.existsSync(new URL("../electron/scripts/make_docx.py", import.meta.url)));
   assert.match(main, /browserToolDefinitions/);
   assert.match(main, /routeExtraTool/);
-  assert.ok(fs.existsSync(new URL("../electron/browser.mjs", import.meta.url)));
+  assert.ok(fs.existsSync(new URL("../electron/browser.mts", import.meta.url)));
   assert.match(browserSource, /webContents\?\.id !== webContentsId/);
   assert.match(browserSource, /removeListener\("will-download", this\.downloadHandler\)/);
   assert.match(browserSource, /dispose\(\)/);
@@ -1256,16 +1256,16 @@ test("codex alignment surfaces are wired end to end", () => {
 });
 
 test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱/自我唤醒/留痕/审计)", () => {
-  const agent = readSource(new URL("../electron/agent.mjs", import.meta.url));
-  const risk = readSource(new URL("../electron/risk.mjs", import.meta.url));
-  const auditSource = readSource(new URL("../electron/audit.mjs", import.meta.url));
+  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+  const risk = readSource(new URL("../electron/risk.mts", import.meta.url));
+  const auditSource = readSource(new URL("../electron/audit.mts", import.meta.url));
 
   // 1. 统一风险分级:risk.mjs 为单源,审批管线 evaluateApproval 驱动,approvalDecision 保持兼容包装
   assert.match(risk, /export const RISK/);
   assert.match(risk, /export function classify/);
-  assert.match(agent, /from "\.\/risk\.mjs"/);
+  assert.match(agent, /from "\.\/risk\.mts"/);
   assert.match(agent, /export function evaluateApproval/);
-  assert.match(agent, /export function approvalDecision\(opts = \{\}\) \{\n\s+return evaluateApproval/);
+  assert.match(agent, /export function approvalDecision\(opts = \{\} as any\) \{\n\s+return evaluateApproval/);
 
   // 2. 常驻允许规则:匹配/建议、rules IPC、审批卡始终允许按钮;
   //    run_command 支持受信只读命令与常用开发命令按 argv 前缀规则化(command-prefix),
@@ -1383,10 +1383,10 @@ test("技能引用消息只显示标签与正文,不回显完整提示词", () =
 });
 
 test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () => {
-  const qqBot = readSource(new URL("../electron/channels/qq-bot.mjs", import.meta.url));
-  const wechat = readSource(new URL("../electron/channels/wechat.mjs", import.meta.url));
-  const manager = readSource(new URL("../electron/channels/manager.mjs", import.meta.url));
-  const workspaceCmd = readSource(new URL("../electron/channels/workspace.mjs", import.meta.url));
+  const qqBot = readSource(new URL("../electron/channels/qq-bot.mts", import.meta.url));
+  const wechat = readSource(new URL("../electron/channels/wechat.mts", import.meta.url));
+  const manager = readSource(new URL("../electron/channels/manager.mts", import.meta.url));
+  const workspaceCmd = readSource(new URL("../electron/channels/workspace.mts", import.meta.url));
   const types = readSource(new URL("../src/types.ts", import.meta.url));
 
   // 1. QQ 官方机器人:手写协议(appSecret→token、gateway、WSS identify/心跳/resume)、归一化与出站切片
@@ -1415,7 +1415,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(manager, /adapter\.sendTyping/);
 
   // 4. 主进程接线:渠道任务引擎、全局忙碌守卫、决议共用入口、状态广播、生命周期
-  assert.match(main, /from "\.\/channels\/manager\.mjs"/);
+  assert.match(main, /from "\.\/channels\/manager\.mts"/);
   assert.match(main, /async function runChannelTask/);
   assert.match(main, /activeAgents\.size \|\| runningScheduledTask \|\| runningChannelTaskCount > 0/);
   assert.match(main, /resolveInboxInternal/);
@@ -1431,7 +1431,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(workspaceCmd, /export function parseWorkspaceSwitch/);
   assert.match(workspaceCmd, /export async function resolveWorkspaceSwitch/);
   assert.match(workspaceCmd, /export function looksLikePathDirective/);
-  assert.match(main, /from "\.\/channels\/workspace\.mjs"/);
+  assert.match(main, /from "\.\/channels\/workspace\.mts"/);
   assert.match(main, /parseWorkspaceSwitch\(text\)/);
   assert.match(main, /resolveWorkspaceSwitch\(workspaceTarget, workspacePath\)/);
   assert.match(main, /looksLikePathDirective\(workspaceTarget\)/);
@@ -1468,7 +1468,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /await sendTyping\(\)/);
   assert.doesNotMatch(main, /收到,正在处理…/);
   assert.match(main, /outboundAttachments = await buildChannelAttachments\(pendingMedia\)/);
-  assert.match(main, /built\[1\]\.attachments = outboundAttachments/);
+  assert.match(main, /\(built\[1\] as any\)\.attachments = outboundAttachments/);
   assert.match(styles, /\.session-channel-badge/);
 
   // 7b. 渠道会话实时进度：运行期间把关键 agent 事件流式转发渲染端，

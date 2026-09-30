@@ -4,8 +4,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createInstallationClient } from "../electron/telemetry.mjs";
-import { createRemoteMessagesManager, createSseParser, quietHoursActive } from "../electron/remote-messages.mjs";
+import { createInstallationClient } from "../electron/telemetry.mts";
+import { createRemoteMessagesManager, createSseParser, quietHoursActive } from "../electron/remote-messages.mts";
 
 // 运营消息中心集成测试：补拉/游标/去重/撤回/回执/通知约束/SSE（方案 §6）。
 

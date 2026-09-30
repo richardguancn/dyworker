@@ -3,7 +3,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8");
+const source = fs.readFileSync(new URL("../electron/main.mts", import.meta.url), "utf8");
 const handler = source.match(/ipcMain\.on\("window:set-ignore-mouse",[\s\S]*?\n\}\);/)[0];
 
 for (const maximized of [false, true]) {

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown, writeWorkspaceFile } from "../electron/workspace.mjs";
+import { getWorkspaceContext, listWorkspace, readWorkspaceMarkdown, writeWorkspaceFile } from "../electron/workspace.mts";
 
 async function makeWorkspace() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-workspace-"));

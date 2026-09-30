@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserPageAdapter, buildSelectScript, mapImageCoordinateToCss } from "../electron/browser-page-adapter.mjs";
+import { BrowserPageAdapter, buildSelectScript, mapImageCoordinateToCss } from "../electron/browser-page-adapter.mts";
 
 test("mapImageCoordinateToCss: 正确将截图像素映射到页面 CSS 坐标", () => {
   const viewport = {

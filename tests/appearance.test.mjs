@@ -9,8 +9,8 @@ import {
   normalizeAppearance,
   readAppearance,
   saveAppearance,
-} from "../electron/appearance.mjs";
-import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "../electron/appearance-platform.mjs";
+} from "../electron/appearance.mts";
+import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "../electron/appearance-platform.mts";
 
 async function makeTmpDir(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyw-appearance-"));
@@ -405,7 +405,7 @@ test("windowBackgroundFor：自定义色、默认底色与系统材质透出", (
 // ---- 第二轮验收回归：R1 ~ R4 ----
 
 test("R1: 主进程与渲染端契约在取消预览时返回已保存的系统材质 effective", async () => {
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mjs"), "utf8");
+  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
   assert.match(mainSrc, /appearance:cancel-preview[\s\S]*?effective:\s*appearanceEffective/);
   const controllerSrc = await fs.readFile(path.join(process.cwd(), "src/appearance/controller.ts"), "utf8");
   assert.match(controllerSrc, /savedEffective:\s*AppearanceEffectiveState/);
@@ -420,7 +420,7 @@ test("R2: 应急恢复外观时立即清除旧预览防抖定时器并递增会�
 });
 
 test("R3: Linux 初始化保留全局应用菜单以保留应急恢复入口，仅隐藏窗口菜单栏", async () => {
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mjs"), "utf8");
+  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
   assert.doesNotMatch(mainSrc, /createWindow[\s\S]*?Menu\.setApplicationMenu\(null\)/);
   assert.match(mainSrc, /mainWindow\.setMenuBarVisibility\(false\)/);
   assert.match(mainSrc, /mainWindow\.autoHideMenuBar = true/);
@@ -439,7 +439,7 @@ test("防残影保护：系统背景下未设置背景图时通配禁用页面�
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
   assert.match(css, /html\[data-system-backdrop="true"\]:not\(\[data-has-bg-image="true"\]\)\s*\*[\s\S]*?backdrop-filter:\s*none\s*!important/);
   assert.doesNotMatch(css, /html\[data-glass\][\s\S]*?\.settings-nav/);
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mjs"), "utf8");
+  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
   assert.match(mainSrc, /applyWindowAppearance[\s\S]*?mainWindow\.webContents\?\.invalidate\?\.\(\)/);
 });
 

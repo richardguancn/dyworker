@@ -3,9 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ASR_MODELS, DEFAULT_ASR_MODEL_ID, configureLocalAsr, localAsrAllModelsStatus, localAsrModelPaths, localAsrModelStatus, localAsrRuntimeStatus, normalizeAsrModelId } from "../electron/local-asr.mjs";
-import { stripAsrText } from "../electron/local-asr-server.mjs";
-import { deserializeSettings, normalizeTranscriptionEngine, serializeSettings } from "../electron/settings.mjs";
+import { ASR_MODELS, DEFAULT_ASR_MODEL_ID, configureLocalAsr, localAsrAllModelsStatus, localAsrModelPaths, localAsrModelStatus, localAsrRuntimeStatus, normalizeAsrModelId } from "../electron/local-asr.mts";
+import { stripAsrText } from "../electron/local-asr-server.mts";
+import { deserializeSettings, normalizeTranscriptionEngine, serializeSettings } from "../electron/settings.mts";
 
 test("Qwen3-ASR 输出文本清理：剥掉 asr_text 标记、语言前缀与特殊 token", () => {
   assert.equal(stripAsrText("你好，世界"), "你好，世界");
@@ -155,7 +155,7 @@ test("语音转写引擎字段：只认 local，其余一律回落 cloud，序�
 test("downloadToFile 流式下载与 SHA256 校验正确通过", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dyworker-dl-"));
   try {
-    const { downloadToFile } = await import("../electron/local-asr.mjs");
+    const { downloadToFile } = await import("../electron/local-asr.mts");
     const content = Buffer.from("hello world a-very-large-chunk-test");
     const expectedSha256 = "6da9ff60458df8a213e4b7bca068ec9d6f35b2e6503c4f69ad9e4b7bca068ec9"; // wrong hash first
     const crypto = await import("node:crypto");

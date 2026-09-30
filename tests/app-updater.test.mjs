@@ -7,7 +7,7 @@ import {
   parseGithubUpdateUrl,
   releaseNotesFromUpdateYml,
   releaseTagForVersion,
-} from "../electron/app-updater.mjs";
+} from "../electron/app-updater.mts";
 
 const offlineFetchText = async () => { throw new Error("测试环境不访问网络"); };
 

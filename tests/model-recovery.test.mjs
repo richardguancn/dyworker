@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import test from "node:test";
-import { requestModel, runAgent } from "../electron/agent.mjs";
+import { requestModel, runAgent } from "../electron/agent.mts";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "" };
 const encoder = new TextEncoder();

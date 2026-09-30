@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { importLegacyData, LEGACY_IMPORT_MARKER } from "../electron/legacy-data.mjs";
+import { importLegacyData, LEGACY_IMPORT_MARKER } from "../electron/legacy-data.mts";
 
 async function makeParent() {
   return fs.mkdtemp(path.join(os.tmpdir(), "dyworker-legacy-test-"));

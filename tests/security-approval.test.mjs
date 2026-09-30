@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { evaluateApproval, runAgent } from "../electron/agent.mjs";
+import { evaluateApproval, runAgent } from "../electron/agent.mts";
 
 const exec = promisify(execFile);
 const prefixes = [

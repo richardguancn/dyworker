@@ -15,7 +15,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
-import { localImagePathFromSource } from "../electron/local-image-path.mjs";
+import { localImagePathFromSource } from "../electron/local-image-path.mts";
 import { useResolvedTheme } from "./appearance/controller";
 
 const localImageMarker = "dyworker-local-image:";

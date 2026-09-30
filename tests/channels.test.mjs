@@ -5,11 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachment, parseApprovalReply } from "../electron/channels/qq-bot.mjs";
-import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mjs";
-import { chatKeyOf, createChannelManager, isNewSessionCommand, MAX_MEDIA_BYTES } from "../electron/channels/manager.mjs";
-import { verifyChannelMediaPath } from "../electron/channels/media-tools.mjs";
-import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mjs";
+import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachment, parseApprovalReply } from "../electron/channels/qq-bot.mts";
+import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mts";
+import { chatKeyOf, createChannelManager, isNewSessionCommand, MAX_MEDIA_BYTES } from "../electron/channels/manager.mts";
+import { verifyChannelMediaPath } from "../electron/channels/media-tools.mts";
+import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mts";
 
 // ---- chunkText ----
 
@@ -1252,7 +1252,7 @@ test("manager:微信适配器收到注入的 stateRoot,避免 SDK 落到系统�
 // ---- 渠道公共模块（shared.mjs）：消除适配器互导，re-export 保持对外 API ----
 
 test("shared 模块统一承载渠道公共纯函数,适配器不再互相依赖", async () => {
-  const shared = await import("../electron/channels/shared.mjs");
+  const shared = await import("../electron/channels/shared.mts");
   assert.equal(typeof shared.chunkText, "function");
   assert.equal(typeof shared.sniffImageExtension, "function");
   assert.equal(shared.MAX_MEDIA_BYTES, 50 * 1024 * 1024);

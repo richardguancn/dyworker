@@ -1,11 +1,11 @@
-// Skill Evals 核心运行器：无头调用 electron/agent.mjs 的 runAgent，
+// Skill Evals 核心运行器：无头调用 electron/agent.mts 的 runAgent，
 // 捕获统一 trace 事件流落盘为 JSONL，再做确定性检查与可选的模型 rubric 评分。
 // 不依赖 Electron，node --test 与 CLI 脚本均可直接复用。
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runAgent } from "../../electron/agent.mjs";
-import { discoverFileSkills } from "../../electron/skills.mjs";
+import { runAgent } from "../../electron/agent.mts";
+import { discoverFileSkills } from "../../electron/skills.mts";
 
 // ===== Prompt 集（CSV）=====
 

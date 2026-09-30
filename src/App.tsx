@@ -7614,30 +7614,89 @@ export function App() {
     }
   }, [settings?.approvalMode]);
 
-  // 切换会话（含启动加载）后贴底：图片附件、mermaid、echarts 都是异步渲染，
-  // 一次性 scrollTo 会被后续的高度增长甩开，所以窗口期内用 ResizeObserver
-  // 监听内容高度，一长高就重新贴底；用户向上滚动立即退出贴底，超时自动退出
+  // 切换会话（含启动加载）后贴底，并在整个会话期间持续跟随内容增长：
+  // 流式思考/回答、图片附件、mermaid、echarts 都会让内容一长再长，没有跟随的话
+  // 最新文字会从悬浮输入框背后溜走（半透明模式下与输入框文字交叠成两层）。
+  // 上滚判定不能只看 scroll 事件里的「距底部是否超阈值」：流式期间内容每帧都在
+  // 长高，RO 的 stick 会抢在排队的 scroll 事件之前把用户刚滚出的位置拉回底部，
+  // 证据被覆盖（实测 scrollBy 500px 被吞）；锚定/content-visibility 抖动也会凭空
+  // 把距离顶过阈值（实测 10px）误杀跟随。因此 stick 时按「当前距离 > 上次距离 +
+  // 本帧增量 + 容差」识别用户上滚，scroll 事件只做补充判定。
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight });
     setAtBottom(true);
-    const pinUntil = performance.now() + 5000;
-    let cancelled = false;
+    let pinned = true;
+    let lastDist = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    let lastHeight = viewport.scrollHeight;
+    // 用户按住（拖滚动条/划选区）期间挂起跟随，松开后按位置重算
+    let interacting = false;
+    // 滚轮上翻宽限期：同帧 RO 抢跑时兜底，避免和用户抢滚动条
+    let upGestureUntil = 0;
+    const dist = () => viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    const onScroll = () => {
+      const d = dist();
+      if (viewport.scrollHeight === lastHeight && d > lastDist) {
+        // 内容高度没变而距离变大：用户在上滚（滚动条拖动/按键），退出跟随
+        pinned = false;
+      } else if (d <= 24) {
+        // 贴回底部恢复跟随；贴底期间的锚定抖动（高度在变）也在此保持跟随
+        pinned = true;
+      } else if (d < lastDist - 100 && d <= 200) {
+        // 大幅下滚且落点接近底部：视为回底。事件里的落点可能带过冲——落点处的
+        // 行此刻才进入 content-visibility 渲染区、高度才兑现，真实落底位置比
+        // 事件里的 d 更贴近底部（实测过冲 60px+），不能按 d≤24 硬判
+        pinned = true;
+      }
+      lastDist = d;
+      lastHeight = viewport.scrollHeight;
+    };
+    const onPointerDown = () => {
+      interacting = true;
+    };
+    const endInteraction = () => {
+      if (!interacting) return;
+      interacting = false;
+      if (dist() <= 24) pinned = true;
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) upGestureUntil = performance.now() + 400;
+    };
     const stick = () => {
-      if (cancelled || performance.now() > pinUntil) return;
+      if (interacting || performance.now() < upGestureUntil) return;
+      const growth = viewport.scrollHeight - lastHeight;
+      const d = dist();
+      if (d > lastDist + growth + 24) {
+        // 距离超出「上次 + 本帧增量 + 容差」：用户已上滚（其 scroll 事件可能
+        // 还排在队里，位置证据会被本帧 stick 覆盖，只能在这里判），退出跟随
+        pinned = false;
+        return;
+      }
+      // 贴底（含刚滚回底部）即恢复跟随：不依赖 scroll 事件曾把 pinned 置回
+      if (d <= 24) pinned = true;
+      if (!pinned) return;
       viewport.scrollTo({ top: viewport.scrollHeight });
+      lastDist = 0;
+      lastHeight = viewport.scrollHeight;
     };
     const column = viewport.firstElementChild;
     const observer = new ResizeObserver(stick);
-    if (column) observer.observe(column);
-    const cancelOnWheelUp = (event: WheelEvent) => {
-      if (event.deltaY < 0) cancelled = true;
-    };
-    viewport.addEventListener("wheel", cancelOnWheelUp, { passive: true });
+    // border-box：--composer-height 变化（输入框多行长高/排队卡片增减）改的是
+    // padding-bottom，只有 border-box 能感知，否则加高后的输入框会盖住末行
+    if (column) observer.observe(column, { box: "border-box" });
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    viewport.addEventListener("wheel", onWheel, { passive: true });
+    viewport.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("pointerup", endInteraction);
+    window.addEventListener("pointercancel", endInteraction);
     return () => {
       observer.disconnect();
-      viewport.removeEventListener("wheel", cancelOnWheelUp);
+      viewport.removeEventListener("scroll", onScroll);
+      viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", endInteraction);
+      window.removeEventListener("pointercancel", endInteraction);
     };
   }, [activeId, ready]);
 

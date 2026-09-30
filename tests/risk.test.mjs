@@ -2,8 +2,8 @@
 // oracle：历史版 approvalDecision 的内联副本，确保管线重构零行为变化。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RISK, classify, isConsequential } from "../electron/risk.mjs";
-import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, toolDefinitions } from "../electron/agent.mjs";
+import { RISK, classify, isConsequential } from "../electron/risk.mts";
+import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, toolDefinitions } from "../electron/agent.mts";
 
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
 const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);

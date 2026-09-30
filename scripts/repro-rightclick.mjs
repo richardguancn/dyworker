@@ -12,7 +12,7 @@ if (!process.env.VITE_DEV_SERVER_URL) {
   process.env.VITE_DEV_SERVER_URL = "http://127.0.0.1:5173";
 }
 
-await import(pathToFileURL(path.join(PROJECT_ROOT, "electron/main.mjs")).href);
+await import(pathToFileURL(path.join(PROJECT_ROOT, "electron/main.mts")).href);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

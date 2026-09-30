@@ -3,10 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { configureLocalAsr } from "../electron/local-asr.mjs";
-import { localTtsReady } from "../electron/local-tts-engine.mjs";
-import { configureLocalTts, DEFAULT_TTS_MODEL_ID, localTtsAllModelsStatus, localTtsModelPaths, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId, TTS_MODELS } from "../electron/local-tts.mjs";
-import { deserializeSettings, normalizeTtsEngine, serializeSettings } from "../electron/settings.mjs";
+import { configureLocalAsr } from "../electron/local-asr.mts";
+import { localTtsReady } from "../electron/local-tts-engine.mts";
+import { configureLocalTts, DEFAULT_TTS_MODEL_ID, localTtsAllModelsStatus, localTtsModelPaths, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId, TTS_MODELS } from "../electron/local-tts.mts";
+import { deserializeSettings, normalizeTtsEngine, serializeSettings } from "../electron/settings.mts";
 
 test("TTS 模型状态：未配置目录时按未初始化处理，文件大小不符不算下载完成", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "dyworker-tts-"));

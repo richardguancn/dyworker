@@ -8,10 +8,10 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mjs";
-import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mjs";
-import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mjs";
-import { McpClient } from "../electron/mcp.mjs";
+import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
+import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mts";
+import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mts";
+import { McpClient } from "../electron/mcp.mts";
 
 const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" };
 
@@ -1195,10 +1195,10 @@ test("替我审批:审核助手放行时不再弹人工审批", async () => {
 
 test("替我审批:修改审批逻辑文件绕过审核助手,直接转人工", async () => {
   const root = await makeWorkspace();
-  const agentPath = fileURLToPath(new URL("../electron/agent.mjs", import.meta.url));
+  const agentPath = fileURLToPath(new URL("../electron/agent.mts", import.meta.url));
   const calls = [];
   let userApprovals = 0;
-  // 即便审核助手会放行，修改 electron/agent.mjs 也必须直接弹人工（不消耗这条 reviewer 响应）
+  // 即便审核助手会放行，修改 electron/agent.mts 也必须直接弹人工（不消耗这条 reviewer 响应）
   const result = await runAgent({
     settings,
     workspacePath: root,

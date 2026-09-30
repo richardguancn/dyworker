@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { evaluateApproval, isLowRiskCommand } from "../electron/agent.mjs";
-import { normalizeApprovalMode } from "../electron/settings.mjs";
+import { evaluateApproval, isLowRiskCommand } from "../electron/agent.mts";
+import { normalizeApprovalMode } from "../electron/settings.mts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,7 +67,7 @@ test("normalizeApprovalMode: 支持 auto 模式", () => {
 });
 
 test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠唤醒补偿、解耦守卫与强感知", async () => {
-  const mainCode = await fs.readFile(path.join(root, "electron/main.mjs"), "utf8");
+  const mainCode = await fs.readFile(path.join(root, "electron/main.mts"), "utf8");
 
   // 1. 动态近邻定时器
   assert.match(mainCode, /function scheduleNextWakeCheck/);

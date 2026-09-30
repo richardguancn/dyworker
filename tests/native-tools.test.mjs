@@ -9,8 +9,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isGlmNativeVisionModel, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "../electron/providers.mjs";
-import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent } from "../electron/agent.mjs";
+import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isGlmNativeVisionModel, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "../electron/providers.mts";
+import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent } from "../electron/agent.mts";
 
 const KIMI_ENDPOINT = "https://api.moonshot.cn/v1/chat/completions";
 

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { readLocalStorageLeveldb, snappyDecompress } from "../electron/localstorage-import.mjs";
+import { readLocalStorageLeveldb, snappyDecompress } from "../electron/localstorage-import.mts";
 
 // ---- 合成 LevelDB fixture 的构造工具（与 Chromium localStorage leveldb 同格式）----
 

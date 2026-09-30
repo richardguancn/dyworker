@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { localImagePathFromSource, readLocalImageData, registerLocalImageIpc } from "../electron/local-image.mjs";
+import { localImagePathFromSource, readLocalImageData, registerLocalImageIpc } from "../electron/local-image.mts";
 
 test("助手回复可以识别 macOS、Linux 和 Windows 的本地图片地址", () => {
   const windowsSpacedPath = "C:\\Users\\demo\\现场 照片.png";

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { saveClipboardImage } from "../electron/clipboard-image.mjs";
+import { saveClipboardImage } from "../electron/clipboard-image.mts";
 
 test("剪贴板图片保存为应用附件文件", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-clipboard-"));

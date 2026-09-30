@@ -3250,6 +3250,10 @@ body.resizing-panels .app-shell {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #c9cac4 transparent;
+  /* 本视口的滚动由贴底跟随显式管理（App.tsx），Chromium 的滚动锚定会在
+     stick 滚动后同帧补偿回退（实测恒差 62px 冻结），并在回底落点上叠加
+     凭空过冲，必须关闭 */
+  overflow-anchor: none;
 }
 
 .conversation-column {

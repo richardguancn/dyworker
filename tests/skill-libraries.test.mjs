@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { DEFAULT_SKILL_LIBRARIES, installSkillFromLibrary, normalizeSkillLibraries, searchSkillLibraries } from "../electron/skill-libraries.mjs";
+import { DEFAULT_SKILL_LIBRARIES, installSkillFromLibrary, normalizeSkillLibraries, searchSkillLibraries } from "../electron/skill-libraries.mts";
 
 test("技能库配置默认接入 SkillHub，并保留未来来源", () => {
   const libraries = normalizeSkillLibraries([

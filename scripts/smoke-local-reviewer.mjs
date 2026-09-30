@@ -2,8 +2,8 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { REVIEWER_POLICY, parseReviewerDecision } from "../electron/agent.mjs";
-import { configureLocalReviewer, localReview, localReviewerModelStatus, LOCAL_REVIEWER_MODEL } from "../electron/local-reviewer.mjs";
+import { REVIEWER_POLICY, parseReviewerDecision } from "../electron/agent.mts";
+import { configureLocalReviewer, localReview, localReviewerModelStatus, LOCAL_REVIEWER_MODEL } from "../electron/local-reviewer.mts";
 
 const dir = "/tmp/dyworker-reviewer-smoke";
 mkdirSync(dir, { recursive: true });

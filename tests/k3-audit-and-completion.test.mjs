@@ -6,7 +6,7 @@ import {
   sanitizeEndpointUrl,
   requestModel,
   runAgent,
-} from "../electron/agent.mjs";
+} from "../electron/agent.mts";
 
 test("通用命令输出草稿编号仍不能证明本次上传", () => {
   const check = verifyTaskEvidence({
@@ -264,7 +264,7 @@ test("场景 10：非破坏性模型切换（Kimi/DeepSeek 保持思考，严格
 });
 
 test("场景 11：runAgent 端到端验证——模型口头宣称上传成功，软件返回 unverified 状态并追加核验提示", async () => {
-  const { runAgent } = await import("../electron/agent.mjs");
+  const { runAgent } = await import("../electron/agent.mts");
   const mockFetch = async () => ({
     ok: true,
     status: 200,

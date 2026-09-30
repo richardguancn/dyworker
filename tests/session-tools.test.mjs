@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "../electron/session-tools.mjs";
+import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "../electron/session-tools.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -203,7 +203,7 @@ test("handleSessionTool:未知工具与异常输入都返回 ok:false 文本,不
 });
 
 test("main.mjs 接线契约:extraTools 含会话工具,路由优先于浏览器/MCP,渠道 fall through 可达", () => {
-  const source = readFileSync(path.join(here, "../electron/main.mjs"), "utf8");
+  const source = readFileSync(path.join(here, "../electron/main.mts"), "utf8");
   // 工具定义注入 agentExtraTools(四处 runAgent 共用)
   assert.match(source, /function agentExtraTools\(mcpTools\) \{[\s\S]*?sessionToolDefinitions\(\)/);
   // createExtraToolRouter 的路由里会话工具先于 browser__/MCP 判定
@@ -255,7 +255,7 @@ test("handleSideChatTool:无会话与未知工具的兜底", () => {
 });
 
 test("main.mjs 接线契约:chat:complete 带会话检索工具循环", () => {
-  const source = readFileSync(path.join(here, "../electron/main.mjs"), "utf8");
+  const source = readFileSync(path.join(here, "../electron/main.mts"), "utf8");
   // 渲染层传入的 session 开放侧边聊天工具
   assert.match(source, /payload\?\.session \|\| null/);
   assert.match(source, /sideChatToolDefinitions\(\)/);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings } from "../electron/settings.mjs";
-import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mjs";
+import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings } from "../electron/settings.mts";
+import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mts";
 
 const secretStorage = {
   isEncryptionAvailable: () => true,

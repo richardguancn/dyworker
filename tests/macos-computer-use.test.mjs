@@ -9,8 +9,8 @@ import {
   desktopToolDefinitions,
   parsePngDimensions,
   unpackedResourcePath,
-} from "../electron/macos-computer-use-server.mjs";
-import { McpClient } from "../electron/mcp.mjs";
+} from "../electron/macos-computer-use-server.mts";
+import { McpClient } from "../electron/mcp.mts";
 
 function pngHeader(width, height) {
   const buffer = Buffer.alloc(24);
@@ -79,7 +79,7 @@ test("JXA 助手文件存在且包含系统接口调用", async () => {
 
 const e2e = process.platform === "darwin" && process.env.DYWORKER_CU_E2E === "1";
 test("macOS 真实图形会话：内置服务完成握手、权限检查、列应用与读取界面", { skip: !e2e }, async () => {
-  const serverPath = fileURLToPath(new URL("../electron/macos-computer-use-server.mjs", import.meta.url));
+  const serverPath = fileURLToPath(new URL("../electron/macos-computer-use-server.mts", import.meta.url));
   const client = new McpClient({
     command: process.execPath,
     args: [serverPath],

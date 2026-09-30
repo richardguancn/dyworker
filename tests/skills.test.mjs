@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverFileSkills, mergeSkillRecords, parseSkillDocument } from "../electron/skills.mjs";
+import { discoverFileSkills, mergeSkillRecords, parseSkillDocument } from "../electron/skills.mts";
 
 async function writeSkill(root, directory, contents) {
   const folder = path.join(root, directory);

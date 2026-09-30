@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SessionQueue } from "../electron/session-queue.mjs";
+import { SessionQueue } from "../electron/session-queue.mts";
 
 test("SessionQueue 按会话串行保存队列项", () => {
   const queue = new SessionQueue();

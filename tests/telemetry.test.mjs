@@ -11,9 +11,9 @@ import {
   nextShanghaiMidnightUtc,
   shanghaiDayKey,
   splitIntervalByDay,
-} from "../electron/telemetry.mjs";
-import { createTelemetryStore } from "../electron/telemetry-store.mjs";
-import { normalizeTelemetrySettings } from "../electron/settings.mjs";
+} from "../electron/telemetry.mts";
+import { createTelemetryStore } from "../electron/telemetry-store.mts";
+import { normalizeTelemetrySettings } from "../electron/settings.mts";
 
 // ---- 可控时钟的活动状态机（方案 §4.2/§12 用例）----
 

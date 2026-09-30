@@ -11,7 +11,7 @@ import {
   mergeBuiltinMemories,
   normalizeMemories,
   selectRelevantMemories,
-} from "../electron/memory.mjs";
+} from "../electron/memory.mts";
 
 test("新安装会自动获得只读的模型能力认知", () => {
   const memories = mergeBuiltinMemories([]);

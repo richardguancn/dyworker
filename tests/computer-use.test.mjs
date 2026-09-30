@@ -6,14 +6,14 @@ import {
   computerUseAction,
   discoverComputerUseServer,
   isComputerUseTool,
-} from "../electron/computer-use.mjs";
+} from "../electron/computer-use.mts";
 
 test("Linux 环境安装等待后台任务返回，同时保留可恢复退出路径", () => {
   assert.equal(COMPUTER_USE_INSTALL_TIMEOUT_MS, 16 * 60_000);
 });
 
 test("macOS 自动使用随应用提供的内置桌面操控服务，不依赖 Codex 客户端", () => {
-  const serverPath = "/Applications/DYWorker.app/Contents/Resources/app.asar/electron/macos-computer-use-server.mjs";
+  const serverPath = "/Applications/DYWorker.app/Contents/Resources/app.asar/electron/macos-computer-use-server.mts";
   const server = discoverComputerUseServer({
     platform: "darwin",
     runtimeExecutable: "/Applications/DYWorker.app/Contents/MacOS/DYWorker",
@@ -39,7 +39,7 @@ test("内置服务文件缺失或不支持的平台不加载 Computer Use", () =
 });
 
 test("Linux 和麒麟 V10 自动使用随应用提供的桌面操控服务", () => {
-  const serverPath = "/opt/dyworker/resources/app.asar/electron/linux-computer-use-server.mjs";
+  const serverPath = "/opt/dyworker/resources/app.asar/electron/linux-computer-use-server.mts";
   const server = discoverComputerUseServer({
     platform: "linux",
     runtimeExecutable: "/opt/DYWorker/dyworker",

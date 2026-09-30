@@ -11,7 +11,7 @@ import {
   inspectImageBuffer,
   readAppearanceImage,
   removeAppearanceImage,
-} from "../electron/appearance.mjs";
+} from "../electron/appearance.mts";
 
 async function makeTmpDir(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyw-appearance-assets-"));

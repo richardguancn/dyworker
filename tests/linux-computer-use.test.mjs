@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { McpClient } from "../electron/mcp.mjs";
+import { McpClient } from "../electron/mcp.mts";
 import {
   absoluteWindowPoint,
   desktopToolDefinitions,
@@ -23,7 +23,7 @@ import {
   targetDisplay,
   unpackedResourcePath,
   VirtualDisplayManager,
-} from "../electron/linux-computer-use-server.mjs";
+} from "../electron/linux-computer-use-server.mts";
 
 // 该文件全部为 Linux 桌面操控专项测试（依赖 X11、dpkg、/usr/bin/python3 等），
 // 非 Linux 平台整组跳过，避免 Windows 打包验证时误跑报错。

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSessionArchive } from "../electron/session-archive.mjs";
+import { createSessionArchive } from "../electron/session-archive.mts";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

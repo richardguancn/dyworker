@@ -4,7 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createTelemetryController } from "../electron/telemetry.mjs";
+import { createTelemetryController } from "../electron/telemetry.mts";
 
 // 设备登记/批量上报/删除流程的集成测试：本地 mock 服务按方案 §7.2 的
 // 接口契约应答（code/message/data 包装 + 逐条 accepted/duplicate/rejected）。

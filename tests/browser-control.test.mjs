@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BrowserControlManager, CONTROL_STATUS } from "../electron/browser-control.mjs";
-import { BrowserAgent } from "../electron/browser.mjs";
+import { BrowserControlManager, CONTROL_STATUS } from "../electron/browser-control.mts";
+import { BrowserAgent } from "../electron/browser.mts";
 
 function createMockWebContents() {
   return {
