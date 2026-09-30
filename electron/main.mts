@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, prom
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHost, disposeHost } from "./host/context.mts";
-import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, runAgent, sanitizeToolCalls, suggestStandingRule } from "./agent.mts";
+import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, sanitizeToolCalls, suggestStandingRule } from "./agent.mts";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mts";
 import { BrowserControlManager } from "./browser-control.mts";
 import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mts";
@@ -226,13 +226,34 @@ function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
 
-// Cordis 宿主：主进程核心服务（审计/设置/会话存档）统一挂入插件生命周期。
-// safeStorage 与领域修正回调在此注入；顶层 await 等待根 fiber 激活，
+// Cordis 宿主：主进程核心服务（审计/设置/会话存档/代理）统一挂入插件生命周期。
+// safeStorage 与领域解析器在此注入；顶层 await 等待根 fiber 激活，
 // 之后的模块级常量（sessionArchive/auditLog）即可同步访问服务。
 const ctx = await createHost({
   userDataDir: app.getPath("userData"),
   safeStorage,
   settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings],
+  // 代理服务的领域解析器：记忆/技能/唤醒/MCP 领域函数仍是本模块实现，
+  // 逐域插件化后改为 ctx.<domain> 直连
+  agentResolvers: {
+    isShuttingDown: () => mcpShuttingDown,
+    readHooks,
+    readMemoryPages,
+    readSkills,
+    readStandingRules,
+    appendMemory,
+    memoriesFromAgentResult,
+    appendSkill,
+    appendUsageStat,
+    history: () => ({ search: searchHistory, readContext: readHistoryContext }),
+    hasPendingWakeForSession,
+    registerWake,
+    mcpExtraTools,
+    agentExtraTools,
+    createExtraToolRouter,
+    auditRecord: (entry) => auditLog.record(entry),
+  },
+  startBackgroundTask: (p) => backgroundTasksManager.startTask(p),
 });
 
 // 会话存档：按会话拆分为 sessions/<id>.json + index.json（迁移见
@@ -3132,7 +3153,6 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     emit({ type: "agent-finished", result });
     return { ok: true, result };
   };
-  let routeExtraTool = null;
   activeAgents.set(sessionId, agentState);
   trackTaskStart();
   try {
@@ -3186,11 +3206,6 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     const loop = payload?.loop?.enabled
       ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
       : { enabled: false, iteration: 1, maximum: 1 };
-    const memoryPages = await readMemoryPages(sessionId);
-    const skills = await readSkills(workspacePath);
-    // 每个任务结束前都做一次轻量判断；没有稳定价值的信息时不会保存。
-    // 这样也覆盖同一会话切换话题的边界，不再依赖“每三轮”这种偶然触发。
-    const memoryReviewDue = true;
     // 附件（图片/文本）展开为模型可读的多模态内容，同时保留思考与工具执行链
     const agentConversation = [];
     for (const message of conversation) {
@@ -3231,98 +3246,44 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       console.log(`[agent] 服务器自报上下文上限 ${serverContextLimit}（${settings.model} @ ${settings.endpoint}），按此钳制`);
     }
     const extraTools = agentExtraTools(await mcpExtraTools(settings));
-    routeExtraTool = createExtraToolRouter(settings, workspacePath, {
-      signal: abortController.signal,
-      renderer: sender,
-      sessionId,
-      runId,
-    });
     if (agentState.cancelled) return cancelledResponse();
-    let iterationMessages = sanitizeToolCalls(agentConversation);
-    let finalResult = null;
-    while (true) {
-      emit({ type: "loop-state", active: loop.enabled, iteration: loop.iteration, maximum: loop.maximum, status: "正在执行" });
-      const result = await runAgent({
-        settings,
-        workspacePath,
-        contextLimit: (() => {
-          // 渲染端按模型静态表或 k3[1M] 式显式覆盖报上来的值，不再设 30000 下限——
-          // 显式写小上下文（如 model[16K]）是用户意图，需原样尊重；未上报时回退 128k。
-          const requested = Number(payload?.contextLimit) || 128000;
-          return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
-        })(),
-        workingContext: String(payload?.workingContext || ""),
-        hooks: await readHooks(workspacePath),
-        goal: String(payload?.goal || "").trim().slice(0, 500),
-        conversation: iterationMessages,
-        memoryPages,
-        skills,
-        history: { search: searchHistory, readContext: readHistoryContext },
-        loop,
-        memoryReviewDue,
-        approvalMode,
-        standingRules: await readStandingRules(),
-        audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode }),
-        extraTools,
-        onExtraTool: routeExtraTool,
-        emit: (agentEvent) => {
-          if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
-          if (agentEvent?.type === "skill-updated") void updateSkill(agentEvent.item);
-          if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
-          emit(agentEvent);
-        },
-        isCancelled: () => agentState.cancelled || mcpShuttingDown,
-        signal: abortController.signal,
-        sleepGuard: () => hasPendingWakeForSession(sessionId),
-        sessionId,
-        startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || sessionId }),
-        requestApproval: (action) => new Promise<any>((resolve) => {
-          agentState.pending.set(action.id, resolve);
-          emit({ type: "approval-request", action });
-        }),
-        requestUserInput: (request) => new Promise<any>((resolve) => {
-          agentState.pending.set(`q:${request.id}`, resolve);
-          emit({ type: "ask-user", request });
-        }),
-      });
-      for (const memory of memoriesFromAgentResult(result)) {
-        if (agentState.cancelled) break;
-        await appendMemory(memory, workspacePath, sessionId);
-      }
-      finalResult = result;
-      if (agentState.cancelled) {
-        await cancelWakesForSession(sessionId);
-        finalResult = { status: "cancelled", finalText: result.finalText || "" };
-        break;
-      }
-      // 主动挂起（self-wake）：登记唤醒记录,到点由调度 tick 续跑,不再进入下一轮
-      if (result.status === "sleeping" && result.wake) {
-        await registerWake({
-          sessionId,
-          workspacePath,
-          approvalMode,
-          wake: result.wake,
-          prompt: latestUserText,
-          finalText: result.finalText,
-        });
-        if (agentState.cancelled) {
-          await cancelWakesForSession(sessionId);
-          finalResult = { status: "cancelled", finalText: result.finalText || "" };
-        }
-        break;
-      }
-      const shouldContinue = loop.enabled
-        && result.status === "done"
-        && !result.finish
-        && loop.iteration < loop.maximum;
-      if (!shouldContinue) break;
-      loop.iteration += 1;
-      iterationMessages = [
-        ...iterationMessages,
-        { role: "assistant", content: result.finalText || "" },
-        { role: "user", content: "请继续推进任务：实际检查结果，完成剩余工作，全部满足验收条件后再交付。" },
-      ];
-    }
+    // 统一代理入口：公共选项装配（hooks/记忆/技能/常驻规则/审计/MCP 工具/守卫）、
+    // 循环续跑、记忆落盘与 sleeping→唤醒登记都在 ctx.agent.run 内；
+    // 桌面入口只声明差异：流式合并 emit、pending-map 审批、abort 信号与循环事件
+    const finalResult = await ctx.agent.run({
+      settings,
+      workspacePath,
+      sessionId,
+      approvalMode,
+      prompt: latestUserText,
+      contextLimit: (() => {
+        // 渲染端按模型静态表或 k3[1M] 式显式覆盖报上来的值，不再设 30000 下限——
+        // 显式写小上下文（如 model[16K]）是用户意图，需原样尊重；未上报时回退 128k。
+        const requested = Number(payload?.contextLimit) || 128000;
+        return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
+      })(),
+      workingContext: String(payload?.workingContext || ""),
+      goal: String(payload?.goal || "").trim().slice(0, 500),
+      conversation: sanitizeToolCalls(agentConversation),
+      loop,
+      loopStateEvents: true,
+      routerOptions: { signal: abortController.signal, renderer: sender, sessionId, runId },
+      requestApproval: (action) => new Promise<any>((resolve) => {
+        agentState.pending.set(action.id, resolve);
+        emit({ type: "approval-request", action });
+      }),
+      requestUserInput: (request) => new Promise<any>((resolve) => {
+        agentState.pending.set(`q:${request.id}`, resolve);
+        emit({ type: "ask-user", request });
+      }),
+      emit: (agentEvent) => {
+        if (agentEvent?.type === "skill-updated") void updateSkill(agentEvent.item);
+        emit(agentEvent);
+      },
+      isCancelled: () => agentState.cancelled,
+      signal: abortController.signal,
+      onCancelled: () => cancelWakesForSession(sessionId),
+    });
     emit({ type: "loop-state", active: false, iteration: loop.iteration, maximum: loop.maximum, status: finalResult.status === "done" ? "已完成" : finalResult.status === "unverified" ? "未验证" : "已停止" });
     emit({ type: "agent-finished", result: finalResult });
     return { ok: true, result: finalResult };
@@ -3347,11 +3308,6 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
           // 落盘失败不影响任务与界面，轨迹视图会降级为内存事件
         }
       })();
-    }
-    try {
-      routeExtraTool?.dispose();
-    } catch (disposeError: any) {
-      console.warn("[agent] routeExtraTool.dispose failed:", disposeError);
     }
     trackTaskEnd();
     if (activeAgents.get(sessionId) === agentState) {
@@ -4216,7 +4172,6 @@ async function workingContextForSession(sessionId) {
 async function resumeWake(wake) {
   runningScheduledTask = true;
   trackTaskStart();
-  let routeExtraTool = null;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("wake:status", {
       sessionId: wake.sessionId,
@@ -4230,7 +4185,6 @@ async function resumeWake(wake) {
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法续跑挂起的任务");
     }
-    routeExtraTool = createExtraToolRouter(settings, wake.workspacePath);
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const workingContext = await workingContextForSession(wake.sessionId);
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
@@ -4241,25 +4195,17 @@ async function resumeWake(wake) {
     // 若原模式是 full-access 则保留
     const sourceApprovalMode = normalizeApprovalMode(wake.approvalMode);
     const approvalMode = sourceApprovalMode === "full-access" ? "full-access" : "auto";
-    const result = await runAgent({
+    const result = await ctx.agent.run({
       settings,
       workspacePath: wake.workspacePath,
-      hooks: await readHooks(wake.workspacePath),
+      sessionId: wake.sessionId,
+      scheduleId: wake.scheduleId,
+      approvalMode,
+      // 唤醒记录仍登记原模式（下次续跑再评估提升）
+      wakeApprovalMode: wake.approvalMode,
+      prompt: wake.prompt,
       workingContext,
       conversation: [...prior, { role: "user", content: wakeText }],
-      memoryPages: await readMemoryPages(wake.sessionId),
-      memoryReviewDue: true,
-      skills: await readSkills(wake.workspacePath),
-      history: { search: searchHistory, readContext: readHistoryContext },
-      approvalMode,
-      standingRules: await readStandingRules(),
-      audit: (entry) => auditLog.record({ ...entry, sessionId: wake.sessionId, approvalMode }),
-      extraTools: agentExtraTools(await mcpExtraTools(settings)),
-      onExtraTool: routeExtraTool,
-      isCancelled: () => mcpShuttingDown,
-      sleepGuard: () => hasPendingWakeForSession(wake.sessionId),
-      sessionId: wake.sessionId,
-      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || wake.sessionId }),
       // 续跑无人值守：审批与提问进收件箱挂起等待；等待期间暂时释放 runningScheduledTask 锁，避免系统调度死锁 2 小时
       requestApproval: async (action) => {
         const pending = createInboxItem({
@@ -4295,26 +4241,12 @@ async function resumeWake(wake) {
           runningScheduledTask = true;
         }
       },
-      emit: (agentEvent) => {
-        collector.handle(agentEvent);
-        if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
-        if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
+      emit: (agentEvent) => collector.handle(agentEvent),
+      afterWakeRegister: async (wakeResult) => {
+        if (wake.scheduleId) await markScheduleSleeping(wake.scheduleId, wakeResult.wake, wake.sessionId);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, wake.workspacePath, wake.sessionId);
-    if (result.status === "sleeping" && result.wake) {
-      // 再次挂起：登记下一段唤醒
-      await registerWake({
-        sessionId: wake.sessionId,
-        scheduleId: wake.scheduleId,
-        workspacePath: wake.workspacePath,
-        approvalMode: wake.approvalMode,
-        wake: result.wake,
-        prompt: wake.prompt,
-        finalText: result.finalText,
-      });
-      if (wake.scheduleId) await markScheduleSleeping(wake.scheduleId, result.wake, wake.sessionId);
-    } else if (wake.scheduleId) {
+    if (result.status !== "sleeping" && wake.scheduleId) {
       await markScheduleFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId);
     }
     const wakeContent = result.status === "sleeping" && result.wake
@@ -4355,9 +4287,6 @@ async function resumeWake(wake) {
       await persistSessionAppend(wake.sessionId, failureMessages);
     }
   } finally {
-    try {
-      routeExtraTool?.dispose();
-    } catch {}
     trackTaskEnd();
     runningScheduledTask = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -4467,32 +4396,20 @@ async function runScheduledTask(record) {
   broadcastSchedulesChanged();
   // 本次执行的会话 id：收件箱条目、审计记录与最终留痕会话共用同一个
   const scheduleSessionId = crypto.randomUUID();
-  let routeExtraTool = null;
   try {
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
-    routeExtraTool = createExtraToolRouter(settings, record.workspacePath);
     const collector = createTranscriptCollector();
-    const result = await runAgent({
+    const result = await ctx.agent.run({
       settings,
       workspacePath: record.workspacePath,
-      hooks: await readHooks(record.workspacePath),
-      conversation: [{ role: "user", content: record.prompt }],
-      memoryPages: await readMemoryPages(scheduleSessionId),
-      memoryReviewDue: true,
-      skills: await readSkills(record.workspacePath),
-      history: { search: searchHistory, readContext: readHistoryContext },
-      approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
-      standingRules: await readStandingRules(),
-      audit: (entry) => auditLog.record({ ...entry, sessionId: scheduleSessionId, approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes" }),
-      extraTools: agentExtraTools(await mcpExtraTools(settings)),
-      onExtraTool: routeExtraTool,
-      isCancelled: () => mcpShuttingDown,
-      sleepGuard: () => hasPendingWakeForSession(scheduleSessionId),
       sessionId: scheduleSessionId,
-      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || scheduleSessionId }),
+      scheduleId: record.id,
+      approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
+      prompt: record.prompt,
+      conversation: [{ role: "user", content: record.prompt }],
       // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action) => {
         const pending = createInboxItem({
@@ -4528,25 +4445,13 @@ async function runScheduledTask(record) {
           runningScheduledTask = true;
         }
       },
-      emit: (agentEvent) => {
-        collector.handle(agentEvent);
-        if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
-        if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
+      emit: (agentEvent) => collector.handle(agentEvent),
+      afterWakeRegister: async (wakeResult) => {
+        await markScheduleSleeping(record.id, wakeResult.wake, scheduleSessionId);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, record.workspacePath, scheduleSessionId);
     if (result.status === "sleeping" && result.wake) {
-      // 主动挂起：登记唤醒记录,本次不结算计划,到点由 checkDueWakes 续跑
-      await registerWake({
-        sessionId: scheduleSessionId,
-        scheduleId: record.id,
-        workspacePath: record.workspacePath,
-        approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
-        wake: result.wake,
-        prompt: record.prompt,
-        finalText: result.finalText,
-      });
-      await markScheduleSleeping(record.id, result.wake, scheduleSessionId);
+      // 主动挂起：登记唤醒与 sleeping 标记已在服务内完成，这里只做留痕
       const sleepingMessages = collector.buildMessages(
         record.prompt,
         result,
@@ -4599,9 +4504,6 @@ async function runScheduledTask(record) {
   } catch (error: any) {
     await markScheduleFinished(record.id, false, error instanceof Error ? error.message : String(error), scheduleSessionId);
   } finally {
-    try {
-      routeExtraTool?.dispose();
-    } catch {}
     trackTaskEnd();
     runningScheduledTask = false;
     broadcastSchedulesChanged();
@@ -5013,7 +4915,6 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       runningChannelTaskCount,
     });
   }
-  let routeExtraTool = null;
   const channelLabel = CHANNEL_LABELS[channel] || channel;
   const sessionId = chatRecord.sessionId;
   // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
@@ -5141,7 +5042,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     const approvalMode = normalizeApprovalMode(settings?.approvalMode);
     let baseRouter = createExtraToolRouter(taskSettings, workspacePath);
     // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
-    routeExtraTool = async (name, args) => {
+    const routeExtraTool = async (name, args) => {
       if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
       if (name === "text_to_speech") return handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings: taskSettings });
       if (name === "switch_workspace") {
@@ -5165,25 +5066,19 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     const contentForModel = await providerMessageContent({ content: userText, attachments });
     // 用「正在输入」状态提示处理中，不再以文字消息形式打扰
     await sendTyping().catch(() => { });
-    const result = await runAgent({
+    const result = await ctx.agent.run({
       settings: taskSettings,
-      workspacePath,
-      hooks: await readHooks(workspacePath),
+      // getter 形式：switch_workspace 中途切换后，记忆落盘/唤醒登记跟随最新目录
+      workspacePath: () => workspacePath,
+      sessionId,
+      approvalMode,
+      prompt: text,
       workingContext,
       conversation: [...prior, { role: "user", content: contentForModel }],
-      memoryPages: await readMemoryPages(sessionId),
-      memoryReviewDue: true,
-      skills: await readSkills(workspacePath),
-      history: { search: searchHistory, readContext: readHistoryContext },
-      approvalMode,
-      standingRules: await readStandingRules(),
-      audit: (entry) => auditLog.record({ ...entry, sessionId, approvalMode, channel }),
-      extraTools: [...agentExtraTools(await mcpExtraTools(taskSettings)), ...channelMediaToolDefinitions()],
+      auditExtras: { channel },
+      extraTools: channelMediaToolDefinitions(),
       onExtraTool: routeExtraTool,
-      isCancelled: () => mcpShuttingDown || channelTaskAborts.has(myKey),
-      sleepGuard: () => hasPendingWakeForSession(sessionId),
-      sessionId,
-      startBackgroundTask: (p) => backgroundTasksManager.startTask({ ...p, sessionId: p.sessionId || sessionId }),
+      isCancelled: () => channelTaskAborts.has(myKey),
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
       // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
       requestApproval: async (action) => {
@@ -5226,11 +5121,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       emit: (agentEvent) => {
         collector.handle(agentEvent);
         forwardChannelEvent(agentEvent);
-        if (agentEvent?.type === "skill-saved") void appendSkill(agentEvent.item);
-        if (agentEvent?.type === "token-usage") void appendUsageStat(agentEvent);
       },
     });
-    for (const memory of memoriesFromAgentResult(result)) await appendMemory(memory, workspacePath, sessionId);
     if (channelTaskAborts.has(myKey) || result.status === "cancelled") {
       // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果。
       // 半截正文保留在留痕里（与桌面端"已按你的要求停止"同口径），用户不至于丢失已生成的内容。
@@ -5328,9 +5220,6 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       result: { status: "error", reason: message, durationMs: Date.now() - taskStartedAt },
     });
   } finally {
-    try {
-      routeExtraTool?.dispose();
-    } catch {}
     clearPending();
     trackTaskEnd();
     runningChannelTaskCount = Math.max(0, runningChannelTaskCount - 1);

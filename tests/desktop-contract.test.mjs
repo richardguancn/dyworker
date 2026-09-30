@@ -19,6 +19,7 @@ const hostContext = readSource(new URL("../electron/host/context.mts", import.me
 const hostAuditService = readSource(new URL("../electron/host/services/audit.mts", import.meta.url));
 const hostSettingsService = readSource(new URL("../electron/host/services/settings.mts", import.meta.url));
 const hostSessionsService = readSource(new URL("../electron/host/services/session-archive.mts", import.meta.url));
+const hostAgentService = readSource(new URL("../electron/host/services/agent.mts", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
@@ -170,7 +171,9 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(main, /sender\.send\("agent:event", \{ sessionId, runId, event: agentEvent \}\)/);
   assert.match(main, /activeAgents\.set\(sessionId, agentState\);\n\s*trackTaskStart\(\);\n\s*try \{/);
   assert.match(main, /agentState\.abortController\.abort\(\)/);
-  assert.match(main, /if \(agentState\.cancelled\) \{\n\s*await cancelWakesForSession\(sessionId\)/);
+  // 用户停止任务时撤回已登记的唤醒：入口提供 onCancelled，服务在取消检查后调用
+  assert.match(main, /onCancelled: \(\) => cancelWakesForSession\(sessionId\)/);
+  assert.match(hostAgentService, /if \(isCancelled\(\)\) \{\s*await options\.onCancelled\?\.\(\)/);
   // 停止要立刻生效：运行中的命令进程组随取消信号被终止，而不是等 120s 超时
   assert.match(agent, /new Workspace\(workspacePath, \{ trustTempDirs, signal: cancellationSignal, isCancelled \}\)/);
   assert.match(agent, /任务已停止，命令被终止/);
@@ -867,7 +870,9 @@ test("Codex skills are refreshed for the active workspace and managed in setting
   assert.match(app, /没有匹配的技能/);
   assert.match(styles, /\.skill-search-field/);
   assert.doesNotMatch(app, /\[\.\.\.commands, \.\.\.skills\]\.slice/);
-  assert.match(main, /readSkills\(workspacePath\)/);
+  // 技能装配收编进代理服务（main 注册解析器，服务每次运行读取）
+  assert.match(main, /readSkills,/);
+  assert.match(hostAgentService, /skills: await this\.resolvers\.readSkills\(workspacePath\)/);
   assert.match(preload, /createSkill: \(payload\)/);
 });
 
@@ -918,7 +923,9 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /event\.preventDefault\(\)/);
   assert.match(main, /closeAllMcpClients\(\)\.finally\(\(\) => app\.quit\(\)\)/);
   assert.match(main, /if \(mcpShuttingDown\) throw new Error/);
-  assert.match(main, /agentState\.cancelled \|\| mcpShuttingDown/);
+  // 合并取消信号：入口信号 + 全局退出信号在服务里汇合
+  assert.match(main, /isCancelled: \(\) => agentState\.cancelled/);
+  assert.match(hostAgentService, /this\.resolvers\.isShuttingDown\(\) \|\| options\.isCancelled\?\.\(\)/);
   assert.match(main, /clearInterval\(schedulerTimer\)/);
   assert.match(main, /请确认当前使用 X11 桌面会话/);
   assert.match(main, /toolName === "install_dependencies"/);
@@ -1093,7 +1100,8 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(browserSource, /webContents\?\.id !== webContentsId/);
   assert.match(browserSource, /removeListener\("will-download", this\.downloadHandler\)/);
   assert.match(browserSource, /dispose\(\)/);
-  assert.match(main, /routeExtraTool\?\.dispose\(\)/);
+  // 外部工具路由 dispose 统一在代理服务收尾执行（含渠道定制路由）
+  assert.match(hostAgentService, /onExtraTool\?\.dispose\?\.\(\)/);
   assert.match(linuxComputerUseSource, /message\.method === "notifications\/cancelled"/);
   assert.match(linuxComputerUseSource, /cancelledToolRequests\.add\(requestId\)/);
   assert.match(linuxComputerUseSource, /cancelled: cancelledToolRequests\.delete\(message\.id\)/);
@@ -1234,11 +1242,11 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(hostSettingsService, /needsSecretMigration/);
   assert.match(settingsStorage, /profiles: normalized\.profiles\.map/);
   assert.match(settingsStorage, /encryptSecret\(profile\.apiKey/);
-  // 长期记忆：普通任务和定时任务都复盘；定时任务完成后同步刷新设置页记忆
-  assert.match(main, /const memoryReviewDue = true/);
+  // 长期记忆：普通任务和定时任务都复盘（每轮任务结束前，服务内统一判定）
+  assert.match(hostAgentService, /memoryReviewDue: true/);
   // 会话记忆：普通任务按会话 id 读取记忆页（session 作用域记忆随会话注入）
-  assert.match(main, /const memoryPages = await readMemoryPages\(sessionId\);/);
-  assert.match(main, /memoryPages,\n\s+skills,\n\s+history: \{ search: searchHistory, readContext: readHistoryContext \},\n\s+loop,\n\s+memoryReviewDue,/);
+  assert.match(hostAgentService, /memoryPages: await this\.resolvers\.readMemoryPages\(sessionId\)/);
+  assert.match(hostAgentService, /history: this\.resolvers\.history\(\)/);
   // 个人记忆知识库（LLM Wiki）：memory.json 只作队列，wiki 是唯一知识库
   assert.match(main, /function memoryWikiReady/);
   assert.match(main, /runWikiConsolidation/);
@@ -1295,7 +1303,8 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(main, /trustedHandle\("rules:list"/);
   assert.match(main, /trustedHandle\("rules:add"/);
   assert.match(main, /trustedHandle\("rules:delete"/);
-  assert.match(main, /standingRules: await readStandingRules\(\)/);
+  assert.match(main, /readStandingRules,/);
+  assert.match(hostAgentService, /standingRules: await this\.resolvers\.readStandingRules\(\)/);
   assert.match(main, /kind === "command-prefix" \? \{ command: pattern \}/);
   assert.match(preload, /listRules:/);
   assert.match(preload, /addRule:/);

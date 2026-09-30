@@ -56,6 +56,15 @@ const MODEL_TRANSPORT_RETRY_BASE_DELAY_MS = 1000;
 // 服务端已返回的状态码不重试，交由既有状态码/压缩回退逻辑处理。取消与中止不重试。
 const MODEL_NETWORK_RETRY_LIMIT = 5;
 const MODEL_NETWORK_RETRY_BASE_DELAY_MS = 1000;
+// 服务端状态码类错误自动重试：429（过载/限流，如 vLLM engine_overloaded）、408、5xx
+// （含 529 过载、502/503/504 网关抖动）属于瞬时故障，退避后重发通常可恢复；
+// 401/403 等凭证问题、400 请求问题与内容安全拦截重试无意义，不在此列。
+// 用户明确要求：模型报错自动重试，最多 10 次。
+const MODEL_STATUS_RETRY_LIMIT = 10;
+const MODEL_STATUS_RETRY_BASE_DELAY_MS = 1000;
+// 单次重试等待上限（含服务端 Retry-After 指示的等待）：10 次重试的累计等待
+// 控制在约 5 分钟内，仍留有单次请求超时（MODEL_TIMEOUT_MS）的余量
+const MODEL_STATUS_RETRY_MAX_DELAY_MS = 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_OUTPUT_LIMIT = 20 * 1024;
 const READ_LIMIT = 300 * 1024;
@@ -2804,38 +2813,46 @@ export function sanitizeEndpointUrl(endpoint) {
   }
 }
 
-async function postChat({ settings, payload, fetchImpl, signal = null, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT }) {
-  let response;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      response = await fetchImpl(endpoint || settings.endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // 本地推理服务（vLLM/Ollama/LM Studio）常无需 Key，空 Key 时不带 Authorization 头
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify(payload),
-        signal,
-      });
-      break;
-    } catch (error: any) {
-      // 只有连接层失败才重试；已取消/超时中止或重试次数用完时直接抛出。
-      if (signal?.aborted || error?.name === "AbortError") {
-        // 超时/断流（AbortError）不在本层重试，抛给外层按传输层失败处理。
-        throw decorateNetworkError(error, endpoint || settings.endpoint);
+function isRetryableStatusError(status) {
+  const code = Number(status);
+  return code === 408 || code === 429 || (code >= 500 && code < 600);
+}
+
+async function postChat({ settings, payload, fetchImpl, signal = null, endpoint = null, apiKey = settings.apiKey, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT, statusRetryBaseDelayMs = MODEL_STATUS_RETRY_BASE_DELAY_MS, statusRetryLimit = MODEL_STATUS_RETRY_LIMIT, onRetry = null }) {
+  // 状态码重试在外层：429/5xx 等瞬时故障按退避重发，最多 statusRetryLimit 次；
+  // 每次重发都完整走一遍内层连接重试。等待期间响应取消信号，取消立即停止。
+  for (let statusAttempt = 0; ; statusAttempt += 1) {
+    let response;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await fetchImpl(endpoint || settings.endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            // 本地推理服务（vLLM/Ollama/LM Studio）常无需 Key，空 Key 时不带 Authorization 头
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+          body: JSON.stringify(payload),
+          signal,
+        });
+        break;
+      } catch (error: any) {
+        // 只有连接层失败才重试；已取消/超时中止或重试次数用完时直接抛出。
+        if (signal?.aborted || error?.name === "AbortError") {
+          // 超时/断流（AbortError）不在本层重试，抛给外层按传输层失败处理。
+          throw decorateNetworkError(error, endpoint || settings.endpoint);
+        }
+        if (attempt >= retryLimit) {
+          // 连接层网络错误重试已耗尽：打标记，外层识别后不再整体重发一轮（否则 6 次×2 轮叠加）
+          const decorated = decorateNetworkError(error, endpoint || settings.endpoint);
+          if (decorated instanceof Error) decorated.networkRetried = true;
+          throw decorated;
+        }
+        await waitModelRetry(retryBaseDelayMs * 2 ** attempt, signal);
+        if (signal?.aborted) throw error;
       }
-      if (attempt >= retryLimit) {
-        // 连接层网络错误重试已耗尽：打标记，外层识别后不再整体重发一轮（否则 6 次×2 轮叠加）
-        const decorated = decorateNetworkError(error, endpoint || settings.endpoint);
-        if (decorated instanceof Error) decorated.networkRetried = true;
-        throw decorated;
-      }
-      await waitModelRetry(retryBaseDelayMs * 2 ** attempt, signal);
-      if (signal?.aborted) throw error;
     }
-  }
-  if (!response.ok) {
+    if (response.ok) return response;
     const detail = (await response.text()).slice(0, 1200);
     // 服务商内容安全拦截（如百炼 content_filter、Kimi risk_control 等）：输入或模型输出均可能触发，
     // 给出客观指引并脱敏端点，避免武断判定
@@ -2871,11 +2888,23 @@ async function postChat({ settings, payload, fetchImpl, signal = null, endpoint 
       error.contentFiltered = true;
       throw error;
     }
-    const error = new Error(`模型请求失败（${response.status}）：${detail}`);
-    error.status = response.status;
-    throw error;
+    // 不可重试的状态码（401/403/400 等）、重试次数用完或已取消：直接抛出。
+    // 报错注明已重试次数，外层传输层看到带 status 的错误也不再整体重发，避免叠加。
+    if (!isRetryableStatusError(response.status) || statusAttempt >= statusRetryLimit || signal?.aborted) {
+      const suffix = statusAttempt > 0 ? `（已自动重试 ${statusAttempt} 次仍失败）` : "";
+      const error = new Error(`模型请求失败（${response.status}）：${detail}${suffix}`);
+      error.status = response.status;
+      if (statusAttempt > 0) error.statusRetries = statusAttempt;
+      throw error;
+    }
+    // 服务端 Retry-After 优先（秒），否则指数退避；两者都不超过单次等待上限
+    const retryAfterSeconds = Number(response.headers?.get?.("retry-after"));
+    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+      ? Math.min(MODEL_STATUS_RETRY_MAX_DELAY_MS, retryAfterSeconds * 1000)
+      : Math.min(MODEL_STATUS_RETRY_MAX_DELAY_MS, statusRetryBaseDelayMs * 2 ** statusAttempt);
+    onRetry?.({ status: response.status, attempt: statusAttempt + 1, limit: statusRetryLimit, delayMs, detail });
+    await waitModelRetry(delayMs, signal);
   }
-  return response;
 }
 
 // 模型类接口统一响应解析：中转网关/WAF 有时用 200 状态返回 HTML 错误页
@@ -3676,7 +3705,7 @@ export function adaptMessagesForModel(messages, settings) {
 // tools 可整体覆盖工具列表（子代理需要裁掉 dispatch_agent，防止无限递归派发）
 // onTransport(mode) 回报实际使用的传输方式："sse"（流式）或 "json"（端点不支持流式时的回退）
 // onUsage(usage) 回报端点返回的真实 token 用量（SSE 模式经 stream_options.include_usage 请求）
-export async function requestModel({ settings, messages, fetchImpl, signal = null, onText = null, onReasoning = null, extraTools = [], tools = null, onTransport = null, onUsage = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
+export async function requestModel({ settings, messages, fetchImpl, signal = null, onText = null, onReasoning = null, extraTools = [], tools = null, onTransport = null, onUsage = null, onRetry = null, retryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS, retryLimit = MODEL_NETWORK_RETRY_LIMIT, statusRetryBaseDelayMs = MODEL_STATUS_RETRY_BASE_DELAY_MS, statusRetryLimit = MODEL_STATUS_RETRY_LIMIT, idleTimeoutMs = MODEL_IDLE_TIMEOUT_MS }) {
   // tools === false 表示完全不带工具（用于上下文压缩等纯文本请求），避免端点对空 tools 数组报错
   const effectiveEndpoint = normalizeModelEndpoint(settings.endpoint);
   const responsesApi = isResponsesEndpoint(effectiveEndpoint);
@@ -3713,13 +3742,13 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
     const streamPayload = responsesApi
       ? { ...basePayload, stream: true }
       : { ...basePayload, stream: true, stream_options: { include_usage: true } };
-    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit });
+    response = await postChat({ settings, payload: streamPayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit, statusRetryBaseDelayMs, statusRetryLimit, onRetry });
   } catch (error: any) {
     if (error?.contentFiltered || /content_filter|considered high risk|data_inspection_failed|risk_control/i.test(error?.message || "")) {
       throw error;
     }
     if (error?.status !== 400 && error?.status !== 404 && error?.status !== 422) throw error;
-    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit });
+    response = await postChat({ settings, payload: basePayload, fetchImpl, signal, endpoint: effectiveEndpoint, retryBaseDelayMs, retryLimit, statusRetryBaseDelayMs, statusRetryLimit, onRetry });
   }
 
   const contentType = response.headers?.get?.("content-type") || "";
@@ -4037,8 +4066,8 @@ export async function summarizeApprovalImpact({ settings, action = {}, context =
     },
   ];
   try {
-    // 辅助调用不重试（retryLimit 0）：失败应立即回退为无说明，而不是退避 30 秒阻塞审批卡
-    const message = await requestModel({ settings, messages: request, fetchImpl, signal, tools: false, retryLimit: 0, retryBaseDelayMs: 1 });
+    // 辅助调用不重试（retryLimit/statusRetryLimit 0）：失败应立即回退为无说明，而不是退避 30 秒阻塞审批卡
+    const message = await requestModel({ settings, messages: request, fetchImpl, signal, tools: false, retryLimit: 0, retryBaseDelayMs: 1, statusRetryLimit: 0 });
     const text = messageText(message).trim();
     // 只保留要点行：模型输出前言后语时剥离，保证卡片上是干净的 bullet 列表
     const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -4849,7 +4878,14 @@ export async function runAgent({
   // 网络连接失败已由 postChat 在内部退避重试，外层不应再重复，默认把网络错误排除在外。
   transportRetryLimit = MODEL_TIMEOUT_RETRY_LIMIT,
   transportRetryBaseDelayMs = MODEL_TRANSPORT_RETRY_BASE_DELAY_MS,
+  // 服务端状态码重试（429/5xx 等，postChat 内指数退避）：默认 10 次；测试可注入小退避值
+  statusRetryLimit = MODEL_STATUS_RETRY_LIMIT,
+  statusRetryBaseDelayMs = MODEL_STATUS_RETRY_BASE_DELAY_MS,
   hooks = [],
+  // 插件策略接缝（宿主把 cordis tools/pre-execute 事件接到这里）：用户/工作区
+  // 钩子规则（hooks）未做出决定时才被咨询，只能追加 block/require_approval，
+  // 不能放行已被规则阻止的操作。返回 { action, message? } 或 null。
+  beforeToolExecute = null,
   goal = "",
   standingRules = [],
   trustTempDirs = true,
@@ -5388,9 +5424,16 @@ export async function runAgent({
           extraTools,
           retryBaseDelayMs: networkRetryBaseDelayMs,
           retryLimit: networkRetryLimit,
+          statusRetryLimit,
+          statusRetryBaseDelayMs,
           idleTimeoutMs: modelIdleTimeoutMs,
           tools: effectiveTools,
           onTransport: (mode) => { transport = mode; },
+          onRetry: ({ status, attempt, limit, delayMs }) => {
+            const info = `模型服务返回 ${status}，${Math.ceil(delayMs / 1000)} 秒后自动重试（${attempt}/${limit}）`;
+            debugLog("tool-call", "模型服务过载或限流，正在自动重试", info);
+            traceEmit({ type: "activity-update", id: thinkingId, status: "running", detail: info });
+          },
           onUsage: (usage) => {
             const used = Number(usage?.prompt_tokens);
             if (Number.isFinite(used) && used > 0) {
@@ -5415,7 +5458,8 @@ export async function runAgent({
       // 传输层失败按退避间隔重发：超时/断流的 AbortError，以及连接被重置等网络错误
       // （fetch failed/ECONNRESET 等，含 postChat 连接重试耗尽后与流式读取中途被重置）。
       // 此时还没有执行任何工具，请求无副作用，重发安全；偶发断流对用户无感。
-      // 已拿到服务端响应的错误（带 status 的 4xx/5xx）与用户主动取消不重试。
+      // 已拿到服务端响应的错误（带 status 的 4xx/5xx）已在 postChat 内按状态码重试，
+      // 这里不再整体重发；用户主动取消同样不重试。
       const isRetryableTransportError = (error) => {
         if (isCancelled() || cancellationSignal?.aborted) return false;
         // 连接层网络错误已由 postChat 在内部按指数退避重试耗尽（带 networkRetried 标记），
@@ -5624,7 +5668,10 @@ export async function runAgent({
 
         // 工具钩子（借鉴 Claude Code hooks）:block 直接阻止;require_approval 在任何模式下都强制审批
         // 内置规则永远生效且最先匹配,用户/工作区规则只能追加
-        const hookVerdict = evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], "before_tool", name, args);
+        let hookVerdict = evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], "before_tool", name, args);
+        if (!hookVerdict && typeof beforeToolExecute === "function") {
+          hookVerdict = await beforeToolExecute({ name, args });
+        }
         if (hookVerdict?.action === "block") {
           const reason = hookVerdict.message || "该操作被用户或工作区配置的钩子规则禁止";
           auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "blocked", detail: reason });
@@ -6201,6 +6248,8 @@ export async function runAgent({
                 networkRetryLimit,
                 transportRetryLimit,
                 transportRetryBaseDelayMs,
+                statusRetryLimit,
+                statusRetryBaseDelayMs,
               });
               for (const change of sub.changes || []) {
                 recordFileChange(change.path, change.added, change.removed, change.diff || "");

@@ -156,3 +156,83 @@ test("disposeHost 幂等于无插件残留：重复调用不抛错", async (t) =
   await disposeHost(ctx);
   await disposeHost(ctx);
 });
+
+// —— tools/pre-execute 事件接缝（策略插件扩展点）——
+
+function mockChatFetch(scriptedMessages, calls = []) {
+  return async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    const message = scriptedMessages.length > 1 ? scriptedMessages.shift() : scriptedMessages[0];
+    return { ok: true, json: async () => ({ choices: [{ message }] }) };
+  };
+}
+
+function toolCall(id, name, args) {
+  return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
+}
+
+function stubAgentResolvers(overrides = {}) {
+  return {
+    isShuttingDown: () => false,
+    readHooks: async () => [],
+    readMemoryPages: async () => [],
+    readSkills: async () => [],
+    readStandingRules: async () => [],
+    appendMemory: async () => {},
+    memoriesFromAgentResult: () => [],
+    appendSkill: async () => {},
+    appendUsageStat: () => {},
+    history: () => ({ search: async () => ({ results: [] }), readContext: async () => "" }),
+    hasPendingWakeForSession: () => false,
+    registerWake: async () => {},
+    mcpExtraTools: async () => [],
+    agentExtraTools: (tools) => tools,
+    createExtraToolRouter: () => {
+      const route = async () => ({ text: "未路由" });
+      route.dispose = () => {};
+      return route;
+    },
+    auditRecord: () => {},
+    ...overrides,
+  };
+}
+
+test("tools/pre-execute 事件：策略监听器经 ctx.agent.run 阻止工具执行", async (t) => {
+  const dir = await makeTmpDir(t);
+  const ctx = await createHost({
+    userDataDir: dir,
+    safeStorage: fakeSafeStorage(),
+    agentResolvers: stubAgentResolvers(),
+    startBackgroundTask: (p) => p,
+  });
+  try {
+    const blocked = [];
+    ctx.on("tools/pre-execute", (name, args, current, next) => {
+      if (name === "list_workspace") {
+        blocked.push({ name, args });
+        return { action: "block", message: "宿主事件策略：演示会话禁止列目录" };
+      }
+      return next();
+    });
+    const calls = [];
+    const result = await ctx.agent.run({
+      settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "k" },
+      workspacePath: dir,
+      sessionId: "s-host",
+      approvalMode: "interactive",
+      conversation: [{ role: "user", content: "列出工作区文件" }],
+      emit: () => {},
+      fetchImpl: mockChatFetch([
+        { role: "assistant", content: null, tool_calls: [toolCall("c1", "list_workspace", {})] },
+        { role: "assistant", content: "策略禁止列目录。" },
+      ], calls),
+    });
+    assert.equal(result.status, "done");
+    assert.equal(blocked.length, 1);
+    const toolMessage = calls[1].messages.find((message) => message.role === "tool");
+    assert.match(toolMessage.content, /宿主事件策略：演示会话禁止列目录/);
+  } finally {
+    await disposeHost(ctx);
+  }
+});

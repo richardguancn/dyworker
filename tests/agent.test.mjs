@@ -2207,13 +2207,14 @@ test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", a
   assert.equal(requestCount, 2);
 });
 
-test("服务端返回状态码的错误不在传输层重试", async () => {
+test("服务端 5xx 自动重试 10 次仍失败时报错，外层不再整体重发", async () => {
   const root = await makeWorkspace();
   let requestCount = 0;
   const result = await runAgent({
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "你好" }],
+    statusRetryBaseDelayMs: 1,
     fetchImpl: async () => {
       requestCount += 1;
       return { ok: false, status: 500, text: async () => "internal error" };
@@ -2221,7 +2222,9 @@ test("服务端返回状态码的错误不在传输层重试", async () => {
   });
   assert.equal(result.status, "error");
   assert.match(result.reason, /500/);
-  assert.equal(requestCount, 1);
+  assert.match(result.reason, /已自动重试 10 次仍失败/);
+  // 首次请求 + 10 次状态码重试共 11 次；外层传输层不再重发，总数不应超过 11
+  assert.equal(requestCount, 11);
 });
 
 test("探测服务器自报的上下文上限（max_model_len）并按端点+模型缓存", async () => {
@@ -4911,6 +4914,57 @@ test("hooks：require_approval 在自动修改模式下仍强制审批", async (
   assert.equal(await fs.readFile(path.join(root, "a.txt"), "utf8"), "hi");
 });
 
+test("beforeToolExecute 接缝：block 策略阻止工具执行", async () => {
+  const root = await makeWorkspace({ "秘密.docx": "内容" });
+  const consulted = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "删掉秘密.docx" }],
+    beforeToolExecute: ({ name, args }) => {
+      consulted.push({ name, args });
+      return { action: "block", message: "插件策略：演示环境禁止删除文件" };
+    },
+    requestApproval: async () => true,
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "delete_file", { path: "秘密.docx" })] },
+      { role: "assistant", content: "策略禁止，无法删除。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.deepEqual(consulted, [{ name: "delete_file", args: { path: "秘密.docx" } }]);
+  assert.equal(await fs.readFile(path.join(root, "秘密.docx"), "utf8"), "内容", "被策略阻止后文件仍在");
+});
+
+test("beforeToolExecute 接缝：require_approval 强制审批，且用户钩子规则优先", async () => {
+  const root = await makeWorkspace();
+  const decisions = [];
+  let approvals = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写文件" }],
+    approvalMode: "allow-writes",
+    hooks: [{ tool: "write_file", action: "require_approval" }],
+    beforeToolExecute: ({ name }) => {
+      decisions.push(name);
+      // 策略试图放行（返回 null）：不得绕过用户钩子的 require_approval
+      return null;
+    },
+    requestApproval: async () => { approvals += 1; return true; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "b.txt", content: "yo" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c2", "write_file", { path: "c.txt", content: "yo" })] },
+      { role: "assistant", content: "完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(decisions.length, 0, "钩子规则已决定时策略不被咨询");
+  assert.equal(approvals, 2);
+  assert.equal(await fs.readFile(path.join(root, "b.txt"), "utf8"), "yo");
+  assert.equal(await fs.readFile(path.join(root, "c.txt"), "utf8"), "yo");
+});
+
 test("evaluateHooks 匹配规则：通配工具、路径 glob、默认 block", () => {
   assert.equal(evaluateHooks(null, "before_tool", "delete_file", {}), null);
   assert.deepEqual(
@@ -5768,6 +5822,70 @@ test("任务取消时网络重试立即中止，不再等待重试", async () =>
   });
   assert.equal(result.status, "cancelled");
   assert.equal(attempts, 1, "取消后不应再重试");
+});
+
+test("模型请求 429 过载自动重试，恢复后任务正常完成", async () => {
+  const root = await makeWorkspace();
+  let attempts = 0;
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    statusRetryBaseDelayMs: 1,
+    emit: (event) => events.push(event),
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts <= 2) {
+        return { ok: false, status: 429, text: async () => '{"error":{"message":"The engine is currently overloaded, please try again later","type":"engine_overloaded_error"}}' };
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "重试后成功。" } }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(attempts, 3, "两次 429 后第三次应成功");
+  const retryUpdates = events.filter((event) => event.type === "activity-update" && /自动重试/.test(String(event.detail || "")));
+  assert.ok(retryUpdates.length >= 2, "每次 429 重试都应透出活动进度");
+  assert.match(String(retryUpdates[0]?.detail || ""), /429/);
+});
+
+test("401 凭证错误不重试，立即报错", async () => {
+  const root = await makeWorkspace();
+  let attempts = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      attempts += 1;
+      return { ok: false, status: 401, text: async () => '{"error":{"message":"invalid api key"}}' };
+    },
+  });
+  assert.equal(result.status, "error");
+  assert.match(String(result.reason || ""), /401/);
+  assert.equal(attempts, 1, "凭证类错误重试无意义，不应重发");
+});
+
+test("429 重试遵循服务端 Retry-After 头", async () => {
+  let attempts = 0;
+  const retries = [];
+  const message = await requestModel({
+    settings,
+    messages: [{ role: "user", content: "你好" }],
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return { ok: false, status: 429, headers: new Map([["retry-after", "0"]]), text: async () => "rate limited" };
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "恢复。" } }] }) };
+    },
+    onRetry: (info) => retries.push(info),
+  });
+  assert.equal(message.content, "恢复。");
+  assert.equal(attempts, 2);
+  assert.equal(retries.length, 1);
+  assert.equal(retries[0].status, 429);
+  assert.equal(retries[0].delayMs, 0, "Retry-After: 0 应立即重试而不是按指数退避等待");
 });
 
 // ===== 统一轨迹事件流（trace-console / process-chain 事件层回归）=====

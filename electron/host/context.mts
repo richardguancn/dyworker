@@ -10,6 +10,7 @@ import { Context } from "cordis";
 import { AuditService } from "./services/audit.mts";
 import { SettingsService } from "./services/settings.mts";
 import { SessionsService } from "./services/session-archive.mts";
+import { AgentService } from "./services/agent.mts";
 import path from "node:path";
 
 export interface HostOptions {
@@ -18,6 +19,9 @@ export interface HostOptions {
   safeStorage?: any;
   // 读设置后依次应用领域修正（模型目录等），由壳层注册
   settingsMigrators?: Array<(settings: any) => any>;
+  // 代理服务的领域解析器（记忆/技能/唤醒/MCP 等，见 services/agent.mts）
+  agentResolvers?: any;
+  startBackgroundTask?: any;
 }
 
 export async function createHost(options: HostOptions) {
@@ -32,6 +36,10 @@ export async function createHost(options: HostOptions) {
   new SessionsService(ctx, {
     dir: path.join(options.userDataDir, "sessions"),
     legacyFile: path.join(options.userDataDir, "sessions.json"),
+  });
+  new AgentService(ctx, {
+    resolvers: options.agentResolvers || {},
+    startBackgroundTask: options.startBackgroundTask || ((p) => p),
   });
   await ctx.fiber.await();
   return ctx;
