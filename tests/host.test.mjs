@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHost, disposeHost } from "../electron/host/context.mts";
+import { channelsPlugin, telemetryPlugin, backgroundTasksPlugin } from "../electron/host/services/runtime-domains.mts";
 
 // 假 safeStorage：明文 base64 往返，语义与 Electron safeStorage 一致（Buffer 进出）
 function fakeSafeStorage() {
@@ -155,6 +156,31 @@ test("disposeHost 幂等于无插件残留：重复调用不抛错", async (t) =
   const ctx = await createHost({ userDataDir: dir, safeStorage: fakeSafeStorage() });
   await disposeHost(ctx);
   await disposeHost(ctx);
+});
+
+test("运行期域插件：dispose 时按注册逆序停止，对象经 ctx 可取", async (t) => {
+  const dir = await makeTmpDir(t);
+  const stops = [];
+  const fakeChannels = { stopAll: async () => { stops.push("channels"); } };
+  const fakeTelemetry = { shutdown: async () => { stops.push("telemetry"); } };
+  const fakeBackgroundTasks = { cleanupAll: () => { stops.push("backgroundTasks"); } };
+  const ctx = await createHost({
+    userDataDir: dir,
+    safeStorage: fakeSafeStorage(),
+    registerService: (hostCtx) => {
+      hostCtx.plugin(channelsPlugin(fakeChannels));
+      hostCtx.plugin(telemetryPlugin(fakeTelemetry));
+      hostCtx.plugin(backgroundTasksPlugin(fakeBackgroundTasks));
+    },
+  });
+  try {
+    assert.equal(ctx.get("channelManager"), fakeChannels);
+    assert.equal(ctx.get("telemetryController"), fakeTelemetry);
+    assert.equal(ctx.get("backgroundTasksManager"), fakeBackgroundTasks);
+  } finally {
+    await disposeHost(ctx);
+  }
+  assert.deepEqual(stops, ["backgroundTasks", "telemetry", "channels"], "逆序停止");
 });
 
 // —— tools/pre-execute 事件接缝（策略插件扩展点）——

@@ -22,6 +22,10 @@ export interface HostOptions {
   // 代理服务的领域解析器（记忆/技能/唤醒/MCP 等，见 services/agent.mts）
   agentResolvers?: any;
   startBackgroundTask?: any;
+  // 运行期服务注册器：壳层在 whenReady 阶段把带生命周期的域对象
+  // （渠道管理器、用量统计、运营消息等）挂进宿主，dispose 时统一清理。
+  // 返回 ctx.plugin(...) 的 fiber 数组，createHost 会等它们激活后再返回
+  registerService?: (ctx: Context) => any[] | void;
 }
 
 export async function createHost(options: HostOptions) {
@@ -42,6 +46,8 @@ export async function createHost(options: HostOptions) {
     startBackgroundTask: options.startBackgroundTask || ((p) => p),
   });
   await ctx.fiber.await();
+  const registered = await Promise.resolve(options.registerService?.(ctx) || []);
+  if (Array.isArray(registered) && registered.length) await Promise.all(registered);
   return ctx;
 }
 

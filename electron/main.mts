@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, prom
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHost, disposeHost } from "./host/context.mts";
+import { channelsPlugin, telemetryPlugin, remoteMessagesPlugin, backgroundTasksPlugin } from "./host/services/runtime-domains.mts";
 import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, sanitizeToolCalls, suggestStandingRule } from "./agent.mts";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mts";
 import { BrowserControlManager } from "./browser-control.mts";
@@ -254,7 +255,19 @@ const ctx = await createHost({
     auditRecord: (entry) => auditLog.record(entry),
   },
   startBackgroundTask: (p) => backgroundTasksManager.startTask(p),
+  // 运行期域挂载：对象在各自创建点（渠道管理器/用量统计/运营消息）注册进来，
+  // 宿主 dispose 时统一逆序清理，替代 before-quit 里手工拼清理链
+  registerService: (hostCtx) => registerRuntimeDomains(hostCtx),
 });
+// 运行期域注册器：域对象延迟创建（依赖 whenReady 阶段的设置读取），
+// 创建后立即挂进宿主；返回 fiber 列表供 createHost 等待激活
+function registerRuntimeDomains(hostCtx) {
+  // 渠道管理器与后台任务管理器已在此前创建（模块级），立即挂载
+  return [
+    hostCtx.plugin(channelsPlugin(channelManager)),
+    hostCtx.plugin(backgroundTasksPlugin(backgroundTasksManager)),
+  ];
+}
 
 // 会话存档：按会话拆分为 sessions/<id>.json + index.json（迁移见
 // session-archive.mts）。读路径走 ctx.sessions，写路径经合并写入器承接
@@ -5375,12 +5388,15 @@ app.whenReady().then(async () => {
       remoteMessages?.noteOnline();
     },
   });
+  // 用量统计与运营消息就绪后挂进宿主生命周期（退出时随 dispose 统一收尾）
+  void ctx.plugin(telemetryPlugin(telemetryController));
   remoteMessages = createRemoteMessagesManager({
     file: dataFile("system-messages.json"),
     client: telemetryController.getClient(),
     showNotification: showRemoteMessageNotification,
     onChanged: broadcastSystemMessagesChanged,
   });
+  void ctx.plugin(remoteMessagesPlugin(remoteMessages));
   await applyTelemetrySettings(storedSettings);
   telemetryController.start();
   remoteMessages.start();
@@ -5423,7 +5439,7 @@ app.on("before-quit", (event) => {
     usageStatsWriteTimer = null;
     void writeJson(dataFile("usage-stats.json"), usageStatsCache || []).catch(() => {});
   }
-  backgroundTasksManager.cleanupAll();
+  // 后台任务清理随宿主 dispose 统一执行（backgroundTasksPlugin），不再手工调用
   if (appUpdateTimer) clearTimeout(appUpdateTimer);
   if (appUpdateInterval) clearInterval(appUpdateInterval);
   appUpdateTimer = null;
@@ -5437,18 +5453,7 @@ app.on("before-quit", (event) => {
   }
   void expireAllPendingInbox("应用在等待处理期间关闭，任务已终止")
     .catch(() => { })
-    .finally(() => Promise.race([
-      // 运营功能退出收尾：先本地落盘，网络尝试最长 1 秒，不阻塞退出
-      Promise.all([
-        telemetryController?.shutdown() || Promise.resolve(),
-        Promise.resolve(remoteMessages?.stop()),
-      ]),
-      new Promise<any>((resolve) => {
-        const timer = setTimeout(resolve, 1_500);
-        timer.unref?.();
-      }),
-    ])
-      .finally(() => channelManager.stopAll()
-        .catch(() => { })
-        .finally(() => closeAllMcpClients().finally(() => app.quit()))));
+    // 运行期域（用量统计/运营消息/渠道/后台任务）的停止已挂进宿主生命周期，
+    // disposeHost 统一触发；网络收尾上限由各域内部保证，不阻塞退出
+    .finally(() => closeAllMcpClients().finally(() => app.quit()));
 });

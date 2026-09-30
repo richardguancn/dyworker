@@ -20,6 +20,7 @@ const hostAuditService = readSource(new URL("../electron/host/services/audit.mts
 const hostSettingsService = readSource(new URL("../electron/host/services/settings.mts", import.meta.url));
 const hostSessionsService = readSource(new URL("../electron/host/services/session-archive.mts", import.meta.url));
 const hostAgentService = readSource(new URL("../electron/host/services/agent.mts", import.meta.url));
+const runtimeDomainsSource = readSource(new URL("../electron/host/services/runtime-domains.mts", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
@@ -1437,7 +1438,9 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /resolveInboxInternal/);
   assert.match(main, /trustedHandle\("channels:get-status"/);
   assert.match(main, /broadcastChannelsStatus/);
-  assert.match(main, /channelManager\.stopAll\(\)/);
+  // 渠道停机挂进宿主生命周期（channelsPlugin，dispose 时统一执行）
+  assert.match(main, /channelsPlugin\(channelManager\)/);
+  assert.match(runtimeDomainsSource, /=> manager\.stopAll\(\)/);
   assert.match(main, /channel-chats\.json/);
   assert.match(main, /channel-credentials\.json/);
   // 设置保存与启动时热生效
