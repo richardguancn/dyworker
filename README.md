@@ -150,7 +150,7 @@ docker run --rm -it \
 
 ```bash
 npm test        # 运行全部自动测试
-npm run build   # 类型检查并生成正式页面
+npm run build   # 类型检查并构建（主进程 .mts 编译到 dist/electron + 前端页面）
 npm run verify  # 构建 + 全部测试一次完成
 ```
 
@@ -158,16 +158,22 @@ npm run verify  # 构建 + 全部测试一次完成
 
 ```text
 build/             打包图标
-docs/screenshots/  界面截图
-electron/          桌面主进程、智能助手、渠道和本机能力
+docs/              架构说明（architecture.md）、界面截图与验收记录
+electron/          桌面主进程（TypeScript）；host/ 为 Cordis 宿主与服务装配
 src/               React 界面
 tests/             自动测试
 index.html         页面入口
 package.json       项目命令和打包配置
 ```
 
+主进程架构：核心服务（设置/审计/会话存档/代理执行/运行期域）挂载在
+Cordis 宿主（`electron/host/`）上统一装配与生命周期管理，四个任务入口
+（桌面/定时唤醒/定时任务/IM 渠道）共用一个代理执行服务，详见
+[docs/architecture.md](docs/architecture.md)。
+
 ## 参与开发
 
+开发环境需要 Node.js ≥ 22.18（测试直接运行 TypeScript 源码）与 npm 10+。
 提交改动前请至少运行 `npm run verify`。修复问题时请补充能够复现问题的自动测试。不要提交 `node_modules/`、`dist/`、`output/`、`.env`、证书、私钥、模型密钥或任何真实密钥。
 
 ## 开源许可证

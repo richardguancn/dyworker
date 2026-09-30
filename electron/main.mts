@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHost, disposeHost } from "./host/context.mts";
 import { channelsPlugin, telemetryPlugin, remoteMessagesPlugin, backgroundTasksPlugin } from "./host/services/runtime-domains.mts";
+import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
 import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, sanitizeToolCalls, suggestStandingRule } from "./agent.mts";
 import { BrowserAgent, browserToolDefinitions } from "./browser.mts";
 import { BrowserControlManager } from "./browser-control.mts";
@@ -3537,37 +3538,19 @@ async function readStandingRules() {
   return Array.isArray(rules) ? rules : [];
 }
 
-trustedHandle("rules:list", () => readStandingRules());
-
-trustedHandle("rules:add", async (_event, payload) => {
-  const kind = String(payload?.kind || "");
-  const tool = String(payload?.tool || "");
-  const pattern = String(payload?.pattern || "").trim();
-  const label = String(payload?.label || "").trim().slice(0, 120);
-  if (!["path-glob", "domain", "mcp-tool", "command-prefix"].includes(kind)) return { ok: false, error: "规则类型无效" };
-  if (!tool || !pattern) return { ok: false, error: "规则内容不完整" };
-  // 用 agent 侧同一套判定确保规则确实能生效（不可规则化时 suggest 返回 null）
-  const probeArgs =
-    kind === "path-glob" ? { path: pattern }
-    : kind === "domain" ? { url: `https://${pattern}/` }
-    : kind === "command-prefix" ? { command: pattern }
-    : {};
-  const probeTool = kind === "mcp-tool" ? pattern : tool;
-  if (!suggestStandingRule(probeTool, probeArgs)) return { ok: false, error: "这类操作不支持始终允许，需要逐次确认" };
-  const rules = await readStandingRules();
-  if (rules.some((rule) => rule.kind === kind && rule.tool === tool && rule.pattern === pattern)) {
-    return { ok: true, duplicated: true };
-  }
-  rules.push({ id: crypto.randomUUID(), kind, tool, pattern, label: label || pattern, createdAt: new Date().toISOString() });
+async function writeStandingRules(rules) {
   await writeJson(dataFile("standing-rules.json"), rules);
-  return { ok: true };
-});
+}
 
-trustedHandle("rules:delete", async (_event, id) => {
-  const rules = await readStandingRules();
-  await writeJson(dataFile("standing-rules.json"), rules.filter((rule) => String(rule.id) !== String(id)));
-  return { ok: true };
-});
+// rules:* IPC 已拆到 host/plugins/rules-ipc.mts（IPC 域拆分样板，
+// 见 docs/architecture.md）：通道名与 preload 不变，领域函数经 deps 注入
+ctx.plugin(rulesIpcPlugin({
+  trustedHandle,
+  readStandingRules,
+  writeStandingRules,
+  suggestStandingRule,
+  randomUUID: () => crypto.randomUUID(),
+}));
 
 trustedHandle("audit:open", async () => {
   const auditPath = dataFile("audit.jsonl");

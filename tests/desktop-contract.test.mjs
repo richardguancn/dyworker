@@ -21,6 +21,7 @@ const hostSettingsService = readSource(new URL("../electron/host/services/settin
 const hostSessionsService = readSource(new URL("../electron/host/services/session-archive.mts", import.meta.url));
 const hostAgentService = readSource(new URL("../electron/host/services/agent.mts", import.meta.url));
 const runtimeDomainsSource = readSource(new URL("../electron/host/services/runtime-domains.mts", import.meta.url));
+const rulesIpcSource = readSource(new URL("../electron/host/plugins/rules-ipc.mts", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
@@ -1301,12 +1302,14 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(auditSource, /entry\?\.model/);
   assert.match(main, /"reviewer"/);
   assert.match(main, /standing-rules\.json/);
-  assert.match(main, /trustedHandle\("rules:list"/);
-  assert.match(main, /trustedHandle\("rules:add"/);
-  assert.match(main, /trustedHandle\("rules:delete"/);
+  // rules:* IPC 已拆到 host/plugins/rules-ipc.mts（域拆分样板），断言随之迁移
+  assert.match(rulesIpcSource, /trustedHandle\("rules:list"/);
+  assert.match(rulesIpcSource, /trustedHandle\("rules:add"/);
+  assert.match(rulesIpcSource, /trustedHandle\("rules:delete"/);
+  assert.match(rulesIpcSource, /kind === "command-prefix" \? \{ command: pattern \}/);
+  assert.match(main, /ctx\.plugin\(rulesIpcPlugin\(/);
   assert.match(main, /readStandingRules,/);
   assert.match(hostAgentService, /standingRules: await this\.resolvers\.readStandingRules\(\)/);
-  assert.match(main, /kind === "command-prefix" \? \{ command: pattern \}/);
   assert.match(preload, /listRules:/);
   assert.match(preload, /addRule:/);
   assert.match(preload, /deleteRule:/);
