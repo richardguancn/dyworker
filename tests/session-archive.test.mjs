@@ -68,15 +68,19 @@ test("applyDelta 只写变化会话，order 权威删除已移除的会话", asy
   const loaded = await archive.loadAll();
   assert.deepEqual(loaded.map((session) => session.id), ["keep"]);
   assert.equal(loaded[0].title, "增量改");
-  const names = (await fs.readdir(dir)).filter((name) => name !== "index.json");
-  assert.equal(names.length, 1, "被移除会话的文件应已删除");
+  // 安全语义：被移除的会话文件不再留在存档根目录，但进 .removed 备份而非被删
+  const rootNames = (await fs.readdir(dir)).filter((name) => name !== "index.json" && name !== ".removed");
+  assert.equal(rootNames.length, 1, "根目录只应剩未移除的会话");
+  const firstBatch = (await fs.readdir(path.join(dir, ".removed"))).sort()[0];
+  const retired = await fs.readdir(path.join(dir, ".removed", firstBatch));
+  assert.ok(retired.some((name) => name.includes("gone")), "被移除的会话应进备份");
 
   // 首次保存即被渲染端过滤掉的会话：order 不含它的文件也应被清理
   await archive.saveAll([makeSession("x"), makeSession("doomed")]);
   await archive.applyDelta({ changed: [], removed: [], order: ["x"] });
   const after = await archive.loadAll();
   assert.deepEqual(after.map((session) => session.id), ["x"]);
-  assert.equal((await fs.readdir(dir)).filter((name) => name !== "index.json").length, 1);
+  assert.equal((await fs.readdir(dir)).filter((name) => name !== "index.json" && name !== ".removed").length, 1);
 });
 
 test("旧单文件 sessions.json 首次访问自动迁移，旧文件改名备份", async () => {
@@ -235,4 +239,73 @@ test("并发混合操作不丢数据、不产生交错损坏", async () => {
     assert.ok(session.id, `会话对象应完整：${JSON.stringify(session).slice(0, 80)}`);
     assert.ok(Array.isArray(session.messages));
   }
+});
+
+// 回归：渲染端某次少报会话时，历史不能被不可逆删掉。
+// 真实事故：某次启动拿到空的初始状态后保存，磁盘上的会话被整批 fs.rm 删除。
+test("少报会话时不删文件，改为移入 .removed 备份且可回滚", async () => {
+  const dir = await tempDir();
+  const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });
+  await archive.saveAll([makeSession("keep-me"), makeSession("also-keep"), makeSession("third")]);
+  const before = await fs.readdir(dir);
+  const sessionFiles = before.filter((name) => name.endsWith(".json") && name !== "index.json");
+  assert.equal(sessionFiles.length, 3);
+
+  // 渲染端只报 1 个会话（模拟初始状态异常）→ 另外 2 个必须只是被移走
+  await archive.saveAll([makeSession("keep-me")]);
+  const after = await fs.readdir(dir);
+  const survivors = after.filter((name) => name.endsWith(".json") && name !== "index.json");
+  assert.equal(survivors.length, 1, "索引里只剩报上来的那 1 个");
+
+  const backups = await fs.readdir(path.join(dir, ".removed"));
+  assert.equal(backups.length, 1, "应产生一批备份目录");
+  const saved = await fs.readdir(path.join(dir, ".removed", backups[0]));
+  const savedSessions = saved.filter((name) => name !== "index.json");
+  assert.equal(savedSessions.length, 2, "被移出的 2 个会话都在备份里，没有被 rm");
+  assert.ok(saved.includes("index.json"), "备份里应带一份改动前的 index 快照");
+
+  // 备份里的内容仍是可用的完整会话，可原样回滚
+  const restored = JSON.parse(await fs.readFile(path.join(dir, ".removed", backups[0], savedSessions[0]), "utf8"));
+  assert.ok(restored.id && Array.isArray(restored.messages));
+  // 备份目录里同时存了"改动前的 index"，回滚要把文件与 index 一起恢复
+  // （归档读取以 index.order 为准，只放回文件是读不出来的）
+  const backupDir = path.join(dir, ".removed", backups[0]);
+  const savedIndex = JSON.parse(await fs.readFile(path.join(backupDir, "index.json"), "utf8"));
+  assert.equal(savedIndex.order.length, 3, "备份里的 index 应是缩小前的 3 条");
+  for (const name of savedSessions) await fs.copyFile(path.join(backupDir, name), path.join(dir, name));
+  await fs.copyFile(path.join(backupDir, "index.json"), path.join(dir, "index.json"));
+  const archive2 = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });
+  const loaded = await archive2.loadAll();
+  assert.equal(loaded.length, 3, "回滚后应能重新读到全部 3 个");
+});
+
+test("显式 removed 的会话同样进备份，可回滚", async () => {
+  const dir = await tempDir();
+  const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });
+  await archive.saveAll([makeSession("a"), makeSession("b")]);
+  await archive.applyDelta({ changed: [], removed: ["b"], order: ["a"] });
+  const backups = await fs.readdir(path.join(dir, ".removed"));
+  const files = await fs.readdir(path.join(dir, ".removed", backups[0]));
+  assert.equal(files.length, 1, "被显式删除的会话也在备份里");
+});
+
+// 安全闸：没有显式删除却让存档大幅缩水 → 拒绝保存，历史必须原样保留。
+// 这是打包版那起数据丢失事故的最后一道防线（app:initial-state 抛错 → 渲染端空状态 → 保存）。
+test("大幅缩水且无显式删除时拒绝保存，历史原样保留", async () => {
+  const dir = await tempDir();
+  const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });
+  const many = Array.from({ length: 10 }, (_, i) => makeSession(`s${i}`));
+  await archive.saveAll(many);
+
+  // 只报 1 个：10 → 1，缩水 9 > 允许(5)，且没有显式 removed → 必须拒绝
+  await archive.saveAll([makeSession("s0")]);
+  const files = (await fs.readdir(dir)).filter((n) => n.endsWith(".json") && n !== "index.json");
+  assert.equal(files.length, 10, "拒绝保存后磁盘上仍应是 10 个会话");
+  const loaded = await createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") }).loadAll();
+  assert.equal(loaded.length, 10, "index 也不应被改写");
+
+  // 显式删除是用户意图，允许执行（并且仍走备份）
+  await archive.applyDelta({ changed: [], removed: ["s1"], order: many.map((s) => s.id).filter((id) => id !== "s1") });
+  const after = (await fs.readdir(dir)).filter((n) => n.endsWith(".json") && n !== "index.json");
+  assert.equal(after.length, 9, "显式删除应生效");
 });

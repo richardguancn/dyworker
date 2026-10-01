@@ -1761,3 +1761,14 @@ test("主进程产物布局与宿主装配顺序：打包后能加载渲染产�
   assert.match(main, /buildMessages\(userText, result, assistantContent\?: string\) \{/);
   assert.doesNotMatch(main, /assistantContent\s*=\s*""/);
 });
+
+// 渲染端写回闸门：引导失败时绝不允许把本地（空的/默认的）状态写回宿主。
+// 真实事故：app:initial-state 抛错 → ready 仍被置真 → 用空状态保存 → 历史/配置被整批覆盖。
+test("渲染端：引导失败后禁止任何写回", () => {
+  assert.match(app, /bootstrapFailedRef/, "应有引导失败标记");
+  assert.match(app, /bootstrapFailedRef\.current = true/, "getInitialState 失败时应置位");
+  // 会话的两处保存（常规防抖 + 流式兜底）都必须带闸门
+  const saveGuards = app.match(/if \(!ready \|\| !window\.dyworker \|\| bootstrapFailedRef\.current/g) || [];
+  assert.ok(saveGuards.length >= 3, `会话与置顶的保存路径都应带闸门，实际 ${saveGuards.length} 处`);
+  assert.match(app, /if \(bootstrapFailedRef\.current\) \{\n\s+setError\("启动时未能读到本地配置/, "手动保存设置也要被拦住");
+});

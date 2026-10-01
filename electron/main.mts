@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, prom
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHost, disposeHost } from "./host/context.mts";
+import { snapshotCriticalFiles } from "./host/boot-backup.mts";
 import { UNATTENDED_PENDING_TIMEOUT_MS } from "./host/services/inbox.mts";
 import { channelsPlugin, telemetryPlugin, remoteMessagesPlugin, backgroundTasksPlugin } from "./host/services/runtime-domains.mts";
 import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
@@ -2265,6 +2266,9 @@ const shellDeps = {
   attachmentType,
   getUpdater: () => appUpdater,
   appVersion: () => app.getVersion(),
+  readAllSessions,
+  readSettings,
+  listWorkspace,
   defaultSessions,
   syncChannelSessionWorkspaces,
   channelMetaOf,
@@ -3510,6 +3514,9 @@ ipcMain.on("window:set-ignore-mouse", (event, _ignore) => {
 });
 
 app.whenReady().then(async () => {
+  // 启动快照：在任何读写（迁移/窗口/渲染端保存）之前，先把用户不可再生的状态文件复制一份。
+  // 与业务逻辑完全解耦的兜底——即使写入路径整个坏掉，也还有 .backups/<时间戳>/ 可回滚。
+  await snapshotCriticalFiles({ dir: app.getPath("userData") });
   await migrateLegacyDataOnFirstRun();
   // 旧扁平记忆列表一次性迁移成 wiki 页面（迁移前自动备份 memory.json）
   void ctx.memory.wikiReady().catch((error) => console.log(`[memory-wiki] 迁移失败：${error?.message || error}`));

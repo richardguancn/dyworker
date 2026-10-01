@@ -6832,6 +6832,11 @@ export function App() {
   const [gitBusy, setGitBusy] = useState<"" | "switch" | "commit" | "commit-push" | "push" | "generate">("");
   const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
   const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
+
+  // 引导是否失败：getInitialState 拿不到数据时（主进程 handler 抛错、IPC 异常等），
+  // 本地状态是空的/默认的，此时任何写回都会把磁盘上的真实数据覆盖掉。
+  // 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
+  const bootstrapFailedRef = useRef(false);
   const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
   const [query, setQuery] = useState("");
   const [composer, setComposer] = useState("");
@@ -7536,6 +7541,7 @@ export function App() {
         setPlatform(state.platform || "");
         setWindowMaximized(Boolean(state.windowMaximized));
       } catch (loadError) {
+        bootstrapFailedRef.current = true;
         setError(loadError instanceof Error ? loadError.message : String(loadError));
       } finally {
         if (!cancelled) setReady(true);
@@ -7580,7 +7586,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!ready || !window.dyworker) return;
+    if (!ready || !window.dyworker || bootstrapFailedRef.current) return;
     // 有任务在跑时暂停常规保存（见 SESSION_STREAMING_SAVE_INTERVAL_MS 的
     // 说明）；任务结束 runningSessionIds 变化后本 effect 重跑，最终内容
     // 会按 180ms 防抖立即落盘，流式期间的内容不会丢
@@ -7591,7 +7597,7 @@ export function App() {
 
   // 任务运行中的低频兜底快照：应用崩溃时最多丢这一窗口内的流式内容
   useEffect(() => {
-    if (!ready || !window.dyworker || !runningSessionIds.size) return;
+    if (!ready || !window.dyworker || bootstrapFailedRef.current || !runningSessionIds.size) return;
     const interval = window.setInterval(() => {
       void window.dyworker?.saveSessions(buildSessionSavePayload(sessionsRef.current));
     }, SESSION_STREAMING_SAVE_INTERVAL_MS);
@@ -7599,7 +7605,7 @@ export function App() {
   }, [ready, runningSessionIds]);
 
   useEffect(() => {
-    if (!ready || !window.dyworker) return;
+    if (!ready || !window.dyworker || bootstrapFailedRef.current) return;
     const timeout = window.setTimeout(() => void window.dyworker?.savePinnedWorkspaces(pinnedWorkspacePaths), 180);
     return () => window.clearTimeout(timeout);
   }, [pinnedWorkspacePaths, ready]);
@@ -10277,6 +10283,10 @@ export function App() {
   };
 
   const saveProviderSettings = async (nextSettings: ProviderSettings, successMessage = "设置已保存") => {
+    if (bootstrapFailedRef.current) {
+      setError("启动时未能读到本地配置，已阻止保存以免覆盖磁盘上的数据；请重启应用后重试。");
+      return false;
+    }
     try {
       const result = await window.dyworker?.saveSettings(nextSettings);
       if (result && !result.ok) {

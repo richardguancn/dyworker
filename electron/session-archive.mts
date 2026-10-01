@@ -32,6 +32,47 @@ function contentFingerprint(value) {
   return crypto.createHash("sha1").update(JSON.stringify(value, null, 2)).digest("hex");
 }
 
+// 退役的会话文件不删除，移入 sessions/.removed/<时间戳>/ 保留
+const REMOVED_DIR = ".removed";
+const REMOVED_KEEP = 20;
+
+async function retireSessionFile(dir, name, stamp) {
+  try {
+    const target = path.join(dir, REMOVED_DIR, stamp || new Date().toISOString().replace(/[:.]/g, "-"));
+    await fs.mkdir(target, { recursive: true });
+    await fs.rename(path.join(dir, name), path.join(target, name));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 把当前 index.json 快照进最近一批备份目录（回滚时与文件一起恢复）
+async function backupIndexSnapshot(dir) {
+  try {
+    const root = path.join(dir, REMOVED_DIR);
+    const stamps = (await fs.readdir(root)).sort();
+    const latest = stamps[stamps.length - 1];
+    if (!latest) return;
+    await fs.copyFile(path.join(dir, INDEX_NAME), path.join(root, latest, INDEX_NAME)).catch(() => {});
+  } catch {
+    // 没有备份目录或 index 不存在：跳过
+  }
+}
+
+// 备份目录只留最近 REMOVED_KEEP 批，避免无限增长
+async function pruneRemovedBackups(dir) {
+  try {
+    const root = path.join(dir, REMOVED_DIR);
+    const stamps = (await fs.readdir(root)).sort();
+    for (const stale of stamps.slice(0, Math.max(0, stamps.length - REMOVED_KEEP))) {
+      await fs.rm(path.join(root, stale), { recursive: true, force: true }).catch(() => {});
+    }
+  } catch {
+    // 目录不存在：无需清理
+  }
+}
+
 async function writeAtomic(file, content) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -144,8 +185,11 @@ export function createSessionArchive({ dir, legacyFile }) {
     migrated = true; // 全新安装：空存档
   };
 
-  // order 是权威视图：删除不在其中的会话文件，重建 index 与内存镜像
-  const persistOrder = async (orderedIds) => {
+  // order 是权威视图：重建 index 与内存镜像。
+  // 但"渲染端少报即删"曾造成不可逆的历史丢失（某次拿到空的初始状态后保存，磁盘上的
+  // 会话会被整批删掉）。现在改为把不在 order 里的文件**移入 sessions/.removed/<时间戳>/**
+  // 而不是 fs.rm，任何一次误删都能从备份取回；同时留下告警便于定位。
+  const persistOrder = async (orderedIds, explicitRemovals = null) => {
     const expected = new Set(orderedIds.map((id) => encodeSessionId(id)));
     expected.add(INDEX_NAME);
     let names = [];
@@ -154,9 +198,28 @@ export function createSessionArchive({ dir, legacyFile }) {
     } catch {
       // 目录尚未创建：写入 index 时会自动建
     }
+    // 安全闸：渲染端"没显式要求删除"却让存档大幅缩水，是异常状态（空状态覆盖、
+    // handler 抛错导致初始化失败等）的典型特征。宁可拒绝这次保存，也不能让历史消失。
+    const onDisk = names.filter((name) => name.endsWith(".json") && name !== INDEX_NAME);
+    const candidates = onDisk.filter((name) => !expected.has(name) && !(explicitRemovals && explicitRemovals.has(name)));
+    const allowance = Math.max(5, Math.floor(onDisk.length * 0.2));
+    if (!explicitRemovals && candidates.length > allowance) {
+      console.warn(`[session-archive] 拒绝一次异常缩水：磁盘 ${onDisk.length} 个会话，本次保存只保留 ${orderedIds.length} 个（将移出 ${candidates.length} > 允许 ${allowance}）。已保留原存档，请检查渲染端初始状态。`);
+      return { blocked: true, total: onDisk.length, kept: orderedIds.length, wouldRetire: candidates.length };
+    }
+    const retired = [];
+    // 同一次 saveAll 产生的退役文件放同一批，便于整体回滚
+    const batchStamp = new Date().toISOString().replace(/[:.]/g, "-");
     for (const name of names) {
       if (!name.endsWith(".json") || expected.has(name)) continue;
-      await fs.rm(path.join(dir, name), { force: true }).catch(() => {});
+      if (await retireSessionFile(dir, name, batchStamp)) retired.push(name);
+    }
+    if (retired.length) {
+      // 备份目录要能自证回滚：连同"改动前的 index"一起存一份——
+      // 归档读取以 index.order 为准，只把文件放回去而不恢复 order 是读不出来的
+      await backupIndexSnapshot(dir);
+      console.warn(`[session-archive] ${retired.length} 个会话被移出存档（已备份到 .removed/）：${retired.slice(0, 5).join(", ")}${retired.length > 5 ? " …" : ""}`);
+      await pruneRemovedBackups(dir);
     }
     entries = orderedIds.map((id) => ({ id, file: encodeSessionId(id) }));
     for (const id of [...byId.keys()]) {
@@ -166,6 +229,7 @@ export function createSessionArchive({ dir, legacyFile }) {
       }
     }
     await writeIndex();
+    return { blocked: false, retired: retired.length };
   };
 
   const withArchive = (job) => enqueue(async () => {
@@ -230,15 +294,18 @@ export function createSessionArchive({ dir, legacyFile }) {
           byId.set(key, session);
           fingerprints.set(key, contentFingerprint(session));
         }
+        const removedStamp = new Date().toISOString().replace(/[:.]/g, "-");
         for (const id of removed) {
           const key = String(id || "");
           if (!key) continue;
-          await fs.rm(path.join(dir, encodeSessionId(key)), { force: true }).catch(() => {});
+          // 显式删除也先备份：用户误操作/渲染端 bug 都可回滚
+          await retireSessionFile(dir, encodeSessionId(key), removedStamp);
           byId.delete(key);
           fingerprints.delete(key);
         }
+        await pruneRemovedBackups(dir);
         if (typeof nextActiveId === "string" && nextActiveId) activeId = nextActiveId;
-        await persistOrder(order.map((id) => String(id)));
+        await persistOrder(order.map((id) => String(id)), new Set(removed.map(String)));
       });
     },
 

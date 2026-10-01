@@ -766,3 +766,24 @@ test("MemoryService：dispose 清掉整合定时器，不在退出后继续跑",
   await disposeHost(ctx);
   assert.equal(service.consolidationTimer, null, "dispose 应清掉定时器");
 });
+
+// 回归：模型配置被"由非空覆盖成空"时先留快照（真实事故：渲染端空状态保存清空了密钥）
+test("SettingsService：模型配置由有变空时先留 .bak 快照，再覆盖", async (t) => {
+  const dir = await makeTmpDir(t);
+  const ctx = await createHost({ userDataDir: dir, safeStorage: fakeSafeStorage() });
+  try {
+    await ctx.settings.write({ endpoint: "https://api.example.com", model: "m1", apiKey: "sk-secret", updateUrl: "https://github.com/richardguancn/dyworker" });
+    // 模拟渲染端带着空模型配置保存
+    await ctx.settings.write({ endpoint: "", model: "", apiKey: "", updateUrl: "https://github.com/richardguancn/dyworker" });
+    const backups = (await fs.readdir(dir)).filter((name) => name.startsWith("settings.json.") && name.endsWith(".bak"));
+    assert.equal(backups.length, 1, "应留下 1 份快照");
+    const snapshot = JSON.parse(await fs.readFile(path.join(dir, backups[0]), "utf8"));
+    assert.equal(snapshot.endpoint, "https://api.example.com", "快照里应保留原模型配置");
+    assert.equal(snapshot.encrypted, true);
+    assert.ok(snapshot.apiKey && !String(snapshot.apiKey).includes("sk-secret"), "快照里应保留密文而非明文");
+    // 覆盖本身仍然执行（不阻断正常的清空流程）
+    assert.equal((await ctx.settings.read()).endpoint, "");
+  } finally {
+    await disposeHost(ctx);
+  }
+});

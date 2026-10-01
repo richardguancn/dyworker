@@ -1,13 +1,14 @@
 // IPC 域插件：工作区（workspace:* / workspace-pins:*）。
 // 领域能力来自 electron/workspace.mts（纯函数，直接 import）；
 // 桌面边界（原生目录选择器/系统打开/文件管理器定位）与状态文件由壳层注入。
+import { snapshotFileBeforeOverwrite } from "../state-snapshot.mts";
 import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "../../workspace.mts";
 
 export function workspaceIpcPlugin(deps) {
   return {
     name: "ipc:workspace",
     apply(ctx) {
-      const { trustedHandle, dataFile, writeJson, dialog, shell, getMainWindow, isTrustedRendererUrl } = deps;
+      const { trustedHandle, dataFile, readJson, writeJson, dialog, shell, getMainWindow, isTrustedRendererUrl } = deps;
 
       trustedHandle("workspace:choose", async () => {
         const result = await dialog.showOpenDialog(getMainWindow(), {
@@ -59,7 +60,13 @@ export function workspaceIpcPlugin(deps) {
           const normalized = Array.isArray(paths)
             ? [...new Set(paths.map((item) => String(item || "").trim()).filter(Boolean))]
             : [];
-          await writeJson(dataFile("workspace-pins.json"), normalized);
+          const file = dataFile("workspace-pins.json");
+          // 由"有"变"无"时先留快照：整份覆盖曾是配置丢失的入口（异常启动把置顶冲成 []）
+          if (!normalized.length) {
+            const stored = await readJson(file, []);
+            if (Array.isArray(stored) && stored.length) await snapshotFileBeforeOverwrite(file);
+          }
+          await writeJson(file, normalized);
           return { ok: true };
         } catch (error: any) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };
