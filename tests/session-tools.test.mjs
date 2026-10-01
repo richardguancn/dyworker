@@ -255,7 +255,8 @@ test("handleSideChatTool:无会话与未知工具的兜底", () => {
 });
 
 test("main.mjs 接线契约:chat:complete 带会话检索工具循环", () => {
-  const source = readFileSync(path.join(here, "../electron/main.mts"), "utf8");
+  // chat:complete 已拆到 host/plugins/chat-ipc.mts（侧边聊天工具循环随域搬迁）
+  const source = readFileSync(path.join(here, "../electron/host/plugins/chat-ipc.mts"), "utf8");
   // 渲染层传入的 session 开放侧边聊天工具
   assert.match(source, /payload\?\.session \|\| null/);
   assert.match(source, /sideChatToolDefinitions\(\)/);
