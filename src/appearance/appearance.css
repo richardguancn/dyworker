@@ -101,8 +101,10 @@ html[data-translucent="true"] .tool-panel.browser-mode {
   border-left-color: var(--border);
 }
 
+/* 输入框是对话流的视觉锚点：正文会从它后面流过，用加浓卡片色托底，
+   否则流过的工具行/回复会和占位符混在一起（半透明与普通模式观感由 alpha 差异区分） */
 html[data-translucent="true"] .composer-card {
-  background: var(--card);
+  background: var(--card-raised, var(--card));
 }
 
 /* 浮层菜单/预览/toast 统一卡片色：深色下原为硬编码中性黑，
@@ -127,7 +129,9 @@ html[data-translucent="true"] .identity-dialog {
 }
 
 /* 主区域与独立标题栏沿用侧栏材质。内部卡片不重复叠加底色，
-   避免相同透明度叠两层后变成更厚重的黑块/白块。 */
+   避免相同透明度叠两层后变成更厚重的黑块/白块。
+   输入框（composer-card）例外：它悬浮在对话流上方、正文从其后流过，
+   必须用 --card-raised 托底保证可读，见上方单独规则。 */
 html[data-translucent="true"] .main-panel,
 html[data-translucent="true"] .titlebar,
 html[data-theme="dark"][data-translucent="true"] .titlebar {
@@ -136,7 +140,6 @@ html[data-theme="dark"][data-translucent="true"] .titlebar {
 
 html[data-translucent="true"] .topbar,
 html[data-theme="dark"][data-translucent="true"] .topbar,
-html[data-translucent="true"] .composer-card,
 html[data-translucent="true"] .new-task-button,
 html[data-translucent="true"] .plan-card,
 html[data-translucent="true"] .tool-summary,
@@ -574,6 +577,13 @@ html[data-translucent="true"] .status-toast,
 html[data-translucent="true"] .conversation-turn-preview {
   backdrop-filter: blur(24px) saturate(1.3);
   -webkit-backdrop-filter: blur(24px) saturate(1.3);
+}
+
+/* 提示 toast 与排队消息卡同样悬浮在对话流上方：模糊只在部分环境生效
+   （系统材质下会被通配规则禁用），加浓托底保证任何组合下文字都可读 */
+html[data-translucent="true"] .status-toast,
+html[data-translucent="true"] .queue-card {
+  background: var(--card-raised, var(--card));
 }
 
 /* ---- 半透明模式：轨迹控制台从专用实色改为面板同源玻璃底 ----

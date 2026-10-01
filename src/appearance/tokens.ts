@@ -104,7 +104,7 @@ export function normalizeHex(input: unknown): string | null {
 // 面板色派生的 CSS 变量映射。无自定义色、透明度为 0 且玻璃关闭时返回 null
 //（controller 移除内联变量、回退样式表默认，老用户观感不变）。文字色（ink/muted/quiet）
 // 与 accent 保持主题默认。
-export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--bubble", "--table-head"] as const;
+export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--card-raised", "--bubble", "--table-head"] as const;
 
 /**
  * 派生规则：自定义色与主题默认面板色混合，得到协调的导航/面板底色；
@@ -113,6 +113,8 @@ export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "
  * alpha = 1 - t/100，文字与图标不受影响。全部面板（侧边栏/正文区/标题栏/
  * 输入框/新建任务/工作计划/改动卡片/表格标题栏）共用同一 alpha，全界面透明度
  * 与左侧面板统一。玻璃开启时强制面板至少保留 22% 透出，模糊才可见。
+ * --card-raised 是 --card 的加浓版（补足剩余透明度），供输入框与悬浮在
+ * 对话流上的元素托底，避免流过的文字透出来干扰输入。
  */
 export function derivePalette(
   settings: Pick<AppearanceSettings, "background">,
@@ -128,6 +130,11 @@ export function derivePalette(
   if (custom && !parseHexColor(custom)) return null;
   let alpha = 1 - transparency / 100;
   if (glass) alpha = Math.min(alpha, 0.78);
+  // 输入框与悬浮层的托底 alpha：对话正文会从输入框后流过，提示 toast / 排队消息卡
+  // 悬浮在正文上方，与面板同 alpha 会把后面的文字透出来和占位符混叠。
+  // 在面板 alpha 基础上补足剩余透明度的 70%（单调不减，alpha=1 时仍为 1）：
+  // 文字不再干扰输入，同时面板透出时输入框也保留一点透出维持半透明观感
+  const raisedAlpha = alpha + (1 - alpha) * 0.7;
   // 全部面板共用同一 alpha：侧边栏、正文区（surface-strong）与卡片级表面透明度统一，
   // 避免卡片叠在更实的正文区上时视觉透明度与侧边栏脱节
   const entries: Array<[string, string | null, number]> = [
@@ -137,6 +144,7 @@ export function derivePalette(
     ["--sidebar-active", mixColor(baseHex, defaults.sidebarActive, 0.3), alpha],
     // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致；alpha 与侧边栏一致
     ["--card", mixColor(baseHex, defaults.card, 0.42), alpha],
+    ["--card-raised", mixColor(baseHex, defaults.card, 0.42), raisedAlpha],
     ["--bubble", mixColor(baseHex, defaults.bubble, 0.5), alpha],
     // 表格标题栏：色调与 bubble 一致，alpha 与侧边栏/卡片同一层级
     ["--table-head", mixColor(baseHex, defaults.bubble, 0.5), alpha],

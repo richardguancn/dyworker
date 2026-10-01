@@ -11,6 +11,7 @@ import {
   saveAppearance,
 } from "../electron/appearance.mts";
 import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "../electron/appearance-platform.mts";
+import { derivePalette } from "../src/appearance/tokens.ts";
 
 async function makeTmpDir(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyw-appearance-"));
@@ -466,4 +467,28 @@ test("透明卡片不嵌套毛玻璃，避免系统材质和背景图组合下�
   for (const name of ["topbar", "composer-card", "new-task-button", "plan-card", "tool-summary"]) {
     assert.ok(rules.some(([, selector, body]) => selector.includes(`html[data-translucent="true"] .${name}`) && /backdrop-filter:\s*none/.test(body)), `${name} 应取消默认毛玻璃`);
   }
+});
+
+test("托底色派生：--card-raised 比 --card 更实且单调不减，玻璃下同样抬升", () => {
+  const alphaOf = (value) => Number(/rgba\([\d.]+, [\d.]+, [\d.]+, ([\d.]+)\)/.exec(value)[1]);
+  const rgbOf = (value) => /^rgba\(([\d.]+, [\d.]+, [\d.]+),/.exec(value)[1];
+  const mid = derivePalette({ background: { transparency: 50 } }, "light");
+  assert.equal(rgbOf(mid["--card-raised"]), rgbOf(mid["--card"]), "托底色与卡片色同色");
+  assert.equal(alphaOf(mid["--card"]), 0.5);
+  assert.equal(alphaOf(mid["--card-raised"]), 0.85);
+  const opaque = derivePalette({ background: { lightColor: "#336699", darkColor: "#336699", transparency: 0 } }, "light");
+  assert.equal(alphaOf(opaque["--card-raised"]), 1, "无透明度时托底不降低不透明度");
+  const glass = derivePalette({ background: { transparency: 50 } }, "light", { glass: true });
+  assert.ok(alphaOf(glass["--card-raised"]) > alphaOf(glass["--card"]));
+});
+
+test("输入框与悬浮层托底：data-translucent 下输入框/toast/排队卡用加浓卡片色，不再强制透明", async () => {
+  const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
+  assert.match(css, /html\[data-translucent="true"\]\s*\.composer-card\s*\{[^}]*background:\s*var\(--card-raised, var\(--card\)\)/);
+  assert.match(css, /html\[data-translucent="true"\]\s*\.status-toast,\s*html\[data-translucent="true"\]\s*\.queue-card\s*\{[^}]*background:\s*var\(--card-raised, var\(--card\)\)/);
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]+)\}/g)];
+  assert.ok(
+    !rules.some(([, selector, body]) => selector.includes(".composer-card") && /background:\s*transparent/.test(body)),
+    "输入框不允许再被置为全透明",
+  );
 });
