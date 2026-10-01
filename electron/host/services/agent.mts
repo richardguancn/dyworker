@@ -83,9 +83,14 @@ export class AgentService extends Service {
           extraTools,
           onExtraTool,
           // 插件策略接缝：tools/pre-execute waterfall 事件（见 host/events.mts）。
-          // 用户/工作区钩子在 runAgent 内先行判定，事件只能追加限制
+          // 用户/工作区钩子在 runAgent 内先行判定，事件只能追加限制。
+          // cordis 的 waterfall 把「最后一个实参」当作兜底函数（无监听器时调用它），
+          // 其余实参会原样传给监听器并追加 next。因此必须显式传兜底 `() => null`，
+          // 否则无监听器时 cordis 会对 null 调用 → TypeError: inner is not a function，
+          // 每个工具调用都会打断整个任务；漏传还会让监听器少收到一个实参
+          // （current 槽位变成 next，next 变成 undefined）。
           beforeToolExecute: async ({ name, args }) => {
-            return await this.ctx.waterfall("tools/pre-execute", name, args, null);
+            return await this.ctx.waterfall("tools/pre-execute", name, args, null, () => null);
           },
           emit,
           isCancelled,

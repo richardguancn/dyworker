@@ -323,4 +323,8 @@ constructor() {
   }
 }
 
-export const backgroundTasksManager = new BackgroundTasksManager();
+// 工厂：由宿主插件在 apply 时创建实例，使后台任务表随宿主隔离
+// （每 createHost 一份，而不是模块级共享；两个宿主/测试并发时不会互相污染）。
+export function createBackgroundTasksManager() {
+  return new BackgroundTasksManager();
+}

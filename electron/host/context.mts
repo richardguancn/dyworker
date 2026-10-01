@@ -11,10 +11,17 @@ import { AuditService } from "./services/audit.mts";
 import { SettingsService } from "./services/settings.mts";
 import { SessionsService } from "./services/session-archive.mts";
 import { AgentService } from "./services/agent.mts";
+import { RulesService } from "./services/rules.mts";
+import { SkillsService } from "./services/skills.mts";
+import { MemoryService } from "./services/memory.mts";
+import { InboxService } from "./services/inbox.mts";
+import { SchedulerService } from "./services/scheduler.mts";
 import path from "node:path";
 
 export interface HostOptions {
   userDataDir: string;
+  // 用户主目录（文件技能 SKILL.md 的发现范围），由壳层注入
+  homeDir?: string;
   // Electron safeStorage（duck-typed，测试可注入假实现）
   safeStorage?: any;
   // 读设置后依次应用领域修正（模型目录等），由壳层注册
@@ -22,9 +29,28 @@ export interface HostOptions {
   // 代理服务的领域解析器（记忆/技能/唤醒/MCP 等，见 services/agent.mts）
   agentResolvers?: any;
   startBackgroundTask?: any;
-  // 运行期服务注册器：壳层在 whenReady 阶段把带生命周期的域对象
-  // （渠道管理器、用量统计、运营消息等）挂进宿主，dispose 时统一清理。
-  // 返回 ctx.plugin(...) 的 fiber 数组，createHost 会等它们激活后再返回
+  // 收件箱与渲染端/系统通知的边界（壳层注入，host 不 import electron）：
+  // broadcast：收件箱有变化时通知渲染端刷新；notify：新条目弹系统通知（含点击聚焦）
+  inboxBroadcast?: () => void;
+  inboxNotify?: (item: any) => void;
+  // 调度服务的壳层边界：忙碌/关机判定、任务执行、渲染端广播
+  schedulerHooks?: {
+    isShuttingDown?: () => boolean;
+    isSessionBusy?: (sessionId: string) => boolean;
+    isSystemBusy?: () => boolean;
+    runScheduledTask?: (record: any) => Promise<void> | void;
+    resumeWake?: (wake: any) => Promise<void> | void;
+    broadcast?: () => void;
+  };
+  // 运行期服务注册器：壳层可把带生命周期的域对象（渠道管理器、用量统计、
+  // 运营消息等）挂进宿主，dispose 时统一清理。返回 ctx.plugin(...) 的 fiber
+  // 数组，createHost 会等它们激活后再返回。
+  //
+  // 重要约束：回调在 createHost 内部、`await ctx.fiber.await()` 之后同步执行，
+  // 即仍处于调用方的顶层 await 期间。此时调用方模块中位于该 await 之后的
+  // const/let 仍处于 TDZ，在回调里引用会抛 ReferenceError。因此这里只能引用
+  // 调用 createHost 之前已完成初始化的绑定（import、函数声明、earlier const）；
+  // 在 await 之后才创建的对象请在创建点直接 ctx.plugin(...) 挂载。
   registerService?: (ctx: Context) => any[] | void;
 }
 
@@ -40,6 +66,25 @@ export async function createHost(options: HostOptions) {
   new SessionsService(ctx, {
     dir: path.join(options.userDataDir, "sessions"),
     legacyFile: path.join(options.userDataDir, "sessions.json"),
+  });
+  new RulesService(ctx, {
+    filePath: path.join(options.userDataDir, "standing-rules.json"),
+  });
+  new SkillsService(ctx, {
+    dir: options.userDataDir,
+    homeDir: options.homeDir || "",
+  });
+  new MemoryService(ctx, {
+    dir: options.userDataDir,
+  });
+  new InboxService(ctx, {
+    dir: options.userDataDir,
+    broadcast: options.inboxBroadcast,
+    notify: options.inboxNotify,
+  });
+  new SchedulerService(ctx, {
+    dir: options.userDataDir,
+    ...(options.schedulerHooks || {}),
   });
   new AgentService(ctx, {
     resolvers: options.agentResolvers || {},

@@ -1443,7 +1443,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /broadcastChannelsStatus/);
   // 渠道停机挂进宿主生命周期（channelsPlugin，dispose 时统一执行）
   assert.match(main, /channelsPlugin\(channelManager\)/);
-  assert.match(runtimeDomainsSource, /=> manager\.stopAll\(\)/);
+  assert.match(runtimeDomainsSource, /stop: \(manager\) => manager\?\.stopAll\?\.\(\)/);
   assert.match(main, /channel-chats\.json/);
   assert.match(main, /channel-credentials\.json/);
   // 设置保存与启动时热生效
