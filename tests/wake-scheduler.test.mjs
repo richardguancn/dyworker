@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateApproval, isLowRiskCommand } from "../electron/agent.mts";
@@ -70,22 +71,25 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   const mainCode = await fs.readFile(path.join(root, "electron/main.mts"), "utf8");
 
   // 1. 动态近邻定时器
-  assert.match(mainCode, /function scheduleNextWakeCheck/);
-  assert.match(mainCode, /void scheduleNextWakeCheck\(\)/);
+  // 近邻唤醒定时器已上收 ctx.scheduler
+  const schedulerSource = readFileSync(new URL("../electron/host/services/scheduler.mts", import.meta.url), "utf8");
+  assert.match(schedulerSource, /async scheduleNextWakeCheck\(\)/);
+  assert.match(mainCode, /void ctx\.scheduler\.scheduleNextWakeCheck\(\)/);
 
   // 2. powerMonitor 休眠/唤醒监听
   assert.match(mainCode, /powerMonitor\.on\("resume"/);
   assert.match(mainCode, /powerMonitor\.on\("unlock-screen"/);
 
   // 3. 细粒度互斥守卫与解除锁死
-  assert.match(mainCode, /runningWakeSessionIds/);
-  assert.match(mainCode, /activeAgents\.has\(sid\)/);
+  // 细粒度互斥：会话是否活跃由壳层判定（hooks），"同一会话不重入"由服务持有
+  assert.match(schedulerSource, /this\.runningWakeSessions\.has\(sid\)/);
+  assert.match(mainCode, /isSessionBusy: \(sessionId\) => activeAgents\.has\(sessionId\)/);
 
   // 4. resumeWake 自主审批提升 (提升至 auto 模式自主推进)
   assert.match(mainCode, /sourceApprovalMode === "full-access" \? "full-access" : "auto"/);
 
-  // 5. 审批等待期间释放 runningScheduledTask 锁
-  assert.match(mainCode, /runningScheduledTask = false;[\s\S]*?awaitInboxWithTimeout[\s\S]*?runningScheduledTask = true;/);
+  // 5. 审批等待期间释放 runningScheduledTask 锁（等待入口现为 ctx.inbox.awaitWithTimeout）
+  assert.match(mainCode, /ctx\.scheduler\.running = false;[\s\S]*?ctx\.inbox\.awaitWithTimeout[\s\S]*?ctx\.scheduler\.running = true;/);
 
   // 6. 异常留痕杜绝静默吞没
   assert.match(mainCode, /到点自动唤醒失败/);

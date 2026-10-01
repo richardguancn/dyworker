@@ -1,5 +1,8 @@
 import assert from "node:assert";
-import { backgroundTasksManager } from "../electron/background-tasks.mts";
+import { createBackgroundTasksManager } from "../electron/background-tasks.mts";
+
+// 用工厂创建，而不是模块级单例：实例归宿主插件所有（生产路径见 backgroundTasksPlugin）
+const backgroundTasksManager = createBackgroundTasksManager();
 
 async function runTests() {
   console.log("▶ 开始测试 background-tasks 模块...");

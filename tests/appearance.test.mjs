@@ -407,7 +407,10 @@ test("windowBackgroundFor：自定义色、默认底色与系统材质透出", (
 
 test("R1: 主进程与渲染端契约在取消预览时返回已保存的系统材质 effective", async () => {
   const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
-  assert.match(mainSrc, /appearance:cancel-preview[\s\S]*?effective:\s*appearanceEffective/);
+  // 外观 IPC 已拆到 host/plugins/appearance-ipc.mts；bridge.getEffective() 就是壳层那份 appearanceEffective
+  const pluginSrc = await fs.readFile(path.join(process.cwd(), "electron/host/plugins/appearance-ipc.mts"), "utf8");
+  assert.match(pluginSrc, /appearance:cancel-preview[\s\S]*?effective:\s*bridge\.getEffective\(\)/);
+  assert.match(mainSrc, /getEffective: \(\) => appearanceEffective/);
   const controllerSrc = await fs.readFile(path.join(process.cwd(), "src/appearance/controller.ts"), "utf8");
   assert.match(controllerSrc, /savedEffective:\s*AppearanceEffectiveState/);
   assert.match(controllerSrc, /effective:\s*restoredEffective/);
