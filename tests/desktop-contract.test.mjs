@@ -22,6 +22,7 @@ const hostSessionsService = readSource(new URL("../electron/host/services/sessio
 const hostAgentService = readSource(new URL("../electron/host/services/agent.mts", import.meta.url));
 const runtimeDomainsSource = readSource(new URL("../electron/host/services/runtime-domains.mts", import.meta.url));
 const rulesIpcSource = readSource(new URL("../electron/host/plugins/rules-ipc.mts", import.meta.url));
+const rulesServiceSource = readSource(new URL("../electron/host/services/rules.mts", import.meta.url));
 const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
@@ -1306,7 +1307,7 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(rulesIpcSource, /trustedHandle\("rules:list"/);
   assert.match(rulesIpcSource, /trustedHandle\("rules:add"/);
   assert.match(rulesIpcSource, /trustedHandle\("rules:delete"/);
-  assert.match(rulesIpcSource, /kind === "command-prefix" \? \{ command: pattern \}/);
+  assert.match(rulesServiceSource, /kind === "command-prefix" \? \{ command: pattern \}/);
   assert.match(main, /ctx\.plugin\(rulesIpcPlugin\(/);
   assert.match(main, /readStandingRules,/);
   assert.match(hostAgentService, /standingRules: await this\.resolvers\.readStandingRules\(\)/);
