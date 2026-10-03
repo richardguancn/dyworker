@@ -271,7 +271,7 @@ export function createActivityTracker({
 
 // ---- HTTP 基础 ----
 
-// 带状态码的错误：控制器据 401/403 走凭据轮换（同 installation_id 重新登记换发）
+// 认证失败保留状态码；已撤销设备不能通过重新登记自动恢复。
 function httpError(message, status) {
   const error = new Error(message);
   error.status = status;
@@ -283,7 +283,7 @@ async function fetchJson(fetchImpl, url, { method = "GET", token = "", body, tim
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const headers: any = { Accept: "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (token) headers.Authorization = `Device ${token}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetchImpl(url, {
       method,
@@ -306,6 +306,8 @@ async function fetchJson(fetchImpl, url, { method = "GET", token = "", body, tim
 function responseData(result) {
   // 平台统一 code/message/data 包装；code 为 0/200/null 视为业务成功
   const payload = result.payload;
+  if (!payload || typeof payload !== "object") throw httpError("服务响应格式无效", result.status);
+  if (payload.code != null && payload.code !== 0 && payload.code !== 200) throw httpError(String(payload.message || "服务请求失败"), payload.code);
   if (payload && typeof payload === "object" && "data" in payload) {
     const code = payload.code;
     if (code !== 0 && code !== 200 && code !== null && code !== undefined) return null;
@@ -321,6 +323,7 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
   let token = "";
   let clockOffsetMs = null;
   let revoked = false;
+  let generation = 0;
 
   const url = (suffix) => `${baseUrl.replace(/\/+$/, "")}${suffix}`;
 
@@ -338,6 +341,7 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
     },
     setToken(nextToken) {
       token = String(nextToken || "");
+      if (token) revoked = false;
     },
     getToken: () => token,
     isConfigured: () => baseUrl.length > 0,
@@ -348,6 +352,7 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
       token = "";
     },
     isRevoked: () => revoked,
+    resetRevocation() { revoked = false; },
     async register({ installationId, appVersion, platform, arch, releaseChannel, statsEnabled, messagesEnabled }) {
       const result = await fetchJson(fetchImpl, url("/api/v1/dyworker/installations/register"), {
         method: "POST",
@@ -357,46 +362,57 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
           platform,
           arch,
           release_channel: releaseChannel,
-          stats_enabled: statsEnabled === true,
+          telemetry_enabled: statsEnabled === true,
           messages_enabled: messagesEnabled === true,
         },
       });
-      if (!result.ok) throw new Error(`设备登记失败：HTTP ${result.status}`);
+      if (!result.ok) throw httpError(`设备登记失败：HTTP ${result.status}`, result.status);
       const data = responseData(result);
-      const nextToken = String(data?.token || data?.device_token || "");
+      const nextToken = data?.device_secret && data?.installation_id === installationId ? `${installationId}.${data.device_secret}` : "";
       if (!nextToken) throw new Error("设备登记响应缺少凭据");
       noteServerTime(data?.server_time || data?.now);
       token = nextToken;
       revoked = false;
+      generation = 1;
       return { token: nextToken };
     },
-    async syncPreferences({ statsEnabled, messagesEnabled, consentGeneration }) {
+    async syncPreferences({ statsEnabled, messagesEnabled }) {
       if (!token) throw new Error("尚未完成设备登记");
       const result = await fetchJson(fetchImpl, url("/api/v1/dyworker/installations/preferences"), {
         method: "PUT",
         token,
         body: {
-          stats_enabled: statsEnabled === true,
+          telemetry_enabled: statsEnabled === true,
           messages_enabled: messagesEnabled === true,
-          consent_generation: Math.max(0, Math.floor(Number(consentGeneration) || 0)),
         },
       });
-      if (!result.ok) throw new Error(`同步运营设置失败：HTTP ${result.status}`);
-      noteServerTime(responseData(result)?.server_time);
-      return true;
+      if (!result.ok) throw httpError(`同步运营设置失败：HTTP ${result.status}`, result.status);
+      const data = responseData(result);
+      if (!Number.isInteger(data?.generation) || data.generation < 1) throw new Error("设置同步响应缺少授权代次");
+      generation = data.generation;
+      noteServerTime(data.server_time);
+      return generation;
     },
     async uploadBatch(events) {
       if (!token) throw new Error("尚未完成设备登记");
       const result = await fetchJson(fetchImpl, url("/api/v1/dyworker/telemetry/batches"), {
         method: "POST",
         token,
-        body: { events },
+        body: {
+          schema_version: SCHEMA_VERSION, metric_version: METRIC_VERSION, consent_generation: generation,
+          events: events.map(({ type, started_at, ended_at, ...event }) => ({
+            ...event,
+            event_type: type === "app_activity" ? "activity" : type === "usage_interval" ? "interval" : type,
+            ...(started_at ? { interval_start: started_at, interval_end: ended_at } : {}),
+          })),
+        },
         timeoutMs: 30_000,
       });
       if (!result.ok) throw httpError(`统计上报失败：HTTP ${result.status}`, result.status);
       const data = responseData(result);
       noteServerTime(data?.server_time);
-      const results = Array.isArray(data?.results) ? data.results : [];
+      if (!Array.isArray(data?.results)) throw new Error("统计响应缺少逐条确认，保留本地队列");
+      const results = data.results;
       const accepted = [];
       const duplicate = [];
       const rejected = [];
@@ -406,10 +422,6 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
         if (item.status === "accepted") accepted.push(id);
         else if (item.status === "duplicate") duplicate.push(id);
         else if (item.status === "rejected") rejected.push(id);
-      }
-      // 兼容不带逐条结果的成功响应：全部按已接受处理
-      if (!results.length) {
-        return { accepted: events.map((event) => event.event_id), duplicate: [], rejected: [] };
       }
       return { accepted, duplicate, rejected };
     },
@@ -423,6 +435,7 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
       });
       if (result.status === 401 || result.status === 403) throw httpError("设备凭据已失效", result.status);
       if (!result.ok) throw httpError(`心跳失败：HTTP ${result.status}`, result.status);
+      responseData(result);
       return true;
     },
     async deleteInstallation() {
@@ -433,6 +446,7 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
         timeoutMs: 15_000,
       });
       if (!result.ok) throw new Error(`删除安装数据失败：HTTP ${result.status}`);
+      responseData(result);
       revoked = true;
       token = "";
       return true;
@@ -468,9 +482,7 @@ export function createTelemetryController({
 
   let settings = null;
   // 上一次 configure 后统计是否处于有效开启：标量快照，调用方原地修改设置对象也不影响判断
-  let lastStatsOn = false;
-  let configuredOnce = false;
-  let state = { installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(), consent_generation: 0 };
+  let state = { installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(), consent_generation: 0, service_url: "", registered: false, revoked: false };
   let credentialMode = "none"; // safe-storage | session | none
   let tracker = null;
   let uploadTimer = null;
@@ -485,6 +497,13 @@ export function createTelemetryController({
   let stateLoaded = null;
   let started = false;
   let writeChain = Promise.resolve();
+  let networkChain = Promise.resolve();
+  let settingsRevision = 0;
+  const networkTask = (task) => {
+    const run = networkChain.then(task, task);
+    networkChain = run.catch(() => {});
+    return run;
+  };
 
   function enqueueWrite(task) {
     const run = writeChain.then(task, task);
@@ -510,6 +529,9 @@ export function createTelemetryController({
             installation_id: String(raw.installation_id) as any,
             created_at: String(raw.created_at || state.created_at),
             consent_generation: Math.max(0, Math.floor(Number(raw.consent_generation) || 0)),
+            service_url: String(raw.service_url || ""),
+            registered: raw.registered === true,
+            revoked: raw.revoked === true,
           };
         }
       } catch {
@@ -565,8 +587,10 @@ export function createTelemetryController({
 
   async function ensureRegistered() {
     await loadStateOnce();
-    client.configure(serviceUrl());
-    if (client.getToken() && !client.isRevoked()) return;
+    if (state.revoked || client.isRevoked()) throw new Error("此设备已撤销，已停止联网，请联系管理员");
+    if (client.getToken()) return;
+    if (state.registered) throw new Error("无法读取此设备的安全凭据，请恢复系统安全存储后重试");
+    await persistState();
     const { token } = await client.register({
       installationId: state.installation_id,
       appVersion,
@@ -577,6 +601,8 @@ export function createTelemetryController({
       messagesEnabled: effectiveMessages(),
     });
     await saveCredentials(token);
+    state.registered = true;
+    await persistState();
     try {
       onRegistered();
     } catch {
@@ -586,12 +612,13 @@ export function createTelemetryController({
 
   async function syncPreferences() {
     await ensureRegistered();
-    await client.syncPreferences({
+    const revision = settingsRevision;
+    state.consent_generation = await client.syncPreferences({
       statsEnabled: effectiveStats(),
       messagesEnabled: effectiveMessages(),
-      consentGeneration: state.consent_generation,
     });
-    preferencesDirty = false;
+    await persistState();
+    preferencesDirty = revision !== settingsRevision;
     lastSyncAt = new Date(now()).toISOString();
     lastError = "";
   }
@@ -603,18 +630,17 @@ export function createTelemetryController({
 
   // 关闭统计本地立即生效：停止采集、清空待发送队列；在途请求的迟到确认对空队列无副作用
   function stopTracker() {
-    if (!tracker) return;
-    tracker.seal("stats-disabled");
+    tracker?.seal("stats-disabled");
     tracker = null;
-    void store.clear();
+    return store.clear();
   }
 
-  async function flushOnce() {
-    if (!effectiveStats() || !client.getToken() || uploadInFlight) return { ok: false, skipped: true };
+  async function flushInternal() {
+    if (!effectiveStats() || state.revoked || uploadInFlight) return { ok: false, skipped: true };
     uploadInFlight = true;
     try {
       if (preferencesDirty) await syncPreferences();
-      if (!client.getToken()) return { ok: false, error: "未登记设备" };
+      if (!effectiveStats() || preferencesDirty || !client.getToken()) return { ok: false, skipped: true };
       const events = await store.pending(200);
       if (!events.length) {
         failures = 0;
@@ -629,24 +655,10 @@ export function createTelemetryController({
       lastSyncAt = new Date(now()).toISOString();
       return { ok: true, uploaded: result.accepted.length + result.duplicate.length, rejected: result.rejected.length };
     } catch (error: any) {
-      // 凭据失效（401/403）：以同一 installation_id 重新登记换发凭据，
-      // 本批事件保持原 event_id 留在队列里下一周期重试
       if (error?.status === 401 || error?.status === 403) {
-        client.setToken("");
-        try {
-          await ensureRegistered();
-          await syncPreferences();
-          const retry = await client.uploadBatch(await store.pending(200));
-          await store.acknowledge({ accepted: retry.accepted.concat(retry.duplicate), rejected: retry.rejected });
-          lastError = "";
-          lastSyncAt = new Date(now()).toISOString();
-          return { ok: true, uploaded: retry.accepted.length + retry.duplicate.length, rejected: retry.rejected.length };
-        } catch (rotateError: any) {
-          lastError = rotateError instanceof Error ? rotateError.message : String(rotateError);
-          log(`[telemetry] ${lastError}`);
-          return { ok: false, error: lastError };
-        }
+        await revokeLocal();
       }
+      if (error?.status === 409) preferencesDirty = true;
       failures += 1;
       // 断网指数退避加随机抖动：60s 起步，封顶 30 分钟
       const delay = Math.min(UPLOAD_INTERVAL_MS * 2 ** (failures - 1), 30 * 60_000) + jitter(5_000);
@@ -659,14 +671,29 @@ export function createTelemetryController({
     }
   }
 
+  const flushOnce = () => networkTask(flushInternal);
+
+  async function revokeLocal() {
+    state.revoked = true;
+    client.markRevoked();
+    await stopTracker();
+    await clearCredentials();
+    await persistState();
+  }
+
   async function heartbeatOnce() {
-    if (!client.getToken() || client.isRevoked()) return;
-    if (!effectiveStats() && !effectiveMessages()) return;
-    try {
-      await client.heartbeat({ appVersion, platform });
-    } catch (error: any) {
-      log(`[telemetry] ${error instanceof Error ? error.message : String(error)}`);
-    }
+    return networkTask(async () => {
+      if (state.revoked || !serviceUrl()) return;
+      if (!effectiveStats() && !effectiveMessages() && !(preferencesDirty && client.getToken())) return;
+      try {
+        if (preferencesDirty) await syncPreferences();
+        if (effectiveStats() || effectiveMessages()) await client.heartbeat({ appVersion, platform });
+      } catch (error: any) {
+        if (error?.status === 401) await revokeLocal();
+        lastError = error instanceof Error ? error.message : String(error);
+        log(`[telemetry] ${lastError}`);
+      }
+    });
   }
 
   function scheduleHeartbeat(controller) {
@@ -683,46 +710,38 @@ export function createTelemetryController({
     store,
     client,
     async configure(nextSettings) {
-      settings = nextSettings;
+      const previousUrl = serviceUrl();
+      settings = { ...nextSettings, telemetry: { ...nextSettings?.telemetry } };
+      const revision = ++settingsRevision;
+      preferencesDirty = true;
+      // 本地停采集不等待任何网络请求完成。
+      if (!effectiveStats() || (previousUrl && previousUrl !== serviceUrl())) await stopTracker();
       await loadStateOnce();
-      const statsWasOn = configuredOnce && lastStatsOn;
-      const statsNowOn = effectiveStats();
-      const anyOn = statsNowOn || effectiveMessages();
-      client.configure(serviceUrl());
-      // 统计开关翻转推进授权代次；服务端据此拒绝旧代次批次。先推进再同步，
-      // 保证 PUT 带的就是新代次。启动时首次 configure：全新安装首次开启推进到 1，
-      // 重启恢复已开启的状态不重复推进（代次已大于 0）。
-      if (statsNowOn && !statsWasOn && !(configuredOnce === false && state.consent_generation > 0)) {
-        state.consent_generation += 1;
+      return networkTask(async () => {
+        if (revision !== settingsRevision) return;
+        const nextUrl = serviceUrl();
+        if (nextUrl && state.service_url && state.service_url !== nextUrl) {
+          await clearCredentials();
+          await store.clear();
+          state = { installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(),
+            consent_generation: 0, service_url: nextUrl, registered: false, revoked: false };
+          client.setToken("");
+          client.resetRevocation();
+        }
+        if (nextUrl) state.service_url = nextUrl;
+        client.configure(nextUrl);
         await persistState();
-      } else if (statsWasOn && !statsNowOn) {
-        state.consent_generation += 1;
-        await persistState();
-      }
-      if (anyOn) {
-        // 开启任一联网运营功能即发生设备登记；偏好（授权代次）随后同步。
-        // 断网时登记失败只记录错误，本地功能不受影响，下一周期重试。
+        if (effectiveStats() && !state.revoked) startTracker();
+        if (!nextUrl || state.revoked) return;
+        if (!effectiveStats() && !effectiveMessages() && !client.getToken()) return;
         try {
-          await ensureRegistered();
           await syncPreferences();
         } catch (error: any) {
+          if (error?.status === 401) await revokeLocal();
           lastError = error instanceof Error ? error.message : String(error);
           log(`[telemetry] ${lastError}`);
         }
-      }
-      if (!statsWasOn && statsNowOn) {
-        startTracker();
-      } else if (statsWasOn && !statsNowOn) {
-        // 关闭统计本地立即生效：停采集、清空待发送队列
-        stopTracker();
-        preferencesDirty = true;
-        // 重连后先同步关闭设置再进行任何上传（断网关闭也先本地生效）
-        if (anyOn) void syncPreferences().catch(() => {});
-      } else if (statsNowOn && !tracker) {
-        startTracker();
-      }
-      lastStatsOn = statsNowOn;
-      configuredOnce = true;
+      });
     },
     start() {
       if (started) return;
@@ -747,6 +766,7 @@ export function createTelemetryController({
     },
     // 供测试与主进程手动触发一次上报（定时器之外的能力）
     flushOnce,
+    heartbeatOnce,
     // 渲染端人工活动信号：点击/按键/滚动节流后进入
     noteUserActivity() {
       if (!tracker || !effectiveStats()) return;
@@ -767,7 +787,7 @@ export function createTelemetryController({
       if (!tracker) return;
       tracker.noteResume();
       // 恢复联网后先同步偏好再上传，避免关闭统计后旧批次再发出
-      if (preferencesDirty) void syncPreferences().then(() => flushOnce()).catch(() => {});
+      void heartbeatOnce().then(() => flushOnce()).catch(() => {});
     },
     noteLocked() {
       if (!tracker) return;
@@ -807,17 +827,13 @@ export function createTelemetryController({
     // 「删除此安装已上传数据」：撤销凭据并触发服务端删除流程，本地队列与凭据一并清除
     async deleteInstallationData() {
       await loadStateOnce();
-      if (!client.getToken()) {
-        await store.clear();
-        await clearCredentials();
-        return { ok: true, deleted: false };
-      }
-      client.configure(serviceUrl());
-      await client.deleteInstallation();
-      await store.clear();
-      await clearCredentials();
-      preferencesDirty = true;
-      return { ok: true, deleted: true };
+      return networkTask(async () => {
+        const registered = Boolean(client.getToken());
+        if (registered) await client.deleteInstallation();
+        await revokeLocal();
+        preferencesDirty = false;
+        return { ok: true, deleted: registered };
+      });
     },
     async status() {
       await loadStateOnce();

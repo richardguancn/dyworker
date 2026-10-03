@@ -86,7 +86,7 @@ async function fetchJsonWithToken(fetchImpl, url, { method = "GET", token = "", 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const headers: any = { Accept: "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (token) headers.Authorization = `Device ${token}`;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetchImpl(url, {
       method,
@@ -96,7 +96,10 @@ async function fetchJsonWithToken(fetchImpl, url, { method = "GET", token = "", 
     });
     let payload = null;
     try {
-      payload = await response.json();
+      // 平台的雪花消息编号超过 JS 安全整数，保留原始数字文本再转为字符串。
+      payload = (JSON.parse as any)(await response.text(), (_key, value, context) =>
+        typeof value === "number" && !Number.isSafeInteger(value) && /^-?\d+$/.test(context?.source || "")
+          ? context.source : value);
     } catch {
       payload = null;
     }
@@ -108,6 +111,8 @@ async function fetchJsonWithToken(fetchImpl, url, { method = "GET", token = "", 
 
 function responseData(result) {
   const payload = result.payload;
+  if (!payload || typeof payload !== "object") throw new Error("服务响应格式无效");
+  if (payload.code != null && payload.code !== 0 && payload.code !== 200) throw new Error(String(payload.message || "消息请求失败"));
   if (payload && typeof payload === "object" && "data" in payload) {
     const code = payload.code;
     if (code !== 0 && code !== 200 && code !== null && code !== undefined) return null;
@@ -130,6 +135,7 @@ export function createRemoteMessagesManager({
   const filePath = String(file || "");
   let state = {
     version: MESSAGE_STORE_VERSION,
+    scope: "",
     cursor: "",
     messages: [],
     pending_receipts: [],
@@ -145,6 +151,9 @@ export function createRemoteMessagesManager({
   let sseBackoffMs = 1_000;
   let pulling = false;
   let receiptBackoffUntil = 0;
+  let flushing = false;
+  let epoch = 0;
+  let pollingOnly = false;
 
   const messagesEnabled = () => settings?.messagesEnabled === true;
   const notifyPrefs = () => settings || {};
@@ -175,6 +184,7 @@ export function createRemoteMessagesManager({
         if (raw && typeof raw === "object" && Array.isArray(raw.messages)) {
           state = {
             version: MESSAGE_STORE_VERSION,
+            scope: String(raw.scope || ""),
             cursor: String(raw.cursor || ""),
             messages: raw.messages.filter((item) => item && typeof item.message_id === "string"),
             pending_receipts: Array.isArray(raw.pending_receipts) ? raw.pending_receipts : [],
@@ -190,15 +200,37 @@ export function createRemoteMessagesManager({
     return loaded;
   }
 
+  // 服务端历史时间字符串采用北京时间；转换后客户端不再受本机时区影响。
+  const serverTime = (value) => {
+    const text = String(value || "");
+    return /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(text) ? text.replace(" ", "T") + "+08:00" : text;
+  };
+
+  async function ensureScope() {
+    await loadOnce();
+    if (!token() || !baseUrl()) return;
+    const scope = `${baseUrl()}|${token().split(".")[0]}`;
+    if (state.scope === scope) return;
+    epoch += 1;
+    stopStream();
+    pollingOnly = false;
+    state = { version: MESSAGE_STORE_VERSION, scope, cursor: "", messages: [], pending_receipts: [], daily: { date: "", notified: 0 } };
+    await persist();
+    onChanged();
+  }
+
   function normalizeIncoming(raw) {
+    const link = String(raw?.action_url || raw?.link || "");
     const message = {
       message_id: String(raw?.message_id || raw?.id || ""),
-      category: String(raw?.category || "announcement"),
+      category: raw?.category === "update" ? "version" : String(raw?.category || "announcement"),
       title: String(raw?.title || "").slice(0, 200),
-      body: String(raw?.body || raw?.content || "").slice(0, 20_000),
-      link: /^https:\/\//i.test(String(raw?.link || "")) ? String(raw.link) : "",
-      published_at: String(raw?.published_at || ""),
-      expires_at: String(raw?.expires_at || ""),
+      body: String(raw?.content ?? raw?.body ?? "").slice(0, 20_000),
+      link: /^https:\/\//i.test(link) ? link : "",
+      published_at: serverTime(raw?.published_at),
+      expires_at: serverTime(raw?.expires_at),
+      read_at: serverTime(raw?.read_at),
+      clicked_at: serverTime(raw?.clicked_at),
       revoked: raw?.revoked === true || raw?.status === "revoked",
     };
     return message.message_id ? message : null;
@@ -235,108 +267,79 @@ export function createRemoteMessagesManager({
   }
 
   async function flushReceipts() {
-    if (!messagesEnabled() || !token() || !state.pending_receipts.length) return;
+    if (!messagesEnabled() || !token() || !state.pending_receipts.length || flushing) return;
     if (receiptBackoffUntil > now()) return;
+    flushing = true;
+    const requestEpoch = epoch;
     try {
-      const receipts = state.pending_receipts.slice(0, 100);
+      const receipts = state.pending_receipts.slice(0, 100).map((receipt) => ({ ...receipt }));
       const result = await fetchJsonWithToken(fetchImpl, `${baseUrl().replace(/\/+$/, "")}/api/v1/dyworker/messages/receipts`, {
-        method: "POST",
-        token: token(),
-        body: { receipts },
-        timeoutMs: 15_000,
+        method: "POST", token: token(), timeoutMs: 15_000,
+        body: { receipts: receipts.map((receipt) => ({ message_id: receipt.message_id,
+          received: Boolean(receipt.received_at || receipt.read_at || receipt.clicked_at),
+          read: Boolean(receipt.read_at || receipt.clicked_at), clicked: Boolean(receipt.clicked_at) })) },
       });
+      if (requestEpoch !== epoch || !messagesEnabled()) return;
       if (!result.ok) throw new Error(`HTTP ${result.status}`);
       const data = responseData(result);
-      const acknowledged = new Set(
-        Array.isArray(data?.acknowledged)
-          ? data.acknowledged.map(String)
-          : receipts.map((receipt) => receipt.message_id),
-      );
-      state.pending_receipts = state.pending_receipts.filter((receipt) => !acknowledged.has(receipt.message_id));
+      if (!Array.isArray(data?.results)) throw new Error("回执响应缺少逐条确认");
+      const acknowledged = new Set(data.results.filter((item) => item.status === "ok").map((item) => String(item.message_id)));
+      state.pending_receipts = state.pending_receipts.filter((receipt) => {
+        const sent = receipts.find((item) => item.message_id === receipt.message_id);
+        // 发送期间新增的已读/点击状态必须留下，不能被旧确认一并删掉。
+        return !acknowledged.has(receipt.message_id) || !sent ||
+          receipt.received_at !== sent.received_at || receipt.read_at !== sent.read_at || receipt.clicked_at !== sent.clicked_at;
+      });
       await persist();
-      receiptBackoffUntil = 0;
+      receiptBackoffUntil = acknowledged.size ? 0 : now() + 60_000;
     } catch (error: any) {
-      // 回执可重传；失败退避后重试，不影响消息中心可用性
       receiptBackoffUntil = now() + 60_000;
       log(`[remote-messages] 回执发送失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      flushing = false;
     }
   }
 
-  async function pull(reason = "manual", allowResync = true) {
+  async function pull(reason = "manual") {
     if (!messagesEnabled() || !token() || !baseUrl() || pulling) return { ok: false, skipped: true };
     pulling = true;
     try {
-      await loadOnce();
-      const result = await fetchJsonWithToken(
-        fetchImpl,
-        `${baseUrl().replace(/\/+$/, "")}/api/v1/dyworker/messages?cursor=${encodeURIComponent(state.cursor)}&limit=100`,
-        { token: token(), timeoutMs: 15_000 },
-      );
-      if (result.status === 401 || result.status === 403) {
-        log("[remote-messages] 设备凭据失效，暂停拉取");
-        return { ok: false, error: "凭据失效" };
-      }
-      if (!result.ok) throw new Error(`HTTP ${result.status}`);
-      const data = responseData(result);
-      if (data?.resync === true && allowResync) {
-        // 游标过期：从头重新同步一次，本地保留已读状态；防服务端持续要求重同步造成循环
-        state.cursor = "";
-        await persist();
-        pulling = false;
-        return pull("resync", false);
-      }
-      const incoming = (Array.isArray(data?.messages) ? data.messages : []).map(normalizeIncoming).filter(Boolean);
-      const revocations = new Set(
-        (Array.isArray(data?.revocations) ? data.revocations : []).map((item) => String(item?.message_id || item || "")),
-      );
-      let changed = false;
-      const notifyCandidates = [];
-      for (const message of incoming) {
-        const existing = state.messages.find((item) => item.message_id === message.message_id);
-        if (!existing) {
-          const record = {
-            ...message,
-            received_at: new Date(now()).toISOString(),
-            read_at: "",
-            clicked_at: "",
-            notified: false,
-          };
-          state.messages.push(record);
-          mergeReceipt(record.message_id, { message_id: record.message_id, received_at: record.received_at });
-          notifyCandidates.push(record);
-          changed = true;
-        } else {
-          // 服务端字段更新（如撤回），本地回执状态不倒退
-          if (message.revoked && !existing.revoked) {
-            existing.revoked = true;
-            changed = true;
-          }
-          if (message.body !== existing.body || message.title !== existing.title) {
-            existing.title = message.title;
-            existing.body = message.body;
-            existing.link = message.link;
-            changed = true;
+      await ensureScope();
+      const requestEpoch = epoch;
+      let received = 0;
+      for (let page = 0; page < 100; page += 1) {
+        const result = await fetchJsonWithToken(fetchImpl,
+          `${baseUrl().replace(/\/+$/, "")}/api/v1/dyworker/messages?cursor=${encodeURIComponent(state.cursor)}&limit=100`,
+          { token: token(), timeoutMs: 15_000 });
+        if (requestEpoch !== epoch || !messagesEnabled()) return { ok: false, skipped: true };
+        if (!result.ok) throw new Error(`HTTP ${result.status}`);
+        const data = responseData(result);
+        if (!Array.isArray(data?.items)) throw new Error("消息响应缺少消息列表，保留原游标");
+        const incoming = data.items.map(normalizeIncoming).filter(Boolean);
+        for (const message of incoming) {
+          const existing = state.messages.find((item) => item.message_id === message.message_id);
+          if (!existing) {
+            const record = { ...message, received_at: new Date(now()).toISOString(), notified: false };
+            state.messages.push(record);
+            mergeReceipt(record.message_id, { message_id: record.message_id, received_at: record.received_at });
+            if (!record.read_at) maybeNotify(record);
+          } else {
+            Object.assign(existing, { ...message, read_at: existing.read_at || message.read_at,
+              clicked_at: existing.clicked_at || message.clicked_at });
           }
         }
-      }
-      for (const messageId of revocations) {
-        const existing = state.messages.find((item) => item.message_id === messageId);
-        if (existing && !existing.revoked) {
-          existing.revoked = true;
-          changed = true;
-        }
-      }
-      const nextCursor = String(data?.next_cursor || data?.cursor || "");
-      if (nextCursor && nextCursor !== state.cursor) {
+        const oldCursor = state.cursor;
+        const nextCursor = String(data?.cursor || "");
+        if (!nextCursor) throw new Error("消息响应缺少游标");
         state.cursor = nextCursor;
-        changed = true;
+        await persist();
+        received += incoming.length;
+        onChanged();
+        if (!data.has_more) break;
+        if (oldCursor === nextCursor) throw new Error("消息分页未推进");
       }
-      // 游标推进与本地消息保存一并持久化
-      if (changed) await persist();
-      for (const candidate of notifyCandidates) maybeNotify(candidate);
-      if (changed) onChanged();
-      void flushReceipts();
-      return { ok: true, received: incoming.length };
+      await flushReceipts();
+      return { ok: true, received };
     } catch (error: any) {
       log(`[remote-messages] 拉取失败（${reason}）：${error instanceof Error ? error.message : String(error)}`);
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -348,17 +351,19 @@ export function createRemoteMessagesManager({
   // ---- SSE：带 Authorization 头的流式连接 ----
 
   async function connectStream() {
-    if (!started || !messagesEnabled() || !token() || !baseUrl()) return;
-    sseAbort = new AbortController();
+    if (!started || !messagesEnabled() || !token() || !baseUrl() || pollingOnly || sseAbort) return;
+    const abort = new AbortController();
+    sseAbort = abort;
     try {
       const response = await fetchImpl(`${baseUrl().replace(/\/+$/, "")}/api/v1/dyworker/messages/stream`, {
         headers: {
           Accept: "text/event-stream",
-          Authorization: `Bearer ${token()}`,
+          Authorization: `Device ${token()}`,
           "Cache-Control": "no-cache",
         },
-        signal: sseAbort.signal,
+        signal: abort.signal,
       });
+      if (response.status === 501) { pollingOnly = true; return; }
       if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`);
       sseBackoffMs = 1_000; // 连接成功后重置退避
       const parser = createSseParser((event) => {
@@ -377,14 +382,16 @@ export function createRemoteMessagesManager({
         parser.feed(decoder.decode(value, { stream: true }));
       }
     } catch (error: any) {
-      if (sseAbort?.signal.aborted) return;
+      if (abort.signal.aborted) return;
       log(`[remote-messages] SSE 断开：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (sseAbort === abort) sseAbort = null;
     }
-    scheduleReconnect();
+    if (!abort.signal.aborted) scheduleReconnect();
   }
 
   function scheduleReconnect() {
-    if (!started || !messagesEnabled()) return;
+    if (!started || !messagesEnabled() || pollingOnly) return;
     const delay = Math.min(sseBackoffMs, 60_000);
     sseBackoffMs = Math.min(sseBackoffMs * 2, 60_000);
     sseReconnectTimer = setTimeout(() => {
@@ -405,8 +412,9 @@ export function createRemoteMessagesManager({
   return {
     async configure(nextSettings) {
       const wasEnabled = messagesEnabled();
-      settings = nextSettings;
-      await loadOnce();
+      settings = { ...nextSettings };
+      epoch += 1;
+      await ensureScope();
       if (started && !wasEnabled && messagesEnabled()) {
         // 开启订阅：立即补拉并建立实时连接
         void pull("enabled");
@@ -417,9 +425,8 @@ export function createRemoteMessagesManager({
     start() {
       if (started) return;
       started = true;
-      if (!messagesEnabled()) return;
-      // 启动后立即补拉；SSE 连接建立后轮询仍作为兜底
-      void pull("startup").then(() => connectStream());
+      // 即使启动时订阅关闭，也保留轮询调度，稍后开启能持续收消息。
+      if (messagesEnabled()) void pull("startup").then(() => connectStream());
       pollTimer = setInterval(() => {
         if (messagesEnabled()) void pull("poll");
       }, pollIntervalMs);
@@ -427,6 +434,7 @@ export function createRemoteMessagesManager({
     },
     stop() {
       started = false;
+      epoch += 1;
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
       stopStream();
@@ -434,10 +442,11 @@ export function createRemoteMessagesManager({
     // 睡眠恢复/解锁/网络恢复后立即补拉未过期消息
     noteOnline() {
       if (started && messagesEnabled()) {
-        void pull("online");
+        void pull("online").then(() => connectStream());
       }
     },
     pull,
+    flushReceipts,
     async listMessages() {
       await loadOnce();
       return [...state.messages].sort((a, b) => String(b.published_at || b.received_at).localeCompare(String(a.published_at || a.received_at)));

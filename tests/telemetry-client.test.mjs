@@ -45,14 +45,14 @@ function startMockServer() {
       if (req.method === "POST" && req.url === "/api/v1/dyworker/installations/register") {
         state.registrations.push(parsed);
         state.tokenCount += 1;
-        return send({ code: 0, message: "ok", data: { token: `device-token-${state.tokenCount}`, server_time: Date.now() } });
+        return send({ code: 0, message: "ok", data: { installation_id: parsed.installation_id, device_secret: `device-token-${state.tokenCount}`, server_time: Date.now() } });
       }
       if (req.method === "PUT" && req.url === "/api/v1/dyworker/installations/preferences") {
         state.preferences.push(parsed);
-        return send({ code: 0, message: "ok", data: {} });
+        return send({ code: 0, message: "ok", data: {generation: state.preferences.length + 1} });
       }
       if (req.method === "POST" && req.url === "/api/v1/dyworker/telemetry/batches") {
-        if (state.expireToken && req.headers.authorization === `Bearer ${state.expireToken}`) {
+        if (state.expireToken && req.headers.authorization === `Device ${state.expireToken}`) {
           return send({ code: 401, message: "credential expired" }, 401);
         }
         if (state.failNextBatches > 0) {
@@ -128,8 +128,8 @@ test("开启统计：登记设备、采集区间、批量上报并按逐条确�
     assert.equal(mock.state.registrations.length, 1);
     assert.equal(mock.state.registrations[0].app_version, "0.2.2-test");
     // 开启统计推进授权代次
-    assert.equal(mock.state.preferences[0].stats_enabled, true);
-    assert.equal(mock.state.preferences[0].consent_generation, 1);
+    assert.equal(mock.state.preferences[0].telemetry_enabled, true);
+    assert.equal(status.consentGeneration, 2);
 
     // 交互 + tick 产生事件
     controller.noteUserActivity();
@@ -144,14 +144,18 @@ test("开启统计：登记设备、采集区间、批量上报并按逐条确�
     assert.equal(await controller.store.count(), 0, "确认后队列清空");
     const batch = mock.state.batchResponses[0];
     assert.ok(batch.events.length >= 1);
+    assert.equal(batch.consent_generation, 2);
+    assert.equal(batch.metric_version, 1);
+    assert.equal(batch.schema_version, 1);
     for (const event of batch.events) {
       assert.equal(typeof event.event_id, "string");
       assert.equal(typeof event.run_id, "string");
       assert.ok(event.schema_version >= 1);
+      assert.ok(["activity", "interval"].includes(event.event_type));
     }
     // 请求带设备凭据
     const batchRequest = mock.requests.find((request) => request.url === "/api/v1/dyworker/telemetry/batches");
-    assert.equal(batchRequest.authorization, "Bearer device-token-1");
+    assert.equal(batchRequest.authorization, `Device ${controller.getInstallationId()}.device-token-1`);
     // 凭据经安全存储加密落盘，不出现明文
     const credentialRaw = await fs.readFile(path.join(dir, "telemetry-credentials.json"), "utf8");
     assert.equal(credentialRaw.includes("device-token-1"), false);
@@ -219,8 +223,8 @@ test("关闭统计：本地立即停止采集并清空队列，偏好同步 stat
     assert.equal(status.statsEnabled, false);
     assert.equal(status.messagesEnabled, true);
     const lastPreferences = mock.state.preferences[mock.state.preferences.length - 1];
-    assert.equal(lastPreferences.stats_enabled, false);
-    assert.equal(lastPreferences.consent_generation, 2, "关闭同样推进授权代次");
+    assert.equal(lastPreferences.telemetry_enabled, false);
+    assert.equal(status.consentGeneration, 3, "使用服务端返回的授权代次");
   });
 });
 
@@ -291,27 +295,20 @@ test("退出收尾：封口区间先落盘；网络尝试不超过 1 秒即返�
   });
 });
 
-test("凭据失效轮换：401 后以同一 installation_id 重新登记换发凭据并重试本批", async () => {
+test("凭据撤销后停止联网，不重新登记绕过撤销", async () => {
   await withServer(async (mock, dir) => {
     const controller = makeController(dir, mock.port);
     await controller.configure(statsSettings(mock.port));
     controller.noteUserActivity();
-    controller.tick();
-    // 服务端使第一个凭据失效
-    mock.state.expireToken = "device-token-1";
-    const result = await controller.flushOnce();
-    assert.equal(result.ok, true, "凭据轮换后本批仍成功上传");
-    assert.equal(mock.state.registrations.length, 2, "以同一安装身份重新登记");
-    assert.equal(
-      mock.state.registrations[1].installation_id,
-      mock.state.registrations[0].installation_id,
-    );
-    assert.equal(await controller.store.count(), 0, "本批事件不丢失");
-    const status = await controller.status();
-    assert.equal(status.registered, true);
-    // 新凭据加密落盘且不含明文
-    const credentialRaw = await fs.readFile(path.join(dir, "telemetry-credentials.json"), "utf8");
-    assert.equal(credentialRaw.includes("device-token-2"), false);
+    mock.state.expireToken = `${controller.getInstallationId()}.device-token-1`;
+    assert.equal((await controller.flushOnce()).ok, false);
+    assert.equal(mock.state.registrations.length, 1);
+    assert.equal((await controller.status()).registered, false);
+    assert.equal((await controller.status()).collecting, false);
+    const restarted = makeController(dir, mock.port);
+    await restarted.configure(statsSettings(mock.port));
+    assert.equal((await restarted.status()).registered, false);
+    assert.equal(mock.state.registrations.length, 1);
   });
 });
 

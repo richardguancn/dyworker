@@ -5,14 +5,15 @@ import { normalizeAsrModelId } from "./local-asr.mts";
 import { normalizeTtsModelId } from "./local-tts.mts";
 import { parseQuietHours } from "./remote-messages.mts";
 
-// 运营服务地址：只接受 HTTPS（受控运营接口地址；政府/内网版本由用户配置
+// 运营服务地址：远程使用 HTTPS，本机调试允许回环 HTTP（政府/内网版本由用户配置
 // 对应内部部署地址，留空表示完全关闭）。允许带端口与路径前缀，去掉尾部斜杠。
 export function normalizeTelemetryServiceUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   try {
     const url = new URL(raw);
-    if (url.protocol !== "https:" || url.search || url.hash || url.username || url.password) return "";
+    const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if ((!localHttp && url.protocol !== "https:") || url.search || url.hash || url.username || url.password) return "";
     return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
   } catch {
     return "";
@@ -46,6 +47,32 @@ export function normalizeApprovalMode(value) {
   // 界面显示一个模式、任务实际按另一个模式运行。
   if (value === "allow-writes") return "reviewer";
   return ["interactive", "reviewer", "auto", "full-access", "deny-changes"].includes(value) ? value : "reviewer";
+}
+
+// 无人值守任务（计划/定时任务与到点唤醒续跑）的生效审批模式。
+// 计划任务自身只提供"是否允许写工作区"一位信息（reviewer / deny-changes），
+// 但用户在设置里显式选了「完全访问权限」时，无人值守运行必须同样生效：
+// 否则会出现"界面显示完全访问、计划/续跑仍逐条要审批"的口径分裂
+// （IM 渠道任务一直按全局模式运行，见 main.mts 渠道入口）。
+// 计划级只读（deny-changes）是比全局设置更具体的约束，不因全局完全访问而放开。
+export function unattendedApprovalMode(globalMode, fallback) {
+  const base = normalizeApprovalMode(fallback);
+  if (base === "deny-changes") return base;
+  return normalizeApprovalMode(globalMode) === "full-access" ? "full-access" : base;
+}
+
+// 到点唤醒续跑（resumeWake）的生效审批模式。挂起时登记的是当时那次运行的模式，
+// 续跑要把它折算成无人值守下的等效模式：
+//   - interactive（严格逐次确认）→ auto：无人值守自主推进，工作区内读写直接放行；
+//   - reviewer（替我审批）→ **保持 reviewer**：审核助手继续逐条把关，工作区内的低风险操作
+//     （含带 rm/ffmpeg 的复合命令）由助手放行，只在越界、外发、破坏性或助手判不准时转人工收件箱。
+//     不能降级成 auto：auto 的 ask（非白名单命令）不经审核助手、直接弹人工审批卡，
+//     无人值守反而比 reviewer 更打扰（2026-10-02 到点续跑弹卡即此原因）。
+//   - full-access / deny-changes / auto：保持原模式（计划级只读不放宽成可写）；
+//   - 全局「完全访问权限」覆盖以上结果（计划级只读除外），见 unattendedApprovalMode。
+export function wakeApprovalMode(globalMode, sourceMode) {
+  const source = normalizeApprovalMode(sourceMode);
+  return unattendedApprovalMode(globalMode, source === "interactive" ? "auto" : source);
 }
 
 // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义 OpenAI 兼容端点。
@@ -321,6 +348,9 @@ export function deserializeSettings(stored, secretStorage) {
 }
 
 export function serializeSettings(settings, secretStorage) {
+  if (String(settings?.telemetry?.serviceUrl || "").trim() && !normalizeTelemetryServiceUrl(settings.telemetry.serviceUrl)) {
+    throw new Error("运营服务地址无效：请使用 HTTPS 地址；本机可使用 http://localhost:端口，不要附带账号、查询参数或锚点。");
+  }
   const normalizedProfiles = normalizeProfiles(settings?.profiles);
   const normalized = {
     identity: normalizeIdentity(settings?.identity),
@@ -419,6 +449,7 @@ export function serializeSettings(settings, secretStorage) {
     enableNativeTools: normalized.enableNativeTools,
     nativeToolsDisabled: normalized.nativeToolsDisabled,
     enableWebSearchBuiltin: normalized.enableWebSearchBuiltin,
+    telemetry: normalized.telemetry,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,
     profileStoreVersion: 1,

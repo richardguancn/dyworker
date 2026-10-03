@@ -36,21 +36,18 @@ function startMockServer() {
       if (req.method === "GET" && url.pathname === "/api/v1/dyworker/messages") {
         state.pulls += 1;
         const cursor = url.searchParams.get("cursor") || "";
-        if (state.resyncCursor === cursor) {
-          return send({ code: 0, data: { resync: true } });
-        }
         return send({
           code: 0,
           data: {
-            messages: state.messages,
-            revocations: state.revocations,
-            next_cursor: cursor ? `cursor-2` : "cursor-1",
+            items: state.messages.map((m) => ({...m, revoked: state.revocations.some((r) => r.message_id === m.message_id)})),
+            resync: state.resyncCursor === cursor,
+            cursor: cursor ? `cursor-2` : "cursor-1",
           },
         });
       }
       if (req.method === "POST" && url.pathname === "/api/v1/dyworker/messages/receipts") {
         state.receipts.push(...(parsed?.receipts || []));
-        return send({ code: 0, data: { acknowledged: (parsed?.receipts || []).map((receipt) => receipt.message_id) } });
+        return send({ code: 0, data: { results: (parsed?.receipts || []).map((receipt) => ({ message_id: receipt.message_id, status: "ok" })) } });
       }
       if (req.method === "GET" && url.pathname === "/api/v1/dyworker/messages/stream") {
         state.streamRequests.push({ authorization: req.headers.authorization || "", url: req.url });
@@ -224,22 +221,22 @@ test("回执：接收回执自动发送；已读只在用户打开后上报一�
     const manager = makeManager(file, mock.port);
     await manager.configure({ messagesEnabled: true, notifyNewMessages: false, dailyPopupLimit: 0 });
     await manager.pull("test");
-    await waitFor(() => mock.state.receipts.some((receipt) => receipt.message_id === "m-read" && receipt.received_at));
+    await waitFor(() => mock.state.receipts.some((receipt) => receipt.message_id === "m-read" && receipt.received));
     // 未打开前没有已读回执
-    assert.equal(mock.state.receipts.some((receipt) => receipt.read_at), false);
+    assert.equal(mock.state.receipts.some((receipt) => receipt.read), false);
 
     await manager.markRead("m-read");
-    await waitFor(() => mock.state.receipts.some((receipt) => receipt.message_id === "m-read" && receipt.read_at));
+    await waitFor(() => mock.state.receipts.some((receipt) => receipt.message_id === "m-read" && receipt.read));
     // 第二次 markRead 是 no-op：已读状态不倒退、不重复上报
     const readStamps = (await manager.listMessages())[0].read_at;
     await manager.markRead("m-read");
     assert.equal((await manager.listMessages())[0].read_at, readStamps);
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(mock.state.receipts.filter((receipt) => receipt.read_at).length, 1);
+    assert.equal(mock.state.receipts.filter((receipt) => receipt.read).length, 1);
 
     // 点击回执：带 clicked_at，且已读不丢
     await manager.markClicked("m-read");
-    await waitFor(() => mock.state.receipts.some((receipt) => receipt.clicked_at));
+    await waitFor(() => mock.state.receipts.some((receipt) => receipt.clicked));
     manager.stop();
   } finally {
     await mock.server.close();
@@ -298,7 +295,7 @@ test("游标过期 resync：清空游标重新同步一次，不陷入循环", a
     await manager.configure({ messagesEnabled: true, notifyNewMessages: false, dailyPopupLimit: 0 });
     await manager.pull("test");
     // 服务器宣布当前游标已过期
-    mock.state.resyncCursor = "cursor-2";
+    mock.state.resyncCursor = "cursor-1";
     mock.state.messages.push({ message_id: "r2", category: "announcement", title: "补拉到新消息", body: "x", published_at: "2026-09-28T03:00:00Z" });
     const result = await manager.pull("test");
     assert.equal(result.ok, true);
@@ -322,7 +319,7 @@ test("SSE：连接带 Authorization 头，收到 new-message 后触发补拉", a
     // 启动补拉完成 + SSE 连接建立
     assert.equal(await waitFor(() => mock.state.pulls >= 1 && mock.state.sseWriters.length >= 1), true);
     // SSE 请求带 Authorization 头，凭据不出现在 URL 上
-    assert.equal(mock.state.streamRequests[0].authorization, "Bearer device-token");
+    assert.equal(mock.state.streamRequests[0].authorization, "Device device-token");
     assert.equal(mock.state.streamRequests[0].url.includes("token"), false);
     // 服务端推送“有新消息”，随后下发新消息：客户端应被触发再次补拉
     mock.state.messages.push({ message_id: "s2", category: "announcement", title: "SSE 新消息", body: "x", published_at: "2026-09-28T04:00:00Z" });
