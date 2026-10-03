@@ -1,0 +1,115 @@
+// 客户端插件运行时：把 DSH 的模块加载器 + 那几个运行时模块挂到渲染端，
+// 让插件的客户端 bundle（lib/client.js）能原样加载、不需要插件做任何改动。
+//
+// 为什么不是 eval/内联脚本：渲染端 CSP 是 `script-src 'self'`，eval 与内联脚本都被禁。
+// 所以 bundle 由主进程通过自定义协议（dyworker-plugin:）提供，渲染端用 <script src> 加载，
+// 脚本自身调 window.__ModuleLoader__.load(...) 完成注册。
+
+import * as React from "react";
+import * as ReactDOM from "react-dom";
+import * as ReactDOMClient from "react-dom/client";
+import * as JsxRuntime from "react/jsx-runtime";
+import { ClientModuleLoader, type LoadedBundle } from "./moduleLoader.ts";
+import { createPrimitives, type PrimitivesHost } from "./primitives.ts";
+
+export { ClientModuleLoader, createPrimitives };
+export type { LoadedBundle, PrimitivesHost };
+
+export const PRIMITIVES_MODULE = "@deepseek-ai/dsh-client-ui-primitives";
+
+export interface ClientRuntimeOptions {
+  /** 挂到哪个对象上（浏览器里是 window；测试里可以传假对象） */
+  target?: any;
+  /** primitives 门面的宿主注入（Markdown 渲染、剪贴板、图标） */
+  primitivesHost?: PrimitivesHost;
+}
+
+export interface ClientRuntime {
+  loader: ClientModuleLoader;
+  primitives: Record<string, any>;
+}
+
+let current: ClientRuntime | null = null;
+
+/** 新建一个独立的运行时实例（每次调用都是新的，测试与多实例场景用） */
+export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientRuntime {
+  const loader = new ClientModuleLoader({
+    onMissingModule: (spec) => {
+      // 宿主没提供的模块是"兼容面缺口"的直接证据，值得在控制台留一条
+      console.warn(`[plugin-client] 插件请求了宿主未提供的模块：${spec}`);
+    },
+  });
+
+  const primitives = createPrimitives(options.primitivesHost);
+
+  loader
+    .provide("react", () => React)
+    .provide("react-dom", () => ReactDOM)
+    .provide("react-dom/client", () => ReactDOMClient)
+    .provide("react/jsx-runtime", () => JsxRuntime)
+    .provide("react/jsx-dev-runtime", () => JsxRuntime)
+    .provide(PRIMITIVES_MODULE, () => primitives);
+
+  const target = options.target ?? (typeof window !== "undefined" ? window : undefined);
+  loader.install(target);
+
+  return { loader, primitives };
+}
+
+/** 安装客户端运行时（应用内单例：重复调用复用，仅重新指向 target） */
+export function installClientRuntime(options: ClientRuntimeOptions = {}): ClientRuntime {
+  if (current) {
+    if (options.target) current.loader.install(options.target);
+    return current;
+  }
+  current = createClientRuntime(options);
+  return current;
+}
+
+/** 取当前运行时（未安装过则安装一次） */
+export function clientRuntime(): ClientRuntime {
+  return current ?? installClientRuntime();
+}
+
+/** 测试用：丢弃单例，下次 installClientRuntime 会重建 */
+export function resetClientRuntime(): void {
+  current = null;
+}
+
+/**
+ * 用 <script> 加载一个插件 bundle，并等它注册进加载器。
+ * 返回本次注册的 bundle 记录（含 requires / missing，用于诊断与验收）。
+ */
+export async function loadBundleScript(url: string, { timeoutMs = 15_000 }: { timeoutMs?: number } = {}): Promise<LoadedBundle> {
+  const runtime = clientRuntime();
+  const before = new Set(runtime.loader.bundles_().map((bundle) => bundle.id));
+
+  await new Promise<void>((resolve, reject) => {
+    if (typeof document === "undefined") {
+      reject(new Error("当前环境没有 document，无法用 <script> 加载插件 bundle"));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    const timer = setTimeout(() => {
+      script.remove();
+      reject(new Error(`加载插件 bundle 超时（${timeoutMs}ms）：${url}`));
+    }, timeoutMs);
+    script.onload = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error(`插件 bundle 加载失败：${url}`));
+    };
+    document.head.appendChild(script);
+  });
+
+  const added = runtime.loader.bundles_().filter((bundle) => !before.has(bundle.id));
+  const last = added[added.length - 1];
+  if (!last) throw new Error("bundle 已加载但没有调用 __ModuleLoader__.load 注册（可能不是 DSH 客户端插件）");
+  return last;
+}
