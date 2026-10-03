@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
+import { loadBundleScript } from "./pluginRuntime/index.ts";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
@@ -26,6 +27,8 @@ export function PluginsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  // 客户端半边试跑结果：记录"能加载吗、缺哪些模块、它要哪些客户端服务"
+  const [clientRuns, setClientRuns] = useState<Record<string, { state: "loading" | "ok" | "error"; text: string }>>({});
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
@@ -41,6 +44,44 @@ export function PluginsPage() {
   }, [bridge]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /**
+   * 加载插件的客户端半边（实验）。
+   * 第 1 步只验证"能不能被加载器加载起来"——bundle 会执行并注册，但界面上还不会出现
+   * 它贡献的面板（那需要第 2 步把宿主已有的面板注册成 dsh-client-* 服务）。
+   */
+  const loadClientHalf = async (entry: PluginEntryRecord, bundle: PluginBundleRecord | undefined) => {
+    const key = entry.id;
+    setClientRuns((current) => ({ ...current, [key]: { state: "loading", text: "正在加载客户端 bundle…" } }));
+    try {
+      const info = await bridge!.pluginClientBundles(bundle?.name || entry.id);
+      if (!info?.ok) {
+        setClientRuns((current) => ({ ...current, [key]: { state: "error", text: info?.error || "没有可加载的客户端入口" } }));
+        return;
+      }
+      const primary = info.entries?.find((item) => item.primary) || info.entries?.[0];
+      if (!primary) {
+        setClientRuns((current) => ({ ...current, [key]: { state: "error", text: "没有可加载的客户端入口" } }));
+        return;
+      }
+      const record = await loadBundleScript(primary.url);
+      if (record.error) {
+        setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `bundle 执行失败：${record.error}` } }));
+        return;
+      }
+      const exportCount = record.exports && typeof record.exports === "object"
+        ? Object.keys(record.exports as object).length
+        : 0;
+      const missing = record.missing.length ? `；缺模块 ${[...new Set(record.missing)].join("、")}` : "";
+      const services = info.inject?.length ? `；它还需要 ${info.inject.length} 个客户端服务（第 2 步）` : "";
+      setClientRuns((current) => ({
+        ...current,
+        [key]: { state: "ok", text: `已加载 ${record.id}（导出 ${exportCount} 项，请求 ${record.requires.length} 次）${missing}${services}` },
+      }));
+    } catch (error: any) {
+      setClientRuns((current) => ({ ...current, [key]: { state: "error", text: String(error?.message || error) } }));
+    }
+  };
 
   const run = useCallback(async (label: string, job: () => Promise<{ ok?: boolean; error?: string } | void>) => {
     setBusy(label);
@@ -107,9 +148,11 @@ export function PluginsPage() {
         {entries.map((entry) => {
           const bundle = bundleOf.get(entry.name);
           const description = bundle?.description || entry.description || "";
+          // 手工加进 dyworker.yml 的插件没有 bundle 记录，客户端半边信息在条目上
+          const clientHalf = bundle?.client || entry.client || null;
           return (
             <div className="plugin-card" key={entry.id}>
-              <div className="plugin-card-icon" style={{ background: tileColor(entry.name) }}>
+              <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(entry.name) } as React.CSSProperties}>
                 <Puzzle size={18} />
               </div>
               <div className="plugin-card-body">
@@ -122,6 +165,30 @@ export function PluginsPage() {
                 </div>
                 {description ? <p className="plugin-card-desc">{description}</p> : <p className="plugin-card-desc muted">{entry.name}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
+                {clientHalf ? (
+                  <div className="plugin-card-client">
+                    <span className="plugin-tag">界面半边</span>
+                    <span className="plugin-card-client-meta">
+                      {clientHalf.platform || "web"}
+                      {clientHalf.inject?.length ? ` · 声明依赖 ${clientHalf.inject.length} 个客户端服务` : ""}
+                    </span>
+                    <button
+                      className="plugins-text-button"
+                      disabled={clientRuns[entry.id]?.state === "loading"}
+                      onClick={() => void loadClientHalf(entry, bundle)}
+                    >
+                      {clientRuns[entry.id]?.state === "loading" ? <Loader2 size={13} className="spin" /> : null}
+                      加载界面半边（实验）
+                    </button>
+                    {clientRuns[entry.id] && clientRuns[entry.id].state !== "loading" ? (
+                      <div className={`plugin-client-result ${clientRuns[entry.id].state}`}>
+                        {clientRuns[entry.id].state === "ok" ? <Check size={12} /> : <AlertTriangle size={12} />}
+                        <span>{clientRuns[entry.id].text}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="plugin-card-tools">
                   <button className="plugins-text-button" onClick={() => setEditing(editing?.id === entry.id ? null : { id: entry.id, text: JSON.stringify(entry.config ?? {}, null, 2) })}>
                     配置

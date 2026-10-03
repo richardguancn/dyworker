@@ -147,3 +147,30 @@ test("安装结果界面：成功给「已安装 + 立即启用」，不兼容�
   assert.match(dialog, /仍然安装（仅主机半边，不会生效）/, "给出显式放行而不是死路");
   assert.match(dialog, /setResult\(\{[\s\S]{0,200}?ok: false/, "拒绝时进入结果视图");
 });
+
+test("深浅色：插件页/弹窗必须走主题变量，不得写死浅色，并覆盖系统深色", () => {
+  const css = read("../src/styles.css");
+  const start = css.indexOf("/* ==== 插件入口 / 插件页 / 添加弹窗 / 安装结果 ====");
+  assert.ok(start > 0, "应能定位到插件样式段");
+  const block = css.slice(start);
+
+  // 硬编码浅色是深色模式失效的根因：页面/弹窗/菜单/输入框/文字都要用变量
+  for (const hardcoded of ["#fbfbf8", "#fffdf7", "background: #fff;", "#fafaf7", "#f4f4f0", "#f0f0ec"]) {
+    assert.ok(!block.includes(hardcoded), `插件样式里不应写死浅色 ${hardcoded}（深色模式下会失效）`);
+  }
+  for (const token of ["var(--surface)", "var(--card)", "var(--border)", "var(--ink)", "var(--muted)", "var(--quiet)"]) {
+    assert.ok(block.includes(token), `插件样式应使用主题变量 ${token}`);
+  }
+
+  // 主按钮用 ink/card 反色，深浅色自动成立
+  assert.match(block, /\.plugins-add-button \{[^}]*background: var\(--ink\)[^}]*color: var\(--surface\)/s,
+    "主按钮应反色而不是写死深色");
+  assert.match(block, /\.add-plugin-submit \{[^}]*background: var\(--ink\)[^}]*color: var\(--surface\)/s,
+    "安装按钮应反色而不是写死深色");
+
+  // 状态色必须有深色取值：受控主题 + 跟随系统两条路都要覆盖
+  assert.match(block, /html\[data-theme="dark"\] \{\s*--pl-ok-bg:/, "状态色要有受控深色取值");
+  assert.match(block, /@media \(prefers-color-scheme: dark\)[\s\S]{0,200}?html:not\(\[data-theme\]\) \{\s*--pl-ok-bg:/,
+    "未受控主题时要跟随系统深色");
+  assert.match(block, /color-mix\(in srgb, var\(--plugin-tile/, "图标底色要按主题混入，避免浅色块在深色下刺眼");
+});

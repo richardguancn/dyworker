@@ -55,6 +55,9 @@ export function pluginsIpcPlugin() {
       ctx.effect(() => ctx.ipc.handle("plugins:uninstall", (_event, id) => host.uninstall({ spec: id })));
       // 重新读清单（手工编辑过 dyworker.yml 后用）
       ctx.effect(() => ctx.ipc.handle("plugins:reload", () => host.reload().then((result) => ({ ok: true, ...result }))));
+
+      // 客户端半边（dsh.client）：只解析入口并给出自定义协议 URL，脚本由渲染端加载执行
+      ctx.effect(() => ctx.ipc.handle("plugins:client-bundles", (_event, id) => host.clientBundles(id)));
     },
   };
 }

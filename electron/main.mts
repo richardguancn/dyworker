@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
@@ -261,6 +261,13 @@ function dataFile(name) {
 // Cordis 宿主：主进程核心服务（审计/设置/会话存档/代理）统一挂入插件生命周期。
 // safeStorage 与领域解析器在此注入；顶层 await 等待根 fiber 激活，
 // 之后的模块级常量（sessionArchive/auditLog）即可同步访问服务。
+// 插件客户端 bundle 走自定义协议：渲染端 CSP 是 script-src 'self'，eval 与内联脚本都被禁，
+// 第三方预打包 bundle（window.__ModuleLoader__.load(...)）只能作为同源 <script src> 加载。
+// 必须在 app ready 之前声明为特权 scheme，否则注册会失败。
+protocol.registerSchemesAsPrivileged([
+  { scheme: "dyworker-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
+
 const ctx = await createHost({
   userDataDir: app.getPath("userData"),
   homeDir: app.getPath("home"),
@@ -3619,6 +3626,28 @@ ipcMain.on("window:set-ignore-mouse", (event, _ignore) => {
 });
 
 app.whenReady().then(async () => {
+  // 插件客户端 bundle 协议：dyworker-plugin://client/<条目id>/<序号>
+  protocol.handle("dyworker-plugin", async (request) => {
+    const notFound = (message) => new Response(`// ${message}\n`, {
+      status: 404, headers: { "content-type": "text/javascript; charset=utf-8" },
+    });
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== "client") return notFound(`未知的插件协议主机：${url.hostname}`);
+      const segments = url.pathname.split("/").filter(Boolean);
+      const entryId = decodeURIComponent(segments[0] || "");
+      const index = Number(segments[1] ?? "0");
+      if (!entryId || !Number.isInteger(index) || index < 0) return notFound("协议地址不合法");
+      const file = await ctx.plugins.clientBundleFile(entryId, index);
+      const source = await fs.readFile(file, "utf8");
+      return new Response(source, {
+        headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
+      });
+    } catch (error) {
+      return notFound(String(error?.message || error));
+    }
+  });
+
   // 启动快照：在任何读写（迁移/窗口/渲染端保存）之前，先把用户不可再生的状态文件复制一份。
   // 与业务逻辑完全解耦的兜底——即使写入路径整个坏掉，也还有 .backups/<时间戳>/ 可回滚。
   await snapshotCriticalFiles({ dir: app.getPath("userData") });

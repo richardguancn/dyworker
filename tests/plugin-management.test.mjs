@@ -566,3 +566,44 @@ test("兼容矩阵不能漏报本宿主确实提供的服务（loader / tools）
   assert.equal(classifyService("tools").state, "name-only");
   assert.match(classifyService("tools").reason, /语义不同/);
 });
+
+test("客户端半边：宿主能解析入口并给出协议 URL，路径不会越出包目录", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const pkgDir = path.join(profile, "node_modules", "with-client");
+  await fs.mkdir(path.join(pkgDir, "lib"), { recursive: true });
+  await fs.writeFile(path.join(pkgDir, "package.json"), JSON.stringify({
+    name: "with-client", version: "2.1.0", type: "module", main: "index.mjs",
+    exports: { ".": "./index.mjs", "./client": { types: "./lib/client.d.ts", default: "./lib/client.js" } },
+    dsh: { client: { platform: "web", inject: ["@deepseek-ai/dsh-client-ui-sidebar-right"] } },
+  }, null, 2), "utf8");
+  await fs.writeFile(path.join(pkgDir, "lib", "client.js"), "// client bundle\n", "utf8");
+  // 主机半边也要是可加载的：add() 在激活失败时会把条目从清单里移除
+  await fs.writeFile(path.join(pkgDir, "index.mjs"),
+    `export function apply() {}\nexport default { name: "with-client", apply };`, "utf8");
+  const added = await ctx.plugins.add({ id: "with-client", name: "with-client" });
+  assert.equal(added.ok, true, `条目应当加进清单：${added.error}`);
+
+  const info = await ctx.plugins.clientBundles("with-client");
+  assert.equal(info.ok, true, JSON.stringify(info));
+  assert.equal(info.version, "2.1.0");
+  assert.equal(info.platform, "web");
+  assert.deepEqual(info.inject, ["@deepseek-ai/dsh-client-ui-sidebar-right"], "要把插件声明的客户端服务带出来（第 2 步据此接线）");
+  assert.equal(info.entries.length, 1);
+  assert.equal(info.entries[0].subpath, "./client");
+  assert.equal(info.entries[0].relative, "lib/client.js");
+  assert.equal(info.entries[0].primary, true);
+  // URL 里只有条目 id 与序号——协议处理器再回到宿主解析真实路径，URL 本身没有文件路径可用
+  assert.equal(info.entries[0].url, "dyworker-plugin://client/with-client/0");
+
+  const file = await ctx.plugins.clientBundleFile("with-client", 0);
+  // macOS 的 /var 是 /private/var 的软链，比较前统一取 realpath
+  assert.equal(file, await fs.realpath(path.join(pkgDir, "lib", "client.js")), "协议处理器要拿到包内绝对路径");
+  await assert.rejects(() => ctx.plugins.clientBundleFile("with-client", 9), /客户端入口不存在/);
+
+  // 没有客户端半边的插件要给出明确原因，而不是空数组
+  await writePluginPackage(profile, "host-only");
+  await ctx.plugins.add({ id: "host-only", name: "host-only" });
+  const none = await ctx.plugins.clientBundles("host-only");
+  assert.equal(none.ok, false);
+  assert.match(none.error, /没有声明客户端半边/);
+});

@@ -19,6 +19,7 @@
 // 与 electron 的边界：本文件不 import electron，目录由壳层注入。
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
+import { resolveClientEntries } from "./plugin-client.mts";
 import { detectInstalledPackageName, installPackageIntoProfile, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
@@ -110,6 +111,9 @@ export class PluginHostService extends Service {
   /** 条目模块名 → 包描述（手工加进清单、不走 bundle 的条目也要能显示说明） */
   descriptions = new Map();
 
+  /** 条目模块名 → 客户端半边声明（dsh.client，没有则为 null） */
+  clients = new Map();
+
   /** 当前真正装载成功的条目 id（服务自己维护，不去反射 loader：
    *  loader 内部实现会在严格访问检查下抛错，被 catch 吞掉会表现为"装了但显示未生效"） */
   activeIds = new Set();
@@ -195,9 +199,13 @@ export class PluginHostService extends Service {
     let description = "";
     try {
       const dir = resolvePackageDir(this.profileManifest(), key);
-      description = String((await readPackageManifest(dir)).description || "");
+      const manifest = await readPackageManifest(dir);
+      description = String(manifest.description || "");
+      // 顺手记下客户端半边声明：列表要据此显示"有界面半边"，不必为每行再读一次清单
+      this.clients.set(key, manifest.dsh?.client || manifest.dyworker?.client || null);
     } catch {
       description = "";
+      this.clients.set(key, null);
     }
     this.descriptions.set(key, description);
     return description;
@@ -379,6 +387,55 @@ export class PluginHostService extends Service {
     return { ok: installed.ok, stage: installed.ok ? "done" : "activate", name: packageName, downloaded, ...installed };
   }
 
+  /** 解析条目对应的插件包与客户端入口 */
+  async clientEntriesOf(target) {
+    const key = String(target || "");
+    const row = this.rows.find((item) => item.id === key || item.name === key);
+    if (!row) throw new Error(`插件不在清单里：${key}`);
+    const dir = resolvePackageDir(this.profileManifest(), row.name);
+    const manifest = await readPackageManifest(dir);
+    return { row, dir, manifest, entries: resolveClientEntries(manifest, dir) };
+  }
+
+  /**
+   * 插件的客户端半边入口（供渲染端用 <script src> 加载）。
+   * URL 走自定义协议，只带条目 id 与序号——协议处理器再回到这里解析真实文件，
+   * 因而不存在"用 URL 直接读任意文件"的面。
+   */
+  async clientBundles(target) {
+    try {
+      const { row, manifest, entries } = await this.clientEntriesOf(target);
+      if (!entries.length) {
+        return { ok: false, id: row.id, name: row.name, error: "这个插件没有声明客户端半边（dsh.client）" };
+      }
+      const client = manifest.dsh?.client || manifest.dyworker?.client || {};
+      return {
+        ok: true,
+        id: row.id,
+        name: row.name,
+        version: String(manifest.version || ""),
+        platform: String(client.platform || ""),
+        inject: Array.isArray(client.inject) ? client.inject : [],
+        entries: entries.map((entry, index) => ({
+          subpath: entry.subpath,
+          relative: entry.relative,
+          primary: entry.primary,
+          url: `dyworker-plugin://client/${encodeURIComponent(row.id)}/${index}`,
+        })),
+      };
+    } catch (error: any) {
+      return { ok: false, id: String(target || ""), error: String(error?.message || error) };
+    }
+  }
+
+  /** 协议处理器用：条目 + 序号 → 客户端 bundle 的绝对路径 */
+  async clientBundleFile(target, index) {
+    const { entries } = await this.clientEntriesOf(target);
+    const entry = entries[Number(index)];
+    if (!entry) throw new Error(`客户端入口不存在：${target} #${index}`);
+    return entry.file;
+  }
+
   /** 只做兼容性判定，不安装（装之前先看能不能跑） */
   async compatibility({ spec }: any = {}) {
     const name = String(spec || "").trim();
@@ -400,6 +457,7 @@ export class PluginHostService extends Service {
       declared: Boolean(bundle.declared),
       installed: this.rows.some((row) => row.name === bundle.name || row.name === bundle.packageName),
       source: bundle.source || null,
+      client: this.clients.get(bundle.packageName) || this.clients.get(bundle.name) || null,
       pinnedVersion: bundle.pinnedVersion || null,
       drift: bundle.pinnedVersion && bundle.version && bundle.pinnedVersion !== bundle.version
         ? `记录版本 ${bundle.pinnedVersion}，当前 ${bundle.version}`
@@ -454,6 +512,7 @@ export class PluginHostService extends Service {
       id: row.id,
       name: row.name,
       description: this.descriptions.get(row.name) || "",
+      client: this.clients.get(row.name) || null,
       disabled: Boolean(row.disabled),
       config: row.config ?? null,
       active: this.activeIds.has(row.id) && !row.disabled,

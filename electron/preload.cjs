@@ -273,5 +273,6 @@ contextBridge.exposeInMainWorld("dyworker", {
   configurePlugin: (payload) => ipcRenderer.invoke("plugins:configure", payload),
   uninstallPlugin: (id) => ipcRenderer.invoke("plugins:uninstall", id),
   reloadPlugins: () => ipcRenderer.invoke("plugins:reload"),
+  pluginClientBundles: (id) => ipcRenderer.invoke("plugins:client-bundles", id),
 });
 

@@ -1079,6 +1079,8 @@ export interface DyworkerBridge {
   configurePlugin(payload: { id: string; config: unknown }): Promise<{ ok: boolean; error?: string }>;
   uninstallPlugin(id: string): Promise<{ ok: boolean; error?: string }>;
   reloadPlugins(): Promise<{ ok: boolean; count?: number }>;
+  /** 客户端半边（dsh.client）入口：只返回 URL，真正执行在渲染端的客户端运行时 */
+  pluginClientBundles(id: string): Promise<PluginClientBundlesResult>;
 
 }
 
@@ -1105,6 +1107,8 @@ export interface PluginEntryRecord {
   id: string;
   name: string;
   description: string;
+  /** 客户端半边声明（dsh.client）；手工加进清单、没有 bundle 记录的条目也靠它 */
+  client?: { platform?: string; inject?: string[] } | null;
   disabled: boolean;
   config: unknown;
   active: boolean;
@@ -1117,6 +1121,8 @@ export interface PluginBundleRecord {
   version: string;
   description: string;
   source?: { kind: string; input: string; source: string } | null;
+  /** 客户端半边声明（dsh.client）；没有界面半边的插件为 null */
+  client?: { platform?: string; inject?: string[] } | null;
   patchFile: string | null;
   declared: boolean;
   installed: boolean;
@@ -1143,6 +1149,19 @@ export interface PluginListResult {
   bundles: PluginBundleRecord[];
   warnings: string[];
   status: { dir: string; tree: string; mounted: boolean; count: number; failed: number };
+}
+
+/** 插件客户端半边（dsh.client）的入口清单：只给 URL，执行在渲染端 */
+export interface PluginClientBundlesResult {
+  ok: boolean;
+  id?: string;
+  name?: string;
+  version?: string;
+  platform?: string;
+  /** 插件声明的客户端服务（cordis inject），界面用它说明"还差哪些服务" */
+  inject?: string[];
+  entries?: Array<{ subpath: string; relative: string; primary: boolean; url: string }>;
+  error?: string;
 }
 
 export interface PluginInstallResult {
