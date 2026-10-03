@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings } from "../electron/settings.mts";
+import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeApprovalMode, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings, unattendedApprovalMode, wakeApprovalMode } from "../electron/settings.mts";
 import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mts";
 
 const secretStorage = {
@@ -293,4 +293,44 @@ test("填入新密钥时新值优先，不被旧密文覆盖", () => {
   const serialized = serializeSettings({ apiKey: "new-key", profiles: [] }, secretStorage);
   const preserved = preserveUndecryptableSecrets(serialized, stored, undecryptableStorage);
   assert.equal(deserializeSettings(preserved, secretStorage).apiKey, "new-key");
+});
+
+test("无人值守任务跟随全局完全访问，但计划级只读不放开", () => {
+  // 全局「完全访问权限」时，计划任务（reviewer）与续跑（auto）都按完全访问运行：
+  // 否则会出现界面显示完全访问、计划/续跑仍逐条弹审批卡的口径分裂
+  assert.equal(unattendedApprovalMode("full-access", "reviewer"), "full-access");
+  assert.equal(unattendedApprovalMode("full-access", "auto"), "full-access");
+  assert.equal(unattendedApprovalMode("full-access", "interactive"), "full-access");
+  // 计划未勾选"允许写工作区"是计划级只读约束，全局完全访问也不放开
+  assert.equal(unattendedApprovalMode("full-access", "deny-changes"), "deny-changes");
+  // 其余全局模式下维持无人值守的保守推导
+  assert.equal(unattendedApprovalMode("interactive", "reviewer"), "reviewer");
+  assert.equal(unattendedApprovalMode("reviewer", "auto"), "auto");
+  assert.equal(unattendedApprovalMode("auto", "deny-changes"), "deny-changes");
+  // 旧值/脏值按 reviewer 归一化，不会意外放宽
+  assert.equal(unattendedApprovalMode("allow-writes", "auto"), "auto");
+  assert.equal(unattendedApprovalMode(undefined, "auto"), "auto");
+  assert.equal(normalizeApprovalMode("full-access"), "full-access");
+});
+
+test("到点续跑：替我审批保持 reviewer 继续由审核助手把关，不降级成 auto", () => {
+  // 回归（2026-10-02）：挂起时是 reviewer，续跑被提升为 auto，于是一条工作区内的
+  // `cd … && rm -f … && ffmpeg …` 复合命令在 auto 下不经审核助手、直接弹人工审批卡；
+  // 同形态命令在 reviewer 下当天被审核助手放行（audit: reviewer-allowed）。
+  assert.equal(wakeApprovalMode("reviewer", "reviewer"), "reviewer");
+  // reviewer 下工作区内的 ask 交审核助手；auto 下同类 ask 直接转人工，因此不得降级
+  assert.notEqual(wakeApprovalMode("reviewer", "reviewer"), "auto");
+  // 严格逐次确认（interactive）挂起后续跑仍提升为无人值守的 auto
+  assert.equal(wakeApprovalMode("reviewer", "interactive"), "auto");
+  // 其余模式保持原样：渠道自动执行 / 计划级只读 / 完全访问
+  assert.equal(wakeApprovalMode("reviewer", "auto"), "auto");
+  assert.equal(wakeApprovalMode("reviewer", "deny-changes"), "deny-changes");
+  assert.equal(wakeApprovalMode("reviewer", "full-access"), "full-access");
+  // 全局完全访问覆盖折算结果（计划级只读除外）
+  assert.equal(wakeApprovalMode("full-access", "reviewer"), "full-access");
+  assert.equal(wakeApprovalMode("full-access", "interactive"), "full-access");
+  assert.equal(wakeApprovalMode("full-access", "deny-changes"), "deny-changes");
+  // 脏值（旧版本 allow-writes / 空）按 reviewer 归一化，仍不降级成 auto
+  assert.equal(wakeApprovalMode("reviewer", "allow-writes"), "reviewer");
+  assert.equal(wakeApprovalMode("reviewer", undefined), "reviewer");
 });
