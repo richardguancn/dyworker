@@ -36,6 +36,18 @@ constructor() {
     return list?.length ? list[0] : null;
   }
 
+  // 出队后、真正执行前被别的占用挡下（例如到点自动唤醒续跑正在跑）：放回队首，
+  // 交给占用方收尾时的 drainSessionQueue 再推进。否则这条消息既不在队列里也没执行，
+  // 渲染端会永远停在"排队中"
+  unshift(entry) {
+    const sessionId = String(entry?.sessionId || "");
+    if (!sessionId || !entry?.runId) return 0;
+    const list = this.queues.get(sessionId) || [];
+    list.unshift(entry);
+    this.queues.set(sessionId, list);
+    return list.length;
+  }
+
   shift(sessionId) {
     const list = this.queues.get(String(sessionId));
     if (!list?.length) return null;

@@ -59,3 +59,21 @@ test("SessionQueue 空会话与无效项安全返回", () => {
   queue.clear();
   assert.equal(queue.total(), 0);
 });
+
+// 出队后、执行前被别的占用挡下（到点自动唤醒续跑的抢跑窗口）时要把条目放回去，
+// 否则这条消息既不在队列里也没执行，渲染端会永远停在"排队中"
+test("SessionQueue 支持出队失败后放回队首", () => {
+  const queue = new SessionQueue();
+  queue.push({ sessionId: "s1", runId: "r1", payload: {}, sender: {} });
+  queue.push({ sessionId: "s1", runId: "r2", payload: {}, sender: {} });
+  const first = queue.shift("s1");
+  assert.equal(first.runId, "r1");
+  assert.equal(queue.unshift(first), 2, "放回队首后连同后面的项一起排队");
+  assert.equal(queue.peek("s1").runId, "r1");
+  assert.equal(queue.count("s1"), 2);
+  // 空队列/无效项安全返回，不产生幽灵条目
+  assert.equal(queue.unshift(null), 0);
+  assert.equal(queue.unshift({ sessionId: "", runId: "r1" }), 0);
+  assert.equal(queue.unshift({ sessionId: "s2", runId: "" }), 0);
+  assert.equal(queue.count("s2"), 0);
+});
