@@ -19,6 +19,17 @@ const STATE_FILES = ["settings.json", "workspace-pins.json", "skills.json", "app
 // 目录型状态：记忆 wiki（页面都是用户/助手长期积累的，不可再生）
 const STATE_DIRS = ["memory-wiki"];
 
+// 优先硬链接：主程序所有落盘都是"写临时文件 + rename"（见 host/io.mts 与 session-archive），
+// 旧 inode 不会被就地改写，所以硬链接出去的快照内容稳定，且几乎不额外占盘
+// （77MB 会话 × 3 份快照从 ~231MB 降到 ~77MB，启动也不再复制一遍）。
+async function linkOrCopy(from, to) {
+  try {
+    await fs.link(from, to);
+  } catch {
+    await fs.copyFile(from, to);
+  }
+}
+
 async function pathSize(target) {
   const stat = await fs.stat(target).catch(() => null);
   if (!stat) return 0;
@@ -58,7 +69,7 @@ export async function snapshotCriticalFiles({ dir, keep = KEEP_SNAPSHOTS, now = 
           console.warn("[boot-backup] 数据超过上限，已跳过本次启动快照");
           return { ok: false, skipped: true, reason: "too-large" };
         }
-        await fs.copyFile(from, path.join(target, "sessions", name));
+        await linkOrCopy(from, path.join(target, "sessions", name));
         bytes += stat.size;
         copied += 1;
       }
@@ -79,7 +90,7 @@ export async function snapshotCriticalFiles({ dir, keep = KEEP_SNAPSHOTS, now = 
       const stat = await fs.stat(from).catch(() => null);
       if (!stat || !stat.isFile()) continue;
       if (bytes + stat.size > MAX_BYTES) break;
-      await fs.copyFile(from, path.join(target, name));
+      await linkOrCopy(from, path.join(target, name));
       bytes += stat.size;
       copied += 1;
     }

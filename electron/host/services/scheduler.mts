@@ -12,13 +12,13 @@
 // 所以是跨域共享状态，必须只有一个所有者。
 //
 // 本文件不依赖 electron：平台事件（睡眠/解锁）由壳层监听后调用本服务的 due 检查。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import path from "node:path";
 import crypto from "node:crypto";
 import { readJson, writeJson } from "../io.mts";
 import { normalizeApprovalMode } from "../../settings.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     scheduler: SchedulerService;
   }
@@ -28,6 +28,12 @@ export const RECURRENCES = ["once", "hourly", "daily", "weekly"];
 
 // 重复方式 → 间隔秒数；未知/缺失按每天处理
 const RECURRENCE_SECONDS = { hourly: 3600, weekly: 7 * 86400, daily: 86400 };
+
+// 唤醒到期但被忙碌守卫推迟时的重试间隔。
+// 不能用 0：已到期的唤醒会算出 wait = max(0, target-now) = 0 → setTimeout(0) 立刻重跑，
+// 仍是忙碌 → 再算 0，于是就变成每秒上千次读 wakes.json 的紧循环
+// （真实事故：27K 个打开句柄 + 主进程 100% CPU + 内存暴涨）。
+const WAKE_DEFERRED_RETRY_MS = 10_000;
 
 // 由当前执行时间推算下一次执行时间（保持原语义：非法时间戳从 now 起算，且结果严格大于 now）
 export function nextOccurrence(recurrence, currentIso, now) {
@@ -292,7 +298,7 @@ export class SchedulerService extends Service {
   // ---- 调度循环 ----
 
   // 动态近邻定时器：只为最近的一条 pending 唤醒设闹钟，最长 2 小时后再对齐
-  async scheduleNextWakeCheck() {
+  async scheduleNextWakeCheck({ minDelayMs = 0 } = {} as any) {
     if (this.hooks.isShuttingDown()) return;
     if (this.wakeTimer) {
       clearTimeout(this.wakeTimer);
@@ -310,8 +316,9 @@ export class SchedulerService extends Service {
       if (wait < minWaitMs) minWaitMs = wait;
     }
     if (!Number.isFinite(minWaitMs)) return;
-    // 最长等待 2 小时，到期触发后再次动态对齐
-    const delay = Math.min(minWaitMs, 2 * 3600 * 1000);
+    // 最长等待 2 小时，到期触发后再次动态对齐。
+    // minDelayMs 用于"已到期但被推迟"的场景：给一个正的退避，避免 0 延迟自旋。
+    const delay = Math.max(Math.min(minWaitMs, 2 * 3600 * 1000), minDelayMs);
     this.wakeTimer = setTimeout(() => {
       this.wakeTimer = null;
       void this.checkDueWakes().then(() => this.scheduleNextWakeCheck());
@@ -326,13 +333,14 @@ export class SchedulerService extends Service {
     const dueList = wakes.filter((wake) => wake.status === "pending" && wake.wakeAt && new Date(wake.wakeAt) <= now);
     if (!dueList.length) return;
 
+    let deferred = false;
     for (const due of dueList) {
       if (this.hooks.isShuttingDown()) break;
       const sid = String(due.sessionId || "");
       // 若目标会话正处于前台活跃或已在唤醒运行中，暂缓该会话唤醒（不阻碍其他会话）
-      if (this.hooks.isSessionBusy(sid) || this.runningWakeSessions.has(sid)) continue;
+      if (this.hooks.isSessionBusy(sid) || this.runningWakeSessions.has(sid)) { deferred = true; continue; }
       // 若已有正在执行计算/工具的后台调度任务，串行排队
-      if (this.running) break;
+      if (this.running) { deferred = true; break; }
 
       // 先落盘 fired 再执行：pending → fired 一次性转移，应用中途退出也不会重复唤醒
       due.status = "fired";
@@ -348,7 +356,8 @@ export class SchedulerService extends Service {
         this.runningWakeSessions.delete(sid);
       }
     }
-    void this.scheduleNextWakeCheck();
+    // 被推迟的唤醒仍在 pending 且已到期：必须退避重试，否则会 0 延迟自旋
+    void this.scheduleNextWakeCheck({ minDelayMs: deferred ? WAKE_DEFERRED_RETRY_MS : 0 });
   }
 
   async checkDueSchedules() {

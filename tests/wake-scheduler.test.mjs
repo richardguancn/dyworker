@@ -73,7 +73,10 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   // 1. 动态近邻定时器
   // 近邻唤醒定时器已上收 ctx.scheduler
   const schedulerSource = readFileSync(new URL("../electron/host/services/scheduler.mts", import.meta.url), "utf8");
-  assert.match(schedulerSource, /async scheduleNextWakeCheck\(\)/);
+  // 支持最小延迟（退避）参数：到期但被忙碌守卫推迟时必须退避，不能 0 延迟自旋
+  assert.match(schedulerSource, /async scheduleNextWakeCheck\(\{ minDelayMs = 0 \}/);
+  assert.match(schedulerSource, /Math\.max\(Math\.min\(minWaitMs, 2 \* 3600 \* 1000\), minDelayMs\)/);
+  assert.match(schedulerSource, /minDelayMs: deferred \? WAKE_DEFERRED_RETRY_MS : 0/);
   assert.match(mainCode, /void ctx\.scheduler\.scheduleNextWakeCheck\(\)/);
 
   // 2. powerMonitor 休眠/唤醒监听

@@ -31,6 +31,10 @@ test("启动快照：复制会话与设置，且不碰大目录", async (t) => {
   assert.equal(JSON.parse(await fs.readFile(path.join(snap, "settings.json"), "utf8")).model, "m");
   assert.equal(await fs.stat(path.join(snap, "models")).catch(() => null), null, "不应快照 models 这类可再生目录");
   assert.match(await fs.readFile(path.join(snap, "memory-wiki", "pages", "facts.md"), "utf8"), /长期记忆/, "记忆 wiki 应被快照");
+  // 会话文件用硬链接：内容一致且不额外占盘（同一 inode）
+  const srcIno = (await fs.stat(path.join(dir, "sessions", "a-1.json"))).ino;
+  const snapIno = (await fs.stat(path.join(snap, "sessions", "a-1.json"))).ino;
+  assert.equal(snapIno, srcIno, "会话快照应与源文件是同一 inode（硬链接），避免多份拷贝占盘");
 });
 
 test("启动快照：只保留最近 3 份", async (t) => {
