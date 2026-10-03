@@ -58,6 +58,106 @@ test("场景 1：没有操作，却声称上传完成（零工具调用虚报）
   assert.match(check.reason, /未检测到真实上传操作/);
 });
 
+test("建议与备选方案不是完成声明：已发表的文章页/后台手动勾选不构成虚报上传", () => {
+  // 真实线上案例（会话 a6e66ef2 的视频号查证交付）：summary 里给用户的建议含「或者已发表的文章页里
+  // 手动转发到视频号」，旧判定把「已发表」当成助手已发表，纯咨询类交付会被误标为未经验证。
+  const advice = verifyTaskEvidence({
+    finalText: "查证结论：**视频号没有内容发布的 API，暂时发不进去。**\n\n**给晨报的实际建议**：\n1. 每天 6 点视频自动进草稿箱后，你发表时在后台顺手勾「发表后转为视频号视频」；\n2. 或者已发表的文章页里手动转发到视频号。\n\n这两条都只在你手动发表的瞬间发生。",
+    executedTools: [{ name: "web_search", status: "success", result: "搜索结果", isReadOnly: true }],
+    fileChanges: [],
+    planSteps: null,
+    isExplicitFinish: true,
+  });
+  assert.equal(advice.verified, true, "给用户的建议/对已发布内容的指代不是助手的完成声明");
+
+  // 放宽不能过头：真实的完成声明仍要被拦下——包括定语形式（「已发布的 3 篇文章都同步成功了」）、
+  // 定语 + 口语完成式（「已发布的文章都传上去了」）、入库、「可以/请」引导词、冒号后接完成声明的句式
+  for (const finalText of [
+    "本次已发表 3 篇文章到公众号。",
+    "可以确认：6 篇已全部上传成功。",
+    "请查收，已发布 2 篇文章。",
+    "请放心：已发布的 3 篇文章都同步成功了。",
+    "可以确认已上传的 6 篇草稿全部同步成功。",
+    "如需核对：已上传的 6 篇草稿全部成功。",
+    "已发布的 3 篇文章：draft_aaa111、draft_bbb222、draft_ccc333。",
+    "已发布的文章都传上去了。",
+    "已发表的文章我都转到视频号了。",
+    "已发布的文章都发出去了。",
+    "已同步的文章都进了草稿箱。",
+    "6 篇均已入库。",
+    "6 篇均已完成入库，编号见下表。",
+  ]) {
+    const claim = verifyTaskEvidence({
+      finalText,
+      executedTools: [{ name: "web_search", status: "success", result: "搜索结果", isReadOnly: true }],
+      fileChanges: [],
+      planSteps: null,
+      isExplicitFinish: true,
+    });
+    assert.equal(claim.verified, false, `真实完成声明不能被放过：${finalText}`);
+    assert.equal(claim.code, "NO_UPLOAD_ACTION");
+  }
+
+  // 如实汇报失败不能被当成虚报：否定词与动词之间常有「真正/实际/全部」等副词
+  for (const finalText of [
+    "经检查，这 6 篇并没有真正发布成功。",
+    "本次并没有全部同步成功，还差 2 篇。",
+    "确认没有实际上传成功。",
+  ]) {
+    const honest = verifyTaskEvidence({
+      finalText,
+      executedTools: [{ name: "web_search", status: "success", result: "搜索结果", isReadOnly: true }],
+      fileChanges: [],
+      planSteps: null,
+      isExplicitFinish: true,
+    });
+    assert.equal(honest.verified, true, `如实的失败汇报不该被判成虚报：${finalText}`);
+  }
+});
+
+test("口语完成式与歧义动词：编造发布要拦下，git 推送/邮件发送/发图不能误判", () => {
+  const readOnly = [{ name: "web_search", status: "success", result: "搜索结果", isReadOnly: true }];
+  const check = (finalText, executedTools = readOnly) => verifyTaskEvidence({
+    finalText,
+    executedTools,
+    fileChanges: [],
+    planSteps: null,
+    isExplicitFinish: true,
+  });
+
+  // 口语完成式（书面词表漏掉的编造说法）
+  for (const finalText of [
+    "文章都已经传到公众号后台了。",
+    "全部传上去了。",
+    "已经推送成功，草稿已生成。",
+    "已成功推送到公众号。",
+    "文章已转存到草稿箱。",
+    "都同步好了。",
+    "文章已成功发出去。",
+    "三篇都已经发好了。",
+    "草稿都已经存好了。",
+    "文章已经发到平台上了。",
+    "上传完毕。",
+  ]) {
+    assert.equal(check(finalText).verified, false, `编造的发布声明不能被放过：${finalText}`);
+  }
+  // 处于发布语境（调用了发布类工具）时，「已全部发送」也要拦下
+  assert.equal(check("已全部发送。", [{ name: "mp__publish_article", status: "success", result: "ok" }]).verified, false);
+
+  // 歧义动词不能误判：git push / 发消息 / 发图都不是平台发布
+  assert.equal(check("已推送。", [{ name: "run_command", status: "success", result: "ok" }]).verified, true, "git 推送不能被当成公众号发布");
+  assert.equal(check("已发送。").verified, true);
+  assert.equal(check("已发送。", [{ name: "send_media", status: "success", result: "已登记发送：图表.png" }]).verified, true);
+
+  // 打算/尝试不是完成
+  assert.equal(check("6 篇均已尝试入库，但都失败了。", [{ name: "mp__upload_article", status: "error", result: "失败" }]).verified, true, "「尝试入库」不是入库成功");
+  // 如实说明部分失败时，成功数少于总数不能判「数量不符」
+  assert.equal(check("已经上传的 3 篇文章中，有 2 篇发布失败。", [
+    { name: "mp__upload_article", status: "success", result: '{"errcode":0,"media_id":"a"}' },
+    { name: "mp__upload_article", status: "error", result: "失败" },
+  ]).verified, true, "如实汇报部分失败不能再判数量不符");
+});
+
 test("场景 2：操作失败，却声称成功（如微信 IP 白名单拦截）", () => {
   const check = verifyTaskEvidence({
     finalText: "成功了，6 篇全部上传草稿箱！",

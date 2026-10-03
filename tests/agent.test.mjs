@@ -8,7 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, probeServerContextLimit, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
+import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isIncompleteDeliveryEnding, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, pickDeliveryText, pointsElsewhereOnly, probeServerContextLimit, promisesDelivery, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mts";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mts";
 import { McpClient } from "../electron/mcp.mts";
@@ -854,6 +854,7 @@ test("Responses API 输出被截断或流提前结束时不会误报成功", asy
       settings: { endpoint: "https://api.deepseek.com/responses", model: "deepseek-v4-flash", apiKey: "k" },
       workspacePath: root,
       conversation: [{ role: "user", content: "打招呼" }],
+      transportRetryBaseDelayMs: 1,
       fetchImpl: mockResponsesStream([
         { type: "response.output_text.delta", sequence_number: 0, delta: "半截" },
       ]),
@@ -921,6 +922,124 @@ test("finish_task 同轮正文以冒号收尾（半截引子）时用 summary �
   });
   assert.equal(result.status, "done");
   assert.equal(result.finalText, "报告已读取，内容是季度总结");
+});
+
+test("finish_task 同轮正文只写预告（现在给你完整答案）时，完整结论必须来自 summary", async () => {
+  const root = await makeWorkspace();
+  // 真实线上案例（会话 a6e66ef2）：正文只写了一句预告，完整结论写在 finish_task 的 summary 里，
+  // 旧口径优先同轮正文，用户只看到「现在可以给你完整、有依据的答案了」而拿不到答案。
+  const summary = "查证结论：**视频号没有内容发布的 API，暂时发不进去。**\n\n**依据**：视频号助手 API 只开放直播信息、橱窗、留资、罗盘、本地生活与小店接口，没有发布视频/发布内容的接口。\n\n**建议**：发表时在后台手动勾选「发表后转为视频号视频」。";
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "视频能发到视频号吗？有接口吗？" }],
+    fetchImpl: mockFetch([
+      {
+        role: "assistant",
+        content: "查证完毕，两次出现都只是顶部导航栏的「视频号」入口文字，接口正文里没有任何视频号能力。现在可以给你完整、有依据的答案了。",
+        tool_calls: [toolCall("c1", "finish_task", { summary, evidence: "已逐类核对官方文档导航树与草稿/发布接口正文" })],
+      },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, summary, "正文只有预告时，交付正文应是完整的 summary，而不是那句预告");
+  assert.doesNotMatch(result.finalText, /现在可以给你完整/, "不能把只说「要给答案」的预告当成交付内容");
+});
+
+test("finish_task 同轮正文只写一句简短结果而成稿在 summary 时，交付 summary", async () => {
+  const root = await makeWorkspace();
+  // 真实线上案例：正文「复核通过。简介已成功落库。」，补好的简介全文只在 summary 里
+  const summary = "视频介绍（简介）已补好并保存进草稿，共 209 字，在 300 字限制内。\n\n**填入的简介**：「本期AI科技晨报，8条要闻、4条国内、4条国际……」\n\n**保存位置**：草稿 media_id 已在回执中核对。";
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "把简介补上" }],
+    fetchImpl: mockFetch([
+      { role: "assistant", content: "复核通过。简介已成功落库。", tool_calls: [toolCall("c1", "finish_task", { summary, evidence: "已重新读取草稿回执核对字数" })] },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  assert.equal(result.finalText, summary, "正文只写一句结果、成稿在 summary 时不能丢成稿");
+});
+
+test("交付正文选择：只有替换后的内容更完整才替换，客套承诺不毁掉正文", () => {
+  const answer = "查证结论：视频号没有内容发布 API，第三方程序发不进去；可行路径只有后台手动转发，审核风险有两处：标题长度与封面比例。";
+  // 同轮正文是完整汇报、summary 只是回执 → 保留正文（线上既有口径）
+  assert.equal(pickDeliveryText("报告是季度总结。", "已读取报告"), "报告是季度总结。");
+  // 正文完整、末尾补一句客套承诺 → 仍保留正文（summary 更短，替换只会丢内容）
+  assert.equal(pickDeliveryText("报告是季度总结。需要的话我可以给你更详细的明细。", "已读取报告"), "报告是季度总结。需要的话我可以给你更详细的明细。");
+  assert.equal(pickDeliveryText("三台机器已全部重启完成，服务恢复。如需，我可以给你完整的处理清单。", "", ""), "三台机器已全部重启完成，服务恢复。如需，我可以给你完整的处理清单。");
+  // 正文写出了具体产出（路径/文件/数量）时，更长的工作日志不能盖掉它
+  const precise = "报告已生成：output/9月24日晨报.docx（12 页，含 8 条要闻）。";
+  assert.equal(pickDeliveryText(precise, `本次已完成以下工作：${"核对与归档。".repeat(14)}`), precise);
+  assert.equal(pickDeliveryText("三个模块共 128 处命中，全部为测试代码。", `本次已完成以下工作：${"读取与汇总。".repeat(14)}`), "三个模块共 128 处命中，全部为测试代码。");
+  // 正文完整 + summary 只是回执/过程记录（不是交付内容）→ 保留正文
+  assert.equal(pickDeliveryText("查证结论：视频号没有内容发布 API，只能后台手动转发。\n\n需要的话我可以给你更详细的明细。", "已核实完毕并把资料归档保存"), "查证结论：视频号没有内容发布 API，只能后台手动转发。\n\n需要的话我可以给你更详细的明细。");
+  assert.equal(pickDeliveryText("查证结论：视频号没有内容发布 API，只能后台手动转发。", "我把三层数据逐条核对了一遍"), "查证结论：视频号没有内容发布 API，只能后台手动转发。");
+  // 「结论如下：<内容>」是完整句，不算引子，且 summary 更短时保留正文
+  assert.equal(pickDeliveryText("结论如下：视频号没有内容发布 API，只能手动转发。", "已查完"), "结论如下：视频号没有内容发布 API，只能手动转发。");
+  // 空正文 → 用 summary
+  assert.equal(pickDeliveryText("", "报告已整理完毕，要点齐全"), "报告已整理完毕，要点齐全");
+  // 冒号半截话 → 用 summary
+  assert.equal(pickDeliveryText("已读取并核对：", "报告已读取，内容是季度总结"), "报告已读取，内容是季度总结");
+  // 预告句（原句 / 换词序 / 后面还跟着客套话 / 不带人称词的指路话）→ 完整成稿在 summary 时用 summary
+  for (const teaser of [
+    "查证完毕，两次出现都只是站点导航文字。现在可以给你完整、有依据的答案了。",
+    "查证完毕，两次出现都只是站点导航文字。现在把完整、有依据的答案给你。",
+    "查证完毕，两次出现都只是站点导航文字。等一下把完整、有依据的答案给你。",
+    "查证完毕，两次出现都只是站点导航文字。现在可以给你完整、有依据的答案了。\n\n有问题随时问我。",
+    "三条线索都核过了，完整结论我整理好了，请查收。",
+    "我已经把这次核对涉及的三个模块、两处风险点和六条替代方案都整理好了，完整结论就放在下面的表格里。",
+    "完整清单见附件文档。",
+    "完整明细我整理在下面的表格当中。",
+  ]) {
+    assert.equal(pickDeliveryText(teaser, answer), answer, `承诺句/指路话应收敛到完整成稿：${teaser}`);
+  }
+  // 正文只是「已完成」式短回执 → 用成稿；既无正文也无 summary 才退回遗留正文，全空兜底固定文案
+  assert.equal(pickDeliveryText("复核通过。简介已成功落库。", answer), answer);
+  assert.equal(pickDeliveryText("", "", "上传并核对："), "上传并核对：");
+  assert.equal(pickDeliveryText("", "", ""), "任务已完成");
+  // summary 带冒号/分条说明它已经给出内容，不能当回执丢掉（否则纯指路话正文会把成稿顶掉）
+  assert.equal(
+    pickDeliveryText("三条线索都核过了，完整结论就放在下面的表格里。", "已整理好三条替代方案：一是换平台，二是走人工通道，三是等接口开放。"),
+    "已整理好三条替代方案：一是换平台，二是走人工通道，三是等接口开放。",
+  );
+  // 长过程日志（流水叙述）不能盖掉正文
+  const qualitative = "视频号没有内容发布 API，第三方程序发不进去，只有后台手动转发一条路。";
+  assert.equal(pickDeliveryText(qualitative, "先读取了草稿列表，然后逐篇核对了字数差异，接着把差异写进表格，最后更新了本地记录并复查了一遍。"), qualitative);
+  // 正文是纯指路话时，成稿即使更短也要用（否则用户永远只看到一句空话）
+  assert.equal(pickDeliveryText("完整结论就放在下面的表格里。", "视频号没有发布接口。"), "视频号没有发布接口。");
+  // 「结论如下：<内容>」是完整句，不是指路话；成稿更长更全时用成稿
+  assert.equal(pointsElsewhereOnly("结论如下：无发布接口。"), false);
+  assert.equal(pickDeliveryText("结论如下：无发布接口。", answer), answer);
+  // 引子/承诺/指路话判定
+  assert.equal(isIncompleteDeliveryEnding("已读取并核对："), true);
+  assert.equal(isIncompleteDeliveryEnding("三点结论如下"), true);
+  assert.equal(isIncompleteDeliveryEnding("结论如下：视频号没有内容发布 API。"), false);
+  assert.equal(isIncompleteDeliveryEnding("脚本默认保存到 D:"), false);
+  assert.equal(isIncompleteDeliveryEnding("完整清单请见 Notion:"), true);
+  assert.equal(promisesDelivery("现在给你完整、有依据的答案了。"), true);
+  assert.equal(promisesDelivery("以上是我给你的结论。"), false);
+  assert.equal(promisesDelivery("报告是季度总结。"), false);
+  assert.equal(pointsElsewhereOnly("完整结论就放在下面的表格里。"), true);
+  assert.equal(pointsElsewhereOnly("下面是完整的排查清单：1) 磁盘 2) 内存 3) 网络。"), false);
+});
+
+test("交付正文被 summary 替换时，被换掉的正文里的完成声明仍要核验", async () => {
+  const root = await makeWorkspace();
+  const body = "文章已全部上传到草稿箱，草稿编号也核对过了。现在可以给你完整的上传明细。";
+  const summary = "本轮上传工作已经收口：明细与回执请以交付卡片为准；如仍有疑问可以继续追问，我会再逐条核对一遍，并把每一篇的状态与编号整理成清单发给你。";
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "把文章上传到公众号" }],
+    fetchImpl: mockFetch([
+      { role: "assistant", content: body, tool_calls: [toolCall("c1", "finish_task", { summary, evidence: "已核对上传回执" })] },
+    ]),
+  });
+  assert.equal(result.finalText.startsWith(summary), true, "正文只承诺交付、summary 更完整时交付 summary");
+  assert.notEqual(result.status, "done", "正文被替换掉不等于声明消失，虚报仍必须被核验拦下");
+  assert.match(result.finalText, /系统核验提示/);
 });
 
 test("write_file 被用户拒绝时不写文件并反馈给模型", async () => {
@@ -2767,6 +2886,7 @@ test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败�
   const broken = await reviewApproval({
     settings,
     action,
+    networkRetryBaseDelayMs: 1,
     fetchImpl: async () => { throw new Error("连接失败"); },
   });
   assert.equal(broken.decision, "ask");
@@ -5019,6 +5139,7 @@ test("compactConversation 摘要请求失败时熔断回退为直接省略，任
   const compacted = await compactConversation({
     messages,
     settings,
+    networkRetryBaseDelayMs: 1,
     fetchImpl: async () => { throw new Error("网络中断"); },
   });
   assert.equal(compacted, true);

@@ -1661,9 +1661,9 @@ export function toolDefinitions() {
         reason: stringProperty("挂起原因，唤醒时会带回给你"),
       },
       ["reason"]),
-    functionTool("finish_task", "确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
+    functionTool("finish_task", "确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。调用前先确认用户的答案已经在回复正文里写完：正文只留「现在给你完整答案」这类预告、内容却放在参数里，用户会看不到结论。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
       {
-        summary: stringProperty("用普通用户能看懂的语言完整说明完成了什么；这段话会直接作为任务结果展示给用户，必须完整、能独立阅读，不要只写标题式或半句引子"),
+        summary: stringProperty("交付内容，必须完整、能独立阅读——用户在消息里看到的结论就来自正文或这里。若正文已给出完整结论，这里写一句交付说明即可；若正文没有写完（只有预告、半句话、或只有一句「已完成」），必须把完整结论连同依据与建议写在这里，不要只写标题式或半句引子"),
         evidence: stringProperty("说明做过哪些结果检查"),
         goalAchieved: { type: "boolean", description: "会话设有长期目标（系统提示会说明）时使用：确认长期目标已达成设为 true；未达成或不确定则省略" }
       },
@@ -2659,6 +2659,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 交付前必须实际验证：文件类产出要重新读取或运行检查确认真实生成、内容正确；无法验证时如实说明「这一步无法验证」，不得假装验证过。\n"
     + "- 先说没有之前先查：用户问到的文件、信息没找到时，先用 list_files、search_history、web_search 等查过再下结论。\n"
     + "- 失败先诊断再行动：工具失败时读懂错误原因、换一个真正不同的做法；不要原样重试，也不要一次失败就放弃。\n"
+    + "- 用户要的结论必须落在回复正文里：查证、分析、咨询类任务结束前，把结论、依据（含来源）和可行建议完整写进正文。不得用「现在给你完整答案」「详见交付结果」这类预告收尾，也不得把结论只放进工具参数（用户只看得到正文，看不到参数）。\n"
     + "- 确实缺少无法自行获取的关键信息时，用 ask_user 工具向用户提问，一次只问一个问题；能自己查到的不要问。",
 
     "# 如实汇报\n"
@@ -2702,7 +2703,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 深度思考（内部推理过程）也使用简体中文进行，与回复语言保持一致。\n"
     + "- 对用户使用简洁、自然的中文，说明做成了什么；不要展示内部工具名或原始命令，除非用户明确要求。\n"
     + "- 中文回复一律使用全角标点（，。！？：；、「」），不要受用户消息里的标点习惯影响；代码、命令、URL 内保持原样。\n"
-    + "- 完成后用一两句话说清结果即可，不要复述全文，不要追问「还需要什么」。",
+    + "- 结论已经在上文完整给出时，收尾用一两句话说清结果即可，不要复述全文，不要追问「还需要什么」；但「简洁」不等于省略结论——用户要的答案必须在正文里看得见。",
 
     "# 聊天内可视化\n"
     + "- 当选项比较、数值调节、数据对比或分步说明明显比纯文字更容易理解时，可以在回复中加入一个或多个 ```dyworker-ui 代码块。普通问题不要强行使用。\n"
@@ -4084,7 +4085,7 @@ export async function summarizeApprovalImpact({ settings, action = {}, context =
   }
 }
 
-export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null } = {} as any) {
+export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null, networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS } = {} as any) {
   // 实时读取策略文件：策略被修改后新决策立即生效，policyHash 随之变化
   const { text: policy, hash: policyHash } = loadReviewerPolicy();
   // 本地内置审核模型：Qwen3-0.6B 在本机 llama.cpp 上推理，零成本离线
@@ -4119,7 +4120,8 @@ export async function reviewApproval({ settings, action = {}, context = "", fetc
     },
   ];
   try {
-    const message = await requestModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage });
+    // 审核失败走 fail-closed（返回 ask），测试靠注入小退避值避免真实等待网络重试阶梯
+    const message = await requestModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
     return { ...parseReviewerDecision(messageText(message)), policyHash };
   } catch (error: any) {
     return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
@@ -4258,7 +4260,7 @@ export function pruneOldToolResults(messages, contextLimit = 128000, force = fal
 // 用一次独立的无工具模型请求把早前对话压缩为结构化摘要。
 // 保留：messages[0] 系统提示、messages[1] 原始任务（用户红线逐字不动）、最近 keepRecent 条消息；
 // 摘要请求失败时熔断回退为直接省略早前记录，任务绝不因压缩失败而中断。
-export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null, keepRecent = 12 }) {
+export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null, keepRecent = 12, networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
   if (messages.length < keepRecent + 8) return false;
   let cut = messages.length - keepRecent;
   // 保留区不能以 tool 消息开头，也不能把 assistant(tool_calls) 与它的工具结果对切开
@@ -4282,7 +4284,7 @@ export async function compactConversation({ messages, settings, fetchImpl, signa
   let summary;
   try {
     // 压缩是纯文本摘要，关闭思考省 token 提速度（厂商不支持关闭时自动退化为不传参数）
-    const message = await requestModel({ settings: { ...settings, reasoningEffort: "off" }, messages: [{ role: "user", content: summaryPrompt }], fetchImpl, signal, tools: false, onUsage });
+    const message = await requestModel({ settings: { ...settings, reasoningEffort: "off" }, messages: [{ role: "user", content: summaryPrompt }], fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
     summary = messageText(message).trim();
     if (!summary) throw new Error("摘要为空");
   } catch {
@@ -4541,6 +4543,123 @@ function countUploadReceipts(tool) {
   return 0;
 }
 
+// 交付正文是否以「半截话」收尾：以冒号收尾的引子，或「结论如下」这类后面什么都没有的引子。
+// 只认整个文本的结尾——「结论如下：视频号没有发布接口」这种后面有内容的完整句不算引子；
+// 单个字母加冒号按 Windows 盘符处理（「保存到 D:」），但「请见 Notion:」这类英文词尾不算豁免。
+export function isIncompleteDeliveryEnding(text) {
+  const value = String(text || "").trim();
+  if (!value) return true;
+  if (/(?:^|[\s（(「])[A-Za-z]:\s*$/.test(value)) return false;
+  if (/[:：]\s*$/.test(value)) return true;
+  return /(?:答案|结论|结果|清单|明细|要点|建议|方案)[^。！？\n]{0,6}(?:如下|见下|附后|在下方|随后给出)[：:]?\s*$/.test(value);
+}
+
+// 正文里是否存在「只承诺交付、还没给内容」的句子。逐句判定而不是只看最后一句：正文后面可能还跟着
+// 「有问题随时问我」这类客套，只查尾句会漏掉真正的承诺句。要求同一句里同时出现预告口吻、交付动词、
+// 对象「你/您」与交付物名词（或「请查收」这类收件提示），避免把「以上是我给你的结论」这种已经交付
+// 的收尾误判成承诺。
+const PROMISE_ANNOUNCE = /(?:现在|这就|下面|接下来|稍后|马上|等一下|待会|即将|将要|将会|可以|会|准备|回头|随后)/;
+const PROMISE_DELIVER = /(?:给|交给|发|呈|奉|提供|汇报|说明|整理|列|输出|呈现)/;
+const PROMISE_TARGET = /(?:你|您)/;
+const PROMISE_NOUN = /(?:答案|结论|结果|回复|答复|说明|汇报|总结|清单|明细|建议|要点|方案|报告|正文|内容|详情|数据|资料|表格)/;
+const PROMISE_RECEIVING = /(?:请查收|请过目|请查阅)/;
+
+function deliverySentences(text) {
+  return String(text || "")
+    .split(/[。！？!?\n]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function isPromiseSentence(sentence) {
+  return (PROMISE_ANNOUNCE.test(sentence) && PROMISE_DELIVER.test(sentence) && PROMISE_TARGET.test(sentence) && PROMISE_NOUN.test(sentence))
+    || (PROMISE_RECEIVING.test(sentence) && PROMISE_NOUN.test(sentence));
+}
+
+export function promisesDelivery(text) {
+  return deliverySentences(text).some(isPromiseSentence);
+}
+
+// summary 是否只是「已完成/已归档」式回执或过程工作日志，而不是交付内容。这类文本再长也不能盖掉
+// 正文里已经给出的答案（实测「已核实完毕并把资料归档保存」「我把三层数据逐条核对了一遍」
+// 「本次已完成以下工作：…」都只是过程记录）。
+// 只有「没有冒号/分号、也不是分条清单」的纯动作汇报才算回执：像
+//「已整理好三条替代方案：一是换平台，二是走人工通道」这种带内容的成稿，绝不能当成回执丢掉。
+const STATUS_REPORT_PATTERN = /^(?:我|我们|本次|本轮|这次|已经?|都|均|全部)[^。！？\n]{0,20}(?:核实|核对|复核|检查|整理|梳理|归档|保存|处理|执行|读取|检索|汇总|确认|更新|交付|结束|搞定|通过|落库|完成)/;
+// 过程日志：本轮工作汇报、工具调用记录，以及「先…然后…接着…最后…」式流水叙述
+const PROCESS_LOG_PATTERN = /(?:本次|本轮|这次)[^。！？\n]{0,12}(?:完成|执行|进行)(?:了)?[^。！？\n]{0,12}工作|(?:调用|执行)了?[^。！？\n]{0,8}工具|工具清单|操作步骤|执行记录|已归档|(?:先|首先)[^。！？\n]{2,40}(?:然后|接着|最后|之后)/;
+// 极短 summary 只有落到这些动作词才算回执：「视频号没有发布接口。」这类短答是交付内容，不能当回执丢掉
+const RECEIPT_WORD_PATTERN = /(?:完毕|读取|读完|阅读|核对|复核|检查|整理|梳理|归档|处理|执行|交付|结束|搞定|确认|修改|更新|落库|保存|生成|通过|就绪|完成)/;
+
+function isStatusOnlySummary(text) {
+  const value = String(text || "").trim();
+  if (!value) return true;
+  if (value.length <= 12) return RECEIPT_WORD_PATTERN.test(value);
+  if (PROCESS_LOG_PATTERN.test(value)) return true;
+  // 带冒号/分号或分条序号说明已经给出内容，不是纯回执
+  if (/[：:；;]/.test(value) || /(?:^|\n)\s*(?:\d+[.、)]|[一二三四五六七八九十]+[、.])/.test(value)) return false;
+  return value.length <= 60 && !ANSWER_PAYLOAD_PATTERN.test(value) && STATUS_REPORT_PATTERN.test(value);
+}
+
+// 判定交付正文是否写出了「具体产出」：文件、路径、链接，或「12 页」「3 条」「128 处」这类带单位的
+// 数量。写了具体产出的正文不能被一份更长的工作日志或一句更短的回执盖掉。
+const ANSWER_PAYLOAD_PATTERN = /(?:[A-Za-z]:[\\/]|[^\s，。；：、（）()「」]{1,60}\.(?:docx?|xlsx?|pptx?|pdf|md|txt|csv|json|html?|png|jpe?g|gif|mp4|mov|mp3|wav|zip|py|js|ts|tsx|mjs)|https?:\/\/|\/[\w.\u4e00-\u9fa5-]+\/|\d+\s*(?:页|篇|条|个|处|行|项|份|例|人|家|张|套|组|道|节|步|元|%|次|字|分钟|小时|天|GB|MB|KB))/i;
+
+// 正文尾句只是「答案在下面表格里 / 见附件文档 / 见后文」这类指路话，并且指路之后没有真的给出
+// 内容。指路话不带人称词，靠 promisesDelivery 抓不到；但「结论如下：<内容>」这种后面有内容的
+// 完整句必须放行，所以「如下/如上」只在句末才算指路话，地点类指路词后面也几乎不能有实质内容。
+export function pointsElsewhereOnly(text) {
+  const sentences = deliverySentences(text);
+  const last = sentences[sentences.length - 1] || "";
+  const pointer = /(?:答案|结论|结果|清单|明细|要点|建议|方案|报告|表格|正文|内容|资料)[^。！？\n]{0,16}(?:放在|见|详见|参见|整理在|汇总在|转到)?[^。！？\n]{0,6}(?:下面|下方|下表|下页|下一节|后文|后面|末尾|本节|第\s*\d+\s*[节页章]|附页|附表|附件|文档|下文|表格|表里|清单里|附后|如上|如下)/;
+  const match = last.match(pointer);
+  if (!match) return false;
+  const after = last.slice(match.index + match[0].length).replace(/[。！？!?、，,：:\s]/g, "");
+  const marker = match[0].slice(-2);
+  return marker === "如下" || marker === "如上" ? after.length <= 1 : after.length <= 6;
+}
+
+// 交付正文选择。finish_task 有两个都可能面向用户的文本来源：模型在同一轮的收尾正文，和工具
+// 契约里要求「完整、能独立阅读」的 summary。二者都可能是过程旁白/半句引子，也都可能是真正的
+// 成稿，所以不能一味偏好其中一个：
+//   · 旧口径固定优先同轮正文，实测有三类交付因此丢了内容——正文只写一句预告（「现在可以给你
+//     完整、有依据的答案了。」）而完整结论写在 summary 里；正文只写「复核通过。简介已成功落库。」
+//     而补好的成稿在 summary 里；正文只写「视频部分已全部完成。」而成片路径在 summary 里。
+//   · 反过来，同轮正文是完整汇报、summary 只是「已读取报告」这类回执时，应当保留正文；正文
+//     完整但末尾补一句客套承诺（「需要的话我可以给你更详细的明细」）时同样要保留正文。
+// 规则：正文为空或以半截话收尾 → summary；summary 只是回执/过程日志 → 保留正文；成稿比正文更长，
+// 且（正文含承诺句/指路话，或正文没有写出具体产出）时用 summary；成稿更长但正文写了具体产出时，
+// 只有正文几乎只剩一句承诺才用 summary；成稿不比正文长时，只有正文本身是空壳（≤12 字且没有产出）
+// 才用 summary；否则保留正文；再退回更早轮次的遗留正文，最后兜底固定文案。
+// 关键约束：正文写出了具体结论或产出时，不会被一句更短的回执或一份更长的工作日志盖掉；
+// summary 也不会因为正文只是一句预告/指路话而被静默丢弃。
+export function pickDeliveryText(roundText, summaryText, legacyText = "") {
+  const text = String(roundText || "").trim();
+  const summary = String(summaryText || "").trim();
+  const legacy = String(legacyText || "").trim();
+  const fallback = summary || legacy || "任务已完成";
+  if (!text) return fallback;
+  // 正文以半截话收尾：肯定没写完，summary 再短也比它完整
+  if (isIncompleteDeliveryEnding(text)) return fallback;
+  if (!summary) return text;
+  const concrete = ANSWER_PAYLOAD_PATTERN.test(text);
+  // summary 只是回执或过程日志：不能盖掉正文（正文只有一句「报告是季度总结。」时也一样）
+  if (isStatusOnlySummary(summary)) return text;
+  const substantive = deliverySentences(text).filter((sentence) => !isPromiseSentence(sentence)).join("");
+  const pointerOnly = pointsElsewhereOnly(text);
+  // 正文本身就是一句指路话（「完整结论就放在下面的表格里。」），或去掉承诺句后几乎没内容：
+  // 成稿就是 summary，比正文短也要用，否则用户拿到的永远是一句空话
+  if (pointerOnly || (promisesDelivery(text) && substantive.length <= 12 && !ANSWER_PAYLOAD_PATTERN.test(substantive))) return summary;
+  const teaser = promisesDelivery(text) || pointerOnly;
+  // 正文只是预告/指路话，或没有写出具体产出，而成稿更长 → 用成稿
+  if (summary.length > text.length && (teaser || !concrete)) return summary;
+  // 成稿更长但正文写了具体产出：只有正文几乎只剩一句承诺时才用成稿
+  if (summary.length > text.length) return text;
+  // 成稿不比正文长：只有正文本身是空壳时才用成稿
+  if (text.length <= 12 && !concrete) return summary;
+  return text;
+}
+
 // 任务完成证据核验：检查模型声称的完成是否具备真实工具执行凭据
 export function verifyTaskEvidence({
   finalText = "",
@@ -4575,10 +4694,34 @@ export function verifyTaskEvidence({
   // 按子句独立判定：除标点外，还在“但/但是/然而/不过/却”等转折连接词处拆开，
   // “A已上传但B尚未上传”两侧分别核对，未完成的 B 不能掩盖虚报的 A
   const clauses = text.split(/[，,；;。！!\n\r]+|但(?:是)?|然而|不过|却/).map((s) => s.trim()).filter(Boolean);
+  // 「推送/发送/转发」有歧义（git push 不是平台发布）：只有整段回复处在内容平台语境里才按发布声明
+  // 处理；本次调用过上传/发布类工具，同样说明处在发布语境
+  const platformContext = /(?:公众号|服务号|订阅号|视频号|草稿箱|草稿|素材库|发布平台|内容平台|后台|朋友圈|企业微信|抖音|小红书|微博|知乎|bilibili|文章|图文|稿件)/i.test(text)
+    || executedTools.some((tool) => /(?:^|[_-])(?:upload|publish|post|draft|material)(?:[_-]|$)/i.test(String(tool?.name || "")));
   const isPositiveUploadClause = (clause) => {
-    const hasPos = /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已进入草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(clause);
-    const hasNeg = /(?:尚未|未|暂未|没有|暂不|先不|不予|不需|不用|无需|不需要)\s*(?:打算|准备|执行|进行)?\s*(?:上传|发布|发表|同步|推送|存入草稿)/i.test(clause);
-    return hasPos && !hasNeg;
+    // 「已发表的文章页」这类定语用法不是完成声明：实测「2. 或者已发表的文章页里手动转发到视频号」
+    // 会被当成助手「已发表」，把纯咨询类交付误判成虚报上传。先把定语形式的上传动词剥掉再判声明，
+    // 这样既不会误判定语，也不会因为句子以「可以/请/如需」开头就漏掉真正的完成声明。
+    const stripped = clause.replace(/已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)(?:的|过的)/g, "");
+    const hasAttributive = stripped !== clause;
+    // 「尝试/准备/开始入库」是打算，不是完成；整句按意图处理，避免「均已尝试入库」被算成入库成功
+    const attemptOnly = /(?:尝试|准备|打算|开始|即将|计划)[^。！？\n]{0,4}(?:入库|上传|发布|发表|同步|发送|推送)/.test(stripped);
+    const hasPos = !attemptOnly && /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已(?:经)?(?:全部|均|都)?入(?:库|仓)|(?:均已|都已|全部|都|均)(?!\s*(?:尝试|准备|打算|开始|即将|计划))[^。！？\n]{0,6}入库|入库(?:成功|完成|完毕)|已进入草稿箱|(?:已经?|都|均|全部|成功)[^。！？\n]{0,3}进[^。！？\n]{0,3}草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(stripped);
+    // 定语剥离后剩下的若是数量/回执信息（「已发布的 3 篇文章：ID1、ID2」），或「都传上去了」
+    // 这类口语完成式（「已发布的文章都传上去了」），仍然是完成声明
+    const attributiveClaim = hasAttributive
+      && /(?:成功|完成|就绪|入库|均已|都已|都同步|全部|共\s*\d+|\d+\s*(?:篇|个|条)|编号|\bid\b|media_id|(?:都|均)(?:已)?[^。！？\n]{0,8}(?:传|发|转|推送|同步|上传|发布|发表|存|入|进)|(?:传|发|转|推送|同步|上传|发布|发表|存|入|进)[^。！？\n]{0,4}了)/i.test(stripped);
+    // 口语完成式：「已经/成功 + 动词」或「动词 + 完成标记」（「文章都已经传到公众号后台了」
+    // 「全部传上去了」「上传完毕」「都同步好了」）。完成标记必须紧贴动词，否则「这两条都只在你
+    // 手动发表的瞬间发生」这种无关句会被误判成完成声明。
+    const colloquialClaim = !attemptOnly && /(?:已经?|成功)[^。！？\n]{0,4}(?:上传|传到|传上去|发布|发表|发到|发出去|发出|发好|转存|转到|同步|入库|进草稿箱|存草稿|存好)|(?:上传|传到|传上去|发布|发表|发到|发出去|发出|发好|转存|转到|同步|入库|进草稿箱|存草稿|存好)[^。！？\n]{0,8}(?:成功|完毕|完成|好了|掉了|完了|了|完)/.test(stripped);
+    // 平台语境下的「已推送成功/已发送/已转发」才算发布声明（git push 的「已推送。」不算）
+    const pushClaim = platformContext
+      && (/(?:已经?|成功)[^。！？\n]{0,4}(?:推送|发送|转发)|(?:推送|发送|转发)[^。！？\n]{0,8}(?:成功|完毕|完成|好了|掉了|完了|了|完)/.test(stripped));
+    // 否定词与完成动词之间允许夹「真正/实际/全部/都」等副词，否则「并没有真正发布成功」这类
+    // 如实的失败汇报会被当成虚报成功
+    const hasNeg = /(?:尚未|未|暂未|没有|并没有|并没|暂无|暂不|先不|不予|不需|不用|无需|不需要)[^。！？\n]{0,6}(?:上传|发布|发表|同步|推送|发送|发到|发出去|存入草稿|入库)/i.test(clause);
+    return (hasPos || attributiveClaim || colloquialClaim || pushClaim) && !hasNeg;
   };
   const claimsUpload = clauses.some(isPositiveUploadClause);
 
@@ -4663,7 +4806,9 @@ export function verifyTaskEvidence({
     }
     // 一次批量调用可能成功上传多篇：按成功回执中的逐篇凭据计数，而不是按工具调用次数
     const successfulReceipts = successfulUploads.reduce((sum, tool) => sum + countUploadReceipts(tool), 0);
-    if (claimedQuantity && Number.isFinite(claimedQuantity) && successfulReceipts < claimedQuantity) {
+    // 已经如实说明有失败/被驳回时，成功数少于总数是吻合事实的，不能再判「数量不符」
+    const reportsFailure = /(?:失败|驳回|被拒|拒绝|未成功|没有成功|不成功|出错|异常|部分)/.test(text);
+    if (!reportsFailure && claimedQuantity && Number.isFinite(claimedQuantity) && successfulReceipts < claimedQuantity) {
       return {
         verified: false,
         verdict: "unverified",
@@ -5337,7 +5482,9 @@ export async function runAgent({
 
     if (finalStatus === "done") {
       verification = verifyTaskEvidence({
-        finalText: text || "",
+        // 核验口径用 claimsText（交付轮正文 + summary 的合集）而不是展示出来的那一份：
+        // 交付正文被替换时，被换掉的正文里如果有虚报，只核验展示文本就会放过它。
+        finalText: result.verificationText || text || "",
         executedTools,
         fileChanges,
         planSteps,
@@ -6404,11 +6551,14 @@ export async function runAgent({
             // 交付正文口径：只有与 finish_task 同轮的正文才算模型的收尾汇报；
             // 更早轮次遗留的 finalText 是过程旁白（如「上传并核对：」半句），拿它当
             // 交付结果会让消息里看不到交付内容，只能去过程节点里找。
-            // 同轮无正文、或正文以冒号收尾（引出下文的半截话）时，用工具契约里面向
-            // 用户的 summary 作为交付正文；再退回遗留正文，最后兜底固定文案。
-            const roundReport = /[:：]\s*$/.test(text) ? "" : text;
+            // 同轮正文为空、以半截话收尾、只承诺交付、或只是「已完成」式短回执时，
+            // 用工具契约里面向用户的 summary 作为交付正文（见 pickDeliveryText）；
+            // 再退回遗留正文，最后兜底固定文案。
             const summaryText = String(outcome.finished.summary || "").trim();
-            return withChanges({ status: "done", finalText: roundReport || summaryText || finalText || "任务已完成", memory: savedMemory, finish: outcome.finished, ...(goal && outcome.finished?.goalAchieved ? { goalAchieved: true } : {}) });
+            const deliveryText = pickDeliveryText(text, summaryText, finalText);
+            // 正文与 summary 都属于本次交付的对外声明，核验要覆盖两者（见 withChanges）。
+            const claimsText = [text, summaryText].map((part) => String(part || "").trim()).filter(Boolean).join("\n\n");
+            return withChanges({ status: "done", finalText: deliveryText, verificationText: claimsText || deliveryText, memory: savedMemory, finish: outcome.finished, ...(goal && outcome.finished?.goalAchieved ? { goalAchieved: true } : {}) });
           }
           if (outcome?.sleeping) {
             for (let rem = idx + 1; rem < toolCalls.length; rem++) {
