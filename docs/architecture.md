@@ -205,3 +205,138 @@ main.mts 里运营域初始化已前移到 `createWindow()` 之前。
   asarUnpack 指向 dist 布局。
 - 渐进类型化债务：`electron/migration-types.d.ts`（Error 索引签名等宽限）
   与各处 `as any` 随域类型化逐步收紧删除。
+
+## 插件层（可安装/启停/配置 Cordis 插件）
+
+宿主跑在 **`@deepseek-ai/cordis@4.0.4`**（DSH vendored 的那份，不是上游 `cordis`）。
+这不是随便选的：插件里的 `Context`/`Service` 必须与宿主是同一份实现，否则插件的
+`ctx.plugin` 永远挂不上。loader 也是 DSH 在用的同一套
+（`@deepseek-ai/cordis-plugin-loader@1.0.5`）。
+
+### 目录与文件
+
+```
+<userData>/plugins/
+  package.json            profile 清单（与 DSH profile 同构，但**不共用**）
+  dyworker.yml            用户层条目（与 dsh 的 cordis.yml 同方言）
+  dyworker.bundles.json   已安装插件包记录（≈ dsh 的 package.json#dsh.profile.bundles）
+  node_modules/<包>       插件包本体
+  data/                   插件私有数据（ctx.storage 的相对路径落点）
+```
+
+刻意不叫 `cordis.yml`、不读也不写 `~/.dsh`：避免与 DSH 的 CLI 互相污染锁文件和启用状态。
+
+### 装配模型（对齐 dsh）
+
+```
+用户层（dyworker.yml）
+      + 各 bundle 的 patch（按安装顺序，applyEntryPatches 语义）
+      = 合成条目 → 交给 loader 装载
+```
+
+`insert` / `disable` / `config` 覆盖、id 定位、name 校验、未命中告警都**直接复用上游
+`applyEntryPatches`**（它同时被 dsh 的挂载路径与 `dsh --dump-config` 使用），
+所以语义与 dsh 一致。卸载 = 丢掉记录重新合成，用户层原样恢复。
+
+### 契约服务（插件只 inject 这些，不接内部 deps 大包）
+
+| 服务 | 能力 | 说明 |
+|---|---|---|
+| `ctx.ipc` | `handle(channel, handler)` → 注销函数 | 来源校验统一在壳层完成；必须配 `ctx.effect` 绑定生命周期，否则停用再启用会撞 Electron 的 second handler |
+| `ctx.storage` | `file/readJson/writeJson/readText/writeText/exists/remove` | 相对名只能落在 `plugins/data` 内（穿越拒绝）；绝对路径限定在 userData 内 |
+| `ctx.window` | `current`（调用期 getter）/`focus`/`broadcast`/`dialog`/`shell`/`clipboard`/`nativeImage`/`nativeTheme` | 主窗口在插件挂载**之后**才创建，所以必须实时读取 |
+| 已有服务 | `settings` `sessions` `skills` `memory` `inbox` `scheduler` `audit` `plugins` | 见「服务清单」 |
+
+### 编写一个插件
+
+```js
+// 包主入口：一个普通 cordis 插件
+export const name = "demo"
+export function apply(ctx, config) {
+  ctx.effect(() => ctx.ipc.handle("demo:ping", () => "pong"))
+  const state = await ctx.storage.readJson("state.json", {})
+}
+export default { name, apply }
+```
+
+包可以声明 bundle patch（dsh 插件用 `dsh.bundle.patch`，一行不用改）：
+
+```json
+{ "dsh": { "bundle": { "patch": "./cordis.patch.yml" } } }
+```
+
+```yaml
+- insert:
+    - id: demo
+      name: demo
+```
+
+没有 patch 的包按「单条目安装」处理。已验证真实的 `dsh-context@0.62.2`
+能被识别（`dsh.bundle.patch` → `insert: [{id: dsh-context, name: dsh-context}]`）。
+
+### 已知限制
+
+- **DSH 插件的 UI 半边跑不了**：DSH 把界面半边（`dsh.client`）交给它的 Web shell
+  与 `dsh-client-*` 服务加载，DYWorker 没有客户端插件宿主。能加载的是 host 半边。
+- 插件与宿主**同进程**，同进程不提供任何隔离；面向第三方开放前需要独立宿主进程。
+- `shellDeps`（内部 25 个 IPC 插件的注入包）仍在，迁移到契约层是渐进过程，
+  已完成样板：`plugins/audit-ipc.mts`。
+
+### DSH 兼容矩阵
+
+DSH 插件声明依赖的服务名（`export const inject` / `static inject` / `ctx.inject([...])`），
+cordis 的 inject **只看名字不看形状**：名字缺失 → 永不 apply（界面上只是"装了什么都没发生"）；
+名字撞上但语义不同 → apply 之后按 DSH API 调用失败。所以安装前先判定并把结论说清楚：
+
+```
+ctx.plugins.compatibility({ spec })   // 只判定不安装
+ctx.plugins.install({ spec })         // 不兼容默认拒绝，返回 verdict/analysis/matrix
+ctx.plugins.install({ spec, allowIncompatible: true })  // 显式放行 partial
+```
+
+判定三档：
+
+| verdict | 含义 | 默认行为 |
+|---|---|---|
+| `runnable` | 主入口可 import，声明的服务本宿主都提供 | 允许安装 |
+| `partial` | 同名但语义不同（如 `skills`），装上会踩 API 差异 | **拒绝**，需显式 `allowIncompatible` |
+| `unsupported` | 缺依赖包导致 import 失败 / 需要本宿主没有的服务 / 含浏览器半边 | 拒绝 |
+
+判定依据全部来自插件包自身：模块能否 import、模块导出的 `inject`、`lib/` 里
+`ctx.inject([...])` 的静态扫描、`dsh.client` 声明、`dependencies`/`peerDependencies` 解析。
+「声明依赖解析不到但主入口能 import」按**内联**处理，不阻断（实测 DSH 有这类包）。
+
+**实测（本机 DSH 0.1.3-alpha.1 发布包）**：
+
+| 插件 | verdict | 原因 |
+|---|---|---|
+| `@deepseek-ai/dsh-agent-instructions` | ✅ runnable | 未声明服务依赖，主入口可 import——**已实际安装并处于 active** |
+| `@deepseek-ai/dsh-skill-filesystem` | ⚠️ partial | 依赖 `skills`，与本宿主同名服务语义不同 |
+| `@deepseek-ai/dsh-token-meter` | ❌ unsupported | 需要 `sessionProjections`（本宿主未提供） |
+| `@deepseek-ai/dsh-tool-bash` | ❌ unsupported | 需要 `tools` / `shell` / `systemPrompt` / `shellEnv` |
+| `dsh-context@0.62.2` | ❌ unsupported | 含浏览器半边（`dsh.client`），需要 DSH 的 Web shell |
+
+**结论**：DSH 插件不是孤立单元，多数依赖 DSH 自己的服务图（`tools`/`llm`/`agents`/
+`sessionProjections`…）。本宿主能装的是**不依赖这些服务**的 host 插件；否则要么补
+等价服务适配器，要么走官方 DSH 后端。这一点在安装时就直接讲明，不做"假装装上"。
+
+### 插件工具的受管链路（ctx.tools）
+
+插件注册的工具**不是**自由入口，四道约束写在 `host/services/tools.mts`：
+
+| 约束 | 做法 |
+|---|---|
+| 名字由宿主生成 | 一律 `plugin__<插件>__<工具>`；`browser__` / `mcp__` / `plugin__` 是保留前缀，插件无法冒充内置工具或覆盖他人工具 |
+| 风险不降级 | 风险以 `host/risk.mts` 的 `classify` 判定为准；插件声明的 `risk` 只能**抬高**，把有副作用的工具说成只读无效 |
+| 内部调用也受管 | `execute(name, args, { source })`：`source !== "agent"`（插件在加载时/后台计时器/内部互调）且工具有副作用时**直接拒绝**并留痕——只保护模型入口是不够的 |
+| 全程留痕 | 每次调用（含被拒绝的）`await` 写入审计：工具名、归属、riskClass、decision、会话/任务标识 |
+
+`classify` 的兜底也收紧了：**未识别的命名空间工具**（`plugin__*`、`dsh__*` 等）一律
+`RISK.EXTERNAL` / 有副作用。此前它们会落进"默认只读"，在只读模式下被直接放行。
+已知命名空间（`browser__`、`mcp__`）与无命名空间的内置工具行为不变。
+
+审批出口：插件工具默认**永远要问**（交互/替我审批模式均 `ask`，只读模式 `deny`）。
+用户显式"始终允许"使用常驻规则 `{ kind: "plugin-tool", pattern: "plugin__a__b" }`，
+与 `mcp-tool` 同款逐工具白名单；只读模式在常驻规则之前判定，不被覆盖。
+
+内置插件迁移样板见 `host/plugins/audit-ipc.mts`（契约层）与 `host/plugins/plugins-ipc.mts`（管理面）。

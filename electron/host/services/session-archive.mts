@@ -1,11 +1,11 @@
 // 会话存档服务：统一包装「按会话拆分存档 + 合并写入器」。读路径（历史检索、
 // 会话工具、渠道工作区推导）与写路径（渲染端增量/整档）都经由 ctx.sessions；
 // dispose 时 flush 合并写入器，保证退出前排队中的会话写盘完成。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import { createSessionArchive } from "../../session-archive.mts";
 import { createCoalescedWriter } from "../../session-store.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     sessions: SessionsService;
   }

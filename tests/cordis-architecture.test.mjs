@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { Context } from "cordis";
+import { Context } from "@deepseek-ai/cordis";
 import { createHost, disposeHost } from "../electron/host/context.mts";
 import { channelsPlugin, telemetryPlugin, backgroundTasksPlugin } from "../electron/host/services/runtime-domains.mts";
 

@@ -6,11 +6,16 @@
 //   - createHost 内同步构造各 Service（cordis 注册为 effect，需 await 根
 //     fiber 激活后方可经 ctx.<name> 访问）。
 //   - disposeHost 逆序执行各 fiber 的 effect 清理（flush、停定时器、断监听）。
-import { Context } from "cordis";
+import { Context } from "@deepseek-ai/cordis";
 import { AuditService } from "./services/audit.mts";
 import { SettingsService } from "./services/settings.mts";
 import { SessionsService } from "./services/session-archive.mts";
 import { AgentService } from "./services/agent.mts";
+import { mountPluginHost } from "./plugin-host.mts";
+import { IpcService } from "./services/ipc.mts";
+import { StorageService } from "./services/storage.mts";
+import { WindowService } from "./services/window.mts";
+import { ToolsService } from "./services/tools.mts";
 import { RulesService } from "./services/rules.mts";
 import { SkillsService } from "./services/skills.mts";
 import { MemoryService } from "./services/memory.mts";
@@ -38,7 +43,8 @@ export interface HostOptions {
     isShuttingDown?: () => boolean;
     isSessionBusy?: (sessionId: string) => boolean;
     isSystemBusy?: () => boolean;
-    runScheduledTask?: (record: any) => Promise<void> | void;
+    // meta.manual：本轮是用户点「立即执行」还是到点自动跑（壳层用它给运行会话打标）
+    runScheduledTask?: (record: any, meta?: { manual?: boolean }) => Promise<void> | void;
     resumeWake?: (wake: any) => Promise<void> | void;
     broadcast?: () => void;
   };
@@ -52,11 +58,43 @@ export interface HostOptions {
   // 调用 createHost 之前已完成初始化的绑定（import、函数声明、earlier const）；
   // 在 await 之后才创建的对象请在创建点直接 ctx.plugin(...) 挂载。
   registerService?: (ctx: Context) => any[] | void;
+  // 契约服务（ctx.ipc / ctx.storage / ctx.window）的壳层能力。
+  // 不传时服务仍会注册，但调用对应能力会给出"壳层未注入"的明确错误——
+  // 这样单测可以只注入需要的部分。
+  contracts?: {
+    // 统一做来源校验的 IPC 注册/注销原语
+    ipcRegister?: (channel: string, handler: any) => void;
+    ipcUnregister?: (channel: string) => void;
+    getMainWindow?: () => any;
+    getWebContents?: () => any[];
+    dialog?: any;
+    shell?: any;
+    clipboard?: any;
+    nativeImage?: any;
+    nativeTheme?: any;
+  };
+  // 插件宿主（ctx.plugins）：装载官方 cordis loader，插件树落在 pluginsDir。
+  // 默认不挂载——测试与不关心插件的调用方不必建目录/读树；
+  // 壳层在启动时传 mountPlugins: true 打开。
+  pluginsDir?: string;
+  mountPlugins?: boolean;
 }
 
 export async function createHost(options: HostOptions) {
   const ctx = new Context();
   ctx.provide("hostOptions", options);
+  const contracts = options.contracts || {};
+  // 契约服务：插件只 inject 这些，而不是壳层内部 deps 大包
+  new IpcService(ctx, {
+    register: contracts.ipcRegister,
+    unregister: contracts.ipcUnregister,
+  });
+  new StorageService(ctx, {
+    root: path.join(options.pluginsDir || path.join(options.userDataDir, "plugins"), "data"),
+    hostDir: options.userDataDir,
+  });
+  new WindowService(ctx, contracts);
+  new ToolsService(ctx);
   new AuditService(ctx, { filePath: path.join(options.userDataDir, "audit.jsonl") });
   new SettingsService(ctx, {
     settingsFile: path.join(options.userDataDir, "settings.json"),
@@ -91,6 +129,10 @@ export async function createHost(options: HostOptions) {
     startBackgroundTask: options.startBackgroundTask || ((p) => p),
   });
   await ctx.fiber.await();
+  // 插件宿主（可选）：官方 loader + 树文件，见 host/plugin-host.mts 的挂载顺序说明
+  if (options.mountPlugins) {
+    await mountPluginHost(ctx, options.pluginsDir || path.join(options.userDataDir, "plugins"));
+  }
   const registered = await Promise.resolve(options.registerService?.(ctx) || []);
   if (Array.isArray(registered) && registered.length) await Promise.all(registered);
   return ctx;

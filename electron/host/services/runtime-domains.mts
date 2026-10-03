@@ -8,7 +8,7 @@
 // 依赖顺序用 cordis inject 声明：运营消息中心需要用量统计的网络客户端，
 // 声明 inject: ["telemetryController"] 后，用量统计没就绪它就不会 apply——
 // 漏接依赖会「不激活」，而不是运行期读到 undefined。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import type { createBackgroundTasksManager } from "../../background-tasks.mts";
 import type { createChannelManager } from "../../channels/manager.mts";
 import type { createRemoteMessagesManager } from "../../remote-messages.mts";
@@ -16,7 +16,7 @@ import type { createTelemetryController } from "../../telemetry.mts";
 
 // 运行期域实例的 ctx 类型：实例由各域模块的工厂创建（域模块保持不 import cordis），
 // 这里用 ReturnType 引用其形状（import type 会被完全擦除，不引入运行期耦合）。
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     channelManager: ReturnType<typeof createChannelManager>;
     telemetryController: ReturnType<typeof createTelemetryController>;

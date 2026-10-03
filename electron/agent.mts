@@ -2439,6 +2439,12 @@ export function matchStandingRule(rules, name, args = {} as any) {
     if (rule.kind === "mcp-tool" && name.startsWith("mcp__") && !isComputerUseTool(name)) {
       if (String(rule.pattern || "") === name) return true;
     }
+    // 插件工具：与 mcp-tool 同款"逐工具精确白名单"。默认永远是问，
+    // 只有用户显式"始终允许这个插件工具"才放行；只读模式（deny-changes）
+    // 在更早处已直接拒绝，常驻规则不会覆盖它。
+    if (rule.kind === "plugin-tool" && name.startsWith("plugin__")) {
+      if (String(rule.pattern || "") === name) return true;
+    }
     if (rule.kind === "command-prefix" && name === "run_command") {
       const command = String(args.command || "").trim();
       if (!command || /[\r\n]/.test(command) || commandChainingPattern.test(command)) continue;

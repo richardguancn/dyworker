@@ -6,11 +6,11 @@
 // 领域解析器（resolvers）由宿主注入：记忆/技能/唤醒/MCP 目前仍是 main.mts
 // 的领域函数，后续插件化（ctx.memory/ctx.skills/...）后逐一替换。
 // 本文件不依赖 electron，node --test 直测。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import { runAgent } from "../../agent.mts";
 import "../events.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     agent: AgentService;
   }

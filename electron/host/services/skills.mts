@@ -5,13 +5,13 @@
 //   - append/update/remove/setEnabled：本地模板的增改删与启停（文件技能只走覆盖表）
 //   - create(payload)：会话「总结为工作模板」落盘入口
 // 用户目录（homeDir）与数据目录（dir）由宿主注入，本文件不依赖 electron。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import path from "node:path";
 import crypto from "node:crypto";
 import { discoverFileSkills, mergeSkillRecords } from "../../skills.mts";
 import { readJson, writeJson } from "../io.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     skills: SkillsService;
   }

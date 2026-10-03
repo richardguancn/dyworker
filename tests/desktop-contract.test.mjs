@@ -1377,7 +1377,10 @@ test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱
   assert.match(hostAuditService, /createAuditLog/);
   assert.match(main, /const auditLog = ctx\.audit/);
   assert.match(main, /audit\.jsonl/);
-  assert.match(auditIpcSource, /trustedHandle\("audit:open"/);
+  // audit-ipc 已迁移到契约层：通道经 ctx.ipc.handle 注册，并用 ctx.effect 绑定生命周期
+  assert.match(auditIpcSource, /ctx\.ipc\.handle\("audit:open"/);
+  assert.match(auditIpcSource, /ctx\.effect\(\(\) => ctx\.ipc\.handle/);
+  assert.match(auditIpcSource, /inject: \["audit", "ipc", "storage", "window"\]/);
   assert.match(preload, /openAuditLog:/);
   assert.match(app, /打开审计日志/);
 

@@ -256,5 +256,15 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("background-tasks:update", listener);
     return () => ipcRenderer.removeListener("background-tasks:update", listener);
   },
+  // 插件管理（主机侧 host/plugins/plugins-ipc.mts）。通道名即契约，改名要同步两边。
+  listPlugins: () => ipcRenderer.invoke("plugins:list"),
+  checkPluginCompatibility: (spec) => ipcRenderer.invoke("plugins:compatibility", spec),
+  installPlugin: (payload) => ipcRenderer.invoke("plugins:install", payload),
+  installPluginPackage: (payload) => ipcRenderer.invoke("plugins:install-package", payload),
+  enablePlugin: (id) => ipcRenderer.invoke("plugins:enable", id),
+  disablePlugin: (id) => ipcRenderer.invoke("plugins:disable", id),
+  configurePlugin: (payload) => ipcRenderer.invoke("plugins:configure", payload),
+  uninstallPlugin: (id) => ipcRenderer.invoke("plugins:uninstall", id),
+  reloadPlugins: () => ipcRenderer.invoke("plugins:reload"),
 });
 

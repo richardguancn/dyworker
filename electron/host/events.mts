@@ -4,14 +4,14 @@
 //     监听器返回 { action: "block" | "require_approval", message? } 做出决定，
 //     或调用 next() 交给后续监听器；无人决定时返回 null（放行，走默认审批策略）。
 //     该事件只能追加限制，不能放行已被用户/工作区钩子规则阻止的操作。
-import type {} from "cordis";
+import type {} from "@deepseek-ai/cordis";
 
 export interface PreToolDecision {
   action?: "block" | "require_approval";
   message?: string;
 }
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Events {
     "tools/pre-execute"(
       name: string,

@@ -15,6 +15,7 @@ import { gitIpcPlugin } from "./host/plugins/git-ipc.mts";
 import { tracesIpcPlugin } from "./host/plugins/traces-ipc.mts";
 import { usageHooksIpcPlugin } from "./host/plugins/usage-hooks-ipc.mts";
 import { auditIpcPlugin } from "./host/plugins/audit-ipc.mts";
+import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
 import { windowIpcPlugin } from "./host/plugins/window-ipc.mts";
 import { attachmentsIpcPlugin } from "./host/plugins/attachments-ipc.mts";
 import { clipboardIpcPlugin } from "./host/plugins/clipboard-ipc.mts";
@@ -264,6 +265,17 @@ const ctx = await createHost({
   userDataDir: app.getPath("userData"),
   homeDir: app.getPath("home"),
   safeStorage,
+  // 插件宿主：启动时读 userData/plugins/dyworker.yml 装载插件
+  //（官方 cordis loader 负责生命周期；清单与解析见 host/plugin-host.mts）
+  mountPlugins: true,
+  // 契约服务的壳层能力：插件通过 ctx.ipc/storage/window 使用，而不是内部 deps 大包
+  contracts: {
+    ipcRegister: (channel, handler) => trustedHandle(channel, handler),
+    ipcUnregister: (channel) => ipcMain.removeHandler(channel),
+    getMainWindow: () => mainWindow,
+    getWebContents: () => BrowserWindow.getAllWindows().map((win) => win.webContents),
+    dialog, shell, clipboard, nativeImage, nativeTheme,
+  },
   settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings],
   // 代理服务的领域解析器：记忆/技能/唤醒/MCP 领域函数仍是本模块实现，
   // 逐域插件化后改为 ctx.<domain> 直连
@@ -1769,8 +1781,10 @@ async function closeAllMcpClients() {
 // ---- 浏览器协作（可见窗口，操作可审计） ----
 
 function agentExtraTools(mcpTools) {
-  // 会话检索工具全路径开放（桌面/定时/续跑/渠道）：纯只读、数据源是本机会话存档，无审批风险
-  return [...mcpTools, ...browserToolDefinitions(), ...sessionToolDefinitions()];
+  // 会话检索工具全路径开放（桌面/定时/续跑/渠道）：纯只读、数据源是本机会话存档，无审批风险。
+  // 插件工具（plugin__*）也在这里进入模型可见的工具面，风险由 host/risk.mts 按名字判定为
+  // 有副作用，因此和外部工具一样要走审批与审计。
+  return [...mcpTools, ...browserToolDefinitions(), ...sessionToolDefinitions(), ...ctx.tools.definitions()];
 }
 
 function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "" } = {} as any) {
@@ -1802,6 +1816,12 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
       return handleSessionTool(name, args, { sessions });
     }
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
+    // 插件工具：经 ctx.tools 派发（内部做风险闸门与审计留痕）
+    if (ctx.tools.owns(name)) {
+      const executed = await ctx.tools.execute(name, args, { sessionId, runId, source: "agent" });
+      if (!executed.ok) throw new Error(executed.error || "插件工具执行失败");
+      return executed.result;
+    }
     return callMcpTool(settings, name, args, { signal });
   };
   route.dispose = () => browserAgent.dispose();
@@ -2297,7 +2317,9 @@ const shellDeps = {
 
 ctx.plugin(tracesIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(usageHooksIpcPlugin({ trustedHandle, ...shellDeps }));
-ctx.plugin(auditIpcPlugin({ trustedHandle, ...shellDeps }));
+ctx.plugin(auditIpcPlugin());
+// 插件管理通道（走契约层：ctx.ipc / ctx.plugins）
+ctx.plugin(pluginsIpcPlugin());
 ctx.plugin(windowIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(attachmentsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(clipboardIpcPlugin({ trustedHandle, ...shellDeps }));

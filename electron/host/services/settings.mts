@@ -5,7 +5,7 @@
 //   - write()：updateUrl 校验规范化 → 加密落盘；返回最终 updateUrl 供壳层
 //     （main.mts）联动 appUpdater——持久化与应用反应分离，服务不感知更新器。
 // safeStorage 与 migrator 由宿主注入，本文件不依赖 electron。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import {
   deserializeSettings,
   needsSecretMigration,
@@ -31,7 +31,7 @@ function losesModelConfig(stored, next) {
   return hasModelConfig(stored) && !hasModelConfig(next);
 }
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     settings: SettingsService;
   }

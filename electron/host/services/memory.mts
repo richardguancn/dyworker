@@ -8,7 +8,7 @@
 //
 // 依赖：数据目录由宿主注入；整合需要模型配置，取 ctx.settings（cordis 服务）。
 // 本文件不依赖 electron，可 node --test 直测（不触发整合时不需要模型）。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -34,7 +34,7 @@ import {
 } from "../../memory-wiki.mts";
 import { readJson, writeJson } from "../io.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     memory: MemoryService;
   }

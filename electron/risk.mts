@@ -83,6 +83,12 @@ export function classify(name, args = {} as any, { platform = process.platform }
   if (workspaceWriteTools.has(name) || toolsNeedingApproval.has(name)) {
     return { risk: RISK.WRITE_LOCAL, consequential: true, computerUseMutation: false, internet: false };
   }
+  // 未识别的命名空间工具（插件工具 plugin__*、外部工具 dsh__* 等）：
+  // **一律按有副作用处理**。插件自称"只读"不能作为授权依据——名字不在已知命名空间里时，
+  // 宁可多问一次审批，也不能默认放行（历史上 dsh__x__write 这类名字曾被判为只读而直接执行）。
+  if (name.includes("__")) {
+    return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: false, externalTool: true };
+  }
   return { risk: RISK.READ, consequential: false, computerUseMutation: false, internet: false };
 }
 

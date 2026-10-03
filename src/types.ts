@@ -1036,6 +1036,17 @@ export interface DyworkerBridge {
   restartBackgroundTask(taskId: string): Promise<BackgroundTaskRecord>;
   getBackgroundTaskLogs(taskId: string): Promise<string[]>;
   onBackgroundTaskUpdate(callback: (event: { type: string; task: BackgroundTaskRecord }) => void): () => void;
+  // 插件管理（通道名见 electron/preload.cjs）
+  listPlugins(): Promise<PluginListResult>;
+  checkPluginCompatibility(spec: string): Promise<PluginCompatibility>;
+  installPlugin(payload: { spec: string; id?: string; allowIncompatible?: boolean }): Promise<PluginInstallResult>;
+  installPluginPackage(payload: { input?: string; spec?: string; version?: string; source?: "default" | "cn" | "custom"; customRegistry?: string; allowIncompatible?: boolean }): Promise<PluginInstallResult>;
+  enablePlugin(id: string): Promise<{ ok: boolean; error?: string }>;
+  disablePlugin(id: string): Promise<{ ok: boolean; error?: string }>;
+  configurePlugin(payload: { id: string; config: unknown }): Promise<{ ok: boolean; error?: string }>;
+  uninstallPlugin(id: string): Promise<{ ok: boolean; error?: string }>;
+  reloadPlugins(): Promise<{ ok: boolean; count?: number }>;
+
 }
 
 export interface BackgroundTaskRecord {
@@ -1052,6 +1063,68 @@ export interface BackgroundTaskRecord {
   urls: string[];
   outputTail: string[];
   pid?: number;
+}
+
+
+// ---- 插件管理（host/plugins/plugins-ipc.mts 的通道契约）----
+
+export interface PluginEntryRecord {
+  id: string;
+  name: string;
+  description: string;
+  disabled: boolean;
+  config: unknown;
+  active: boolean;
+  error: string | null;
+}
+
+export interface PluginBundleRecord {
+  name: string;
+  packageName: string;
+  version: string;
+  description: string;
+  source?: { kind: string; input: string; source: string } | null;
+  patchFile: string | null;
+  declared: boolean;
+  installed: boolean;
+  pinnedVersion: string | null;
+  drift: string | null;
+  error: string | null;
+}
+
+/** 兼容性判定：runnable 能跑；partial 同名服务语义不同；unsupported 跑不了（含原因） */
+export interface PluginCompatibility {
+  name: string;
+  version: string;
+  verdict: "runnable" | "partial" | "unsupported";
+  reasons: string[];
+  matrix: string;
+  missingPackages: string[];
+  clientHalf: { platform?: string; inject?: string[] } | null;
+  hostHalf: { entry: string; importable: boolean; importError: string | null; inject: string[]; hints: string[] };
+  services: Array<{ name: string; state: "fulfilled" | "name-only" | "missing"; reason: string }>;
+}
+
+export interface PluginListResult {
+  entries: PluginEntryRecord[];
+  bundles: PluginBundleRecord[];
+  warnings: string[];
+  status: { dir: string; tree: string; mounted: boolean; count: number; failed: number };
+}
+
+export interface PluginInstallResult {
+  ok: boolean;
+  name?: string;
+  id?: string;
+  error?: string;
+  incompatible?: boolean;
+  verdict?: string;
+  matrix?: string;
+  entry?: PluginEntryRecord;
+  stage?: string;
+  /** 兼容性分析（拒绝时用来展示逐条原因） */
+  analysis?: PluginCompatibility & { matrix?: string };
+  downloaded?: { ok?: boolean; kind?: string; ranInstallScripts?: boolean; error?: string };
 }
 
 declare global {

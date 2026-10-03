@@ -190,7 +190,7 @@ test("运行期域插件：创建由插件负责，dispose 时按注册逆序停
 
 test("remoteMessages 插件 inject telemetryController：依赖未就绪不 apply", async (t) => {
   const dir = await makeTmpDir(t);
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
   const bare = new Context();
   await bare.fiber.await();
   let built = 0;
@@ -407,7 +407,7 @@ test("RulesService：落盘文件在 userData 下，损坏内容退化为空数�
 });
 
 test("rules IPC 插件用 inject 声明依赖：ctx.rules 缺失时不激活", async () => {
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
   const { rulesIpcPlugin } = await import("../electron/host/plugins/rules-ipc.mts");
   // 直接在一个空容器上挂插件：inject 的 rules 服务不存在 → apply 不应执行
   const bare = new Context();
@@ -446,7 +446,7 @@ test("敏感路径守卫：命中规则表，且不误伤普通路径", async ()
 test("敏感路径守卫挂上接缝后：full-access 下读敏感文件也会要求审批", async (t) => {
   const dir = await makeTmpDir(t);
   const { sensitivePathGuardPlugin } = await import("../electron/host/plugins/sensitive-path-guard.mts");
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
 
   // 无插件：full-access 直接放行
   const plain = await createHost({
@@ -495,7 +495,7 @@ test("敏感路径守卫挂上接缝后：full-access 下读敏感文件也会�
 
 test("敏感路径守卫未命中时委托后续监听器，不截断策略链", async () => {
   const { sensitivePathGuardPlugin } = await import("../electron/host/plugins/sensitive-path-guard.mts");
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
   const ctx = new Context();
   await ctx.fiber.await();
   try {
@@ -567,7 +567,7 @@ test("运行期域插件接真实工厂：创建归插件，ctx.<name> 就绪，
 // —— 域 IPC 插件：通道名与 preload 契约不变，依赖用 inject 门控 ——
 
 test("域 IPC 插件：inject 满足前不注册通道，满足后注册的通道名与 preload 一致", async () => {
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
   const { backgroundTasksIpcPlugin } = await import("../electron/host/plugins/background-tasks-ipc.mts");
   const { channelsIpcPlugin } = await import("../electron/host/plugins/channels-ipc.mts");
   const { telemetryIpcPlugin } = await import("../electron/host/plugins/telemetry-ipc.mts");
@@ -632,7 +632,7 @@ test("域 IPC 插件：inject 满足前不注册通道，满足后注册的通�
 });
 
 test("域 IPC 插件：handler 只做通道映射，调用打到注入的服务上", async () => {
-  const { Context } = await import("cordis");
+  const { Context } = await import("@deepseek-ai/cordis");
   const { backgroundTasksIpcPlugin } = await import("../electron/host/plugins/background-tasks-ipc.mts");
   const bare = new Context();
   await bare.fiber.await();

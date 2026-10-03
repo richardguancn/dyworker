@@ -11,12 +11,12 @@
 //     列表读取前自动落盘为已失效，避免界面出现点不动的钉子户。
 //
 // 与 electron 的边界：系统通知与渲染端广播由壳层以回调注入（本文件不 import electron）。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import path from "node:path";
 import crypto from "node:crypto";
 import { readJson, writeJson } from "../io.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     inbox: InboxService;
   }

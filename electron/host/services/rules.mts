@@ -6,12 +6,12 @@
 //     「这类操作是否真的可以始终允许」，通过后去重写入
 //   - remove()：按 id 删除
 // 本文件不依赖 electron：规则文件路径由宿主注入，可 node --test 直测。
-import { Service } from "cordis";
+import { Service } from "@deepseek-ai/cordis";
 import crypto from "node:crypto";
 import { suggestStandingRule } from "../../agent.mts";
 import { readJson, writeJson } from "../io.mts";
 
-declare module "cordis" {
+declare module "@deepseek-ai/cordis" {
   interface Context {
     rules: RulesService;
   }
