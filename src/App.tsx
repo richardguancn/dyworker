@@ -81,6 +81,7 @@ import {
 } from "lucide-react";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, memo, useCallback, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PluginsPage } from "./PluginsPage";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
@@ -6880,6 +6881,13 @@ export function App() {
   const composerModelsKeyRef = useRef("");
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
+
+  // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
+  useEffect(() => {
+    if (!activeId) return;
+    setPluginsPageOpen(false);
+  }, [activeId]);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [toolPanelWidth, setToolPanelWidth] = useState(() => {
     const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
@@ -10488,6 +10496,9 @@ export function App() {
       : "在文件管理器中显示";
 
   const selectSession = (session: SessionRecord) => {
+    // 先关插件页：点"当前已选中"的会话时 activeId 不变，
+    // 只靠 activeId 变化的 effect 是关不掉的（这就是之前点了没反应的原因）。
+    setPluginsPageOpen(false);
     setSessionMenuId(null);
     setActiveId(session.id);
     setEditingMessage(null);
@@ -10735,8 +10746,12 @@ export function App() {
     }
   };
 
-  const renderSessionItem = (session: SessionRecord) => (
-    <div className={`session-item-wrap ${session.id === activeId ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
+  const renderSessionItem = (session: SessionRecord) => {
+    // 插件页打开时主内容区不是会话，会话列表就**不该再显示"当前选中"高亮**——
+    // 否则用户会以为这个会话仍可点击选中（实际点了没反应：activeId 没变）。
+    const selected = session.id === activeId && !pluginsPageOpen;
+    return (
+    <div className={`session-item-wrap ${selected ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
       {renamingId === session.id ? (
         <input
           className="session-rename-input"
@@ -10749,7 +10764,7 @@ export function App() {
           onBlur={(event) => renameSession(session.id, event.target.value)}
         />
       ) : (
-        <button className={`session-item ${session.id === activeId ? "active" : ""}`} onClick={() => selectSession(session)} title={session.title}>
+        <button className={`session-item ${selected ? "active" : ""}`} onClick={() => selectSession(session)} title={session.title}>
           {session.pinned && <Pin size={12} className="pin-icon" />}
           {session.channel && (
             <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : "微信"}</span>
@@ -10794,8 +10809,8 @@ export function App() {
         </div>
       )}
     </div>
-  );
-
+    );
+  };
   const beginPanelResize = (edge: "left" | "right", event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     panelResizeRef.current = {
@@ -11086,6 +11101,16 @@ export function App() {
           新建任务
         </button>
 
+        <button
+          className={`sidebar-plugins-button ${pluginsPageOpen ? "active" : ""}`}
+          onClick={() => setPluginsPageOpen((open) => !open)}
+          aria-label="插件"
+          aria-current={pluginsPageOpen ? "page" : undefined}
+        >
+          <Sparkles size={17} />
+          插件
+        </button>
+
         {query !== "" && (
           <div className="sidebar-search-wrap">
             <Search size={15} />
@@ -11231,7 +11256,8 @@ export function App() {
         />
       )}
 
-      <main className="main-panel">
+      <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""}`}>
+        {pluginsPageOpen && <PluginsPage />}
         <header className="topbar">
           <div className="topbar-left no-drag">
             <button
