@@ -20,6 +20,23 @@ function devCspRelaxation() {
   };
 }
 
+// katex.min.css 为兼容旧浏览器同时声明 woff2/woff/ttf 三种字体格式，但 Electron 即
+// Chromium，woff2 之外的两种永远不会被下载；剔除引用后 Rollup 便不再复制这 40 个字体
+// 文件（约 0.9MB），公式渲染不受影响
+function dropUnusedKatexFontFormats() {
+  return {
+    name: "drop-unused-katex-font-formats",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/katex.*\.css($|\?)/.test(id)) return null;
+      const trimmed = code
+        .replace(/,url\(fonts\/[^)]*\.woff\) format\("woff"\)/g, "")
+        .replace(/,url\(fonts\/[^)]*\.ttf\) format\("truetype"\)/g, "");
+      return trimmed === code ? null : { code: trimmed, map: null };
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
   build: {
@@ -52,5 +69,5 @@ export default defineConfig({
       clientFiles: ["./src/main.tsx"],
     },
   },
-  plugins: [react(), devCspRelaxation()],
+  plugins: [react(), devCspRelaxation(), dropUnusedKatexFontFormats()],
 });

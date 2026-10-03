@@ -579,10 +579,14 @@ html[data-translucent="true"] .conversation-turn-preview {
   -webkit-backdrop-filter: blur(24px) saturate(1.3);
 }
 
-/* 提示 toast 与排队消息卡同样悬浮在对话流上方：模糊只在部分环境生效
-   （系统材质下会被通配规则禁用），加浓托底保证任何组合下文字都可读 */
+/* 提示 toast、待发送列表里的排队消息卡与挂起唤醒卡同样悬浮在对话流上方：
+   模糊只在部分环境生效（系统材质下会被通配规则禁用），加浓托底保证任何组合下文字都可读 */
 html[data-translucent="true"] .status-toast,
 html[data-translucent="true"] .queue-card {
+  background: var(--card-raised, var(--card));
+}
+
+html[data-translucent="true"] .sleep-card {
   background: var(--card-raised, var(--card));
 }
 

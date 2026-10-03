@@ -763,12 +763,123 @@ function InteractiveBlock({ widget }: { widget: InteractiveWidget }) {
   return <StepsView widget={widget} />;
 }
 
-// memo + 上游 stripControlMarkersCached 的稳定引用：已完成消息在 App 整树重渲染时
-// 不再重新执行 remark/rehype 解析；流式消息的 content 每帧都变，仍按原频率更新。
-export const InteractiveMessage = memo(function InteractiveMessage({ content }: { content: string }) {
-  // 流式期间 content 每个 token 都是新字符串：用 deferred 值驱动整段
-  // remark(gfm+math+autospace)→rehype-katex 解析，让 React 在高频更新下合并中间帧，
-  // 空闲时立即追上最新内容（长回复下避免逐 token 全量重解析主线程卡顿）
+// ---------------------------------------------------------------- 流式正文的增量 Markdown 渲染
+//
+// 背景：react-markdown 对 processor 与 AST 零缓存，若流式期间每个事件都把「已输出的全文」
+// 重新解析一遍，累计解析字符量 = L×E/2，事件数 E 直接放大成本（实测 16k 字符回复按
+// 20 次/秒推送：930 次 commit 共 17.6s、156 个 ≥50ms 长任务）。此前为了绕开它，未定稿
+// 正文整段按纯文本渲染，代价是用户在整个输出过程里看到的都是 `**加粗**` 这样的源码。
+//
+// 现在按块增量解析：已经收尾的块各自渲染一次，之后由 memo 冻结；只有末尾那块仍在增长的
+// 尾巴会随事件重解析，累计解析量从 L×E/2 降到 tail×E（尾巴通常只是一段文字）。
+//
+// 切块边界只取两种位置：代码围栏 / 美元公式块之外的空行，以及代码围栏收尾行之后。
+// 这样一段代码、一张表、一个 dyworker-ui 交互块都不会被从中间切开，渲染结果与定稿一致。
+export function splitStreamingBlocks(content: string): string[] {
+  const text = String(content ?? "");
+  if (!text) return [];
+  const blocks: string[] = [];
+  let blockStart = 0;
+  let offset = 0;
+  let fence: { char: string; length: number } | null = null;
+  let mathOpen = false;
+
+  const endBlock = (end: number) => {
+    const block = text.slice(blockStart, end);
+    if (block.trim()) blocks.push(block);
+    blockStart = end;
+  };
+
+  for (const rawLine of text.split("\n")) {
+    const lineStart = offset;
+    // +1 补回被 split 丢掉的换行符；最后一行没有换行符时靠 min 夹回文本末尾
+    offset = Math.min(offset + rawLine.length + 1, text.length);
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+    if (fence) {
+      const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (closer && closer[1][0] === fence.char && closer[1].length >= fence.length) {
+        fence = null;
+        // 围栏一收尾，这一块在 Markdown 语义上就封闭了，即使下一行没有空行也可以定稿
+        endBlock(offset);
+      }
+      continue;
+    }
+
+    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (opener) {
+      fence = { char: opener[1][0], length: opener[1].length };
+      continue;
+    }
+
+    // 跨行的 $$ 公式块同样不能中途切开，否则 KaTeX 只看到半截公式。
+    // 只认整行开头的 $$（单行 $$…$$ 自成一块，正文里出现的 $$ 不参与判断，
+    // 否则一个孤立的 $$ 会把后面所有内容锁成一块，增量解析退化回全量）。
+    const trimmed = line.trim();
+    if (mathOpen) {
+      if (trimmed.endsWith("$$")) mathOpen = false;
+      continue;
+    }
+    if (trimmed.startsWith("$$") && !(trimmed.length > 2 && trimmed.endsWith("$$"))) {
+      mathOpen = true;
+      continue;
+    }
+
+    if (!trimmed) {
+      endBlock(lineStart);
+      blockStart = offset;
+    }
+  }
+
+  endBlock(text.length);
+  return blocks.length ? blocks : [text];
+}
+
+// 单个已定稿块：内容切出后不再变化，memo 让它在后续流式事件里直接短路，
+// 于是整条回复从头到尾每块只被 remark/rehype 解析一次。
+const MarkdownChunk = memo(function MarkdownChunk({ content }: { content: string }) {
+  const segments = useMemo(() => parseInteractiveMessage(content), [content]);
+  return (
+    <>
+      {segments.map((segment, index) => segment.kind === "widget" ? (
+        <InteractiveBlock widget={segment.widget} key={`widget-${index}`} />
+      ) : segment.content.trim() ? (
+        <ReactMarkdown
+          key={`markdown-${index}`}
+          components={markdownComponents}
+          remarkPlugins={[remarkGfm, remarkMath, remarkAutoSpace]}
+          rehypePlugins={[rehypeKatex]}
+          urlTransform={markdownUrlTransform}
+        >{segment.content}</ReactMarkdown>
+      ) : null)}
+    </>
+  );
+});
+
+// 未定稿正文：按块渲染 Markdown。已收尾的块由 MarkdownChunk 的 memo 冻结，
+// 只有末尾那块随事件重解析；useDeferredValue 继续在高频事件下合并中间帧
+// （与代码高亮、mermaid/echarts「等输入稳定再渲染」同一策略）。
+// 用 index 作 key：块只会在末尾追加，已有块的下标永远不变，定稿时同一个下标
+// 从「尾巴」变成「定稿块」，内容相同即原地复用、不会重新解析。
+function StreamingMessage({ content }: { content: string }) {
+  const deferredContent = useDeferredValue(content);
+  const blocks = useMemo(() => splitStreamingBlocks(deferredContent), [deferredContent]);
+  return (
+    <div className="message-content">
+      {/* 单层 markdown-content 容器：块级元素保持兄弟关系，首元素去边距等样式与定稿一致 */}
+      {blocks.length ? (
+        <div className="markdown-content streaming-markdown">
+          {blocks.map((block, index) => <MarkdownChunk key={index} content={block} />)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// 已定稿正文：整条一次性解析为 Markdown/交互块
+function SettledMessage({ content }: { content: string }) {
+  // deferred 值服务于定稿解析：live 更新（滚动、输入、其它消息）不至于被
+  // 一次长正文解析挡住
   const deferredContent = useDeferredValue(content);
   const segments = useMemo(() => parseInteractiveMessage(deferredContent), [deferredContent]);
   return (
@@ -787,11 +898,28 @@ export const InteractiveMessage = memo(function InteractiveMessage({ content }: 
       ) : null)}
     </div>
   );
+}
+
+// memo：已完成消息（content 不再变化）在 App 整树重渲染时直接短路，不重跑解析。
+// 注意 memo 对字符串 props 用的是值比较，所以上游 stripControlMarkersCached 的
+// 缓存即使被整体清空、重新算出一个等值字符串，也不会击穿这里。
+export const InteractiveMessage = memo(function InteractiveMessage({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  /** 该消息是否仍在流式输出（未定稿）。true 时走按块增量的 Markdown 渲染。 */
+  streaming?: boolean;
+}) {
+  // 两条路径必须是两个组件：hooks 不能随 streaming 变化在同一个实例里增减
+  return streaming ? <StreamingMessage content={content} /> : <SettledMessage content={content} />;
 });
 
 // 小段 Markdown 渲染（审批卡的影响说明、收件箱条目等）：与正文同一套渲染管线，
-// 去掉数学公式与交互控件解析，纯文本/列表/加粗场景够用
-export function MarkdownSnippet({ content }: { content: string }) {
+// 去掉数学公式与交互控件解析，纯文本/列表/加粗场景够用。
+// 必须 memo：react-markdown 无内部缓存，不 memo 的话每次 App 重渲染（流式期间
+// 20 次/秒）都会把这些已完成的小段落重新解析一遍。
+export const MarkdownSnippet = memo(function MarkdownSnippet({ content }: { content: string }) {
   return (
     <div className="markdown-content">
       <ReactMarkdown
@@ -801,4 +929,4 @@ export function MarkdownSnippet({ content }: { content: string }) {
       >{content}</ReactMarkdown>
     </div>
   );
-}
+});
