@@ -82,6 +82,7 @@ import {
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, memo, useCallback, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PluginsPage } from "./PluginsPage";
+import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
@@ -885,7 +886,10 @@ function renderInlineTokens(
 
 type ToolPanelTab = {
   id: string;
-  kind: "browser" | "files" | "review" | "chat" | "tasks";
+  kind: "browser" | "files" | "review" | "chat" | "tasks" | "plugin";
+  /** kind === "plugin"：插件登记的右侧面板标签（sidebar.right.pane.tab 插槽） */
+  pluginId?: string;
+  pluginKey?: string;
   title: string;
   url?: string;
   loadedUrl?: string;
@@ -9659,6 +9663,28 @@ export function App() {
     setToolPanelMenuOpen(false);
   };
 
+  // 插件登记右侧面板标签（sidebar.right.pane.tab 插槽）时，接进已有的工具面板：
+  // 不新造界面容器，直接开一个 plugin 类型的标签页承载插件组件。
+  useEffect(() => onPluginPanelRequest((request) => {
+    setRightPanelOpen(true);
+    const existing = toolPanelTabs.find((tab) => tab.kind === "plugin" && tab.pluginKey === request.key);
+    if (existing) {
+      updateToolPanelTab(existing.id, { title: request.label });
+      focusToolPanelTab(existing.id);
+      return;
+    }
+    const sequence = toolPanelTabSequenceRef.current++;
+    const id = `plugin-${sequence}`;
+    setToolPanelTabs((current) => [...current, {
+      id,
+      kind: "plugin" as const,
+      title: request.label,
+      pluginId: request.pluginId,
+      pluginKey: request.key,
+    }]);
+    setActiveToolPanelTabId(id);
+  }), [toolPanelTabs, updateToolPanelTab, focusToolPanelTab]);
+
   const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false, initialUrl?: string) => {
     if (!createNew) {
       const existing = toolPanelTabs.find((tab) => tab.kind === kind);
@@ -13008,6 +13034,11 @@ export function App() {
         </div>
         <div className={`tool-panel-scroll ${activeToolPanelKind === "browser" && !menuPageShown ? "browser-scroll" : ""}`}>
           {menuPageShown && <div className="tool-panel-menu-page" data-menu-root>{toolPanelMenu}</div>}
+          {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "plugin" && (
+            <section className="plugin-slot-panel">
+              <PluginSlotView pluginId={activeToolPanelTab.pluginId} pluginKey={activeToolPanelTab.pluginKey} />
+            </section>
+          )}
           {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "browser" && (
             <section className="browser-panel">
               <div className="browser-toolbar">

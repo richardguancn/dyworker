@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { loadBundleScript } from "./pluginRuntime/index.ts";
+import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
+import { requestPluginPanels } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
@@ -69,14 +71,21 @@ export function PluginsPage() {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `bundle 执行失败：${record.error}` } }));
         return;
       }
-      const exportCount = record.exports && typeof record.exports === "object"
-        ? Object.keys(record.exports as object).length
-        : 0;
+      // 交给客户端插件宿主：它是 cordis 插件，由容器提供 slots/locale 等服务后 apply
+      const pluginRecord = await clientHost().load(record.exports, record.id);
+      if (!pluginRecord.ok) {
+        setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `插件 apply 失败：${pluginRecord.error}` } }));
+        return;
+      }
+      // 它登记进宿主插槽的界面贡献：右侧面板标签会被壳层接进已有工具面板
+      const panels = requestPluginPanels(record.id, pluginRecord.slots);
       const missing = record.missing.length ? `；缺模块 ${[...new Set(record.missing)].join("、")}` : "";
-      const services = info.inject?.length ? `；它还需要 ${info.inject.length} 个客户端服务（第 2 步）` : "";
+      const slots = pluginRecord.slots.length ? `；登记插槽 ${pluginRecord.slots.join("、")}` : "；没有登记界面位置";
+      const pending = pluginRecord.missingCalls.length ? `；未实现调用 ${[...new Set(pluginRecord.missingCalls)].slice(0, 4).join("、")}` : "";
+      const opened = panels.length ? `；已开右侧面板 ${panels.map((panel) => panel.label).join("、")}` : "";
       setClientRuns((current) => ({
         ...current,
-        [key]: { state: "ok", text: `已加载 ${record.id}（导出 ${exportCount} 项，请求 ${record.requires.length} 次）${missing}${services}` },
+        [key]: { state: "ok", text: `已加载并 apply ${record.id}${slots}${opened}${missing}${pending}` },
       }));
     } catch (error: any) {
       setClientRuns((current) => ({ ...current, [key]: { state: "error", text: String(error?.message || error) } }));

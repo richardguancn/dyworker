@@ -16797,3 +16797,14 @@ html[data-theme="dark"] {
 
 .plugin-client-result.ok { background: #eef7ee; color: #2f6b3a; }
 .plugin-client-result.error { background: #fdeeee; color: #8a3b3b; }
+
+/* 插件贡献的右侧面板标签（sidebar.right.pane.tab 插槽） */
+.plugin-slot-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow-y: auto; }
+
+.plugin-slot-view { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.plugin-slot-item { min-width: 0; }
+.plugin-slot-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; padding: 24px; color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
