@@ -199,6 +199,11 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("schedules:changed", listener);
     return () => ipcRenderer.removeListener("schedules:changed", listener);
   },
+  onScheduleRunStarted: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("schedules:run-started", listener);
+    return () => ipcRenderer.removeListener("schedules:run-started", listener);
+  },
   onSessionPrepend: (callback) => {
     const listener = (_event, session) => callback(session);
     ipcRenderer.on("sessions:prepend", listener);
@@ -210,6 +215,8 @@ contextBridge.exposeInMainWorld("dyworker", {
     return () => ipcRenderer.removeListener("sessions:append", listener);
   },
   cancelWakesForSession: (sessionId) => ipcRenderer.invoke("wakes:cancel-for-session", sessionId),
+  listPendingWakes: () => ipcRenderer.invoke("wakes:list-pending"),
+  resumeWakeNow: (sessionId) => ipcRenderer.invoke("wakes:resume-now", sessionId),
   onWakeStatus: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("wake:status", listener);

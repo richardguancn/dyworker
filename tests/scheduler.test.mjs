@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHost, disposeHost } from "../electron/host/context.mts";
 import { nextOccurrence } from "../electron/host/services/scheduler.mts";
+import { schedulesIpcPlugin } from "../electron/host/plugins/schedules-ipc.mts";
 
 async function makeTmpDir(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-sched-"));
@@ -247,12 +248,185 @@ test("checkDueSchedules：忙碌时跳过；到期则先落 running 再交给壳
     assert.equal((await scheduler.list())[0].lastStatus, "running", "执行前先落 running（防重入）");
     assert.equal((await scheduler.list())[0].lastRun, now.toISOString());
 
-    // 重入保护：调度器自身标记运行中时不再触发（真实入口会在这期间推进 nextRun）
+    // 重入保护：调度器自身标记运行中时不再触发
+    // （真实入口会在本轮结束时推进 nextRun：正常收尾在 markFinished，
+    //   主动挂起在 markSleeping——两处都必须推进，见下方回归用例）
     calls.scheduled.length = 0;
     scheduler.running = true;
     await scheduler.checkDueSchedules();
     assert.deepEqual(calls.scheduled, []);
     scheduler.running = false;
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+// 回归：一个真实事故。计划执行中主动挂起等待长任务（3677 帧 ffmpeg 渲染），
+// 挂起路径在壳层提前 return、不经过 markFinished，于是 nextRun 永远停在过去，
+// 10s tick 每轮都判定"到期"并新建一个会话跑同一任务 —— 7 分钟内派生出 8 个并发会话。
+test("回归：计划挂起后消耗本轮到期额度，tick 不得重复触发同一计划", async (t) => {
+  const start = new Date("2026-10-02T08:40:51.127Z");
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "plan-1", name: "每日晨报", recurrence: "daily", nextRun: start.toISOString(), enabled: true, lastStatus: "" },
+  ]), "utf8");
+
+  const { ctx, scheduler, calls, setNow } = await makeScheduler(t, { dir, now: () => start });
+  try {
+    // 第一轮：到期 → 先落 running 再交给壳层
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["plan-1"]);
+    assert.equal((await scheduler.list())[0].lastStatus, "running");
+
+    // 壳层执行中主动挂起（等待后台渲染）
+    await scheduler.markSleeping("plan-1", { wakeAt: "2026-10-02T09:41:00.000Z", reason: "等待渲染完成" }, "sess-1");
+    const asleep = (await scheduler.list())[0];
+    assert.equal(asleep.lastStatus, "sleeping");
+    assert.ok(
+      new Date(asleep.nextRun) > start,
+      "挂起必须把 nextRun 推进到未来，否则下一 tick 会重复触发（本次事故根因）",
+    );
+
+    // 壳层 finally 释放全局 running 后，后续每个 tick 都不得再次触发
+    scheduler.running = false;
+    calls.scheduled.length = 0;
+    for (const at of ["2026-10-02T09:00:00.000Z", "2026-10-02T09:31:00.000Z", "2026-10-02T13:00:00.000Z"]) {
+      setNow(new Date(at));
+      await scheduler.checkDueSchedules();
+    }
+    assert.deepEqual(calls.scheduled, [], "挂起期间不得重复触发同一计划");
+    assert.equal((await scheduler.list())[0].lastStatus, "sleeping", "跳过时不得被改写成 running");
+
+    // 唤醒续跑收尾：nextRun 已在未来，markFinished 不得二次推进
+    const future = (await scheduler.list())[0].nextRun;
+    await scheduler.markFinished("plan-1", true, "已完成", "sess-1");
+    assert.equal((await scheduler.list())[0].nextRun, future, "已处于未来的 nextRun 不应被二次推进");
+
+    // 到了下一次真实到期时间仍要正常触发：修复不能把计划卡死
+    calls.scheduled.length = 0;
+    setNow(new Date(new Date(future).getTime() + 1000));
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["plan-1"], "下一次真实到期应正常触发");
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+test("markSleeping：一次性计划挂起时不停用（续跑收尾才停用），且消耗本轮额度", async (t) => {
+  const start = new Date("2026-10-02T08:40:51.127Z");
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "once-1", recurrence: "once", nextRun: start.toISOString(), enabled: true, lastStatus: "running" },
+  ]), "utf8");
+
+  const { ctx, scheduler, calls, setNow } = await makeScheduler(t, { dir, now: () => start });
+  try {
+    await scheduler.markSleeping("once-1", { wakeAt: "2026-10-02T09:00:00.000Z", reason: "等渲染" }, "sess-2");
+    const item = (await scheduler.list())[0];
+    assert.equal(item.lastStatus, "sleeping");
+    assert.ok(new Date(item.nextRun) > start, "挂起同样要消耗本轮到期额度");
+    // 关键：挂起只是"暂停"，不能在这里就停用。唤醒是"先落 fired 再执行"、
+    // 失败不重试，若此刻停用，续跑一旦失败任务就永久丢失。
+    assert.equal(item.enabled, true, "一次性计划挂起时不得提前停用");
+
+    scheduler.running = false;
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, [], "nextRun 已推进，挂起期间不得再触发");
+
+    // 续跑真正收尾时才停用（markFinished 对 once 的既有语义）
+    setNow(new Date("2026-10-02T08:00:00.000Z"));
+    await scheduler.markFinished("once-1", true, "已完成", "sess-2");
+    assert.equal((await scheduler.list())[0].enabled, false, "续跑收尾后一次性计划应停用");
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+// 回归：checkDueSchedules 在「读盘 → 挑 due → 写回 running」之间有两处 await，
+// 10s tick / 1.5s bootTimer / 系统唤醒事件 / triggerNow 四个调用方可并发进入，
+// 各自读到同一个 due 项并各执行一次。真实事故里两次派生会话只隔 5.301s。
+test("回归：checkDueSchedules 并发调用只允许触发一次", async (t) => {
+  const dir = await makeTmpDir(t);
+  const now = new Date("2026-09-30T10:00:00.000Z");
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "p1", recurrence: "daily", nextRun: "2026-09-30T09:00:00.000Z", enabled: true, lastStatus: "" },
+  ]), "utf8");
+
+  const { ctx, scheduler, calls } = await makeScheduler(t, { dir, now: () => now });
+  try {
+    await Promise.all([
+      scheduler.checkDueSchedules(),
+      scheduler.checkDueSchedules(),
+      scheduler.checkDueSchedules(),
+    ]);
+    assert.deepEqual(calls.scheduled, ["p1"], "并发进入也只能执行一次");
+    assert.equal((await scheduler.list())[0].lastStatus, "running");
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+// 回归：计划挂起、唤醒仍在册时，到期判定必须跳过它（否则与挂起中的会话并行跑同一任务）。
+// 但唤醒一旦被消费/取消，挂起即不成立，计划要能按 nextRun 正常恢复，不能永久卡死。
+test("回归：挂起中的计划凭 pending 唤醒免于重复触发，唤醒消失后恢复", async (t) => {
+  const start = new Date("2026-09-30T10:00:00.000Z");
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "p2", recurrence: "hourly", nextRun: start.toISOString(), enabled: true, lastStatus: "" },
+  ]), "utf8");
+  await fs.writeFile(path.join(dir, "wakes.json"), JSON.stringify([
+    { id: "w1", sessionId: "sess-2", scheduleId: "p2", workspacePath: "/w", wakeAt: "2026-09-30T12:00:00.000Z", status: "pending" },
+  ]), "utf8");
+
+  const { ctx, scheduler, calls, setNow } = await makeScheduler(t, { dir, now: () => start });
+  try {
+    // 第一轮触发并挂起
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["p2"]);
+    await scheduler.markSleeping("p2", { wakeAt: "2026-09-30T12:00:00.000Z", reason: "等很久" }, "sess-2");
+    scheduler.running = false;
+
+    // hourly 的下一个周期点到达：挂起 + pending 唤醒 → 必须跳过
+    calls.scheduled.length = 0;
+    setNow(new Date("2026-09-30T11:00:00.000Z"));
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, [], "挂起中且有 pending 唤醒时不得并行再起一轮");
+    assert.equal((await scheduler.list())[0].lastStatus, "sleeping", "跳过时不得改写成 running");
+
+    // 唤醒被消费后，挂起不再成立：计划按 nextRun 恢复，不永久卡死
+    const wakes = await scheduler.readWakes();
+    wakes[0].status = "fired";
+    await scheduler.writeWakes(wakes);
+    setNow(new Date("2026-09-30T11:30:00.000Z"));
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["p2"], "唤醒消失后计划应能恢复触发");
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+test("triggerNow：挂起中且唤醒在册时拒绝立即执行，避免与等待唤醒的会话双跑", async (t) => {
+  const start = new Date("2026-09-30T10:00:00.000Z");
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "p3", recurrence: "daily", nextRun: "2026-12-01T00:00:00.000Z", enabled: true, lastStatus: "sleeping" },
+  ]), "utf8");
+  await fs.writeFile(path.join(dir, "wakes.json"), JSON.stringify([
+    { id: "w2", sessionId: "sess-3", scheduleId: "p3", workspacePath: "/w", wakeAt: "2026-09-30T12:00:00.000Z", status: "pending" },
+  ]), "utf8");
+
+  const { ctx, scheduler } = await makeScheduler(t, { dir, now: () => start });
+  try {
+    const blocked = await scheduler.triggerNow("p3");
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.error, /已挂起等待唤醒/);
+    assert.equal((await scheduler.list())[0].nextRun, "2026-12-01T00:00:00.000Z", "被拒时不得改动 nextRun");
+
+    // 唤醒取消后允许立即执行
+    const wakes = await scheduler.readWakes();
+    wakes[0].status = "cancelled";
+    await scheduler.writeWakes(wakes);
+    assert.equal((await scheduler.triggerNow("p3")).ok, true);
   } finally {
     await disposeHost(ctx);
   }
@@ -343,4 +517,144 @@ test("triggerNow：把 nextRun 拨到现在并触发检查；运行中拒绝", a
   } finally {
     await disposeHost(ctx);
   }
+});
+
+// 回归：到期的唤醒若因会话忙碌被推迟，定时器必须**退避**而不是 0 延迟重试。
+// 真实事故：0 延迟自旋 → 每秒上千次读 wakes.json → 27K 打开句柄 + 主进程 100% CPU + 内存暴涨。
+test("唤醒退避：会话忙碌时推迟的到期唤醒不会 0 延迟自旋", async (t) => {
+  const { scheduler, calls } = await makeScheduler(t, { hooks: { isSessionBusy: () => true } });
+  // 造一条已到期的唤醒
+  const wake = {
+    id: "w-busy", sessionId: "s-busy", workspacePath: "/tmp", approvalMode: "interactive",
+    wakeAt: "2026-09-30T09:59:00.000Z", reason: "测试", status: "pending",
+  };
+  await fs.writeFile(path.join(scheduler.file("wakes.json")), JSON.stringify([wake]), "utf8");
+
+  // 记录 setTimeout 被武装的延迟。注意 checkDueWakes 内部是 `void scheduleNextWakeCheck(...)`，
+  // 要等它跑完（含一次文件读）再撤钩子，否则观察不到武装动作。
+  const delays = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, delay, ...rest) => { delays.push(delay); return realSetTimeout(fn, delay, ...rest); };
+  try {
+    await scheduler.checkDueWakes();
+    for (let i = 0; i < 30 && !delays.length; i += 1) {
+      await new Promise((resolve) => realSetTimeout(resolve, 10));
+    }
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+
+  assert.equal(calls.woke.length, 0, "忙碌时不应真的唤醒");
+  assert.ok(delays.length >= 1, "应重新武装定时器");
+  assert.ok(delays.every((d) => d >= 10_000), `推迟重试必须退避，实际延迟：${JSON.stringify(delays)}`);
+
+  // 唤醒仍然是 pending（被推迟、没有丢失）
+  const wakes = await readJson(scheduler.dir, "wakes.json");
+  assert.equal(wakes[0].status, "pending");
+});
+
+test("唤醒退避：不忙碌时到期唤醒立即触发（退避不误伤正常路径）", async (t) => {
+  const { scheduler, calls } = await makeScheduler(t);
+  await fs.writeFile(path.join(scheduler.file("wakes.json")), JSON.stringify([{
+    id: "w-ok", sessionId: "s-ok", workspacePath: "/tmp", approvalMode: "interactive",
+    wakeAt: "2026-09-30T09:59:00.000Z", reason: "测试", status: "pending",
+  }]), "utf8");
+  await scheduler.checkDueWakes();
+  assert.deepEqual(calls.woke, ["s-ok"], "不忙碌时应正常唤醒");
+});
+
+test("唤醒退避：scheduleNextWakeCheck 显式最小延迟会压过 0", async (t) => {
+  const { scheduler } = await makeScheduler(t);
+  await fs.writeFile(path.join(scheduler.file("wakes.json")), JSON.stringify([{
+    id: "w-due", sessionId: "s", workspacePath: "/tmp", approvalMode: "interactive",
+    wakeAt: "2026-09-30T09:00:00.000Z", reason: "已到期", status: "pending",
+  }]), "utf8");
+
+  const delays = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, delay, ...rest) => { delays.push(delay); return realSetTimeout(fn, delay, ...rest); };
+  try {
+    await scheduler.scheduleNextWakeCheck({ minDelayMs: 10_000 });
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  assert.deepEqual(delays, [10_000], "到期唤醒 + 最小延迟 → 退避 10s，而不是 0");
+});
+
+// 渲染端"挂起中"卡片与「立即继续」按钮的数据出口：listPending 只列待唤醒，
+// claimPendingForSession 一次性把 pending 转成 fired 并交给壳层立刻续跑。
+test("待唤醒查询与立即继续：listPending 只列 pending，claim 一次性取走且不可重复", async (t) => {
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "wakes.json"), JSON.stringify([
+    { id: "w-1", sessionId: "s-1", workspacePath: "/w", wakeAt: "2026-10-01T09:00:00.000Z", reason: "等接口恢复", status: "pending" },
+    { id: "w-2", sessionId: "s-2", workspacePath: "/w", wakeAt: "2026-10-02T09:00:00.000Z", reason: "已取消", status: "cancelled" },
+    { id: "w-3", sessionId: "s-1", workspacePath: "/w", wakeAt: "2026-10-03T09:00:00.000Z", reason: "历史已触发", status: "fired" },
+  ]), "utf8");
+  const { ctx, scheduler } = await makeScheduler(t, { dir });
+  // 屏蔽近邻定时器自续期，避免断言之间异步再跑
+  scheduler.scheduleNextWakeCheck = async () => {};
+  try {
+    assert.deepEqual(await scheduler.listPending(), [
+      { sessionId: "s-1", wakeAt: "2026-10-01T09:00:00.000Z", reason: "等接口恢复" },
+    ], "只列 status=pending，取消/已触发的历史条目不能当成挂起中");
+
+    const claimed = await scheduler.claimPendingForSession("s-1");
+    assert.equal(claimed.id, "w-1");
+    assert.equal(claimed.status, "fired");
+    assert.ok(claimed.firedAt, "取走时必须落 fired 时间");
+    assert.equal(await scheduler.claimPendingForSession("s-1"), null, "同一条不能被取两次（否则会重复续跑）");
+    assert.deepEqual(await scheduler.listPending(), []);
+    assert.equal(await scheduler.claimPendingForSession("不存在"), null);
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
+// 挂起卡片两个按钮的服务端契约。schedulesIpcPlugin 是纯工厂（不 import electron），
+// 可以直接喂假 ctx/trustedHandle 调用，观察守卫是否在"取走待唤醒"之前生效。
+test("wakes IPC：「立即继续」受会话占用与后台锁双重守卫，通过后取走待唤醒再续跑", async () => {
+  const handlers = new Map();
+  const calls = { woke: [], claimed: [] };
+  const scheduler = {
+    running: false,
+    listPending: async () => [{ sessionId: "s-1", wakeAt: "2026-10-01T09:00:00.000Z", reason: "等接口恢复" }],
+    claimPendingForSession: async (sid) => {
+      calls.claimed.push(sid);
+      return sid === "s-1" ? { id: "w-1", sessionId: "s-1" } : null;
+    },
+    cancelForSession: async () => {},
+  };
+  schedulesIpcPlugin({
+    trustedHandle: (channel, handler) => handlers.set(channel, handler),
+    resumeWake: async (wake, options) => { calls.woke.push(wake.id); calls.lastOptions = options; },
+    isSessionBusy: (sid) => sid === "s-busy",
+  }).apply({ scheduler });
+
+  assert.deepEqual(await handlers.get("wakes:list-pending")(), [
+    { sessionId: "s-1", wakeAt: "2026-10-01T09:00:00.000Z", reason: "等接口恢复" },
+  ]);
+
+  // 会话自己还在跑：不能插队
+  const busy = await handlers.get("wakes:resume-now")(null, "s-busy");
+  assert.equal(busy.ok, false);
+  assert.match(busy.error, /正在执行任务/);
+
+  // 后台任务占着调度锁：同样不能插队（resumeWake 收尾会把 running 误置 false，等于替别人解锁）
+  scheduler.running = true;
+  const locked = await handlers.get("wakes:resume-now")(null, "s-1");
+  assert.equal(locked.ok, false);
+  assert.match(locked.error, /后台任务正在执行/);
+  assert.deepEqual(calls.claimed, [], "被守卫拦下时绝不能先取走待唤醒（取走即丢失，到点也不会再唤醒）");
+
+  // 守卫放行：取走 pending 并交给壳层立刻续跑
+  scheduler.running = false;
+  assert.equal((await handlers.get("wakes:resume-now")(null, "s-1")).ok, true);
+  assert.deepEqual(calls.claimed, ["s-1"]);
+  assert.deepEqual(calls.woke, ["w-1"]);
+  assert.deepEqual(calls.lastOptions, { manual: true }, "手动续跑必须带 manual 标记：界面不能说成「已到点自动唤醒」");
+
+  // 没有待唤醒：给出明确失败而不是静默什么都不做
+  const missing = await handlers.get("wakes:resume-now")(null, "s-none");
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /没有待唤醒/);
 });

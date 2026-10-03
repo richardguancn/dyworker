@@ -48,7 +48,7 @@ import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComput
 import { applyBuiltinMemoryOverrides, buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, normalizeMemoryItem, normalizeMemories } from "./memory.mts";
 import { applyConsolidation, buildConsolidationMessages, ensureWiki, integrateItems, listWikiPages, parseConsolidationResult, readWikiPages, removeWikiMemory, serializeMemoryRow, updateWikiMemory } from "./memory-wiki.mts";
 import { McpClient } from "./mcp.mts";
-import { countUndecryptableSecrets, decryptChannelSecret, encryptChannelSecret, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine } from "./settings.mts";
+import { countUndecryptableSecrets, decryptChannelSecret, encryptChannelSecret, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, unattendedApprovalMode, wakeApprovalMode } from "./settings.mts";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mts";
 import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "./session-tools.mts";
 import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mts";
@@ -306,9 +306,10 @@ const ctx = await createHost({
   // 调度服务的壳层边界：忙碌/关机判定 + 任务执行 + 渲染端广播
   schedulerHooks: {
     isShuttingDown: () => mcpShuttingDown,
-    isSessionBusy: (sessionId) => activeAgents.has(sessionId),
+    isSessionBusy: (sessionId) => isSessionBusy(sessionId),
     isSystemBusy: () => activeAgents.size > 0 || runningChannelTaskCount > 0,
-    runScheduledTask: (record) => runScheduledTask(record),
+    // meta.manual：本轮是用户点「立即执行」还是到点自动跑（透传给 schedules:run-started）
+    runScheduledTask: (record, meta) => runScheduledTask(record, meta),
     resumeWake: (wake) => resumeWake(wake),
     broadcast: () => broadcastSchedulesChanged(),
   },
@@ -1515,6 +1516,11 @@ function buildWavFromPcm(pcm, sampleRate) {
 
 const activeAgents = new Map();
 const sessionQueue = new SessionQueue();
+// 到点自动唤醒的续跑（resumeWake）不经过 executeAgentRun，必须单独登记"占用中"：
+// 两种占用合并成同一条会话忙判定后，续跑期间渲染端再发消息才会进队列，
+// 而不是被当成空闲会话并发起第二个 run（两个 run 同时写一个会话会让回复气泡串味）。
+const wakeRuns = new Map();
+const isSessionBusy = (sessionId) => activeAgents.has(String(sessionId)) || wakeRuns.has(String(sessionId));
 let mcpShuttingDown = false;
 
 // ---- 长期记忆 ----
@@ -1898,7 +1904,8 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
   const sessionId = String(payload?.sessionId || "").trim();
   const runId = String(payload?.runId || "").trim();
   if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
-  if (activeAgents.has(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
+  // 占用判定同样覆盖唤醒续跑：续跑期间入队的消息只能排队，不能起并发 run
+  if (isSessionBusy(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
   const abortController = new AbortController();
   const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController, sender };
   // 统一轨迹事件流（trace-console）：本 run 内所有 trace 记录先攒在内存，
@@ -2184,7 +2191,13 @@ function drainSessionQueue(sessionId) {
     drainSessionQueue(sessionId);
     return;
   }
-  void executeAgentRun({ payload: entry.payload, sender: entry.sender }).catch(() => {
+  void executeAgentRun({ payload: entry.payload, sender: entry.sender }).then((result: any) => {
+    // 出队后才发现会话被别的占用挡下（唤醒续跑抢跑的极小窗口）：放回队首等占用方收尾推进，
+    // 否则这条消息既没执行也不在队列里，渲染端会永远显示"排队中"
+    if (result && result.ok === false && isSessionBusy(sessionId)) {
+      sessionQueue.unshift(entry);
+    }
+  }).catch(() => {
     // executeAgentRun 内部已把失败上报给渲染端，这里只保证队列继续推进
   });
 }
@@ -2232,7 +2245,8 @@ ctx.plugin(memoriesIpcPlugin({ trustedHandle }));
 ctx.plugin(inboxIpcPlugin({ trustedHandle }));
 
 // schedules:* / wakes:*：领域在 ctx.scheduler（计划存储 + 调度循环）
-ctx.plugin(schedulesIpcPlugin({ trustedHandle }));
+// 「立即继续」要多跑一次壳层的 resumeWake，占用判定同样来自壳层
+ctx.plugin(schedulesIpcPlugin({ trustedHandle, resumeWake, isSessionBusy }));
 
 // git:* / workspace:context：领域是纯函数（git.mts/workspace.mts），只有"生成提交信息"要模型
 ctx.plugin(gitIpcPlugin({ trustedHandle, generateCommitMessage }));
@@ -2304,6 +2318,10 @@ const shellDeps = {
   isShuttingDown: () => mcpShuttingDown,
   activeAgents,
   sessionQueue,
+  // 会话忙判定（前台 run ∪ 唤醒续跑）：agent:send 的排队判定必须与调度器共用同一份
+  isSessionBusy,
+  // 唤醒续跑中止信号（agent:cancel 用来打断无人值守续跑）
+  wakeRuns,
   emitToSession,
   executeAgentRun,
   // 设置保存要联动的域（睡眠拦截/审核模型/语音/渠道/运营）
@@ -2428,6 +2446,14 @@ function broadcastSchedulesChanged() {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("schedules:changed");
 }
 
+// 计划运行开始：起跑前先把本次运行的会话标识与元信息推给渲染端。渲染端据此立刻建出
+// 会话（用户消息 + 流式占位气泡），后续 agent:event（scheduleRun 打标）边跑边填充。
+// 以前只在结束/挂起时才 sessions:prepend 整段转录，一个跑二十分钟的计划在这段时间里
+// 「最近任务」里什么都没有——用户点了「立即执行」只能干等，分不清是在跑还是没跑起来。
+function sendScheduleRunStarted(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("schedules:run-started", payload);
+}
+
 
 
 
@@ -2502,18 +2528,31 @@ async function workingContextForSession(sessionId) {
   return String(session.workingContext ?? messageContext ?? "").trim();
 }
 
-async function resumeWake(wake) {
+// options.manual：「立即继续」按钮触发的手动续跑（不是到点自动唤醒）。
+// 渲染端要据此说"已按你的要求立即继续"，而不是谎称"已到点自动唤醒"。
+async function resumeWake(wake, options: any = {}) {
+  const wakeSessionId = String(wake?.sessionId || "");
+  const manualWake = Boolean(options.manual);
   ctx.scheduler.running = true;
   trackTaskStart();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("wake:status", {
-      sessionId: wake.sessionId,
-      status: "running",
-      wakeAt: wake.wakeAt,
-      reason: wake.reason,
-    });
-  }
+  // 登记占用：唤醒续跑与前台任务共用同一条"会话忙"判定，这段无人值守执行期间
+  // 渲染端发来的消息才会被排队而不是并发起第二个 run。
+  // runId 一并下发给渲染端，让运行中的续跑也能被 ESC/停止按钮中止。
+  const wakeRunId = crypto.randomUUID();
+  const wakeAbort = new AbortController();
+  if (wakeSessionId) wakeRuns.set(wakeSessionId, { runId: wakeRunId, abort: wakeAbort });
   try {
+    // 状态广播放在 try 内：任何后续异常都必须走 finally 释放占用，否则这个会话会被永久锁死
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("wake:status", {
+        sessionId: wake.sessionId,
+        status: "running",
+        runId: wakeRunId,
+        wakeAt: wake.wakeAt,
+        reason: wake.reason,
+        ...(manualWake ? { manual: true } : {}),
+      });
+    }
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法续跑挂起的任务");
@@ -2523,11 +2562,13 @@ async function resumeWake(wake) {
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector();
-    // 自动唤醒任务是无人值守的自主推进：若原会话是交互确认(interactive)或审核模式，
-    // 唤醒后自动提升为 auto 模式（工作区内读写、低风险命令与安全操作自动放行，仅高危操作拦截）；
-    // 若原模式是 full-access 则保留
-    const sourceApprovalMode = normalizeApprovalMode(wake.approvalMode);
-    const approvalMode = sourceApprovalMode === "full-access" ? "full-access" : "auto";
+    // 到点续跑的生效审批模式：interactive 提升为 auto；reviewer（替我审批）保持 reviewer，
+    // 让审核助手继续逐条把关——工作区内的低风险操作（含带 rm/ffmpeg 的复合命令）由助手放行，
+    // 只在越界、外发、破坏性或助手判不准时才转人工收件箱。降级成 auto 会让工作区内的 ask
+    // 不经审核助手直接弹人工审批卡，无人值守反而更打扰（2026-10-02 到点续跑弹卡即此原因）。
+    // full-access / deny-changes / auto 保持原模式，全局「完全访问权限」同样生效。
+    // 折算规则见 settings.mts 的 wakeApprovalMode / unattendedApprovalMode（有单测钉住）。
+    const approvalMode = wakeApprovalMode(settings.approvalMode, wake.approvalMode);
     const result = await ctx.agent.run({
       settings,
       workspacePath: wake.workspacePath,
@@ -2539,6 +2580,9 @@ async function resumeWake(wake) {
       prompt: wake.prompt,
       workingContext,
       conversation: [...prior, { role: "user", content: wakeText }],
+      // 续跑中止信号：渲染端「停止」/ESC 能真正打断无人值守续跑
+      signal: wakeAbort.signal,
+      isCancelled: () => wakeAbort.signal.aborted,
       // 续跑无人值守：审批与提问进收件箱挂起等待；等待期间暂时释放 ctx.scheduler.running 锁，避免系统调度死锁 2 小时
       requestApproval: async (action) => {
         const pending = ctx.inbox.create({
@@ -2622,11 +2666,24 @@ async function resumeWake(wake) {
   } finally {
     trackTaskEnd();
     ctx.scheduler.running = false;
+    // idle 必须带上本次续跑的 runId（渲染端按键比对清除可停止的 runId），
+    // 且要在 drainSessionQueue 之前发出：出队消息的 queue-start 会写入新的 runId
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("wake:status", {
         sessionId: wake.sessionId,
         status: "idle",
+        runId: wakeRunId,
       });
+    }
+    if (wakeSessionId) {
+      wakeRuns.delete(wakeSessionId);
+      // 续跑期间用户在输入框发的消息已在队列里：这里与 executeAgentRun 同一出口推进，
+      // 否则它们会一直卡在队列中（唤醒续跑不走 executeAgentRun 的 finally）
+      try {
+        drainSessionQueue(wakeSessionId);
+      } catch (drainError: any) {
+        console.warn("[wakes] 续跑收尾推进队列失败:", drainError);
+      }
     }
   }
 }
@@ -2691,24 +2748,74 @@ function createTranscriptCollector() {
   };
 }
 
-async function runScheduledTask(record) {
+async function runScheduledTask(record, meta) {
   ctx.scheduler.running = true;
   trackTaskStart();
   broadcastSchedulesChanged();
   // 本次执行的会话 id：收件箱条目、审计记录与最终留痕会话共用同一个
   const scheduleSessionId = crypto.randomUUID();
+  // 实时转发的运行标识 + 会话标题：与渠道运行同一套信封（用 scheduleRun 打标区分）
+  const scheduleRunId = scheduleSessionId;
+  const scheduleTitle = `计划：${String(record.name || "未命名").slice(0, 24)}`;
+  const scheduleStartedAt = new Date().toISOString();
+  const collector = createTranscriptCollector();
+  // 起跑前先建会话：界面立刻能看到"这次运行",后续事件边跑边填,不用等任务结束
+  sendScheduleRunStarted({
+    sessionId: scheduleSessionId,
+    runId: scheduleRunId,
+    scheduleId: String(record.id || ""),
+    title: scheduleTitle,
+    workspacePath: record.workspacePath,
+    prompt: record.prompt,
+    startedAt: scheduleStartedAt,
+    manual: Boolean(meta?.manual),
+  });
+  // 运行期把关键 agent 事件实时转发（白名单与渠道运行共用；trace/token-usage 只进本地留痕）。
+  // 定义在 try 之外：catch 路径也要用它发收尾事件，若只在 try 内定义，
+  // 早于定义行抛出的异常会让 catch 再抛 ReferenceError、吞掉真实错误。
+  const forwardRunEvent = (agentEvent) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type)) return;
+    mainWindow.webContents.send("agent:event", {
+      sessionId: scheduleSessionId,
+      runId: scheduleRunId,
+      scheduleRun: true,
+      event: agentEvent,
+    });
+  };
+  // 收尾：把权威转录交给渲染端（原位归并进运行开始时建的会话）或直接落盘。
+  // 运行开始/结束是两条路径：起跑下发 schedules:run-started 建会话，收尾用 sessions:prepend
+  // 下发完整转录（渲染端按会话 id 归并，不会出现两条同 id 会话）。
+  const finishSession = async (messages) => {
+    const session = {
+      id: scheduleSessionId,
+      title: scheduleTitle,
+      workspacePath: record.workspacePath,
+      createdAt: scheduleStartedAt,
+      updatedAt: new Date().toISOString(),
+      messages,
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("sessions:prepend", session);
+    } else {
+      // 窗口未运行：转录直接落盘，下次启动读回
+      await persistSessionRecord(session);
+    }
+  };
   try {
     const settings = await readSettings();
     if (!settings.endpoint || !settings.model || !settings.apiKey) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
-    const collector = createTranscriptCollector();
     const result = await ctx.agent.run({
       settings,
       workspacePath: record.workspacePath,
       sessionId: scheduleSessionId,
       scheduleId: record.id,
-      approvalMode: record.allowWorkspaceWrites ? "reviewer" : "deny-changes",
+      // 计划任务自身只有"是否允许写工作区"（reviewer / deny-changes）；
+      // 用户全局选了「完全访问权限」时同样生效，否则会出现界面显示完全访问、
+      // 计划任务却逐条弹审批卡的口径分裂（渠道任务一直按全局模式运行）。
+      approvalMode: unattendedApprovalMode(settings.approvalMode, record.allowWorkspaceWrites ? "reviewer" : "deny-changes"),
       prompt: record.prompt,
       conversation: [{ role: "user", content: record.prompt }],
       // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
@@ -2746,7 +2853,11 @@ async function runScheduledTask(record) {
           ctx.scheduler.running = true;
         }
       },
-      emit: (agentEvent) => collector.handle(agentEvent),
+      emit: (agentEvent) => {
+        collector.handle(agentEvent);
+        // 留痕与实时转发各走各的：collector 收全量（含 trace），界面只收影响 UI 白名单事件
+        forwardRunEvent(agentEvent);
+      },
       afterWakeRegister: async (wakeResult) => {
         await ctx.scheduler.markSleeping(record.id, wakeResult.wake, scheduleSessionId);
       },
@@ -2758,52 +2869,24 @@ async function runScheduledTask(record) {
         result,
         `${result.finalText || ""}\n\n已主动挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim(),
       );
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("sessions:prepend", {
-          id: scheduleSessionId,
-          title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
-          workspacePath: record.workspacePath,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          messages: sleepingMessages,
-        });
-      } else {
-        // 窗口未运行：转录直接落盘，下次启动读回
-        await persistSessionRecord({
-          id: scheduleSessionId,
-          title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
-          workspacePath: record.workspacePath,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          messages: sleepingMessages,
-        });
-      }
+      await finishSession(sleepingMessages);
       return;
     }
     await ctx.scheduler.markFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId);
-    const finishedMessages = collector.buildMessages(record.prompt, result);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("sessions:prepend", {
-        id: scheduleSessionId,
-        title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
-        workspacePath: record.workspacePath,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messages: finishedMessages,
-      });
-    } else {
-      // 窗口未运行：转录直接落盘，下次启动读回
-      await persistSessionRecord({
-        id: scheduleSessionId,
-        title: `计划：${String(record.name || "未命名").slice(0, 24)}`,
-        workspacePath: record.workspacePath,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messages: finishedMessages,
-      });
-    }
+    await finishSession(collector.buildMessages(record.prompt, result));
   } catch (error: any) {
-    await ctx.scheduler.markFinished(record.id, false, error instanceof Error ? error.message : String(error), scheduleSessionId);
+    const message = error instanceof Error ? error.message : String(error);
+    await ctx.scheduler.markFinished(record.id, false, message, scheduleSessionId);
+    // 失败也要收口：运行开始时已经建过会话并标了"运行中"，不收尾的话界面上的气泡
+    // 会永远停在执行中，用户看不到失败原因（以前失败路径连会话都不落）
+    try {
+      await finishSession(collector.buildMessages(
+        record.prompt,
+        { status: "error", finalText: `计划执行失败：${message}`, reason: message },
+      ));
+    } catch (finishError: any) {
+      console.log(`[schedules] 失败收尾落盘失败：${finishError?.message || finishError}`);
+    }
   } finally {
     trackTaskEnd();
     ctx.scheduler.running = false;

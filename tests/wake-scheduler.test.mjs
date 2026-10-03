@@ -86,10 +86,27 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   // 3. 细粒度互斥守卫与解除锁死
   // 细粒度互斥：会话是否活跃由壳层判定（hooks），"同一会话不重入"由服务持有
   assert.match(schedulerSource, /this\.runningWakeSessions\.has\(sid\)/);
-  assert.match(mainCode, /isSessionBusy: \(sessionId\) => activeAgents\.has\(sessionId\)/);
+  // 壳层的会话忙判定必须同时算上"唤醒续跑中"：只认 activeAgents 的话，
+  // 续跑期间渲染端发的消息会被当成空闲会话并发起第二个 run（同一会话两个线程）
+  assert.match(mainCode, /isSessionBusy: \(sessionId\) => isSessionBusy\(sessionId\)/);
+  assert.match(mainCode, /const isSessionBusy = \(sessionId\) => activeAgents\.has\(String\(sessionId\)\) \|\| wakeRuns\.has\(String\(sessionId\)\)/);
+  // 续跑登记占用 / 收尾释放并推进队列（唤醒续跑不走 executeAgentRun 的 finally）
+  assert.match(mainCode, /wakeRuns\.set\(wakeSessionId, \{ runId: wakeRunId, abort: wakeAbort \}\)/);
+  assert.match(mainCode, /wakeRuns\.delete\(wakeSessionId\);[\s\S]*?drainSessionQueue\(wakeSessionId\)/);
+  // agent:send 必须复用同一份忙判定（否则队列语义与主进程不一致）
+  const agentIpcSource = readFileSync(new URL("../electron/host/plugins/agent-ipc.mts", import.meta.url), "utf8");
+  assert.match(agentIpcSource, /if \(isSessionBusy\(sessionId\)\) \{/);
 
-  // 4. resumeWake 自主审批提升 (提升至 auto 模式自主推进)
-  assert.match(mainCode, /sourceApprovalMode === "full-access" \? "full-access" : "auto"/);
+  // 4. resumeWake 生效审批模式：折算规则上收 settings.mts（wakeApprovalMode，tests/settings.test.mjs
+  //    有行为单测钉住），续跑入口必须走它。**reviewer（替我审批）不得降级成 auto**：降级后工作区内的
+  //    ask 不经审核助手、直接弹人工审批卡（2026-10-02 带 rm/ffmpeg 的复合命令到点续跑弹卡即此原因），
+  //    而同形态命令在 reviewer 下当天被审核助手放行过。
+  assert.match(mainCode, /const approvalMode = wakeApprovalMode\(settings\.approvalMode, wake\.approvalMode\)/);
+  assert.doesNotMatch(mainCode, /sourceApprovalMode === "full-access" \|\| sourceApprovalMode === "deny-changes" \? sourceApprovalMode : "auto"/);
+  assert.doesNotMatch(mainCode, /sourceApprovalMode/);
+  // 计划任务同样跟随全局完全访问，不再固定为 reviewer / deny-changes
+  assert.match(mainCode, /approvalMode: unattendedApprovalMode\(settings\.approvalMode, record\.allowWorkspaceWrites \? "reviewer" : "deny-changes"\)/);
+  assert.match(mainCode, /(unattendedApprovalMode|wakeApprovalMode)[^}]*\} from "\.\/settings\.mts"/);
 
   // 5. 审批等待期间释放 runningScheduledTask 锁（等待入口现为 ctx.inbox.awaitWithTimeout）
   assert.match(mainCode, /ctx\.scheduler\.running = false;[\s\S]*?ctx\.inbox\.awaitWithTimeout[\s\S]*?ctx\.scheduler\.running = true;/);
@@ -119,4 +136,33 @@ test("App.tsx 契约：会话内直显待审批卡片、列表项橙点徽标、
   // 3. 监听 onWakeStatus 与 onInboxFocusItem
   assert.match(appCode, /onWakeStatus/);
   assert.match(appCode, /onInboxFocusItem/);
+
+  // 4. 挂起等待唤醒期间禁止发送：发送键变灰 + 输入框上方的挂起卡片给出唯一两个出口
+  assert.match(appCode, /const activeSleeping = activeSession\?\.id \? sleepingSessions\[activeSession\.id\] : undefined/);
+  assert.match(appCode, /&& !activeSleeping\s*\n\s*&& voiceState !== "transcribing"/);
+  assert.match(appCode, /className="sleep-card"/);
+  assert.match(appCode, /立即继续/);
+  assert.match(appCode, /取消唤醒/);
+  assert.match(appCode, /window\.dyworker\?\.resumeWakeNow\?\.\(sessionId\)/);
+  assert.match(appCode, /cancelWakesForSession\?\.\(sessionId\)/);
+  // 发消息入口也要拦（Enter 直接走 sendMessage，不看 canSend）
+  assert.match(appCode, /const targetSleeping = sleepingSessions\[targetSession\.id\]/);
+  // 权威状态来自主进程（气泡上的 taskStatus=sleeping 取消后不会变）
+  assert.match(appCode, /listPendingWakes/);
+
+  // 5. 续跑进行中：状态行与气泡说明都要改口，不能一边说"将于 X 自动唤醒"一边在跑
+  // 文案改写本身抽在 src/wakeNote.ts，由 tests/wake-note.test.mjs 做行为测试；
+  // 这里只锁接线：状态、状态行、气泡改写三处都不能少
+  assert.match(appCode, /const \[wakingSessions, setWakingSessions\]/);
+  assert.match(appCode, /const activeWaking = activeSession\?\.id \? wakingSessions\[activeSession\.id\] : undefined/);
+  // RunningStatusLabel 支持 waking：自动唤醒说"已到点自动唤醒（时间）"，手动续跑另说
+  assert.match(appCode, /wakingPrefix = waking/);
+  assert.match(appCode, /已到点自动唤醒（\$\{formatWakeTime\(waking\.wakeAt\)\}）/);
+  assert.match(appCode, /已按你的要求立即继续/);
+  // 气泡那句将来时在开跑时改写、收尾时收口
+  assert.match(appCode, /patchWakingSleepNote\(payload\.sessionId, wakeAt, marker, "waking"\)/);
+  assert.match(appCode, /patchWakingSleepNote\(payload\.sessionId, finished\.wakeAt, finished\.marker, "woke", finished\.done\)/);
+  // 重启/窗口关闭期间已跑完的那一觉也要收口（"将于"→"原定"）
+  assert.match(appCode, /settleResolvedSleepNote\(content\)/);
+  assert.match(appCode, /wakingNoteTexts\(formatWakeTime\(wakeAt\), Boolean\(payload\.manual\)\)/);
 });

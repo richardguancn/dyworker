@@ -8,7 +8,7 @@ export function agentIpcPlugin(deps) {
     name: "ipc:agent",
     inject: ["scheduler"],
     apply(ctx) {
-      const { trustedHandle, isTrustedRendererUrl, isShuttingDown, activeAgents, sessionQueue, emitToSession, executeAgentRun, drainSessionQueue } = deps;
+      const { trustedHandle, isTrustedRendererUrl, isShuttingDown, activeAgents, wakeRuns, isSessionBusy, sessionQueue, emitToSession, executeAgentRun, drainSessionQueue } = deps;
 
 trustedHandle("agent:send", async (event, payload) => {
   try {
@@ -17,7 +17,8 @@ trustedHandle("agent:send", async (event, payload) => {
     const sessionId = String(payload?.sessionId || "").trim();
     const runId = String(payload?.runId || "").trim();
     if (!sessionId || !runId) return { ok: false, error: "任务标识无效，请新建任务后重试" };
-    if (activeAgents.has(sessionId)) {
+    // 占用判定含自动唤醒续跑：续跑期间的消息必须进队列，否则会和续跑并发写同一会话
+    if (isSessionBusy(sessionId)) {
       const count = sessionQueue.push({ sessionId, runId, payload, sender: event.sender });
       emitToSession(event.sender, sessionId, runId, { type: "queued", count });
       return { ok: true, queued: true, runId };
@@ -43,6 +44,10 @@ trustedHandle("agent:run-queued-now", async (_event, payload) => {
   if (!sessionQueue.promote(sessionId, runId)) return { ok: false, error: "这条消息已不在队列中" };
   const agentState = activeAgents.get(sessionId);
   if (!agentState) {
+    // 唤醒续跑占用中：不能在这里直接启动（会并发），已提到队首的条目等续跑收尾时统一出队
+    if (isSessionBusy(sessionId)) {
+      return { ok: false, error: "这个会话正在自动唤醒续跑，消息将在续跑结束后按队列执行" };
+    }
     // 当前任务恰好已结束，队列不会自动推进，这里直接启动队首
     drainSessionQueue(sessionId);
     return { ok: true };
@@ -79,7 +84,15 @@ trustedHandle("agent:cancel", async (_event, payload) => {
   const runId = String(payload?.runId || "");
   if (!sessionId || !runId) return { ok: false };
   const agentState = activeAgents.get(sessionId);
-  if (!agentState) return { ok: false };
+  if (!agentState) {
+    // 自动唤醒的续跑不登记 activeAgents：按 runId 命中它的中止信号直接打断
+    const wakeRun = wakeRuns?.get(sessionId);
+    if (wakeRun && wakeRun.runId === runId) {
+      wakeRun.abort.abort();
+      return { ok: true };
+    }
+    return { ok: false };
+  }
   if (agentState.runId !== runId) return { ok: false };
   agentState.cancelled = true;
   agentState.abortController.abort();

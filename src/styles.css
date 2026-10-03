@@ -1017,6 +1017,13 @@ body.resizing-panels .app-shell {
   color: #9ca29a;
 }
 
+/* 挂起等待唤醒：比运行态更弱，只做"这个会话暂时发不出消息"的提示 */
+.session-sleeping-icon {
+  flex: 0 0 auto;
+  color: #b3b8ae;
+  opacity: 0.9;
+}
+
 .session-item:hover {
   background: var(--sidebar-hover);
   color: #30332e;
@@ -1916,6 +1923,17 @@ body.resizing-panels .app-shell {
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   font-weight: 400;
   line-height: 1.45;
+}
+
+/* 计划表单里的审批口径说明：与上方"允许修改工作区文件"同属一段帮助文字 */
+.plan-form-hint {
+  margin: -2px 2px 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(70, 74, 66, 0.05);
+  color: #7c8078;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  line-height: 1.5;
 }
 
 .plan-save {
@@ -3277,9 +3295,11 @@ body.resizing-panels .app-shell {
   margin-bottom: 34px;
 }
 
-/* Linux 上 Chromium 合成器对 content-visibility 子树有绘制偏移 bug，
-   表现为切换会话后整个界面左移、再切换又恢复，故在 Linux 关闭该虚拟化 */
-.platform-linux .message-row {
+/* Chromium 合成器对 content-visibility 子树有绘制偏移 bug，
+   表现为切换会话后整个界面左移（左侧文字被窗口裁掉、右侧露出背景层）、再切换又恢复。
+   Linux 与 macOS 均已实测复现，这两个平台关闭该虚拟化；Windows 暂未复现，保留优化 */
+.platform-linux .message-row,
+.platform-darwin .message-row {
   content-visibility: visible;
   contain-intrinsic-size: none;
 }
@@ -4397,6 +4417,13 @@ body.resizing-panels .app-shell {
   stroke-width: 1.8;
 }
 
+/* 流式未定稿正文：与定稿走同一套 Markdown 排版，只是按块增量解析
+   （见 InteractiveMessage 的 streaming 说明）。这里只留一个稳定的路径标记，
+   样式与 .markdown-content 一致，定稿瞬间不跳版。 */
+.streaming-markdown {
+  overflow-wrap: anywhere;
+}
+
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3 {
@@ -5146,6 +5173,11 @@ body.resizing-panels .app-shell {
   font-size: calc(13px * var(--font-ui-scale, 1));
 }
 
+/* 挂起后的续跑：和普通任务区分开，说明这是自动/手动唤醒继续的 */
+.assistant-working.waking {
+  color: var(--muted, #74776e);
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -5238,15 +5270,64 @@ body.resizing-panels .app-shell {
   box-shadow: 0 0 0 3px rgba(106, 111, 101, 0.12), var(--shadow-lg);
 }
 
-/* 排队消息卡片（对照 Codex：收在输入框上方，不插进对话流） */
+/* 待发送列表（对照 Codex）：排队消息与挂起唤醒提示独立成卡，收在输入框上沿，
+   不插进对话流、也不和输入框共用同一张卡片——输入框只负责正在编辑的这一条。
+   比输入框窄一档居中，底边塞到输入框下面，读起来是"被输入框压住的一条待发队列" */
+.composer-pending {
+  position: relative;
+  z-index: 0;
+  width: min(880px, 71.5%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* 底边塞进输入框底下：既不露底边框，也不留缝 */
+  margin-bottom: -8px;
+  pointer-events: auto;
+}
+
+/* 排队消息卡片：任务运行期间发出的消息收在这里，等当前任务结束后依次执行 */
 .queue-card {
   display: flex;
   flex-direction: column;
-  margin: -2px 0 7px;
-  padding: 4px;
+  padding: 4px 4px 5px;
   border: 1px solid var(--border, #e5e5df);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--card, #fff);
+}
+
+/* 紧贴输入框的那一张：底边压到输入框下面——下缘不圆、不留底边框；
+   多出来的下内边距就是被输入框盖住的那一截，保证最后一行不会被压住 */
+.composer-pending > :last-child {
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  padding-bottom: 15px;
+}
+
+/* 输入框浮在待发送列表之上：上缘补一层向上投影，把"谁在上面"压出来 */
+.composer-pending + .composer-card {
+  box-shadow: 0 -6px 14px -6px rgba(20, 21, 18, 0.22), var(--shadow-md);
+}
+
+.composer-pending + .composer-card:focus-within {
+  box-shadow: 0 -6px 14px -6px rgba(20, 21, 18, 0.22), var(--shadow-lg);
+}
+
+.queue-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 4px;
+  color: var(--quiet, #8a8f85);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.queue-card-title {
+  color: var(--muted, #646861);
+  font-weight: 600;
+}
+
+.queue-card-hint {
+  margin-left: auto;
 }
 
 .queue-card-row {
@@ -5297,6 +5378,60 @@ body.resizing-panels .app-shell {
 .queue-card-steer:hover {
   background: rgba(69, 71, 66, 0.08);
   color: var(--ink);
+}
+
+/* 主动挂起（等待自动唤醒）：输入框禁用期间的唯一出口卡片，同样紧贴在输入框上方 */
+.sleep-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e5e5df);
+  border-radius: 14px;
+  background: var(--surface, #f6f6f2);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: var(--muted, #646861);
+}
+
+.sleep-card-icon {
+  flex: none;
+  color: var(--quiet, #8a8f85);
+}
+
+.sleep-card-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sleep-card-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.sleep-card-button {
+  padding: 4px 10px;
+  border: 1px solid var(--border, #e5e5df);
+  border-radius: 8px;
+  background: var(--card, #fff);
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.sleep-card-button:hover {
+  background: rgba(69, 71, 66, 0.08);
+}
+
+.sleep-card-button.primary {
+  border-color: transparent;
+  background: var(--ink);
+  color: #fbfbfa;
+}
+
+.sleep-card-button.primary:hover {
+  filter: brightness(1.08);
 }
 
 .queue-card-more-wrap {
@@ -7111,6 +7246,8 @@ body.resizing-panels .app-shell {
   :root { --sidebar-width: 268px; --tool-panel-width: 290px; }
   .conversation-column,
   .composer-card { width: 82%; }
+  /* 待发送列表始终比输入框窄一档，窄窗下保持同样的落差 */
+  .composer-pending { width: 77%; }
 }
 
 @media (min-width: 1440px) {
@@ -8093,6 +8230,54 @@ body.resizing-panels .app-shell {
 /* 用量统计对话框 */
 .usage-dialog {
   width: min(620px, 100%);
+}
+
+/* Token 活动图（用量统计面板顶部）：标题行 + 视图切换 + ECharts 画布 */
+.token-activity {
+  margin: 2px 0 14px;
+}
+
+.token-activity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.token-activity-title {
+  font-size: calc(15px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.token-activity-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.token-activity-tabs button {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  border-radius: 7px;
+  color: var(--muted, #76766d);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.token-activity-tabs button:hover {
+  color: var(--ink);
+}
+
+.token-activity-tabs button.active {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.token-activity-chart {
+  width: 100%;
 }
 
 .usage-table {

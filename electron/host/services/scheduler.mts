@@ -54,6 +54,11 @@ function appendScheduleHistory(item, entry) {
 export class SchedulerService extends Service {
   dir;
   running = false;
+  // checkDueSchedules 的重入保护：从「读 schedules.json」到「写回 running 标记」
+  // 之间有两处 await，10s tick / 1.5s bootTimer / powerMonitor resume|unlock /
+  // triggerNow 四个调用方可以并发进入读到同一个 due 项，各自都去执行一次。
+  // 真实事故里两次派生会话只隔 5.301s（小于 10s tick），就是这条竞态。
+  scheduling = false;
   runningWakeSessions = new Set();
   schedulerTimer = null;
   bootTimer = null;
@@ -181,11 +186,25 @@ export class SchedulerService extends Service {
     const item = items.find((entry) => String(entry.id) === String(id));
     if (!item) return { ok: false, error: "没有找到这个定时任务" };
     if (item.lastStatus === "running") return { ok: false, error: "这个任务正在执行" };
+    // 挂起中的计划不能"立即执行"：它的那个会话还在等唤醒，此时再起一轮就是两个
+    // 实例并行跑同一任务（真实事故里模型自己写下"同目录有另一个同一任务的执行实例
+    // 正在并行跑流程"），而且旧的 pending 唤醒到点还会再续跑一次，等于跑三遍。
+    // 要立刻推进请用挂起横幅上的「立即继续」——那条路径有会话占用与全局忙碌双守卫，
+    // 并且会先把唤醒记录取走再续跑。
+    const wakes = await this.readWakes();
+    const suspended = wakes.some((wake) =>
+      wake.status === "pending" && String(wake.scheduleId) === String(id));
+    if (item.lastStatus === "sleeping" && suspended) {
+      return { ok: false, error: "这个任务已挂起等待唤醒，请用「立即继续」或先取消挂起" };
+    }
     item.enabled = true;
     item.nextRun = this.now().toISOString();
     await this.writeScheduleList(items);
-    void this.checkDueSchedules();
-    return { ok: true };
+    // 只等调度决策落盘，不等任务跑完（IPC 不能挂到任务结束）。
+    // 返回值带回"这一轮到底有没有立刻派发"：忙碌守卫（桌面任务执行中/已有后台任务在跑）
+    // 会把这次点击推迟到下一个 tick，界面据此说"已排队"而不是谎报"已开始执行"。
+    const due = await this.checkDueSchedules({ awaitRun: false, manual: true });
+    return { ok: true, started: Boolean(due) };
   }
 
   // 上次运行中被关掉：标为失败并安排立即重跑，避免计划卡在 running 永不触发
@@ -226,11 +245,31 @@ export class SchedulerService extends Service {
     const items = await this.list();
     const item = items.find((entry) => String(entry.id) === String(id));
     if (!item) return;
+    const now = this.now();
     item.lastStatus = "sleeping";
     item.lastSummary = `已挂起，将于 ${new Date(wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${String(wake.reason || "").slice(0, 120)}）`;
-    item.updatedAt = this.now().toISOString();
+    item.updatedAt = now.toISOString();
+    // 挂起 = 本轮已交棒给自我唤醒机制，本轮到期额度必须在此消耗掉。
+    //
+    // 不变量：到期判定是 `enabled && nextRun <= now`（见 checkDueSchedules），因此
+    // "本轮已结束"的唯一表达方式就是推进 nextRun。此前推进 nextRun 只发生在
+    // markFinished 里，而挂起路径在壳层提前 return、永不经过 markFinished
+    // （main.mts 的 runScheduledTask：status === "sleeping" 时直接 return），
+    // 于是 nextRun 永远停在过去 → 每 10s tick 都判定"到期" → 每轮再新建一个会话
+    // 跑同一任务。真实事故：一个每日计划在 7 分钟内派生出 8 个并发会话，
+    // 各自拉起同一套 3677 帧 ffmpeg 渲染，把机器和界面一起拖垮。
+    //
+    // nextOccurrence 对已处于未来的 nextRun 是幂等的（while 循环不进入），
+    // 所以唤醒续跑结束后再由 markFinished 收尾不会二次推进。
+    // 唤醒若丢失，nextRun 已推进到下一次真实到期时间，任务仍会按周期恢复，不会卡死。
+    //
+    // 这里**不能**对 recurrence === "once" 直接 enabled = false：挂起只是"暂停"，
+    // 而唤醒是"先落 fired 再执行"（见 checkDueWakes），落盘之后若续跑失败不会重试，
+    // 计划就被永久停用、任务再也跑不起来。once 的真正停用交给续跑收尾的
+    // markFinished（它只对已完成的运行生效）。
+    item.nextRun = nextOccurrence(item.recurrence, item.nextRun, now);
     appendScheduleHistory(item, {
-      at: this.now().toISOString(),
+      at: now.toISOString(),
       status: "sleeping",
       summary: item.lastSummary,
       sessionId: String(sessionId || ""),
@@ -257,6 +296,33 @@ export class SchedulerService extends Service {
   async hasPendingForSession(sessionId) {
     const wakes = await this.readWakes();
     return wakes.some((wake) => wake.status === "pending" && String(wake.sessionId) === String(sessionId));
+  }
+
+  // 渲染端"挂起中"状态的权威数据源：气泡上的 taskStatus=sleeping 只是历史留痕，
+  // 用户取消唤醒后不会自己变，重启后也读不出"是否还挂着"，所以一律回主进程问。
+  async listPending() {
+    const wakes = await this.readWakes();
+    return wakes
+      .filter((wake) => wake.status === "pending")
+      .map((wake) => ({
+        sessionId: String(wake.sessionId || ""),
+        wakeAt: String(wake.wakeAt || ""),
+        reason: String(wake.reason || ""),
+      }));
+  }
+
+  // 用户点「立即继续」：把该会话的待唤醒一次性取走（pending → fired）交给壳层立刻续跑，
+  // 取不到返回 null。与 checkDueWakes 同一语义——先落盘再执行，中途退出也不会重复唤醒。
+  async claimPendingForSession(sessionId) {
+    const wakes = await this.readWakes();
+    const target = wakes.find((wake) => wake.status === "pending" && String(wake.sessionId) === String(sessionId));
+    if (!target) return null;
+    target.status = "fired";
+    target.firedAt = this.now().toISOString();
+    await this.writeWakes(wakes);
+    // 被取走的那条可能正是最近的一条闹钟，重新对齐
+    void this.scheduleNextWakeCheck();
+    return target;
   }
 
   async registerWake({ sessionId, scheduleId = null, workspacePath, approvalMode, wake, prompt, finalText }) {
@@ -360,17 +426,61 @@ export class SchedulerService extends Service {
     void this.scheduleNextWakeCheck({ minDelayMs: deferred ? WAKE_DEFERRED_RETRY_MS : 0 });
   }
 
-  async checkDueSchedules() {
-    if (this.hooks.isShuttingDown() || this.running || this.hooks.isSystemBusy()) return;
+  // awaitRun=false：只等「调度决策落盘」，不等 runScheduledTask 跑完。
+  // triggerNow 经 IPC 同步返回，不能把 invoke 挂到任务结束（可能几十分钟），
+  // 但也必须等状态写入再返回——否则调用方拿到 ok 时状态还没落盘，
+  // 且那次写盘会在调用方之后继续跑（与目录清理/后续写形成竞态）。
+  // 返回值：本轮真正派发的计划（被忙碌守卫拦下时返回 null，调用方据此区分"已开始执行"与"已排队"）。
+  // meta.manual 透传给壳层：开始运行时的 schedules:run-started 用它区分「立即执行」与到点自动跑。
+  async checkDueSchedules(options: { awaitRun?: boolean; manual?: boolean } = {}) {
+    const awaitRun = options.awaitRun !== false;
+    const manual = options.manual === true;
+    if (this.hooks.isShuttingDown() || this.running || this.hooks.isSystemBusy() || this.scheduling) return null;
     const now = this.now();
-    const items = await this.list();
-    const due = items.find((item) => item.enabled && item.nextRun && new Date(item.nextRun) <= now);
-    if (!due) return;
-    due.lastStatus = "running";
-    due.lastRun = now.toISOString();
-    due.updatedAt = now.toISOString();
-    await this.writeScheduleList(items);
-    await this.hooks.runScheduledTask(due);
+    let due = null;
+    // 重入保护只覆盖「读 → 挑 due → 写回 running」这段窗口，不跨 runScheduledTask：
+    // 后者会在审批/提问等待期间主动释放 this.running（避免调度死锁），若这里把锁
+    // 一直握到运行结束，其他已到期的计划在长达 2 小时的审批等待里都得不到执行。
+    this.scheduling = true;
+    try {
+      const items = await this.list();
+      // 挂起中且唤醒仍在册的计划，本轮尚未结束（那个会话在等唤醒），不能再触发
+      // 一次——否则会与挂起中的会话并行跑同一任务。只看 lastStatus 不够：
+      // 唤醒若已被消费或取消，说明挂起实际已不成立，应让计划按 nextRun 正常恢复，
+      // 否则续跑失败会把计划永久卡死（nextRun 虽已推进，但每次到期都会被这里跳过）。
+      const wakes = await this.readWakes();
+      const suspendedScheduleIds = new Set(
+        wakes
+          .filter((wake) => wake.status === "pending" && wake.scheduleId)
+          .map((wake) => String(wake.scheduleId)),
+      );
+      due = items.find((item) =>
+        item.enabled
+        && item.nextRun
+        && new Date(item.nextRun) <= now
+        && !(item.lastStatus === "sleeping" && suspendedScheduleIds.has(String(item.id)))) || null;
+      if (due) {
+        due.lastStatus = "running";
+        due.lastRun = now.toISOString();
+        due.updatedAt = now.toISOString();
+        await this.writeScheduleList(items);
+      }
+    } finally {
+      this.scheduling = false;
+    }
+    if (!due) return null;
+    if (awaitRun) {
+      await this.hooks.runScheduledTask(due, { manual });
+    } else {
+      // 交棒但不等待：运行异常由壳层自身收尾（runScheduledTask 有 try/catch/finally），
+      // 这里只兜住同步抛出，避免产生未处理的 rejection
+      try {
+        void Promise.resolve(this.hooks.runScheduledTask(due, { manual })).catch(() => {});
+      } catch {
+        // 同步抛出同样忽略：状态已落 running，下一轮 recoverInterrupted 会兜底
+      }
+    }
+    return due;
   }
 
   // 启动调度：先恢复中断的计划，再挂 10s tick 与首帧补偿检查。

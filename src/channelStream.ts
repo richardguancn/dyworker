@@ -19,6 +19,13 @@ export function isChannelRunEnvelope(envelope: unknown): boolean {
   return Boolean(envelope) && (envelope as { channelRun?: unknown }).channelRun === true;
 }
 
+// 定时计划运行的实时透传信封（主进程 runScheduledTask 起跑后边跑边发 agent:event）。
+// 与渠道运行共用同一套流式归约，区别只在打标字段：计划会话是主进程本次运行新建的，
+// 没有 channel 来源标记，渲染端必须靠 scheduleRun 才能把它们与桌面运行区分开。
+export function isScheduleRunEnvelope(envelope: unknown): boolean {
+  return Boolean(envelope) && (envelope as { scheduleRun?: unknown }).scheduleRun === true;
+}
+
 export function registerStreamMessage(runs: ChannelStreamRuns, runId: string, ref: ChannelStreamRef): void {
   if (!runId) return;
   runs.set(runId, ref);
@@ -47,6 +54,32 @@ export function takeStreamMessage(runs: ChannelStreamRuns, runId: string): Chann
 
 interface AppendMessage {
   id?: string;
+}
+
+interface PrependedSession {
+  id: string;
+  title?: string;
+  titleCustom?: boolean;
+  messages: unknown[];
+}
+
+// sessions:prepend 的幂等归并（纯函数，可安全放进 setState updater）：
+// 计划运行开始时渲染端已经乐观建好同 id 会话（schedules:run-started），结束时主进程再用
+// sessions:prepend 下发权威转录。按 id 命中原位替换消息，未命中才插到列表最前——
+// 不做归并的话「最近任务」里会出现两条 id 相同、一条停在运行中、一条已是最终结果的会话。
+// 用户手动改过标题（titleCustom）时保留用户标题，不被下发的默认标题覆盖。
+export function mergePrependedSession<T extends PrependedSession>(
+  sessions: T[],
+  incoming: T,
+): { sessions: T[]; merged: boolean } {
+  const index = sessions.findIndex((session) => session.id === incoming.id);
+  if (index < 0) return { sessions: [incoming, ...sessions], merged: false };
+  return {
+    sessions: sessions.map((session, offset) => offset === index
+      ? { ...session, ...incoming, ...(session.titleCustom ? { title: session.title, titleCustom: true } : {}) }
+      : session),
+    merged: true,
+  };
 }
 
 // 收尾消息落库归约（纯函数，可安全放进 setState updater）：

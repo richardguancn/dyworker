@@ -814,6 +814,30 @@ export interface ScheduleRecord {
   history?: Array<{ at: string; status: string; summary: string; sessionId: string }>;
 }
 
+/** 待唤醒（主动挂起）记录：主进程 wakes.json 里 status=pending 的条目 */
+export interface PendingWakeRecord {
+  sessionId: string;
+  wakeAt: string;
+  reason: string;
+}
+
+/**
+ * 计划任务开始运行的实时通知：主进程在起跑 agent 之前下发。
+ * 渲染端先用它建出会话（用户消息 + 流式占位气泡），后续 agent:event（scheduleRun 打标）
+ * 边跑边填充，结束时再由 sessions:prepend 下发权威转录原位归并。
+ */
+export interface ScheduleRunStarted {
+  sessionId: string;
+  runId: string;
+  scheduleId: string;
+  title: string;
+  workspacePath: string;
+  prompt: string;
+  startedAt: string;
+  /** 用户点了「立即执行」（区别于到点自动运行）：界面可以把这次运行的会话直接推到眼前 */
+  manual?: boolean;
+}
+
 export interface DyworkerBridge {
   /** 同步平台标识（preload 直接读 process.platform）：首帧渲染即用，不经过 IPC */
   readonly platform: string;
@@ -986,7 +1010,7 @@ export interface DyworkerBridge {
   resolveQuestion(sessionId: string, requestId: string, answer: string): Promise<{ ok: boolean }>;
   onInboxChanged(callback: () => void): () => void;
   onInboxFocusItem?(callback: (item: InboxItem) => void): () => void;
-  onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; wakeAt?: string; reason?: string }) => void): () => void;
+  onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; runId?: string; wakeAt?: string; reason?: string; manual?: boolean }) => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
   updateMemory(payload: { id: string; content: string; category?: string; name?: string; kind?: string }): Promise<{ ok: boolean; error?: string }>;
   lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
@@ -1001,11 +1025,20 @@ export interface DyworkerBridge {
   saveSchedule(payload: Partial<ScheduleRecord>): Promise<{ ok: boolean; error?: string }>;
   deleteSchedule(id: string): Promise<{ ok: boolean }>;
   setScheduleEnabled(id: string, enabled: boolean): Promise<{ ok: boolean }>;
-  triggerSchedule(id: string): Promise<{ ok: boolean; error?: string }>;
+  triggerSchedule(id: string): Promise<{ ok: boolean; error?: string; started?: boolean }>;
   onSchedulesChanged(callback: () => void): () => void;
+  /**
+   * 计划任务开始运行（主进程 runScheduledTask 起跑前下发）：渲染端据此立刻建出这次运行的
+   * 会话与流式占位气泡，用户点「立即执行」后不用等任务跑完（可能几十分钟）才看到它。
+   */
+  onScheduleRunStarted?(callback: (payload: ScheduleRunStarted) => void): () => void;
   onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
   onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[] }) => void): () => void;
   cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
+  /** 主进程待唤醒列表：渲染端“挂起中”状态的权威来源（重启后同样准确） */
+  listPendingWakes?(): Promise<PendingWakeRecord[]>;
+  /** 立即继续挂起的任务：取走待唤醒并马上续跑，不等约定时间 */
+  resumeWakeNow?(sessionId: string): Promise<{ ok: boolean; error?: string }>;
   getChannelsStatus(): Promise<ChannelsStatusMap>;
   onChannelsStatus(callback: (statusMap: ChannelsStatusMap) => void): () => void;
   transcribeAudio(payload: {

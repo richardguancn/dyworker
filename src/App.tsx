@@ -85,20 +85,24 @@ import { PluginsPage } from "./PluginsPage";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
+import { TokenActivity } from "./TokenActivityPanel";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
-import { forgetStreamMessage, isChannelRunEnvelope, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
+import { forgetSessionStream, forgetStreamMessage, isChannelRunEnvelope, isScheduleRunEnvelope, mergePrependedSession, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
+import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
 
 const now = new Date().toISOString();
+// 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
+type WakingSessionEntry = { wakeAt: string; manual?: boolean; marker: string; done: string };
 const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
 const WORKSPACE_SESSION_LIMIT = 5;
 // 任务运行中的会话快照兜底保存间隔：流式输出让 sessions 状态以分片频率
@@ -374,6 +378,28 @@ const composerApprovalModes = [
     warning: true,
   },
 ];
+
+// 计划表单里的审批口径说明：计划任务与到点续跑都按设置里的审批模式运行
+// （生效规则见 electron/settings.mts 的 unattendedApprovalMode / wakeApprovalMode：
+//  全局完全访问对计划/续跑同样生效；续跑保持"替我审批"由审核助手把关，不降级成 auto）。
+// 文案与输入框上的模式说明同源，避免两处口径漂移。
+const planApprovalModeNotes: Record<string, string> = {
+  interactive: "每次需要授权的操作都会进审批收件箱，等你确认后才继续",
+  reviewer: "工作区内的低风险操作由审核助手放行，越界、外发、破坏性操作才进审批收件箱等你确认",
+  "full-access": "不再逐条向你确认（仍会拦截系统级安装等少数操作）",
+  auto: "工作区内的读写自动放行，其余需要确认的操作进审批收件箱",
+  "deny-changes": "只读运行，不会修改文件或运行命令",
+};
+
+// 计划表单里那句审批口径说明（整段拼好，避免 JSX 换行在中文里塞进空格）
+function planApprovalHint(mode: ApprovalMode, allowWorkspaceWrites: boolean) {
+  const label = composerApprovalModes.find((option) => option.value === mode)?.label || "替我审批";
+  const note = planApprovalModeNotes[mode] || planApprovalModeNotes.reviewer;
+  const suffix = allowWorkspaceWrites
+    ? "。"
+    : "；未开启「允许修改工作区文件」时整轮只读，不会改动任何文件。";
+  return `计划执行与到点续跑都按设置里的审批模式运行：当前「${label}」——${note}${suffix}`;
+}
 
 function makeSession(workspacePath = ""): SessionRecord {
   const createdAt = new Date().toISOString();
@@ -3630,18 +3656,24 @@ const ProcessTimeline = memo(function ProcessTimeline({
 
 // 任务运行状态行：耗时数字自持 1s 定时器，只重渲染这一行，
 // 不再驱动整个 App 每秒重渲染（原 elapsedTick 方案）
-function RunningStatusLabel({ loopState, startedAt }: { loopState: { iteration: number; maximum: number; status: string } | null; startedAt?: number }) {
+// waking：本次运行是挂起任务的续跑，要显式说明"自动唤醒/按你的要求继续"，
+// 否则用户只看到一句"正在处理任务"，会以为任务莫名其妙又跑起来了
+function RunningStatusLabel({ loopState, startedAt, waking }: { loopState: { iteration: number; maximum: number; status: string } | null; startedAt?: number; waking?: { wakeAt: string; manual?: boolean } }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!startedAt || loopState) return;
     const timer = window.setInterval(() => setTick((tick) => tick + 1), 1000);
     return () => window.clearInterval(timer);
   }, [startedAt, loopState]);
+  const wakingPrefix = waking
+    ? (waking.manual ? "已按你的要求立即继续" : `已到点自动唤醒（${formatWakeTime(waking.wakeAt)}）`)
+    : "";
   if (loopState) {
-    return <span>{`持续执行 第 ${loopState.iteration}/${loopState.maximum} 轮 · ${loopState.status}`}</span>;
+    return <span>{`${wakingPrefix ? `${wakingPrefix} · ` : ""}持续执行 第 ${loopState.iteration}/${loopState.maximum} 轮 · ${loopState.status}`}</span>;
   }
   const elapsedSeconds = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
-  return <span>{`正在处理任务${elapsedSeconds > 1 ? ` · ${formatDuration(elapsedSeconds * 1000)}` : ""}`}</span>;
+  const label = wakingPrefix ? `${wakingPrefix}，正在继续处理` : "正在处理任务";
+  return <span>{`${label}${elapsedSeconds > 1 ? ` · ${formatDuration(elapsedSeconds * 1000)}` : ""}`}</span>;
 }
 
 function ApprovalCard({ action, onResolve }: { action: ApprovalAction; onResolve: (approved: boolean) => void }) {
@@ -4454,6 +4486,7 @@ function PlansPanel({
   items,
   workspaceReady,
   currentWorkspacePath,
+  approvalMode,
   onSave,
   onToggle,
   onDelete,
@@ -4464,6 +4497,7 @@ function PlansPanel({
   items: ScheduleRecord[];
   workspaceReady: boolean;
   currentWorkspacePath?: string;
+  approvalMode: ApprovalMode;
   onSave: (draft: ScheduleDraft) => Promise<boolean>;
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
@@ -4525,6 +4559,7 @@ function PlansPanel({
               <small>开启后助手可以创建和修改文件；关闭时只查看内容</small>
             </span>
           </label>
+          <p className="plan-form-hint">{planApprovalHint(approvalMode, draft.allowWorkspaceWrites)}</p>
           <button className="button-primary plan-save" disabled={saving || !workspaceReady} onClick={() => void submit()}>
             {saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
             {workspaceReady ? "保存计划" : "请先选择工作文件夹"}
@@ -4824,6 +4859,7 @@ function UsageStatsPanel({ records }: { records: UsageRecord[] | null }) {
 
   return (
     <>
+      {records !== null && summary.length > 0 && <TokenActivity records={records} />}
       {records === null ? (
           <p className="dialog-note">正在读取…</p>
         ) : summary.length === 0 ? (
@@ -5348,7 +5384,7 @@ function TelemetrySettingsSection({ draft, setDraft }: {
           onChange={(event) => patch({ serviceUrl: event.target.value })}
         />
       </label>
-      <p className="dialog-note">使用统计与运营消息连接安全监管平台提供的受控接口。政府或内网部署填写对应内部地址即可；留空时两项功能都不联网。开启任一项后会用随机安装标识登记设备（不采集 MAC 地址、硬盘序列号、主机名和系统用户名）。</p>
+      <p className="dialog-note">使用统计与运营消息连接安全监管平台提供的受控接口。填写平台根地址，不需要附加接口路径。本机测试可填 http://localhost:8000；其他电脑请填可访问的 HTTPS 平台地址。修改后请点击“保存设置”；留空时两项功能都不联网。开启任一项后会用随机安装标识登记设备（不采集 MAC 地址、硬盘序列号、主机名和系统用户名）。</p>
       <div className="dialog-section-title">使用统计</div>
       <label className="dialog-check">
         <input
@@ -5368,7 +5404,7 @@ function TelemetrySettingsSection({ draft, setDraft }: {
         />
         订阅公告、版本提醒与维护通知
       </label>
-      <p className="dialog-note">与使用统计互不影响：关闭统计仍可接收消息。在线时实时提醒，离线期间的消息在下次打开或恢复联网后补收；退出应用期间不承诺即时提醒。</p>
+      <p className="dialog-note">与使用统计互不影响：关闭统计仍可接收消息。在线时每 5 分钟检查新消息，离线期间的消息在下次打开或恢复联网后补收；退出应用期间不承诺即时提醒。</p>
       <label className="dialog-check">
         <input
           type="checkbox"
@@ -5594,6 +5630,7 @@ function SettingsDialog({
   schedules,
   workspaceReady,
   currentWorkspacePath,
+  approvalMode,
   onSaveSchedule,
   onToggleSchedule,
   onDeleteSchedule,
@@ -5625,6 +5662,7 @@ function SettingsDialog({
   schedules: ScheduleRecord[];
   workspaceReady: boolean;
   currentWorkspacePath?: string;
+  approvalMode: ApprovalMode;
   onSaveSchedule: (draft: ScheduleDraft) => Promise<boolean>;
   onToggleSchedule: (id: string, enabled: boolean) => void;
   onDeleteSchedule: (id: string) => void;
@@ -6740,6 +6778,7 @@ function SettingsDialog({
             items={schedules}
             workspaceReady={workspaceReady}
             currentWorkspacePath={currentWorkspacePath}
+            approvalMode={approvalMode}
             onSave={onSaveSchedule}
             onToggle={onToggleSchedule}
             onDelete={onDeleteSchedule}
@@ -6868,6 +6907,45 @@ export function App() {
   const [sideChatSeed, setSideChatSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  // 主动挂起（有待唤醒）的会话：主进程 wakes.json 是权威状态，这里只做镜像。
+  // 不能用气泡上的 taskStatus=sleeping 代替——取消唤醒后它不会自己变，重启也读不出来。
+  const [sleepingSessions, setSleepingSessions] = useState<Record<string, PendingWakeRecord>>({});
+  // 正在续跑（已唤醒）的会话：气泡那句将来时的挂起说明要改写成"正在继续处理"，
+  // 运行状态行也要说清是自动唤醒还是用户点的「立即继续」
+  const [wakingSessions, setWakingSessions] = useState<Record<string, WakingSessionEntry>>({});
+  // 事件回调里要读"当前正在续跑的会话"做气泡收口，同时保持 setState updater 纯净
+  const wakingSessionsRef = useRef<Record<string, WakingSessionEntry>>({});
+  const refreshPendingWakes = async () => {
+    const list = await window.dyworker?.listPendingWakes?.();
+    if (!Array.isArray(list)) return;
+    const next: Record<string, PendingWakeRecord> = {};
+    for (const item of list) {
+      if (item?.sessionId) next[item.sessionId] = { ...item, sessionId: item.sessionId };
+    }
+    setSleepingSessions(next);
+    // 这一觉已经走完（到点跑过 / 被取消 / 窗口关着时已触发）的会话：气泡里那句
+    // "将于 X 自动唤醒继续"要收口成"原定 X 自动唤醒"，否则重启后它还在声称将来会唤醒。
+    // 仍在待唤醒列表、或正在续跑中的会话不动。
+    setSessions((current) => {
+      let changedAny = false;
+      const settled = current.map((session) => {
+        if (next[session.id] || wakingSessionsRef.current[session.id]) return session;
+        let changed = false;
+        const messages = session.messages.map((message) => {
+          if (message.role !== "assistant" || message.taskStatus !== "sleeping" || !message.content) return message;
+          const content = String(message.content);
+          const settledContent = settleResolvedSleepNote(content);
+          if (settledContent === content) return message;
+          changed = true;
+          return { ...message, content: settledContent };
+        });
+        if (!changed) return session;
+        changedAny = true;
+        return { ...session, messages };
+      });
+      return changedAny ? settled : current;
+    });
+  };
   const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
@@ -7129,6 +7207,31 @@ export function App() {
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
   };
 
+  // 续跑开始/结束时改写那条挂起气泡的说明（只动我们自己生成的那句，不碰模型正文）。
+  // 目标靠"将于/原定 {wakeAt} 自动唤醒"这个精确时间 + 注入的 marker 定位：同一会话可能
+  // 挂起过多轮，不能简单按"最后一条 sleeping"取，否则会把新一轮的挂起说明也改掉。
+  const patchWakingSleepNote = (sessionId: string, wakeAt: string, marker: string, phase: "waking" | "woke", done = "") => {
+    const wakeAtText = formatWakeTime(wakeAt);
+    updateSession(sessionId, (session) => {
+      let changed = false;
+      const messages = session.messages.map((message) => {
+        if (message.role !== "assistant" || !message.content) return message;
+        const content = String(message.content);
+        if (phase === "waking") {
+          const next = rephraseSleepNote(content, wakeAtText, marker);
+          if (next === content) return message;
+          changed = true;
+          return { ...message, content: next };
+        }
+        const next = closeWakingNote(content, marker, done);
+        if (next === content) return message;
+        changed = true;
+        return { ...message, content: next };
+      });
+      return changed ? { ...session, messages } : session;
+    });
+  };
+
   const clearSessionNotice = (sessionId: string) => {
     const previous = sessionNoticeTimersRef.current.get(sessionId);
     if (previous) {
@@ -7235,9 +7338,18 @@ export function App() {
   }, [sessions]);
 
   // 渠道流式气泡登记（跨两个长期存活的监听器共享）：
-  // sessionId → 占位消息 id（实时事件归约用）；runId → 占位位置（收尾 append 原位替换用）
+  // sessionId → 占位消息 id（实时事件归约用）；runId → 占位位置（收尾 append 原位替换用）。
+  // 定时计划运行（scheduleRun 打标）复用同一套登记：它的占位气泡同样按会话清理。
   const channelStreamIdsRef = useRef<Map<string, string>>(new Map());
   const channelStreamRunsRef: { current: ChannelStreamRuns } = useRef(new Map<string, ChannelStreamRef>());
+  // 正在进行定时计划运行的会话（主进程 runScheduledTask 在跑）：这些会话的输入框要禁用，
+  // 否则用户中途发消息会和后台那轮计划任务同时写同一个会话，收尾 prepend 会把新消息覆盖掉
+  const [scheduledRunSessions, setScheduledRunSessions] = useState<Set<string>>(() => new Set());
+  // 刚点了「立即执行」的计划 id：等主进程回 schedules:run-started 时把这次运行的会话直接打开
+  const manualRunScheduleRef = useRef<string>("");
+  // 「立即执行」后要自动打开的会话：等它进了会话列表再由 selectSession 走完整切换流程
+  // （切工作区、关旧审阅标签、刷新工作区文件），否则会话可能落在别的分组的折叠里
+  const [pendingAutoOpenSessionId, setPendingAutoOpenSessionId] = useState("");
 
   // 工作台布局持久化：面板 Tab、分栏比例按会话保存到 localStorage，切换会话恢复、重启不丢。
   // 恢复先于保存执行，避免启动时用空状态覆盖已保存布局；没有自定义过布局（无 Tab）的会话不落盘。
@@ -7612,6 +7724,13 @@ export function App() {
     return () => window.clearInterval(interval);
   }, [ready, runningSessionIds]);
 
+  // 启动/重启后恢复"挂起中"会话：主进程 wakes.json 里还挂着的待唤醒必须重新显示，
+  // 否则刚重启时输入框会被当成空闲，用户一发消息就会和到点续跑撞在同一个会话里
+  useEffect(() => {
+    if (!ready || !window.dyworker || bootstrapFailedRef.current) return;
+    void refreshPendingWakes();
+  }, [ready]);
+
   useEffect(() => {
     if (!ready || !window.dyworker || bootstrapFailedRef.current) return;
     const timeout = window.setTimeout(() => void window.dyworker?.savePinnedWorkspaces(pinnedWorkspacePaths), 180);
@@ -7789,10 +7908,75 @@ export function App() {
     });
     const offPrepend = window.dyworker?.onSessionPrepend?.((session) => {
       const workingContext = session.workingContext ?? latestWorkingContext(session.messages);
-      setSessions((current) => [{ ...session, ...(workingContext !== undefined ? { workingContext } : {}) }, ...current]);
+      const incoming: SessionRecord = { ...session, ...(workingContext !== undefined ? { workingContext } : {}) };
+      // 计划运行开始时已按同一个会话 id 乐观建过会话（schedules:run-started），这里必须按 id
+      // 原位归并权威转录：直接 prepend 会在「最近任务」里多出一条同 id 的重复会话，一条停在
+      // 运行中、一条已是最终结果（markdown 渲染也会因为 React key 重复而漂移）。
+      // mergePrependedSession 是纯函数，可安全放进 updater（StrictMode 双调结果一致）。
+      setSessions((current) => mergePrependedSession<SessionRecord>(current, incoming).sessions);
+      // 一轮运行结束（完成/挂起/失败都会走到这里）：清掉这次运行的流式占位与运行标记，
+      // 否则气泡永远停在"正在执行"，侧栏的转圈也不会停
+      forgetSessionStream(channelStreamRunsRef.current, session.id);
+      channelStreamIdsRef.current.delete(session.id);
+      setScheduledRunSessions((current) => {
+        if (!current.has(session.id)) return current;
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+      setRunningSessionIds((current) => {
+        if (!current.has(session.id)) return current;
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+      setLoopStates((current) => {
+        if (!(session.id in current)) return current;
+        const next = { ...current };
+        delete next[session.id];
+        return next;
+      });
+      // 计划主动挂起时，界面要立刻出「立即继续 / 取消唤醒」卡片（挂起状态以主进程
+      // wakes.json 为权威）；已完成/失败的一轮也会借此清掉过期的挂起标记
+      void refreshPendingWakes();
       setNotice(session.channel
         ? `收到${session.channel === "qq" ? "QQ" : "微信"}消息，渠道会话已建立`
         : "定时计划已执行，结果已保存到最近任务");
+    });
+    // 定时计划开始运行：主进程在起跑前就把本次运行的会话标识推过来，界面立刻建出会话与
+    // 流式占位气泡（后续 agent:event 带 scheduleRun 打标实时填充）。以前只在运行结束（或
+    // 挂起）时才 prepend 整段转录，一个跑几十分钟的计划这段时间里界面上什么都没有。
+    const offScheduleRunStarted = window.dyworker?.onScheduleRunStarted?.((payload) => {
+      const sessionId = String(payload?.sessionId || "");
+      if (!sessionId) return;
+      const runId = String(payload?.runId || sessionId);
+      const startedAt = payload?.startedAt || new Date().toISOString();
+      const assistantId = crypto.randomUUID();
+      // 占位气泡登记放在 updater 外：StrictMode 下 updater 会被双调，ref 写入必须只发生一次
+      registerStreamMessage(channelStreamRunsRef.current, runId, { sessionId, messageId: assistantId });
+      channelStreamIdsRef.current.set(sessionId, assistantId);
+      setSessions((current) => mergePrependedSession<SessionRecord>(current, {
+        id: sessionId,
+        title: payload?.title || "计划任务",
+        workspacePath: String(payload?.workspacePath || ""),
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        messages: [
+          { id: crypto.randomUUID(), role: "user", content: String(payload?.prompt || ""), createdAt: startedAt },
+          { id: assistantId, role: "assistant", content: "", createdAt: startedAt, activities: [] },
+        ],
+      }).sessions);
+      setRunningSessionIds((current) => new Set(current).add(sessionId));
+      setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
+      setScheduledRunSessions((current) => new Set(current).add(sessionId));
+      // 手动「立即执行」：用户点它就是要马上看到这次运行，直接把会话推到眼前
+      // （到点自动执行的计划只进列表，不抢当前会话焦点）
+      if (payload?.manual && manualRunScheduleRef.current === String(payload?.scheduleId || "")) {
+        manualRunScheduleRef.current = "";
+        setSettingsOpen(false);
+        setPendingAutoOpenSessionId(sessionId);
+      }
+      showSessionNotice(sessionId, "计划任务已开始执行，进度实时显示在这里");
     });
     const offAppend = window.dyworker?.onSessionAppend?.((payload) => {
       const appendUnread = payload.sessionId !== activeIdRef.current;
@@ -7847,13 +8031,48 @@ export function App() {
       if (payload.status === "running") {
         setRunningSessionIds((current) => new Set(current).add(payload.sessionId));
         setRunningStartedAt((current) => ({ ...current, [payload.sessionId]: Date.now() }));
-        showSessionNotice(payload.sessionId, "已到点自动唤醒，正在自主推进任务...");
+        // 主进程下发了续跑的 runId：登记后 ESC/停止按钮才能真的打断无人值守续跑
+        if (payload.runId) runningRunIdsRef.current.set(payload.sessionId, payload.runId);
+        // 已经开跑就不再是"挂起中"，避免挂起卡片和运行状态同时显示
+        setSleepingSessions((current) => {
+          if (!(payload.sessionId in current)) return current;
+          const next = { ...current };
+          delete next[payload.sessionId];
+          return next;
+        });
+        // 记录"续跑中"：运行状态行与气泡说明都按这个状态改写，
+        // 免得界面上还挂着"将于 X 自动唤醒"的将来时，下面却在跑任务
+        const wakeAt = String(payload.wakeAt || "");
+        const { marker, done } = wakingNoteTexts(formatWakeTime(wakeAt), Boolean(payload.manual));
+        const wakingEntry: WakingSessionEntry = { wakeAt, manual: Boolean(payload.manual), marker, done };
+        wakingSessionsRef.current = { ...wakingSessionsRef.current, [payload.sessionId]: wakingEntry };
+        setWakingSessions(wakingSessionsRef.current);
+        patchWakingSleepNote(payload.sessionId, wakeAt, marker, "waking");
+        showSessionNotice(
+          payload.sessionId,
+          payload.manual ? "已按你的要求立即继续，正在处理..." : "已到点自动唤醒，正在自主推进任务...",
+        );
       } else {
         setRunningSessionIds((current) => {
           const next = new Set(current);
           next.delete(payload.sessionId);
           return next;
         });
+        if (runningRunIdsRef.current.get(payload.sessionId) === payload.runId) {
+          runningRunIdsRef.current.delete(payload.sessionId);
+        }
+        // 续跑收尾：把气泡从"正在继续处理"收口为已完成时态，再清掉续跑标记。
+        // 这里用 ref 读、状态更新保持纯净（updater 在 StrictMode 下会被双调）
+        const finished = wakingSessionsRef.current[payload.sessionId];
+        if (finished) {
+          patchWakingSleepNote(payload.sessionId, finished.wakeAt, finished.marker, "woke", finished.done);
+          const next = { ...wakingSessionsRef.current };
+          delete next[payload.sessionId];
+          wakingSessionsRef.current = next;
+          setWakingSessions(next);
+        }
+        // 续跑可能又挂了新的一觉（或已被用户取消）：回主进程取权威状态
+        void refreshPendingWakes();
       }
     });
     const offInboxFocus = window.dyworker?.onInboxFocusItem?.((item) => {
@@ -7896,6 +8115,7 @@ export function App() {
     return () => {
       offSchedules?.();
       offPrepend?.();
+      offScheduleRunStarted?.();
       offAppend?.();
       offInbox?.();
       offWakeStatus?.();
@@ -7908,15 +8128,17 @@ export function App() {
     };
   }, []);
 
-  // 渠道（QQ/微信）会话实时进度：主进程在渠道任务运行期间把关键 agent 事件
-  // （活动流、正文流式、计划、循环状态、任务结束）通过 agent:event 转发过来（信封带
-  // channelRun: true），这里归约进对应会话的消息，让渠道回复像桌面任务一样边跑边显示，
-  // 而不是等全部结束才一次性 append。与 runTask 内的监听器互不干扰：
-  // 它只处理 taskSessionId+taskRunId，不碰渠道会话；这里只认 channelRun 标记的信封，
+  // 渠道（QQ/微信）/定时计划会话实时进度：主进程在任务运行期间把关键 agent 事件
+  // （活动流、正文流式、计划、循环状态、任务结束）通过 agent:event 转发过来（渠道信封带
+  // channelRun: true，计划运行带 scheduleRun: true），这里归约进对应会话的消息，让它们在
+  // 界面上边跑边显示，而不是等全部结束才一次性落库。与 runTask 内的监听器互不干扰：
+  // 它只处理 taskSessionId+taskRunId，不碰这两类会话；这里只认显式打标的信封，
   // 桌面端在渠道会话里发起的运行（无标记）不会被重复渲染成第二个气泡。
+  // 两类运行共用同一套占位气泡归约：计划会话的占位气泡在 schedules:run-started 时就已建好，
+  // ensureChannelAssistant 只是兜底（信封先到、run-started 后到的极端时序）。
   useEffect(() => {
     if (!window.dyworker?.onAgentEvent) return;
-    // 每个渠道会话当前正在流式更新的 assistant 占位消息 id（按 sessionId 记录）
+    // 每个流式会话当前正在更新的 assistant 占位消息 id（按 sessionId 记录）
     const channelStreamIds = channelStreamIdsRef.current;
     const streamRuns = channelStreamRunsRef.current;
     const patchChannelAssistant = (sessionId: string, updater: (current: ChatMessage) => ChatMessage) => {
@@ -7957,11 +8179,16 @@ export function App() {
         }
         return;
       }
-      // 只处理渠道运行转发的事件：桌面会话由 runTask 内注册的专属监听器处理，
+      // 只处理带运行标记的转发事件：桌面会话由 runTask 内注册的专属监听器处理，
       // 桌面端在渠道会话里发起的运行（信封无 channelRun 标记）也归它，这里必须跳过
-      if (!isChannelRunEnvelope(sessionAgentEvent)) return;
+      const scheduledRun = isScheduleRunEnvelope(sessionAgentEvent);
+      if (!isChannelRunEnvelope(sessionAgentEvent) && !scheduledRun) return;
       const target = sessionsRef.current.find((session) => session.id === sessionId);
-      if (!target || !target.channel) return;
+      if (!target) return;
+      // 渠道归约只认渠道会话（桌面端可能在同一个渠道会话里起运行，那是 runTask 的事）；
+      // 计划运行只认本次运行已经建好占位气泡的会话（run-started 先到，标识在 channelStreamIds 里）
+      if (!scheduledRun && !target.channel) return;
+      if (scheduledRun && !channelStreamIds.has(sessionId)) return;
       if (event.type === "queue-start") {
         ensureChannelAssistant(sessionId, runId);
         setRunningSessionIds((current) => new Set(current).add(sessionId));
@@ -8040,6 +8267,19 @@ export function App() {
         if (result.status === "done" && !result.demo) {
           playCompletionSound();
           showSessionNotice(sessionId, "任务已完成");
+        } else if (result.status === "sleeping" && result.wake) {
+          // 渠道会话同样会有主动挂起：挂起期间也不该再起新一轮（会与到点续跑撞车）
+          setSleepingSessions((current) => ({
+            ...current,
+            [sessionId]: {
+              sessionId,
+              wakeAt: result.wake!.wakeAt,
+              reason: result.wake!.reason || "",
+            },
+          }));
+          showSessionNotice(sessionId, `已挂起，将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续`);
+          // 以主进程 pending 列表为准自纠正（登记被跳过时不该把输入框锁死）
+          void refreshPendingWakes();
         }
       }
     });
@@ -8277,6 +8517,15 @@ export function App() {
     }, []);
   }, [activeSession]);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
+  // 当前会话是否有待唤醒的挂起任务：有则禁止发送——挂起期间再起一轮会让老任务的到点续跑
+  // 追到新任务的回复后面（同一会话两个线程），这正是"回复框串味"的来源
+  const activeSleeping = activeSession?.id ? sleepingSessions[activeSession.id] : undefined;
+  // 当前会话正被一轮定时计划任务占用（主进程 runScheduledTask 在跑）：这次运行的会话现在
+  // 是实时可见的，但输入框必须锁住——中途发消息会和后台那轮计划并行写同一个会话，
+  // 计划收尾的 sessions:prepend 一归并就把新消息覆盖没了
+  const activeScheduledRun = Boolean(activeSession?.id && scheduledRunSessions.has(activeSession.id));
+  // 当前会话正在做挂起后的续跑：运行状态行要显示"已到点自动唤醒/已按你的要求立即继续"
+  const activeWaking = activeSession?.id ? wakingSessions[activeSession.id] : undefined;
   // 排队消息收在输入框上方的队列卡片里（对照 Codex），不插进对话流；
   // 主进程开始执行（queue-start 出队）后才作为正式消息渲染
   const activeQueuedMessages = useMemo(() => {
@@ -8289,9 +8538,16 @@ export function App() {
   // 不能简单取 messages 末尾——后面可能跟着排队占位消息
   const streamingAssistantIndex = useMemo(() => {
     if (!activeSession || !activeTaskRunning) return -1;
+    // 流式占位气泡**永远**是提交任务时追加在消息末尾的那一条（桌面路径见 sendTask，
+    // 渠道路径见 ensureChannelAssistant），所以只认最后一条非排队消息。
+    // 不能向前回溯找「最近一条没有 taskStatus 的助手消息」：唤醒续跑只置位
+    // runningSessionIds、并不新建占位气泡，向前回溯会命中一条早已定稿的历史消息，
+    // 把它误判成流式气泡（渲染成纯文本、并隐藏它的时间/复制/分叉操作行）。
+    // 排队占位气泡（taskStatus=queued）会跟在末尾，需要跳过。
     for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
       const item = activeSession.messages[index];
-      if (item.role === "assistant" && !item.taskStatus && !(item.runId && queuedRunIds.has(item.runId))) return index;
+      if (item.runId && queuedRunIds.has(item.runId)) continue;
+      return item.role === "assistant" && !item.taskStatus ? index : -1;
     }
     return -1;
   }, [activeSession, activeTaskRunning, queuedRunIds]);
@@ -8456,6 +8712,18 @@ export function App() {
     newTaskGuardRef.current = false;
     // 会话删除时,它登记的待唤醒一并取消,避免无主的自动续跑
     void window.dyworker?.cancelWakesForSession?.(id);
+    setSleepingSessions((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    if (wakingSessionsRef.current[id]) {
+      const next = { ...wakingSessionsRef.current };
+      delete next[id];
+      wakingSessionsRef.current = next;
+      setWakingSessions(next);
+    }
     delete sessionDraftsRef.current[id];
     setSessions((current) => {
       const remaining = current.filter((session) => session.id !== id);
@@ -8469,6 +8737,59 @@ export function App() {
       if (id === activeId) setActiveId(remaining[0].id);
       return remaining;
     });
+  };
+
+  // 「立即继续」：取走主进程的待唤醒并马上续跑（不等约定时间）。
+  // 先乐观收起挂起卡片，失败时回主进程重新拉一次权威状态，避免界面与磁盘不一致。
+  const resumeSleepingTask = async (sessionId: string) => {
+    setSleepingSessions((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setRunningSessionIds((current) => new Set(current).add(sessionId));
+    setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
+    const result = await window.dyworker?.resumeWakeNow?.(sessionId);
+    if (result && !result.ok) {
+      // 主进程没接（会话占用/后台任务占着调度道）：乐观加上的运行态要撤回，
+      // 否则会留下一个转不完的运行中图标和点不动的停止键
+      setRunningSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(sessionId);
+        return next;
+      });
+      setRunningStartedAt((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+      void refreshPendingWakes();
+      showSessionNotice(sessionId, result.error || "立即继续失败，任务仍会在到点时自动唤醒");
+    }
+  };
+
+  // 「取消唤醒」：不打断已有内容，只是让这个会话重新可交互
+  const cancelSleepingTask = async (sessionId: string) => {
+    await window.dyworker?.cancelWakesForSession?.(sessionId);
+    setSleepingSessions((current) => {
+      if (!(sessionId in current)) return current;
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    // 挂起气泡里的说明是历史留痕：不补一句，它会继续声称"到点自动唤醒"
+    updateSession(sessionId, (session) => {
+      const index = session.messages.map((message) => message.taskStatus === "sleeping").lastIndexOf(true);
+      if (index < 0) return session;
+      return {
+        ...session,
+        messages: session.messages.map((message, messageIndex) => messageIndex === index
+          ? { ...message, content: `${message.content}\n\n**已取消自动唤醒**，本会话可以继续对话。`.trim() }
+          : message),
+      };
+    });
+    showSessionNotice(sessionId, "已取消自动唤醒");
   };
 
   const unarchiveSession = (id: string) => {
@@ -9726,6 +10047,13 @@ export function App() {
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
     if (activeTaskRunning && !queueSupported) return;
+    // 挂起等待唤醒期间不接收新消息：否则本会话会立刻起第二轮 run，而到点的自动续跑
+    // 随后又把老任务的结果追进来，同一个回复框里就出现两个线程（正文互相穿插）
+    const targetSleeping = sleepingSessions[targetSession.id];
+    if (targetSleeping) {
+      setNotice(`${formatWakeTime(targetSleeping.wakeAt)} 将自动唤醒继续；可点输入框上方的「立即继续」提前续跑，或「取消唤醒」后再发送`);
+      return;
+    }
     const editingTarget = !isOverride && editingMessage?.sessionId === targetSession.id
       ? targetSession.messages[editingMessage.messageIndex]
       : null;
@@ -9910,7 +10238,7 @@ export function App() {
             if (result.status === "paused" && result.reason) {
               content = content ? `${content}\n\n**已暂停**：${result.reason}` : `**已暂停**：${result.reason}`;
             } else if (result.status === "sleeping" && result.wake) {
-              const sleepNote = `**已主动挂起**：将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。期间可以关闭应用，到点会照常继续。`;
+              const sleepNote = `**已主动挂起**：将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续（原因：${result.wake.reason}）。期间可以关闭应用，到点会照常继续。`;
               content = content ? `${content}\n\n${sleepNote}` : sleepNote;
             } else if (result.status === "cancelled") {
               content = content ? `${content}\n\n已按你的要求停止。` : "已按你的要求停止。";
@@ -9944,7 +10272,19 @@ export function App() {
             playCompletionSound();
             showSessionNotice(taskSessionId, "任务已完成");
           } else if (result.status === "sleeping" && result.wake) {
-            showSessionNotice(taskSessionId, `已挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续`);
+            showSessionNotice(taskSessionId, `已挂起，将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续`);
+            // 挂起态以主进程登记为准（这里先给即时反馈，重启后的权威列表由 wakes:list-pending 拉取）
+            setSleepingSessions((current) => ({
+              ...current,
+              [taskSessionId]: {
+                sessionId: taskSessionId,
+                wakeAt: result.wake!.wakeAt,
+                reason: result.wake!.reason || "",
+              },
+            }));
+            // 再回主进程核对一次：没有工作目录等情况下登记会被跳过（到点根本不会唤醒），
+            // 只信本地标记会把输入框永久锁死，所以以磁盘上的 pending 列表为准自纠正
+            void refreshPendingWakes();
           }
           // 模型在 finish_task 中明确报告长期目标已达成：自动解除，避免已结束的目标继续干扰后续任务
           if (result.goalAchieved) {
@@ -10443,9 +10783,21 @@ export function App() {
   };
 
   const triggerSchedule = (id: string) => {
+    // 记下这次是手动触发的哪个计划：主进程回 schedules:run-started 时把这次运行的会话
+    // 直接打开（用户点了「立即执行」就是要马上看到它在跑）
+    manualRunScheduleRef.current = id;
     void window.dyworker?.triggerSchedule(id).then((result) => {
-      if (!result?.ok) setError(result?.error || "无法执行");
-      else setNotice("已开始执行这个计划任务");
+      if (!result?.ok) {
+        manualRunScheduleRef.current = "";
+        setError(result?.error || "无法执行");
+      } else if (result.started === false) {
+        // 忙碌守卫把这一轮推迟了（桌面任务在跑或已有后台任务）：明说"已排队"，
+        // 别让用户以为点了没反应，也别谎报"已开始执行"
+        manualRunScheduleRef.current = "";
+        setNotice("当前有任务正在运行，这个计划已排队，等它结束后自动开始");
+      } else {
+        setNotice("计划已开始执行，正在打开这次运行的会话");
+      }
     });
   };
 
@@ -10483,9 +10835,13 @@ export function App() {
     settings.endpoint,
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
+  // 例外一：挂起等待唤醒期间禁止发送（发送键变灰），必须先「立即继续」或「取消唤醒」
+  // 例外二：定时计划运行中的会话禁止发送（后台那轮计划不是本会话的排队任务，并行写会互相覆盖）
   const canSend = Boolean(
     (composer.trim() || attachments.length || activeSkills.length || composerPastes.length || annotations.length)
     && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
+    && !activeScheduledRun
+    && !activeSleeping
     && voiceState !== "transcribing",
   );
   const recentExpanded = workspaceGroupOpen.__recent__ !== false;
@@ -10518,6 +10874,17 @@ export function App() {
     setHoveredTurnIndex(turnIndex);
     conversationTurnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  // 「立即执行」后自动打开这次运行的会话：会话已在 run-started 时建好并进了 sessions，
+  // 这里走和点侧栏列表项完全一样的切换流程（切工作区、刷新工作区文件），
+  // 确保它真的出现在眼前，而不是落在别的分组的折叠里
+  useEffect(() => {
+    if (!pendingAutoOpenSessionId) return;
+    const target = sessions.find((session) => session.id === pendingAutoOpenSessionId);
+    if (!target) return;
+    setPendingAutoOpenSessionId("");
+    selectSession(target);
+  }, [pendingAutoOpenSessionId, sessions]);
 
   const clearWorkspace = () => {
     if (!activeSession) return;
@@ -10775,6 +11142,14 @@ export function App() {
             <span className="session-pending-dot" role="status" aria-label="有待审批事项" title="该任务有待确认的审批或提问" />
           )}
           {runningSessionIds.has(session.id) && <LoaderCircle className="spin session-running-icon" size={15} />}
+          {/* 挂起等待唤醒：列表里给出可见标记，否则用户不知道这个会话为什么发不出消息 */}
+          {!runningSessionIds.has(session.id) && sleepingSessions[session.id] && (
+            <Moon
+              className="session-sleeping-icon"
+              size={14}
+              aria-label="任务已挂起，等待自动唤醒"
+            />
+          )}
         </button>
       )}
       <button
@@ -11620,6 +11995,10 @@ export function App() {
                   && activeTaskRunning
                   && !message.taskStatus
                   && index === streamingAssistantIndex;
+                // 未定稿（仍在流式输出）的助手消息：交给 InteractiveMessage 走增量 Markdown 路径
+                // （按块解析、已定稿的块 memo 冻结，见该组件 streaming 说明）。
+                // streamingAssistantIndex 在无运行任务时为 -1，下标不可能等于 -1，故天然安全
+                const isStreamingMessage = index === streamingAssistantIndex;
                 // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
                 const inlineTokenNames = message.role === "user"
                   ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
@@ -11766,7 +12145,12 @@ export function App() {
                           }}
                         />
                       )}
-                      {message.content && <InteractiveMessage content={stripControlMarkersCached(message.content)} />}
+                      {message.content && (
+                        <InteractiveMessage
+                          content={stripControlMarkersCached(message.content)}
+                          streaming={isStreamingMessage}
+                        />
+                      )}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           {Boolean(messageVisibleText(message).trim()) && (
@@ -11802,9 +12186,13 @@ export function App() {
 
             {activeTaskRunning && (
               <div className="message-row assistant">
-                <div className="assistant-working">
+                <div className={`assistant-working ${activeWaking ? "waking" : ""}`}>
                   <LoaderCircle className="spin" size={17} />
-                  <RunningStatusLabel loopState={activeLoopState} startedAt={activeSession?.id ? runningStartedAt[activeSession.id] : undefined} />
+                  <RunningStatusLabel
+                    loopState={activeLoopState}
+                    startedAt={activeSession?.id ? runningStartedAt[activeSession.id] : undefined}
+                    waking={activeWaking}
+                  />
                 </div>
               </div>
             )}
@@ -11967,79 +12355,115 @@ export function App() {
               </button>
             </div>
           )}
+          {/* 待发送列表：排队消息与挂起唤醒提示都独立成卡，统一收在输入框上方。
+              输入框只负责正在编辑的这一条，不再和它们挤在同一张卡片里（对照 Codex） */}
+          {(activeSleeping || (activeTaskRunning && activeQueuedMessages.length > 0)) && (
+            <div className="composer-pending" aria-label="待发送列表">
+              {activeSleeping && (
+                <div className="sleep-card" role="status" aria-label="任务已挂起">
+                  <Moon size={14} className="sleep-card-icon" />
+                  <span className="sleep-card-text">
+                    任务已挂起，将于 <strong>{formatWakeTime(activeSleeping.wakeAt)}</strong> 自动唤醒继续
+                    {activeSleeping.reason ? `（原因：${activeSleeping.reason}）` : ""}；期间不再接收新消息
+                  </span>
+                  <span className="sleep-card-actions">
+                    <button
+                      type="button"
+                      className="sleep-card-button primary"
+                      onClick={() => activeSession && void resumeSleepingTask(activeSession.id)}
+                    >
+                      立即继续
+                    </button>
+                    <button
+                      type="button"
+                      className="sleep-card-button"
+                      onClick={() => activeSession && void cancelSleepingTask(activeSession.id)}
+                    >
+                      取消唤醒
+                    </button>
+                  </span>
+                </div>
+              )}
+              {activeTaskRunning && activeQueuedMessages.length > 0 && (
+                <div className="queue-card" role="status" aria-label="待发送的消息">
+                  <div className="queue-card-head">
+                    <span className="queue-card-title">待发送</span>
+                    <span className="queue-card-count">{activeQueuedMessages.length} 条</span>
+                    <span className="queue-card-hint">当前任务结束后依次执行</span>
+                  </div>
+                  {activeQueuedMessages.map((entry) => (
+                    <div className="queue-card-row" key={entry.message.runId}>
+                      <CornerUpLeft size={14} className="queue-card-icon" />
+                      <span className="queue-card-text" title={messageVisibleText(entry.message)}>
+                        {messageVisibleText(entry.message)}
+                      </span>
+                      <span className="queue-card-actions">
+                        <button
+                          type="button"
+                          className="queue-card-steer"
+                          onClick={() => void runQueuedMessageNow(entry)}
+                          title="停下当前任务，立即执行这条消息"
+                        >
+                          <Play size={13} />
+                          立即执行
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-button subtle tiny"
+                          onClick={() => void removeQueuedMessage(entry.message.runId || "", entry.messageIndex)}
+                          aria-label="删除这条排队消息"
+                          title="删除这条排队消息"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <span className="queue-card-more-wrap" data-menu-root>
+                          <button
+                            type="button"
+                            className="icon-button subtle tiny"
+                            onClick={() => setQueueMenuRunId((current) => current === entry.message.runId ? null : entry.message.runId || null)}
+                            aria-label="排队消息更多操作"
+                            title="更多操作"
+                            aria-expanded={queueMenuRunId === entry.message.runId}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                          {queueMenuRunId === entry.message.runId && (
+                            <div className="session-menu queue-card-menu" role="menu">
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setQueueMenuRunId(null);
+                                  // 原地编辑：保持排队位置，开始执行时按新内容运行
+                                  startMessageEdit(entry.message, entry.messageIndex);
+                                }}
+                              >
+                                编辑内容（保持排队位置）
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setQueueMenuRunId(null);
+                                  void copyMessage(entry.message);
+                                }}
+                              >
+                                复制内容
+                              </button>
+                            </div>
+                          )}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
             onDragOver={handleComposerDragOver}
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {activeTaskRunning && activeQueuedMessages.length > 0 && (
-              <div className="queue-card" role="status" aria-label="排队中的消息">
-                {activeQueuedMessages.map((entry) => (
-                  <div className="queue-card-row" key={entry.message.runId}>
-                    <CornerUpLeft size={14} className="queue-card-icon" />
-                    <span className="queue-card-text" title={messageVisibleText(entry.message)}>
-                      {messageVisibleText(entry.message)}
-                    </span>
-                    <span className="queue-card-actions">
-                      <button
-                        type="button"
-                        className="queue-card-steer"
-                        onClick={() => void runQueuedMessageNow(entry)}
-                        title="停下当前任务，立即执行这条消息"
-                      >
-                        <Play size={13} />
-                        立即执行
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-button subtle tiny"
-                        onClick={() => void removeQueuedMessage(entry.message.runId || "", entry.messageIndex)}
-                        aria-label="删除这条排队消息"
-                        title="删除这条排队消息"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      <span className="queue-card-more-wrap" data-menu-root>
-                        <button
-                          type="button"
-                          className="icon-button subtle tiny"
-                          onClick={() => setQueueMenuRunId((current) => current === entry.message.runId ? null : entry.message.runId || null)}
-                          aria-label="排队消息更多操作"
-                          title="更多操作"
-                          aria-expanded={queueMenuRunId === entry.message.runId}
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
-                        {queueMenuRunId === entry.message.runId && (
-                          <div className="session-menu queue-card-menu" role="menu">
-                            <button
-                              role="menuitem"
-                              onClick={() => {
-                                setQueueMenuRunId(null);
-                                // 原地编辑：保持排队位置，开始执行时按新内容运行
-                                startMessageEdit(entry.message, entry.messageIndex);
-                              }}
-                            >
-                              编辑内容（保持排队位置）
-                            </button>
-                            <button
-                              role="menuitem"
-                              onClick={() => {
-                                setQueueMenuRunId(null);
-                                void copyMessage(entry.message);
-                              }}
-                            >
-                              复制内容
-                            </button>
-                          </div>
-                        )}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
             {showComposerContext && (
               <div className="composer-context" aria-label="当前工作上下文">
                 <div className="context-folder-wrap">
@@ -12475,27 +12899,40 @@ export function App() {
                   {voiceState === "transcribing" ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} />}
                 </button>
                 {/* 对照 Codex：运行中且没有可发送内容时，发送键变成停止键，只保留一个圆形按钮；
-                    输入框有内容时仍是发送键（点击后消息进入队列） */}
+                    输入框有内容时仍是发送键（点击后消息进入队列）。
+                    定时计划运行中的会话没有可取消的 runId（那轮计划在主进程后台跑），
+                    这里只显示转圈，不给一个点了没反应的停止键 */}
                 {activeTaskRunning && !canSend ? (
-                  <button
-                    className="send-button stop"
-                    onClick={() => {
-                      if (!activeSession) return;
-                      const runId = runningRunIdsRef.current.get(activeSession.id);
-                      if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
-                    }}
-                    aria-label="停止当前任务"
-                    title="停止当前任务（排队中的消息仍会继续执行）"
-                  >
-                    <Square size={14} fill="currentColor" />
-                  </button>
+                  activeScheduledRun ? (
+                    <button
+                      className="send-button"
+                      disabled
+                      aria-label="计划任务正在后台运行"
+                      title="计划任务正在后台运行，暂时不能从这里停止"
+                    >
+                      <LoaderCircle size={16} className="spin" />
+                    </button>
+                  ) : (
+                    <button
+                      className="send-button stop"
+                      onClick={() => {
+                        if (!activeSession) return;
+                        const runId = runningRunIdsRef.current.get(activeSession.id);
+                        if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
+                      }}
+                      aria-label="停止当前任务"
+                      title="停止当前任务（排队中的消息仍会继续执行）"
+                    >
+                      <Square size={14} fill="currentColor" />
+                    </button>
+                  )
                 ) : (
                   <button
                     className="send-button"
                     onClick={() => void sendMessage()}
                     disabled={!canSend}
                     aria-label={editingMessage ? "重新发送" : "发送"}
-                    title="Enter 发送"
+                    title={activeSleeping ? "任务已挂起，请先点【立即继续】或【取消唤醒】" : "Enter 发送"}
                   >
                     <ArrowUp size={19} />
                   </button>
@@ -13075,6 +13512,7 @@ export function App() {
           schedules={schedules}
           workspaceReady={Boolean(workspacePath)}
           currentWorkspacePath={workspacePath}
+          approvalMode={approvalMode}
           onSaveSchedule={saveSchedule}
           onToggleSchedule={toggleSchedule}
           onDeleteSchedule={deleteSchedule}

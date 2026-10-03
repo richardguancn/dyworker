@@ -192,7 +192,10 @@ test("conversation tasks can run concurrently without leaking runtime state", ()
   assert.match(app, /agentUnsubscribeRefs\.current\.set\(taskRunId, unsubscribeAgent\)/);
   assert.doesNotMatch(app, /\|\| busy \|\|/);
   assert.match(main, /const activeAgents = new Map\(\)/);
-  assert.match(main, /activeAgents\.has\(sessionId\)/);
+  // 会话占用判定统一走 isSessionBusy（前台 run ∪ 自动唤醒续跑）：唤醒续跑不登记
+  // activeAgents，只看 activeAgents 会让续跑期间的消息并发起第二个 run
+  assert.match(main, /const isSessionBusy = \(sessionId\) => activeAgents\.has\(String\(sessionId\)\) \|\| wakeRuns\.has\(String\(sessionId\)\)/);
+  assert.match(main, /if \(isSessionBusy\(sessionId\)\) return \{ ok: false, error: "这个任务还在执行/);
   assert.match(main, /activeAgents\.set\(sessionId, agentState\)/);
   assert.match(main, /activeAgents\.delete\(sessionId\)/);
   assert.match(main, /sender\.send\("agent:event", \{ sessionId, runId, event: agentEvent \}\)/);
@@ -266,6 +269,34 @@ test("任务运行期间发送消息进入会话队列，排队消息未执行�
   // 队列消息的监听器保留到真正执行完成，避免排队期间被提前取消
   assert.match(app, /排队消息的监听器一直保留到真正执行完成/);
   assert.match(app, /非排队消息的监听器在此收尾/);
+});
+
+test("待发消息与挂起唤醒提示独立成列表收在输入框上方，不与输入框混在同一张卡片", () => {
+  const pendingAt = app.indexOf('className="composer-pending"');
+  const composerAt = app.indexOf("className={`composer-card");
+  const queueAt = app.indexOf('className="queue-card"');
+  const sleepAt = app.indexOf('className="sleep-card"');
+  assert.ok(pendingAt > 0, "必须存在待发送列表容器");
+  assert.ok(composerAt > pendingAt, "待发送列表必须排在输入框卡片之前（位于输入框上方）");
+  assert.ok(queueAt > pendingAt && queueAt < composerAt, "排队消息必须收在上方列表里，不能嵌进输入框卡片");
+  assert.ok(sleepAt > pendingAt && sleepAt < composerAt, "挂起唤醒提示必须收在上方列表里，不能嵌进输入框卡片");
+  assert.match(app, /aria-label="待发送列表"/);
+  assert.match(app, /className="queue-card-head"/);
+  // 比输入框(min(940px,76%))窄一档、底边压到输入框下面，
+  // 且要能接住指针事件（composer-dock 本身是 pointer-events: none）
+  const pendingRule = /\.composer-pending\s*\{([^}]*)\}/.exec(styles)?.[1] || "";
+  assert.match(pendingRule, /width:\s*min\(880px,\s*71\.5%\)/, "待发送列表要比输入框窄一点");
+  assert.match(pendingRule, /margin-bottom:\s*-8px/, "待发送列表底边要压到输入框下面，中间不留空隙");
+  assert.match(pendingRule, /pointer-events:\s*auto/);
+  // 紧贴输入框的那张卡：下缘不圆、不留底边框，整条列表塞到输入框底下
+  const attachedRule = /\.composer-pending > :last-child\s*\{([^}]*)\}/.exec(styles)?.[1] || "";
+  assert.match(attachedRule, /border-bottom:\s*0/, "待发送框不要底边框");
+  assert.match(attachedRule, /border-radius:\s*14px 14px 0 0/, "待发送框下缘不能有圆角");
+  assert.match(attachedRule, /padding-bottom:\s*15px/, "被输入框盖住的那一截要留出下内边距，别压住最后一行");
+  // 输入框浮在列表之上：上缘补一层向上投影，把前后层次压出来
+  assert.match(styles, /\.composer-pending \+ \.composer-card\s*\{[^}]*box-shadow:\s*0 -6px 14px -6px/);
+  // 悬浮在对话流上方的卡片必须有加浓托底，半透明模式下不能透成一片
+  assert.match(appearanceCss, /html\[data-translucent="true"\] \.sleep-card\s*\{[^}]*background:\s*var\(--card-raised, var\(--card\)\)/);
 });
 
 test("多轮任务会保存并传递上一轮工作记录", () => {
@@ -866,7 +897,8 @@ test("composer uses the Codex permission menu and keeps secondary controls compa
   assert.match(app, /完全访问权限/);
   assert.doesNotMatch(app, /自动审核/);
   assert.match(app, /approval-mode-menu/);
-  assert.match(app, /title="Enter 发送"/);
+  // 发送键提示语在挂起等待唤醒时改为引导先「立即继续」或「取消唤醒」
+  assert.match(app, /activeSleeping \? "任务已挂起，请先点【立即继续】或【取消唤醒】" : "Enter 发送"/);
   assert.doesNotMatch(app, /className="shortcut-hint"/);
   assert.doesNotMatch(app, /className="loop-toggle"/);
   // 语音输入开关已回到输入框（mic 按钮接通 toggleVoiceInput，见本地语音契约测试）
@@ -1082,6 +1114,15 @@ test("linux 使用系统边框与阴影，不扩大窗口输入区域", () => {
   assert.doesNotMatch(styles, /html\.window-shadow/);
   assert.doesNotMatch(main, /setIgnoreMouseEvents\(true/);
   assert.doesNotMatch(app, /setIgnoreMouse\??\./);
+});
+
+test("消息行虚拟化：mac 与 linux 都关闭 content-visibility", () => {
+  // Chromium 合成器对 content-visibility 子树有绘制偏移 bug：切换会话后整页左移、
+  // 再切换又恢复；只挂 linux 时 mac 上会复现（右侧露出背景层），故两个平台都必须关闭
+  assert.match(
+    styles,
+    /\.platform-linux \.message-row,\s*\.platform-darwin \.message-row \{\s*content-visibility: visible;\s*contain-intrinsic-size: none;/,
+  );
 });
 
 test("linux 保留窗口诊断与空白重载", () => {
