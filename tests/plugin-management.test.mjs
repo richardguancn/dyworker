@@ -114,25 +114,40 @@ test("管理通道：列表 / 安装 / 启停 / 配置 / 卸载 全链路", asyn
   assert.deepEqual(listed.bundles, []);
 });
 
-test("管理通道：不兼容插件在通道层也被拒绝，且带矩阵给界面", async (t) => {
+test("管理通道：真正缺失服务的插件被拒绝；同名语义不同的只标部分兼容", async (t) => {
   const { ipc, profile } = await hostWithManagement(t);
-  const pkgDir = path.join(profile, "node_modules", "needs-tools");
-  await fs.mkdir(pkgDir, { recursive: true });
-  await fs.writeFile(path.join(pkgDir, "package.json"), JSON.stringify({
+
+  // ① 依赖本宿主完全没有的服务 → inject 永不满足 → 拒绝安装
+  const missingDir = path.join(profile, "node_modules", "needs-projection");
+  await fs.mkdir(missingDir, { recursive: true });
+  await fs.writeFile(path.join(missingDir, "package.json"), JSON.stringify({
+    name: "needs-projection", version: "1.0.0", type: "module", main: "index.mjs",
+  }), "utf8");
+  await fs.writeFile(path.join(missingDir, "index.mjs"),
+    `export const inject = ["sessionProjections"];\nexport function apply() {}\nexport default { name: "needs-projection", inject, apply };`, "utf8");
+
+  const compat = await call(ipc, "plugins:compatibility", "needs-projection");
+  assert.equal(compat.verdict, "unsupported");
+  assert.match(compat.matrix, /needs-projection/);
+
+  const refused = await call(ipc, "plugins:install", { spec: "needs-projection" });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.incompatible, true);
+  assert.ok(refused.matrix, "界面要能拿到矩阵文本");
+  assert.deepEqual((await call(ipc, "plugins:list")).entries, []);
+
+  // ② 只依赖同名但语义不同的 tools → 插件会 apply，标部分兼容并可显式安装
+  const toolsDir = path.join(profile, "node_modules", "needs-tools");
+  await fs.mkdir(toolsDir, { recursive: true });
+  await fs.writeFile(path.join(toolsDir, "package.json"), JSON.stringify({
     name: "needs-tools", version: "1.0.0", type: "module", main: "index.mjs",
   }), "utf8");
-  await fs.writeFile(path.join(pkgDir, "index.mjs"),
+  await fs.writeFile(path.join(toolsDir, "index.mjs"),
     `export const inject = ["tools"];\nexport function apply() {}\nexport default { name: "needs-tools", inject, apply };`, "utf8");
 
-  const compat = await call(ipc, "plugins:compatibility", "needs-tools");
-  assert.equal(compat.verdict, "unsupported");
-  assert.match(compat.matrix, /needs-tools/);
-
-  const result = await call(ipc, "plugins:install", { spec: "needs-tools" });
-  assert.equal(result.ok, false);
-  assert.equal(result.incompatible, true);
-  assert.ok(result.matrix, "界面要能拿到矩阵文本");
-  assert.deepEqual((await call(ipc, "plugins:list")).entries, []);
+  const partial = await call(ipc, "plugins:compatibility", "needs-tools");
+  assert.equal(partial.verdict, "partial", "同名语义不同只算部分兼容，不能当成不支持");
+  assert.match(partial.matrix, /语义不同/);
 });
 
 test("管理通道：手工改过 dyworker.yml 后可以 reload", async (t) => {
@@ -536,4 +551,18 @@ test("安装源：自定义地址走 --registry，非法地址明确报错", asy
   assert.equal(bad.ok, false);
   assert.match(bad.error, /http:\/\/ 或 https:\/\//);
   assert.equal(ran, false, "非法地址不应发起任何安装命令");
+});
+
+test("兼容矩阵不能漏报本宿主确实提供的服务（loader / tools）", async () => {
+  const { classifyService, HOST_SERVICES } = await import("../electron/host/dsh-compat.mts");
+  // 这两个服务宿主都挂了：loader 由官方 cordis-plugin-loader 提供，tools 由 ToolsService 提供。
+  // 漏报会让本来能跑的插件被误判为"不支持"（dsh-better-sidebar 就因此被多报了两项）。
+  assert.ok(HOST_SERVICES.includes("loader"), "loader 应计入宿主提供的服务（漏报会把能跑的插件误判为不支持）");
+  assert.ok(HOST_SERVICES.includes("tools"), "tools 也应计入：宿主确实有同名服务，只是语义不同");
+  // loader 用的是 DSH 同一个官方包 → 语义相同，属于真正可用
+  assert.equal(classifyService("loader").state, "fulfilled");
+  // tools 是宿主自己的插件工具注册表，与 DSH 的 agent 工具运行时不是一套 API →
+  // 插件会 apply，但按 DSH API 调用会失败，所以是"同名语义不同"而不是"可用"
+  assert.equal(classifyService("tools").state, "name-only");
+  assert.match(classifyService("tools").reason, /语义不同/);
 });

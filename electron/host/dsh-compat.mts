@@ -21,6 +21,9 @@ import { pathToFileURL } from "node:url";
 // 本宿主提供的服务名（与 host/context.mts 的注册保持一致）
 export const HOST_SERVICES = [
   "hostOptions",
+  // cordis 官方 loader（@deepseek-ai/cordis-plugin-loader）挂成的服务：
+  // 有的 DSH 插件用它做热加载/子树管理，本宿主确实提供，不能漏报。
+  "loader",
   "ipc",
   "storage",
   "window",
@@ -34,6 +37,8 @@ export const HOST_SERVICES = [
   "scheduler",
   "agent",
   "plugins",
+  // 插件工具服务：插件通过它注册自己的工具（统一走 plugin__<plugin>__<tool> 命名与审批）
+  "tools",
 ];
 
 // 已知的 DSH 服务名（扫描本机 DSH 发布包得到），用于把"缺什么"说成人话
@@ -176,8 +181,10 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir) {
     reasons.push(`依赖本宿主未提供的服务：${blocking.map((service) => service.name).join(", ")}——cordis 的 inject 永不满足，插件不会被 apply`);
   }
   const nameOnly = services.filter((service) => service.state === "name-only");
-  if (nameOnly.length && verdict === "runnable") {
-    verdict = "partial";
+  if (nameOnly.length) {
+    // 同名语义不同一律要报出来：即使最终判定已经不是 runnable（例如另有真正缺失的服务），
+    // 用户也需要知道"这个服务名虽然存在、但按 DSH API 调用会失败"，否则会误以为只差一项。
+    if (verdict === "runnable") verdict = "partial";
     reasons.push(`同名但语义不同：${nameOnly.map((service) => `${service.name}（${service.reason}）`).join("；")}`);
   }
   if (verdict === "runnable") {

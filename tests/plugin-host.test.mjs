@@ -342,7 +342,10 @@ test("兼容性：依赖 DSH 才有的服务 → unsupported（inject 永不满�
   });
   const analysis = await ctx.plugins.compatibility({ spec: "needs-tools" });
   assert.equal(analysis.verdict, "unsupported");
-  assert.ok(analysis.reasons.some((line) => line.includes("tools") && line.includes("llm")), analysis.reasons.join("；"));
+  // llm 是 DSH 独有、本宿主完全没有 → 出现在"未提供"那行；
+  // tools 是同名但语义不同 → 出现在"语义不同"那行（它不会阻止 apply，但仍要如实告知）
+  assert.ok(analysis.reasons.some((line) => line.includes("llm")), analysis.reasons.join("；"));
+  assert.ok(analysis.reasons.some((line) => line.includes("tools")), analysis.reasons.join("；"));
 
   const result = await ctx.plugins.install({ spec: "needs-tools" });
   assert.equal(result.ok, false);
