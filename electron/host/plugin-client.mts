@@ -75,7 +75,102 @@ export function resolveClientEntries(manifest: any, pkgDir: string): ClientEntry
   return entries.sort((a, b) => Number(b.primary) - Number(a.primary) || a.subpath.localeCompare(b.subpath));
 }
 
+/**
+ * 拆分包名与子路径：`@scope/name/sub` → { name: "@scope/name", subpath: "./sub" }。
+ * DSH 客户端模块常用子路径（实测 require("@deepseek-ai/dsh-client-runtime/client")）。
+ */
+export function splitModuleSpec(spec: string): { name: string; subpath: string } {
+  const parts = String(spec || "").split("/");
+  const nameParts = parts[0]?.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
+  const rest = parts.slice(nameParts.length).filter(Boolean).join("/");
+  return { name: nameParts.join("/"), subpath: rest ? `./${rest}` : "" };
+}
+
 /** 客户端半边是否真的存在（用于兼容矩阵与界面提示） */
 export function hasClientHalf(manifest: any): boolean {
   return Boolean(manifest?.dsh?.client || manifest?.dyworker?.client);
+}
+
+export interface ClientModuleNode {
+  /** 包名，如 @deepseek-ai/dsh-client-ui-settings */
+  spec: string;
+  /** 包目录（绝对路径） */
+  dir: string;
+  /** 客户端 bundle 入口（绝对路径） */
+  file: string;
+  /** 它自己声明的客户端模块依赖 */
+  deps: string[];
+}
+
+export interface ClientModulePlan {
+  /** 依赖在前、插件在后的加载顺序（已去重） */
+  ordered: ClientModuleNode[];
+  /** 解析不到的模块（package.json 里声明了、但本机找不到） */
+  missing: string[];
+}
+
+/**
+ * 把"声明的客户端模块"展开成依赖在前、可直接逐个加载的顺序。
+ *
+ * 依据：插件与客户端模块都用 package.json 的 dsh.client.inject 声明"需要哪些客户端模块"，
+ * 而模块之间还会互相依赖（例如 dsh-client-ui-settings 声明 dsh-api-remotes）。
+ * 循环依赖会被安全跳过。
+ *
+ * @param roots 直接声明的模块名
+ * @param resolve 包名 → { manifest, dir }；解析不到返回 null
+ */
+export function orderClientModules(
+  roots: string[],
+  resolve: (spec: string) => { manifest: any; dir: string; relative?: string } | null,
+): ClientModulePlan {
+  const ordered: ClientModuleNode[] = [];
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  const visiting = new Set<string>();
+
+  const visit = (spec: string) => {
+    const key = String(spec || "");
+    if (!key || seen.has(key) || visiting.has(key)) return;
+    visiting.add(key);
+    const found = resolve(key);
+    if (!found) {
+      if (!missing.includes(key)) missing.push(key);
+      visiting.delete(key);
+      return;
+    }
+    const client = found.manifest?.dsh?.client || found.manifest?.dyworker?.client || null;
+    const deps: string[] = Array.isArray(client?.inject) ? client.inject.map(String) : [];
+    // 先递归依赖（依赖在前）
+    for (const dep of deps) visit(dep);
+    // 子路径模块（如 @deepseek-ai/dsh-client-runtime/client）用它自己的入口
+    const entries = found.relative
+      ? [{ file: path.resolve(found.dir, found.relative) }]
+      : resolveClientEntries(found.manifest, found.dir);
+    if (entries.length) {
+      ordered.push({ spec: key, dir: found.dir, file: entries[0].file, deps });
+    } else if (client) {
+      // 声明了客户端半边但没有可解析入口：如实记为缺失
+      if (!missing.includes(key)) missing.push(key);
+    }
+    visiting.delete(key);
+    seen.add(key);
+  };
+
+  for (const root of roots || []) visit(String(root));
+  return { ordered, missing };
+}
+
+
+/**
+ * 提取 bundle 里**字面量 require** 的模块名。
+ * DSH 的客户端 bundle 是预打包产物，require 的参数都是字符串字面量，
+ * 因此在**不执行代码**的前提下就能算出依赖闭包——这让"没声明但会被 require 的模块"
+ * 也能被提前加载（实测 dsh-client-ui-slots 就是这样被别的模块用到的）。
+ */
+export function readStaticRequires(source: string): string[] {
+  const found = new Set<string>();
+  for (const match of String(source || "").matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)) {
+    found.add(match[1]);
+  }
+  return [...found];
 }

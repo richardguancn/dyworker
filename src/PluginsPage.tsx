@@ -66,6 +66,17 @@ export function PluginsPage() {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: "没有可加载的客户端入口" } }));
         return;
       }
+      // 先按依赖顺序加载它声明的客户端模块（slots/locale/settings 这些服务由它们提供），
+      // 再加载插件本身——否则插件 inject 的服务还没人提供，apply 会静默降级
+      const moduleNotes: string[] = [];
+      for (const moduleRef of info.modules || []) {
+        try {
+          const loaded = await loadBundleScript(moduleRef.url);
+          moduleNotes.push(`${moduleRef.spec}${loaded.error ? "（失败）" : ""}`);
+        } catch (error: any) {
+          moduleNotes.push(`${moduleRef.spec}（${String(error?.message || error).slice(0, 40)}）`);
+        }
+      }
       const record = await loadBundleScript(primary.url);
       if (record.error) {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `bundle 执行失败：${record.error}` } }));
@@ -83,9 +94,11 @@ export function PluginsPage() {
       const slots = pluginRecord.slots.length ? `；登记插槽 ${pluginRecord.slots.join("、")}` : "；没有登记界面位置";
       const pending = pluginRecord.missingCalls.length ? `；未实现调用 ${[...new Set(pluginRecord.missingCalls)].slice(0, 4).join("、")}` : "";
       const opened = panels.length ? `；已开右侧面板 ${panels.map((panel) => panel.label).join("、")}` : "";
+      const modules = moduleNotes.length ? `；客户端模块 ${moduleNotes.length} 个（${moduleNotes.slice(0, 3).join("、")}${moduleNotes.length > 3 ? "…" : ""}）` : "";
+      const missingModules = info.missingModules?.length ? `；模块未安装 ${info.missingModules.slice(0, 2).join("、")}` : "";
       setClientRuns((current) => ({
         ...current,
-        [key]: { state: "ok", text: `已加载并 apply ${record.id}${slots}${opened}${missing}${pending}` },
+        [key]: { state: "ok", text: `已加载并 apply ${record.id}${modules}${slots}${opened}${missingModules}${missing}${pending}` },
       }));
     } catch (error: any) {
       setClientRuns((current) => ({ ...current, [key]: { state: "error", text: String(error?.message || error) } }));

@@ -9,6 +9,9 @@ import * as React from "react";
 import * as ReactDOM from "react-dom";
 import * as ReactDOMClient from "react-dom/client";
 import * as JsxRuntime from "react/jsx-runtime";
+// DSH 的客户端模块（如 dsh-client-ui-settings）会 require("@deepseek-ai/cordis")——
+// 必须给出**同一个** cordis 包，客户端插件与我们的容器才共用一套 Context/Service
+import * as Cordis from "@deepseek-ai/cordis";
 import { ClientModuleLoader, type LoadedBundle } from "./moduleLoader.ts";
 import { createPrimitives, type PrimitivesHost } from "./primitives.ts";
 
@@ -43,6 +46,8 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
   const primitives = createPrimitives(options.primitivesHost);
 
   loader
+    // DSH 客户端模块要用同一个 cordis（容器也是用它建的）
+    .provide("@deepseek-ai/cordis", () => Cordis)
     .provide("react", () => React)
     .provide("react-dom", () => ReactDOM)
     .provide("react-dom/client", () => ReactDOMClient)

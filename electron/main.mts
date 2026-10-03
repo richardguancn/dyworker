@@ -3633,18 +3633,29 @@ app.whenReady().then(async () => {
     });
     try {
       const url = new URL(request.url);
-      if (url.hostname !== "client") return notFound(`未知的插件协议主机：${url.hostname}`);
       const segments = url.pathname.split("/").filter(Boolean);
-      const entryId = decodeURIComponent(segments[0] || "");
-      const index = Number(segments[1] ?? "0");
-      if (!entryId || !Number.isInteger(index) || index < 0) return notFound("协议地址不合法");
-      const file = await ctx.plugins.clientBundleFile(entryId, index);
+      if (!segments.length) return notFound("协议地址不合法");
+      const index = Number(segments[segments.length - 1] ?? "0");
+      if (!Number.isInteger(index) || index < 0) return notFound("协议地址不合法");
+      // client/<条目id>/<序号>：插件自己的客户端半边
+      // module/<客户端模块包名>/<序号>：插件声明的客户端模块（dsh.client.inject）
+      const kind = url.hostname;
+      const target = decodeURIComponent(segments.slice(0, -1).join("/"));
+      if (!target) return notFound("协议地址不合法");
+      const file = kind === "client"
+        ? await ctx.plugins.clientBundleFile(target, index)
+        : kind === "module"
+          ? ctx.plugins.clientModuleFile(target, index)
+          : null;
+      if (!file) return notFound(`未知的插件协议主机：${kind}`);
       const source = await fs.readFile(file, "utf8");
       return new Response(source, {
         headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
       });
     } catch (error) {
-      return notFound(String(error?.message || error));
+      // 插件 bundle 加载失败必须留痕：否则渲染端只能看到"脚本加载失败"，无从定位
+      console.warn(`[plugin-protocol] ${request.url} → ${String((error as any)?.message || error)}`);
+      return notFound(String((error as any)?.message || error));
     }
   });
 

@@ -19,13 +19,15 @@
 // 与 electron 的边界：本文件不 import electron，目录由壳层注入。
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
-import { resolveClientEntries } from "./plugin-client.mts";
+import { orderClientModules, readStaticRequires, resolveClientEntries, splitModuleSpec } from "./plugin-client.mts";
 import { detectInstalledPackageName, installPackageIntoProfile, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as yaml from "js-yaml";
 
@@ -409,8 +411,16 @@ export class PluginHostService extends Service {
         return { ok: false, id: row.id, name: row.name, error: "这个插件没有声明客户端半边（dsh.client）" };
       }
       const client = manifest.dsh?.client || manifest.dyworker?.client || {};
+      const plan = await this.clientModulePlan(target);
       return {
         ok: true,
+        // URL 末段是**该包内的客户端入口序号**（不是模块在计划里的位置）：
+        // 协议处理器按 包名 + 包内序号 解析，因此这里固定取主入口 0。
+        modules: plan.ordered.map((node) => ({
+          spec: node.spec,
+          url: `dyworker-plugin://module/${encodeURIComponent(node.spec)}/0`,
+        })),
+        missingModules: plan.missing,
         id: row.id,
         name: row.name,
         version: String(manifest.version || ""),
@@ -426,6 +436,87 @@ export class PluginHostService extends Service {
     } catch (error: any) {
       return { ok: false, id: String(target || ""), error: String(error?.message || error) };
     }
+  }
+
+  /**
+   * 客户端模块（dsh.client.inject 里那些包）的解析目录。
+   * 优先插件自己的 node_modules；找不到时退到本机 DSH 的共享目录——
+   * 这些包本身是 DSH 的客户端运行时，用户机器上通常随 DSH 一起存在。
+   * （正式分发时应把它们作为依赖装进插件目录，这里的兜底只是为了能用。）
+   */
+  clientModuleRoots() {
+    const roots = [path.join(this.dir, "node_modules")];
+    const dshRoot = path.join(os.homedir(), ".dsh", "profiles");
+    roots.push(path.join(dshRoot, "node_modules"));
+    for (const name of ["desktop", "web"]) roots.push(path.join(dshRoot, name, "node_modules"));
+    return roots;
+  }
+
+  /** 按包名找客户端模块（返回 manifest 与包目录） */
+  resolveClientModule(spec) {
+    const { name, subpath } = splitModuleSpec(String(spec || ""));
+    if (!name) return null;
+    for (const root of this.clientModuleRoots()) {
+      const dir = path.join(root, ...name.split("/"));
+      try {
+        const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+        // 子路径入口：exports["./sub"]（可能是字符串或 { default }）
+        const target = subpath ? manifest?.exports?.[subpath] : undefined;
+        const relative = typeof target === "string"
+          ? target
+          : target && typeof target === "object" ? target.default : undefined;
+        if (subpath && !relative) return null;
+        return { manifest, dir, relative };
+      } catch {
+        // 换下一个来源
+      }
+    }
+    return null;
+  }
+
+  /** 插件声明的客户端模块依赖图（依赖在前），以及解析不到的模块 */
+  async clientModulePlan(target) {
+    const { manifest } = await this.clientEntriesOf(target);
+    const client = manifest.dsh?.client || manifest.dyworker?.client || {};
+    const declared = Array.isArray(client.inject) ? client.inject.map(String) : [];
+    // 除了声明，还要把 bundle 里**字面量 require** 到的可解析模块算进来：
+    // 有的模块（如 dsh-client-ui-slots）没被声明，但会被别的模块 require。
+    const roots = [...declared];
+    // 工作队列到不动点：新加入的模块里 require 到的模块也要继续扫，
+    // 否则"被 require 但没声明"的模块（实测 dsh-client-ui-slots）会漏掉。
+    // 注意逐模块 try/catch：任何一个模块读失败都不能中断整轮扫描。
+    const seen = new Set(declared);
+    const queue = [...declared];
+    while (queue.length) {
+      const spec = queue.shift()!;
+      try {
+        const found = this.resolveClientModule(spec);
+        if (!found) continue;
+        const entries = found.relative
+          ? [{ file: path.resolve(found.dir, found.relative) }]
+          : resolveClientEntries(found.manifest, found.dir);
+        for (const entry of entries) {
+          const source = readFileSync(entry.file, "utf8");
+          for (const required of readStaticRequires(source)) {
+            if (seen.has(required) || !required.startsWith("@deepseek-ai/")) continue;
+            if (this.resolveClientModule(required)) { seen.add(required); roots.push(required); queue.push(required); }
+          }
+        }
+      } catch {
+        // 单个模块读失败：跳过它，继续扫其余模块
+      }
+    }
+    return orderClientModules(roots, (spec) => this.resolveClientModule(spec));
+  }
+
+  /** 协议处理器用：客户端模块名 + 序号 → bundle 绝对路径 */
+  clientModuleFile(spec, index) {
+    const found = this.resolveClientModule(spec);
+    if (!found) throw new Error(`客户端模块未安装：${spec}`);
+    const entries = resolveClientEntries(found.manifest, found.dir);
+    const entry = entries[Number(index)];
+    if (!entry) throw new Error(`客户端模块入口不存在：${spec} #${index}`);
+    return entry.file;
   }
 
   /** 协议处理器用：条目 + 序号 → 客户端 bundle 的绝对路径 */

@@ -197,3 +197,49 @@ test("真实 bundle：本机已装 DSH 插件的客户端 bundle 全都能被加
   assert.ok(loaded.length >= 1, "至少要验收一个客户端 bundle");
   console.log(`  已验收 ${loaded.length} 个真实客户端 bundle：${loaded.join("、")}`);
 });
+
+test("客户端模块依赖图：依赖在前、循环安全、解析不到的如实记为缺失", async () => {
+  const { orderClientModules } = await import("../electron/host/plugin-client.mts");
+  // 模拟：插件要 ui-settings；ui-settings 要 api-remotes；api-remotes 无依赖
+  const packages = {
+    "@deepseek-ai/dsh-client-ui-settings": {
+      dir: "/nm/settings",
+      manifest: {
+        name: "@deepseek-ai/dsh-client-ui-settings",
+        exports: { "./client": { default: "./lib/client.js" } },
+        dsh: { client: { inject: ["@deepseek-ai/dsh-api-remotes"], platform: "web" } },
+      },
+    },
+    "@deepseek-ai/dsh-api-remotes": {
+      dir: "/nm/remotes",
+      manifest: {
+        name: "@deepseek-ai/dsh-api-remotes",
+        exports: { "./client": "./lib/client.js" },
+        dsh: { client: { platform: "web" } },
+      },
+    },
+    "@deepseek-ai/dsh-cyclic-a": {
+      dir: "/nm/a",
+      manifest: { name: "a", exports: { "./client": "./lib/client.js" }, dsh: { client: { inject: ["@deepseek-ai/dsh-cyclic-b"] } } },
+    },
+    "@deepseek-ai/dsh-cyclic-b": {
+      dir: "/nm/b",
+      manifest: { name: "b", exports: { "./client": "./lib/client.js" }, dsh: { client: { inject: ["@deepseek-ai/dsh-cyclic-a"] } } },
+    },
+  };
+  const plan = orderClientModules(
+    ["@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-not-installed", "@deepseek-ai/dsh-cyclic-a"],
+    (spec) => packages[spec] || null,
+  );
+
+  assert.deepEqual(plan.ordered.map((node) => node.spec), [
+    "@deepseek-ai/dsh-api-remotes",           // 依赖先加载
+    "@deepseek-ai/dsh-client-ui-settings",
+    "@deepseek-ai/dsh-cyclic-b",              // 循环里的两个模块都要加载（不能死循环）
+    "@deepseek-ai/dsh-cyclic-a",
+  ]);
+  // 每个模块只出现一次（循环不会重复入队）
+  assert.equal(new Set(plan.ordered.map((node) => node.spec)).size, plan.ordered.length);
+  assert.deepEqual(plan.missing, ["@deepseek-ai/dsh-not-installed"], "解析不到的模块要如实报出来");
+  assert.equal(plan.ordered[0].file, "/nm/remotes/lib/client.js", "入口要解析成绝对路径");
+});

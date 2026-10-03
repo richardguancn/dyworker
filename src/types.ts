@@ -1161,6 +1161,10 @@ export interface PluginClientBundlesResult {
   /** 插件声明的客户端服务（cordis inject），界面用它说明"还差哪些服务" */
   inject?: string[];
   entries?: Array<{ subpath: string; relative: string; primary: boolean; url: string }>;
+  /** 它声明的客户端模块（依赖在前）：slots/locale/settings 这些服务由它们提供 */
+  modules?: Array<{ spec: string; url: string }>;
+  /** 声明了但本机没装的客户端模块 */
+  missingModules?: string[];
   error?: string;
 }
 
