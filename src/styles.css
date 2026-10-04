@@ -16464,6 +16464,58 @@ html[data-theme="dark"] {
 .plugins-page button { white-space: nowrap; flex: 0 0 auto; }
 
 .plugins-group { display: flex; flex-direction: column; }
+/* ── DSH 设计令牌桥接 ────────────────────────────────────────────────
+   DSH 的插件界面（如内置的轨迹视图）用 --dsw-alias-* / --dsw-font-* 这套设计变量，
+   它们由 DSH 自己的主题层提供，我们没有。不桥接的话插件的 <style> 是注入了、
+   但每条规则的值都取不到——界面上表现为"样式全没了"（只剩裸 DOM 布局）。
+   这里把它们映射到我们**自己的**主题变量：浅色/深色跟随我们的主题，无需再维护两套配色。
+   未逐一精确对应的语义色用同色系近似值，不追求与 DSH 像素级一致。 */
+:root {
+  /* 背景层次 */
+  --dsw-alias-bg-base: var(--surface);
+  --dsw-alias-bg-layer-1: var(--card);
+  --dsw-alias-bg-layer-2: var(--surface);
+  --dsw-alias-bg-module-platform: var(--sidebar);
+  --dsw-specific-sidebar-fill: var(--sidebar);
+  /* 文字层次 */
+  --dsw-alias-label-primary: var(--ink);
+  --dsw-alias-label-secondary: var(--muted);
+  --dsw-alias-label-tertiary: var(--quiet);
+  --dsw-alias-label-caption: var(--quiet);
+  --dsw-alias-label-dimmed: var(--quiet);
+  /* 边框 */
+  --dsw-alias-border-l1: var(--border);
+  --dsw-alias-border-l2: var(--border);
+  --dsw-alias-border-l3: var(--border-strong);
+  /* 交互态 */
+  --dsw-alias-interactive-bg-hover: var(--sidebar-hover);
+  --dsw-alias-interactive-bg-active: var(--sidebar-active);
+  /* 品牌 / 语义色 */
+  --dsw-alias-brand-primary-new-colorprimary-new-color: var(--accent);
+  --dsw-alias-state-business-primary: var(--accent);
+  --dsw-alias-state-business-tertiary: color-mix(in srgb, var(--accent) 18%, transparent);
+  --dsw-alias-state-error-primary: #d4380d;
+  --dsw-alias-state-error-secondary: #cf1322;
+  --dsw-alias-state-success-primary: #389e0d;
+  --dsw-alias-state-success-tertiary: rgba(56, 158, 13, 0.18);
+  --dsw-alias-state-warn-label: #d46b08;
+  --dsw-alias-state-warn-tertiary: rgba(212, 107, 8, 0.18);
+  --dsw-static-blue-500: var(--accent);
+  /* Markdown 细节 */
+  --dsw-alias-markdown-citation: var(--muted);
+  --dsw-alias-markdown-code-block: var(--bubble);
+  /* 滚动条 */
+  --dsw-alias-scrollbar-bg-l2: var(--border);
+  --dsw-alias-scrollbar-hover-l2: var(--border-strong);
+  /* 字体与阴影 */
+  --dsw-font-family: var(--font-ui, "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --dsw-font-xs-13: 13px;
+  --dsw-font-xs-strong-13: 600 13px;
+  --dsw-font-xxs-12: 12px;
+  --dsw-font-xxxs-11: 11px;
+  --dsw-shadow-lv2: var(--shadow-md);
+}
+
 /* 插件市场：搜索 + 分类 + 条目（办公 / 政务精选） */
 .plugins-market-toolbar {
   display: flex;
