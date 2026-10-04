@@ -25,7 +25,8 @@ export class SessionsService extends Service {
     ctx.effect(() => () => this.writer.flush());
   }
 
-  // 各只读消费方（历史检索、会话工具、渠道工作区推导等）统一入口
+  // 各只读消费方（历史检索、会话工具、渠道工作区推导等）统一入口。
+  // 注：DSH 插件用的 sessions.get(id) 就是下面的 get，无需另加。
   loadAll() {
     return this.archive.loadAll();
   }

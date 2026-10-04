@@ -274,5 +274,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   uninstallPlugin: (id) => ipcRenderer.invoke("plugins:uninstall", id),
   reloadPlugins: () => ipcRenderer.invoke("plugins:reload"),
   pluginClientBundles: (id) => ipcRenderer.invoke("plugins:client-bundles", id),
+  // 插件 HTTP 路由：渲染端对 /api/* 的 fetch 经这里进主进程执行
+  pluginApiFetch: (payload) => ipcRenderer.invoke("plugin-api:fetch", payload),
+  pluginApiRoutes: () => ipcRenderer.invoke("plugin-api:routes"),
 });
 

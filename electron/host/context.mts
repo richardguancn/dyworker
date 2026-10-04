@@ -16,6 +16,8 @@ import { IpcService } from "./services/ipc.mts";
 import { StorageService } from "./services/storage.mts";
 import { WindowService } from "./services/window.mts";
 import { ToolsService } from "./services/tools.mts";
+import { ConnectionService } from "./services/connection.mts";
+import { SessionProjectionCacheService, SessionProjectionsService } from "./services/projections.mts";
 import { RulesService } from "./services/rules.mts";
 import { SkillsService } from "./services/skills.mts";
 import { MemoryService } from "./services/memory.mts";
@@ -95,6 +97,12 @@ export async function createHost(options: HostOptions) {
   });
   new WindowService(ctx, contracts);
   new ToolsService(ctx);
+  // DSH 宿主服务适配：插件的主机半边靠它们注册 HTTP 路由、读会话、取投影
+  // （实测 dsh-context 用 connection.fetch.register / sessions.get / sessionProjections.stateOf）
+  new ConnectionService(ctx);
+  new SessionProjectionsService(ctx);
+  new SessionProjectionCacheService(ctx);
+
   new AuditService(ctx, { filePath: path.join(options.userDataDir, "audit.jsonl") });
   new SettingsService(ctx, {
     settingsFile: path.join(options.userDataDir, "settings.json"),

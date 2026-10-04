@@ -15,8 +15,10 @@ import * as Cordis from "@deepseek-ai/cordis";
 import { ClientModuleLoader, type LoadedBundle } from "./moduleLoader.ts";
 import { createPrimitives, type PrimitivesHost } from "./primitives.ts";
 import { SHIMMED_CLIENT_MODULES, createRuntimeClientShim, createSlotsModuleShim } from "./dshClientShims.ts";
+import { installPluginApiBridge, isPluginApiPath } from "./apiBridge.ts";
 
 export { ClientModuleLoader, createPrimitives };
+export { installPluginApiBridge, isPluginApiPath };
 export type { LoadedBundle, PrimitivesHost };
 
 export const PRIMITIVES_MODULE = "@deepseek-ai/dsh-client-ui-primitives";
@@ -65,6 +67,8 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
 
   const target = options.target ?? (typeof window !== "undefined" ? window : undefined);
   loader.install(target);
+  // 插件的 /api/* fetch 走主进程里它自己注册的路由
+  installPluginApiBridge(target);
 
   return { loader, primitives };
 }

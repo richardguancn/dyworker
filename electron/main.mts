@@ -16,6 +16,7 @@ import { tracesIpcPlugin } from "./host/plugins/traces-ipc.mts";
 import { usageHooksIpcPlugin } from "./host/plugins/usage-hooks-ipc.mts";
 import { auditIpcPlugin } from "./host/plugins/audit-ipc.mts";
 import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
+import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
 import { windowIpcPlugin } from "./host/plugins/window-ipc.mts";
 import { attachmentsIpcPlugin } from "./host/plugins/attachments-ipc.mts";
 import { clipboardIpcPlugin } from "./host/plugins/clipboard-ipc.mts";
@@ -2345,6 +2346,7 @@ ctx.plugin(usageHooksIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(auditIpcPlugin());
 // 插件管理通道（走契约层：ctx.ipc / ctx.plugins）
 ctx.plugin(pluginsIpcPlugin());
+ctx.plugin(pluginApiIpcPlugin());
 ctx.plugin(windowIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(attachmentsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(clipboardIpcPlugin({ trustedHandle, ...shellDeps }));

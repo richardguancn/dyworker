@@ -299,3 +299,44 @@ test("模块加载顺序：DSH 客户端模块拿得到 slots / runtime 兼容�
   assert.equal(result.exports.slots, "function");
   assert.equal(result.exports.store, "function");
 });
+
+test("插件 API 桥：只接管同源 /api/*，其余 fetch 原样透传，失败如实报错", async () => {
+  const { installPluginApiBridge, isPluginApiPath } = await import("../src/pluginRuntime/apiBridge.ts");
+
+  assert.equal(isPluginApiPath("/api/dsh-context/detail"), true);
+  assert.equal(isPluginApiPath("/api"), true);
+  assert.equal(isPluginApiPath("https://example.com/api/x"), false, "跨源 /api 不归我们管");
+  assert.equal(isPluginApiPath("/apix"), false);
+  assert.equal(isPluginApiPath("/assets/a.png"), false);
+
+  const calls = [];
+  const target = {
+    fetch: async (input) => { calls.push(String(input)); return new Response("origin", { status: 200 }); },
+    dyworker: {
+      pluginApiFetch: async (payload) => {
+        calls.push(payload);
+        return { status: 200, body: JSON.stringify({ ok: true, value: null }), headers: { "content-type": "application/json" } };
+      },
+    },
+  };
+  const restore = installPluginApiBridge(target, target.dyworker);
+
+  // ① 插件路由：走桥
+  const response = await target.fetch("/api/dsh-context/detail", { method: "POST", body: "{}" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, value: null });
+  assert.deepEqual(calls.at(-1), { path: "/api/dsh-context/detail", method: "POST", body: "{}" });
+
+  // ② 其它请求：原样透传
+  const passthrough = await target.fetch("/assets/logo.png");
+  assert.equal(await passthrough.text(), "origin");
+
+  // ③ 没有桥时如实报 502，而不是伪造成功
+  const bare = { fetch: async () => new Response("x") };
+  installPluginApiBridge(bare, {});
+  const failed = await bare.fetch("/api/x");
+  assert.equal(failed.status, 502);
+
+  restore();
+  assert.equal(await (await target.fetch("/assets/logo.png")).text(), "origin", "复原后不再拦截");
+});
