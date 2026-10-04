@@ -11960,7 +11960,7 @@ export function App() {
                 onAppendTraces={appendSessionTraces}
               />
             ) : (
-              <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} />
+              <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
             )}
           </section>
         )}

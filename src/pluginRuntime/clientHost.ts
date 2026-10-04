@@ -14,6 +14,7 @@
 // 因此插件里那些我们还没接的位置会自动跳过，不会报错、也不会出现"注册了但没人渲染"。
 
 import { Context } from "@deepseek-ai/cordis";
+import { SessionViewRuntime } from "./sessionViewRuntime.ts";
 
 export interface SlotMeta {
   name: string;
@@ -92,6 +93,11 @@ export class ClientPluginHost {
   private readonly fibers: any[] = [];
   /** conversationEvents / conversationViews 的登记内容（按类别存放） */
   private readonly conversationParts = new Map<string, unknown[]>();
+  /**
+   * 会话视图运行时：把我们的会话事件折叠成插件要的视图数据（见 sessionViewRuntime.ts）。
+   * DSH 这套驱动在它的客户端会话层（裸 ESM，我们加载不了），所以按同一份契约自己实现。
+   */
+  private readonly sessionViews = new SessionViewRuntime();
 
   constructor(options: ClientHostOptions = {}) {
     this.localeCode = options.locale || "zh";
@@ -204,14 +210,35 @@ export class ClientPluginHost {
   /** 登记一个对话事件/视图定义；返回注销函数 */
   private registerConversationPart(kind: string, definition: unknown) {
     if (!definition) return () => undefined;
+    // 除了登记，还要交给视图运行时：这一步才让插件的数据装配真正跑起来
+    const unregisterRuntime = kind === "events"
+      ? this.sessionViews.registerEvent(definition as any)
+      : this.sessionViews.registerView(definition as any);
     const list = this.conversationParts.get(kind) || [];
     list.push(definition);
     this.conversationParts.set(kind, list);
     this.notify();
     return () => {
+      unregisterRuntime();
       this.conversationParts.set(kind, (this.conversationParts.get(kind) || []).filter((item) => item !== definition));
       this.notify();
     };
+  }
+
+  /** 喂一批会话事件给视图运行时（壳层在会话变化时调用） */
+  ingestSessionEvents(events: any[]): void {
+    this.sessionViews.ingest(events);
+    this.notify();
+  }
+
+  /** 各视图 target 的快照（喂给插件视图的 snapshot.views） */
+  sessionViewSnapshots(): Map<string, any> {
+    return this.sessionViews.snapshots();
+  }
+
+  /** 当前已装配的视图 target（调试与测试用） */
+  sessionViewTargets(): string[] {
+    return this.sessionViews.targetsOf();
   }
 
   /** 已登记的对话事件/视图定义（调试与测试用） */

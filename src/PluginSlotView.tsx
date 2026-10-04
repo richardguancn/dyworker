@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import { clientHost, onPanelOpenRequest } from "./pluginRuntime/clientHostSingleton.ts";
+import { buildSessionEvents } from "./pluginRuntime/sessionEvents.ts";
 
 export interface PluginPanelRequest {
   pluginId: string;
@@ -92,7 +93,7 @@ export function requestPluginPanels(pluginId: string, slots: string[]): PluginPa
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
@@ -121,6 +122,15 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
   }, [sessionId]);
 
   const useProjection = React.useCallback((key: string) => projections[String(key)] ?? null, [projections]);
+
+  // 把会话消息喂给视图运行时（DSH 视图插件订阅的是事件流，不是消息数组）。
+  // 喂完它会把装配好的视图快照放进 snapshot.views，插件据此渲染真实内容。
+  const sessionMessages = (session as any)?.messages;
+  React.useEffect(() => {
+    const events = buildSessionEvents(Array.isArray(sessionMessages) ? sessionMessages : []);
+    if (!events.length) return;
+    host.ingestSessionEvents(events);
+  }, [host, sessionMessages]);
 
   const contributions = host.contributionsFor(slot).filter((contribution) => {
     if (pluginKey) {
@@ -159,7 +169,7 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
       // 快照数据下一步按 dsh-context 那套投影的做法从我们的会话折出来；先给出**空但诚实**的形状：
       // views 里没有 trajectory 时，插件会渲染它自己的空状态，而不是报错或假装有数据。
       const snapshot = {
-        views: new Map<string, unknown>(),
+        views: host.sessionViewSnapshots(),
         openState: "ready",
         loadingOlder: false,
         hasMore: false,

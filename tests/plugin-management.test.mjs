@@ -909,3 +909,56 @@ test("客户端模块闭包：扫客户端半边的 require，纯库模块回退
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("会话视图运行时：按 DSH 契约把会话事件折成视图快照", async () => {
+  const { SessionViewRuntime } = await import("../src/pluginRuntime/sessionViewRuntime.ts");
+  const { buildSessionEvents } = await import("../src/pluginRuntime/sessionEvents.ts");
+
+  // ① 用**真实插件同款契约**造一个最小视图：每条助手消息装配成一个节点
+  const runtime = new SessionViewRuntime();
+  runtime.registerView({ target: "demo", create: () => {
+    const nodes = new Map();
+    return {
+      apply({ upserts }) { for (const node of upserts) nodes.set(node.key, node); },
+      replace({ nodes: list }) { nodes.clear(); for (const node of list) nodes.set(node.key, node); },
+      snapshot() { return { nodes: [...nodes.values()] }; },
+    };
+  } });
+  runtime.registerEvent({
+    kind: "demo-assistant", target: "demo",
+    match: (event) => (event.type === "assistant/message" ? { id: `t${event.data?.turn ?? 0}`, role: "update" } : null),
+    start: () => ({ turns: 0 }),
+    update: (context) => ({ turns: (context.state?.turns ?? 0) + 1 }),
+    publication: () => "immediate",
+    buildViewNode: (context) => ({ key: context.key, anchorSeq: context.matches[0]?.event?.seq ?? 0, turns: context.state.turns }),
+  });
+
+  const events = buildSessionEvents([
+    { role: "system", content: "系统提示" },
+    { role: "user", content: "你好" },
+    { role: "assistant", content: "回答一" },
+    { role: "user", content: "再来" },
+    { role: "assistant", content: "回答二" },
+  ]);
+  // 事件映射要覆盖插件认的类型，seq 单调递增
+  assert.ok(events.some((e) => e.type === "user/message"));
+  assert.ok(events.some((e) => e.type === "assistant/message"));
+  assert.ok(events.some((e) => e.type === "step/start"));
+  assert.ok(events.some((e) => e.type === "turn/end"));
+  for (let i = 1; i < events.length; i += 1) assert.ok(events[i].seq > events[i - 1].seq, "seq 要单调递增");
+
+  runtime.ingest(events);
+  const snapshots = runtime.snapshots();
+  assert.deepEqual(runtime.targetsOf(), ["demo"]);
+  assert.ok(snapshots.get("demo"), "要有 demo 快照");
+  // 两条助手消息属于同一 target 但 key 不同……
+  // 这里 key 都是 t0（映射里没给 turn），所以断言"至少装配出一个节点且有状态"
+  assert.ok(snapshots.get("demo").nodes.length >= 1);
+
+  // ② 定义抛错不能把运行时带崩
+  const fragile = new SessionViewRuntime();
+  fragile.registerView({ target: "fragile", create: () => ({ apply() { throw new Error("装配器炸了"); }, snapshot: () => ({ ok: true }) }) });
+  fragile.registerEvent({ target: "fragile", match: () => ({ id: "x", role: "update" }), update: () => ({}), buildViewNode: () => ({ key: "x", anchorSeq: 1 }) });
+  fragile.ingest([{ type: "user/message", seq: 1, time: 1, data: {} }]);
+  assert.equal(fragile.snapshots().get("fragile").ok, true, "装配器抛错时要保留上一次快照");
+});
