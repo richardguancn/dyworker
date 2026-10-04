@@ -82,13 +82,16 @@ textarea:focus-visible {
   z-index: 40;
   top: 0;
   bottom: 0;
-  /* 命中区域保持 8px，但视觉只画一条细灰线（对照 Codex 拖动条），不要整条蓝色高亮 */
+  /* 命中区域保持 8px，但视觉只画一条很淡的细灰线（对照 Codex 拖动条），不要整条蓝色高亮 */
   width: 8px;
   cursor: col-resize;
   touch-action: none;
   transform: translateX(0);
 }
 
+/* 分隔线只是"提示边界"，不该抢视线：静止时几乎看不见，悬停/拖动时才略微加深。
+   弹窗层必须压在它上面——弹窗若被关进带 z-index 的祖先（如 .plugins-page），
+   fixed 定位会被那个层叠上下文压到这里之下，表现为竖线切穿弹窗（见 AddPluginDialog 的 portal）。 */
 .panel-resize-handle::after {
   content: "";
   position: absolute;
@@ -97,14 +100,14 @@ textarea:focus-visible {
   left: 50%;
   width: 1px;
   transform: translateX(-0.5px);
-  background: rgba(128, 132, 124, 0.28);
+  background: rgba(128, 132, 124, 0.16);
   transition: background 0.15s ease, width 0.15s ease;
 }
 
 .panel-resize-handle:hover::after,
 body.resizing-panels .panel-resize-handle::after {
   width: 2px;
-  background: rgba(128, 132, 124, 0.6);
+  background: rgba(128, 132, 124, 0.38);
 }
 
 .panel-resize-left {
@@ -5574,6 +5577,35 @@ body.resizing-panels .app-shell {
 .user-message-text .skill-token {
   color: #7c52ff;
   background: rgba(124, 82, 255, 0.1);
+}
+
+/* @「会话标题」token 的内联高亮：绿色区分于文件（蓝）与技能（紫） */
+.composer-mirror .session-token,
+.user-message-text .session-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .session-token {
+  background: rgba(13, 148, 101, 0.16);
+  box-shadow: 0 0 0 1px rgba(13, 148, 101, 0.24);
+}
+
+.user-message-text .session-token {
+  color: #0c8a61;
+  background: rgba(13, 148, 101, 0.1);
+}
+
+/* 气泡里的会话 token 可点击跳转 */
+.user-message-text .session-token.clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.user-message-text .session-token.clickable:hover {
+  background: rgba(13, 148, 101, 0.2);
 }
 
 /* 气泡里的 @文件 token 可点击打开 */
@@ -16432,6 +16464,67 @@ html[data-theme="dark"] {
 .plugins-page button { white-space: nowrap; flex: 0 0 auto; }
 
 .plugins-group { display: flex; flex-direction: column; }
+/* 插件市场：搜索 + 分类 + 条目（办公 / 政务精选） */
+.plugins-market-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 10px;
+}
+.plugins-market-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+}
+.plugins-market-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.plugins-market-categories {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.plugin-category-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-category-chip:hover { color: var(--text); }
+.plugin-category-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.plugin-market-tag {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.plugin-card.market .plugin-card-body { gap: 6px; }
+.plugin-tag.ok {
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
+}
+
 .plugins-group-title {
   display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
   color: var(--muted); font-size: calc(12px * var(--font-ui-scale, 1)); font-weight: 600;

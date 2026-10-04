@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
+import { CATALOG_CATEGORIES, CATALOG_SNAPSHOT_DATE, filterCatalog, isInstalled } from "./pluginCatalog";
 import { loadBundleScript } from "./pluginRuntime/index.ts";
 import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
 import { requestPluginPanels } from "./PluginSlotView";
@@ -32,6 +33,10 @@ export function PluginsPage() {
   // 客户端半边试跑结果：记录"能加载吗、缺哪些模块、它要哪些客户端服务"
   const [clientRuns, setClientRuns] = useState<Record<string, { state: "loading" | "ok" | "error"; text: string }>>({});
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  // 插件市场：搜索词、分类、以及点「安装」时预填给添加向导的规格
+  const [marketQuery, setMarketQuery] = useState("");
+  const [marketCategory, setMarketCategory] = useState("");
+  const [marketSpec, setMarketSpec] = useState("");
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
 
@@ -134,6 +139,13 @@ export function PluginsPage() {
   return (
     <section className="plugins-page">
       {addOpen && <AddPluginDialog onClose={() => setAddOpen(false)} onInstalled={() => void refresh()} />}
+      {marketSpec ? (
+        <AddPluginDialog
+          initialSpec={marketSpec}
+          onClose={() => setMarketSpec("")}
+          onInstalled={() => void refresh()}
+        />
+      ) : null}
       <header className="plugins-page-header">
         <div className="plugins-page-heading">
           <h1>插件</h1>
@@ -154,6 +166,76 @@ export function PluginsPage() {
       {data?.warnings?.length ? (
         <div className="plugins-message warn">{data.warnings.slice(0, 3).map((line) => <div key={line}>{line}</div>)}</div>
       ) : null}
+
+      <div className="plugins-group">
+        <div className="plugins-group-title">
+          <span>插件市场</span>
+          <span className="plugins-group-count">
+            精选 {filterCatalog(marketQuery, marketCategory).length} 个 · 办公 / 政务
+          </span>
+        </div>
+        <div className="plugins-market-toolbar">
+          <label className="plugins-market-search">
+            <Search size={14} />
+            <input
+              value={marketQuery}
+              onChange={(event) => setMarketQuery(event.target.value)}
+              placeholder="搜索插件：公文、发票、Excel、PDF…"
+            />
+          </label>
+          <div className="plugins-market-categories">
+            <button
+              className={`plugin-category-chip ${marketCategory ? "" : "on"}`}
+              onClick={() => setMarketCategory("")}
+            >全部</button>
+            {CATALOG_CATEGORIES.map((category) => (
+              <button
+                key={category}
+                className={`plugin-category-chip ${marketCategory === category ? "on" : ""}`}
+                onClick={() => setMarketCategory(category)}
+              >{category}</button>
+            ))}
+          </div>
+        </div>
+        {filterCatalog(marketQuery, marketCategory).map((plugin) => {
+          const installed = isInstalled(plugin, entries);
+          return (
+            <div className="plugin-card market" key={plugin.id}>
+              <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(plugin.repo) } as React.CSSProperties}>
+                <Puzzle size={18} />
+              </div>
+              <div className="plugin-card-body">
+                <div className="plugin-card-title">
+                  <strong>{plugin.repo}</strong>
+                  <span className="plugin-tag"><Star size={11} /> {plugin.stars}</span>
+                  <span className="plugin-tag">{plugin.category}</span>
+                  {plugin.verified ? <span className="plugin-tag ok">本机已验证</span> : null}
+                  {installed ? <span className="plugin-tag">已安装</span> : null}
+                </div>
+                <p className="plugin-card-desc">{plugin.summary}</p>
+                <div className="plugin-card-tools">
+                  {plugin.tags.map((tag) => <span className="plugin-market-tag" key={tag}>{tag}</span>)}
+                  <button
+                    className="plugins-text-button"
+                    disabled={Boolean(busy) || installed}
+                    onClick={() => setMarketSpec(plugin.install)}
+                    title={installed ? "已经装过了" : `安装 ${plugin.packageName}`}
+                  >
+                    {installed ? <Check size={13} /> : <Plus size={13} />} {installed ? "已安装" : "安装"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {filterCatalog(marketQuery, marketCategory).length === 0 ? (
+          <p className="plugins-empty">没有匹配的插件，换个关键词试试。</p>
+        ) : null}
+        <p className="plugins-hint">
+          star 数为 {CATALOG_SNAPSHOT_DATE} 的快照（非实时）。点「安装」会带规格打开添加向导，
+          先跑兼容性判定再决定装不装——市场只负责发现，不跳过检查。
+        </p>
+      </div>
 
       <div className="plugins-group">
         <div className="plugins-group-title">

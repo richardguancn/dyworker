@@ -21,8 +21,8 @@ function verdictClass(verdict?: string) {
   return "bad";
 }
 
-export function AddPluginDialog({ onClose, onInstalled }: { onClose: () => void; onInstalled: () => void }) {
-  const [input, setInput] = useState("");
+export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { onClose: () => void; onInstalled: () => void; initialSpec?: string }) {
+  const [input, setInput] = useState(initialSpec);
   const [version, setVersion] = useState("");
   const [source, setSource] = useState<"default" | "cn" | "custom">("default");
   const [customRegistry, setCustomRegistry] = useState("");
@@ -60,15 +60,16 @@ export function AddPluginDialog({ onClose, onInstalled }: { onClose: () => void;
   ] as const;
   const sourceLabel = SOURCE_OPTIONS.find((option) => option.id === source)?.label || "官方源";
 
-  const check = async () => {
-    if (!bridge?.checkPluginCompatibility || !target) return;
+  const check = async (override?: string) => {
+    const probe = String(override ?? input ?? "").trim();
+    if (!bridge?.checkPluginCompatibility || !probe) return;
     setBusy("check");
     setError("");
     setCompat(null);
     try {
       // GitHub / 本地来源先要装进 profile 才能判定，这里只对包名做预检
-      if (/^[\w@./-]+$/.test(target) && !/^[.~/]/.test(target) && !target.includes("github.com")) {
-        setCompat(await bridge.checkPluginCompatibility(target));
+      if (/^[\w@./-]+$/.test(probe) && !/^[.~/]/.test(probe) && !probe.includes("github.com")) {
+        setCompat(await bridge.checkPluginCompatibility(probe));
       } else {
         setLog("GitHub / 本地来源需要先安装到插件目录，安装完成后会自动做兼容性判定。");
       }
@@ -78,6 +79,14 @@ export function AddPluginDialog({ onClose, onInstalled }: { onClose: () => void;
       setBusy("");
     }
   };
+
+  // 市场点「安装」时带规格进来：直接预检一次，省掉用户再点一下
+  useEffect(() => {
+    if (!initialSpec) return;
+    void check(initialSpec);
+    // 只在挂载时按预填规格跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSpec]);
 
   const describeInstalled = async (name: string) => {
     try {

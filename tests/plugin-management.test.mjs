@@ -814,3 +814,42 @@ test("内置插件：目录扫描、默认启用、并在条目上打内置标�
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("插件市场：清单条目完整、可搜索、可判定已安装", async () => {
+  const { PLUGIN_CATALOG, CATALOG_CATEGORIES, filterCatalog, catalogSorted, isInstalled } = await import("../src/pluginCatalog.ts");
+
+  assert.ok(PLUGIN_CATALOG.length >= 10, `精选清单不该太空，实际 ${PLUGIN_CATALOG.length} 条`);
+  const ids = new Set();
+  for (const plugin of PLUGIN_CATALOG) {
+    assert.ok(plugin.id && plugin.repo.includes("/"), `条目要有 owner/repo：${plugin.id}`);
+    assert.ok(plugin.packageName, `条目要有包名：${plugin.id}`);
+    assert.ok(Number.isFinite(plugin.stars) && plugin.stars >= 0, `star 数要是数字：${plugin.id}`);
+    assert.ok(plugin.summary.length > 6, `条目要有说明：${plugin.id}`);
+    assert.ok(CATALOG_CATEGORIES.includes(plugin.category), `分类要在目录里：${plugin.id} → ${plugin.category}`);
+    assert.ok(plugin.install.startsWith("github:") || plugin.install === plugin.packageName,
+      `安装规格要么是 github:owner/repo，要么是包名：${plugin.id} → ${plugin.install}`);
+    assert.equal(ids.has(plugin.id), false, `条目重复：${plugin.id}`);
+    ids.add(plugin.id);
+  }
+
+  // 办公 / 政务要有份量（用户要的是这条线）
+  const office = PLUGIN_CATALOG.filter((p) => p.category === "办公");
+  const gov = PLUGIN_CATALOG.filter((p) => p.category === "政务公文");
+  assert.ok(office.length >= 3, "办公分类要有足够条目");
+  assert.ok(gov.length >= 3, "政务公文分类要有足够条目");
+
+  // 排序：star 从高到低
+  const sorted = catalogSorted();
+  for (let i = 1; i < sorted.length; i += 1) assert.ok(sorted[i - 1].stars >= sorted[i].stars, "按 star 降序");
+
+  // 搜索：中文关键词与英文标签都能命中
+  assert.ok(filterCatalog("公文").some((p) => p.repo === "linhut/gongwen-skill"));
+  assert.ok(filterCatalog("excel").length > 0);
+  assert.equal(filterCatalog("", "政务公文").every((p) => p.category === "政务公文"), true);
+  assert.equal(filterCatalog("这个肯定搜不到").length, 0);
+
+  // 已安装判定：包名或仓库名任一命中即算装了
+  const dshContext = PLUGIN_CATALOG.find((p) => p.id === "bowenliang123/dsh-context");
+  assert.equal(isInstalled(dshContext, [{ id: "dsh-context", name: "dsh-context" }]), true);
+  assert.equal(isInstalled(dshContext, [{ id: "x", name: "别的插件" }]), false);
+});
