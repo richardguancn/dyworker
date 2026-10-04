@@ -28,7 +28,7 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as yaml from "js-yaml";
 
@@ -110,6 +110,34 @@ function resolveOwnsId(bundle, id) {
   }
   return false;
 }
+
+/**
+ * 从 "Cannot find package 'X'" 里的 X 还原出可安装的包名。
+ * X 可能是裸包名（@scope/name、name），也可能是 profile/node_modules 下的绝对路径
+ * （包自身残缺时 Node 会退化到 <dir>/index.js）。后者要能反推出 @scope/name 才能重装。
+ */
+function packageNameFromMissing(missing: string, profileDir: string): string {
+  const raw = String(missing || "").trim();
+  if (!raw) return "";
+  if (!raw.startsWith("/") && !raw.startsWith(".")) return raw;
+  // /tmp 与 /private/tmp 这种软链差异会让前缀比较失败（macOS 上实测踩到），
+  // 两边都归一化到真实路径再比。
+  const real = (value: string) => {
+    try {
+      return realpathSync(value);
+    } catch {
+      return value;
+    }
+  };
+  const normalizedRaw = real(raw);
+  const nodeModules = path.join(real(profileDir), "node_modules") + path.sep;
+  if (!normalizedRaw.startsWith(nodeModules)) return "";
+  const rest = normalizedRaw.slice(nodeModules.length).split(path.sep);
+  if (!rest.length) return "";
+  const name = rest[0].startsWith("@") ? `${rest[0]}/${rest[1] || ""}` : rest[0];
+  return name.includes("/") && name.endsWith("/") ? "" : name;
+}
+
 
 export class PluginHostService extends Service {
   // loader 由 mountPluginHost 在构造时注入并持有，服务内部只用 this.loader。
@@ -243,6 +271,20 @@ export class PluginHostService extends Service {
     const rows = composeRows([...this.baseRows, ...extraRows], layers, (message: any, ...args: any[]) => {
       warnings.push(`${message}${args.length ? ` ${args.join(" ")}` : ""}`);
     });
+    // 陈旧覆盖清理：覆盖是**打在条目上的补丁**，条目不存在时它永远找不到目标，
+    // 每次组装都报 "entry ... not found"（用户 profile 里就留着这样一条 overrides.dsh-context，
+    // 而 dyworker.yml 是空的——早前安装失败留下的）。
+    // 注意判据是**组装后的条目**（bundle 的 patch 能插入条目，那些条目不 baseRows 里），
+    // 只按 baseRows 判断会把它们的配置/启停覆盖一起误删（测试就抓到了这个）。
+    const composedIds = new Set(rows.map((row: any) => String(row.id)));
+    const stale = Object.keys(this.overrides).filter((id) => !composedIds.has(String(id)));
+    if (stale.length) {
+      for (const id of stale) delete (this.overrides as any)[id];
+      warnings.push(`已清理 ${stale.length} 条失效的插件覆盖记录（条目不存在）：${stale.slice(0, 3).join("、")}`);
+      void this.persistBundles();
+      // 清掉之后再组装一次，避免这一轮的告警与结果里还带着失效补丁
+      return this.compose();
+    }
     this.patchWarnings = warnings;
     this.rows = rows.map((row) => normalizeRow(
       builtinNames.has(row.name) || builtinIds.has(row.id) ? { ...row, builtin: true } : row,
@@ -503,12 +545,17 @@ export class PluginHostService extends Service {
     // 自愈：profile 里可能是**旧的/残缺的**依赖树（早前失败的安装留下的老版本，
     // 传递依赖缺失）。ensureRuntimePeers 见它能解析就跳过，于是残缺版本一直留着，
     // 激活报 "Cannot find package X"。这里按报错缺什么补什么，再重试激活（最多 3 轮）。
-    for (let attempt = 0; attempt < 3 && !installed.ok; attempt += 1) {
+    for (let attempt = 0; attempt < 4 && !installed.ok; attempt += 1) {
       const missing = /Cannot find package '([^']+)'/.exec(String(installed.error || ""))?.[1];
-      if (!missing || missing.startsWith("/") || missing.startsWith(".")) break;
+      // 报错里的"包"可能是绝对路径（profile/node_modules 下的残缺包解析失败时会这样），
+      // 这时从中还原包名，重装到**最新版**再重试——用户 profile 里是旧的 0.0.1-rc.1 残缺树。
+      const repairTarget = missing ? packageNameFromMissing(missing, this.dir) : "";
+      if (!repairTarget) break;
+      const repairVersion = await newestVersion(repairTarget, { npmPath: npmPath || process.env.DYWORKER_NPM || null });
       const repaired: any = await installPackageIntoProfile({
         dir: this.dir,
-        input: missing,
+        input: repairTarget,
+        version: repairVersion || undefined,
         source,
         customRegistry,
         npmPath: npmPath || process.env.DYWORKER_NPM || null,
@@ -869,9 +916,13 @@ export class PluginHostService extends Service {
       if (row) {
         if (enabled) delete row.disabled;
         else row.disabled = true;
-      } else {
+      } else if (this.rows.some((item) => String(item.id) === String(id))) {
         // bundle 提供的条目：写宿主侧覆盖，不改插件包自己的 patch
         this.overrides[id] = { ...(this.overrides[id] || {}), disabled: !enabled };
+      } else {
+        // 清单里根本没有这个条目：写覆盖只会留下一条**永远打不到目标的补丁**
+        // （组装时报 entry not found）。这里如实拒绝，并告诉用户该怎么办。
+        return { ok: false, id, error: `插件 ${id} 不在清单里：请先在插件页安装它` };
       }
       try {
         await (this.loader as any).update(id, { disabled: !enabled });

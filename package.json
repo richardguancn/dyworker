@@ -93,7 +93,7 @@
       "dist/electron/scripts/linux_computer_use.py",
       "dist/electron/scripts/macos_computer_use.js",
       "node_modules/node-llama-cpp/**/*",
-      "node_modules/@deepseek-ai/cordis/**/*"
+      "node_modules/@deepseek-ai/**/*"
     ],
     "directories": {
       "output": "output/electron",
