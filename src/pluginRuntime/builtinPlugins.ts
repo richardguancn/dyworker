@@ -8,7 +8,7 @@
 //
 // 失败只记录不抛：某个内置插件坏了不该影响应用启动。
 
-import { createClientRuntime, loadBundleScript, loadedBundle } from "./index.ts";
+import { installClientRuntime, loadBundleScript, loadedBundle } from "./index.ts";
 import { clientHost } from "./clientHostSingleton.ts";
 
 export interface BuiltinLoadResult {
@@ -30,7 +30,10 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
     return results;
   }
 
-  createClientRuntime(); // 确保运行时（window.__ModuleLoader__ + /api 桥）已装好
+  // 必须用**单例**运行时：createClientRuntime() 会新建一个实例并覆盖 window.__ModuleLoader__，
+  // 而 loadBundleScript 读的是单例——bundle 会注册到新实例、我们从单例里找，结果永远是
+  // "新增注册 0 个"，插件界面出不来（实测就是这个）。
+  installClientRuntime();
 
   for (const entry of entries) {
     if (!entry?.builtin || entry.disabled) continue;

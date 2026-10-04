@@ -112,13 +112,18 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
     { className: "plugin-slot-view", "data-plugin": pluginId || "", "data-slot": slot },
     contributions.map((contribution) => {
       const meta = contribution.meta as Record<string, unknown>;
-      // 插件用 inject() 声明它需要的数据；渲染时把结果作为 props 传进去
+      // 插件用 inject(sessionId) 声明它需要的数据；渲染时把结果作为 props 传进去。
+      // 必须把 sessionId 传进去：DSH 的会话视图就靠这个参数去取会话数据
+      // （实测 dsh-client-ui-trajectory 的 inject 拿不到 sessionId 会抛"会话不可用"，
+      //  以前我们吞掉异常 → 界面一片空白，什么线索都没有）。
       let injected: Record<string, unknown> = {};
+      let injectionError = "";
       if (typeof meta.inject === "function") {
         try {
-          injected = ((meta.inject as () => Record<string, unknown>)()) || {};
-        } catch {
+          injected = ((meta.inject as (id: string) => Record<string, unknown>)(sessionId || "")) || {};
+        } catch (error: any) {
           injected = {};
+          injectionError = String(error?.message || error);
         }
       }
       const props = {
@@ -140,6 +145,11 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
       return React.createElement(
         "div",
         { className: "plugin-slot-item", key: String(meta.key ?? meta.id ?? contribution.sequence) },
+        // 插件的 inject 抛错时如实显示原因：否则界面只剩空白，排查时毫无线索
+        injectionError
+          ? React.createElement("div", { className: "plugin-slot-error" },
+              `插件视图数据没取到：${injectionError}`)
+          : null,
         element,
       );
     }),

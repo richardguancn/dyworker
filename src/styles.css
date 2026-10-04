@@ -16525,6 +16525,17 @@ html[data-theme="dark"] {
   border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
 }
 
+/* 插件视图 inject 失败时的提示（如实显示，不静默空白） */
+.plugin-slot-error {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d97706) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn, #d97706) 10%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .plugins-group-title {
   display: flex; align-items: center; gap: 8px; margin: 2px 0 10px;
   color: var(--muted); font-size: calc(12px * var(--font-ui-scale, 1)); font-weight: 600;
