@@ -115,18 +115,39 @@ export async function loadBundleScript(url: string, { timeoutMs = 15_000 }: { ti
     }, timeoutMs);
     script.onload = () => {
       clearTimeout(timer);
+      if ((globalThis as any).__DYW_BUNDLE_DEBUG) console.log(`[bundle] onload ${url}`);
       resolve();
     };
-    script.onerror = () => {
+    script.onerror = (event: any) => {
       clearTimeout(timer);
       script.remove();
+      if ((globalThis as any).__DYW_BUNDLE_DEBUG) console.log(`[bundle] onerror ${url} ${String(event?.message || "")}`);
       reject(new Error(`插件 bundle 加载失败：${url}`));
     };
     document.head.appendChild(script);
   });
 
   const added = runtime.loader.bundles_().filter((bundle) => !before.has(bundle.id));
+  if ((globalThis as any).__DYW_BUNDLE_DEBUG) {
+    console.log(`[bundle] ${url} 新增注册 ${added.length} 个：${added.map((b) => b.id).join(",") || "（无）"}${added.map((b) => b.error).filter(Boolean).length ? ` 错误：${added.map((b) => b.error).filter(Boolean).join(" | ")}` : ""}`);
+  }
   const last = added[added.length - 1];
   if (!last) throw new Error("bundle 已加载但没有调用 __ModuleLoader__.load 注册（可能不是 DSH 客户端插件）");
   return last;
+}
+
+/**
+ * 取一个**已经加载过**的 bundle（按注册 id，通常就是包名）。
+ *
+ * 为什么需要：同一个 bundle 会以两种身份出现——插件的客户端入口，以及别的模块
+ * `require` 的依赖模块。先作为依赖被加载、再作为插件入口加载时，`loadBundleScript`
+ * 会因为"没有新注册"而报错，插件界面于是永远出不来（实测 dsh-client-ui-trajectory
+ * 就是这样：它的模块清单里有模块 require 了它自己）。这里按包名把那份复用回来。
+ */
+export function loadedBundle(id: string): LoadedBundle | undefined {
+  const wanted = String(id || "");
+  if (!wanted) return undefined;
+  const runtime = clientRuntime();
+  return runtime.loader.bundles_().find((bundle) => bundle.id === wanted)
+    || runtime.loader.bundles_().find((bundle) => bundle.id.endsWith(`/${wanted}`));
 }

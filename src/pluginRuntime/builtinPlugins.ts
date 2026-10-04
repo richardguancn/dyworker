@@ -8,7 +8,7 @@
 //
 // 失败只记录不抛：某个内置插件坏了不该影响应用启动。
 
-import { createClientRuntime, loadBundleScript } from "./index.ts";
+import { createClientRuntime, loadBundleScript, loadedBundle } from "./index.ts";
 import { clientHost } from "./clientHostSingleton.ts";
 
 export interface BuiltinLoadResult {
@@ -51,13 +51,25 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
           moduleErrors.push(`${moduleRef.spec}: ${String(error?.message || error)}`);
         }
       }
-      if (moduleErrors.length) console.warn("[plugin] 内置插件的客户端模块加载失败：", moduleErrors);
+      if (moduleErrors.length) console.warn(`[plugin] 内置插件的客户端模块加载失败（${moduleErrors.length} 个）：${moduleErrors.slice(0, 3).join(" ｜ ")}`);
       const primary = info.entries?.find((item: any) => item.primary) || info.entries?.[0];
       if (!primary) {
         results.push({ id: entry.id, ok: false, slots: [], error: "没有客户端入口" });
         continue;
       }
-      const record = await loadBundleScript(primary.url);
+      // 它可能已经作为别人的依赖模块加载过了：这时按包名复用，而不是当成失败
+      let record = loadedBundle(info.name);
+      if (!record) {
+        try {
+          record = await loadBundleScript(primary.url);
+        } catch (error: any) {
+          record = loadedBundle(info.name);
+          if (!record) {
+            results.push({ id: entry.id, ok: false, slots: [], error: String(error?.message || error) });
+            continue;
+          }
+        }
+      }
       if (record.error) {
         results.push({ id: entry.id, ok: false, slots: [], error: record.error });
         continue;
@@ -67,6 +79,10 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
     } catch (error: any) {
       results.push({ id: entry.id, ok: false, slots: [], error: String(error?.message || error) });
     }
+  }
+  // 内置插件不多，结果留一行日志：出问题时这是唯一的线索
+  if (results.length) {
+    console.log("[plugin] 内置插件客户端半边：", results.map((r) => `${r.id} ${r.ok ? "✓" : `✗ ${r.error}`} 插槽[${r.slots.join(",")}]`).join("；"));
   }
   return results;
 }

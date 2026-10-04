@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { CATALOG_CATEGORIES, CATALOG_SNAPSHOT_DATE, filterCatalog, isInstalled } from "./pluginCatalog";
-import { loadBundleScript } from "./pluginRuntime/index.ts";
+import { loadBundleScript, loadedBundle } from "./pluginRuntime/index.ts";
 import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
 import { requestPluginPanels } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
@@ -82,7 +82,19 @@ export function PluginsPage() {
           moduleNotes.push(`${moduleRef.spec}（${String(error?.message || error).slice(0, 40)}）`);
         }
       }
-      const record = await loadBundleScript(primary.url);
+      // 可能已作为依赖模块加载过：按包名复用（同一个 bundle 加载两次应当幂等）
+      let record = loadedBundle(bundle?.name || entry.name || entry.id);
+      if (!record) {
+        try {
+          record = await loadBundleScript(primary.url);
+        } catch (error: any) {
+          record = loadedBundle(bundle?.name || entry.name || entry.id);
+          if (!record) {
+            setClientRuns((current) => ({ ...current, [key]: { state: "error", text: String(error?.message || error) } }));
+            return;
+          }
+        }
+      }
       if (record.error) {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `bundle 执行失败：${record.error}` } }));
         return;

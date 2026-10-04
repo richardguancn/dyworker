@@ -269,10 +269,25 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "dyworker-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
+/**
+ * 自动化/排查用的安全存储替身：设了 DYWORKER_SKIP_SAFE_STORAGE=1 就不碰系统钥匙串。
+ *
+ * 为什么需要：用临时 userData 启动做验证时，macOS 会弹「允许访问钥匙串」并要求输入登录密码——
+ * 本机调试不该反复打扰用户。替身明确报告"加密不可用"，宿主会走它本来就有的明文回退路径
+ * （见下方权限收紧逻辑），因此只影响密钥的存储形式，不影响任何业务逻辑。
+ */
+const safeStorageForHost = process.env.DYWORKER_SKIP_SAFE_STORAGE
+  ? {
+      isEncryptionAvailable: () => false,
+      encryptString: (value: string) => Buffer.from(String(value), "utf8"),
+      decryptString: (buffer: Buffer) => Buffer.from(buffer).toString("utf8"),
+    }
+  : safeStorage;
+
 const ctx = await createHost({
   userDataDir: app.getPath("userData"),
   homeDir: app.getPath("home"),
-  safeStorage,
+  safeStorage: safeStorageForHost,
   // 插件宿主：启动时读 userData/plugins/dyworker.yml 装载插件
   //（官方 cordis loader 负责生命周期；清单与解析见 host/plugin-host.mts）
   mountPlugins: true,
@@ -2323,7 +2338,7 @@ const shellDeps = {
   isSafeBrowserUrl,
   session,
   browserPasswordStorePath,
-  safeStorage,
+  safeStorage: safeStorageForHost,
   browserControlManager,
   getEmbeddedBrowserContents: (id) => embeddedBrowserContentsById.get(id),
   // 桌面会话任务入口的壳层状态与执行函数（运行期 Map/队列 + 任务执行）
@@ -3697,7 +3712,7 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
     releaseChannel: app.isPackaged ? "stable" : "dev",
-    secretStorage: safeStorage,
+    secretStorage: safeStorageForHost,
     onRegistered: () => {
       // 设备登记完成后立即补拉消息并建立实时订阅
       ctx.remoteMessages?.noteOnline();
