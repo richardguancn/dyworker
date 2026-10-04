@@ -78,6 +78,9 @@ test("轨迹模型：压缩与会话结束成为标记，计划阶段进展不�
   const model = buildTraceModel(events);
   const kinds = model.markers.map((marker) => marker.kind);
   assert.deepEqual(kinds, ["compaction", "plan-update", "session-end"]);
+  // 标记按轮次分组：轮次存在则内嵌，否则算会话级
+  assert.equal(model.markersByTurn.get(1).length, 3, "三个标记都属于第 1 轮");
+  assert.equal(model.sessionMarkers.length, 0);
   assert.equal(model.markers[0].title, "上下文已压缩");
 });
 
@@ -121,4 +124,6 @@ test("轨迹：时长与 token 的展示格式", () => {
   assert.equal(formatTokens(950), "950");
   assert.equal(formatTokens(9500), "9.5k");
   assert.equal(formatTokens(54282), "54k");
+  assert.equal(formatTokens(95_428_000), "95M", "百万级用 M");
+  assert.equal(formatTokens(2_500_000), "2.5M");
 });

@@ -94,6 +94,9 @@ export interface TraceMetrics {
 export interface TraceModel {
   turns: TraceTurn[];
   markers: TraceMarker[];
+  /** 按轮次归好的标记：轮内标记内嵌到对应轮次，turn<=0 的归到会话级 */
+  markersByTurn: Map<number, TraceMarker[]>;
+  sessionMarkers: TraceMarker[];
   metrics: TraceMetrics;
   /** 没有归属轮次的零散事件（例如任务开始前的活动） */
   loose: TraceEvent[];
@@ -381,9 +384,26 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
     if (!turn.prompt && sessionUserMessages[index]) turn.prompt = sessionUserMessages[index];
   });
 
+  const sortedMarkers = markers.sort((a, b) => a.seq - b.seq);
+  const markersByTurn = new Map<number, TraceMarker[]>();
+  const sessionMarkers: TraceMarker[] = [];
+  const turnNumbers = new Set(orderedTurns.map((turn) => turn.turn));
+  for (const marker of sortedMarkers) {
+    // 轮内标记内嵌到该轮；会话级（turn<=0 或轮次不存在）单独收集
+    if (marker.turn > 0 && turnNumbers.has(marker.turn)) {
+      const list = markersByTurn.get(marker.turn) || [];
+      list.push(marker);
+      markersByTurn.set(marker.turn, list);
+    } else {
+      sessionMarkers.push(marker);
+    }
+  }
+
   return {
     turns: orderedTurns,
-    markers: markers.sort((a, b) => a.seq - b.seq),
+    markers: sortedMarkers,
+    markersByTurn,
+    sessionMarkers,
     loose,
     metrics: {
       spanMs: Number.isFinite(firstTime) && Number.isFinite(lastTime) ? (lastTime as number) - (firstTime as number) : 0,
@@ -432,9 +452,10 @@ export function formatDuration(ms: number | null): string {
   return `${minutes}m${rest.toString().padStart(2, "0")}s`;
 }
 
-/** token 数紧凑显示 */
+/** token 数紧凑显示（K/M 两档：累计输入常见到百万级，"95428k" 这种读不出来） */
 export function formatTokens(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   if (value < 1000) return String(Math.round(value));
-  return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}k`;
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
 }

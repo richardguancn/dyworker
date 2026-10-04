@@ -16705,7 +16705,7 @@ html[data-theme="dark"] {
 .trv-trace-marker.plan-update .trv-trace-marker-dot { background: #389e0d; }
 .trv-trace-marker-title { color: var(--quiet); }
 .trv-trace-inspector {
-  flex: 0 0 380px; min-width: 0; display: flex; flex-direction: column;
+  flex: 0 0 420px; min-width: 0; display: flex; flex-direction: column;
   border-left: 1px solid var(--border); background: var(--surface);
 }
 .trv-trace-inspector header {
@@ -16713,6 +16713,7 @@ html[data-theme="dark"] {
   gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border);
 }
 .trv-trace-inspector-tabs { display: flex; gap: 6px; padding: 8px 10px 0; }
+.trv-trace-inspector-actions { display: flex; gap: 6px; }
 .trv-trace-inspector-body {
   flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 10px;
   white-space: pre-wrap; word-break: break-word;

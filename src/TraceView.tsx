@@ -177,7 +177,24 @@ function Inspector({ model, selection, onClose }: { model: any; selection: Selec
       "header",
       null,
       h("strong", null, title),
-      h("button", { type: "button", className: "plugins-text-button", onClick: onClose }, "关闭"),
+      h(
+        "span",
+        { className: "trv-trace-inspector-actions" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "plugins-text-button",
+            title: "复制当前页签内容",
+            onClick: () => {
+              const body = tab === "preview" ? preview : tab === "summary" ? summary : raw;
+              void navigator.clipboard?.writeText(body || "");
+            },
+          },
+          "复制",
+        ),
+        h("button", { type: "button", className: "plugins-text-button", onClick: onClose }, "关闭"),
+      ),
     ),
     h(
       "div",
@@ -244,6 +261,11 @@ export function TraceView({
       h(Metric, { label: "输入", value: formatTokens(metrics.promptTokens), hint: "累计输入 token" }),
       h(Metric, { label: "模型", value: metrics.models.length ? metrics.models.join(" / ") : "—" }),
       h(Metric, { label: "工具", value: String(metrics.tools.length), hint: metrics.tools.slice(0, 12).join("、") }),
+      h(Metric, {
+        label: "标记",
+        value: String(model.markers.length),
+        hint: `压缩 ${model.markers.filter((m) => m.kind === "compaction").length} · 结束 ${model.markers.filter((m) => m.kind === "session-end").length} · 计划 ${model.markers.filter((m) => m.kind === "plan-update").length}`,
+      }),
       h(
         "label",
         { className: "trv-trace-view-search" },
@@ -291,13 +313,17 @@ export function TraceView({
                       h(StepBlock, { key: request.seq, request, selection, onSelect: setSelection, query }),
                     ),
                   ),
+                  // 轮内标记（压缩/计划/文件变更/结束）跟着这一轮走，不再全堆在列表末尾
+                  (model.markersByTurn.get(turn.turn) || []).map((marker) =>
+                    h(Marker, { key: `m-${marker.kind}-${marker.seq}`, marker }),
+                  ),
                 ),
               ),
-        model.markers.length
+        model.sessionMarkers.length
           ? h(
               "div",
               { className: "trv-trace-markers" },
-              model.markers.map((marker) => h(Marker, { key: `${marker.kind}-${marker.seq}`, marker })),
+              model.sessionMarkers.map((marker) => h(Marker, { key: `s-${marker.kind}-${marker.seq}`, marker })),
             )
           : null,
       ),
