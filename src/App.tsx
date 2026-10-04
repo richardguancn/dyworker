@@ -11940,28 +11940,9 @@ export function App() {
 
         {conversationView !== "chat" && (
           <section className="conversation-view-panel">
-            {conversationView === "trace" ? (
-              <TraceConsole
-                traces={activeSessionTraceEvents}
-                logs={debugLogs}
-                sessionId={activeSession?.id}
-                onClear={() => {
-                  traceEventsRef.current = [];
-                  setTraceEvents([]);
-                  runTraceEventsRef.current.clear();
-                  pendingDebugLogsRef.current = [];
-                  if (debugLogFlushTimerRef.current !== null) {
-                    window.clearTimeout(debugLogFlushTimerRef.current);
-                    debugLogFlushTimerRef.current = null;
-                  }
-                  setDebugLogs([]);
-                }}
-                onClose={() => setConversationView("chat")}
-                onAppendTraces={appendSessionTraces}
-              />
-            ) : (
-              <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
-            )}
+            {/* 会话区视图全部由插件贡献（DSH 的 conversation.view 插槽）。
+                自研的轨迹控制台已由内置的 DSH 轨迹插件取代，这里不再维护第二套。 */}
+            <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
           </section>
         )}
 

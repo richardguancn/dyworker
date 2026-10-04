@@ -278,6 +278,8 @@ export function PluginsPage() {
                   {bundle && !bundle.declared ? <span className="plugin-tag">单条目</span> : null}
                   {entry.disabled ? <span className="plugin-tag">已停用</span> : null}
                   {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
+                  {/* 内置插件：随应用分发、开机自动加载，用户可停用但不能卸载 */}
+                  {entry.builtin ? <span className="plugin-tag">内置</span> : null}
                 </div>
                 {description ? <p className="plugin-card-desc">{description}</p> : <p className="plugin-card-desc muted">{entry.name}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
@@ -309,9 +311,13 @@ export function PluginsPage() {
                   <button className="plugins-text-button" onClick={() => setEditing(editing?.id === entry.id ? null : { id: entry.id, text: JSON.stringify(entry.config ?? {}, null, 2) })}>
                     配置
                   </button>
-                  <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", () => bridge!.uninstallPlugin(bundle?.name || entry.id))}>
-                    <Trash2 size={13} /> 卸载
-                  </button>
+                  {entry.builtin ? (
+                    <span className="plugins-hint">内置插件随应用分发，可停用但不能卸载</span>
+                  ) : (
+                    <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", () => bridge!.uninstallPlugin(bundle?.name || entry.id))}>
+                      <Trash2 size={13} /> 卸载
+                    </button>
+                  )}
                 </div>
                 {editing?.id === entry.id && (
                   <div className="plugin-config-editor">
