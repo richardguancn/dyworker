@@ -778,7 +778,6 @@ test("会话读取是同步语义：DSH 插件按同步方式用 sessions.get(id
 test("内置插件：目录扫描、默认启用、并在条目上打内置标记", async (t) => {
   const { createHost, disposeHost } = await import("../electron/host/context.mts");
   const { dshClientModuleNames } = await import("../electron/host/plugin-install.mts");
-  const builtinRoot = path.resolve(import.meta.dirname, "..", "builtin-plugins");
 
   // dsh.client.inject 声明的是客户端模块，也要纳入运行时依赖（排除 cordis：必须共用宿主同一份）
   assert.deepEqual(dshClientModuleNames({
@@ -786,7 +785,19 @@ test("内置插件：目录扫描、默认启用、并在条目上打内置标�
   }), ["@deepseek-ai/dsh-api-gateway/client"]);
   assert.deepEqual(dshClientModuleNames({}), []);
 
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-builtin-"));
+  // 用**夹具**内置插件验证机制本身（不再依赖任何具体插件：原先内置的 DSH 轨迹插件已移除）
+  const builtinRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-builtin-"));
+  const builtinPkg = path.join(builtinRoot, "@acme", "builtin-demo");
+  await fs.mkdir(path.join(builtinPkg, "lib"), { recursive: true });
+  await fs.writeFile(path.join(builtinPkg, "package.json"), JSON.stringify({
+    name: "@acme/builtin-demo", version: "1.0.0", main: "lib/index.js",
+    exports: { ".": { default: "./lib/index.js" }, "./client": "./lib/client.js" },
+    dsh: { client: { platform: "web", inject: [] } },
+  }), "utf8");
+  await fs.writeFile(path.join(builtinPkg, "lib", "index.js"), "export function apply() {}\n", "utf8");
+  await fs.writeFile(path.join(builtinPkg, "lib", "client.js"), "window.__ModuleLoader__.load({ id: '@acme/builtin-demo', factory: () => ({}) });\n", "utf8");
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-builtin-profile-"));
   const ctx = await createHost({
     userDataDir: dir,
     mountPlugins: true,
@@ -795,23 +806,23 @@ test("内置插件：目录扫描、默认启用、并在条目上打内置标�
   });
   try {
     const builtins = ctx.plugins.builtinPlugins();
-    assert.ok(builtins.some((entry) => entry.name === "@deepseek-ai/dsh-client-ui-trajectory"),
-      `应发现内置的轨迹插件，实际：${JSON.stringify(builtins.map((e) => e.name))}`);
+    assert.ok(builtins.some((entry) => entry.name === "@acme/builtin-demo"),
+      `应发现内置插件，实际：${JSON.stringify(builtins.map((e) => e.name))}`);
 
-    // 清单里没有它，也要补一行且默认启用（不写 disabled）
-    const entry = ctx.plugins.entries().find((item) => item.name === "@deepseek-ai/dsh-client-ui-trajectory");
+    const entry = ctx.plugins.entries().find((item) => item.name === "@acme/builtin-demo");
     assert.ok(entry, "内置插件应出现在条目里");
     assert.equal(entry.builtin, true, "要打上内置标记（界面据此显示「内置」）");
     assert.equal(entry.disabled, false, "内置插件默认启用");
     assert.equal(entry.active, true, `内置插件应已激活：${entry.error || ""}`);
 
     // 客户端半边从内置目录解析（它不在 npm 管理的插件目录里）
-    const info = await ctx.plugins.clientBundles("@deepseek-ai/dsh-client-ui-trajectory");
+    const info = await ctx.plugins.clientBundles("@acme/builtin-demo");
     assert.equal(info.ok, true, info.error);
     assert.equal(info.entries?.[0]?.relative, "lib/client.js");
   } finally {
     await disposeHost(ctx);
     await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(builtinRoot, { recursive: true, force: true });
   }
 });
 

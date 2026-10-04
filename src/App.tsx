@@ -11921,6 +11921,8 @@ export function App() {
             className={`conversation-tab ${conversationView === "chat" ? "active" : ""}`}
             onClick={() => setConversationView("chat")}
           >对话</button>
+          {/* 轨迹：原生实现（数据来自我们自己的 TraceEvent 流）。
+              以前这里是 DSH 官方轨迹插件贡献的标签，已移除——不依赖那套会话视图壳层。 */}
           <button
             role="tab"
             aria-selected={conversationView === "trace"}
@@ -11940,9 +11942,29 @@ export function App() {
 
         {conversationView !== "chat" && (
           <section className="conversation-view-panel">
-            {/* 会话区视图全部由插件贡献（DSH 的 conversation.view 插槽）。
-                自研的轨迹控制台已由内置的 DSH 轨迹插件取代，这里不再维护第二套。 */}
-            <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
+            {conversationView === "trace" ? (
+              <TraceConsole
+                traces={activeSessionTraceEvents}
+                logs={debugLogs}
+                sessionId={activeSession?.id}
+                onClear={() => {
+                  traceEventsRef.current = [];
+                  setTraceEvents([]);
+                  runTraceEventsRef.current.clear();
+                  pendingDebugLogsRef.current = [];
+                  if (debugLogFlushTimerRef.current !== null) {
+                    window.clearTimeout(debugLogFlushTimerRef.current);
+                    debugLogFlushTimerRef.current = null;
+                  }
+                  setDebugLogs([]);
+                }}
+                onClose={() => setConversationView("chat")}
+                onAppendTraces={appendSessionTraces}
+              />
+            ) : (
+              /* 插件贡献的会话区视图（DSH 的 conversation.view 插槽）仍然接在这里 */
+              <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
+            )}
           </section>
         )}
 
