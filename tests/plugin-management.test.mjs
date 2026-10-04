@@ -607,3 +607,53 @@ test("客户端半边：宿主能解析入口并给出协议 URL，路径不会�
   assert.equal(none.ok, false);
   assert.match(none.error, /没有声明客户端半边/);
 });
+
+test("DSH 插件 peer 运行时依赖：只挑 @deepseek-ai/*（排除 cordis），取最新发布版", async () => {
+  const { dshPeerNames, newestVersion, linkHostCordis } = await import("../electron/host/plugin-install.mts");
+
+  // 只挑 DSH 运行时包；cordis 必须用宿主同一份，不能装成独立副本
+  assert.deepEqual(dshPeerNames({
+    peerDependencies: {
+      "@deepseek-ai/dsh-session": ">=0.1.5-rc.1",
+      "@deepseek-ai/cordis": "^4.0.2",
+      react: "^18.3.1",
+      "@deepseek-ai/dsh-settings": ">=0.1.5-rc.1",
+    },
+  }), ["@deepseek-ai/dsh-session", "@deepseek-ai/dsh-settings"]);
+  assert.deepEqual(dshPeerNames({}), []);
+
+  // 最新发布版含 prerelease：这些包的 latest dist-tag 长期停在旧的 0.0.1-rc.1，
+  // 直接 npm install 会装到过旧版本，所以要从 versions 列表取最后一个
+  const calls = [];
+  const version = await newestVersion("@deepseek-ai/dsh-session", {
+    npmPath: "/fake/npm",
+    run: async (command, args) => {
+      calls.push(args);
+      return { code: 0, stdout: JSON.stringify(["0.0.1-rc.1", "0.1.7-rc.2", "0.2.1-alpha.1"]), stderr: "" };
+    },
+  });
+  assert.equal(version, "0.2.1-alpha.1");
+  assert.ok(calls[0].includes("versions"), "要列全部版本而不是拿 latest 标签");
+  assert.ok(calls[0].includes("--json"));
+
+  // 拿不到版本时返回 null（调用方回落到"不指定版本"），不抛错
+  const none = await newestVersion("@deepseek-ai/nope", {
+    npmPath: "/fake/npm",
+    run: async () => ({ code: 1, stdout: "", stderr: "ERR" }),
+  });
+  assert.equal(none, null);
+
+  // cordis 软链：指向宿主同一份
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-link-"));
+  try {
+    const hostDir = path.join(dir, "host-cordis");
+    await fs.mkdir(hostDir, { recursive: true });
+    const profileDir = path.join(dir, "profile");
+    await fs.mkdir(profileDir, { recursive: true });
+    await linkHostCordis(profileDir, hostDir);
+    const link = path.join(profileDir, "node_modules", "@deepseek-ai", "cordis");
+    assert.equal(await fs.realpath(link), await fs.realpath(hostDir), "插件要解析到宿主同一份 cordis");
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

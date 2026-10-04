@@ -20,7 +20,7 @@
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
 import { orderClientModules, readStaticRequires, resolveClientEntries, splitModuleSpec } from "./plugin-client.mts";
-import { detectInstalledPackageName, installPackageIntoProfile, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
+import { detectInstalledPackageName, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import fs from "node:fs/promises";
@@ -374,6 +374,8 @@ export class PluginHostService extends Service {
     }
 
     const installed = await this.install({ spec: packageName, allowIncompatible });
+    // 装上了才补运行时 peer 依赖（git/本地来源装完的包名已在上一步解析出来）
+    if (installed.ok) await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
     if (installed.ok) {
       // 记录来源（界面要显示"从 GitHub / 本地目录装的"）与钉住的版本
       const index = this.bundles.findIndex((bundle) => bundle.name === packageName);
@@ -436,6 +438,36 @@ export class PluginHostService extends Service {
     } catch (error: any) {
       return { ok: false, id: String(target || ""), error: String(error?.message || error) };
     }
+  }
+
+  /**
+   * 补齐 DSH 插件的 peer 运行时依赖，并让插件共享宿主同一份 cordis。
+   * 不补的话插件主机半边根本 import 不进来（缺 dsh-session 等），也就永远不会 apply。
+   */
+  async ensureRuntimePeers(packageName, npmPath = null) {
+    const installed = [];
+    try {
+      const dir = resolvePackageDir(this.profileManifest(), packageName);
+      const manifest = await readPackageManifest(dir);
+      for (const peer of dshPeerNames(manifest)) {
+        // 已经能解析就不重复装
+        if (this.resolveClientModule(peer)) continue;
+        const version = await newestVersion(peer, { npmPath });
+        const result = await installPackageIntoProfile({
+          dir: this.dir,
+          input: peer,
+          version: version || undefined,
+          source: "default",
+          ignoreScripts: true,
+          npmPath,
+        });
+        if (result.ok) installed.push(`${peer}@${version || "latest"}`);
+      }
+      await linkHostCordis(this.dir, hostCordisDir());
+    } catch {
+      // 补依赖失败不该让安装整体失败：如实返回已补上的部分
+    }
+    return installed;
   }
 
   /**

@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 
 /**
@@ -422,5 +423,62 @@ export async function readProfileDependencies(dir) {
     return manifest.dependencies || {};
   } catch {
     return {};
+  }
+}
+
+
+/**
+ * DSH 插件的 peer 运行时依赖。
+ *
+ * 为什么必须装：DSH 插件（如 dsh-context）把 @deepseek-ai/dsh-session / dsh-settings 等
+ * 声明为 **peerDependencies**，它们提供插件主机半边真正依赖的领域能力（会话日志、设置作用域…）。
+ * 不装的话插件主入口 import 就失败——实测报 "does not provide an export named 'SessionLogOffset'"、
+ * "Cannot find package '@deepseek-ai/dsh-scope'" 之类，插件永远不会 apply。
+ *
+ * 两条硬约束：
+ *   1. 取**最新发布版**（含 prerelease）：这些包的 latest dist-tag 长期停在旧的 0.0.1-rc.1，
+ *      直接 npm install 会装到过旧版本，所以用 versions 列表取最后一个。
+ *   2. `@deepseek-ai/cordis` 绝不能装成独立副本：插件的 Context/Service 必须与宿主同一个模块实例，
+ *      否则 cordis 认不出对方的服务。这里用软链指向宿主自己那份。
+ */
+export function dshPeerNames(manifest: any): string[] {
+  const peers = manifest?.peerDependencies || {};
+  return Object.keys(peers).filter((name) => name.startsWith("@deepseek-ai/") && name !== "@deepseek-ai/cordis");
+}
+
+/** 取一个包的最新发布版本（含 prerelease）；取不到返回 null */
+export async function newestVersion(pkg: string, { run = spawnRunner, npmPath }: any = {}): Promise<string | null> {
+  const resolved = await resolveNpmPath({ explicit: npmPath });
+  if (!resolved) return null;
+  try {
+    const result = await run(resolved, ["view", pkg, "versions", "--json"], { timeoutMs: 60_000 });
+    if (result.code !== 0) return null;
+    const parsed = JSON.parse(result.stdout);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.length ? String(list[list.length - 1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 宿主自己那份 cordis 的目录（插件必须解析到同一份，否则 Service/Context 不共享） */
+export function hostCordisDir(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    return path.dirname(require.resolve("@deepseek-ai/cordis/package.json"));
+  } catch {
+    return "";
+  }
+}
+
+/** 让插件能解析到宿主同一份 cordis（软链；已存在则覆盖） */
+export async function linkHostCordis(dir: string, hostCordisDir: string): Promise<void> {
+  const target = path.join(dir, "node_modules", "@deepseek-ai", "cordis");
+  try {
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.rm(target, { recursive: true, force: true });
+    await fs.symlink(hostCordisDir, target, "dir");
+  } catch {
+    // 软链失败（权限/平台）不算致命：插件仍可尝试从自身依赖解析
   }
 }
