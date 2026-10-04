@@ -456,7 +456,7 @@ export class PluginHostService extends Service {
     if (!rawInput) throw new Error("installPackage 需要插件包名 / GitHub 地址 / 本地路径");
 
     const before = await readProfileDependencies(this.dir);
-    const downloaded = await installPackageIntoProfile({
+    const installArgs = {
       dir: this.dir,
       input: rawInput,
       version,
@@ -465,7 +465,21 @@ export class PluginHostService extends Service {
       npmPath: npmPath || process.env.DYWORKER_NPM || null,
       ignoreScripts,
       run,
-    });
+    };
+    let downloaded: any = await installPackageIntoProfile(installArgs);
+    // DSH 生态自己发布的包之间 peer 版本线互斥（-rc / -alpha 混用），
+    // 直接装必然 ERESOLVE 失败——实测用户装 dsh-context 就卡在这里。
+    // 先按常规装一次，失败且是 peer 冲突时再用 --legacy-peer-deps 重试（并如实标注）。
+    let legacyPeerDeps = false;
+    if (!downloaded.ok && /ERESOLVE|peer dep|Conflicting peer/i.test(String(downloaded.error || ""))) {
+      const retry: any = await installPackageIntoProfile({ ...installArgs, legacyPeerDeps: true });
+      if (retry.ok) {
+        legacyPeerDeps = true;
+        downloaded = { ...retry, note: "peer 依赖版本线冲突，已用 --legacy-peer-deps 重试成功" };
+      } else {
+        downloaded = retry;
+      }
+    }
     if (!downloaded.ok) return { ok: false, stage: "download", name: rawInput, ...downloaded };
 
     // git / 本地来源装完后要回到"按包名上树"的流程：从 profile 依赖 diff 里找出装进来的包名
@@ -480,9 +494,32 @@ export class PluginHostService extends Service {
       packageName = await detectInstalledPackageName(this.dir, before, { parsed: parsedInput, rawInput }) || rawInput;
     }
 
-    const installed = await this.install({ spec: packageName, allowIncompatible });
-    // 装上了才补运行时 peer 依赖（git/本地来源装完的包名已在上一步解析出来）
-    if (installed.ok) await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
+    // **先补运行时依赖（含 cordis 软链），再激活**。
+    // 顺序反了会死锁：激活需要 cordis，而补依赖挂在 "激活成功" 之后——激活失败就永远不补。
+    // 实测用户装 dsh-context 就是这样：npm 把 cordis 软链抹掉 → 激活报 Cannot find package
+    // → 补依赖不执行 → UI 上只说"安装失败"且没有原因。
+    await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
+    let installed: any = await this.install({ spec: packageName, allowIncompatible });
+    // 自愈：profile 里可能是**旧的/残缺的**依赖树（早前失败的安装留下的老版本，
+    // 传递依赖缺失）。ensureRuntimePeers 见它能解析就跳过，于是残缺版本一直留着，
+    // 激活报 "Cannot find package X"。这里按报错缺什么补什么，再重试激活（最多 3 轮）。
+    for (let attempt = 0; attempt < 3 && !installed.ok; attempt += 1) {
+      const missing = /Cannot find package '([^']+)'/.exec(String(installed.error || ""))?.[1];
+      if (!missing || missing.startsWith("/") || missing.startsWith(".")) break;
+      const repaired: any = await installPackageIntoProfile({
+        dir: this.dir,
+        input: missing,
+        source,
+        customRegistry,
+        npmPath: npmPath || process.env.DYWORKER_NPM || null,
+        ignoreScripts,
+        legacyPeerDeps: true,
+        run,
+      });
+      if (!repaired.ok) break;
+      await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
+      installed = await this.install({ spec: packageName, allowIncompatible });
+    }
     if (installed.ok) {
       // 记录来源（界面要显示"从 GitHub / 本地目录装的"）与钉住的版本
       const index = this.bundles.findIndex((bundle) => bundle.name === packageName);
@@ -495,7 +532,16 @@ export class PluginHostService extends Service {
         await this.persistBundles();
       }
     }
-    return { ok: installed.ok, stage: installed.ok ? "done" : "activate", name: packageName, downloaded, ...installed };
+    return {
+      ok: installed.ok,
+      stage: installed.ok ? "done" : "activate",
+      name: packageName,
+      downloaded,
+      ...(legacyPeerDeps ? { legacyPeerDeps: true } : {}),
+      ...installed,
+      // 激活失败要把原因带出去：否则界面上只有"安装失败"四个字，用户与排查都无从下手
+      ...(installed.ok ? {} : { error: String((installed as any).error || "插件激活失败") }),
+    };
   }
 
   /** 解析条目对应的插件包与客户端入口 */

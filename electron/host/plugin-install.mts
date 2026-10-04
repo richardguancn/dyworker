@@ -9,6 +9,7 @@
 // 可测性：包管理器调用以 `run` 注入（默认 spawn），测试可断言传了什么参数、
 // 也可模拟失败，而不必真的联网。
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -480,7 +481,20 @@ export async function newestVersion(pkg: string, { run = spawnRunner, npmPath }:
 export function hostCordisDir(): string {
   try {
     const require = createRequire(import.meta.url);
-    return path.dirname(require.resolve("@deepseek-ai/cordis/package.json"));
+    const resolved = path.dirname(require.resolve("@deepseek-ai/cordis/package.json"));
+    // 打包后这个路径会落在 app.asar 里。asar 只对 Electron 打过补丁的 fs 透明，
+    // **Node 的 ESM 加载器读不了** —— 插件 import 时就是 "Cannot find package"。
+    // 因此打包时把 cordis 解包（asarUnpack），这里把 asar 路径映射到 app.asar.unpacked。
+    const marker = `${path.sep}app.asar${path.sep}`;
+    if (resolved.includes(marker)) {
+      const unpacked = resolved.replace(marker, `${path.sep}app.asar.unpacked${path.sep}`);
+      try {
+        if (existsSync(path.join(unpacked, "package.json"))) return unpacked;
+      } catch {
+        // 没解包成功就退回原路径，至少不改变非打包环境的行为
+      }
+    }
+    return resolved;
   } catch {
     return "";
   }

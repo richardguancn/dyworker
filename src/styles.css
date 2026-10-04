@@ -16508,11 +16508,15 @@ html[data-theme="dark"] {
   --dsw-alias-scrollbar-bg-l2: var(--border);
   --dsw-alias-scrollbar-hover-l2: var(--border-strong);
   /* 字体与阴影 */
+  /* 字体令牌必须是**完整的 font 简写**：插件写的是 font: var(--dsw-font-xxs-12)，
+     只给一个尺寸会把字体族一起重置掉。尺寸里带上外观的字号缩放，
+     这样插件的字体会跟着「外观」里的字号设置走（`--font-content-scale` 是我们正文用的那个）。 */
   --dsw-font-family: var(--font-ui, "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-  --dsw-font-xs-13: 13px;
-  --dsw-font-xs-strong-13: 600 13px;
-  --dsw-font-xxs-12: 12px;
-  --dsw-font-xxxs-11: 11px;
+  --dsw-font-scale: var(--font-content-scale, 1);
+  --dsw-font-xs-13: calc(13px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xs-strong-13: 600 calc(13px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xxs-12: calc(12px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xxxs-11: calc(11px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
   --dsw-shadow-lv2: var(--shadow-md);
 }
 
