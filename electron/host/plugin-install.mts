@@ -253,6 +253,8 @@ export async function installPackageIntoProfile({
   customRegistry,
   npmPath,
   ignoreScripts = true,
+  /** DSH 自己发布的包之间 peer 版本线互相冲突（-rc/-alpha 混用），补运行时依赖时要放宽 */
+  legacyPeerDeps = false,
   run = spawnRunner,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   loginPath: injectedLoginPath,
@@ -301,6 +303,7 @@ export async function installPackageIntoProfile({
   const childEnv = { ...process.env, PATH: childDirs.join(path.delimiter) };
 
   const baseArgs = ["install", "--prefix", dir, "--save-exact", "--no-audit", "--no-fund"];
+  if (legacyPeerDeps) baseArgs.push("--legacy-peer-deps");
   // 注册表来源的包是构建好的产物，默认不跑安装脚本；
   // git / 本地来源往往需要 prepare 现场构建（TS 源码仓库的 lib/ 不在仓库里），
   // 因此这类来源默认允许脚本，并在界面上明确告知。
@@ -444,6 +447,18 @@ export async function readProfileDependencies(dir) {
 export function dshPeerNames(manifest: any): string[] {
   const peers = manifest?.peerDependencies || {};
   return Object.keys(peers).filter((name) => name.startsWith("@deepseek-ai/") && name !== "@deepseek-ai/cordis");
+}
+
+/**
+ * 插件声明的**客户端模块**（package.json 的 dsh.client.inject）。
+ * 它们不是 peerDependencies，但同样是运行时必需：DSH 的客户端半边按包名加载它们
+ * （实测 dsh-client-ui-trajectory 声明了 5 个，缺一个它的视图就注册不出来）。
+ * 与 peer 依赖一样排除 cordis（必须共用宿主同一份）。
+ */
+export function dshClientModuleNames(manifest: any): string[] {
+  const client = manifest?.dsh?.client || manifest?.dyworker?.client || {};
+  const declared = Array.isArray(client.inject) ? client.inject : [];
+  return declared.map(String).filter((name) => name.startsWith("@deepseek-ai/") && name !== "@deepseek-ai/cordis");
 }
 
 /** 取一个包的最新发布版本（含 prerelease）；取不到返回 null */

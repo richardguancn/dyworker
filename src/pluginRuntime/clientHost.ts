@@ -68,6 +68,11 @@ export interface ClientHostOptions {
   /** 诊断：插件调用了未实现的服务方法 */
   onMissingCall?: (service: string, method: string) => void;
   /**
+   * 会话数据提供者（壳层注入）：插件用 ctx.sessions.binding(id) 拿当前会话。
+   * 我们不在客户端存会话，直接由壳层把活动会话给它——这是真实数据，不是占位。
+   */
+  sessionProvider?: (sessionId: string) => unknown;
+  /**
    * 插件要求打开右侧面板标签时回调（kind 即插槽贡献里的 key）。
    * 壳层据此在**已有的工具面板**里开标签——这正是 sidebarRight.openTab 的语义。
    */
@@ -85,6 +90,8 @@ export class ClientPluginHost {
   private readonly records: PluginLoadRecord[] = [];
   private sequence = 0;
   private readonly fibers: any[] = [];
+  /** conversationEvents / conversationViews 的登记内容（按类别存放） */
+  private readonly conversationParts = new Map<string, unknown[]>();
 
   constructor(options: ClientHostOptions = {}) {
     this.localeCode = options.locale || "zh";
@@ -116,11 +123,28 @@ export class ClientPluginHost {
 
     // 会话 / 连接 / 工作区：先把 inject 满足（否则插件根本不会 apply），
     // 方法按需补——插件用到未实现的方法会记进 missingCalls，而不是静默失效
+    // 对话事件 / 对话视图注册表：DSH 的客户端插件用它们登记自己的定义
+    // （实测 dsh-client-ui-trajectory 全部通过这两个注册表 + slots 登记界面）
+    this.ctx.provide("conversationEvents", {
+      register: (definition: unknown) => this.registerConversationPart("events", definition),
+      list: () => [...(this.conversationParts.get("events") || [])],
+    });
+    this.ctx.provide("conversationViews", {
+      register: (definition: unknown) => this.registerConversationPart("views", definition),
+      list: () => [...(this.conversationParts.get("views") || [])],
+    });
+
+    this.sessionProvider = options.sessionProvider;
     this.ctx.provide("sessions", this.stubService("sessions", {
       scope: () => this.stubService("sessions.scope", {}),
       refresh: () => undefined,
       list: () => [],
       current: () => null,
+      // 插件按 binding(id).session 取会话；没有就返回 undefined（插件会如实抛出"会话不可用"）
+      binding: (sessionId: string) => {
+        const session = this.sessionProvider?.(String(sessionId || ""));
+        return session ? { session } : undefined;
+      },
     }));
     this.ctx.provide("connection", this.stubService("connection", {
       scope: () => this.stubService("connection.scope", {}),
@@ -149,6 +173,13 @@ export class ClientPluginHost {
     }));
   }
 
+  /** 壳层更新会话数据来源（活动会话变化时调用） */
+  setSessionProvider(provider: ((sessionId: string) => unknown) | undefined) {
+    this.sessionProvider = provider;
+  }
+
+  private sessionProvider?: (sessionId: string) => unknown;
+
   /** 未实现的服务：已知方法按 stub 走，未知方法记名后返回 undefined（不抛错） */
   private stubService(name: string, methods: Record<string, unknown>) {
     return new Proxy(methods, {
@@ -168,6 +199,24 @@ export class ClientPluginHost {
     const record = this.records[this.records.length - 1];
     const key = `${service}.${method}`;
     if (record && !record.missingCalls.includes(key)) record.missingCalls.push(key);
+  }
+
+  /** 登记一个对话事件/视图定义；返回注销函数 */
+  private registerConversationPart(kind: string, definition: unknown) {
+    if (!definition) return () => undefined;
+    const list = this.conversationParts.get(kind) || [];
+    list.push(definition);
+    this.conversationParts.set(kind, list);
+    this.notify();
+    return () => {
+      this.conversationParts.set(kind, (this.conversationParts.get(kind) || []).filter((item) => item !== definition));
+      this.notify();
+    };
+  }
+
+  /** 已登记的对话事件/视图定义（调试与测试用） */
+  conversationPartsOf(kind: string): unknown[] {
+    return [...(this.conversationParts.get(String(kind)) || [])];
   }
 
   private notify() {

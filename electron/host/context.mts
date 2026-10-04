@@ -26,6 +26,8 @@ import { SchedulerService } from "./services/scheduler.mts";
 import path from "node:path";
 
 export interface HostOptions {
+  /** 内置插件目录（随应用分发，默认启用，可在插件页停用） */
+  builtinPluginsDir?: string;
   userDataDir: string;
   // 用户主目录（文件技能 SKILL.md 的发现范围），由壳层注入
   homeDir?: string;
@@ -139,7 +141,9 @@ export async function createHost(options: HostOptions) {
   await ctx.fiber.await();
   // 插件宿主（可选）：官方 loader + 树文件，见 host/plugin-host.mts 的挂载顺序说明
   if (options.mountPlugins) {
-    await mountPluginHost(ctx, options.pluginsDir || path.join(options.userDataDir, "plugins"));
+    await mountPluginHost(ctx, options.pluginsDir || path.join(options.userDataDir, "plugins"), {
+      builtinDir: options.builtinPluginsDir,
+    });
   }
   const registered = await Promise.resolve(options.registerService?.(ctx) || []);
   if (Array.isArray(registered) && registered.length) await Promise.all(registered);

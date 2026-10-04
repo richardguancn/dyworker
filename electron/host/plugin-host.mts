@@ -21,14 +21,14 @@ import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } f
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
 import { orderClientModules, readStaticRequires, resolveClientEntries, splitModuleSpec } from "./plugin-client.mts";
 import { clearPluginRoutes } from "./services/connection.mts";
-import { detectInstalledPackageName, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
+import { detectInstalledPackageName, dshClientModuleNames, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as yaml from "js-yaml";
 
@@ -60,6 +60,8 @@ function normalizeRow(row: any) {
   if (row?.disabled) out.disabled = true;
   if (row?.group) out.group = row.group;
   if (row?.inject) out.inject = row.inject;
+  // 内置标记要透传：界面据此显示「内置」，停用/启用也走同一条路径
+  if (row?.builtin) out.builtin = true;
   return out;
 }
 
@@ -111,8 +113,70 @@ export class PluginHostService extends Service {
   patchWarnings = [];
   /** 最近一次安装的兼容性分析结果 */
   lastAnalysis = null;
+  /**
+   * 解析插件包目录：优先插件自己的 node_modules，其次**内置插件目录**。
+   * 内置插件随应用分发，不归 npm 管（npm install 会把它剪掉），所以走独立目录。
+   */
+  packageDirOf(name) {
+    const spec = String(name || "");
+    try {
+      return resolvePackageDir(this.profileManifest(), spec);
+    } catch (error) {
+      const builtin = this.builtinPlugins().find((entry) => entry.name === spec || entry.id === spec);
+      if (builtin) return builtin.dir;
+      throw error;
+    }
+  }
+
   /** 条目模块名 → 包描述（手工加进清单、不走 bundle 的条目也要能显示说明） */
   descriptions = new Map();
+
+  /** 内置插件根目录（随应用分发，不走 npm 管理的插件目录） */
+  builtinDir = "";
+
+  /**
+   * 扫描内置插件：每个子目录（或 @scope/name 两级）只要有 package.json 且声明了
+   * dsh/dyworker 插件字段，就算一个内置插件。它们**默认启用**，用户可在插件页停用。
+   */
+  builtinPlugins() {
+    const root = this.builtinDir;
+    if (!root) {
+      console.warn("[plugins] 未配置内置插件目录");
+      return [];
+    }
+    const found = [];
+    const readDir = (dir, prefix) => {
+      let entries = [];
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const name = entry.name;
+        if (name.startsWith(".")) continue;
+        const full = path.join(dir, name);
+        if (prefix) {
+          const manifest = this.readBuiltinManifest(full);
+          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full });
+          continue;
+        }
+        if (name.startsWith("@")) { readDir(full, name); continue; }
+        const manifest = this.readBuiltinManifest(full);
+        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full });
+      }
+    };
+    readDir(root, "");
+    return found;
+  }
+
+  private readBuiltinManifest(dir) {
+    try {
+      const manifest = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
+      if (!manifest?.name) return null;
+      if (!manifest.dsh && !manifest.dyworker) return null;
+      return manifest;
+    } catch {
+      return null;
+    }
+  }
 
   /** 条目模块名 → 客户端半边声明（dsh.client，没有则为 null） */
   clients = new Map();
@@ -127,6 +191,7 @@ export class PluginHostService extends Service {
     super(ctx, "plugins");
     this.dir = config.dir;
     this.loader = config.loader;
+    this.builtinDir = config.builtinDir || "";
   }
 
   profileManifest() {
@@ -147,11 +212,21 @@ export class PluginHostService extends Service {
     const overlay = Object.entries(this.overrides).map(([id, patch]) => ({ id, ...(patch as any) }));
     const layers = [...this.bundles.map((bundle) => bundle.patches)];
     if (overlay.length) layers.push(overlay);
-    const rows = composeRows(this.baseRows, layers, (message: any, ...args: any[]) => {
+    // 内置插件：清单里已有的条目**打上内置标记**，清单里没有的补一行（默认启用）。
+    // 注意不能简单地"跳过已有的"——用户装过同名插件时清单里已经有它，那样就永远打不上标记。
+    const builtins = this.builtinPlugins();
+    const builtinNames = new Set(builtins.map((entry) => entry.name));
+    const builtinIds = new Set(builtins.map((entry) => entry.id));
+    const extraRows = builtins
+      .filter((entry) => !this.baseRows.some((row) => row.id === entry.id || row.name === entry.name))
+      .map((entry) => ({ id: entry.id, name: entry.name }));
+    const rows = composeRows([...this.baseRows, ...extraRows], layers, (message: any, ...args: any[]) => {
       warnings.push(`${message}${args.length ? ` ${args.join(" ")}` : ""}`);
     });
     this.patchWarnings = warnings;
-    this.rows = rows.map((row) => normalizeRow(row));
+    this.rows = rows.map((row) => normalizeRow(
+      builtinNames.has(row.name) || builtinIds.has(row.id) ? { ...row, builtin: true } : row,
+    ));
     return this.rows;
   }
 
@@ -168,6 +243,17 @@ export class PluginHostService extends Service {
     try {
       return pathToFileURL(profileRequire.resolve(spec)).href;
     } catch (error: any) {
+      // 内置插件不装进 profile（npm 会剪掉），改从内置目录解析主入口
+      const builtin = this.builtinPlugins().find((entry) => entry.name === spec || entry.id === spec);
+      if (builtin) {
+        try {
+          const manifest = JSON.parse(readFileSync(path.join(builtin.dir, "package.json"), "utf8"));
+          const main = path.resolve(builtin.dir, manifest.main || manifest.exports?.["."]?.default || "lib/index.js");
+          return pathToFileURL(main).href;
+        } catch {
+          // 落到下面的错误提示
+        }
+      }
       const hint = error?.code === "MODULE_NOT_FOUND"
         ? `插件包未安装到 profile：在 ${path.join(this.dir, "node_modules")} 下找不到 ${spec}`
         : String(error?.message || error);
@@ -201,7 +287,7 @@ export class PluginHostService extends Service {
     if (this.descriptions.has(key)) return this.descriptions.get(key);
     let description = "";
     try {
-      const dir = resolvePackageDir(this.profileManifest(), key);
+      const dir = this.packageDirOf(key);
       const manifest = await readPackageManifest(dir);
       description = String(manifest.description || "");
       // 顺手记下客户端半边声明：列表要据此显示"有界面半边"，不必为每行再读一次清单
@@ -397,7 +483,7 @@ export class PluginHostService extends Service {
     const key = String(target || "");
     const row = this.rows.find((item) => item.id === key || item.name === key);
     if (!row) throw new Error(`插件不在清单里：${key}`);
-    const dir = resolvePackageDir(this.profileManifest(), row.name);
+    const dir = this.packageDirOf(row.name);
     const manifest = await readPackageManifest(dir);
     return { row, dir, manifest, entries: resolveClientEntries(manifest, dir) };
   }
@@ -448,9 +534,11 @@ export class PluginHostService extends Service {
   async ensureRuntimePeers(packageName, npmPath = null) {
     const installed = [];
     try {
-      const dir = resolvePackageDir(this.profileManifest(), packageName);
+      const dir = this.packageDirOf(packageName);
       const manifest = await readPackageManifest(dir);
-      for (const peer of dshPeerNames(manifest)) {
+      // peer 依赖 + 客户端模块：两者都是运行时必需（后者由 dsh.client.inject 声明）
+      const needed = [...dshPeerNames(manifest), ...dshClientModuleNames(manifest)];
+      for (const peer of needed) {
         // 已经能解析就不重复装
         if (this.resolveClientModule(peer)) continue;
         const version = await newestVersion(peer, { npmPath });
@@ -460,6 +548,8 @@ export class PluginHostService extends Service {
           version: version || undefined,
           source: "default",
           ignoreScripts: true,
+          // DSH 运行时包的 peer 版本线互斥，必须放宽（见 plugin-install 注释）
+          legacyPeerDeps: true,
           npmPath,
         });
         if (result.ok) installed.push(`${peer}@${version || "latest"}`);
@@ -637,6 +727,8 @@ export class PluginHostService extends Service {
       name: row.name,
       description: this.descriptions.get(row.name) || "",
       client: this.clients.get(row.name) || null,
+      // 内置插件（随应用分发）：界面据此显示「内置」标记，停用走同一条 override 路径
+      builtin: Boolean(row.builtin),
       disabled: Boolean(row.disabled),
       config: row.config ?? null,
       active: this.activeIds.has(row.id) && !row.disabled,
@@ -826,13 +918,13 @@ export async function ensurePluginProfile(dir: string) {
  *   3. 先挂 Loader，再构造 PluginHostService（它 inject loader）；
  *   4. 读清单装载条目。
  */
-export async function mountPluginHost(ctx: any, dir: string) {
+export async function mountPluginHost(ctx: any, dir: string, options: any = {}) {
   await ensurePluginProfile(dir);
   const baseUrl = new URL(".", pathToFileURL(path.join(dir, TREE_FILE))).href;
   ctx.baseUrl = baseUrl;
   if (ctx.root) ctx.root.baseUrl = baseUrl;
   await ctx.plugin(Loader, { baseUrl });
-  const service = new PluginHostService(ctx, { dir, loader: ctx.loader });
+  const service = new PluginHostService(ctx, { dir, loader: ctx.loader, builtinDir: options?.builtinDir });
   await service.load();
   return service;
 }

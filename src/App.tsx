@@ -84,6 +84,7 @@ import { createPortal } from "react-dom";
 import { PluginsPage } from "./PluginsPage";
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
+import { loadBuiltinClientHalves } from "./pluginRuntime/builtinPlugins.ts";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
@@ -9666,6 +9667,24 @@ export function App() {
     setActiveToolPanelTabId(id);
     setToolPanelMenuOpen(false);
   };
+
+  // 内置插件（随应用分发、默认启用）的客户端半边开机自动加载——内置就该开机即用，
+  // 不需要用户去插件页点"加载界面半边"。失败只记录，不影响启动。
+  useEffect(() => {
+    let cancelled = false;
+    void loadBuiltinClientHalves().then((results) => {
+      if (cancelled) return;
+      const failed = results.filter((result) => !result.ok);
+      if (failed.length) console.warn("[plugin] 内置插件客户端半边加载失败：", failed);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 客户端宿主取会话的数据来源：插件用 ctx.sessions.binding(id) 拿它渲染轨迹等视图
+  useEffect(() => {
+    clientHost().setSessionProvider((sessionId) =>
+      activeSession && String(activeSession.id) === String(sessionId) ? activeSession : undefined);
+  }, [activeSession]);
 
   // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
   useEffect(() => {

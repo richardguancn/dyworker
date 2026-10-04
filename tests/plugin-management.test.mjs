@@ -774,3 +774,43 @@ test("会话读取是同步语义：DSH 插件按同步方式用 sessions.get(id
   assert.equal(missing, undefined, "不存在的会话如实返回 undefined");
   assert.equal(typeof ctx.sessions.getAsync, "function", "需要异步语义时用 getAsync");
 });
+
+test("内置插件：目录扫描、默认启用、并在条目上打内置标记", async (t) => {
+  const { createHost, disposeHost } = await import("../electron/host/context.mts");
+  const { dshClientModuleNames } = await import("../electron/host/plugin-install.mts");
+  const builtinRoot = path.resolve(import.meta.dirname, "..", "builtin-plugins");
+
+  // dsh.client.inject 声明的是客户端模块，也要纳入运行时依赖（排除 cordis：必须共用宿主同一份）
+  assert.deepEqual(dshClientModuleNames({
+    dsh: { client: { inject: ["@deepseek-ai/dsh-api-gateway/client", "@deepseek-ai/cordis", "react"] } },
+  }), ["@deepseek-ai/dsh-api-gateway/client"]);
+  assert.deepEqual(dshClientModuleNames({}), []);
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-builtin-"));
+  const ctx = await createHost({
+    userDataDir: dir,
+    mountPlugins: true,
+    builtinPluginsDir: builtinRoot,
+    contracts: { ipcRegister: () => {}, ipcUnregister: () => {} },
+  });
+  try {
+    const builtins = ctx.plugins.builtinPlugins();
+    assert.ok(builtins.some((entry) => entry.name === "@deepseek-ai/dsh-client-ui-trajectory"),
+      `应发现内置的轨迹插件，实际：${JSON.stringify(builtins.map((e) => e.name))}`);
+
+    // 清单里没有它，也要补一行且默认启用（不写 disabled）
+    const entry = ctx.plugins.entries().find((item) => item.name === "@deepseek-ai/dsh-client-ui-trajectory");
+    assert.ok(entry, "内置插件应出现在条目里");
+    assert.equal(entry.builtin, true, "要打上内置标记（界面据此显示「内置」）");
+    assert.equal(entry.disabled, false, "内置插件默认启用");
+    assert.equal(entry.active, true, `内置插件应已激活：${entry.error || ""}`);
+
+    // 客户端半边从内置目录解析（它不在 npm 管理的插件目录里）
+    const info = await ctx.plugins.clientBundles("@deepseek-ai/dsh-client-ui-trajectory");
+    assert.equal(info.ok, true, info.error);
+    assert.equal(info.entries?.[0]?.relative, "lib/client.js");
+  } finally {
+    await disposeHost(ctx);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -1111,6 +1111,8 @@ export interface PluginEntryRecord {
   description: string;
   /** 客户端半边声明（dsh.client）；手工加进清单、没有 bundle 记录的条目也靠它 */
   client?: { platform?: string; inject?: string[] } | null;
+  /** 内置插件（随应用分发，默认启用，可在插件页停用） */
+  builtin?: boolean;
   disabled: boolean;
   config: unknown;
   active: boolean;

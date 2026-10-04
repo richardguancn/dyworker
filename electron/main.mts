@@ -276,6 +276,10 @@ const ctx = await createHost({
   // 插件宿主：启动时读 userData/plugins/dyworker.yml 装载插件
   //（官方 cordis loader 负责生命周期；清单与解析见 host/plugin-host.mts）
   mountPlugins: true,
+  // 内置插件（如 DSH 轨迹视图）：随应用分发，不走 npm 管理的插件目录
+  // getAppPath()：开发时是仓库根，打包后是 app.asar 根——内置插件随 files 打进产物，
+  // Electron 的 fs 补丁能直接从 asar 里读，所以两条路径都成立
+  builtinPluginsDir: path.join(app.getAppPath(), "builtin-plugins"),
   // 契约服务的壳层能力：插件通过 ctx.ipc/storage/window 使用，而不是内部 deps 大包
   contracts: {
     ipcRegister: (channel, handler) => trustedHandle(channel, handler),
