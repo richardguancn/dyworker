@@ -40,6 +40,26 @@ declare module "@deepseek-ai/cordis" {
 
 // 清单文件名。方言与 dsh 的 cordis.yml 一致，但文件名独立，
 // 避免被 DSH 的工装（dsh plugin / dsh config 命令）误读误写。
+/**
+ * 从某个包目录出发能否解析到模块——与插件自己的 import 语义一致。
+ *
+ * 不能复用我们的 resolveClientModule：它会搜 DSH 共享目录等额外根，
+ * 于是出现"我们找得到、插件 import 不到"的错判，补依赖被跳过，插件启动即报
+ * Cannot find package。
+ */
+function resolvableFrom(fromDir: string, spec: string): boolean {
+  const base = path.join(fromDir, "package.json");
+  for (const target of [spec, `${spec}/package.json`]) {
+    try {
+      createRequire(base).resolve(target);
+      return true;
+    } catch {
+      // 换下一个形式
+    }
+  }
+  return false;
+}
+
 export const TREE_FILE = "dyworker.yml";
 export const PROFILE_MANIFEST = "package.json";
 // 已安装 bundle 记录（与 dsh 的 package.json#dsh.profile.bundles 等价，独立成文件避免与 DSH 工具互踩）
@@ -539,8 +559,11 @@ export class PluginHostService extends Service {
       // peer 依赖 + 客户端模块：两者都是运行时必需（后者由 dsh.client.inject 声明）
       const needed = [...dshPeerNames(manifest), ...dshClientModuleNames(manifest)];
       for (const peer of needed) {
-        // 已经能解析就不重复装
-        if (this.resolveClientModule(peer)) continue;
+        // 判断"是否已就绪"必须**从插件自己的位置解析**：
+        // 我们的 resolveClientModule 会搜 DSH 共享目录等额外根，因此会出现
+        // "我们找得到、插件 import 不到"的错判——插件启动时报 Cannot find package。
+        // 这里用 createRequire 从插件包目录解析，与它自己的 import 语义一致。
+        if (resolvableFrom(dir, peer)) continue;
         const version = await newestVersion(peer, { npmPath });
         const result = await installPackageIntoProfile({
           dir: this.dir,
