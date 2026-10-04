@@ -467,12 +467,16 @@ export class PluginHostService extends Service {
     await this.reload();
     await this.persistBundles();
     const failed = this.rows.filter((row) => this.failures.has(row.id)).map((row) => row.id);
+    // 失败时必须把**真实原因**带出去：以前只回 ok:false，error 是空的——
+    // 界面上只剩"安装失败"四个字，调用方（含安装自愈）也拿不到"缺哪个包"的线索。
+    const firstFailure = failed.length ? String(this.failures.get(failed[0]) || "") : "";
     return {
       ok: failed.length === 0,
       name,
       updated: existing >= 0,
       entries: this.rows.length,
       failed,
+      ...(failed.length ? { error: firstFailure || `插件 ${name} 激活失败` } : {}),
       verdict: analysis.verdict,
       analysis,
       matrix: formatMatrix(analysis),
@@ -545,7 +549,10 @@ export class PluginHostService extends Service {
     // 自愈：profile 里可能是**旧的/残缺的**依赖树（早前失败的安装留下的老版本，
     // 传递依赖缺失）。ensureRuntimePeers 见它能解析就跳过，于是残缺版本一直留着，
     // 激活报 "Cannot find package X"。这里按报错缺什么补什么，再重试激活（最多 3 轮）。
-    for (let attempt = 0; attempt < 4 && !installed.ok; attempt += 1) {
+    // 上限给足：npm 用 --legacy-peer-deps 时**完全不装 peer 依赖**，
+    // 而 DSH 的包大量用 peer（dsh-session → dsh-scope、dsh-llm → …）。
+    // 每次激活只暴露"下一个"缺失包，所以要允许修多轮。
+    for (let attempt = 0; attempt < 12 && !installed.ok; attempt += 1) {
       const missing = /Cannot find package '([^']+)'/.exec(String(installed.error || ""))?.[1];
       // 报错里的"包"可能是绝对路径（profile/node_modules 下的残缺包解析失败时会这样），
       // 这时从中还原包名，重装到**最新版**再重试——用户 profile 里是旧的 0.0.1-rc.1 残缺树。
