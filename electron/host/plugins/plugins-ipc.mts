@@ -69,7 +69,8 @@ export function pluginsIpcPlugin() {
         try {
           const session = ctx.sessions.get(sessionId);
           if (session === undefined || session === null) return { ok: false, error: "会话不存在" };
-          const value = ctx.sessionProjections.stateOf(session, key);
+          // 客户端要的是线格式视图（顶层带 current/nodes/...），与插件路由用的原始状态不同
+          const value = ctx.sessionProjections.viewOf(session, key);
           return { ok: true, value: value === undefined ? null : value };
         } catch (error) {
           return { ok: false, error: String(error?.message || error) };

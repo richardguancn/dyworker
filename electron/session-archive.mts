@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 
 // 会话存档的按会话拆分存储：sessions/<id>.json 每会话一个文件 +
@@ -262,6 +263,31 @@ export function createSessionArchive({ dir, legacyFile }) {
     get(sessionId) {
       const key = String(sessionId || "");
       return withArchive(() => readSession(key));
+    },
+
+    /**
+     * 同步读取单会话。DSH 插件按**同步**语义调用 sessions.get(id)
+     * （实测 dsh-context 的 detail 路由：getSession(sessionId) 直接当对象用），
+     * 异步版本会让它拿到一个 Promise，投影自然算不出来。
+     * 已装载的会话在 byId 里，未装载的按 index 读文件。
+     */
+    getSync(sessionId) {
+      const key = String(sessionId || "");
+      if (!key) return undefined;
+      if (byId.has(key)) return byId.get(key);
+      const entry = entries.find((item) => item.id === key);
+      if (!entry) return undefined;
+      try {
+        const session = JSON.parse(readFileSync(path.join(dir, entry.file), "utf8"));
+        if (session?.id) {
+          byId.set(String(session.id), session);
+          fingerprints.set(String(session.id), contentFingerprint(session));
+          return session;
+        }
+      } catch {
+        // 文件损坏等：如实当作读不到
+      }
+      return undefined;
     },
 
     // 旧渲染端整档快照：按内容指纹只重写变化的会话文件

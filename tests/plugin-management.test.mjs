@@ -702,3 +702,75 @@ test("插件 HTTP 路由服务：可注册 / 派发 / 列出，路由粘性且�
   clearPluginRoutes();
   assert.deepEqual(listPluginRoutes(), [], "统一清理要能把所有插件路由清空");
 });
+
+test("会话投影：把我们的消息流折成 DSH 的 contextTimeline 状态（字段形状对齐消费端）", async () => {
+  const { foldContextTimeline, CONTEXT_TIMELINE_KEY } = await import("../electron/host/services/projections.mts");
+
+  // 空会话：如实"还没有投影"
+  assert.equal(foldContextTimeline({ messages: [] }), undefined);
+  assert.equal(foldContextTimeline({}), undefined);
+
+  const session = {
+    id: "s1",
+    messages: [
+      { role: "system", content: "你是助手" },
+      { role: "user", content: "帮我看看这段代码" },
+      { role: "assistant", content: "好的，我来分析", tool_calls: [{ function: { name: "read_file", arguments: "{}" } }] },
+      { role: "tool", toolName: "read_file", content: "文件内容" },
+      { role: "assistant", content: "分析完成" },
+    ],
+  };
+  const state = foldContextTimeline(session);
+
+  // 消费端（dsh-context 的 headFieldsOf/detailCollectionsOf）只读这些字段
+  assert.deepEqual(Object.keys(state.sums).sort(), ["assistant", "inject", "skill", "tool", "user"]);
+  assert.ok(state.systemTokens > 0, "系统提示词要单独计入");
+  assert.ok(state.toolsTokens > 0, "工具结果计入工具占用");
+  assert.ok(state.sums.user > 0 && state.sums.assistant > 0);
+  assert.equal(state.requests.length, 2, "每条助手消息 = 一次请求");
+  assert.deepEqual(state.requests.map((r) => r.turn), [1, 2]);
+  assert.ok(state.requests.every((r) => typeof r.seq === "number" && typeof r.total === "number" && typeof r.prompt === "number"));
+  assert.equal(state.turnRuns, 2);
+  assert.ok(state.surface.length >= 4, "用户/助手/工具消息都要成为界面节点");
+  assert.ok(state.surface.every((n) => typeof n.seq === "number" && typeof n.tokens === "number" && typeof n.cat === "string"));
+  assert.equal(state.surface.find((n) => n.cat === "tool").tool, "read_file");
+  // 四个集合必须是数组（客户端 recordsOnly 校验）
+  for (const key of ["events", "archived", "fileOps", "spans"]) assert.ok(Array.isArray(state[key]), `${key} 要是数组`);
+  assert.equal(state.detailRev, session.messages.length, "修订号随消息数变化，客户端据此重取详情");
+  assert.equal(CONTEXT_TIMELINE_KEY, "contextTimeline");
+});
+
+test("会话投影：客户端线格式视图（客户端 timelineOf 校验要求 current 在顶层）", async () => {
+  const { foldContextTimeline, timelineWireView } = await import("../electron/host/services/projections.mts");
+  const state = foldContextTimeline({
+    messages: [
+      { role: "system", content: "系统提示" },
+      { role: "user", content: "问题" },
+      { role: "assistant", content: "回答" },
+    ],
+  });
+  const view = timelineWireView(state);
+
+  // 客户端校验：current 的 8 个字段都是有限数字 + 四个集合都是对象数组
+  for (const key of ["system", "tools", "user", "inject", "skill", "assistant", "tool", "total"]) {
+    assert.equal(typeof view.current[key], "number", `current.${key} 要是数字`);
+    assert.ok(Number.isFinite(view.current[key]));
+  }
+  for (const key of ["requests", "events", "nodes", "archive"]) {
+    assert.ok(Array.isArray(view[key]) && view[key].every((e) => e && typeof e === "object"), `${key} 要是对象数组`);
+  }
+  assert.equal(view.current.total, view.current.system + view.current.tools + view.current.user + view.current.assistant);
+  assert.equal(view.counts.turns, 1);
+  assert.equal(view.detailRev, 3);
+  assert.equal(timelineWireView(undefined), null, "没有投影时如实返回 null");
+});
+
+test("会话读取是同步语义：DSH 插件按同步方式用 sessions.get(id)", async (t) => {
+  const { ctx } = await hostWithManagement(t);
+  // 契约要点：返回的是会话对象或 undefined，**不是 Promise**
+  // （返回 Promise 会让插件拿到一个对象壳，投影永远算不出来——实测踩过）
+  const missing = ctx.sessions.get("not-here");
+  assert.equal(typeof missing?.then, "undefined", "不能返回 Promise");
+  assert.equal(missing, undefined, "不存在的会话如实返回 undefined");
+  assert.equal(typeof ctx.sessions.getAsync, "function", "需要异步语义时用 getAsync");
+});

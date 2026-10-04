@@ -31,7 +31,18 @@ export class SessionsService extends Service {
     return this.archive.loadAll();
   }
 
+  /**
+   * 同步读取单会话。DSH 插件（如 dsh-context 的 detail 路由）按同步语义用它：
+   * `const session = getSession(sessionId); const state = projections.stateOf(session, key)`。
+   * 返回 Promise 会让插件拿到一个 Promise 对象，投影永远算不出来（实测踩过）。
+   * 需要异步语义时用 getAsync。
+   */
   get(sessionId) {
+    return this.archive.getSync(sessionId);
+  }
+
+  /** 异步读取（保留给需要等待归档装载的调用方） */
+  getAsync(sessionId) {
     return this.archive.get(sessionId);
   }
 
