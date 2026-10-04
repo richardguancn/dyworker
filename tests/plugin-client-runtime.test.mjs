@@ -243,3 +243,59 @@ test("客户端模块依赖图：依赖在前、循环安全、解析不到的�
   assert.deepEqual(plan.missing, ["@deepseek-ai/dsh-not-installed"], "解析不到的模块要如实报出来");
   assert.equal(plan.ordered[0].file, "/nm/remotes/lib/client.js", "入口要解析成绝对路径");
 });
+
+test("客户端模块兼容层：缺失模块的导出齐备，未实现导出被记名而不是崩", async () => {
+  const { createSlotsModuleShim, createRuntimeClientShim } = await import("../src/pluginRuntime/dshClientShims.ts");
+  const unknown = [];
+  const report = (module, name) => unknown.push(`${module}:${name}`);
+
+  // 导出清单来自扫描本机 43 个 DSH 客户端模块的属性访问，不是猜的
+  const slots = createSlotsModuleShim(report);
+  assert.equal(typeof slots.resolveSlotLabel, "function");
+  assert.equal(slots.resolveSlotLabel({ label: () => "上下文" }), "上下文");
+  assert.equal(slots.resolveSlotLabel({ label: "标题" }), "标题");
+  assert.equal(slots.resolveSlotLabel({ name: "x" }), "x");
+  assert.ok(new slots.SlotOwnershipError("x") instanceof Error);
+  assert.ok(new slots.StaleAuthorizationError("x") instanceof Error);
+
+  const runtime = createRuntimeClientShim(report);
+  for (const name of ["createSnapshotStore", "defineStore", "emptyAssistantBlock", "resolveWorkspacePath",
+    "shallowEqual", "isAppendSurfaceEvent", "toAssistantBlocks", "isTokenDelta", "toAssistantBlock",
+    "contextForm", "displayFailureMessage", "contextProvenance", "indexSubagentDescendants",
+    "abbreviateHomePath", "conversationContextKey", "workspaceTitleOf", "sessionRecallLabels",
+    "isReplacementSurfaceEvent", "DirectoryBrowseError"]) {
+    assert.ok(runtime[name] !== undefined, `兼容层要提供 ${name}`);
+  }
+  // 状态原语是真实现：能存能取能订阅
+  const store = runtime.defineStore({ count: 1 });
+  assert.deepEqual(store.get(), { count: 1 });
+  let seen = null;
+  store.subscribe((value) => { seen = value; });
+  store.set({ count: 2 });
+  assert.deepEqual(seen, { count: 2 });
+  assert.equal(runtime.shallowEqual({ a: 1 }, { a: 1 }), true);
+  assert.equal(runtime.shallowEqual({ a: 1 }, { a: 2 }), false);
+
+  // 未实现的导出：不返回 undefined（插件一调就崩），而是记名 + 宽松函数
+  const extra = runtime.someFutureHelper;
+  assert.equal(typeof extra, "function");
+  assert.ok(unknown.some((item) => item.includes("someFutureHelper")), "未实现导出要记名");
+  assert.equal("anythingElse" in runtime, true);
+});
+
+test("模块加载顺序：DSH 客户端模块拿得到 slots / runtime 兼容层，不再报缺模块", async () => {
+  const { createClientRuntime } = await import("../src/pluginRuntime/index.ts");
+  const target = {};
+  const runtime = createClientRuntime({ target });
+  const result = target.__ModuleLoader__.load({
+    id: "probe",
+    factory: (require) => ({
+      slots: typeof require("@deepseek-ai/dsh-client-ui-slots").resolveSlotLabel,
+      store: typeof require("@deepseek-ai/dsh-client-runtime/client").defineStore,
+    }),
+  });
+  assert.equal(result.error, undefined, result.error);
+  assert.deepEqual(result.missing, [], "这两个模块不该再被记为缺失");
+  assert.equal(result.exports.slots, "function");
+  assert.equal(result.exports.store, "function");
+});

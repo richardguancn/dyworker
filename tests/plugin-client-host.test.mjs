@@ -83,7 +83,7 @@ test("容器：插槽注册与渲染顺序（order / priority）", async () => {
         name: "sidebar.right.pane.tab", id: "first", order: 1,
       }, () => null));
       // 宿主没提供的插槽：inject 不应执行注册回调
-      ctx.slots.inject("conversation.view", () => {
+      ctx.slots.inject("conversation.input.overlay", () => {
         throw new Error("宿主没提供的插槽不该执行注册回调");
       });
     },

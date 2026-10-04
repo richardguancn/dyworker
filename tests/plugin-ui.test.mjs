@@ -66,7 +66,9 @@ test("添加插件弹窗：支持 包名 / GitHub 地址 / 本地目录 三种�
 test("插件页是「页面」而不是「弹窗」：无遮罩层，渲染在主内容区内，切会话自动返回", () => {
   assert.ok(!panel.includes("plugins-overlay"), "不应再使用遮罩弹窗");
   assert.ok(!panel.includes("createPortal"), "不应挂在 portal 上");
-  assert.match(app, /<main className=\{`main-panel \$\{pluginsPageOpen \? "plugins-page-open" : ""\}`\}>\s*\n\s*\{pluginsPageOpen && <PluginsPage \/>\}/, "插件页应直接渲染在 main-panel 内");
+  // main-panel 的类名里还会带会话区视图状态（conversation-view-open），断言只看关键部分
+  assert.match(app, /<main className=\{`main-panel \$\{pluginsPageOpen \? "plugins-page-open" : ""\}[^`]*`\}>\s*\n\s*\{pluginsPageOpen && <PluginsPage \/>\}/,
+    "插件页应直接渲染在 main-panel 内");
   assert.match(app, /useEffect\(\(\) => \{\s*\n\s*if \(!activeId\) return;\s*\n\s*setPluginsPageOpen\(false\);/, "切换会话时应回到聊天");
   // 版式：行式卡片 + 开关（对齐 DSH）
   assert.match(panel, /plugin-card-icon/, "行首应有图标块");

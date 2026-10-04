@@ -51,8 +51,12 @@ export interface PluginLoadRecord {
 
 /** 宿主真正渲染的插槽。没列在这里的插槽，插件的 inject 会自动跳过。 */
 export const HOST_SLOTS = [
+  // 会话区的视图标签（dsh-context 默认位置就是这里）
+  "conversation.view",
+  // 右侧面板的标签（我们的工具面板就是它）
   "sidebar.right.pane.tab",
   "sidebar.right.pane.tab.title",
+  // 设置页分区
   "settings.section",
 ] as const;
 
@@ -63,6 +67,11 @@ export interface ClientHostOptions {
   slots?: readonly string[];
   /** 诊断：插件调用了未实现的服务方法 */
   onMissingCall?: (service: string, method: string) => void;
+  /**
+   * 插件要求打开右侧面板标签时回调（kind 即插槽贡献里的 key）。
+   * 壳层据此在**已有的工具面板**里开标签——这正是 sidebarRight.openTab 的语义。
+   */
+  onPanelRequest?: (kind: string, detail?: unknown) => void;
 }
 
 export class ClientPluginHost {
@@ -117,6 +126,22 @@ export class ClientPluginHost {
       scope: () => this.stubService("connection.scope", {}),
       status: () => ({ state: "connected" }),
     }));
+    // sidebarRight：插件用它打开右侧面板（实测 API：openTab(kind) / openResource(address)）。
+    // 直接接我们已有的工具面板，而不是另造容器。
+    this.ctx.provide("sidebarRight", {
+      openTab: (kind: string) => { options.onPanelRequest?.(String(kind || "")); return true; },
+      openResource: (address: unknown) => { options.onPanelRequest?.("", address); return true; },
+      closeTab: () => undefined,
+      has: (kind: string) => this.availableSlots.has(String(kind)),
+    });
+
+    // uiConversation：实测只用 imageUrl(sessionId, attachment) 取附件图地址
+    this.ctx.provide("uiConversation", {
+      imageUrl: () => undefined,
+      openSession: () => undefined,
+      scope: () => this.stubService("uiConversation.scope", {}),
+    });
+
     this.ctx.provide("workspaces", this.stubService("workspaces", {
       scope: () => this.stubService("workspaces.scope", {}),
       list: () => [],

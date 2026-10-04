@@ -83,6 +83,7 @@ import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, Key
 import { createPortal } from "react-dom";
 import { PluginsPage } from "./PluginsPage";
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
+import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
@@ -6964,6 +6965,9 @@ export function App() {
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
+  // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
+  const [conversationView, setConversationView] = useState("chat");
+  const [pluginConversationViews, setPluginConversationViews] = useState<Array<{ key: string; label: string }>>([]);
 
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
   useEffect(() => {
@@ -9663,6 +9667,24 @@ export function App() {
     setToolPanelMenuOpen(false);
   };
 
+  // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
+  useEffect(() => {
+    const host = clientHost();
+    const sync = () => {
+      setPluginConversationViews(host.contributionsFor("conversation.view").map((contribution) => ({
+        key: String(contribution.meta.key ?? contribution.meta.id ?? ""),
+        label: typeof contribution.meta.label === "function"
+          ? String((contribution.meta.label as () => unknown)())
+          : String(contribution.meta.label ?? contribution.meta.id ?? "插件视图"),
+      })).filter((view) => view.key));
+    };
+    sync();
+    return host.subscribe(sync);
+  }, []);
+
+  // 切会话（含新建任务）时回到对话标签，避免停在上一个会话的插件视图上
+  useEffect(() => { setConversationView("chat"); }, [activeId]);
+
   // 插件登记右侧面板标签（sidebar.right.pane.tab 插槽）时，接进已有的工具面板：
   // 不新造界面容器，直接开一个 plugin 类型的标签页承载插件组件。
   useEffect(() => onPluginPanelRequest((request) => {
@@ -11657,7 +11679,7 @@ export function App() {
         />
       )}
 
-      <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""}`}>
+      <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
         {pluginsPageOpen && <PluginsPage />}
         <header className="topbar">
           <div className="topbar-left no-drag">
@@ -11870,6 +11892,59 @@ export function App() {
             )}
           </div>
         </header>
+
+        {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
+            视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
+        <div className="conversation-tabs" role="tablist" aria-label="会话视图">
+          <button
+            role="tab"
+            aria-selected={conversationView === "chat"}
+            className={`conversation-tab ${conversationView === "chat" ? "active" : ""}`}
+            onClick={() => setConversationView("chat")}
+          >对话</button>
+          <button
+            role="tab"
+            aria-selected={conversationView === "trace"}
+            className={`conversation-tab ${conversationView === "trace" ? "active" : ""}`}
+            onClick={() => setConversationView("trace")}
+          >轨迹</button>
+          {pluginConversationViews.map((view) => (
+            <button
+              key={view.key}
+              role="tab"
+              aria-selected={conversationView === view.key}
+              className={`conversation-tab ${conversationView === view.key ? "active" : ""}`}
+              onClick={() => setConversationView(view.key)}
+            >{view.label}</button>
+          ))}
+        </div>
+
+        {conversationView !== "chat" && (
+          <section className="conversation-view-panel">
+            {conversationView === "trace" ? (
+              <TraceConsole
+                traces={activeSessionTraceEvents}
+                logs={debugLogs}
+                sessionId={activeSession?.id}
+                onClear={() => {
+                  traceEventsRef.current = [];
+                  setTraceEvents([]);
+                  runTraceEventsRef.current.clear();
+                  pendingDebugLogsRef.current = [];
+                  if (debugLogFlushTimerRef.current !== null) {
+                    window.clearTimeout(debugLogFlushTimerRef.current);
+                    debugLogFlushTimerRef.current = null;
+                  }
+                  setDebugLogs([]);
+                }}
+                onClose={() => setConversationView("chat")}
+                onAppendTraces={appendSessionTraces}
+              />
+            ) : (
+              <PluginSlotView slot="conversation.view" pluginKey={conversationView} />
+            )}
+          </section>
+        )}
 
         {conversationSearchOpen && (
           <div className="conversation-search" role="search" aria-label="搜索会话内容">

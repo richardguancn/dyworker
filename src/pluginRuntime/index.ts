@@ -14,6 +14,7 @@ import * as JsxRuntime from "react/jsx-runtime";
 import * as Cordis from "@deepseek-ai/cordis";
 import { ClientModuleLoader, type LoadedBundle } from "./moduleLoader.ts";
 import { createPrimitives, type PrimitivesHost } from "./primitives.ts";
+import { SHIMMED_CLIENT_MODULES, createRuntimeClientShim, createSlotsModuleShim } from "./dshClientShims.ts";
 
 export { ClientModuleLoader, createPrimitives };
 export type { LoadedBundle, PrimitivesHost };
@@ -44,6 +45,11 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
   });
 
   const primitives = createPrimitives(options.primitivesHost);
+  // 本机没装（或软链断掉）的两个 DSH 客户端模块：由我们自己兜底实现，
+  // 否则依赖它们的 DSH 客户端模块会在 require 阶段就挂掉
+  const shimReport = (moduleName: string, name: string) => {
+    console.warn(`[plugin-client] ${moduleName} 需要未实现的导出：${name}`);
+  };
 
   loader
     // DSH 客户端模块要用同一个 cordis（容器也是用它建的）
@@ -53,7 +59,9 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
     .provide("react-dom/client", () => ReactDOMClient)
     .provide("react/jsx-runtime", () => JsxRuntime)
     .provide("react/jsx-dev-runtime", () => JsxRuntime)
-    .provide(PRIMITIVES_MODULE, () => primitives);
+    .provide(PRIMITIVES_MODULE, () => primitives)
+    .provide(SHIMMED_CLIENT_MODULES[0], () => createSlotsModuleShim(shimReport))
+    .provide(SHIMMED_CLIENT_MODULES[1], () => createRuntimeClientShim(shimReport));
 
   const target = options.target ?? (typeof window !== "undefined" ? window : undefined);
   loader.install(target);

@@ -5,9 +5,23 @@ import { ClientPluginHost } from "./clientHost.ts";
 
 let current: ClientPluginHost | null = null;
 
+/** 插件要求打开右侧面板标签的订阅（壳层订阅它来开标签） */
+const panelHandlers = new Set<(kind: string, detail?: unknown) => void>();
+
+export function onPanelOpenRequest(handler: (kind: string, detail?: unknown) => void): () => void {
+  panelHandlers.add(handler);
+  return () => panelHandlers.delete(handler);
+}
+
 /** 取（必要时创建）客户端插件宿主 */
 export function clientHost(): ClientPluginHost {
-  if (!current) current = new ClientPluginHost();
+  if (!current) {
+    current = new ClientPluginHost({
+      onPanelRequest: (kind, detail) => {
+        for (const handler of panelHandlers) handler(kind, detail);
+      },
+    });
+  }
   return current;
 }
 

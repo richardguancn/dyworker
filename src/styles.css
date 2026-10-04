@@ -16808,3 +16808,60 @@ html[data-theme="dark"] {
   height: 100%; padding: 24px; color: var(--muted);
   font-size: calc(12.5px * var(--font-ui-scale, 1));
 }
+
+/* 会话区视图标签（对话 / 轨迹 / 插件贡献的视图） */
+/* 顶栏是绝对定位（inset: 0 0 auto 0），标签栏必须自己下移到它下面，否则会被盖住 */
+.conversation-tabs {
+  position: absolute;
+  top: var(--topbar-height);
+  left: 0;
+  right: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.conversation-tab {
+  position: relative;
+  padding: 8px 10px 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.conversation-tab:hover { color: var(--ink); }
+.conversation-tab.active { color: var(--ink); font-weight: 600; }
+.conversation-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+/* 非「对话」标签时，隐藏消息区与输入框，只留顶栏 + 标签栏 + 视图面板 */
+.main-panel.conversation-view-open > *:not(.topbar):not(.conversation-tabs):not(.conversation-view-panel) {
+  display: none;
+}
+
+.conversation-view-panel {
+  position: absolute;
+  top: calc(var(--topbar-height) + 34px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}

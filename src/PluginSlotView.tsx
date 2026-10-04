@@ -8,7 +8,7 @@
 // 组件用 React.createElement 而不是 JSX：保持可在 Node 里被引用与测试。
 
 import * as React from "react";
-import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
+import { clientHost, onPanelOpenRequest } from "./pluginRuntime/clientHostSingleton.ts";
 
 export interface PluginPanelRequest {
   pluginId: string;
@@ -20,17 +20,34 @@ type PanelHandler = (request: PluginPanelRequest) => void;
 
 const handlers = new Set<PanelHandler>();
 
-/** 壳层订阅：有插件登记右侧面板标签时收到通知（返回取消订阅） */
+/** 壳层订阅：有插件登记右侧面板标签、或插件主动要求打开面板时收到通知 */
 export function onPluginPanelRequest(handler: PanelHandler): () => void {
   handlers.add(handler);
-  return () => handlers.delete(handler);
+  // 插件通过 sidebarRight.openTab(kind) 主动开来时，走同一条通道
+  const off = onPanelOpenRequest((kind) => {
+    if (!kind) return;
+    const label = clientHost().contributionsFor("sidebar.right.pane.tab")
+      .map((contribution) => ({
+        key: String(contribution.meta.key ?? contribution.meta.id ?? ""),
+        label: typeof contribution.meta.label === "function"
+          ? String((contribution.meta.label as () => unknown)())
+          : String(contribution.meta.label ?? kind),
+      }))
+      .find((item) => item.key === kind);
+    handler({ pluginId: "", key: kind, label: label?.label || kind });
+  });
+  return () => { handlers.delete(handler); off(); };
 }
 
 /** 插件加载完成后调用：把它的插槽贡献通知壳层 */
+// conversation.view 由会话区标签栏承载（见 App 的 conversation-tabs）；
+// 右侧面板只接 sidebar.right.pane.tab
+const PANEL_SLOTS = ["sidebar.right.pane.tab"] as const;
+
 export function requestPluginPanels(pluginId: string, slots: string[]): PluginPanelRequest[] {
-  const slot = "sidebar.right.pane.tab";
-  if (!slots.includes(slot)) return [];
-  const requests = clientHost().contributionsFor(slot).map((contribution) => {
+  const active = PANEL_SLOTS.filter((slot) => slots.includes(slot));
+  if (!active.length) return [];
+  const requests = active.flatMap((slot) => clientHost().contributionsFor(slot)).map((contribution) => {
     const key = String(contribution.meta.key ?? contribution.meta.id ?? `${pluginId}-${contribution.sequence}`);
     const label = typeof contribution.meta.label === "function"
       ? String((contribution.meta.label as () => unknown)())
@@ -45,12 +62,12 @@ export function requestPluginPanels(pluginId: string, slots: string[]): PluginPa
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey }: { pluginId?: string; pluginKey?: string }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab" }: { pluginId?: string; pluginKey?: string; slot?: string }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
 
-  const contributions = host.contributionsFor("sidebar.right.pane.tab").filter((contribution) => {
+  const contributions = host.contributionsFor(slot).filter((contribution) => {
     if (pluginKey) {
       const key = String(contribution.meta.key ?? contribution.meta.id ?? "");
       if (key !== pluginKey) return false;
@@ -64,7 +81,7 @@ export function PluginSlotView({ pluginId, pluginKey }: { pluginId?: string; plu
 
   return React.createElement(
     "div",
-    { className: "plugin-slot-view", "data-plugin": pluginId || "" },
+    { className: "plugin-slot-view", "data-plugin": pluginId || "", "data-slot": slot },
     contributions.map((contribution) => {
       const meta = contribution.meta as Record<string, unknown>;
       // 插件用 inject() 声明它需要的数据；渲染时把结果作为 props 传进去
