@@ -853,3 +853,59 @@ test("插件市场：清单条目完整、可搜索、可判定已安装", async
   assert.equal(isInstalled(dshContext, [{ id: "dsh-context", name: "dsh-context" }]), true);
   assert.equal(isInstalled(dshContext, [{ id: "x", name: "别的插件" }]), false);
 });
+
+test("客户端模块闭包：扫客户端半边的 require，纯库模块回退主入口", async (t) => {
+  const { createHost, disposeHost } = await import("../electron/host/context.mts");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-plan-"));
+  const plugins = path.join(dir, "plugins");
+  const mods = path.join(plugins, "node_modules", "@deepseek-ai");
+  const write = async (rel, body) => {
+    const file = path.join(mods, rel);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, body);
+  };
+  // 纯库模块：没有 ./client 导出，只有主入口——但它是运行时必需
+  await write("lib-lib/package.json", JSON.stringify({ name: "@deepseek-ai/lib-lib", version: "1.0.0", main: "lib/index.js" }));
+  await write("lib-lib/lib/index.js", "exports.thing = 1;");
+  // 两半都有的模块：require 写在客户端半边（lib/client.js），主入口是主机半边
+  await write("mod-with-half/package.json", JSON.stringify({
+    name: "@deepseek-ai/mod-with-half", version: "1.0.0", main: "lib/index.js",
+    exports: { ".": { default: "./lib/index.js" }, "./client": { default: "./lib/client.js" } },
+  }));
+  await write("mod-with-half/lib/index.js", "exports.hostOnly = 1;");
+  await write("mod-with-half/lib/client.js", 'module.exports = require("@deepseek-ai/lib-lib");');
+  // 插件包放在 node_modules 根下（不是 @deepseek-ai/ 里）
+  const pluginDir = path.join(plugins, "node_modules", "plugin-a");
+  await fs.mkdir(path.join(pluginDir, "lib"), { recursive: true });
+  await fs.writeFile(path.join(pluginDir, "package.json"), JSON.stringify({
+    name: "plugin-a", version: "1.0.0", main: "lib/index.js",
+    exports: { ".": { default: "./lib/index.js" } },
+    dsh: { client: { platform: "web", inject: ["@deepseek-ai/mod-with-half"] } },
+  }));
+  await fs.writeFile(path.join(pluginDir, "lib", "index.js"), "exports.apply = () => {};");
+  await fs.writeFile(path.join(plugins, "dyworker.yml"), "- id: plugin-a\n  name: plugin-a\n");
+
+  const ctx = await createHost({
+    userDataDir: dir,
+    pluginsDir: plugins,
+    mountPlugins: true,
+    contracts: { ipcRegister: () => {}, ipcUnregister: () => {} },
+  });
+  try {
+    const plan = await ctx.plugins.clientModulePlan("plugin-a");
+    const specs = plan.ordered.map((node) => node.spec);
+    // ① 客户端半边里的 require 必须被扫到（否则运行时"宿主未提供该模块"）
+    assert.ok(specs.includes("@deepseek-ai/lib-lib"), `要扫到客户端半边的 require，实际：${JSON.stringify(specs)}`);
+    // ② 纯库模块没有客户端半边，也要在计划里（回退主入口），不能被当成缺失丢掉
+    const libNode = plan.ordered.find((node) => node.spec === "@deepseek-ai/lib-lib");
+    assert.ok(libNode?.file.endsWith("lib/index.js"), `纯库模块要回退主入口：${libNode?.file}`);
+    assert.deepEqual(plan.missing, [], "不该有缺失模块");
+    // ③ 协议取文件也要能拿到纯库模块
+    assert.ok(ctx.plugins.clientModuleFile("@deepseek-ai/lib-lib", 0).endsWith("lib/index.js"));
+    // ④ 依赖在前：@deepseek-ai/lib-lib 要排在 @deepseek-ai/mod-with-half 之前
+    assert.ok(specs.indexOf("@deepseek-ai/lib-lib") < specs.indexOf("@deepseek-ai/mod-with-half"), "依赖要先于使用者");
+  } finally {
+    await disposeHost(ctx);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

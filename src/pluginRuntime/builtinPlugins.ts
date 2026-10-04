@@ -40,13 +40,18 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
         results.push({ id: entry.id, ok: false, slots: [], error: info?.error || "没有客户端半边" });
         continue;
       }
+      const moduleErrors: string[] = [];
       for (const moduleRef of info.modules || []) {
         try {
-          await loadBundleScript(moduleRef.url);
-        } catch {
-          // 单个模块失败：继续，插件自身可能不依赖它
+          const loaded = await loadBundleScript(moduleRef.url);
+          // 单个模块失败不能静默：插件运行时 require 到它就会报"宿主未提供该模块"，
+          // 而真正的原因藏在这里（脚本取不到 / 执行抛错）。
+          if (loaded?.error) moduleErrors.push(`${moduleRef.spec}: ${loaded.error}`);
+        } catch (error: any) {
+          moduleErrors.push(`${moduleRef.spec}: ${String(error?.message || error)}`);
         }
       }
+      if (moduleErrors.length) console.warn("[plugin] 内置插件的客户端模块加载失败：", moduleErrors);
       const primary = info.entries?.find((item: any) => item.primary) || info.entries?.[0];
       if (!primary) {
         results.push({ id: entry.id, ok: false, slots: [], error: "没有客户端入口" });

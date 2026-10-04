@@ -9,6 +9,7 @@
 // 解析结果只包含包目录内的文件（做一次路径归属校验，避免协议层被用来读任意文件）。
 
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
 export interface ClientEntry {
   /** exports 里的子路径，如 "./client"；没有 exports 声明时为 "" */
@@ -119,6 +120,31 @@ export interface ClientModulePlan {
  * @param roots 直接声明的模块名
  * @param resolve 包名 → { manifest, dir }；解析不到返回 null
  */
+/**
+ * 客户端**模块**（不是插件自己的客户端半边）的入口文件。
+ *
+ * 顺序：子路径 → exports 里的 ./client* → **主入口**。
+ * 最后这步是为纯库模块准备的：`@deepseek-ai/dsh-client-store` 这类包只是普通 JS 库，
+ * 没有客户端半边导出，但运行时确实要 require 它——不兜底就会在排序阶段被当成"缺失"丢掉，
+ * 表现为插件加载时报"宿主未提供该模块"。
+ */
+export function resolveModuleEntries(found: { manifest: any; dir: string; relative?: string }): ClientEntry[] {
+  const out: ClientEntry[] = [];
+  const push = (file: string, subpath: string) => {
+    const resolved = path.resolve(file);
+    if (out.some((entry) => entry.file === resolved)) return;
+    out.push({ subpath, file: resolved, relative: path.relative(found.dir, resolved), primary: out.length === 0 });
+  };
+  if (found.relative) push(path.resolve(found.dir, found.relative), "./client");
+  for (const entry of resolveClientEntries(found.manifest, found.dir)) push(entry.file, entry.subpath);
+  if (out.length) return out;
+  const main = found.manifest?.main
+    || (typeof found.manifest?.exports?.["."] === "string" ? found.manifest.exports["."] : found.manifest?.exports?.["."]?.default)
+    || "index.js";
+  push(path.resolve(found.dir, String(main)), ".");
+  return out;
+}
+
 export function orderClientModules(
   roots: string[],
   resolve: (spec: string) => { manifest: any; dir: string; relative?: string } | null,
@@ -140,12 +166,23 @@ export function orderClientModules(
     }
     const client = found.manifest?.dsh?.client || found.manifest?.dyworker?.client || null;
     const deps: string[] = Array.isArray(client?.inject) ? client.inject.map(String) : [];
+    const entries = resolveModuleEntries(found);
+    // 字面量 require 也是真依赖：模块只声明了 dsh.client.inject 的一部分依赖，
+    // 其余（实测 dsh-api-session-controller → @deepseek-ai/dsh-client-store）靠 require。
+    // 排序只按声明会把被依赖者排在使用者之后，运行时就是"模块还没加载"。
+    const literal = new Set<string>();
+    for (const entry of entries) {
+      try {
+        for (const required of readStaticRequires(readFileSync(entry.file, "utf8"))) {
+          if (required.startsWith("@deepseek-ai/")) literal.add(required);
+        }
+      } catch {
+        // 单个文件读失败：跳过它的 require，不影响其余排序
+      }
+    }
     // 先递归依赖（依赖在前）
-    for (const dep of deps) visit(dep);
+    for (const dep of [...deps, ...literal]) visit(dep);
     // 子路径模块（如 @deepseek-ai/dsh-client-runtime/client）用它自己的入口
-    const entries = found.relative
-      ? [{ file: path.resolve(found.dir, found.relative) }]
-      : resolveClientEntries(found.manifest, found.dir);
     if (entries.length) {
       ordered.push({ spec: key, dir: found.dir, file: entries[0].file, deps });
     } else if (client) {

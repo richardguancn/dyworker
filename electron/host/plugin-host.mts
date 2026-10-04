@@ -19,7 +19,7 @@
 // 与 electron 的边界：本文件不 import electron，目录由壳层注入。
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
-import { orderClientModules, readStaticRequires, resolveClientEntries, splitModuleSpec } from "./plugin-client.mts";
+import { orderClientModules, readStaticRequires, resolveClientEntries, resolveModuleEntries, splitModuleSpec } from "./plugin-client.mts";
 import { clearPluginRoutes } from "./services/connection.mts";
 import { detectInstalledPackageName, dshClientModuleNames, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
@@ -553,6 +553,8 @@ export class PluginHostService extends Service {
           npmPath,
         });
         if (result.ok) installed.push(`${peer}@${version || "latest"}`);
+        // 失败要留痕：静默跳过会变成"插件界面莫名其妙不出现"，排查时毫无线索
+        else console.warn(`[plugins] 运行时依赖 ${peer} 补装失败：${String(result.error || "").slice(0, 160)}`);
       }
       await linkHostCordis(this.dir, hostCordisDir());
     } catch {
@@ -615,9 +617,12 @@ export class PluginHostService extends Service {
       try {
         const found = this.resolveClientModule(spec);
         if (!found) continue;
-        const entries = found.relative
-          ? [{ file: path.resolve(found.dir, found.relative) }]
-          : resolveClientEntries(found.manifest, found.dir);
+        // 要扫的是**运行时真正会加载的文件**：两半都有的模块里，require 往往写在客户端半边
+        // （lib/client.js），而 package.json 的主入口是主机半边（lib/index.js）。
+        // 只扫主入口会漏掉客户端半边的 require——实测 dsh-api-session-controller 需要
+        // @deepseek-ai/dsh-client-store，就是这样被漏掉的（结果运行时"宿主未提供该模块"）。
+        const entries = resolveModuleEntries(found).map((entry) => ({ file: entry.file }));
+        if (process.env.DYW_PLAN_DEBUG) console.log(`[plan] ${spec} → ${entries.map((e) => e.file.split("/").slice(-2).join("/")).join(", ")}`);
         for (const entry of entries) {
           const source = readFileSync(entry.file, "utf8");
           for (const required of readStaticRequires(source)) {
@@ -625,8 +630,9 @@ export class PluginHostService extends Service {
             if (this.resolveClientModule(required)) { seen.add(required); roots.push(required); queue.push(required); }
           }
         }
-      } catch {
+      } catch (error: any) {
         // 单个模块读失败：跳过它，继续扫其余模块
+        if (process.env.DYW_PLAN_DEBUG) console.log(`[plan] ${spec} ✗ ${String(error?.message || error).slice(0, 120)}`);
       }
     }
     return orderClientModules(roots, (spec) => this.resolveClientModule(spec));
@@ -636,7 +642,8 @@ export class PluginHostService extends Service {
   clientModuleFile(spec, index) {
     const found = this.resolveClientModule(spec);
     if (!found) throw new Error(`客户端模块未安装：${spec}`);
-    const entries = resolveClientEntries(found.manifest, found.dir);
+    // 用统一入口：纯库模块（无客户端半边）回退主入口，见 resolveModuleEntries
+    const entries = resolveModuleEntries(found);
     const entry = entries[Number(index)];
     if (!entry) throw new Error(`客户端模块入口不存在：${spec} #${index}`);
     return entry.file;
