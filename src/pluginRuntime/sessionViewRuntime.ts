@@ -26,8 +26,9 @@ export interface ConversationEventDefinition {
   kind?: string;
   target?: string;
   match?: (event: any) => { id: string; role: string } | null | undefined;
-  start?: (context: any, match: any) => any;
-  update?: (context: any, match: any) => any;
+  /** reader 是 DSH 给的"读上一次状态"入口；我们没有跨事件历史，传最小实现 */
+  start?: (context: any, match: any, reader?: any) => any;
+  update?: (context: any, match: any, reader?: any) => any;
   publication?: (match: any) => string | undefined;
   buildViewNode?: (context: any) => any;
 }
@@ -45,6 +46,17 @@ interface TargetRuntime {
 }
 
 export class SessionViewRuntime {
+  /**
+   * 装配过程中的错误回调。
+   * 默认只在控制台留一句（并且受 __DYW_VIEW_DEBUG 控制）——静默吞掉错误正是
+   * "视图莫名空白、毫无线索"的来源，但也不能把日志刷爆。
+   */
+  private readonly onError?: (stage: string, error: unknown, detail?: unknown) => void;
+
+  constructor(onError?: (stage: string, error: unknown, detail?: unknown) => void) {
+    this.onError = onError;
+  }
+
   /** target → 事件定义列表（按注册顺序） */
   private readonly eventDefinitions = new Map<string, ConversationEventDefinition[]>();
   /** target → 装配器与节点表 */
@@ -90,7 +102,8 @@ export class SessionViewRuntime {
           let matched: { id: string; role: string } | null | undefined;
           try {
             matched = definition.match?.(event);
-          } catch {
+          } catch (error) {
+            this.onError?.("match", error, { kind: definition.kind, type: event?.type });
             matched = null; // 单个定义匹配失败不该影响其它定义
           }
           if (!matched?.id) continue;
@@ -105,14 +118,17 @@ export class SessionViewRuntime {
             start: undefined,
             state: undefined,
           };
+          // 定义的 start/update 会有第三个参数 reader（DSH 用它读上一次状态）；
+          // 我们没有跨事件的历史读取需求，给一个诚实的最小实现
+          const reader = { previous: () => undefined };
           try {
             if (matched.role === "start") {
               context.start = match;
               context.matches = [match];
-              context.state = definition.start?.(context, match) ?? context.state;
+              context.state = definition.start?.(context, match, reader) ?? context.state;
             } else {
               context.matches.push(match);
-              context.state = definition.update?.(context, match) ?? context.state;
+              context.state = definition.update?.(context, match, reader) ?? context.state;
             }
             const publication = definition.publication?.(match) ?? "immediate";
             if (publication !== "none") {
@@ -123,8 +139,9 @@ export class SessionViewRuntime {
                 if (previous === undefined || previous.anchorSeq !== node.anchorSeq) structural = true;
               }
             }
-          } catch {
-            // 单个节点装配失败：跳过它，别把整个视图搞崩
+          } catch (error) {
+            // 单个节点装配失败：跳过它，别把整个视图搞崩——但必须留痕
+            this.onError?.("buildViewNode", error, { kind: definition.kind, key });
           }
           runtime.contexts.set(key, context);
         }
@@ -134,8 +151,9 @@ export class SessionViewRuntime {
         // 有结构变化时走 replace，避免装配器内部的顺序表过期
         if (structural && typeof runtime.builder.replace === "function") runtime.builder.replace({ nodes: upserts });
         else runtime.builder.apply({ upserts });
-      } catch {
-        // 装配器自身抛错：保留上一次快照
+      } catch (error) {
+        // 装配器自身抛错：保留上一次快照，但要留痕
+        this.onError?.("builder", error, { target });
       }
     }
   }
@@ -147,8 +165,9 @@ export class SessionViewRuntime {
       try {
         const snapshot = runtime.builder?.snapshot?.();
         if (snapshot) result.set(target, snapshot);
-      } catch {
+      } catch (error) {
         // 快照取不到：这个视图就没有数据，插件会渲染它自己的空状态
+        this.onError?.("snapshot", error, { target });
       }
     }
     return result;

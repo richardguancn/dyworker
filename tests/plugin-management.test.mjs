@@ -962,3 +962,41 @@ test("会话视图运行时：按 DSH 契约把会话事件折成视图快照", 
   fragile.ingest([{ type: "user/message", seq: 1, time: 1, data: {} }]);
   assert.equal(fragile.snapshots().get("fragile").ok, true, "装配器抛错时要保留上一次快照");
 });
+
+test("会话事件形状：插件必读字段一个都不能缺（缺了就渲染崩）", async () => {
+  const { buildSessionEvents } = await import("../src/pluginRuntime/sessionEvents.ts");
+  const events = buildSessionEvents([
+    { role: "user", content: "你好" },
+    { role: "assistant", content: "回答", tool_calls: [{ id: "c1", function: { name: "read_file", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "c1", toolName: "read_file", content: "文件内容" },
+  ], { provider: "deepseek", model: "deepseek-chat" });
+
+  const byType = (type) => events.filter((e) => e.type === type);
+  // 助手事件：turn/step（key 靠它拼）、usage（finalNode 直读）、source（节点产出条件）
+  const assistant = byType("assistant/message")[0];
+  assert.equal(typeof assistant.data.turn, "number", "要有 turn");
+  assert.equal(typeof assistant.data.step, "number", "要有 step");
+  assert.ok(assistant.data.usage && typeof assistant.data.usage === "object", "要有 usage 对象");
+  assert.equal(assistant.data.message.source.provider, "deepseek");
+  assert.equal(assistant.data.message.source.model, "deepseek-chat");
+  assert.ok(Array.isArray(assistant.data.message.content), "content 要是内容块数组（插件会遍历）");
+  assert.equal(typeof assistant.data.message.id, "string", "要有 message.id");
+
+  // 用户事件：顶层 content + source.kind（trajectory-input-message 直接读）
+  const user = byType("user/message")[0];
+  assert.ok(Array.isArray(user.data.content), "用户事件要有顶层 content 块数组");
+  assert.equal(user.data.source.kind, "user");
+  assert.equal(typeof user.data.id, "string");
+
+  // 工具事件：call 与 result 的 callId 要能对上
+  const call = byType("tool/call")[0];
+  const result = byType("tool/result")[0];
+  assert.equal(call.data.callId, "c1");
+  assert.equal(result.data.message.source.callId, "c1", "结果的 callId 要与 call 对应");
+  assert.ok(Array.isArray(result.data.message.content));
+
+  // 每轮一个 turn/end，且 reason 必填（turn-end 定义读 data.reason.kind）
+  const turnEnd = byType("turn/end")[0];
+  assert.equal(typeof turnEnd.data.turn, "number");
+  assert.equal(typeof turnEnd.data.reason.kind, "string");
+});

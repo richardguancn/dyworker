@@ -97,7 +97,12 @@ export class ClientPluginHost {
    * 会话视图运行时：把我们的会话事件折叠成插件要的视图数据（见 sessionViewRuntime.ts）。
    * DSH 这套驱动在它的客户端会话层（裸 ESM，我们加载不了），所以按同一份契约自己实现。
    */
-  private readonly sessionViews = new SessionViewRuntime();
+  private readonly sessionViews = new SessionViewRuntime((stage, error, detail) => {
+    // 默认安静；排查视图为什么空白时设 __DYW_VIEW_DEBUG=1
+    if ((globalThis as any).__DYW_VIEW_DEBUG) {
+      console.warn(`[plugin-view] ${stage} 失败：`, String((error as any)?.message || error), detail ?? "");
+    }
+  });
 
   constructor(options: ClientHostOptions = {}) {
     this.localeCode = options.locale || "zh";

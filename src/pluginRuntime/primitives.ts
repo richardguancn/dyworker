@@ -72,6 +72,25 @@ export function createPrimitives(host: PrimitivesHost = {}): Record<string, any>
   };
   MarkdownText.displayName = "DshPrimitives(MarkdownText)";
 
+  /**
+   * Markdown → 纯文本。DSH 的插件会拿它做"预览文本"，并且**直接假设返回字符串**
+   * （实测 dsh-client-ui-trajectory 会立刻 `.replace(...)`，返回非字符串就崩）。
+   * 这里做的是轻量剥离：去掉常见标记，保留可读文字；不追求完整 Markdown 解析。
+   */
+  const extractMarkdownPlainText = (value: unknown): string => {
+    const text = typeof value === "string" ? value : String(value ?? "");
+    return text
+      .replace(/```[\s\S]*?```/g, (block) => block.replace(/```[^\n]*\n?/g, ""))
+      .replace(/`([^`]*)`/g, "$1")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s{0,3}>\s?/gm, "")
+      .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, "$1")
+      .replace(/\r\n?/g, "\n")
+      .trim();
+  };
+
   const Button = (props: any) => {
     const { variant, size, loading, children, className, ...rest } = props || {};
     return h(
@@ -172,6 +191,8 @@ export function createPrimitives(host: PrimitivesHost = {}): Record<string, any>
     StateDot,
     MarkdownText,
     writeClipboard,
+    // Markdown → 纯文本：插件会直接对返回值做字符串操作，必须是真实现
+    extractMarkdownPlainText,
   };
 
   // 未知导出：图标给通用图标组件，其它给宽容占位组件，并把名字记进诊断
