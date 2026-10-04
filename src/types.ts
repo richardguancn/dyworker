@@ -1081,6 +1081,8 @@ export interface DyworkerBridge {
   reloadPlugins(): Promise<{ ok: boolean; count?: number }>;
   /** 客户端半边（dsh.client）入口：只返回 URL，真正执行在渲染端的客户端运行时 */
   pluginClientBundles(id: string): Promise<PluginClientBundlesResult>;
+  /** 插件视图要的会话投影（DSH 客户端契约里的 useProjection） */
+  pluginProjection(payload: { sessionId: string; key: string }): Promise<{ ok: boolean; value?: unknown; error?: string }>;
 
 }
 

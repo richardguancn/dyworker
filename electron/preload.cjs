@@ -277,5 +277,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   // 插件 HTTP 路由：渲染端对 /api/* 的 fetch 经这里进主进程执行
   pluginApiFetch: (payload) => ipcRenderer.invoke("plugin-api:fetch", payload),
   pluginApiRoutes: () => ipcRenderer.invoke("plugin-api:routes"),
+  // 插件视图要的会话投影（sessionId + key）
+  pluginProjection: (payload) => ipcRenderer.invoke("plugins:projection", payload),
 });
 

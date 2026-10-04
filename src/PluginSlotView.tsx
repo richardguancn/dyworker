@@ -44,6 +44,9 @@ export function onPluginPanelRequest(handler: PanelHandler): () => void {
 // 右侧面板只接 sidebar.right.pane.tab
 const PANEL_SLOTS = ["sidebar.right.pane.tab"] as const;
 
+/** 预取的投影键：DSH 的会话投影名字（目前只有上下文时间线） */
+const PROJECTION_KEYS = ["contextTimeline"] as const;
+
 export function requestPluginPanels(pluginId: string, slots: string[]): PluginPanelRequest[] {
   const active = PANEL_SLOTS.filter((slot) => slots.includes(slot));
   if (!active.length) return [];
@@ -62,10 +65,35 @@ export function requestPluginPanels(pluginId: string, slots: string[]): PluginPa
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab" }: { pluginId?: string; pluginKey?: string; slot?: string }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
+
+  // DSH 客户端契约：壳层给插件视图提供 sessionId 与 useProjection(key)。
+  // useProjection 是**同步**钩子（插件在渲染期调用），所以先按已知键预取，再同步返回缓存值；
+  // 取不到（null）插件会进入 cold 分支，走它自己的 /api 路由。
+  const [projections, setProjections] = React.useState<Record<string, unknown>>({});
+  React.useEffect(() => {
+    if (!sessionId) { setProjections({}); return; }
+    let cancelled = false;
+    const load = async () => {
+      const next: Record<string, unknown> = {};
+      for (const key of PROJECTION_KEYS) {
+        try {
+          const result = await (window as any).dyworker?.pluginProjection?.({ sessionId, key });
+          next[key] = result?.ok ? result.value : null;
+        } catch {
+          next[key] = null;
+        }
+      }
+      if (!cancelled) setProjections(next);
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  const useProjection = React.useCallback((key: string) => projections[String(key)] ?? null, [projections]);
 
   const contributions = host.contributionsFor(slot).filter((contribution) => {
     if (pluginKey) {
@@ -99,6 +127,9 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
         key: meta.key,
         id: meta.id,
         host: "sidebar",
+        // DSH 宿主视图契约（插件按这两个 prop 决定渲染什么）
+        sessionId: sessionId || "",
+        useProjection,
         // 插件常常按 props.t 取文案；这里给一个安全的恒等函数兜底
         t: typeof injected.t === "function" ? injected.t : (text: string) => text,
       };

@@ -58,6 +58,23 @@ export function pluginsIpcPlugin() {
 
       // 客户端半边（dsh.client）：只解析入口并给出自定义协议 URL，脚本由渲染端加载执行
       ctx.effect(() => ctx.ipc.handle("plugins:client-bundles", (_event, id) => host.clientBundles(id)));
+
+      // 插件视图要的会话投影（DSH 客户端契约：壳层提供 useProjection(key)）。
+      // 数据源是宿主的 sessionProjections 服务；还没实现折叠时如实返回 undefined，
+      // 插件据此进入"cold"分支并走它自己的 /api 路由取数据。
+      ctx.effect(() => ctx.ipc.handle("plugins:projection", (_event, payload) => {
+        const sessionId = String(payload?.sessionId || "");
+        const key = String(payload?.key || "");
+        if (!sessionId || !key) return { ok: false, error: "缺少 sessionId 或 key" };
+        try {
+          const session = ctx.sessions.get(sessionId);
+          if (session === undefined || session === null) return { ok: false, error: "会话不存在" };
+          const value = ctx.sessionProjections.stateOf(session, key);
+          return { ok: true, value: value === undefined ? null : value };
+        } catch (error) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      }));
     },
   };
 }
