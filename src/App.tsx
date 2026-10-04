@@ -91,6 +91,7 @@ import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import { TokenActivity } from "./TokenActivityPanel";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
+import { TraceView } from "./TraceView";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
@@ -11943,23 +11944,12 @@ export function App() {
         {conversationView !== "chat" && (
           <section className="conversation-view-panel">
             {conversationView === "trace" ? (
-              <TraceConsole
+              /* 原生轨迹视图（数据来自我们自己的 TraceEvent 流；不再依赖 DSH 的轨迹插件） */
+              <TraceView
                 traces={activeSessionTraceEvents}
-                logs={debugLogs}
+                messages={activeSession?.messages}
                 sessionId={activeSession?.id}
-                onClear={() => {
-                  traceEventsRef.current = [];
-                  setTraceEvents([]);
-                  runTraceEventsRef.current.clear();
-                  pendingDebugLogsRef.current = [];
-                  if (debugLogFlushTimerRef.current !== null) {
-                    window.clearTimeout(debugLogFlushTimerRef.current);
-                    debugLogFlushTimerRef.current = null;
-                  }
-                  setDebugLogs([]);
-                }}
                 onClose={() => setConversationView("chat")}
-                onAppendTraces={appendSessionTraces}
               />
             ) : (
               /* 插件贡献的会话区视图（DSH 的 conversation.view 插槽）仍然接在这里 */

@@ -36,6 +36,7 @@ const TRACE_KIND_LABEL: Record<TraceEvent["kind"], string> = {
   "activity-update": "活动更新",
   "plan-update": "计划更新",
   "file-change": "文件变更",
+  "context-compacted": "上下文压缩",
   "agent-finished": "任务结束",
 };
 

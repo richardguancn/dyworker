@@ -16592,6 +16592,134 @@ html[data-theme="dark"] {
   border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
 }
 
+/* ── 原生轨迹视图 ─────────────────────────────────────────────────────
+   结构对齐官方「轨迹」：工具栏指标 → 时长条形图 → 轮次行（USER/ASSISTANT）
+   → 请求行 → 工具调用与结果 → 标记；右侧检查面板给详情。
+   字号跟随「外观」里的缩放（--font-content-scale），不写死。 */
+.trv-trace-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-size: calc(12.5px * var(--font-content-scale, 1));
+  color: var(--ink);
+}
+.trv-trace-view-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.trv-trace-metric { display: flex; flex-direction: column; gap: 1px; line-height: 1.25; }
+.trv-trace-metric-label { color: var(--quiet); font-size: calc(10.5px * var(--font-content-scale, 1)); }
+.trv-trace-metric strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.trv-trace-view-search {
+  display: flex; align-items: center; gap: 6px;
+  margin-left: auto; min-width: 220px;
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+}
+.trv-trace-view-search input {
+  flex: 1; border: 0; background: transparent; color: var(--ink);
+  font-size: inherit; outline: none;
+}
+.trv-trace-bars {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 54px; padding: 6px 14px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.trv-trace-bar {
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+  flex: 0 0 14px; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer;
+}
+.trv-trace-bar-fill {
+  width: 100%; border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.trv-trace-bar.on .trv-trace-bar-fill { background: var(--accent); }
+.trv-trace-bar-label { color: var(--quiet); font-size: 9px; margin-top: 2px; }
+.trv-trace-view-body { display: flex; flex: 1; min-height: 0; }
+.trv-trace-view-scroll { flex: 1; min-width: 0; overflow: auto; padding: 6px 10px 24px; }
+.trv-trace-turn { padding: 8px 6px 10px; border-bottom: 1px dashed var(--border); }
+.trv-trace-turn.on { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 8px; }
+.trv-trace-turn-head { display: flex; align-items: center; gap: 10px; }
+.trv-trace-turn-no { font-weight: 600; color: var(--muted); }
+.trv-trace-turn-time { color: var(--quiet); font-variant-numeric: tabular-nums; }
+.trv-trace-turn-tools { color: var(--quiet); }
+.trv-trace-user, .trv-trace-assistant { display: flex; gap: 10px; padding: 4px 0 4px 12px; align-items: flex-start; }
+.trv-trace-role {
+  flex: 0 0 78px; font-size: calc(10.5px * var(--font-content-scale, 1));
+  letter-spacing: .04em; font-weight: 600; padding-top: 2px;
+}
+.trv-trace-role.user { color: var(--accent); }
+.trv-trace-role.assistant { color: #8b5cf6; }
+/* 正文必须能撑开：不给 flex 尺寸时会被压成一列一个字（实测踩到） */
+.trv-trace-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  line-height: 1.55;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.trv-trace-step { padding: 2px 0 4px 12px; }
+.trv-trace-request {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 4px 8px; border: 1px solid transparent; border-radius: 6px;
+  background: var(--bubble); color: var(--muted); cursor: pointer; text-align: left;
+  font-size: inherit;
+}
+.trv-trace-request:hover { border-color: var(--border-strong); }
+.trv-trace-request.on { border-color: var(--accent); color: var(--ink); }
+.trv-trace-request-model { font-weight: 600; color: var(--ink); }
+.trv-trace-request-endpoint { color: var(--quiet); }
+.trv-trace-request-time, .trv-trace-request-tokens { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--quiet); }
+.trv-trace-request-time + .trv-trace-request-tokens { margin-left: 8px; }
+.trv-trace-reply {
+  color: var(--muted);
+  padding: 4px 0 0 8px;
+  line-height: 1.55;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.trv-trace-tools { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 0 8px; }
+.trv-trace-tool {
+  display: grid; grid-template-columns: 130px minmax(0, 1.2fr) minmax(0, 1.4fr) 64px;
+  gap: 8px; align-items: baseline; width: 100%;
+  padding: 3px 8px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer; text-align: left; font-size: inherit;
+}
+.trv-trace-tool:hover { background: var(--sidebar-hover); }
+.trv-trace-tool.on { border-color: var(--accent); }
+.trv-trace-tool.bad .trv-trace-tool-result { color: #cf1322; }
+.trv-trace-tool-name { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trv-trace-tool-args, .trv-trace-tool-result { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trv-trace-tool-time { text-align: right; font-variant-numeric: tabular-nums; color: var(--quiet); }
+.trv-trace-markers { display: flex; flex-direction: column; gap: 4px; padding: 10px 6px; }
+.trv-trace-marker { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.trv-trace-marker-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--quiet); }
+.trv-trace-marker.compaction .trv-trace-marker-dot { background: #d46b08; }
+.trv-trace-marker.session-end .trv-trace-marker-dot { background: var(--accent); }
+.trv-trace-marker.plan-update .trv-trace-marker-dot { background: #389e0d; }
+.trv-trace-marker-title { color: var(--quiet); }
+.trv-trace-inspector {
+  flex: 0 0 380px; min-width: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); background: var(--surface);
+}
+.trv-trace-inspector header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.trv-trace-inspector-tabs { display: flex; gap: 6px; padding: 8px 10px 0; }
+.trv-trace-inspector-body {
+  flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 10px;
+  white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono); font-size: calc(11.5px * var(--font-content-scale, 1));
+  color: var(--muted); line-height: 1.55;
+}
+
 /* 插件视图 inject 失败时的提示（如实显示，不静默空白） */
 .plugin-slot-error {
   margin: 8px 12px;

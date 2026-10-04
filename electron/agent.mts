@@ -5323,6 +5323,16 @@ export async function runAgent({
           });
           break;
         }
+        case "context-compacted": {
+          trace = makeTrace({
+            kind: "context-compacted",
+            direction: "out",
+            target: "system",
+            title: "上下文已压缩",
+            content: String(agentEvent.summary || ""),
+          });
+          break;
+        }
         case "file-change": {
           trace = makeTrace({
             kind: "file-change",
@@ -5546,12 +5556,12 @@ export async function runAgent({
           signal,
           onSummary: (summary) => {
             debugLog("tool-call", "上下文自动压缩（compact）", summary);
-            traceEmit({ type: "context-compacted" });
+            traceEmit({ type: "context-compacted", summary });
           },
           onUsage: (usage) => {
             const used = Number(usage?.prompt_tokens);
-            if (Number.isFinite(used) && used > 0) {
-              traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: false });
+            if (Number.isFinite(used) && used >= 0) {
+              traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: Boolean(usage.estimated) });
             }
           },
         }));
@@ -5662,7 +5672,13 @@ export async function runAgent({
                 keepRecent: 8,
                 onSummary: (summary) => {
                   debugLog("tool-call", "服务端判定上下文超限，强制压缩（compact）", summary);
-                  traceEmit({ type: "context-compacted" });
+                  traceEmit({ type: "context-compacted", summary });
+                },
+                onUsage: (usage) => {
+                  const used = Number(usage?.prompt_tokens);
+                  if (Number.isFinite(used) && used >= 0) {
+                    traceEmit({ type: "token-usage", model: settings.model, prompt: used, completion: Number(usage?.completion_tokens) || 0, estimated: Boolean(usage.estimated) });
+                  }
                 },
               }));
               if (compacted) continue;

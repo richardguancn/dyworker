@@ -166,6 +166,7 @@ export interface TraceEvent {
     | "activity-update"
     | "plan-update"
     | "file-change"
+    | "context-compacted"
     | "agent-finished";
   direction: "in" | "out";
   target: "model" | "tool" | "system";
