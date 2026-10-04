@@ -42,6 +42,33 @@ export function onPluginPanelRequest(handler: PanelHandler): () => void {
 /** 插件加载完成后调用：把它的插槽贡献通知壳层 */
 // conversation.view 由会话区标签栏承载（见 App 的 conversation-tabs）；
 // 右侧面板只接 sidebar.right.pane.tab
+/**
+ * 插件视图的错误边界。
+ *
+ * 为什么必须有：插件组件是第三方代码，渲染期抛错会**把整个会话区带崩**——
+ * 实测 dsh-client-ui-trajectory 一渲染就抛，整棵 React 树被卸载、标签和面板全消失，
+ * 界面上什么线索都没有。边界把错误限制在插件自己的格子里，并如实显示原因。
+ */
+class PluginSlotBoundary extends React.Component<{ children?: React.ReactNode; label: string }, { error: string }> {
+  state = { error: "" };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: String((error as Error)?.message || error) };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error(`[plugin] 插件视图「${this.props.label}」渲染失败：`, error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return React.createElement("div", { className: "plugin-slot-error" },
+        `插件视图「${this.props.label}」渲染失败：${this.state.error}`);
+    }
+    return this.props.children;
+  }
+}
+
 const PANEL_SLOTS = ["sidebar.right.pane.tab"] as const;
 
 /** 预取的投影键：DSH 的会话投影名字（目前只有上下文时间线） */
@@ -126,8 +153,33 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
           injectionError = String(error?.message || error);
         }
       }
+      // DSH 会话视图的壳层契约：插件视图从 props 里拿这几个钩子/回调
+      //   useSession(selector)  → 读会话快照（views/openState/loadingOlder/hasMore…）
+      //   useDuration(selector) → 读插件自己的 duration store（inject 里给的 hooks.duration）
+      // 快照数据下一步按 dsh-context 那套投影的做法从我们的会话折出来；先给出**空但诚实**的形状：
+      // views 里没有 trajectory 时，插件会渲染它自己的空状态，而不是报错或假装有数据。
+      const snapshot = {
+        views: new Map<string, unknown>(),
+        openState: "ready",
+        loadingOlder: false,
+        hasMore: false,
+      };
+      const durationStore = (injected.hooks as any)?.duration;
+      const readDuration = () => {
+        try {
+          if (typeof durationStore?.get === "function") return durationStore.get();
+          if (typeof durationStore?.getState === "function") return durationStore.getState();
+        } catch {
+          // 读不到就当作没有：视图自己会退化成默认值
+        }
+        return null;
+      };
       const props = {
         ...injected,
+        useSession: (selector: (value: unknown) => unknown) => selector(snapshot),
+        useDuration: (selector: (value: unknown) => unknown) => selector(readDuration()),
+        inspect: undefined,
+        onInspectDone: () => undefined,
         name: meta.name,
         key: meta.key,
         id: meta.id,
@@ -135,8 +187,13 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
         // DSH 宿主视图契约（插件按这两个 prop 决定渲染什么）
         sessionId: sessionId || "",
         useProjection,
-        // 插件常常按 props.t 取文案；这里给一个安全的恒等函数兜底
-        t: typeof injected.t === "function" ? injected.t : (text: string) => text,
+        // 插件按 props.t 取文案。**必须绑定到插件自己的命名空间**：
+        // 之前给的是恒等函数，界面上直接显示原始键名（toolbar.duration 这种）。
+        t: typeof injected.t === "function"
+          ? injected.t
+          : (typeof meta.locale === "string" && meta.locale
+              ? (host.ctx as any).locale?.bind?.(String(meta.locale)) ?? ((text: string) => text)
+              : (text: string) => text),
       };
       const component = contribution.component;
       const element = typeof component === "function"
@@ -150,7 +207,7 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
           ? React.createElement("div", { className: "plugin-slot-error" },
               `插件视图数据没取到：${injectionError}`)
           : null,
-        element,
+        React.createElement(PluginSlotBoundary, { label: String(meta.key ?? meta.id ?? "插件视图") }, element),
       );
     }),
   );
