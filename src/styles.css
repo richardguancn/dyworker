@@ -17006,8 +17006,10 @@ html[data-theme="dark"] {
   background: var(--ink);
 }
 
-/* 非「对话」标签时，隐藏消息区与输入框，只留顶栏 + 标签栏 + 视图面板 */
-.main-panel.conversation-view-open > *:not(.topbar):not(.conversation-tabs):not(.conversation-view-panel) {
+/* 非「对话」标签时，隐藏消息区与输入框，只留顶栏 + 标签栏 + 视图面板。
+   必须排除 .plugins-page：插件页是整页接管，这条规则在 .plugins-page-open 之后，
+   不排除的话"在插件视图下点插件页"会把它一起隐藏——页面变全白（实测就是这个）。 */
+.main-panel.conversation-view-open > *:not(.topbar):not(.conversation-tabs):not(.conversation-view-panel):not(.plugins-page) {
   display: none;
 }
 

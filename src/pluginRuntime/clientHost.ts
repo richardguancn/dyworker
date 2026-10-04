@@ -268,7 +268,14 @@ export class ClientPluginHost {
     const slot = String(meta?.name || "");
     if (!slot) return () => undefined;
     const contribution: SlotContribution = { slot, meta: { ...meta }, component, sequence: this.sequence++ };
-    const list = this.contributions.get(slot) || [];
+    // 同一个插件可能被登记两次：内置插件开机自动加载后，用户又在插件页点了「加载界面半边」，
+    // 或者同一个 bundle 被作为依赖模块和插件入口各加载一次。不去重的话界面上会出现
+    // **两个一模一样的标签**（实测「对话 | 轨迹 | 轨迹」）。按 (slot, key) 去重，后来的替换先前的。
+    const key = String(meta?.key ?? meta?.id ?? "");
+    const list = (this.contributions.get(slot) || []).filter((item) => {
+      if (!key) return true;
+      return String(item.meta?.key ?? item.meta?.id ?? "") !== key;
+    });
     list.push(contribution);
     this.contributions.set(slot, list);
     const record = this.records[this.records.length - 1];
