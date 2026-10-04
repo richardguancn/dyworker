@@ -195,6 +195,12 @@ export function PluginsPage() {
               placeholder="搜索插件：公文、发票、Excel、PDF…"
             />
           </label>
+          <span
+            className="plugins-market-meta"
+            title={`点「安装」会带规格打开添加向导，先跑兼容性判定再决定装不装——市场只负责发现，不跳过检查。`}
+          >
+            star 数 {CATALOG_SNAPSHOT_DATE} 快照
+          </span>
           <div className="plugins-market-categories">
             <button
               className={`plugin-category-chip ${marketCategory ? "" : "on"}`}
@@ -226,7 +232,11 @@ export function PluginsPage() {
                 </div>
                 <p className="plugin-card-desc">{plugin.summary}</p>
                 <div className="plugin-card-tools">
-                  {plugin.tags.map((tag) => <span className="plugin-market-tag" key={tag}>{tag}</span>)}
+                  {/* 标签最多露 3 个：多了会把这一行挤成噪声，完整列表放 title */}
+                  {plugin.tags.slice(0, 3).map((tag) => <span className="plugin-market-tag" key={tag}>{tag}</span>)}
+                  {plugin.tags.length > 3 ? (
+                    <span className="plugin-market-tag" title={plugin.tags.join("、")}>+{plugin.tags.length - 3}</span>
+                  ) : null}
                   <button
                     className="plugins-text-button"
                     disabled={Boolean(busy) || installed}
@@ -243,10 +253,6 @@ export function PluginsPage() {
         {filterCatalog(marketQuery, marketCategory).length === 0 ? (
           <p className="plugins-empty">没有匹配的插件，换个关键词试试。</p>
         ) : null}
-        <p className="plugins-hint">
-          star 数为 {CATALOG_SNAPSHOT_DATE} 的快照（非实时）。点「安装」会带规格打开添加向导，
-          先跑兼容性判定再决定装不装——市场只负责发现，不跳过检查。
-        </p>
       </div>
 
       <div className="plugins-group">
@@ -278,8 +284,12 @@ export function PluginsPage() {
                   {bundle && !bundle.declared ? <span className="plugin-tag">单条目</span> : null}
                   {entry.disabled ? <span className="plugin-tag">已停用</span> : null}
                   {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
-                  {/* 内置插件：随应用分发、开机自动加载，用户可停用但不能卸载 */}
-                  {entry.builtin ? <span className="plugin-tag">内置</span> : null}
+                  {/* 内置插件：随应用分发、开机自动加载，可停用但不能卸载（说明收进悬浮） */}
+                  {entry.builtin ? (
+                    <span className="plugin-tag" title="随应用分发，开机自动加载；可停用，但不能卸载">
+                      内置
+                    </span>
+                  ) : null}
                 </div>
                 {description ? <p className="plugin-card-desc">{description}</p> : <p className="plugin-card-desc muted">{entry.name}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
@@ -311,9 +321,7 @@ export function PluginsPage() {
                   <button className="plugins-text-button" onClick={() => setEditing(editing?.id === entry.id ? null : { id: entry.id, text: JSON.stringify(entry.config ?? {}, null, 2) })}>
                     配置
                   </button>
-                  {entry.builtin ? (
-                    <span className="plugins-hint">内置插件随应用分发，可停用但不能卸载</span>
-                  ) : (
+                  {entry.builtin ? null : (
                     <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", () => bridge!.uninstallPlugin(bundle?.name || entry.id))}>
                       <Trash2 size={13} /> 卸载
                     </button>
