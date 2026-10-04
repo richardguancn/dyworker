@@ -20,6 +20,7 @@
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
 import { orderClientModules, readStaticRequires, resolveClientEntries, splitModuleSpec } from "./plugin-client.mts";
+import { clearPluginRoutes } from "./services/connection.mts";
 import { detectInstalledPackageName, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";

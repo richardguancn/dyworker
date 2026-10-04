@@ -657,3 +657,48 @@ test("DSH 插件 peer 运行时依赖：只挑 @deepseek-ai/*（排除 cordis）
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+test("插件 HTTP 路由服务：可注册 / 派发 / 列出，路由粘性且卸载时统一清理", async () => {
+  const { ConnectionService, clearPluginRoutes, listPluginRoutes } = await import("../electron/host/services/connection.mts");
+  const { Context } = await import("@deepseek-ai/cordis");
+  const service = new ConnectionService(new Context());
+
+  // DSH 插件全部走 connection.fetch.register 注册路由，门面必须在
+  // （处理函数字段名是 fetch，路由表在模块级——两处都踩过坑，见 connection.mts 注释）
+  assert.equal(typeof service.fetch.register, "function");
+  assert.equal(typeof service.register, "function");
+  assert.equal(typeof service.dispatch, "function");
+
+  const off = service.fetch.register({
+    path: "/api/demo/ping",
+    methods: ["POST"],
+    requestBody: "buffered",
+    // 注意：DSH 插件的处理函数字段名就是 fetch（不是 handler）
+    fetch: () => Response.json({ ok: true, from: "demo" }, { headers: { "cache-control": "no-store" } }),
+  });
+  assert.deepEqual(service.list(), ["POST /api/demo/ping"]);
+  assert.equal(service.routes.length, 1, "routes 只读视图要反映注册表（不能是静态空数组）");
+
+  const ok = await service.dispatch({ path: "/api/demo/ping", method: "POST", body: "{}" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(ok.body), { ok: true, from: "demo" });
+  assert.equal(ok.headers["cache-control"], "no-store", "响应头要透传回去");
+
+  // 方法不匹配 / 路径不存在：如实 404，不伪造成功
+  assert.equal((await service.dispatch({ path: "/api/demo/ping", method: "GET" })).status, 404);
+  assert.equal((await service.dispatch({ path: "/api/nope", method: "POST" })).status, 404);
+
+  // handler 抛错：500 + 错误信息，不把宿主带崩
+  const throwing = service.register({ path: "/api/demo/boom", methods: ["POST"], fetch: () => { throw new Error("炸了"); } });
+  const failed = await service.dispatch({ path: "/api/demo/boom", method: "POST" });
+  assert.equal(failed.status, 500);
+  assert.match(failed.body, /炸了/);
+  throwing();
+
+  // 路由注册是**粘性**的：cordis 的 inject fiber 重启会把 effect 的 disposer 调一遍，
+  // 若在这里注销，插件的路由永远留不住（实测"注册→立刻注销"循环）。真正卸载走 clearPluginRoutes。
+  off();
+  assert.ok(listPluginRoutes().includes("POST /api/demo/ping"), "disposer 不该把路由注销掉");
+  clearPluginRoutes();
+  assert.deepEqual(listPluginRoutes(), [], "统一清理要能把所有插件路由清空");
+});
