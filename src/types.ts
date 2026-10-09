@@ -1216,7 +1216,7 @@ export interface PluginCompatibility {
   matrix: string;
   missingPackages: string[];
   clientHalf: { platform?: string; inject?: string[] } | null;
-  hostHalf: { entry: string; importable: boolean; importError: string | null; inject: string[]; hints: string[] };
+  hostHalf: { entry: string; importable: boolean | null; metadataOnly?: boolean; importError: string | null; inject: string[]; hints: string[] };
   services: Array<{ name: string; state: "fulfilled" | "name-only" | "missing"; reason: string }>;
 }
 

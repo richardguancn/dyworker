@@ -16,7 +16,9 @@
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { spawnPluginProcess, terminatePluginProcess } from "./dsh-runtime/process.mts";
-import { DSH_RUNTIME_SERVICES, DSH_SESSION_SERVICES, isDshPackage } from "./dsh-runtime/baseline.mts";
+import { DSH_VERSION, DSH_RUNTIME_SERVICES, DSH_SESSION_SERVICES, isDshPackage } from "./dsh-runtime/baseline.mts";
+import { evaluatePluginCompatibility, readProfileVersionExemptions } from '@deepseek-ai/dsh-app-boot';
+import { resolvePluginModule } from './plugin-module-cache.mts';
 import { probeDshSessionPlugin } from "./dsh-runtime/session-compat.mts";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -159,14 +161,23 @@ export function missingDshPackages(profileManifest, manifest) {
  *   clientHalf, missingPackages, services, verdict, reasons
  * }}
  */
-export async function analyzePlugin(profileManifest, spec, manifest, pkgDir, { config = {} }: any = {}) {
+export async function analyzePlugin(profileManifest, spec, manifest, pkgDir,
+  { config = {}, entryUrl: suppliedEntry, metadataOnly = false,
+    versionExemptions = readProfileVersionExemptions(path.dirname(profileManifest)) }: any = {}) {
   const exported = manifest.exports?.["."] ?? (typeof manifest.exports === "string" ? manifest.exports : null);
   const main = (typeof exported === "string" ? exported : exported?.import || exported?.default) || manifest.main || "index.js";
   const entry = path.join(pkgDir, main);
-  const entryUrl = pathToFileURL(entry).href;
+  const entryUrl = suppliedEntry || (!metadataOnly && resolvePluginModule(spec, path.dirname(profileManifest))) || pathToFileURL(entry).href;
 
-  const declared = await readDeclaredInject(entryUrl, { profileDir: path.dirname(profileManifest), packageDir: pkgDir });
-  const hints = await scanInjectHints(pkgDir);
+  const versionIssue = isDshPackage(manifest) ? evaluatePluginCompatibility(manifest, versionExemptions, DSH_VERSION) : undefined;
+  const versionError = versionIssue && !versionIssue.exempted
+    ? `插件要求的 DSH 版本与当前 ${DSH_VERSION} 不一致：${Object.entries(versionIssue.peers).map(([name, range]) => `${name} ${range}`).join('、')}`
+    : null;
+
+  // 与官方预检一致：版本不匹配时，不先执行插件主入口。
+  const declared = versionError ? { importError: versionError } : metadataOnly ? []
+    : await readDeclaredInject(entryUrl, { profileDir: path.dirname(profileManifest), packageDir: pkgDir });
+  const hints = metadataOnly ? [] : await scanInjectHints(pkgDir);
   const importError = Array.isArray(declared) ? null : declared.importError;
   const inject = Array.isArray(declared) ? declared : [];
 
@@ -226,15 +237,18 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir, { c
     reasons.push(`同名但语义不同：${nameOnly.map((service) => `${service.name}（${service.reason}）`).join("；")}`);
   }
   if (verdict === "runnable") {
-    reasons.push(services.length ? "声明依赖的服务本宿主均提供" : "未声明服务依赖，主入口可 import");
+    reasons.push(metadataOnly ? "插件包仅提供配置；配置中的条目分别装载"
+      : services.length ? "声明依赖的服务本宿主均提供" : "未声明服务依赖，主入口可 import");
   }
 
   return {
     name: manifest.name || spec,
     version: manifest.version || "",
-    hostHalf: { entry: main, importable: !importError, importError, inject, hints },
+    hostHalf: { entry: metadataOnly ? '' : main, importable: metadataOnly && !importError ? null : !importError,
+      metadataOnly, importError, inject, hints },
     clientHalf: client ? { platform: client.platform || "", inject: client.inject || [] } : null,
     missingPackages,
+    versionIssue: versionIssue || null,
     services,
     runtime: sessionCheck?.ok ? "dsh-session" : isolated ? "tool-bridge" : "host",
     verdict,

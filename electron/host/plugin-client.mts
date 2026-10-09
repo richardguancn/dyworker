@@ -175,7 +175,8 @@ export function orderClientModules(
       return;
     }
     const client = found.manifest?.dsh?.client || found.manifest?.dyworker?.client || null;
-    const deps: string[] = Array.isArray(client?.inject) ? client.inject.map(String) : [];
+    const deps: string[] = [...(Array.isArray(client?.inject) ? client.inject : []),
+      ...(Array.isArray(client?.external) ? client.external : [])].map(String);
     const entries = resolveModuleEntries(found);
     // 字面量 require 也是真依赖：模块只声明了 dsh.client.inject 的一部分依赖，
     // 其余（实测 dsh-api-session-controller → @deepseek-ai/dsh-client-store）靠 require。

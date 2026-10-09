@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import Loader from '@deepseek-ai/cordis-plugin-loader';
 import ConfigEditor from '@deepseek-ai/dsh-config-editor';
 import Settings from '@deepseek-ai/dsh-settings';
-import { mountRootInclude, readProfilePatches } from '@deepseek-ai/dsh-app-boot';
+import { mountRootInclude, readProfilePatches, readProfileVersionExemptions, PROFILE_COMPATIBILITY_FILENAME } from '@deepseek-ai/dsh-app-boot';
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include';
 import { createRequire } from 'node:module';
 
@@ -19,13 +19,23 @@ function stablePluginName(name: string) {
   } catch { return name; }
 }
 
+function profileEntries(plugins: any[]) {
+  const stable = (row: any): any => ({ ...row, name: stablePluginName(row.name),
+    ...(row.group && Array.isArray(row.config) ? { config: row.config.map(stable) } : {}) });
+  return plugins.map(item => stable(item.options || { id: item.id, name: item.entryUrl, config: item.config ?? {} }));
+}
+
+function flatEntries(rows: any[]): any[] {
+  return rows.flatMap(row => [row, ...(row.group && Array.isArray(row.config) ? flatEntries(row.config) : [])]);
+}
+
 async function restoreStablePatchNames(file: string, plugins: any[]) {
   let source: string;
   try { source = await fs.readFile(file, 'utf8'); }
   catch (error: any) { if (error.code === 'ENOENT') return; throw error; }
   const patches = yaml.load(source, { schema: entryListSchema });
   if (!Array.isArray(patches)) return;
-  const names = new Map(plugins.map(item => [item.id, stablePluginName(item.entryUrl)]));
+  const names = new Map(flatEntries(profileEntries(plugins)).map(item => [item.id, item.name]));
   let changed = false;
   for (const row of patches) {
     if (row && typeof row.name === 'string' && row.name !== names.get(row.id)
@@ -55,19 +65,21 @@ export async function mountDshProfile(ctx: any, input: any) {
   const configPath = path.join(dir, 'cordis.yml');
   // 基础条目来自宿主批准的清单；用户设置在官方 patch 文件中独立保留。
   await fs.writeFile(configPath, '[]');
+  // 会话继承插件目录中已经明确允许的精确版本；不自行增加或延续旧授权。
+  await fs.writeFile(path.join(dir, PROFILE_COMPATIBILITY_FILENAME), JSON.stringify(readProfileVersionExemptions(input.profileDir)), { mode: 0o600 });
   // 缓存代次属于进程装载，不是设置身份；重装不能让官方 name 匹配失效。
   await restoreStablePatchNames(path.join(dir, 'cordis.patch.yml'), input.plugins || []);
-  await fs.writeFile(path.join(bundleDir, 'cordis.patch.yml'), JSON.stringify([{ insert: (input.plugins || []).map((item: any) => ({
-    id: item.id, name: stablePluginName(item.entryUrl), config: item.config || {},
-  })) }], null, 2));
+  const rows = profileEntries(input.plugins || []);
+  await fs.writeFile(path.join(bundleDir, 'cordis.patch.yml'), JSON.stringify([{ insert: rows }], null, 2));
   ctx.provide('profileContext', { name: 'dyworker-session', dir, home, cwd: input.workspacePath,
     patchPath: path.join(dir, 'cordis.patch.yml'), installAnchor: manifest, startedBundles: [], overlays: [], telemetryDisabledEnv: '1' });
   await ctx.plugin(Loader, { baseUrl: pathToFileURL(configPath).href });
   await ctx.plugin(ConfigEditor); await ctx.plugin(Settings);
   await mountRootInclude(ctx, configPath, readProfilePatches('dyworker-dsh', ctx.profileContext));
   await ctx.loader.await(); await ctx.fiber.await();
-  for (const item of input.plugins || []) {
+  for (const item of flatEntries(rows)) {
     const entry = [...ctx.loader.entries()].find((entry: any) => entry.options.id === item.id);
+    if (entry?.disabled) continue;
     await entry?.fiber?.await();
     if (!entry?.fiber || entry.fiber.state !== 2) {
       const missing = Object.keys(entry?.fiber?.inject || {}).filter(name => !entry.fiber.ctx.get(name));

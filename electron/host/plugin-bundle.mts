@@ -16,7 +16,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { applyEntryPatches } from "@deepseek-ai/cordis-plugin-include";
-import * as yaml from "js-yaml";
+import { bundlePatchPaths, loadOverlayPatches } from "@deepseek-ai/dsh-app-boot";
 
 // bundle 声明字段：先看自有命名空间，再看 dsh 的（dsh 包无需任何改动）
 const BUNDLE_FIELDS = ["dyworker", "dsh"];
@@ -48,7 +48,8 @@ export function resolvePackageDir(profileManifest, spec) {
   if (/^(?:@[\w.-]+\/)?[\w.-]+$/.test(spec)) {
     const direct = path.join(path.dirname(profileManifest), "node_modules", spec);
     try {
-      if (JSON.parse(readFileSync(path.join(direct, "package.json"), "utf8")).name === spec) return realpathSync(direct);
+      // npm 别名的目录名与清单 name 不同；目录仍由 profile 的依赖键决定。
+      if (typeof JSON.parse(readFileSync(path.join(direct, "package.json"), "utf8")).name === 'string') return realpathSync(direct);
     } catch { /* 再按模块解析规则查找 */ }
   }
   const profileRequire = createRequire(profileManifest);
@@ -85,35 +86,25 @@ export async function readPackageManifest(pkgDir) {
  * @returns { patchFile, patches }；包内没有声明时返回 patches: null（调用方走默认单条目）
  */
 export async function readBundlePatch(pkgDir, manifest) {
-  let declared = null;
-  let namespace = null;
+  let bundle = null;
+  let namespace: string | null = null;
   for (const field of BUNDLE_FIELDS) {
-    const value = manifest?.[field]?.bundle?.patch;
-    if (typeof value === "string" && value.trim()) {
-      declared = value.trim();
+    const value = manifest?.[field]?.bundle;
+    if (value && Object.hasOwn(value, "patch")) {
+      bundle = value;
       namespace = field;
       break;
     }
   }
-  if (!declared) return { patchFile: null, namespace: null, patches: null };
-
-  const patchFile = path.resolve(pkgDir, declared);
-  let text;
+  if (!bundle) return { patchFile: null, patchFiles: [], namespace: null, patches: null };
   try {
-    text = await fs.readFile(patchFile, "utf8");
+    // 复用官方解析器：多文件顺序、!!js、相对入口锚定都与 DSH 一致。
+    const patchFiles = bundlePatchPaths(pkgDir, bundle);
+    const patches = patchFiles.flatMap(file => loadOverlayPatches("dyworker", file));
+    return { patchFile: patchFiles[0] ?? null, patchFiles, namespace, patches };
   } catch (error: any) {
-    throw new BundleError(`插件包 ${manifest.name} 声明的 patch 文件读不到：${patchFile}（${error?.message || error}）`);
+    throw new BundleError(`插件包 ${manifest.name} 的配置加载失败：${error?.message || error}`);
   }
-  let patches;
-  try {
-    patches = yaml.load(text) ?? [];
-  } catch (error: any) {
-    throw new BundleError(`插件包 ${manifest.name} 的 patch 不是合法 YAML：${error?.message || error}`);
-  }
-  if (!Array.isArray(patches)) {
-    throw new BundleError(`插件包 ${manifest.name} 的 patch 顶层必须是数组`);
-  }
-  return { patchFile, namespace, patches };
 }
 
 /**
@@ -123,12 +114,8 @@ export async function readBundlePatch(pkgDir, manifest) {
  * @param warn 未命中 patch 的告警收集器
  */
 export function composeRows(baseRows, bundlePatches, warn: any = () => {}) {
-  let rows = [...(baseRows || [])];
-  for (const patches of bundlePatches) {
-    if (!patches?.length) continue;
-    rows = applyEntryPatches(rows, patches, warn);
-  }
-  return rows;
+  // 官方启动时将所有层合成一次；克隆插入项，避免后续覆盖污染保存的原层。
+  return applyEntryPatches(structuredClone(baseRows || []), structuredClone((bundlePatches || []).flat()), warn);
 }
 
 /** 包名（spec）→ 默认条目 id：取最后一段并去掉 scope */
@@ -144,7 +131,7 @@ export function defaultEntryId(spec) {
 export async function describeBundle(profileManifest, spec, { id }: any = {}) {
   const pkgDir = resolvePackageDir(profileManifest, spec);
   const manifest = await readPackageManifest(pkgDir);
-  const { patchFile, namespace, patches } = await readBundlePatch(pkgDir, manifest);
+  const { patchFile, patchFiles, namespace, patches } = await readBundlePatch(pkgDir, manifest);
   const entryId = id || defaultEntryId(spec);
   return {
     name: spec,
@@ -154,6 +141,7 @@ export async function describeBundle(profileManifest, spec, { id }: any = {}) {
     dir: pkgDir,
     entryUrl: pathToFileURL(pkgDir).href,
     patchFile,
+    patchFiles,
     namespace,
     patches: patches ?? [{ insert: [{ id: entryId, name: spec }] }],
     declared: Boolean(patches),

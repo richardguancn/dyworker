@@ -30,7 +30,9 @@ export const DSH_SESSION_SERVICES = [...DSH_RUNTIME_SERVICES, "llm", "agents", "
   "subagents", "userQuestions", "sandboxPolicy", "jobs", "ptcRuntime", "workflowEngine",
   "connection", "loader", "configEditor", "settings", "profileContext", "attachments", "commands", "fileUploads"];
 export function isDshPackage(manifest: any) {
-  return !manifest.dyworker && Boolean(manifest.dsh || /^(?:@deepseek-ai\/)?dsh-/.test(manifest.name || ""));
+  return !manifest.dyworker && Boolean(manifest.dsh || /^(?:@deepseek-ai\/)?dsh-/.test(manifest.name || "")
+    || Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies })
+      .some(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')));
 }
 export const DSH_SUPPORT = Object.freeze([
   { name: "dsh-office-tools", version: "1.0.5", scope: "Word、Excel、PowerPoint 文件工具", runtime: DSH_VERSION },

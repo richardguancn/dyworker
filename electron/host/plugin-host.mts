@@ -22,20 +22,25 @@ import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
 import { HOST_CLIENT_MODULES, orderClientModules, readStaticRequires, resolveClientEntries, resolveModuleEntries, splitModuleSpec } from "./plugin-client.mts";
 import { detectInstalledPackageName, hostCordisDir, hostPackageDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies, spawnRunner } from "./plugin-install.mts";
 import { runtimeImportsOf, runtimePackageName } from "./plugin-runtime-deps.mts";
-import { pluginModuleUrl, refreshPluginModules, registerPluginModules } from "./plugin-module-cache.mts";
+import { pluginModuleUrl, resolvePluginModule, refreshPluginModules, registerPluginModules } from "./plugin-module-cache.mts";
 import { DshPluginBridge } from "./dsh-runtime/bridge.mts";
-import { DSH_BASELINE, isDshPackage } from "./dsh-runtime/baseline.mts";
+import { DSH_VERSION, DSH_BASELINE, isDshPackage } from "./dsh-runtime/baseline.mts";
 import { transactPluginProfile } from "./plugin-transaction.mts";
 import { collectProfilePackages, restoreMissingProfilePackages } from './profile-preservation.mts';
 import { Service } from "@deepseek-ai/cordis";
-import Loader from "@deepseek-ai/cordis-plugin-loader";
+import Loader, { Group } from "@deepseek-ai/cordis-plugin-loader";
+import Include from '@deepseek-ai/cordis-plugin-include';
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import * as yaml from "js-yaml";
+import { entryListSchema } from '@deepseek-ai/cordis-plugin-include';
+import { evaluatePluginCompatibility, readProfileVersionExemptions, setProfileVersionExemption } from '@deepseek-ai/dsh-app-boot';
+import { fileURLToPath } from 'node:url';
+
+const treeYaml = createRequire(import.meta.resolve('@deepseek-ai/cordis-plugin-include'))('js-yaml');
 import semver from "semver";
 
 declare module "@deepseek-ai/cordis" {
@@ -79,22 +84,21 @@ function normalizeRow(row: any) {
   if (!name) throw new Error(`插件条目 ${id} 缺少 name（模块名）`);
   const out: any = { id, name };
   if (row?.config != null) out.config = row.config;
-  if (row?.disabled) out.disabled = true;
-  if (row?.group) out.group = row.group;
-  if (row?.inject) out.inject = row.inject;
+  for (const key of ['disabled', 'group', 'inject']) if (row?.[key] != null) out[key] = row[key];
+  if (row?.group && Array.isArray(out.config)) out.config = out.config.map(normalizeRow);
   // 内置标记要透传：界面据此显示「内置」，停用/启用也走同一条路径
   if (row?.builtin) out.builtin = true;
   return out;
 }
 
 export function parseTree(text) {
-  const data = yaml.load(text || "") ?? [];
+  const data = treeYaml.load(text || "", { schema: entryListSchema }) ?? [];
   if (!Array.isArray(data)) throw new Error(`${TREE_FILE} 顶层必须是条目数组`);
   return data.map(normalizeRow);
 }
 
 export function stringifyTree(rows) {
-  return HEADER + (rows.length ? yaml.dump(rows, { lineWidth: 120, noRefs: true }) : "[]\n");
+  return HEADER + (rows.length ? treeYaml.dump(rows, { schema: entryListSchema, lineWidth: 120, noRefs: true }) : "[]\n");
 }
 
 /** 判断某个 bundle 的 patch 是否会插入该 id（用于"这条是哪个包带来的"） */
@@ -111,6 +115,10 @@ function resolveOwnsId(bundle, id) {
     }
   }
   return false;
+}
+
+function includesModule(rows, spec) {
+  return rows.some(row => row.name === spec || (row.group && Array.isArray(row.config) && includesModule(row.config, spec)));
 }
 
 /**
@@ -169,8 +177,17 @@ export class PluginHostService extends Service {
    */
   packageDirOf(name) {
     const spec = String(name || "");
+    if (spec.startsWith('.') || path.isAbsolute(spec) || spec.startsWith('file:')) {
+      let dir = path.dirname(fileURLToPath(new URL(this.resolveSpecifier(spec))));
+      while (true) {
+        try { if (statSync(path.join(dir, 'package.json')).isFile()) return dir; } catch {}
+        const parent = path.dirname(dir);
+        if (parent === dir) throw new Error(`本地插件缺少 package.json：${spec}`);
+        dir = parent;
+      }
+    }
     try {
-      return resolvePackageDir(this.profileManifest(), spec);
+      return resolvePackageDir(this.profileManifest(), splitModuleSpec(spec).name);
     } catch (error) {
       const builtin = this.builtinPlugins().find((entry) => entry.name === spec || entry.id === spec);
       if (builtin) return builtin.dir;
@@ -307,11 +324,11 @@ export class PluginHostService extends Service {
     if (spec.startsWith("cordis:")) return spec;
     if (spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("file:")) {
       // 相对路径按 profile 目录解析（与 dsh 的 cordis.yml 写法一致）
-      return new URL(spec, pathToFileURL(this.treeFile())).href;
+      return pluginModuleUrl(fileURLToPath(new URL(spec, pathToFileURL(this.treeFile()))), this.dir);
     }
     const profileRequire = createRequire(this.profileManifest());
     try {
-      return pluginModuleUrl(profileRequire.resolve(spec), this.dir);
+      return resolvePluginModule(spec, this.dir) || pluginModuleUrl(profileRequire.resolve(spec), this.dir);
     } catch (error: any) {
       // 内置插件不装进 profile（npm 会剪掉），改从内置目录解析主入口
       const builtin = this.builtinPlugins().find((entry) => entry.name === spec || entry.id === spec);
@@ -380,10 +397,12 @@ export class PluginHostService extends Service {
     }
     if (!text.trim()) {
       this.baseRows = [];
+      this.failures.delete('<tree>');
       return { ok: true };
     }
     try {
       this.baseRows = parseTree(text);
+      this.failures.delete('<tree>');
       return { ok: true };
     } catch (error: any) {
       const reason = String(error?.message || error);
@@ -424,7 +443,8 @@ export class PluginHostService extends Service {
   /** 按当前合成结果更新条目；未改变的插件继续运行。 */
   async reload() {
     // 重读用户层：手工改过 dyworker.yml 之后 reload 必须能看到改动
-    await this.readBaseRows();
+    const read = await this.readBaseRows();
+    if (!read.ok) return read;
     const previous = [...this.rows];
     this.compose();
     for (const row of previous) if (!this.rows.some(item => item.id === row.id)) await this.deactivate(row.id);
@@ -453,7 +473,8 @@ export class PluginHostService extends Service {
 
     // 兼容性判定前置：不兼容的包直接拒绝，避免"装上了但什么都不做"
     const manifest = await readPackageManifest(described.dir);
-    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir);
+    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir,
+      { metadataOnly: described.declared && !includesModule(composeRows([], [described.patches]), name) });
     this.lastAnalysis = analysis;
     if (analysis.verdict !== "runnable" && !allowIncompatible) {
       return {
@@ -473,14 +494,19 @@ export class PluginHostService extends Service {
       version: described.version,
       description: described.description || "",
       patchFile: described.patchFile,
+      patchFiles: described.patchFiles,
       declared: described.declared,
       patches: described.patches,
     };
+    // 沿用“仍然安装”的明确选择，通过官方独立授权文件保存精确版本。
+    if (allowIncompatible && analysis.versionIssue && !analysis.versionIssue.exempted)
+      await setProfileVersionExemption(this.dir, `${manifest.name}@${manifest.version}`, DSH_VERSION, true, true);
     if (existing >= 0) this.bundles[existing] = record;
     else this.bundles.push(record);
     await this.reload();
     await this.persistBundles();
-    const failed = this.rows.filter((row) => row.name === name && this.failures.has(row.id)).map((row) => row.id);
+    const failed = this.rows.filter((row) => (row.name === name || resolveOwnsId(record, row.id))
+      && this.failures.has(row.id)).map((row) => row.id);
     // 失败时必须把**真实原因**带出去：以前只回 ok:false，error 是空的——
     // 界面上只剩"安装失败"四个字，调用方（含安装自愈）也拿不到"缺哪个包"的线索。
     const firstFailure = failed.length ? String(this.failures.get(failed[0]) || "") : "";
@@ -541,9 +567,12 @@ export class PluginHostService extends Service {
         const described = await describeBundle(staging.profileManifest(), spec);
         const manifest = await readPackageManifest(described.dir);
         const config = composeRows([], [described.patches]).find(item => item.name === spec)?.config || {};
-        const analysis = await analyzePlugin(staging.profileManifest(), spec, manifest, described.dir, { config });
+        const metadataOnly = described.declared && !includesModule(composeRows([], [described.patches]), spec);
+        const analysis = await analyzePlugin(staging.profileManifest(), spec, manifest, described.dir, { config, metadataOnly });
         if (analysis.verdict !== "runnable" && !allowIncompatible) return { ok: false, error: analysis.reasons.join("；"), analysis };
-        if (isDshPackage(manifest) && analysis.runtime !== 'dsh-session') {
+        if (allowIncompatible && analysis.versionIssue && !analysis.versionIssue.exempted)
+          await setProfileVersionExemption(stage, `${manifest.name}@${manifest.version}`, DSH_VERSION, true, true);
+        if (!metadataOnly && isDshPackage(manifest) && analysis.runtime !== 'dsh-session') {
           const bridge = new DshPluginBridge({ profileDir: stage, packageDir: described.dir, entryUrl: staging.resolveSpecifier(spec),
             config });
           try { await bridge.discover(); } finally { await bridge.dispose(); }
@@ -987,15 +1016,26 @@ export class PluginHostService extends Service {
    *  loader 内部对 import 失败只记一条 logger 就静默跳过） */
   async activate(row, creating) {
     const resolved = this.resolveSpecifier(row.name);
-    if (!row.builtin) {
+    // 含 DSH 插件的组整体交给官方会话加载器，保留组内提供服务和依赖等待。
+    if (row.group && Array.isArray(row.config) && await this.containsDshPlugin(row.config)) {
+      this.isolatedIds.add(row.id);
+      await this.deactivate(row.id);
+      if (row.disabled !== true) this.sessionRequired.add(row.id);
+      this.activated.set(row.id, await this.activationSignature(row));
+      await this.ctx.get('dshRuntime')?.closeIdle();
+      return resolved;
+    }
+    if (!row.builtin && !row.group && !row.name.startsWith('cordis:')) {
       const packageDir = this.packageDirOf(row.name);
       const manifest = await readPackageManifest(packageDir);
       if (isDshPackage(manifest)) {
         this.isolatedIds.add(row.id);
         await this.deactivate(row.id);
-        if (!row.disabled) {
-          const analysis = await analyzePlugin(this.profileManifest(), row.name, manifest, packageDir, { config: row.config ?? {} });
-          if (analysis.runtime === 'dsh-session') {
+        if (row.disabled !== true) {
+          const analysis = await analyzePlugin(this.profileManifest(), row.name, manifest, packageDir,
+            { config: row.config ?? {}, entryUrl: resolved });
+          if (analysis.versionIssue && !analysis.versionIssue.exempted) throw new Error(analysis.reasons.join('；'));
+          if (analysis.runtime === 'dsh-session' || row.inject != null || typeof row.disabled === 'object') {
             this.sessionRequired.add(row.id);
             this.activated.set(row.id, await this.activationSignature(row));
             await this.ctx.get('dshRuntime')?.closeIdle();
@@ -1020,11 +1060,13 @@ export class PluginHostService extends Service {
       }
     }
     await (this.loader as any).import(resolved);
+    const resolveChildren = (rows) => rows.map(child => ({ ...child, name: this.resolveSpecifier(child.name),
+      ...(child.group && Array.isArray(child.config) ? { config: resolveChildren(child.config) } : {}) }));
     const options = {
+      ...row,
       id: row.id,
       name: resolved,
-      config: row.config ?? null,
-      disabled: Boolean(row.disabled),
+      config: row.group && Array.isArray(row.config) ? resolveChildren(row.config) : row.config ?? null,
     };
     if (creating) await (this.loader as any).create(options);
     else {
@@ -1039,6 +1081,13 @@ export class PluginHostService extends Service {
     await this.loader.await();
     const entry = this.loader.resolve(row.id);
     await entry.fiber?.await();
+    const awaitChildren = async (rows) => {
+      for (const child of rows) {
+        await this.loader.resolve(child.id).fiber?.await();
+        if (child.group && Array.isArray(child.config)) await awaitChildren(child.config);
+      }
+    };
+    if (row.group && Array.isArray(row.config)) await awaitChildren(row.config);
     if (entry.fiber?.state === FiberState.ACTIVE) this.activeIds.add(row.id);
     else this.activeIds.delete(row.id);
     this.activated.set(row.id, await this.activationSignature(row));
@@ -1046,9 +1095,14 @@ export class PluginHostService extends Service {
   }
 
   async activationSignature(row) {
-    let revision = "";
-    try { const entry = this.resolveSpecifier(row.name); const file = new URL(entry); const stat = await fs.stat(file); revision = `${stat.mtimeMs}:${stat.size}`; } catch {}
-    return JSON.stringify([row, revision]);
+    const revisions = [];
+    const visit = async item => {
+      try { const entry = this.resolveSpecifier(item.name); const stat = await fs.stat(new URL(entry));
+        revisions.push([item.id, stat.mtimeMs, stat.size]); } catch {}
+      if (item.group && Array.isArray(item.config)) for (const child of item.config) await visit(child);
+    };
+    await visit(row);
+    return JSON.stringify([row, revisions]);
   }
   async deactivate(id: string) {
     this.sessionRequired.delete(id);
@@ -1065,13 +1119,43 @@ export class PluginHostService extends Service {
     await Promise.all([...this.remote.values()].map(item => item.bridge.stopRun(sessionId, runId)));
   }
 
+  async containsDshPlugin(rows) {
+    for (const row of rows) {
+      if (row.group && Array.isArray(row.config)) {
+        if (await this.containsDshPlugin(row.config)) return true;
+      } else if (!row.name.startsWith('cordis:')) {
+        try { if (isDshPackage(await readPackageManifest(this.packageDirOf(row.name)))) return true; } catch {}
+      }
+    }
+    return false;
+  }
+
   /** 只从宿主已安装、未停用的条目取插件入口，不接受界面传来的任意路径。 */
   async dshSessionPlugins() {
     const result = [];
+    const sessionRow = async row => {
+      const name = this.resolveSpecifier(row.name);
+      if (!row.group && !row.name.startsWith('cordis:')) {
+        const manifest = await readPackageManifest(this.packageDirOf(row.name));
+        const issue = evaluatePluginCompatibility(manifest, readProfileVersionExemptions(this.dir), DSH_VERSION);
+        if (issue && !issue.exempted) throw new Error(`插件 ${manifest.name}@${manifest.version} 不支持当前 DSH ${DSH_VERSION}`);
+      }
+      return { ...row, name, ...(row.group && Array.isArray(row.config)
+        ? { config: await Promise.all(row.config.map(sessionRow)) } : {}) };
+    };
     for (const row of this.rows) {
-      if (row.builtin || row.disabled) continue;
+      if (row.builtin || row.disabled === true || this.failures.has(row.id)) continue;
+      if (row.group && Array.isArray(row.config) && await this.containsDshPlugin(row.config)) {
+        const options = await sessionRow(row);
+        result.push({ id: row.id, entryUrl: options.name, config: options.config, options });
+        continue;
+      }
+      if (row.name.startsWith('cordis:')) continue;
       const manifest = await readPackageManifest(this.packageDirOf(row.name));
-      if (isDshPackage(manifest)) result.push({ id: row.id, entryUrl: this.resolveSpecifier(row.name), config: row.config ?? {} });
+      if (isDshPackage(manifest)) {
+        const options = await sessionRow(row);
+        result.push({ id: row.id, entryUrl: options.name, config: row.config ?? {}, options });
+      }
     }
     return result;
   }
@@ -1099,18 +1183,20 @@ export class PluginHostService extends Service {
   }
   entries() {
     return this.rows.map((row) => {
-      const runtime = this.runtimeState(row.id, Boolean(row.disabled));
+      let disabled = Boolean(row.disabled);
+      try { disabled = this.loader.resolve(row.id).disabled; } catch {}
+      const runtime = this.runtimeState(row.id, disabled);
       return {
         id: row.id, name: row.name, description: this.descriptions.get(row.name) || "",
         client: this.clients.get(row.name) || null, builtin: Boolean(row.builtin),
-        disabled: Boolean(row.disabled), config: row.config ?? null, ...runtime,
+        disabled, config: row.config ?? null, ...runtime,
         error: this.failures.get(row.id) || (runtime.missingServices.length ? `等待必需能力：${runtime.missingServices.join("、")}` : null),
       };
     });
   }
 
-  async add({ id, name, config = null }) {
-    const row = normalizeRow({ id, name, ...(config == null ? {} : { config }) });
+  async add(options) {
+    const row = normalizeRow(options);
     const index = this.baseRows.findIndex((item) => item.id === row.id);
     const exists = index >= 0;
     if (exists) this.baseRows[index] = { ...this.baseRows[index], ...row };
@@ -1305,6 +1391,8 @@ export async function mountPluginHost(ctx: any, dir: string, options: any = {}) 
   ctx.baseUrl = baseUrl;
   if (ctx.root) ctx.root.baseUrl = baseUrl;
   await ctx.plugin(Loader, { baseUrl });
+  ctx.loader.builtins.group = Group;
+  ctx.loader.builtins.include = Include;
   const service = new PluginHostService(ctx, { dir, loader: ctx.loader, builtinDir: options?.builtinDir });
   await service.load();
   return service;

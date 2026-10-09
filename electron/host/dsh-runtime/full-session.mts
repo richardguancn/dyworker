@@ -50,7 +50,7 @@ export class OfficialDshSession {
     if (this.child) throw new Error('DSH 会话已经启动');
     await fs.mkdir(this.options.dataDir, { recursive: true });
     const input = { profileDir: this.options.profileDir, sessionId: this.options.sessionId, model: this.options.model,
-      plugins: (this.options.plugins || []).map(({ id, entryUrl, config }: any) => ({ id, entryUrl, config })),
+      plugins: (this.options.plugins || []).map(({ id, entryUrl, config, options }: any) => ({ id, entryUrl, config, options })),
       extraTools: this.options.extraTools || [],
       fixedExtraTools: this.options.fixedExtraTools || [],
       dataDir: await fs.realpath(this.options.dataDir), workspacePath: await fs.realpath(this.options.workspacePath) };

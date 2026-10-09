@@ -45,7 +45,7 @@ function packageEntry(spec: string, parent: string, conditions: Set<string>) {
         const map = exports && typeof exports === 'object' && !Array.isArray(exports)
           && Object.keys(exports).some(key => key.startsWith('.'));
         target = targetOf(map ? exports[subpath] : subpath === '.' ? exports : null, conditions);
-        if (!target && map) {
+        if (!target && map && !Object.hasOwn(exports, subpath)) {
           for (const key of Object.keys(exports).sort((a, b) => b.length - a.length)) {
             if (!key.includes('*')) continue;
             const [prefix, suffix] = key.split('*');
@@ -64,7 +64,7 @@ function packageEntry(spec: string, parent: string, conditions: Set<string>) {
       const file = path.resolve(dir, target!);
       if (!inside(dir, file)) return null;
       try { if (statSync(file).isFile()) return realpathSync(file); } catch {}
-      return null; // 缺文件交给标准解析器报错，不隐藏安装问题。
+      return file; // 保留 ESM 所选目标；缺文件不能改走 require 的另一份入口。
     }
     const up = path.dirname(base);
     if (up === base) return null;
@@ -90,6 +90,11 @@ export function pluginModuleUrl(file: string, profile: string): string {
   const current = revisions.get(canonical(profile));
   if (current) url.searchParams.set(REVISION, String(current.revision));
   return url.href;
+}
+/** 使用主机 ESM 条件解析插件入口，而不是 require 条件。 */
+export function resolvePluginModule(spec: string, profile: string): string | null {
+  const file = packageEntry(spec, path.join(profile, 'package.json'), new Set(['node', 'import', 'node-addons']));
+  return file ? pluginModuleUrl(file, profile) : null;
 }
 export function refreshPluginModules(profile: string): void {
   const current = revisions.get(canonical(profile));
