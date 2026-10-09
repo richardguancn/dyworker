@@ -9,6 +9,7 @@
 import { Service } from "@deepseek-ai/cordis";
 import { runAgent } from "../../agent.mts";
 import { randomUUID } from "node:crypto";
+import { shouldContinueGoal } from "../../goal.mts";
 import { assertDshModelSettings } from "../dsh-runtime/model-settings.mts";
 import "../events.mts";
 
@@ -151,9 +152,14 @@ export class AgentService extends Service {
         }
         const shouldContinue = loop.enabled
           && result.status === "done"
-          && !result.finish
+          && shouldContinueGoal(result, options.goal)
           && loop.iteration < loop.maximum;
-        if (!shouldContinue) return result;
+        if (!shouldContinue) {
+          if (loop.enabled && options.goal && result.status === 'done' && !result.goalAchieved && loop.iteration >= loop.maximum) {
+            return { ...result, status: 'paused', reason: `已推进 ${loop.maximum} 轮，目标尚未确认完成，可继续推进。` };
+          }
+          return result;
+        }
         loop.iteration += 1;
         iterationMessages = [
           ...iterationMessages,

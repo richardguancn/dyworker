@@ -1,5 +1,6 @@
 import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
+import { queuedGoalPayload, settledStoredGoal } from "./goal.mts";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
@@ -1925,7 +1926,7 @@ async function queuedPayloadFromSession({ sessionId, runId, payload }) {
     if (queuedIndex >= 0) freshPayload.messages = messages.slice(0, queuedIndex + 1);
     if (session) {
       if (typeof session.workingContext === "string") freshPayload.workingContext = session.workingContext;
-      if (typeof session.goal === "string") freshPayload.goal = session.goal;
+      Object.assign(freshPayload, queuedGoalPayload(freshPayload, session));
     }
   } catch {
     // 读档失败时退回入队时的快照，任务照常执行
@@ -2194,7 +2195,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
       })(),
       workingContext: String(payload?.workingContext || ""),
-      goal: String(payload?.goal || "").trim().slice(0, 500),
+      goal: String(payload?.goal || "").trim(),
       conversation: sanitizeToolCalls(agentConversation),
       loop,
       loopStateEvents: true,
@@ -2221,6 +2222,10 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       signal: abortController.signal,
       onCancelled: () => ctx.scheduler.cancelForSession(sessionId),
     });
+    // Save the goal outcome before draining queued messages, even if the renderer is closed.
+    const storedGoalSession = ctx.sessions.get(sessionId);
+    const settled = settledStoredGoal(storedGoalSession, payload, finalResult);
+    if (settled && settled !== storedGoalSession) await ctx.sessions.upsert(settled);
     emit({ type: "loop-state", active: false, iteration: loop.iteration, maximum: loop.maximum, status: finalResult.status === "done" ? "已完成" : finalResult.status === "unverified" ? "未验证" : "已停止" });
     emit({ type: "agent-finished", result: finalResult });
     return { ok: true, result: finalResult };
@@ -2642,6 +2647,7 @@ async function resumeWake(wake, options: any = {}) {
     }
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const workingContext = await workingContextForSession(wake.sessionId);
+    const wakeGoal = queuedGoalPayload({}, ctx.sessions.get(wake.sessionId) || {});
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector({runId:wakeRunId});
@@ -2663,6 +2669,8 @@ async function resumeWake(wake, options: any = {}) {
       wakeApprovalMode: wake.approvalMode,
       prompt: wake.prompt,
       workingContext,
+      goal: wakeGoal.goal,
+      ...(wakeGoal.goal ? { loop: { enabled: true, iteration: 1, maximum: 10 } } : {}),
       conversation: [...prior, { role: "user", content: wakeText }],
       // 续跑中止信号：渲染端「停止」/ESC 能真正打断无人值守续跑
       signal: wakeAbort.signal,
@@ -2720,12 +2728,14 @@ async function resumeWake(wake, options: any = {}) {
       : undefined;
     const wakeMessages = collector.buildMessages(`（到点自动唤醒）${wakeText}`, result, wakeContent);
     const savedWake=await ctx.sessions.getAsync(wake.sessionId);
-    if (savedWake) await ctx.sessions.replace({...savedWake,messages:mergeDshTranscript(savedWake.messages || [],wakeMessages),updatedAt:new Date().toISOString()});
+    const settledWake = settledStoredGoal(savedWake, wakeGoal, result);
+    if (savedWake) await ctx.sessions.replace({...settledWake,messages:mergeDshTranscript(savedWake.messages || [],wakeMessages),updatedAt:new Date().toISOString()});
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("sessions:append", {
         runId:wakeRunId,sessionId: wake.sessionId,
         workspacePath: wake.workspacePath,
         messages: wakeMessages,
+        goalState: settledWake?.goalState,
       });
       mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:{type:'agent-finished',result}});
     } else {

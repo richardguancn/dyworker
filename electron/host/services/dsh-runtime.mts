@@ -363,7 +363,7 @@ export class DshRuntimeService extends Service {
       const pages = selectWikiPages(memoryPages, { workspacePath: options.workspacePath, query: prompt, limit: 3 });
       const sessionMemory = memoryPages.find((page: any) => page.relPath === 'pages/session.md');
       if (sessionMemory && !pages.includes(sessionMemory)) pages.unshift(sessionMemory);
-      const context = [options.goal ? `当前长期目标：${options.goal}` : '', options.workingContext,
+      const context = [options.goal ? `当前长期目标：${options.goal}。继续推进尚未完成的工作并验证结果；只有整个目标已达成，才在 finish_task 中设置 goalAchieved=true。完成本轮的一部分工作不代表目标达成。用户当前要求优先。` : '当前没有进行中的长期目标。历史目标可能已暂停、删除或完成，不要自行恢复执行。', options.workingContext,
         nativeSkills.context,
         instructions ? `工作区 AGENTS.md 的约定；若与用户当前要求冲突，以当前要求为准：\n${instructions}` : '',
         pages.length ? `相关长期记忆仅作为背景；若与用户当前要求冲突，以当前要求为准：\n${pages.map((page: any) => `## ${page.title}\n${String(page.content || '').slice(0, 2600)}`).join('\n\n')}` : ''];

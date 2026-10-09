@@ -1,3 +1,5 @@
+import { GoalBanner } from "./GoalBanner";
+import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import {
   AlarmClock,
@@ -362,7 +364,7 @@ const builtinCommands = [
   {
     id: "builtin:goal",
     title: "/goal",
-    detail: "设定会话长期目标：本次任务最多自动推进 10 轮，之后每个任务交付前对照目标自检（/goal 取消 可解除）",
+    detail: "设定目标并持续推进；支持 /goal 暂停、继续、取消，输入框上方可查看状态和用时",
     prompt: "/goal ",
   },
   {
@@ -7870,7 +7872,9 @@ export function App() {
         const state = await window.dyworker.getInitialState();
         if (cancelled) return;
         const loaded = keepSingleUnstartedSession(state.sessions.length ? state.sessions : [makeSession(state.workspacePath)]);
-        setSessions(loaded);
+        setSessions(loaded.map(session => session.goal && !session.goalState
+          ? { ...session, ...startGoal(session.goal) }
+          : session));
         // 种子保存基线：首次保存不需要把整档重发一遍
         savedSessionsRef.current = new Map(loaded.map((session) => [session.id, session]));
         // 恢复上次选中的会话；已不存在（被删/来自旧版本存档）则回退到列表第一项
@@ -7920,7 +7924,7 @@ export function App() {
     const removed = [...saved.keys()].filter((id) => !currentIds.has(id));
     savedSessionsRef.current = new Map(current.map((session) => [session.id, session]));
     return {
-      changed,
+      changed: changed.map(session => session.goalState?.status === "active" ? { ...session, goalState: { ...session.goalState, elapsedMs: goalElapsed(session), activeSince: Date.now() } } : session),
       removed,
       order: current.map((session) => session.id),
       activeId: activeIdRef.current,
@@ -8228,6 +8232,7 @@ export function App() {
                 ...session,
                 // 渠道里用「更换工作目录至…」切换后，主进程随下一条消息带回新路径
                 workspacePath: payload.workspacePath || session.workspacePath,
+                ...(payload.goalState && session.goalState?.id === payload.goalState.id && session.goalState.status === 'active' ? { goalState: payload.goalState } : {}),
                 ...(workingContext !== undefined ? { workingContext } : {}),
                 ...(appendUnread ? { unread: true } : {}),
                 messages: mergedMessages,
@@ -8989,7 +8994,7 @@ export function App() {
       title: `${session.title}（分支）`,
       workspacePath: session.workspacePath,
       ...(session.runtime ? { runtime: session.runtime } : {}),
-      ...(session.goal ? { goal: session.goal } : {}),
+      ...(session.goal ? { goal: session.goal, goalState: { ...startGoal(session.goal).goalState!, status: "paused", activeSince: undefined } } : {}),
       createdAt: now,
       updatedAt: now,
       messages: session.messages.slice(0, messageIndex + 1).map((message) => ({ ...message })),
@@ -10676,8 +10681,45 @@ export function App() {
     setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
   };
 
+  const goalActionsRef = useRef(new Set<string>());
+  const handleGoalAction = async (sessionId: string, action: 'pause' | 'resume' | 'remove' | 'complete') => {
+    const session = sessionsRef.current.find(row => row.id === sessionId);
+    if (!session?.goal || goalActionsRef.current.has(sessionId)) return;
+    if (session.goalState?.status === 'complete' && action !== 'remove') return;
+    goalActionsRef.current.add(sessionId);
+    try {
+      if (action === 'resume') {
+        if (runningSessionIds.has(sessionId) || runningRunIdsRef.current.has(sessionId)) {
+          showSessionNotice(sessionId, '当前任务结束后可继续目标。');
+          return;
+        }
+        void sendMessage(`继续推进目标：${session.goal}\n先核对已有进展，完成剩余工作并验证结果。`, sessionId, undefined, undefined, true);
+        return;
+      }
+      const next = action === 'remove' ? { ...session, goal: undefined, goalState: undefined }
+        : changeGoalStatus(session, action === 'pause' ? 'paused' : 'complete');
+      // Persist before cancellation drains the queue, so queued work cannot revive an old goal.
+      const updated = sessionsRef.current.map(row => row.id === sessionId ? next : row);
+      sessionsRef.current = updated;
+      setSessions(updated);
+      let saveError = "";
+      if (window.dyworker?.saveSessions) {
+        const saved = await window.dyworker.saveSessions({ changed: [next], removed: [], order: updated.map(row => row.id),
+          activeId: activeIdRef.current, meta: updated.map(row => ({ id: row.id, channel: row.channel, workspacePath: row.workspacePath })) }).catch(error => ({ ok: false, error: String(error) }));
+        if (!saved.ok) saveError = saved.error || '目标状态保存失败';
+      }
+      const runId = runningRunIdsRef.current.get(sessionId);
+      if (activeGoal(session) && runId) await window.dyworker?.cancelTask(sessionId, runId);
+      if (activeGoal(session) && sleepingSessions[sessionId]) await cancelSleepingTask(sessionId);
+      if (saveError) throw new Error(saveError);
+      showSessionNotice(sessionId, action === 'pause' ? '目标已暂停' : action === 'remove' ? '目标已删除' : '目标已标记完成');
+    } catch (error) {
+      showSessionError(sessionId, error instanceof Error ? error.message : '目标操作失败');
+    } finally { goalActionsRef.current.delete(sessionId); }
+  };
+
   const sendMessage = async (overridePrompt?: string, overrideSessionId?: string, overrideRunId?: string,
-    pluginSubmission?: import('./pluginRuntime/conversation').ConversationSubmission) => {
+    pluginSubmission?: import('./pluginRuntime/conversation').ConversationSubmission, resumeGoal = false) => {
     if (pluginSubmission) {
       pluginSubmission.signal.throwIfAborted();
       const owned = sessions.find(session => session.id === pluginSubmission.sessionId);
@@ -10721,7 +10763,7 @@ export function App() {
     }
     const isOverride = typeof overridePrompt === "string";
     const targetSession = overrideSessionId
-      ? sessions.find((session) => session.id === overrideSessionId) || (pluginSubmission ? undefined : activeSession)
+      ? sessionsRef.current.find((session) => session.id === overrideSessionId) || (pluginSubmission ? undefined : activeSession)
       : activeSession;
     if (!targetSession) return;
 
@@ -10729,6 +10771,22 @@ export function App() {
     const clipboardLeading = (dshDraft?.clipboardText ?? composer).length - (dshDraft?.clipboardText ?? composer).trimStart().length;
     const isPluginReference = (at: number) => dshDraft?.references.some(ref => at + clipboardLeading >= ref.offset && at + clipboardLeading < ref.offset + ref.length);
     if (!isOverride && (!content && !attachments.length && !activeSkills.length && !composerPastes.length && !annotations.length)) return;
+    const goalCommand = !isOverride ? content.match(/^\/goal(?:\s+([\s\S]*))?$/i) : null;
+    if (goalCommand) {
+      const argument = (goalCommand[1] || '').trim();
+      const action = ({ '暂停': 'pause', pause: 'pause', '继续': 'resume', resume: 'resume', '取消': 'remove', '清除': 'remove', clear: 'remove', '完成': 'complete' } as const)[argument.toLowerCase() as 'pause'];
+      if (!argument || action) {
+        setComposer('');
+        setMentionMenu(null);
+        if (!argument) setNotice(targetSession.goal ? `当前目标：${targetSession.goal}（可在目标栏暂停、继续或删除）` : '用法：/goal 目标描述');
+        else await handleGoalAction(targetSession.id, action);
+        return;
+      }
+      if (targetSession.goal && targetSession.goalState?.status !== 'complete') {
+        setNotice('当前还有未完成的目标，请先完成或删除，再创建新目标。');
+        return;
+      }
+    }
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
     if (activeTaskRunning && !queueSupported) return;
@@ -10776,23 +10834,8 @@ export function App() {
         }
         return;
       }
-      // /goal：设定会话级长期目标（跨轮驱动，借鉴 Claude Code /goal）
-      const goalMatch = content.match(/^\/goal(?:\s+([\s\S]*))?$/);
-      if (goalMatch) {
-        const argument = (goalMatch[1] || "").trim();
-        if (!argument) {
-          setNotice(targetSession.goal ? `当前目标：${targetSession.goal}（输入 /goal 取消 可解除）` : "用法：/goal 目标描述，例如 /goal 本周五前完成季度总结初稿");
-          setComposer("");
-          return;
-        }
-        if (["取消", "清除", "clear"].includes(argument)) {
-          updateSession(targetSession.id, (session) => ({ ...session, goal: undefined }));
-          setNotice("已解除长期目标");
-          setComposer("");
-          return;
-        }
-        setNotice(`已设定长期目标：${argument}，本任务会自动多轮推进，之后每个任务交付前对照它自检`);
-        content = argument;
+      if (goalCommand) {
+        content = goalCommand[1].trim();
         goalDriven = true;
       }
       setError("");
@@ -10908,7 +10951,7 @@ export function App() {
       : null;
     const updatedSession: SessionRecord = {
       ...targetSession,
-      ...(goalDriven ? { goal: content } : {}),
+      ...(goalDriven ? startGoal(content) : (resumeGoal || targetSession.goalState?.status === "blocked") ? { goalState: { ...changeGoalStatus(targetSession, "active").goalState!, id: crypto.randomUUID() } } : {}),
       ...(editingTarget ? { workingContext: undefined } : {}),
       title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : targetSession.title,
       workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath || targetSession.workspacePath || "",
@@ -10920,6 +10963,7 @@ export function App() {
       ],
     };
     setEditingMessage(null);
+    sessionsRef.current = sessionsRef.current.map(session => session.id === targetSession.id ? updatedSession : session);
     setSessions((current) => current.map((session) => session.id === targetSession.id ? updatedSession : session));
 
     if (isQueuedEdit) {
@@ -11012,10 +11056,9 @@ export function App() {
             // 只信本地标记会把输入框永久锁死，所以以磁盘上的 pending 列表为准自纠正
             void refreshPendingWakes();
           }
-          // 模型在 finish_task 中明确报告长期目标已达成：自动解除，避免已结束的目标继续干扰后续任务
-          if (result.goalAchieved) {
-            updateSession(taskSessionId, (session) => (session.goal ? { ...session, goal: undefined } : session));
-            showSessionNotice(taskSessionId, "长期目标已达成并解除（如实际未达成可重新 /goal 设定）");
+          updateSession(taskSessionId, (session) => settleGoal(session, updatedSession, result));
+          if (result.status === 'done' && result.goalAchieved && activeGoal(sessionsRef.current.find(row => row.id === taskSessionId) || updatedSession)) {
+            showSessionNotice(taskSessionId, "目标已完成");
           }
         };
         let finishedEventSeen = false;
@@ -11173,6 +11216,21 @@ export function App() {
         });
         agentUnsubscribeRefs.current.set(taskRunId, unsubscribeAgent);
         try {
+          // Goal controls and queued runs read the archive; publish the goal before admission.
+          if (updatedSession.goal || targetSession.goal) {
+            const saved = await window.dyworker.saveSessions({ changed: [updatedSession], removed: [],
+              order: sessionsRef.current.map(row => row.id), activeId: activeIdRef.current,
+              meta: sessionsRef.current.map(row => ({ id: row.id, channel: row.channel, workspacePath: row.workspacePath })) });
+            if (!saved.ok) throw new Error(saved.error || '目标保存失败，请重试');
+            const latest = sessionsRef.current.find(row => row.id === taskSessionId);
+            if (activeGoal(updatedSession) && (!latest || !activeGoal(latest) || latest.goalState?.id !== updatedSession.goalState?.id)) {
+              applyAgentResult({ status: 'cancelled', finalText: '' });
+              if (!runningRunIdsRef.current.has(taskSessionId)) setRunningSessionIds(current => {
+                const next = new Set(current); next.delete(taskSessionId); return next;
+              });
+              return;
+            }
+          }
           const response = await window.dyworker.sendTask({
             settings,
             runtime: updatedSession.runtime,
@@ -11180,9 +11238,10 @@ export function App() {
             sessionId: updatedSession.id,
             contextLimit: modelContextLimit(settings.model, settings.endpoint),
             workingContext: updatedSession.workingContext,
-            goal: updatedSession.goal,
+            goal: activeGoal(updatedSession),
+            goalId: updatedSession.goalState?.id,
             messages: updatedSession.messages,
-            loop: { enabled: goalDriven, maximum: goalDriven ? 10 : 1 },
+            loop: { enabled: Boolean(activeGoal(updatedSession)), maximum: activeGoal(updatedSession) ? 10 : 1 },
             approvalMode,
             runId: taskRunId,
           });
@@ -11239,8 +11298,8 @@ export function App() {
           createdAt: new Date().toISOString(),
         };
         shouldScrollToBottomRef.current = taskSessionId;
-        updateSession(activeSession.id, (session) => ({
-          ...session,
+        updateSession(taskSessionId, (session) => ({
+          ...settleGoal(session, updatedSession, { status: "paused", finalText: "", reason: "当前环境仅展示预览，未执行目标。" }),
           updatedAt: assistant.createdAt,
           messages: [...session.messages, assistant],
         }));
@@ -11249,7 +11308,7 @@ export function App() {
       const detail = requestError instanceof Error ? requestError.message : String(requestError);
       showSessionError(taskSessionId, detail);
       updateSession(taskSessionId, (session) => ({
-        ...session,
+        ...settleGoal(session, updatedSession, { status: "error", finalText: "", reason: detail }),
         messages: recordTaskFailure(session.messages, { assistantId: requestAssistantId, runId: messageRunId,
           detail, createdAt: new Date().toISOString() }),
       }));
@@ -13350,6 +13409,8 @@ export function App() {
               )}
             </div>
           )}
+          {activeSession?.goal && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
+            session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
             onDragOver={handleComposerDragOver}
@@ -13384,40 +13445,6 @@ export function App() {
                     <span>{workspaceContext.branch}</span>
                   </span>
                 )}
-              </div>
-            )}
-            {activeSession?.goal && (
-              <div className="goal-banner" title={`长期目标：${activeSession.goal}`}>
-                <span className="goal-banner-icon"><Target size={13} /></span>
-                <span className="goal-banner-label">长期目标</span>
-                <span className="goal-banner-text">{activeSession.goal}</span>
-                {activeTaskRunning && activeLoopState && (
-                  <span className="goal-banner-status">
-                    <LoaderCircle className="spin" size={11} />
-                    推进中 {activeLoopState.iteration}/{activeLoopState.maximum} 轮
-                  </span>
-                )}
-                <button
-                  className="goal-banner-done"
-                  aria-label="标记长期目标已达成"
-                  title="标记目标已达成并解除"
-                  onClick={() => {
-                    updateSession(activeSession.id, (session) => ({ ...session, goal: undefined }));
-                    setNotice("已标记长期目标达成并解除");
-                  }}
-                >
-                  <Check size={12} />
-                </button>
-                <button
-                  className="goal-banner-close"
-                  aria-label="解除长期目标"
-                  onClick={() => {
-                    updateSession(activeSession.id, (session) => ({ ...session, goal: undefined }));
-                    setNotice("已解除长期目标");
-                  }}
-                >
-                  <X size={12} />
-                </button>
               </div>
             )}
             {editingMessage?.sessionId === activeSession?.id && (

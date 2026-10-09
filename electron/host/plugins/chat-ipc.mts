@@ -32,7 +32,7 @@ trustedHandle("chat:complete", async (_event, payload) => {
   const session = payload?.session || null;
   const hasSession = Boolean(session && Array.isArray(session.messages) && session.messages.length);
   if (hasSession) {
-    const goal = String(session.goal || "").trim();
+    const goal = !session.goalState || session.goalState.status === 'active' ? String(session.goal || "").trim() : '';
     messages.unshift({
       role: "system",
       content: `这是「侧边聊天」：用户的临时问答区。用户当前的主会话是「${String(session.title || "未命名会话").trim()}」，与它相关的提问先用 search_current_session 按关键词检索、或用 read_current_session 了解最近进展，再依据检索结果作答；不要尝试继续执行主会话里的任务。${goal ? `主会话长期目标：${goal}` : ""}`,

@@ -11,6 +11,7 @@ import {mergeDshTranscript} from '../electron/host/dsh-runtime/presentation.mts'
 import {hasConfiguredModel} from '../electron/host/dsh-runtime/model-settings.mts';
 import {normalizeApprovalMode,wakeApprovalMode} from '../electron/settings.mts';
 import {channelMediaToolDefinitions} from '../electron/channels/media-tools.mts';
+import {queuedGoalPayload,settledStoredGoal} from '../electron/goal.mts';
 const require=createRequire(import.meta.url);
 const response=text=>new Response(JSON.stringify({choices:[{message:{role:'assistant',content:text},finish_reason:'stop'}]}),{headers:{'content-type':'application/json'}});
 async function setup(t,fetchImpl,windowOpen=true) {
@@ -26,7 +27,7 @@ async function setup(t,fetchImpl,windowOpen=true) {
   const deps={ctx,crypto,entryRuns,wakeRuns,channelTaskAborts,channelTaskKeys:new Set(),activeAgents:new Map(),mcpShuttingDown:false,CHANNEL_QUEUE_WAIT_TIMEOUT_MS:10000,
     trackTaskStart:()=>{},trackTaskEnd:()=>{},channelDebug:()=>{},CHANNEL_LABELS:{qq:'QQ'},defaultChannelWorkspace:async()=>workspacePath,
     mainWindow:windowOpen ? {isDestroyed:()=>false,webContents:{send:(type,payload)=>envelopes.push({type,payload})}} : null,
-    createTranscriptCollector,mergeDshTranscript,readSettings:async()=>settings,hasConfiguredModel,normalizeApprovalMode,wakeApprovalMode,
+    createTranscriptCollector,mergeDshTranscript,queuedGoalPayload,settledStoredGoal,readSettings:async()=>settings,hasConfiguredModel,normalizeApprovalMode,wakeApprovalMode,
     UNATTENDED_PENDING_TIMEOUT_MS:10000,CHANNEL_STREAM_EVENT_TYPES:new Set(['queue-start','dsh-conversation','agent-finished']),
     parseWorkspaceSwitch:()=>null,buildChannelAttachments:async media=>{assert.deepEqual(media||[],[]);return [];},
     visibleConversationForSession:async id=>(await host.sessions.getAsync(id))?.messages.map(m=>({role:m.role,content:m.content}))||[],
@@ -86,4 +87,21 @@ test('实际唤醒停止保留片段，旧历史和本轮要求不被覆盖，�
   const end=Date.now()+10000;while(!envelopes.some(e=>e.payload?.event?.type==='dsh-conversation'&&e.payload.event.turns.some(turn=>turn.replies.some(reply=>reply.text==='唤醒停止前的实际片段')))){if(Date.now()>end)throw new Error('没有收到实际唤醒片段');await new Promise(r=>setTimeout(r,10));}
   wakeRuns.get('wake-root').abort.abort();await running;const saved=await host.sessions.getAsync('wake-root');
   assert.deepEqual(saved.messages.slice(0,2).map(m=>m.content),['旧要求','旧回复']);assert.equal(saved.messages.length,4);assert.match(saved.messages.at(-1).content,/唤醒停止前的实际片段/);assert.equal(saved.messages.at(-1).taskStatus,'cancelled');assert.equal(wakeRuns.size,0);
+});
+
+test('目标自动唤醒沿用当前目标，达成后先保存完成状态再释放队列',async t=>{
+  let calls=0;
+  const {host,workspacePath,envelopes,wake}=await setup(t,async()=>{
+    calls++;
+    return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:'两项文字检查均已完成。',tool_calls:[{id:'goal-wake-finish',type:'function',function:{name:'finish_task',arguments:JSON.stringify({summary:'文字检查均已完成',evidence:'已核对两项文字',goalAchieved:true})}}]},finish_reason:'tool_calls'}]}),{headers:{'content-type':'application/json'}});
+  });
+  await host.sessions.replace({id:'wake-goal',runtime:'dsh',workspacePath,goal:'核对两项文字',goalState:{id:'wake-goal-generation',status:'active',createdAt:Date.now(),elapsedMs:5000,activeSince:Date.now()},messages:[{id:'old-user',role:'user',content:'核对两项文字'}]});
+  await wake({sessionId:'wake-goal',workspacePath,prompt:'核对两项文字',reason:'隔离目标验收',createdAt:new Date().toISOString(),wakeAt:new Date().toISOString()});
+  const saved=await host.sessions.getAsync('wake-goal');
+  assert.equal(calls,1);
+  assert.equal(saved.goalState.status,'complete');
+  assert.ok(saved.goalState.elapsedMs>=5000);
+  assert.equal(saved.goalState.activeSince,undefined);
+  assert.equal(envelopes.find(e=>e.type==='sessions:append').payload.goalState.status,'complete');
+  assert.equal(queuedGoalPayload({goal:'核对两项文字'},saved).goal,'');
 });

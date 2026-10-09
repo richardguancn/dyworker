@@ -30,6 +30,35 @@ async function setup(t) {
   return { root, host, workspacePath };
 }
 
+test('goal 只结束部分工作仍继续，整个目标完成后停止', async t => {
+  const { host, workspacePath } = await setup(t);
+  let calls = 0;
+  const result = await host.agent.run({ runtime: 'dsh', sessionId: 'goal-partial', settings, workspacePath,
+    prompt: '完成两项普通文字检查', goal: '完成两项普通文字检查', conversation: [{ role: 'user', content: '完成两项普通文字检查' }],
+    loop: { enabled: true, iteration: 1, maximum: 3 }, approvalMode: 'full-access',
+    fetchImpl: async () => {
+      calls++;
+      return reply({ role: 'assistant', content: calls === 1 ? '第一项已核对。' : '两项已核对。', tool_calls: [{ id: `finish-${calls}`, type: 'function',
+        function: { name: 'finish_task', arguments: JSON.stringify({ summary: '文字检查结果', evidence: '已核对文字', ...(calls === 2 ? { goalAchieved: true } : {}) }) } }] });
+    } });
+  assert.equal(calls, 2);
+  assert.equal(result.status, 'done');
+  assert.equal(result.goalAchieved, true);
+});
+
+test('goal 用尽轮次明确保留未完成状态，不报告目标完成', async t => {
+  const { host, workspacePath } = await setup(t);
+  let calls = 0;
+  const result = await host.agent.run({ runtime: 'dsh', sessionId: 'goal-limit', settings, workspacePath,
+    prompt: '继续核对文字', goal: '完成全部文字检查', conversation: [{ role: 'user', content: '继续核对文字' }],
+    loop: { enabled: true, iteration: 1, maximum: 2 }, approvalMode: 'full-access',
+    fetchImpl: async () => { calls++; return reply({ role: 'assistant', content: '部分文字已核对，仍有剩余。' }); } });
+  assert.equal(calls, 2);
+  assert.equal(result.status, 'paused');
+  assert.match(result.reason, /已推进 2 轮/);
+  assert.equal(result.goalAchieved, undefined);
+});
+
 test('DSH 缺少模型设置明确失败，不创建官方会话或调用模型；补齐后可执行', async t => {
   const { host, workspacePath } = await setup(t);
   await host.sessions.upsert({ id: 'missing-model', runtime: 'dsh', workspacePath, messages: [] });

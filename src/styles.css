@@ -8430,82 +8430,54 @@ body.resizing-panels .app-shell {
   text-overflow: ellipsis;
 }
 
-/* /goal 长期目标横幅（吸附在输入框顶部） */
+/* Goal strip shares the composer's edge, with neutral colors in both themes. */
 .goal-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -4px -4px 10px;
-  padding: 6px 8px 6px 10px;
-  border: 1px solid rgba(127, 164, 0, 0.3);
-  border-radius: 12px;
-  background: linear-gradient(90deg, rgba(127, 164, 0, 0.1), rgba(127, 164, 0, 0.045) 55%, transparent);
-  color: #66713d;
-  font-size: calc(12px * var(--font-ui-scale, 1));
-  line-height: 1.4;
-}
-
-.goal-banner-icon {
+  width: min(916px, calc(76% - 24px));
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  background: rgba(127, 164, 0, 0.16);
-  color: #5d7016;
+  margin-bottom: -17px;
+  padding: 7px 10px 23px;
+  border: 1px solid var(--border);
+  border-radius: 21px 21px 0 0;
+  background: var(--surface);
+  color: var(--muted);
+  pointer-events: auto;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.5;
 }
-
-.goal-banner-label {
-  flex: none;
-  font-weight: 600;
-  color: #5d7016;
-  white-space: nowrap;
+.goal-banner-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.goal-banner-icon { flex: none; color: var(--quiet); }
+.goal-banner-summary {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0;
+  border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
 }
-
-.goal-banner-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #6b7452;
+.goal-banner-label { flex: none; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.goal-banner-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.goal-banner-time { flex: none; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.goal-banner-actions { display: flex; flex: none; gap: 2px; margin-left: auto; }
+.goal-banner-actions button, .goal-banner-done {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 28px; height: 28px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--muted); cursor: pointer; font: inherit;
 }
-
-.goal-banner-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(127, 164, 0, 0.14);
-  color: #5d7016;
-  font-size: calc(11px * var(--font-ui-scale, 1));
-  white-space: nowrap;
+.goal-banner button:hover { background: var(--sidebar-hover); color: var(--ink); }
+.goal-banner button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.goal-banner button:disabled { opacity: .45; cursor: default; }
+.goal-banner-details { margin: 8px 2px 2px 24px; border-top: 1px solid var(--border); padding-top: 8px; }
+.goal-banner-details p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25vh; overflow-y: auto; color: var(--ink); }
+.goal-banner-details .goal-banner-reason { color: var(--muted); }
+.goal-banner-detail-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.goal-banner-done { flex: none; padding: 0 7px; }
+@media (max-width: 1120px) {
+  .goal-banner { width: calc(82% - 24px); }
 }
-
-.goal-banner-close,
-.goal-banner-done {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #8b935f;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.goal-banner-close:hover,
-.goal-banner-done:hover {
-  background: rgba(127, 164, 0, 0.18);
-  color: #4e5c0f;
+@media (max-width: 700px) {
+  .goal-banner { width: calc(82% - 24px); font-size: 12px; }
+  .goal-banner-row { gap: 5px; }
+  .goal-banner-summary { flex: 1; flex-wrap: wrap; gap: 0; }
+  .goal-banner-label, .goal-banner-text { width: 100%; }
+  .goal-banner-time { font-size: 11px; }
+  .goal-banner-detail-footer { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
 
 /* ---- 跟随 macOS / Linux 系统外观的深色主题 ---- */
@@ -9921,46 +9893,7 @@ html:not([data-theme]) .attachment-chip.ref-attachment-chip {
   }
 
 
-  html:not([data-theme]) .goal-banner {
-    border-color: rgba(157, 190, 74, 0.28);
-    background: linear-gradient(90deg, rgba(127, 164, 0, 0.14), rgba(127, 164, 0, 0.06) 55%, transparent);
-  }
-
-
-  html:not([data-theme]) .goal-banner-icon {
-    background: rgba(157, 190, 74, 0.16);
-    color: #b5c878;
-  }
-
-
-  html:not([data-theme]) .goal-banner-label,
-html:not([data-theme]) .goal-banner-status {
-    color: #b5c878;
-  }
-
-
-  html:not([data-theme]) .goal-banner-status {
-    background: rgba(157, 190, 74, 0.14);
-  }
-
-
-  html:not([data-theme]) .goal-banner-text {
-    color: #a3ad8c;
-  }
-
-
-  html:not([data-theme]) .goal-banner-close {
-    color: #8f9a6e;
-  }
-
-
-  html:not([data-theme]) .goal-banner-close:hover {
-    background: rgba(157, 190, 74, 0.18);
-    color: #cdd99b;
-  }
-
-
-  html:not([data-theme]) .interactive-block {
+html:not([data-theme]) .interactive-block {
     background: rgba(255, 255, 255, 0.025);
   }
 
@@ -11455,46 +11388,7 @@ html[data-theme="dark"] .attachment-chip.ref-attachment-chip {
   }
 
 
-  html[data-theme="dark"] .goal-banner {
-    border-color: rgba(157, 190, 74, 0.28);
-    background: linear-gradient(90deg, rgba(127, 164, 0, 0.14), rgba(127, 164, 0, 0.06) 55%, transparent);
-  }
-
-
-  html[data-theme="dark"] .goal-banner-icon {
-    background: rgba(157, 190, 74, 0.16);
-    color: #b5c878;
-  }
-
-
-  html[data-theme="dark"] .goal-banner-label,
-html[data-theme="dark"] .goal-banner-status {
-    color: #b5c878;
-  }
-
-
-  html[data-theme="dark"] .goal-banner-status {
-    background: rgba(157, 190, 74, 0.14);
-  }
-
-
-  html[data-theme="dark"] .goal-banner-text {
-    color: #a3ad8c;
-  }
-
-
-  html[data-theme="dark"] .goal-banner-close {
-    color: #8f9a6e;
-  }
-
-
-  html[data-theme="dark"] .goal-banner-close:hover {
-    background: rgba(157, 190, 74, 0.18);
-    color: #cdd99b;
-  }
-
-
-  html[data-theme="dark"] .interactive-block {
+html[data-theme="dark"] .interactive-block {
     background: rgba(255, 255, 255, 0.025);
   }
 

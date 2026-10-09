@@ -1316,9 +1316,9 @@ test("codex alignment surfaces are wired end to end", () => {
   // /goal 跨轮目标驱动:斜杠命令 → 会话级 goal → 注入系统提示,goalDriven 强制持续执行
   assert.match(app, /builtin:goal/);
   assert.match(app, /goalDriven/);
-  assert.match(app, /goal-banner/);
+  assert.match(app, /<GoalBanner/);
   // 达成闭环:finish_task 带 goalAchieved → 结果回传 → 渲染端解除目标;横幅可手动标记达成
-  assert.match(app, /goal-banner-done/);
+  assert.match(app, /handleGoalAction/);
   assert.match(app, /result\.goalAchieved/);
   assert.match(main, /payload\?\.goal/);
   assert.match(agent, /长期目标是/);

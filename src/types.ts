@@ -135,7 +135,7 @@ export interface AgentResult {
   finalText: string;
   reason?: string;
   demo?: boolean;
-  // 会话设有 /goal 长期目标且模型在 finish_task 中明确报告已达成时为 true；渲染端据此自动解除目标
+  // 会话设有 /goal 且已核验整个目标达成时为 true；保留完成记录，不再驱动后续任务
   goalAchieved?: boolean;
   wake?: { wakeAt: string; reason: string };
   changes?: FileChange[];
@@ -345,8 +345,16 @@ export interface SessionRecord {
   titleCustom?: boolean;
   workspacePath: string;
   // /goal 设定的长期目标：注入会话内每个任务的系统提示，交付前对照自检；
-  // 模型在 finish_task 中报告达成或用户在横幅确认后解除，不达成不自动消失
+  // 状态与用时保存在 goalState；兼容只有 goal 字符串的旧会话
   goal?: string;
+  goalState?: {
+    id: string;
+    status: 'active' | 'paused' | 'blocked' | 'complete';
+    createdAt: number;
+    elapsedMs: number;
+    activeSince?: number;
+    reason?: string;
+  };
   // 上一轮实际读取和操作得到的工作资料，作为下一轮的隐藏上下文保存
   workingContext?: string;
   // 来源渠道(QQ/微信消息驱动的会话),用于列表标识
@@ -1032,6 +1040,7 @@ export interface DyworkerBridge {
     workspacePath: string;
     contextLimit?: number;
     goal?: string;
+    goalId?: string;
     workingContext?: string;
     messages: ChatMessage[];
     loop?: { enabled: boolean; maximum: number };
@@ -1096,7 +1105,7 @@ export interface DyworkerBridge {
   onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
   onDshSessionRenamed(callback: (payload: {sessionId:string;title:string}) => void): () => void;
   onDshSessionCreated(callback: (payload: {session:SessionRecord}) => void): () => void;
-  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[] }) => void): () => void;
+  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[]; goalState?: SessionRecord['goalState'] }) => void): () => void;
   cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
   /** 主进程待唤醒列表：渲染端“挂起中”状态的权威来源（重启后同样准确） */
   listPendingWakes?(): Promise<PendingWakeRecord[]>;
