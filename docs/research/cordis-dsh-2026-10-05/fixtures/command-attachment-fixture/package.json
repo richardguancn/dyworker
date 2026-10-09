@@ -1,0 +1,1 @@
+{"name":"command-attachment-fixture","version":"1.0.0","type":"module","main":"index.js","exports":{".":"./index.js","./client":"./client.js"},"license":"MIT","description":"自行编写的真实附件命令验收插件","dsh":{"client":{"platform":"web","inject":["inputTriggers","slots","sessions"]}}}
