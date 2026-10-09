@@ -83,6 +83,7 @@ import {
 } from "lucide-react";
 import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, memo, useCallback, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { applyReasoningStream } from "./reasoningStream";
 import { PluginsPage } from "./PluginsPage";
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
@@ -3711,17 +3712,10 @@ const ProcessTimeline = memo(function ProcessTimeline({
       {!collapsed && (
         <div className="process-timeline-content">
           {/* 旧消息兼容：如果 activities 中没有 thinking 项，但 message.reasoning 存在，在此渲染思考 */}
-          {Boolean(hasReasoning && !activities.some((a) => a.kind === "thinking" && a.detail)) && (
+          {Boolean(hasReasoning && !activities.some((a) => a.kind === "thinking")) && (
             <ProcessThoughtItem
               text={message.reasoning!}
               streaming={isStreaming && !message.content}
-            />
-          )}
-          {/* 实时思考：如果正在流式中且当前还没有 thinking activity 在跑 */}
-          {Boolean(isStreaming && message.reasoning && !activities.some((a) => a.kind === "thinking" && a.status === "running")) && (
-            <ProcessThoughtItem
-              text={message.reasoning!}
-              streaming={true}
             />
           )}
           {/* 按时序遍历各项活动 */}
@@ -3737,9 +3731,9 @@ const ProcessTimeline = memo(function ProcessTimeline({
                 <div key={activity.id} className="process-thinking-group">
                   {showThought && (
                     <ProcessThoughtItem
-                      text={activity.detail || (isStreaming ? message.reasoning || "" : "")}
+                      text={activity.detail || ""}
                       durationMs={activity.durationMs}
-                      streaming={activity.status === "running"}
+                      streaming={isStreaming && activity.status === "running"}
                     />
                   )}
                   {showCommentary && (
@@ -8488,7 +8482,7 @@ export function App() {
         patchChannelAssistant(sessionId, (current) => ({ ...current, content: event.text }));
       } else if (event.type === "assistant-reasoning" && !activeDshTurns.has(runId)) {
         ensureChannelAssistant(sessionId, runId);
-        patchChannelAssistant(sessionId, (current) => ({ ...current, reasoning: event.text }));
+        patchChannelAssistant(sessionId, (current) => applyReasoningStream(current, event.text));
       } else if (event.type === "plan-update") {
         ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, plan: event.steps }));
@@ -11065,7 +11059,7 @@ export function App() {
           } else if (agentEvent.type === "assistant-text" && !activeDshTurnId) {
             patchAssistant((current) => ({ ...current, content: agentEvent.text }));
           } else if (agentEvent.type === "assistant-reasoning" && !activeDshTurnId) {
-            patchAssistant((current) => ({ ...current, reasoning: agentEvent.text }));
+            patchAssistant((current) => applyReasoningStream(current, agentEvent.text));
           } else if (agentEvent.type === "file-change") {
             patchAssistant((current) => ({ ...current, changes: agentEvent.changes }));
           } else if (agentEvent.type === "plan-update") {

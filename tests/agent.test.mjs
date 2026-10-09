@@ -2302,6 +2302,10 @@ test("推理模型长思考时思考内容流式透出，正文不含思考内�
   const reasoningEvents = events.filter((event) => event.type === "assistant-reasoning");
   assert.ok(reasoningEvents.length >= 1, "思考内容应流式透出");
   assert.equal(reasoningEvents[reasoningEvents.length - 1].text, "第一步推理");
+  const thinking = events.find((event) => event.type === "activity" && event.activity.kind === "thinking");
+  assert.equal(thinking.activity.detail, "", "开始时不应伪造思考内容");
+  const completed = events.find((event) => event.type === "activity-update" && event.id === thinking.activity.id && event.status === "success");
+  assert.equal(completed.detail, "第一步推理", "结束后仍可查看本轮思考内容");
 });
 
 test("连接被重置（ECONNRESET）等网络错误也会自动重试一次", async () => {

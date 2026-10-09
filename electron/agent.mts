@@ -5657,7 +5657,7 @@ export async function runAgent({
       if (isCancelled() || cancellationSignal?.aborted) return withChanges({ status: "cancelled", finalText });
       const thinkingStartTime = Date.now();
       let currentRoundThinking = "";
-      const thinkingId = startActivity("thinking", "思考过程", "助手正在理解资料和安排下一步");
+      const thinkingId = startActivity("thinking", "思考过程", "");
       // 这次请求真实带了什么：消息条数、工具定义条数与体积、系统提示词体积。
       // 上下文插件靠它算"工具定义占多少"（供应商不回报这个），数值是估值，界面按 ≈ 标注。
       const requestContext = {
@@ -5785,6 +5785,7 @@ export async function runAgent({
             traceEmit({ type: "activity-update", id: thinkingId, status: "running", detail });
             // 丢弃本次不完整输出，保持前面已完成的工具结果，重发当前请求。
             finalText = previousText;
+            currentRoundThinking = "";
             traceEmit({ type: "assistant-text", text: previousText });
             traceEmit({ type: "assistant-reasoning", text: "" });
             await waitModelRetry(delayMs, cancellationSignal, isCancelled);
