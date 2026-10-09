@@ -1,0 +1,159 @@
+{
+  "scope": "draft_snapshot",
+  "sourceSnapshotMatchesCurrent": false,
+  "sourceSnapshotMismatches": [
+    "electron/host/dsh-runtime/profile.mts",
+    "electron/host/plugin-host.mts"
+  ],
+  "note": "passed 为文案整理时的检查结果；sourceFiles 保留当时的源码摘要，不代表当前源码检查结果。",
+  "passed": true,
+  "labelRows": 662,
+  "shortDescriptions": 662,
+  "noticeGroups": 116,
+  "noticeLines": 318,
+  "settingsPages": 16,
+  "sideMenuEntries": 6,
+  "sourceFiles": [
+    {
+      "file": "builtin-plugins/dyworker-context/src/client.tsx",
+      "sha256": "55f84be7cf33f02f290a86e60cb56bac270d8caf7c859bf0c10de04cebe9eac9"
+    },
+    {
+      "file": "builtin-plugins/dyworker-context/src/context-view.tsx",
+      "sha256": "6893007d59d679100600afa795380f61c9d16d38d1a60abaced7580098c29317"
+    },
+    {
+      "file": "builtin-plugins/dyworker-trajectory/src/client.tsx",
+      "sha256": "e65fae6267f18c4bb490c226b56f1902621050a9f9e5b9ee37dd559aae4acc77"
+    },
+    {
+      "file": "electron/agent.mts",
+      "sha256": "24c384a5ca5786caf611d2ecfd345ac9bafb61d8d4bcc2329efe5a04b265c36a"
+    },
+    {
+      "file": "electron/channels/manager.mts",
+      "sha256": "c9a2305df569dd606e0c62349358ac57dc9aed5e149e4144b5b49ca34917855e"
+    },
+    {
+      "file": "electron/host/dsh-runtime/native-skills.mts",
+      "sha256": "810494ba4e86faf219c92a25487a60c3dcdcc354a6b119900a59b8886197ff89"
+    },
+    {
+      "file": "electron/host/dsh-runtime/profile.mts",
+      "sha256": "5672493e8ba012bc5914fcb1bfc74ee765f25839013fd3863abf5324b0701beb"
+    },
+    {
+      "file": "electron/host/dsh-runtime/task-birth.mts",
+      "sha256": "ccb3ca8bfd852fb190795afd04bc8d44e49276a6d499cd6b9c047b062c268bac"
+    },
+    {
+      "file": "electron/host/plugin-host.mts",
+      "sha256": "558511dd1f10cc4d240a611446ccb6977a9ac6d7897c2a5e5d4c6a63f71f46f1"
+    },
+    {
+      "file": "electron/host/plugin-install.mts",
+      "sha256": "255681c42e8cfd16a1440b0b067577c1fec35dc9d82d6a216241ea952e1181bf"
+    },
+    {
+      "file": "electron/host/plugins/attachments-ipc.mts",
+      "sha256": "203a017d8b220c5f1276764058793d0b6a472010c69406e2291e3c3bcac1fbc4"
+    },
+    {
+      "file": "electron/host/plugins/workspace-ipc.mts",
+      "sha256": "5a53128fcf6c3d8e2f15e8bebddc6eb3a30ef687e1f5e185533a0d2cb97a35fd"
+    },
+    {
+      "file": "electron/host/services/scheduler.mts",
+      "sha256": "025bed043b2d7396fbbb64734c53dc0a62abdc564373eaee97841449445c0c5f"
+    },
+    {
+      "file": "electron/main.mts",
+      "sha256": "ea41e57654c25f1630086228c8fb5b08c946c20dc98e02da338e0602faf7a093"
+    },
+    {
+      "file": "electron/memory-wiki.mts",
+      "sha256": "cbac3d769cfb4e6712738578000afe30784e9b888709e0908b1d228512d026db"
+    },
+    {
+      "file": "electron/skills.mts",
+      "sha256": "eefd7382b527839a9cf59ef344e04c8f005ff5f6f05b2e346162664a0a5a1220"
+    },
+    {
+      "file": "src/AddPluginDialog.tsx",
+      "sha256": "59dde94b192edc12926fde147eecec55940e18801dae8480c05eafe5ec3e7126"
+    },
+    {
+      "file": "src/App.tsx",
+      "sha256": "d3ca6bea35c361d6d5bb5cbecf87647200a7b31ef7a75082c4602d8c497387d2"
+    },
+    {
+      "file": "src/BackgroundTasksPanel.tsx",
+      "sha256": "fc8bb849d56d8073d5d70262d1744dd164d5b36c50ead2d0229397bd19432ff7"
+    },
+    {
+      "file": "src/BrowserControlOverlay.tsx",
+      "sha256": "5e26d50a64b75dbd54b54adf58091cc193b9f96c593538f36256fac52ac76054"
+    },
+    {
+      "file": "src/DshChildHistory.tsx",
+      "sha256": "83d01490e9db5fb5a6a1e509aafff0e3a4aa1db2569d5a0f27ecfaee4cc508c1"
+    },
+    {
+      "file": "src/DshComposer.tsx",
+      "sha256": "560fbbd9ca98a0250dc07924bb63e7c837cf752c522cc8a707deb1332271e706"
+    },
+    {
+      "file": "src/FilePreviewPanel.tsx",
+      "sha256": "7046b37496c1f1a7422d6406b5487c5d0712fbd35f521f2cb798171b065f6b4b"
+    },
+    {
+      "file": "src/GoalBanner.tsx",
+      "sha256": "7929c646850ca366d2471330eee17c2e43211e6f6343b07dd7ca275fc6174229"
+    },
+    {
+      "file": "src/ImageAttachment.tsx",
+      "sha256": "8d0624b509907a2776a79d3e4bdad9f5f434420a02d4bf2d856a0e01197b624a"
+    },
+    {
+      "file": "src/InteractiveMessage.tsx",
+      "sha256": "5e3ee32db33935804d29d1d59b20bc5a38492cfddaae9f0e9fe72785af1b0f24"
+    },
+    {
+      "file": "src/PluginDetailPage.tsx",
+      "sha256": "91ff694741ad3b47aba05ce60253fb046533e524051fd9ca1d09db54298e9841"
+    },
+    {
+      "file": "src/PluginsPage.tsx",
+      "sha256": "2f44e40f8e0307a75a65aaa86bb0ba7e6b9e5559ea4faa1cdb5c9cec6b50b151"
+    },
+    {
+      "file": "src/SystemMessagesPanel.tsx",
+      "sha256": "9b773b4faaf96c1a2bd8dc786eaf9617e0440e35fa7dbd9183114a12de764924"
+    },
+    {
+      "file": "src/TokenActivityPanel.tsx",
+      "sha256": "170c5b9ff84f9187943e6929bc3e694df9cb8a245029e5bd4a1cf03bd065ebea"
+    },
+    {
+      "file": "src/TraceConsole.tsx",
+      "sha256": "c0715a0627d911643c2507ddeab311543f773e3508e3f4ab205707fbc6da0cb1"
+    },
+    {
+      "file": "src/TraceView.tsx",
+      "sha256": "93bd4defa21c1c54585b13be4938cd823f9d42bfd3bb4d1b5dd8f7b70149d520"
+    },
+    {
+      "file": "src/appearance/AppearanceSettingsPanel.tsx",
+      "sha256": "74cc7f9b836bc122af99d4b5d7341a1437030784f4e462d51a69aa0b0a2aa258"
+    },
+    {
+      "file": "src/pluginLabels.ts",
+      "sha256": "7ac101174ff4dc0bcc9ad7edba11cf1921f29c3f32632a17e084a2fd2944a52c"
+    },
+    {
+      "file": "src/traceModel.ts",
+      "sha256": "08c56e1cd3d57d817d292e22dd847e54bfec4085ff0899b07df828d15f0a43e0"
+    }
+  ],
+  "errors": []
+}
