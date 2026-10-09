@@ -326,6 +326,8 @@ test("SSE：连接带 Authorization 头，收到 new-message 后触发补拉", a
     const writer = mock.state.sseWriters[0];
     writer.write("event: new-message\ndata: {}\n\n");
     assert.equal(await waitFor(() => mock.state.pulls >= 2), true, "SSE 提示触发补拉");
+    // The server receiving the pull does not mean its response has been saved.
+    assert.equal(await waitFor(async () => (await manager.listMessages()).some(message => message.message_id === "s2")), true, "新消息实际保存后可读取");
     const messages = await manager.listMessages();
     assert.equal(messages.some((message) => message.message_id === "s2"), true);
     manager.stop();

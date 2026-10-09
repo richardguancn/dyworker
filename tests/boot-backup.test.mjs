@@ -55,7 +55,9 @@ test("启动快照：没有数据时不留下空目录；失败不影响启动",
   assert.equal(result.skipped, true);
   assert.equal(await fs.stat(path.join(dir, ".backups")).catch(() => null), null, "全新安装不应产生 .backups");
 
-  // 目标目录不可写 → 返回 ok:false 而不是抛错
-  const blocked = await snapshotCriticalFiles({ dir: "/proc/definitely-not-writable" });
+  // 用真实文件阻挡目标目录；root 下 chmod 仍可写，/proc 的递归目录操作也因系统而异。
+  const blockedPath = path.join(dir, 'blocked');
+  await fs.writeFile(blockedPath, '此处是普通文件，不能创建备份目录');
+  const blocked = await snapshotCriticalFiles({ dir: blockedPath });
   assert.equal(blocked.ok, false);
 });

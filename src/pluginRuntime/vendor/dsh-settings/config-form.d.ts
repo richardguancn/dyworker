@@ -1,0 +1,3 @@
+export interface FormSnapshot { status: string; value?: any; revision?: number; writable: boolean; mode: string; base?: unknown; user?: unknown }
+export interface ConfigForm { getSnapshot(): FormSnapshot; subscribe(listener: () => void): () => void; set(field: string, value: unknown): Promise<boolean>; unset(field: string): Promise<boolean>; mutate(ops: unknown[], revision?: number): Promise<boolean> }
+export class ConfigForms { constructor(ctx: any, options: any); get<T = unknown>(ns: string): ConfigForm; whileServed(namespaces: readonly string[], register: (served: ReadonlySet<string>) => () => void): () => void; describe(): any }

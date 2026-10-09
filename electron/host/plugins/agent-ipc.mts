@@ -8,7 +8,7 @@ export function agentIpcPlugin(deps) {
     name: "ipc:agent",
     inject: ["scheduler"],
     apply(ctx) {
-      const { trustedHandle, isTrustedRendererUrl, isShuttingDown, activeAgents, wakeRuns, isSessionBusy, sessionQueue, emitToSession, executeAgentRun, drainSessionQueue } = deps;
+      const { trustedHandle, isTrustedRendererUrl, isShuttingDown, activeAgents, wakeRuns, entryRuns, isSessionBusy, sessionQueue, emitToSession, executeAgentRun, drainSessionQueue } = deps;
 
 trustedHandle("agent:send", async (event, payload) => {
   try {
@@ -28,6 +28,11 @@ trustedHandle("agent:send", async (event, payload) => {
     const reason = agentError instanceof Error ? agentError.message : String(agentError);
     return { ok: false, error: reason };
   }
+});
+
+trustedHandle('agent:continue-child', async (event, payload) => {
+  if (!isTrustedRendererUrl(event.senderFrame?.url)) return {ok:false,error:{message:'任务请求来源无效'}};
+  return deps.executeChildRun({payload,sender:event.sender});
 });
 
 trustedHandle("agent:remove-queued", (_event, payload) => {
@@ -86,9 +91,10 @@ trustedHandle("agent:cancel", async (_event, payload) => {
   const agentState = activeAgents.get(sessionId);
   if (!agentState) {
     // 自动唤醒的续跑不登记 activeAgents：按 runId 命中它的中止信号直接打断
-    const wakeRun = wakeRuns?.get(sessionId);
+    const wakeRun = wakeRuns?.get(sessionId) || entryRuns?.get(sessionId);
     if (wakeRun && wakeRun.runId === runId) {
       wakeRun.abort.abort();
+      await ctx.scheduler.cancelForSession(sessionId);
       return { ok: true };
     }
     return { ok: false };

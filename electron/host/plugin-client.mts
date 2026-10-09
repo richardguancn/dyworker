@@ -11,6 +11,16 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 
+// 与渲染端 createClientRuntime 的 provide 清单一致。这些模块由宿主共享，
+// 不应再从注册表下载，也不能被客户端依赖图当成缺失模块。
+export const HOST_CLIENT_MODULES = new Set([
+  "@deepseek-ai/cordis", "react", "react-dom", "react-dom/client",
+  "react/jsx-runtime", "react/jsx-dev-runtime",
+  "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-slots",
+  "@deepseek-ai/dsh-client-runtime/client",
+  "@deepseek-ai/dsh-client-store", "@deepseek-ai/dsh-client-ui-dockkit",
+]);
+
 export interface ClientEntry {
   /** exports 里的子路径，如 "./client"；没有 exports 声明时为 "" */
   subpath: string;
@@ -156,7 +166,7 @@ export function orderClientModules(
 
   const visit = (spec: string) => {
     const key = String(spec || "");
-    if (!key || seen.has(key) || visiting.has(key)) return;
+    if (!key || HOST_CLIENT_MODULES.has(key) || seen.has(key) || visiting.has(key)) return;
     visiting.add(key);
     const found = resolve(key);
     if (!found) {
@@ -183,9 +193,9 @@ export function orderClientModules(
     // 先递归依赖（依赖在前）
     for (const dep of [...deps, ...literal]) visit(dep);
     // 子路径模块（如 @deepseek-ai/dsh-client-runtime/client）用它自己的入口
-    if (entries.length) {
+    if (entries.length && !ordered.some(node => node.file === entries[0].file)) {
       ordered.push({ spec: key, dir: found.dir, file: entries[0].file, deps });
-    } else if (client) {
+    } else if (!entries.length && client) {
       // 声明了客户端半边但没有可解析入口：如实记为缺失
       if (!missing.includes(key)) missing.push(key);
     }

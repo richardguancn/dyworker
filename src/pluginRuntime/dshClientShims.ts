@@ -15,6 +15,10 @@
 // 领域助手给"安全默认值"（不抛错、返回空值），未知导出用 Proxy 兜底并记名——
 // 目标是让模块能加载、界面能起来，而不是假装完整复刻 DSH。
 
+import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session/surface';
+import * as Events from './vendor/dsh-settings/event-projection.js';
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store';
+
 type UnknownReporter = (module: string, name: string) => void;
 
 function createStore(initial: unknown) {
@@ -71,7 +75,7 @@ export function createSlotsModuleShim(report: UnknownReporter = () => {}): Recor
       if (key === "__esModule" || key === "then" || typeof prop === "symbol") return undefined;
       report("@deepseek-ai/dsh-client-ui-slots", key);
       // 未知导出给一个"什么都能当"的宽松函数
-      return (..._args: unknown[]) => undefined;
+      return (..._args: unknown[]) => { throw new Error(`此插件功能暂不支持：${key}`); };
     },
     has: () => true,
   });
@@ -82,7 +86,9 @@ export function createRuntimeClientShim(report: UnknownReporter = () => {}): Rec
   const base: Record<string, any> = {
     // ---- 状态原语：忠实实现 ----
     defineStore: (initial: unknown) => createStore(typeof initial === "function" ? (initial as () => unknown)() : initial),
-    createSnapshotStore: (getSnapshot: () => unknown, subscribe?: (listener: () => void) => () => void) => {
+    createSnapshotStore: (getSnapshot: unknown, subscribe?: (listener: () => void) => () => void) => {
+      // 新版接收初始值；旧版包接收读取函数，保留这两个有实据的分支。
+      if (typeof getSnapshot !== 'function') return createSnapshotStore(getSnapshot, subscribe as any);
       const store = createStore(undefined);
       return {
         ...store,
@@ -111,19 +117,25 @@ export function createRuntimeClientShim(report: UnknownReporter = () => {}): Rec
     resolveWorkspacePath: (value: unknown) => (typeof value === "string" ? value : String((value as any)?.path ?? "")),
     workspaceTitleOf: (workspace: any) => String(workspace?.title ?? workspace?.name ?? workspace?.path ?? ""),
     conversationContextKey: (value: any) => String(value?.sessionId ?? value?.id ?? ""),
-    sessionRecallLabels: () => [],
+    sessionRecallLabels: Events.sessionRecallLabels,
 
     // ---- 领域助手：安全默认值（不抛错，返回空/假） ----
-    isAppendSurfaceEvent: () => false,
-    isReplacementSurfaceEvent: () => false,
-    isTokenDelta: () => false,
-    toAssistantBlock: (value: unknown) => (value && typeof value === "object" ? value : { content: "" }),
-    toAssistantBlocks: (value: unknown) => (Array.isArray(value) ? value : []),
-    emptyAssistantBlock: () => ({ content: "" }),
-    contextForm: () => null,
-    contextProvenance: () => null,
-    displayFailureMessage: (error: unknown) => String((error as any)?.message || error || ""),
-    indexSubagentDescendants: () => new Map(),
+    isAppendSurfaceEvent,
+    isReplacementSurfaceEvent,
+    isTokenDelta: Events.isTokenDelta,
+    toAssistantBlock: Events.toAssistantBlock,
+    // DSH 的助手内容块：字符串要变成文本块，组件才渲染得出内容。
+    // 以前一律返回空数组——节点是有了但正文全空。
+    toAssistantBlocks: (value: unknown) => {
+      if (Array.isArray(value)) return Events.toAssistantBlocks(value);
+      if (typeof value === 'string') return Events.toAssistantBlocks(value ? [{ type: 'text', text: value }] : []);
+      return [];
+    },
+    emptyAssistantBlock: Events.emptyAssistantBlock,
+    contextForm: Events.contextForm,
+    contextProvenance: () => { throw new Error("此插件功能暂不支持：contextProvenance"); },
+    displayFailureMessage: (error: unknown) => Events.displayFailure(error).message,
+    indexSubagentDescendants: () => { throw new Error("此插件功能暂不支持：indexSubagentDescendants"); },
 
     // ---- 错误类 ----
     DirectoryBrowseError: class DirectoryBrowseError extends ShimError {},
@@ -134,7 +146,7 @@ export function createRuntimeClientShim(report: UnknownReporter = () => {}): Rec
       if (key in target) return target[key];
       if (key === "__esModule" || key === "then" || typeof prop === "symbol") return undefined;
       report("@deepseek-ai/dsh-client-runtime/client", key);
-      return (..._args: unknown[]) => undefined;
+      return (..._args: unknown[]) => { throw new Error(`此插件功能暂不支持：${key}`); };
     },
     has: () => true,
   });

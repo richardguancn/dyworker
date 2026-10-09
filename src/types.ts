@@ -91,6 +91,7 @@ export interface InboxItem {
   impact?: string;
   question?: string;
   options?: string[];
+  questionPresentation?: Pick<QuestionRequest, 'optionDescriptions' | 'header' | 'detail' | 'multiSelect' | 'answerFormat'>;
   createdAt: string;
   status: "pending" | "resolved" | "expired";
   resolution?: string;
@@ -102,6 +103,11 @@ export interface QuestionRequest {
   id: string;
   question: string;
   options: string[];
+  optionDescriptions?: string[];
+  header?: string;
+  detail?: string;
+  multiSelect?: boolean;
+  answerFormat?: 'dsh';
 }
 
 export interface PlanStep {
@@ -118,7 +124,13 @@ export interface FileChange {
   diff?: string;
 }
 
+export interface DshVisibleTurn {
+  user: {id:string;text:string;createdAt:string};
+  replies: {id:string;text:string;createdAt:string;partial?:boolean;reasoning?:string;executedMessages:NonNullable<AgentResult['executedMessages']>}[];
+}
+
 export interface AgentResult {
+  dshTurns?: DshVisibleTurn[];
   status: "done" | "paused" | "cancelled" | "error" | "sleeping" | "unverified";
   finalText: string;
   reason?: string;
@@ -158,6 +170,9 @@ export interface TraceEvent {
   step: number;
   kind:
     | "model-request"
+    // 首个流式增量（正文或思考）到达的时刻：只有它才能把「总时长」拆成
+    // 首 token 延迟 + 生成时长，轨迹的请求计时面板要用
+    | "model-first-token"
     | "model-response"
     | "tool-call"
     | "tool-result"
@@ -167,6 +182,8 @@ export interface TraceEvent {
     | "plan-update"
     | "file-change"
     | "context-compacted"
+    // 上下文剪枝：较早的工具结果被占位符替换（microcompact），带上回收的估算 token
+    | "context-pruned"
     | "agent-finished";
   direction: "in" | "out";
   target: "model" | "tool" | "system";
@@ -174,7 +191,25 @@ export interface TraceEvent {
   parentSeq?: number;
   title: string;
   content: string;
-  usage?: { prompt: number; completion: number; estimated: boolean };
+  usage?: {
+    prompt: number;
+    completion: number;
+    estimated: boolean;
+    /** 缓存命中的输入 token（供应商回报时才有） */
+    cacheRead?: number;
+    /** 写入缓存的输入 token */
+    cacheWrite?: number;
+    /** 推理（思考）token */
+    reasoning?: number;
+  };
+  /** 请求的组成元信息（model-request 事件带出）：消息条数 / 工具定义条数与估算体积 */
+  context?: {
+    messages?: number;
+    tools?: number;
+    toolsTokens?: number;
+    systemTokens?: number;
+    promptTokens?: number;
+  };
   // 子代理嵌套深度（0=主代理，转发时加深）
   depth?: number;
   activityId?: string;
@@ -210,6 +245,7 @@ export interface UsageRecord {
 export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-access" | "deny-changes";
 
 export type AgentEvent =
+  | { type: "dsh-conversation"; turns: DshVisibleTurn[] }
   | { type: "activity"; activity: ActivityRecord }
   | { type: "activity-update"; id: string; status: ActivityRecord["status"]; detail?: string; durationMs?: number; commentary?: string; branch?: { parentId: string; title?: string; depth: number } }
   | { type: "assistant-text"; text: string }
@@ -241,10 +277,12 @@ export interface SessionAgentEvent {
   // 渠道（QQ/微信）任务转发的事件带 true；桌面端 runTask 的事件没有此字段，
   // 渠道流式归约器凭它区分来源，避免同一运行被渲染成两个气泡
   channelRun?: boolean;
+  childRun?: boolean;
   event: AgentEvent;
 }
 
 export interface Attachment {
+  commandGrantId?: string;
   name: string;
   path: string;
   size: number;
@@ -265,6 +303,12 @@ export interface MessageAnnotation {
 }
 
 export interface ChatMessage {
+  dshTurnId?: string;
+  dshStreaming?: boolean;
+  dshMessageId?: string;
+  dshAttachments?: import('./pluginRuntime/inputTriggers').SubmitAttachment[];
+  dshAttachmentNames?: string[];
+  pluginReferences?: import('./pluginRuntime/vendor/dsh-draft-editor/index.js').DraftSnapshot['references'];
   id?: string;
   role: Role;
   content: string;
@@ -275,6 +319,8 @@ export interface ChatMessage {
   skillsUsed?: string[];
   // 折叠的长粘贴块：content 已含原文（发给模型），气泡按块折叠展示、可展开查看
   pasteBlocks?: Array<{ id: string; text: string }>;
+  // @「标题」引用的历史会话：content 已含摘要块（发给模型），气泡按标题高亮、可点击跳转
+  sessionRefs?: Array<{ id: string; title: string }>;
   createdAt: string;
   attachments?: Attachment[];
   activities?: ActivityRecord[];
@@ -291,6 +337,9 @@ export interface ChatMessage {
 
 export interface SessionRecord {
   id: string;
+  parentSessionId?: string;
+  dshForkAtSeq?: number;
+  runtime?: 'dyworker' | 'dsh';
   title: string;
   // 用户手动重命名过：不再被自动生成的会话标题覆盖
   titleCustom?: boolean;
@@ -452,6 +501,7 @@ export interface ModelProfile {
 // modelProfileId 为空 = 渠道任务跟随桌面端当前模型;否则固定使用某个模型档案
 // approvalMode:auto(自动执行,少打扰;越界路径由审核助手把关)/ reviewer(替我审批)/ interactive(严格逐次确认)
 export interface ChannelsConfig {
+  runtime?: "dyworker" | "dsh";
   qq: { enabled: boolean; appId: string; appSecret: string };
   wechat: { enabled: boolean };
   modelProfileId: string;
@@ -648,6 +698,7 @@ export interface TelemetryStatus {
   queue: { pending: number; droppedOverflow: number; lastDroppedAt: string };
   lastSyncAt: string;
   lastError: string;
+  nextRegistrationRetryAt?: string;
   clockOffsetMs: number | null;
   collecting: boolean;
 }
@@ -798,6 +849,7 @@ export interface SkillLibrarySearchResult {
 }
 
 export interface ScheduleRecord {
+  runtime?: "dyworker" | "dsh";
   id: string;
   name: string;
   prompt: string;
@@ -807,7 +859,7 @@ export interface ScheduleRecord {
   lastRun: string;
   enabled: boolean;
   allowWorkspaceWrites: boolean;
-  lastStatus: "" | "running" | "success" | "failed" | "sleeping";
+  lastStatus: "" | "running" | "success" | "failed" | "sleeping" | "cancelled";
   lastSummary: string;
   createdAt: string;
   updatedAt: string;
@@ -828,6 +880,7 @@ export interface PendingWakeRecord {
  * 边跑边填充，结束时再由 sessions:prepend 下发权威转录原位归并。
  */
 export interface ScheduleRunStarted {
+  runtime?: "dyworker" | "dsh";
   sessionId: string;
   runId: string;
   scheduleId: string;
@@ -857,8 +910,10 @@ export interface DyworkerBridge {
   saveSessions(payload: SessionRecord[] | SessionSavePayload): Promise<{ ok: boolean; error?: string }>;
   savePinnedWorkspaces(paths: string[]): Promise<{ ok: boolean; error?: string }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
-  chooseAttachments(): Promise<{ canceled: boolean; attachments: Attachment[] }>;
-  saveClipboardImage(payload: { data: number[]; mimeType: string }): Promise<{ ok: boolean; attachment?: Attachment; error?: string }>;
+  chooseAttachments(sessionId?: string): Promise<{ canceled: boolean; attachments: Attachment[] }>;
+  serializeCommandAttachments(payload: { sessionId: string; grantIds: string[] }): Promise<{ ok: boolean; attachments?: import('./pluginRuntime/inputTriggers').SubmitAttachment[]; error?: string }>;
+  browserFileUpload(payload: { action: string; sessionId: string; uploadId?: string; data?: string; name?: string }): Promise<{ ok: boolean; value?: unknown; error?: string }>;
+  saveClipboardImage(payload: { data: number[]; mimeType: string; sessionId?: string }): Promise<{ ok: boolean; attachment?: Attachment; error?: string }>;
   readClipboardText(): Promise<string>;
   writeClipboardText(text: string): Promise<{ ok: boolean }>;
   writeClipboardImage(payload: { dataUrl?: string; path?: string }): Promise<{ ok: boolean; error?: string }>;
@@ -880,6 +935,9 @@ export interface DyworkerBridge {
   getImportedLocalStorage(origin: string): Promise<Record<string, string> | null>;
   markImportedLocalStorageDone(origin: string): Promise<{ ok: boolean }>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
+  readFilePreview(workspacePath: string, filePath: string): Promise<FilePreviewResult>;
+  choosePreviewFile(): Promise<{ canceled: boolean; path?: string; workspacePath?: string }>;
+  onFilePanelRequest(callback: (request: { path: string; workspacePath: string; ownerSessionId: string }) => void): () => void;
   readWorkspaceFile(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; binary?: boolean; error?: string }>;
   writeWorkspaceFile(workspacePath: string, filePath: string, content: string): Promise<{ ok: boolean; path?: string; bytes?: number; error?: string }>;
   gitStage(workspacePath: string, paths: string[]): Promise<{ ok: boolean; error?: string }>;
@@ -970,6 +1028,7 @@ export interface DyworkerBridge {
   }): Promise<{ content: string; demo?: boolean }>;
   sendTask(payload: {
     settings: ProviderSettings;
+    runtime?: 'dyworker' | 'dsh';
     workspacePath: string;
     contextLimit?: number;
     goal?: string;
@@ -981,6 +1040,7 @@ export interface DyworkerBridge {
     runId?: string;
   }): Promise<{ ok: boolean; result?: AgentResult; queued?: boolean; runId?: string; error?: string }>;
   removeQueuedTask(payload: { sessionId: string; runId: string }): Promise<{ ok: boolean; removed?: boolean }>;
+  continueChildTask(payload: {sessionId:string;runId:string;prompt:any}): Promise<{ok:boolean;value?:{messageId:string};runId?:string;error?:{message:string}}>;
   runQueuedTaskNow(payload: { sessionId: string; runId: string }): Promise<{ ok: boolean; error?: string }>;
   resolveApproval(sessionId: string, actionId: string, approved: boolean): Promise<{ ok: boolean }>;
   cancelTask(sessionId: string, runId: string): Promise<{ ok: boolean }>;
@@ -1034,6 +1094,8 @@ export interface DyworkerBridge {
    */
   onScheduleRunStarted?(callback: (payload: ScheduleRunStarted) => void): () => void;
   onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
+  onDshSessionRenamed(callback: (payload: {sessionId:string;title:string}) => void): () => void;
+  onDshSessionCreated(callback: (payload: {session:SessionRecord}) => void): () => void;
   onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[] }) => void): () => void;
   cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
   /** 主进程待唤醒列表：渲染端“挂起中”状态的权威来源（重启后同样准确） */
@@ -1072,6 +1134,11 @@ export interface DyworkerBridge {
   onBackgroundTaskUpdate(callback: (event: { type: string; task: BackgroundTaskRecord }) => void): () => void;
   // 插件管理（通道名见 electron/preload.cjs）
   listPlugins(): Promise<PluginListResult>;
+  pluginCatalog(payload?:{force?:boolean}): Promise<{
+    plugins:import('./pluginCatalog').CatalogPlugin[];revision:string;publishedAt:string;
+    source:'bundled'|'cache'|'platform';fetchedAt:number|null;notice:string;
+  }>;
+  pluginDetails(id: string): Promise<PluginDetailRecord>;
   checkPluginCompatibility(spec: string): Promise<PluginCompatibility>;
   installPlugin(payload: { spec: string; id?: string; allowIncompatible?: boolean }): Promise<PluginInstallResult>;
   installPluginPackage(payload: { input?: string; spec?: string; version?: string; source?: "default" | "cn" | "custom"; customRegistry?: string; allowIncompatible?: boolean }): Promise<PluginInstallResult>;
@@ -1084,6 +1151,7 @@ export interface DyworkerBridge {
   pluginClientBundles(id: string): Promise<PluginClientBundlesResult>;
   /** 插件视图要的会话投影（DSH 客户端契约里的 useProjection） */
   pluginProjection(payload: { sessionId: string; key: string }): Promise<{ ok: boolean; value?: unknown; error?: string }>;
+  dshOperation(payload: { sessionId: string; action: 'session-create' | 'session-fork' | 'global-search' | 'global-search-cancel' | 'overview' | 'snapshot' | 'family' | 'child-snapshot' | 'session-image' | 'history-page' | 'history-open' | 'history-next' | 'history-close' | 'history-list' | 'history-control-open' | 'history-state' | 'history-search' | 'session-rename' | 'session-command' | 'settings-describe' | 'settings-update' | 'settings-mutate' | 'inject' | 'compact' | 'input-snapshot' | 'input-admit' | 'input-update-queue' | 'input-cancel' | 'child-prompt' | 'child-interrupt'; payload?: unknown }): Promise<{ ok: boolean; value?: any; error?: { message: string; code?: string; details?: any } }>;
 
 }
 
@@ -1117,6 +1185,8 @@ export interface PluginEntryRecord {
   disabled: boolean;
   config: unknown;
   active: boolean;
+  state?: "active" | "pending" | "loading" | "failed" | "disabled" | "stopping" | "session-required";
+  missingServices?: string[];
   error: string | null;
 }
 
@@ -1138,9 +1208,10 @@ export interface PluginBundleRecord {
 
 /** 兼容性判定：runnable 能跑；partial 同名服务语义不同；unsupported 跑不了（含原因） */
 export interface PluginCompatibility {
+  runtime?: "host" | "tool-bridge" | "dsh-session";
   name: string;
   version: string;
-  verdict: "runnable" | "partial" | "unsupported";
+  verdict: "runnable" | "partial" | "unsupported" | "pending";
   reasons: string[];
   matrix: string;
   missingPackages: string[];
@@ -1154,6 +1225,17 @@ export interface PluginListResult {
   bundles: PluginBundleRecord[];
   warnings: string[];
   status: { dir: string; tree: string; mounted: boolean; count: number; failed: number };
+}
+
+export interface PluginDetailRecord {
+  entry: PluginEntryRecord;
+  bundle: PluginBundleRecord | null;
+  metadata: { name: string; version: string; description: string; author: string; license: string; homepage: string; repository: string;
+    engines: Array<{ name: string; version: string }>; dependencies: Array<{ name: string; version: string }>;
+    peerDependencies: Array<{ name: string; version: string }> } | null;
+  readme: string;
+  readmeTruncated: boolean;
+  metadataError: string | null;
 }
 
 /** 插件客户端半边（dsh.client）的入口清单：只给 URL，执行在渲染端 */
@@ -1186,6 +1268,8 @@ export interface PluginInstallResult {
   /** 兼容性分析（拒绝时用来展示逐条原因） */
   analysis?: PluginCompatibility & { matrix?: string };
   downloaded?: { ok?: boolean; kind?: string; ranInstallScripts?: boolean; error?: string };
+  source?: { kind?: string; input?: string; source?: string };
+  dir?: string;
 }
 
 declare global {
@@ -1193,3 +1277,16 @@ declare global {
     dyworker?: DyworkerBridge;
   }
 }
+
+export type FilePreviewResult = {
+  ok: boolean;
+  path?: string;
+  name?: string;
+  size?: number;
+  kind?: "image" | "pdf" | "markdown" | "text" | "unsupported";
+  mime?: string;
+  data?: string;
+  content?: string;
+  note?: string;
+  error?: string;
+};

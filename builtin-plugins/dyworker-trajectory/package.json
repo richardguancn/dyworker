@@ -1,0 +1,19 @@
+{
+  "name": "dyworker-trajectory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "轨迹插件：会话区的「轨迹」标签 —— 工具栏 / 三道泳道时间条 / 台账行 / 检查面板（数据来自本会话落盘的 trace 事件流）",
+  "main": "index.js",
+  "exports": {
+    ".": { "default": "./index.js" },
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "client": { "platform": "web", "inject": [] }
+  },
+  "dyworker": {
+    "builtin": true
+  },
+  "license": "MIT"
+}

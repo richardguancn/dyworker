@@ -8,6 +8,8 @@
 // 本文件不依赖 electron，node --test 直测。
 import { Service } from "@deepseek-ai/cordis";
 import { runAgent } from "../../agent.mts";
+import { randomUUID } from "node:crypto";
+import { assertDshModelSettings } from "../dsh-runtime/model-settings.mts";
 import "../events.mts";
 
 declare module "@deepseek-ai/cordis" {
@@ -36,6 +38,8 @@ export class AgentService extends Service {
 
   async run(options = {} as any) {
     const { settings, sessionId, approvalMode, prompt = "" } = options;
+    const runtime = options.runtime ?? this.ctx.get('sessions')?.get(sessionId)?.runtime;
+    assertDshModelSettings(runtime, settings);
     // 渠道任务的 workspacePath 会被 switch_workspace 工具中途改写：支持传函数，
     // 运行起始用调用时的值，记忆落盘/唤醒登记用当时的最新值
     const resolveWorkspacePath = () => String(
@@ -43,6 +47,10 @@ export class AgentService extends Service {
     ).trim();
     const workspacePath = resolveWorkspacePath();
     const isCancelled = this.combinedIsCancelled(options);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
+    const cancellation = setInterval(() => { if (isCancelled()) controller.abort(new Error("任务已停止")); }, 50);
+    cancellation.unref();
     // MCP 工具由服务统一装配；入口通过 extraTools 追加渠道媒体等额外工具
     const extraTools = [
       ...this.resolvers.agentExtraTools(await this.resolvers.mcpExtraTools(settings)),
@@ -51,9 +59,12 @@ export class AgentService extends Service {
     // 外部工具路由：入口可传入定制路由（渠道媒体接管/工作区切换重建），否则按
     // routerOptions 自建；dispose 统一在收尾执行（含入口定制路由的 .dispose）
     const onExtraTool = options.onExtraTool
-      ?? this.resolvers.createExtraToolRouter(settings, workspacePath, options.routerOptions);
+      ?? this.resolvers.createExtraToolRouter(settings, workspacePath, {
+        ...options.routerOptions, sessionId, runId: options.routerOptions?.runId || options.runId || randomUUID(), signal,
+      });
+    onExtraTool?.setExecutionContext?.({ sessionId, runId: options.runId || options.routerOptions?.runId || randomUUID(), signal });
     const emit = (agentEvent) => {
-      if (agentEvent?.type === "skill-saved") void this.resolvers.appendSkill(agentEvent.item);
+      if (agentEvent?.type === "skill-saved" && !agentEvent.persisted) void this.resolvers.appendSkill(agentEvent.item);
       if (agentEvent?.type === "token-usage") void this.resolvers.appendUsageStat(agentEvent);
       options.emit?.(agentEvent);
     };
@@ -64,7 +75,11 @@ export class AgentService extends Service {
         if (options.loopStateEvents) {
           emit({ type: "loop-state", active: loop.enabled, iteration: loop.iteration, maximum: loop.maximum, status: "正在执行" });
         }
-        const result = await runAgent({
+        const result = runtime === 'dsh'
+          ? await this.ctx.dshRuntime.run({ ...options, settings, workspacePath, sessionId, approvalMode,
+            prompt: loop.iteration > 1 ? LOOP_CONTINUE_PROMPT : prompt, signal, emit, resolvers: this.resolvers,
+            conversation: iterationMessages, extraTools, onExtraTool })
+          : await runAgent({
           settings,
           workspacePath,
           ...(options.contextLimit !== undefined ? { contextLimit: options.contextLimit } : {}),
@@ -94,7 +109,7 @@ export class AgentService extends Service {
           },
           emit,
           isCancelled,
-          ...(options.signal ? { signal: options.signal } : {}),
+          signal,
           ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
           sleepGuard: () => this.resolvers.hasPendingWakeForSession(sessionId),
           sessionId,
@@ -110,7 +125,8 @@ export class AgentService extends Service {
         }
         if (isCancelled()) {
           await options.onCancelled?.();
-          return { status: "cancelled", finalText: result.finalText || "" };
+          return { status: "cancelled", finalText: result.finalText || "",
+            ...(result.dshTurns ? {dshTurns:result.dshTurns,executedMessages:result.executedMessages} : {}) };
         }
         if (result.status === "sleeping" && result.wake) {
           // 主动挂起（self-wake）：登记唤醒记录，到点由调度 tick 续跑
@@ -126,7 +142,8 @@ export class AgentService extends Service {
           });
           if (isCancelled()) {
             await options.onCancelled?.();
-            return { status: "cancelled", finalText: result.finalText || "" };
+            return { status: "cancelled", finalText: result.finalText || "",
+            ...(result.dshTurns ? {dshTurns:result.dshTurns,executedMessages:result.executedMessages} : {}) };
           }
           // 唤醒登记后的入口收尾（定时计划标记 sleeping 等）
           await options.afterWakeRegister?.(result);
@@ -145,8 +162,10 @@ export class AgentService extends Service {
         ];
       }
     } finally {
+      clearInterval(cancellation);
+      controller.abort(new Error("任务已结束"));
       try {
-        onExtraTool?.dispose?.();
+        await onExtraTool?.dispose?.();
       } catch (disposeError: any) {
         console.warn("[agent] onExtraTool dispose failed:", disposeError);
       }

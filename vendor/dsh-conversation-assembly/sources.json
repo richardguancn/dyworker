@@ -1,0 +1,22 @@
+{
+  "commit": "5badb15009ae1756c3afe0ae0cef1faafc290ccc",
+  "sources": {
+    "packages/client/ui-conversation/src/client/conversation/event-registry.ts": "b0b489b1f6d1c4c1e3d06d094703c7f26540aa4b695523985b9e2dc0149a05a8",
+    "packages/client/ui-conversation/src/client/conversation/view-registry.ts": "b65588acd518aa81cf6d96967f160600631257cbd10f87322b5ca1b7cee1d291",
+    "packages/client/ui-conversation/src/client/conversation/assembly.ts": "7022ce9b52345d3b5c7a85094cfe974d195f5c10f155bc5f38457bf6dd7c068f",
+    "packages/client/ui-conversation/src/client/conversation/assembler.ts": "be899b081beb2c01ed202da4c326ae180eb105297f65790c6f2314bca2992cc4",
+    "packages/client/ui-conversation/src/client/conversation/group-registry.ts": "73ebf9982d84f589458c9ce60ff51e67d916f9331334f768d6f93edb5fd3b390",
+    "packages/client/ui-conversation/src/client/conversation/definition-registry.ts": "af83ece4e166278c5238b30bd19906f8abd1e813c44eb8fe7403be90fe7fa561",
+    "packages/client/ui-conversation/src/client/conversation/group-store.ts": "5fcccc47703f466d90a7b1b4e2aa0f8a2cefa783e481673176c47f11c6e73104",
+    "packages/client/ui-conversation/src/client/conversation/location-index.ts": "cac8f87d70a67aa9ffcfa39fed3ee042c26286e593fe912c5af51a95e176e3da",
+    "packages/client/ui-conversation/src/client/conversation/historical-images.ts": "76e5431532ad5a996d0f1f198dc3ed787240c54175eeeefc33b868fee8197aeb",
+    "packages/client/ui-conversation/src/client/contract/conversation.ts": "7708738833887e8bbb154530ae20805497f0203d9ac5b5eecebcb728bb582f2b",
+    "packages/client/ui-conversation/src/client/contract/groups.ts": "c83233b50cc09277042548daedff7c1a355de70a4b81895089a43811bc09f4c9",
+    "packages/client/ui-conversation/src/client/contract/request-inspection.ts": "276817bdd6c5fdf691d0adba06dfdd578016c567c1b8b218bf93c8ebcf39d3e7",
+    "packages/client/ui-conversation/src/client/contract/system-prompt.ts": "bcc10aa1bcc748deb847b9e264d0f5ed92d80f97b98c071826b01fe10e6c03e3",
+    "packages/client/ui-conversation/src/client/contract/records.ts": "ae9720e19b8ff82b05581f00bed8fbde77293d49447c6b191cb1af574d53c24a",
+    "packages/client/ui-conversation/src/client/contract/context-producer.ts": "7975b6c3af776872a6ff064913262cdc4208a1f85429c64fe67939ae0a24718a",
+    "packages/client/ui-conversation/src/client/contract/snapshot.ts": "0c2abe05175c503093ae1e4c94ff85acf3f613df913bf68a0611fbc9e525abb7",
+    "packages/api/session-controller/src/client/contract/events.ts": "64acca2457e9853a5a0159e13a335412ab622e55b88f4a0ab71eb6d9c8430d8d"
+  }
+}

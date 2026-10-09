@@ -56,11 +56,11 @@ test("添加插件弹窗：支持 包名 / GitHub 地址 / 本地目录 三种�
   assert.match(dialog, /中国大陆镜像源/, "要提供大陆镜像源");
   assert.match(dialog, /registry\.npmmirror\.com/, "镜像源要写清 npm 走哪个源");
   assert.match(dialog, /代理会经手你拉取的代码/, "要诚实说明第三方代理经手代码");
-  assert.match(dialog, /会执行该仓库的构建脚本/, "GitHub/本地来源要说明会跑构建脚本");
+  assert.match(dialog, /安装默认不运行插件的安装脚本/, "所有来源均应说明默认不执行代码");
   assert.match(dialog, /插件安装引导和示例/, "要有可展开的引导");
   // 风险提示照抄 DSH 的口径
   assert.match(dialog, /请确认插件来源可信/);
-  assert.match(dialog, /暂不支持自动更新/);
+  assert.match(dialog, /插件不会自动更新/);
 });
 
 test("插件页是「页面」而不是「弹窗」：无遮罩层，渲染在主内容区内，切会话自动返回", () => {
@@ -146,7 +146,7 @@ test("安装结果界面：成功给「已安装 + 立即启用」，不兼容�
   assert.match(dialog, /enablePlugin/, "「立即启用」要真的调启用接口");
   assert.match(dialog, /查看安装详情/, "要有详情展开");
   assert.match(dialog, /无法运行/, "不兼容时同款界面说明");
-  assert.match(dialog, /仍然安装（仅主机半边，不会生效）/, "给出显式放行而不是死路");
+  assert.match(dialog, /仍然安装（部分功能可能不可用）/, "给出显式放行并准确说明影响");
   assert.match(dialog, /setResult\(\{[\s\S]{0,200}?ok: false/, "拒绝时进入结果视图");
 });
 

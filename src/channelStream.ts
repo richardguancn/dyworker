@@ -1,3 +1,4 @@
+import {mergeDshTranscript} from '../electron/host/dsh-runtime/presentation.mts';
 // 渠道（QQ/微信）会话的流式气泡归约助手（纯函数，渲染端与单测共用）。
 //
 // 背景：渠道任务运行期间，主进程把关键 agent 事件以 { sessionId, runId, channelRun: true, event }
@@ -54,10 +55,14 @@ export function takeStreamMessage(runs: ChannelStreamRuns, runId: string): Chann
 
 interface AppendMessage {
   id?: string;
+  role?: string;
+  runId?: string;
+  dshTurnId?: string;
 }
 
 interface PrependedSession {
   id: string;
+  runtime?:string;
   title?: string;
   titleCustom?: boolean;
   messages: unknown[];
@@ -76,7 +81,7 @@ export function mergePrependedSession<T extends PrependedSession>(
   if (index < 0) return { sessions: [incoming, ...sessions], merged: false };
   return {
     sessions: sessions.map((session, offset) => offset === index
-      ? { ...session, ...incoming, ...(session.titleCustom ? { title: session.title, titleCustom: true } : {}) }
+      ? { ...session, ...incoming, ...(incoming.runtime==='dsh' ? {messages:mergeDshTranscript(session.messages,incoming.messages)} : {}), ...(session.titleCustom ? { title: session.title, titleCustom: true } : {}) }
       : session),
     merged: true,
   };
@@ -90,6 +95,11 @@ export function reconcileChannelAppend<T extends AppendMessage>(
   placeholderMessageId: string | null,
   incoming: T[],
 ): { messages: T[]; replacedMessageId: string | null } {
+  const canonicalRuns = new Set(incoming.filter(message=>message.role==='assistant' && message.dshTurnId && message.runId).map(message=>message.runId));
+  if (canonicalRuns.size) {
+    return {messages:mergeDshTranscript(messages,incoming,placeholderMessageId),
+      replacedMessageId:placeholderMessageId && messages.some(message=>message.id===placeholderMessageId) ? placeholderMessageId : null};
+  }
   const index = placeholderMessageId ? messages.findIndex((message) => message.id === placeholderMessageId) : -1;
   if (index < 0) {
     return { messages: [...messages, ...incoming], replacedMessageId: null };
@@ -102,4 +112,8 @@ export function reconcileChannelAppend<T extends AppendMessage>(
     messages: [...messages.slice(0, index), ...replacement, ...messages.slice(index + 1)],
     replacedMessageId: placeholderMessageId,
   };
+}
+
+export function isWakeRunEnvelope(envelope:unknown):boolean {
+  return Boolean(envelope) && (envelope as {wakeRun?:unknown}).wakeRun === true;
 }

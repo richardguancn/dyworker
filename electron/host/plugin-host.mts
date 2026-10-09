@@ -19,18 +19,24 @@
 // 与 electron 的边界：本文件不 import electron，目录由壳层注入。
 import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
-import { orderClientModules, readStaticRequires, resolveClientEntries, resolveModuleEntries, splitModuleSpec } from "./plugin-client.mts";
-import { clearPluginRoutes } from "./services/connection.mts";
-import { detectInstalledPackageName, dshClientModuleNames, dshPeerNames, hostCordisDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies } from "./plugin-install.mts";
+import { HOST_CLIENT_MODULES, orderClientModules, readStaticRequires, resolveClientEntries, resolveModuleEntries, splitModuleSpec } from "./plugin-client.mts";
+import { detectInstalledPackageName, hostCordisDir, hostPackageDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies, spawnRunner } from "./plugin-install.mts";
+import { runtimeImportsOf, runtimePackageName } from "./plugin-runtime-deps.mts";
+import { pluginModuleUrl, refreshPluginModules, registerPluginModules } from "./plugin-module-cache.mts";
+import { DshPluginBridge } from "./dsh-runtime/bridge.mts";
+import { DSH_BASELINE, isDshPackage } from "./dsh-runtime/baseline.mts";
+import { transactPluginProfile } from "./plugin-transaction.mts";
+import { collectProfilePackages, restoreMissingProfilePackages } from './profile-preservation.mts';
 import { Service } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { readFileSync, readdirSync, realpathSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as yaml from "js-yaml";
+import semver from "semver";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -49,16 +55,12 @@ declare module "@deepseek-ai/cordis" {
  */
 function resolvableFrom(fromDir: string, spec: string): boolean {
   const base = path.join(fromDir, "package.json");
-  for (const target of [spec, `${spec}/package.json`]) {
-    try {
-      createRequire(base).resolve(target);
-      return true;
-    } catch {
-      // 换下一个形式
-    }
-  }
-  return false;
+  try { createRequire(base).resolve(spec); return true; }
+  catch { return false; }
 }
+
+// Cordis 发布包中的 FiberState 是 const enum，没有 JavaScript 导出。
+const FiberState = { PENDING: 0, LOADING: 1, ACTIVE: 2, FAILED: 3, DISPOSED: 4, UNLOADING: 5 };
 
 export const TREE_FILE = "dyworker.yml";
 export const PROFILE_MANIFEST = "package.json";
@@ -234,12 +236,18 @@ export class PluginHostService extends Service {
   activeIds = new Set();
   /** id → 装载失败原因（模块解析不到 / 预检 import 失败等） */
   failures = new Map();
+  remote = new Map<string, { bridge: DshPluginBridge; disposeTools: Array<() => void> }>();
+  activated = new Map<string, string>();
+  isolatedIds = new Set<string>();
+  sessionRequired = new Set<string>();
 
   constructor(ctx, config = {} as any) {
     super(ctx, "plugins");
     this.dir = config.dir;
+    ctx.effect(() => registerPluginModules(this.dir));
     this.loader = config.loader;
     this.builtinDir = config.builtinDir || "";
+    ctx.effect(() => async () => { await Promise.all([...this.remote.keys()].map(id => this.deactivate(id))); });
   }
 
   profileManifest() {
@@ -303,7 +311,7 @@ export class PluginHostService extends Service {
     }
     const profileRequire = createRequire(this.profileManifest());
     try {
-      return pathToFileURL(profileRequire.resolve(spec)).href;
+      return pluginModuleUrl(profileRequire.resolve(spec), this.dir);
     } catch (error: any) {
       // 内置插件不装进 profile（npm 会剪掉），改从内置目录解析主入口
       const builtin = this.builtinPlugins().find((entry) => entry.name === spec || entry.id === spec);
@@ -386,6 +394,15 @@ export class PluginHostService extends Service {
 
   /** 装配：用户层 + bundle 记录 → 合成 → 逐条装载 */
   async load() {
+    // 应用升级后，旧共享软链可能仍指向上一个安装目录；只更新软链，不覆盖真实插件包。
+    for (const name of [...Object.keys(DSH_BASELINE), 'zod']) {
+      const link = path.join(this.dir, 'node_modules', name);
+      const stat = await fs.lstat(link).catch(() => null);
+      if (!stat?.isSymbolicLink()) continue;
+      const target = hostPackageDir(name); if (!target || await fs.readlink(link) === target) continue;
+      await fs.unlink(link); await fs.symlink(target, link, 'dir');
+      refreshPluginModules(this.dir);
+    }
     const read = await this.readBaseRows();
     if (!read.ok) return read;
     await this.readBundles();
@@ -404,22 +421,19 @@ export class PluginHostService extends Service {
     return { ok: true, count: this.rows.length, bundles: this.bundles.length };
   }
 
-  /** 卸载全部条目后按当前合成结果重建（安装/卸载 bundle 这类低频操作走这条路） */
+  /** 按当前合成结果更新条目；未改变的插件继续运行。 */
   async reload() {
     // 重读用户层：手工改过 dyworker.yml 之后 reload 必须能看到改动
     await this.readBaseRows();
-    for (const row of this.rows) {
-      try {
-        (this.loader as any).remove(row.id);
-      } catch {
-        // 未创建
-      }
-    }
-    await this.loader.await();
-    this.activeIds.clear();
+    const previous = [...this.rows];
     this.compose();
+    for (const row of previous) if (!this.rows.some(item => item.id === row.id)) await this.deactivate(row.id);
     for (const row of this.rows) {
+      await this.describeRow(row.name);
       try {
+        const signature = await this.activationSignature(row);
+        if (this.activated.get(row.id) === signature) continue;
+        await this.deactivate(row.id);
         await this.activate(row, true);
         this.failures.delete(row.id);
       } catch (error: any) {
@@ -466,7 +480,7 @@ export class PluginHostService extends Service {
     else this.bundles.push(record);
     await this.reload();
     await this.persistBundles();
-    const failed = this.rows.filter((row) => this.failures.has(row.id)).map((row) => row.id);
+    const failed = this.rows.filter((row) => row.name === name && this.failures.has(row.id)).map((row) => row.id);
     // 失败时必须把**真实原因**带出去：以前只回 ok:false，error 是空的——
     // 界面上只剩"安装失败"四个字，调用方（含安装自愈）也拿不到"缺哪个包"的线索。
     const firstFailure = failed.length ? String(this.failures.get(failed[0]) || "") : "";
@@ -486,8 +500,16 @@ export class PluginHostService extends Service {
   /** 卸载插件包：撤掉它的 patch，重建条目 */
   async uninstall({ spec }: any = {}) {
     const name = String(spec || "").trim();
+    const row = this.rows.find(item => item.id === name || item.name === name);
+    if (row?.builtin) return { ok: false, name, error: '内置插件可停用，不能卸载' };
+    const owner = this.bundles.find(bundle => bundle.name === name || bundle.packageName === name || (row && resolveOwnsId(bundle, row.id)));
+    if (!owner && this.baseRows.some(item => item.id === name || item.name === name)) {
+      const ids = this.baseRows.filter(item => item.id === name || item.name === name).map(item => item.id);
+      for (const id of ids) { const result = await this.remove(id); if (!result.ok) return result; }
+      return { ok: true, name, removed: true, entries: this.rows.length };
+    }
     const before = this.bundles.length;
-    this.bundles = this.bundles.filter((bundle) => bundle.name !== name);
+    this.bundles = this.bundles.filter((bundle) => bundle !== owner);
     await this.reload();
     await this.persistBundles();
     return { ok: true, name, removed: before !== this.bundles.length, entries: this.rows.length };
@@ -498,6 +520,49 @@ export class PluginHostService extends Service {
    * 默认 --ignore-scripts（不跑安装脚本）、--save-exact（钉版本）。
    */
   async installPackage({ input, spec, version = null, source = "default", customRegistry, allowIncompatible = false, npmPath, ignoreScripts = true, run }: any = {}) {
+    const options = { input, spec, version, source, customRegistry, allowIncompatible, npmPath, ignoreScripts, run };
+    return transactPluginProfile(this.dir, async stage => {
+      const preserved = await collectProfilePackages(this.dir, [...this.bundles.map(bundle => bundle.packageName || bundle.name),
+        ...this.baseRows.filter(row => !row.builtin).map(row => runtimePackageName(row.name))]);
+      const runner = run || spawnRunner;
+      let updating: string;
+      try { const parsed = parsePluginSource(String(input || spec || '')); if (parsed.kind === 'npm') updating = parsed.name; } catch { /* 安装入口负责返回无效来源。 */ }
+      const guardedRun = async (command: string, args: any[], commandOptions: any) => {
+        const result = await runner(command, args, commandOptions);
+        if (args[0] === 'install') await restoreMissingProfilePackages(stage, preserved, updating);
+        return result;
+      };
+      // 仅复用安装/分析方法，不创建 Service、不运行主进程插件、不修改当前条目。
+      const staging = Object.create(this);
+      staging.dir = stage;
+      staging.bundles = structuredClone(this.bundles);
+      staging.overrides = structuredClone(this.overrides);
+      staging.install = async ({ spec, allowIncompatible }) => {
+        const described = await describeBundle(staging.profileManifest(), spec);
+        const manifest = await readPackageManifest(described.dir);
+        const config = composeRows([], [described.patches]).find(item => item.name === spec)?.config || {};
+        const analysis = await analyzePlugin(staging.profileManifest(), spec, manifest, described.dir, { config });
+        if (analysis.verdict !== "runnable" && !allowIncompatible) return { ok: false, error: analysis.reasons.join("；"), analysis };
+        if (isDshPackage(manifest) && analysis.runtime !== 'dsh-session') {
+          const bridge = new DshPluginBridge({ profileDir: stage, packageDir: described.dir, entryUrl: staging.resolveSpecifier(spec),
+            config });
+          try { await bridge.discover(); } finally { await bridge.dispose(); }
+        }
+        return { ok: true, name: spec, analysis };
+      };
+      return staging.installPackageInPlace({ ...options, run: guardedRun });
+    }, async prepared => {
+      refreshPluginModules(this.dir); this.descriptions.clear(); this.clients.clear();
+      const result = await this.install({ spec: prepared.name, allowIncompatible });
+      return { ...prepared, ...result, dir: this.dir };
+    }, async () => {
+      refreshPluginModules(this.dir); this.descriptions.clear(); this.clients.clear();
+      await this.readBundles(); await this.reload();
+    }, () => !this.ctx.tools?.executing && !this.ctx.get('dshRuntime')?.busy,
+    async () => this.ctx.get('dshRuntime')?.suspendViewsForProfileSwitch());
+  }
+
+  async installPackageInPlace({ input, spec, version = null, source = "default", customRegistry, allowIncompatible = false, npmPath, ignoreScripts = true, run }: any = {}) {
     const rawInput = String(input || spec || "").trim();
     if (!rawInput) throw new Error("installPackage 需要插件包名 / GitHub 地址 / 本地路径");
 
@@ -510,23 +575,16 @@ export class PluginHostService extends Service {
       customRegistry,
       npmPath: npmPath || process.env.DYWORKER_NPM || null,
       ignoreScripts,
+      // 与 DSH 的 autoInstallPeers:false 一致：peer 由宿主提供，按实际入口补齐。
+      legacyPeerDeps: true,
       run,
     };
-    let downloaded: any = await installPackageIntoProfile(installArgs);
-    // DSH 生态自己发布的包之间 peer 版本线互斥（-rc / -alpha 混用），
-    // 直接装必然 ERESOLVE 失败——实测用户装 dsh-context 就卡在这里。
-    // 先按常规装一次，失败且是 peer 冲突时再用 --legacy-peer-deps 重试（并如实标注）。
-    let legacyPeerDeps = false;
-    if (!downloaded.ok && /ERESOLVE|peer dep|Conflicting peer/i.test(String(downloaded.error || ""))) {
-      const retry: any = await installPackageIntoProfile({ ...installArgs, legacyPeerDeps: true });
-      if (retry.ok) {
-        legacyPeerDeps = true;
-        downloaded = { ...retry, note: "peer 依赖版本线冲突，已用 --legacy-peer-deps 重试成功" };
-      } else {
-        downloaded = retry;
-      }
-    }
-    if (!downloaded.ok) return { ok: false, stage: "download", name: rawInput, ...downloaded };
+    const downloaded: any = await installPackageIntoProfile(installArgs);
+    if (!downloaded.ok) return {
+      ok: false, stage: "download", name: rawInput, ...downloaded,
+      source: { kind: downloaded.kind, input: rawInput, source }, dir: this.dir,
+    };
+    refreshPluginModules(this.dir);
 
     // git / 本地来源装完后要回到"按包名上树"的流程：从 profile 依赖 diff 里找出装进来的包名
     let parsedInput: any = null;
@@ -544,36 +602,17 @@ export class PluginHostService extends Service {
     // 顺序反了会死锁：激活需要 cordis，而补依赖挂在 "激活成功" 之后——激活失败就永远不补。
     // 实测用户装 dsh-context 就是这样：npm 把 cordis 软链抹掉 → 激活报 Cannot find package
     // → 补依赖不执行 → UI 上只说"安装失败"且没有原因。
-    await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
-    let installed: any = await this.install({ spec: packageName, allowIncompatible });
-    // 自愈：profile 里可能是**旧的/残缺的**依赖树（早前失败的安装留下的老版本，
-    // 传递依赖缺失）。ensureRuntimePeers 见它能解析就跳过，于是残缺版本一直留着，
-    // 激活报 "Cannot find package X"。这里按报错缺什么补什么，再重试激活（最多 3 轮）。
-    // 上限给足：npm 用 --legacy-peer-deps 时**完全不装 peer 依赖**，
-    // 而 DSH 的包大量用 peer（dsh-session → dsh-scope、dsh-llm → …）。
-    // 每次激活只暴露"下一个"缺失包，所以要允许修多轮。
-    for (let attempt = 0; attempt < 12 && !installed.ok; attempt += 1) {
-      const missing = /Cannot find package '([^']+)'/.exec(String(installed.error || ""))?.[1];
-      // 报错里的"包"可能是绝对路径（profile/node_modules 下的残缺包解析失败时会这样），
-      // 这时从中还原包名，重装到**最新版**再重试——用户 profile 里是旧的 0.0.1-rc.1 残缺树。
-      const repairTarget = missing ? packageNameFromMissing(missing, this.dir) : "";
-      if (!repairTarget) break;
-      const repairVersion = await newestVersion(repairTarget, { npmPath: npmPath || process.env.DYWORKER_NPM || null });
-      const repaired: any = await installPackageIntoProfile({
-        dir: this.dir,
-        input: repairTarget,
-        version: repairVersion || undefined,
-        source,
-        customRegistry,
-        npmPath: npmPath || process.env.DYWORKER_NPM || null,
-        ignoreScripts,
-        legacyPeerDeps: true,
-        run,
-      });
-      if (!repaired.ok) break;
-      await this.ensureRuntimePeers(packageName, npmPath || process.env.DYWORKER_NPM || null);
-      installed = await this.install({ spec: packageName, allowIncompatible });
+    const peerOptions = { npmPath: npmPath || process.env.DYWORKER_NPM || null, source, customRegistry, run };
+    const dependencies = await this.ensureRuntimePeers(packageName, peerOptions);
+    if (dependencies.failed.length) {
+      return {
+        ok: false, stage: "dependencies", name: packageName, downloaded, dependencies,
+        source: { kind: downloaded.kind, input: rawInput, source }, dir: this.dir,
+        error: dependencies.failed.map((item) => `${item.name}：${item.error}`).join("；"),
+      };
     }
+    let installed: any = await this.install({ spec: packageName, allowIncompatible });
+    // 缺失依赖不再自动升级到无约束最新版；由暂存事务回退并返回具体原因。
     if (installed.ok) {
       // 记录来源（界面要显示"从 GitHub / 本地目录装的"）与钉住的版本
       const index = this.bundles.findIndex((bundle) => bundle.name === packageName);
@@ -591,7 +630,10 @@ export class PluginHostService extends Service {
       stage: installed.ok ? "done" : "activate",
       name: packageName,
       downloaded,
-      ...(legacyPeerDeps ? { legacyPeerDeps: true } : {}),
+      source: { kind: downloaded.kind, input: rawInput, source },
+      dir: this.dir,
+      dependencies,
+      legacyPeerDeps: true,
       ...installed,
       // 激活失败要把原因带出去：否则界面上只有"安装失败"四个字，用户与排查都无从下手
       ...(installed.ok ? {} : { error: String((installed as any).error || "插件激活失败") }),
@@ -627,7 +669,7 @@ export class PluginHostService extends Service {
         // 协议处理器按 包名 + 包内序号 解析，因此这里固定取主入口 0。
         modules: plan.ordered.map((node) => ({
           spec: node.spec,
-          url: `dyworker-plugin://module/${encodeURIComponent(node.spec)}/0`,
+          url: `dyworker-plugin://module/${encodeURIComponent(node.spec)}/0?rev=${this.clientRevision(this.clientModuleFile(node.spec, 0))}`,
         })),
         missingModules: plan.missing,
         id: row.id,
@@ -639,7 +681,7 @@ export class PluginHostService extends Service {
           subpath: entry.subpath,
           relative: entry.relative,
           primary: entry.primary,
-          url: `dyworker-plugin://client/${encodeURIComponent(row.id)}/${index}`,
+          url: `dyworker-plugin://client/${encodeURIComponent(row.id)}/${index}?rev=${this.clientRevision(entry.file)}`,
         })),
       };
     } catch (error: any) {
@@ -648,56 +690,116 @@ export class PluginHostService extends Service {
   }
 
   /**
-   * 补齐 DSH 插件的 peer 运行时依赖，并让插件共享宿主同一份 cordis。
-   * 不补的话插件主机半边根本 import 不进来（缺 dsh-session 等），也就永远不会 apply。
+   * 按实际入口补齐运行时依赖，并共享宿主已经提供的公共模块。
+   * peer 清单仅用于确定实际引用的版本约束，不作为递归安装清单。
    */
-  async ensureRuntimePeers(packageName, npmPath = null) {
+  async ensureRuntimePeers(packageName, options: any = {}) {
+    const { npmPath, source = "default", customRegistry, run } = options;
     const installed = [];
+    const failed = [];
+    const reused = new Set<string>();
+    const queue = [
+      { spec: packageName, side: "host", fromDir: this.dir, range: "*" },
+      { spec: packageName, side: "client", fromDir: this.dir, range: "*" },
+    ];
+    const seen = new Set<string>();
+    const shared = new Map(Object.keys(DSH_BASELINE).map(name => [name, hostPackageDir(name)]).filter(([, dir]) => dir) as Array<[string, string]>);
+    const linkShared = async (name, target) => {
+      if (!target) return;
+      const link = path.join(this.dir, "node_modules", name);
+      await fs.mkdir(path.dirname(link), { recursive: true });
+      await fs.rm(link, { recursive: true, force: true });
+      await fs.symlink(target, link, "dir");
+    };
     try {
-      const dir = this.packageDirOf(packageName);
-      const manifest = await readPackageManifest(dir);
-      // peer 依赖 + 客户端模块：两者都是运行时必需（后者由 dsh.client.inject 声明）
-      const needed = [...dshPeerNames(manifest), ...dshClientModuleNames(manifest)];
-      for (const peer of needed) {
-        // 判断"是否已就绪"必须**从插件自己的位置解析**：
-        // 我们的 resolveClientModule 会搜 DSH 共享目录等额外根，因此会出现
-        // "我们找得到、插件 import 不到"的错判——插件启动时报 Cannot find package。
-        // 这里用 createRequire 从插件包目录解析，与它自己的 import 语义一致。
-        if (resolvableFrom(dir, peer)) continue;
-        const version = await newestVersion(peer, { npmPath });
-        const result = await installPackageIntoProfile({
-          dir: this.dir,
-          input: peer,
-          version: version || undefined,
-          source: "default",
-          ignoreScripts: true,
-          // DSH 运行时包的 peer 版本线互斥，必须放宽（见 plugin-install 注释）
-          legacyPeerDeps: true,
-          npmPath,
-        });
-        if (result.ok) installed.push(`${peer}@${version || "latest"}`);
-        // 失败要留痕：静默跳过会变成"插件界面莫名其妙不出现"，排查时毫无线索
-        else console.warn(`[plugins] 运行时依赖 ${peer} 补装失败：${String(result.error || "").slice(0, 160)}`);
+      while (queue.length && seen.size < 128) {
+        const job = queue.shift()!;
+        const name = runtimePackageName(job.spec);
+        if (job.side === "host" && DSH_BASELINE[name]) { reused.add(name); continue; }
+        if (job.side === "client" && HOST_CLIENT_MODULES.has(job.spec)) { reused.add(job.spec); continue; }
+        if (name === "@deepseek-ai/cordis") { reused.add(name); continue; }
+        const key = `${job.side}:${job.spec}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const range = semver.validRange(job.range) ? job.range : "*";
+        // 宿主已经随应用分发的公共库共享同一份，不为插件重复安装。
+        if (job.side === "host" && (name.startsWith("@deepseek-ai/") || name === "zod")) {
+          const hostDir = hostPackageDir(name);
+          if (hostDir) {
+            const hostManifest = await readPackageManifest(hostDir);
+            if (semver.satisfies(hostManifest.version, range, { includePrerelease: true })) {
+              shared.set(name, hostDir);
+              await linkShared(name, hostDir);
+              reused.add(name);
+              continue;
+            }
+          }
+        }
+        let dir = "";
+        let manifest: any;
+        try {
+          dir = resolvePackageDir(path.join(job.fromDir, "package.json"), name);
+          manifest = await readPackageManifest(dir);
+          if (!semver.satisfies(manifest.version, range, { includePrerelease: true })) dir = "";
+          if (dir && job.side === "host" && !resolvableFrom(job.fromDir, job.spec)) dir = "";
+        } catch { dir = ""; }
+        if (!dir) {
+          // 官方组件必须使用完整基线，不能以 latest 修复混合版本。
+          const version = DSH_BASELINE[name] || await newestVersion(name, { npmPath, source, customRegistry, run, range });
+          if (!version) { failed.push({ name, error: `无法从所选安装源取得 ${name} 的可用版本（需要 ${range}）` }); continue; }
+          const result = await installPackageIntoProfile({
+            dir: this.dir, input: name, version, source, customRegistry, run,
+            ignoreScripts: true, legacyPeerDeps: true, npmPath,
+          });
+          if (!result.ok) { failed.push({ name, error: String(result.error || "依赖安装失败") }); continue; }
+          installed.push(`${name}@${version}`);
+          dir = this.packageDirOf(name);
+          manifest = await readPackageManifest(dir);
+        }
+        const found = { manifest, dir };
+        let entries: string[];
+        if (job.side === "client") {
+          // 插件没有浏览器半边时，不把它的后台入口再当客户端扫描。
+          if (name === packageName && !resolveClientEntries(manifest, dir).length) continue;
+          const { subpath } = splitModuleSpec(job.spec);
+          const exported = subpath ? manifest.exports?.[subpath] : null;
+          const relative = typeof exported === "string" ? exported : exported?.default || exported?.import;
+          entries = resolveModuleEntries({ ...found, ...(relative ? { relative } : {}) }).map((entry) => entry.file);
+        } else {
+          const { subpath } = splitModuleSpec(job.spec);
+          const exported = manifest.exports?.[subpath === "" ? "." : subpath];
+          const relative = typeof exported === "string" ? exported : exported?.import || exported?.default;
+          entries = [path.resolve(dir, relative || manifest.main || "index.js")];
+        }
+        // 只跟踪被实际文件使用的 import / require；不递归安装 peer 服务包。
+        const imports = await runtimeImportsOf(dir, entries);
+        if (job.side === "client") {
+          const client = manifest.dyworker?.client || manifest.dsh?.client;
+          if (Array.isArray(client?.inject)) imports.push(...client.inject.map(String));
+          if (Array.isArray(client?.external)) imports.push(...client.external.map(String));
+        }
+        for (const spec of new Set(imports)) {
+          const dep = runtimePackageName(spec);
+          queue.push({ spec, side: job.side, fromDir: dir, range: manifest.dependencies?.[dep] || manifest.peerDependencies?.[dep] || "*" });
+        }
       }
-      await linkHostCordis(this.dir, hostCordisDir());
-    } catch {
-      // 补依赖失败不该让安装整体失败：如实返回已补上的部分
+      if (queue.length) failed.push({ name: packageName, error: "插件实际依赖过多，已停止补装" });
+    } catch (error: any) {
+      failed.push({ name: packageName, error: String(error?.message || error) });
+    } finally {
+      // npm 会剪掉未声明的软链，每轮安装后恢复宿主公共库。
+      for (const [name, target] of shared) {
+        try { await linkShared(name, target); }
+        catch (error: any) { failed.push({ name, error: String(error?.message || error) }); }
+      }
+      if (installed.length) refreshPluginModules(this.dir);
     }
-    return installed;
+    return { installed, failed, reused: [...reused] };
   }
 
-  /**
-   * 客户端模块（dsh.client.inject 里那些包）的解析目录。
-   * 优先插件自己的 node_modules；找不到时退到本机 DSH 的共享目录——
-   * 这些包本身是 DSH 的客户端运行时，用户机器上通常随 DSH 一起存在。
-   * （正式分发时应把它们作为依赖装进插件目录，这里的兜底只是为了能用。）
-   */
+  /** 客户端模块只从自己的插件环境解析，不借用用户的 DSH 安装。 */
   clientModuleRoots() {
-    const roots = [path.join(this.dir, "node_modules")];
-    const dshRoot = path.join(os.homedir(), ".dsh", "profiles");
-    roots.push(path.join(dshRoot, "node_modules"));
-    for (const name of ["desktop", "web"]) roots.push(path.join(dshRoot, name, "node_modules"));
-    return roots;
+    return [path.join(this.dir, "node_modules")];
   }
 
   /** 按包名找客户端模块（返回 manifest 与包目录） */
@@ -726,7 +828,7 @@ export class PluginHostService extends Service {
   async clientModulePlan(target) {
     const { manifest } = await this.clientEntriesOf(target);
     const client = manifest.dsh?.client || manifest.dyworker?.client || {};
-    const declared = Array.isArray(client.inject) ? client.inject.map(String) : [];
+    const declared = [...(Array.isArray(client.inject) ? client.inject : []), ...(Array.isArray(client.external) ? client.external : [])].map(String);
     // 除了声明，还要把 bundle 里**字面量 require** 到的可解析模块算进来：
     // 有的模块（如 dsh-client-ui-slots）没被声明，但会被别的模块 require。
     const roots = [...declared];
@@ -780,13 +882,75 @@ export class PluginHostService extends Service {
     return entry.file;
   }
 
+  clientRevision(file: string) { const stat = statSync(file); return `${stat.mtimeMs}-${stat.size}`; }
+  async clientResourceFile(owner: string, fileName: string, revision?: string) {
+    if (fileName !== "client.js" && !/^client\.[A-Za-z0-9][A-Za-z0-9._-]*\.js$/.test(fileName)) throw new Error("插件资源名不合法");
+    const row = this.rows.find(item => item.name === owner || item.id === owner);
+    let main: string;
+    if (row) {
+      if (row.disabled) throw new Error("插件已停用");
+      main = await this.clientBundleFile(row.id, 0);
+    } else main = this.clientModuleFile(owner, 0);
+    if (revision && revision !== "initial" && revision !== this.clientRevision(main)) throw new Error("插件资源版本已变化，请重新加载");
+    const root = realpathSync(path.dirname(main));
+    const file = realpathSync(path.join(root, fileName === "client.js" ? path.basename(main) : fileName));
+    if (path.dirname(file) !== root) throw new Error("插件资源越出所属目录");
+    return file;
+  }
+
   /** 只做兼容性判定，不安装（装之前先看能不能跑） */
+  async detail(id: string) {
+    const entry = this.entries().find(row => row.id === id);
+    if (!entry) throw new Error('插件不存在或已卸载');
+    const bundle = this.bundles_().find(row => row.name === entry.name || row.packageName === entry.name) || null;
+    let metadata: any = null; let readme = ''; let readmeTruncated = false; let metadataError: string | null = null;
+    try {
+      const root = await fs.realpath(this.packageDirOf(entry.name));
+      const manifest = await readPackageManifest(root);
+      const author = typeof manifest.author === 'string' ? manifest.author : String(manifest.author?.name || '');
+      const repository = typeof manifest.repository === 'string' ? manifest.repository : String(manifest.repository?.url || '');
+      metadata = { name: String(manifest.name || entry.name), version: String(manifest.version || ''),
+        description: String(manifest.description || ''), author, license: typeof manifest.license === 'string' ? manifest.license : '',
+        homepage: String(manifest.homepage || ''), repository,
+        engines: Object.entries(manifest.engines || {}).map(([name, version]) => ({ name, version: String(version) })),
+        dependencies: Object.entries(manifest.dependencies || {}).map(([name, version]) => ({ name, version: String(version) })),
+        peerDependencies: Object.entries(manifest.peerDependencies || {}).map(([name, version]) => ({ name, version: String(version) })) };
+      const fileName = (await fs.readdir(root)).filter(name => /^readme(?:\.(?:md|markdown|txt))?$/i.test(name)).sort()[0];
+      if (fileName) {
+        const file = await fs.realpath(path.join(root, fileName));
+        if (path.dirname(file) !== root) throw new Error('插件说明文件指向包目录之外，未读取');
+        const handle = await fs.open(file, 'r');
+        try {
+          const stat = await handle.stat();
+          if (!stat.isFile()) throw new Error('插件说明不是普通文件');
+          const limit = 64 * 1024; const buffer = Buffer.alloc(limit);
+          const { bytesRead } = await handle.read(buffer, 0, limit, 0);
+          readme = buffer.subarray(0, bytesRead).toString('utf8'); readmeTruncated = stat.size > limit;
+        } finally { await handle.close(); }
+      }
+    } catch (error) { metadataError = String(error?.message || error); }
+    return { entry, bundle, metadata, readme, readmeTruncated, metadataError };
+  }
+
   async compatibility({ spec }: any = {}) {
-    const name = String(spec || "").trim();
+    const parsed = parsePluginSource(spec);
+    const name = parsed.kind === "npm" ? parsed.name : "";
     if (!name) throw new Error("compatibility 需要插件包名");
-    const described = await describeBundle(this.profileManifest(), name, {});
+    let described;
+    try {
+      described = await describeBundle(this.profileManifest(), name, {});
+    } catch (error: any) {
+      if (!String(error?.message || error).includes("插件包未安装到 profile")) throw error;
+      return {
+        name, version: parsed.version || "", verdict: "pending", matrix: "",
+        reasons: ["插件尚未下载，安装时会自动下载依赖并检查兼容性"],
+        missingPackages: [], services: [], clientHalf: null,
+        hostHalf: { entry: "", importable: false, importError: null, inject: [], hints: [] },
+      };
+    }
     const manifest = await readPackageManifest(described.dir);
-    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir);
+    const row = this.rows.find(row => row.name === name || row.id === spec);
+    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir, { config: row?.config ?? {} });
     return { ...analysis, matrix: formatMatrix(analysis) };
   }
 
@@ -823,6 +987,38 @@ export class PluginHostService extends Service {
    *  loader 内部对 import 失败只记一条 logger 就静默跳过） */
   async activate(row, creating) {
     const resolved = this.resolveSpecifier(row.name);
+    if (!row.builtin) {
+      const packageDir = this.packageDirOf(row.name);
+      const manifest = await readPackageManifest(packageDir);
+      if (isDshPackage(manifest)) {
+        this.isolatedIds.add(row.id);
+        await this.deactivate(row.id);
+        if (!row.disabled) {
+          const analysis = await analyzePlugin(this.profileManifest(), row.name, manifest, packageDir, { config: row.config ?? {} });
+          if (analysis.runtime === 'dsh-session') {
+            this.sessionRequired.add(row.id);
+            this.activated.set(row.id, await this.activationSignature(row));
+            await this.ctx.get('dshRuntime')?.closeIdle();
+            return resolved;
+          }
+          const bridge = new DshPluginBridge({ profileDir: this.dir, packageDir, entryUrl: resolved, config: row.config ?? {} });
+          const disposeTools: Array<() => void> = [];
+          try {
+            const schemas = await bridge.discover();
+            for (const schema of schemas) disposeTools.push(this.ctx.tools.register({
+              plugin: row.id, name: schema.name, description: schema.description, parameters: schema.parameters,
+              risk: undefined,
+              handler: (args, execution) => bridge.execute(schema.name, args, execution),
+            }));
+            this.remote.set(row.id, { bridge, disposeTools });
+            this.activeIds.add(row.id);
+          } catch (error) { disposeTools.forEach(dispose => dispose()); await bridge.dispose(); throw error; }
+        }
+        this.activated.set(row.id, await this.activationSignature(row));
+        await this.ctx.get('dshRuntime')?.closeIdle();
+        return resolved;
+      }
+    }
     await (this.loader as any).import(resolved);
     const options = {
       id: row.id,
@@ -840,8 +1036,44 @@ export class PluginHostService extends Service {
       }
       await (this.loader as any).create(options);
     }
-    this.activeIds.add(row.id);
+    await this.loader.await();
+    const entry = this.loader.resolve(row.id);
+    await entry.fiber?.await();
+    if (entry.fiber?.state === FiberState.ACTIVE) this.activeIds.add(row.id);
+    else this.activeIds.delete(row.id);
+    this.activated.set(row.id, await this.activationSignature(row));
     return resolved;
+  }
+
+  async activationSignature(row) {
+    let revision = "";
+    try { const entry = this.resolveSpecifier(row.name); const file = new URL(entry); const stat = await fs.stat(file); revision = `${stat.mtimeMs}:${stat.size}`; } catch {}
+    return JSON.stringify([row, revision]);
+  }
+  async deactivate(id: string) {
+    this.sessionRequired.delete(id);
+    await this.ctx.get('dshRuntime')?.stopOwners([id]);
+    const remote = this.remote.get(id);
+    if (remote) {
+      this.remote.delete(id); remote.disposeTools.forEach(dispose => dispose());
+      await remote.bridge.dispose();
+    }
+    try { this.loader.remove(id); } catch {}
+    await this.loader.await(); this.activeIds.delete(id); this.activated.delete(id);
+  }
+  async stopRun(sessionId: string, runId: string) {
+    await Promise.all([...this.remote.values()].map(item => item.bridge.stopRun(sessionId, runId)));
+  }
+
+  /** 只从宿主已安装、未停用的条目取插件入口，不接受界面传来的任意路径。 */
+  async dshSessionPlugins() {
+    const result = [];
+    for (const row of this.rows) {
+      if (row.builtin || row.disabled) continue;
+      const manifest = await readPackageManifest(this.packageDirOf(row.name));
+      if (isDshPackage(manifest)) result.push({ id: row.id, entryUrl: this.resolveSpecifier(row.name), config: row.config ?? {} });
+    }
+    return result;
   }
 
   /** 清单写回（宿主独占；loader 根树的 write() 是 no-op） */
@@ -850,20 +1082,31 @@ export class PluginHostService extends Service {
     await fs.writeFile(this.treeFile(), stringifyTree(this.baseRows), "utf8");
   }
 
-  /** 当前插件：清单行 + 运行态（是否装载、失败原因） */
+  /** 读取官方 loader 的真实 fiber，待依赖不能显示成已启动。 */
+  runtimeState(id: string, disabled = false) {
+    if (disabled) return { state: "disabled", active: false, missingServices: [] };
+    if (this.remote.has(id)) return { state: "active", active: true, missingServices: [] };
+    if (this.failures.has(id)) return { state: "failed", active: false, missingServices: [] };
+    if (this.sessionRequired.has(id)) return { state: "session-required", active: false, missingServices: [] };
+    try {
+      const fiber = this.loader.resolve(id).fiber;
+      const state = fiber?.state;
+      const missingServices = Object.keys(fiber?.inject || {}).filter(name => !fiber.ctx.get(name));
+      return { state: state === FiberState.ACTIVE ? "active" : state === FiberState.FAILED ? "failed"
+        : state === FiberState.LOADING ? "loading" : state === FiberState.UNLOADING ? "stopping" : "pending",
+        active: state === FiberState.ACTIVE, missingServices };
+    } catch { return { state: "failed", active: false, missingServices: [] }; }
+  }
   entries() {
-    return this.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      description: this.descriptions.get(row.name) || "",
-      client: this.clients.get(row.name) || null,
-      // 内置插件（随应用分发）：界面据此显示「内置」标记，停用走同一条 override 路径
-      builtin: Boolean(row.builtin),
-      disabled: Boolean(row.disabled),
-      config: row.config ?? null,
-      active: this.activeIds.has(row.id) && !row.disabled,
-      error: this.failures.get(row.id) || null,
-    }));
+    return this.rows.map((row) => {
+      const runtime = this.runtimeState(row.id, Boolean(row.disabled));
+      return {
+        id: row.id, name: row.name, description: this.descriptions.get(row.name) || "",
+        client: this.clients.get(row.name) || null, builtin: Boolean(row.builtin),
+        disabled: Boolean(row.disabled), config: row.config ?? null, ...runtime,
+        error: this.failures.get(row.id) || (runtime.missingServices.length ? `等待必需能力：${runtime.missingServices.join("、")}` : null),
+      };
+    });
   }
 
   async add({ id, name, config = null }) {
@@ -932,8 +1175,12 @@ export class PluginHostService extends Service {
         return { ok: false, id, error: `插件 ${id} 不在清单里：请先在插件页安装它` };
       }
       try {
-        await (this.loader as any).update(id, { disabled: !enabled });
-        if (enabled) { this.failures.delete(id); this.activeIds.add(id); }
+        const current = { ...this.rows.find(item => item.id === id), disabled: !enabled };
+        if (this.isolatedIds.has(id) || !this.activated.has(id)) await this.activate(current, true);
+        else await (this.loader as any).update(id, { disabled: !enabled });
+        await this.loader.await();
+        if (!this.remote.has(id)) { try { await this.loader.resolve(id).fiber?.await(); } catch {} }
+        if (enabled) { this.failures.delete(id); if (this.runtimeState(id).active) this.activeIds.add(id); }
         else this.activeIds.delete(id);
         results.push({ id, ok: true });
       } catch (error: any) {
@@ -960,7 +1207,8 @@ export class PluginHostService extends Service {
       if (row) row.config = config ?? null;
       else this.overrides[id] = { ...(this.overrides[id] || {}), config: config ?? null };
       try {
-        await (this.loader as any).update(id, { config: config ?? null });
+        await this.deactivate(id);
+        await this.activate({ ...this.rows.find(item => item.id === id), config: config ?? null }, true);
       } catch (error: any) {
         this.failures.set(id, String(error?.message || error));
       }
@@ -987,8 +1235,7 @@ export class PluginHostService extends Service {
     this.activeIds.delete(id);
     try {
       if (row) {
-        (this.loader as any).remove(id);
-        await this.loader.await();
+        await this.deactivate(id);
       }
       this.compose();
       await this.persist();

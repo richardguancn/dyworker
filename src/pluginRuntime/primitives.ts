@@ -13,6 +13,7 @@
 // 与宿主界面强耦合的部分（Markdown 渲染、剪贴板）通过 host 注入，缺省有降级实现。
 
 import * as React from "react";
+import { createPortal } from 'react-dom';
 
 export interface PrimitivesHost {
   /** 用宿主现有的 Markdown 渲染器渲染（缺省降级为纯文本） */
@@ -114,29 +115,60 @@ export function createPrimitives(host: PrimitivesHost = {}): Record<string, any>
 
   /** DSH 的 Menu 形如 <Menu items={[{label, onClick}]}/> 或直接给 children，两种都接 */
   const Menu = (props: any) => {
-    const { items, children, className, ...rest } = props || {};
-    if (Array.isArray(items)) {
-      return h(
+    const { items, children, className, open, anchor, onSelect, onClose, selectedId, selectedIds = [], portal, align = 'start', ...rest } = props || {};
+    const wrapper = React.useRef<HTMLSpanElement>(null);
+    const list = React.useRef<HTMLDivElement>(null);
+    const [position, setPosition] = React.useState({ top: 0, left: 0 });
+    const shown = open !== false;
+    React.useLayoutEffect(() => {
+      if (!shown || !portal) return;
+      const place = () => {
+        const rect = wrapper.current?.getBoundingClientRect(); if (!rect) return;
+        const width = list.current?.offsetWidth || 160;
+        const height = list.current?.offsetHeight || 0;
+        setPosition({ left: Math.max(8, Math.min(innerWidth - width - 8, align === 'end' ? rect.right - width : rect.left)),
+          top: rect.bottom + height + 8 > innerHeight ? Math.max(8, rect.top - height - 4) : rect.bottom + 4 });
+      };
+      place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
+      return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+    }, [shown, portal, align]);
+    React.useEffect(() => {
+      if (!shown || !anchor) return;
+      const dismiss = (event: PointerEvent) => { if (!wrapper.current?.contains(event.target as Node) && !list.current?.contains(event.target as Node)) onClose?.(); };
+      document.addEventListener('pointerdown', dismiss);
+      return () => document.removeEventListener('pointerdown', dismiss);
+    }, [shown, anchor, onClose]);
+    const menu = !shown ? null : Array.isArray(items) ? h(
         "div",
-        { role: "menu", ...rest, className: cx("plugin-ui-menu", className) },
+        { ref: list, role: 'menu', className: cx('plugin-ui-menu', anchor && 'plugin-ui-menu-popup', !anchor && className),
+          style: anchor ? { position: portal ? 'fixed' : 'absolute', ...(portal ? position : { top: '100%', [align === 'end' ? 'right' : 'left']: 0 }) } : undefined,
+          onKeyDown: (event: any) => {
+            if (event.key === 'Escape') { event.stopPropagation(); onClose?.(); wrapper.current?.querySelector('button')?.focus(); }
+            if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+              event.preventDefault(); const rows = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') || []);
+              const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+              rows[event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus();
+            }
+          } },
         items.map((item: any, index: number) =>
-          h(
+          item.type === 'separator' ? h('hr', { key: item.id || index, role: 'separator' })
+          : item.type === 'label' ? h('span', { key: item.id || index }, item.text) : h(
             "button",
             {
               key: item?.key ?? item?.id ?? index,
               role: "menuitem",
               type: "button",
-              className: cx("plugin-ui-menu-item", item?.danger && "danger"),
-              onClick: item?.onClick,
+              className: cx("plugin-ui-menu-item", item?.danger && "danger", (item.id === selectedId || selectedIds.includes(item.id)) && 'selected'),
+              onClick: (event: any) => { item.onClick?.(event); onSelect?.(item.id); },
               disabled: item?.disabled,
             },
             item?.icon ?? null,
             item?.label ?? item?.title ?? "",
           ),
         ),
-      );
-    }
-    return h("div", { role: "menu", ...rest, className: cx("plugin-ui-menu", className) }, children);
+      ) : h('div', { ref: list, role: 'menu', className: cx('plugin-ui-menu', className) }, children);
+    return anchor ? h('span', { ref: wrapper, className: cx('plugin-ui-menu-anchor', className) }, anchor,
+      portal && menu && typeof document !== 'undefined' ? createPortal(menu, document.body) : menu) : menu;
   };
   Menu.displayName = "DshPrimitives(Menu)";
 

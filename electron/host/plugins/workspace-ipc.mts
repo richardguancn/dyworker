@@ -1,3 +1,5 @@
+import path from "node:path";
+import { readFilePreview } from "../../file-preview.mts";
 // IPC 域插件：工作区（workspace:* / workspace-pins:*）。
 // 领域能力来自 electron/workspace.mts（纯函数，直接 import）；
 // 桌面边界（原生目录选择器/系统打开/文件管理器定位）与状态文件由壳层注入。
@@ -18,6 +20,15 @@ export function workspaceIpcPlugin(deps) {
         if (result.canceled || !result.filePaths[0]) return { canceled: true };
         const selectedPath = result.filePaths[0];
         return { canceled: false, path: selectedPath, entries: await listWorkspace(selectedPath) };
+      });
+
+      trustedHandle("workspace:preview-file", (_event, payload) =>
+        readFilePreview(String(payload?.workspacePath || ""), String(payload?.filePath || "")));
+
+      trustedHandle("workspace:choose-preview-file", async () => {
+        const result = await dialog.showOpenDialog(getMainWindow(), { title: "打开文件预览", properties: ["openFile"] });
+        const filePath = result.filePaths[0];
+        return result.canceled || !filePath ? { canceled: true } : { canceled: false, path: filePath, workspacePath: path.dirname(filePath) };
       });
 
       trustedHandle("workspace:refresh", (_event, workspacePath) => listWorkspace(String(workspacePath || "")));

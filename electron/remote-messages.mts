@@ -438,6 +438,8 @@ export function createRemoteMessagesManager({
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
       stopStream();
+      // 调度立即停止；需要收尾的调用方可等待已经排队的原子落盘完成。
+      return writeChain;
     },
     // 睡眠恢复/解锁/网络恢复后立即补拉未过期消息
     noteOnline() {

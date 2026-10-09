@@ -1,0 +1,15 @@
+{
+  "commit": "5badb15009ae1756c3afe0ae0cef1faafc290ccc",
+  "sources": {
+    "packages/client/ui-trajectory/src/client/trajectory-message-definitions.ts": "1a4eeb432d55820c36c50975ee37b052d2148818705941a9315a2ac0a5b78ea6",
+    "packages/client/ui-trajectory/src/client/trajectory-request-header-definition.ts": "9b8032aa9d407411026937db2dab709f76b312a3ce33dc553fec663041bca220",
+    "packages/client/ui-trajectory/src/client/trajectory-assistant-definition.ts": "532f6b8b250c6eb5bd0d605937c204391d88a2e5ee63adecc4ebed8dcd0b39e8",
+    "packages/client/ui-trajectory/src/client/trajectory-tool-definition.ts": "445422ecde38858faf3cd390adc33b4e3bc6c2671bc4645f2cb989ed915b0358",
+    "packages/client/ui-trajectory/src/client/trajectory-compaction-definition.ts": "587a4ac3db4f56ddf4cac2f3a752ac03733dd9c1626d7814d4db4cb766403fe6",
+    "packages/client/ui-trajectory/src/client/trajectory-snapshot-builder.ts": "8ce1db4f34542be76c1e78b0fb95705ecef14b2a5105173eb332a94fd0a056c6",
+    "packages/client/ui-trajectory/src/client/trajectory-definition-common.ts": "dbf896d0856f4f658cffc28dca615ebbce009e95ac0cbbcb526bb7913f27400f",
+    "packages/client/ui-trajectory/src/client/trajectory-event-projection.ts": "d38fa4fd56ae078c4d13fdde5f12ddb3ae93e717cd8da039f4f76f3f890ffa69",
+    "packages/client/ui-trajectory/src/client/trajectory-contract.ts": "61e69960f0c08af7d99c555b01b8c0b36b5210a2b1a09989ea2ab16459e29ec4",
+    "packages/client/ui-trajectory/src/client/copy-codes.ts": "58852ce7e6f76cdb0384a134e2d78b459b161c30aa47c83f800c5ee18ee3f540"
+  }
+}

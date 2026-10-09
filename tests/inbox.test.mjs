@@ -227,3 +227,20 @@ test("并发创建不丢条目：落盘队列串行化 read-modify-write", async
     await disposeHost(ctx);
   }
 });
+
+
+test("DSH 提问保留多选说明及全部选项，任务停止后立即失效且不留等待", async t => {
+  const dir = await makeTmpDir(t); const ctx = await createHost({ userDataDir: dir });
+  try {
+    const controller = new AbortController();
+    const presentation = { answerFormat: 'dsh', multiSelect: true, optionDescriptions: ['说明'], header: '格式', detail: '完整方案' };
+    const pending = ctx.inbox.create({ kind: 'question', sessionId: 'dsh', question: 'q'.repeat(1100),
+      options: ['A', 'B', 'C', 'D', 'E', 'F'], questionPresentation: presentation }, { signal: controller.signal });
+    await flushInbox(ctx);
+    const item = (await ctx.inbox.list())[0]; assert.equal(item.question.length, 1100);
+    assert.equal(item.options.length, 6); assert.deepEqual(item.questionPresentation, presentation);
+    controller.abort(); assert.equal((await pending).ok, false); await flushInbox(ctx);
+    assert.equal(ctx.inbox.pending.size, 0); assert.equal((await ctx.inbox.list())[0].status, 'expired');
+    assert.equal((await ctx.inbox.resolve(pending.itemId, { answer: 'A' })).ok, false);
+  } finally { await disposeHost(ctx); }
+});

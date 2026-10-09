@@ -26,6 +26,17 @@ const riskRank = (risk) => Math.max(0, RISK_ORDER.indexOf(risk));
 const higherRisk = (a, b) => (riskRank(a) >= riskRank(b) ? a : b);
 
 export const PLUGIN_TOOL_PREFIX = "plugin__";
+/** 将官方结构化输出转换为现有代理入口；文件变更只采纳宿主实际读回的记录。 */
+export function pluginToolResult(output: any) {
+  if (typeof output?.ok === "boolean") return output;
+  return { ok: true,
+    result: Array.isArray(output?.content) ? output.content.map(item => item.text || "").filter(Boolean).join("\n")
+      : typeof output === "string" ? output : JSON.stringify(output),
+    ...(output?.additionalContexts ? { additionalContexts: output.additionalContexts } : {}),
+    ...(output?.concludesTurn ? { concludesTurn: true } : {}),
+    changes: (output?.hostReceipts || []).map(receipt => ({ path: receipt.path, added: 0, removed: 0, receipt })),
+  };
+}
 
 /** 工具名只留下安全字符，避免注入奇怪的名字 */
 function slug(value) {
@@ -44,6 +55,8 @@ export class ToolsService extends Service {
   registry = new Map();
   /** 保留前缀：插件不得占用 */
   reserved;
+  executionState = { count: 0 };
+  get executing() { return this.executionState.count; }
 
   constructor(ctx, config = {} as any) {
     super(ctx, "tools");
@@ -93,7 +106,7 @@ export class ToolsService extends Service {
     };
     this.registry.set(finalName, entry);
     return () => {
-      this.registry.delete(finalName);
+      if (this.registry.get(finalName) === entry) this.registry.delete(finalName);
     };
   }
 
@@ -129,7 +142,8 @@ export class ToolsService extends Service {
    * 执行插件工具。
    * @param source "agent"（模型在任务里调用，已经过审批链）| "internal"（插件内部/后台调用）
    */
-  async execute(name, args = {}, { sessionId = "", runId = "", source = "internal", audit = true } = {}) {
+  async execute(name, args = {}, { sessionId = "", runId = "", source = "internal", audit = true,
+    signal = undefined, workspacePath = "", timeoutMs = 120_000 }: any = {}) {
     const entry = this.registry.get(String(name || ""));
     if (!entry) return { ok: false, error: `未知工具：${name}` };
 
@@ -158,13 +172,17 @@ export class ToolsService extends Service {
     }
 
     try {
-      const result = await entry.handler(args, { sessionId, runId, source, name: entry.name });
+      this.executionState.count += 1;
+      const executionSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeoutMs)]);
+      executionSignal.throwIfAborted();
+      const result = await entry.handler(args, { sessionId, runId, source, name: entry.name, signal: executionSignal, workspacePath });
+      executionSignal.throwIfAborted();
       await auditEntry("executed", "");
       return { ok: true, result };
     } catch (error: any) {
       const reason = String(error?.message || error);
       await auditEntry("failed", reason);
       return { ok: false, error: reason };
-    }
+    } finally { this.executionState.count = Math.max(0, this.executionState.count - 1); }
   }
 }

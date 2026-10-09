@@ -8,7 +8,9 @@ contextBridge.exposeInMainWorld("dyworker", {
   saveSessions: (sessions) => ipcRenderer.invoke("sessions:save", sessions),
   savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
-  chooseAttachments: () => ipcRenderer.invoke("attachments:choose"),
+  chooseAttachments: (sessionId) => ipcRenderer.invoke("attachments:choose", sessionId),
+  serializeCommandAttachments: (payload) => ipcRenderer.invoke('attachments:command-serialize', payload),
+  browserFileUpload: (payload) => ipcRenderer.invoke('attachments:browser-upload', payload),
   saveClipboardImage: (payload) => ipcRenderer.invoke("attachments:save-clipboard-image", payload),
   readClipboardText: () => ipcRenderer.invoke("clipboard:read-text"),
   writeClipboardText: (text) => ipcRenderer.invoke("clipboard:write-text", text),
@@ -17,6 +19,13 @@ contextBridge.exposeInMainWorld("dyworker", {
   refreshWorkspace: (path) => ipcRenderer.invoke("workspace:refresh", path),
   getWorkspaceContext: (path) => ipcRenderer.invoke("workspace:context", path),
   readWorkspaceMarkdown: (workspacePath, filePath) => ipcRenderer.invoke("workspace:read-markdown", { workspacePath, filePath }),
+  readFilePreview: (workspacePath, filePath) => ipcRenderer.invoke("workspace:preview-file", { workspacePath, filePath }),
+  choosePreviewFile: () => ipcRenderer.invoke("workspace:choose-preview-file"),
+  onFilePanelRequest: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on("file:panel-request", listener);
+    return () => ipcRenderer.removeListener("file:panel-request", listener);
+  },
   readWorkspaceFile: (workspacePath, filePath) => ipcRenderer.invoke("workspace:read-file", { workspacePath, filePath }),
   writeWorkspaceFile: (workspacePath, filePath, content) => ipcRenderer.invoke("workspace:write-file", { workspacePath, filePath, content }),
   listTraces: (sessionId) => ipcRenderer.invoke("traces:list", sessionId),
@@ -135,6 +144,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   completeChat: (payload) => ipcRenderer.invoke("chat:complete", payload),
   sendTask: (payload) => ipcRenderer.invoke("agent:send", payload),
+  continueChildTask: (payload) => ipcRenderer.invoke('agent:continue-child', payload),
   removeQueuedTask: (payload) => ipcRenderer.invoke("agent:remove-queued", payload),
   runQueuedTaskNow: (payload) => ipcRenderer.invoke("agent:run-queued-now", payload),
   resolveApproval: (sessionId, actionId, approved) => ipcRenderer.invoke("agent:resolve-approval", { sessionId, actionId, approved }),
@@ -214,6 +224,16 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("sessions:append", listener);
     return () => ipcRenderer.removeListener("sessions:append", listener);
   },
+  onDshSessionRenamed: (callback) => {
+    const listener = (_event,payload) => callback(payload);
+    ipcRenderer.on('sessions:dsh-renamed',listener);
+    return () => ipcRenderer.removeListener('sessions:dsh-renamed',listener);
+  },
+  onDshSessionCreated: (callback) => {
+    const listener=(_event,payload)=>callback(payload);
+    ipcRenderer.on('sessions:dsh-created',listener);
+    return ()=>ipcRenderer.removeListener('sessions:dsh-created',listener);
+  },
   cancelWakesForSession: (sessionId) => ipcRenderer.invoke("wakes:cancel-for-session", sessionId),
   listPendingWakes: () => ipcRenderer.invoke("wakes:list-pending"),
   resumeWakeNow: (sessionId) => ipcRenderer.invoke("wakes:resume-now", sessionId),
@@ -265,6 +285,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   // 插件管理（主机侧 host/plugins/plugins-ipc.mts）。通道名即契约，改名要同步两边。
   listPlugins: () => ipcRenderer.invoke("plugins:list"),
+  pluginCatalog: (payload) => ipcRenderer.invoke("plugins:catalog", payload),
+  pluginDetails: (id) => ipcRenderer.invoke("plugins:detail", id),
   checkPluginCompatibility: (spec) => ipcRenderer.invoke("plugins:compatibility", spec),
   installPlugin: (payload) => ipcRenderer.invoke("plugins:install", payload),
   installPluginPackage: (payload) => ipcRenderer.invoke("plugins:install-package", payload),
@@ -276,8 +298,9 @@ contextBridge.exposeInMainWorld("dyworker", {
   pluginClientBundles: (id) => ipcRenderer.invoke("plugins:client-bundles", id),
   // 插件 HTTP 路由：渲染端对 /api/* 的 fetch 经这里进主进程执行
   pluginApiFetch: (payload) => ipcRenderer.invoke("plugin-api:fetch", payload),
+  pluginApiCancel: (requestId) => ipcRenderer.invoke("plugin-api:cancel", requestId),
   pluginApiRoutes: () => ipcRenderer.invoke("plugin-api:routes"),
   // 插件视图要的会话投影（sessionId + key）
   pluginProjection: (payload) => ipcRenderer.invoke("plugins:projection", payload),
+  dshOperation: (payload) => ipcRenderer.invoke('plugins:dsh-operation', payload),
 });
-

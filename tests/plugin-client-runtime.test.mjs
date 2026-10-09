@@ -1,7 +1,7 @@
 // 客户端插件运行时（第 1 步）：模块加载器 + primitives 门面。
 //
 // 验收标准不是"接口看起来对"，而是**真实的 DSH 插件 bundle 能被加载起来**：
-// 取本机已装的 dsh-context 的 lib/client.js（618KB，预打包产物），在 Node 里执行它，
+// 取项目固定的 dsh-context 的 lib/client.js（618KB，预打包产物），在 Node 里执行它，
 // 断言它通过 window.__ModuleLoader__.load 注册成功、factory 跑通、且没有请求到宿主没提供的模块。
 
 import test from "node:test";
@@ -9,10 +9,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 import { createClientRuntime, PRIMITIVES_MODULE } from "../src/pluginRuntime/index.ts";
-import { resolveClientEntries } from "../electron/host/plugin-client.mts";
+import { HOST_CLIENT_MODULES, orderClientModules, resolveClientEntries } from "../electron/host/plugin-client.mts";
 import { createPrimitives } from "../src/pluginRuntime/primitives.ts";
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+test('官方提示组件保留图表列锚点，不增加破坏百分比高度的包装层', () => {
+  const runtime = createClientRuntime({ target: {} });
+  const markup = renderToStaticMarkup(React.createElement(runtime.primitives.Tooltip, { label: '真实用量', side: 'top' },
+    React.createElement('div', { className: 'lc-ov-usage-col' }, React.createElement('span', { style: { height: '100%' } }, '真实数据'))));
+  assert.match(markup, /^<div class="lc-ov-usage-col"/);
+  assert.doesNotMatch(markup, /plugin-ui-tooltip/);
+  assert.match(markup, /height:100%/);
+});
 
 // 每个用例一个独立运行时：单例会被用例之间互相污染（第一版就是这么翻车的）
 function freshRuntime() {
@@ -20,6 +32,25 @@ function freshRuntime() {
   const runtime = createClientRuntime({ target });
   return { target, runtime };
 }
+
+test("安装器声明的客户端公共模块全部由宿主提供，不列入下载或缺失清单", () => {
+  const { runtime } = freshRuntime();
+  for (const name of HOST_CLIENT_MODULES) assert.equal(runtime.loader.has(name), true, name);
+  const plan = orderClientModules([...HOST_CLIENT_MODULES], () => assert.fail('共享模块不应查找磁盘包'));
+  assert.deepEqual(plan, { ordered: [], missing: [] });
+});
+
+test('官方普通界面辅助模块直接提供真实状态与布局行为，不再当作插件脚本加载',()=>{
+  const {runtime}=freshRuntime();
+  const stores=runtime.loader.require('@deepseek-ai/dsh-client-store');
+  const store=stores.createSnapshotStore({count:1});let changed=0;
+  const off=store.subscribe(()=>changed++);store.set({count:2});
+  assert.equal(store.getSnapshot().count,2);assert.equal(changed,1);off();
+  const dock=runtime.loader.require('@deepseek-ai/dsh-client-ui-dockkit');
+  const layout=dock.createInitialState(dock.createIdMinter());
+  assert.equal(dock.dockPaneCount(layout),1);
+  assert.deepEqual(dock.dockPaneIds(layout),[layout.rootId]);
+});
 
 test("加载器：DSH 形态的 bundle 能注册，factory 拿到 require 并返回模块导出", () => {
   const { target, runtime } = freshRuntime();
@@ -53,6 +84,8 @@ test("加载器：bundle 请求宿主没有的模块时记录缺口，且不因�
       return {};
     },
   });
+  assert.equal(bad.error, undefined, "注册不能执行 factory");
+  assert.equal(bad.exports, undefined, "读取时才执行并记录失败");
   assert.match(bad.error, /fancy-chart/, "失败原因要点出缺哪个模块");
   assert.deepEqual(bad.missing, ["@deepseek-ai/dsh-client-ui-fancy-chart"]);
 
@@ -145,14 +178,11 @@ test("客户端入口解析：两种 exports 写法与多 bundle 包都要认（
   assert.deepEqual(fallback.map((e) => e.relative), ["lib/client.js"]);
 });
 
-test("真实 bundle：本机已装 DSH 插件的客户端 bundle 全都能被加载起来", async (t) => {
+test("真实发布包：固定 dsh-context 0.62.2 的客户端模块能加载，无需用户 DSH", async (t) => {
   // 逐个插件、逐个客户端入口，在 Node 里执行真实产物。这是第 1 步的验收依据：
   // 不是"接口看起来对"，而是第三方预打包产物能被加载器加载、factory 跑通、无缺失模块。
-  const roots = [
-    path.join(os.homedir(), ".dsh", "profiles", "desktop"),
-    path.join(os.homedir(), ".dsh", "profiles", "web"),
-    path.join(os.homedir(), ".dsh", "profiles"),
-  ];
+  const require = createRequire(import.meta.url);
+  const roots = [path.dirname(path.dirname(path.dirname(require.resolve("dsh-context/package.json"))))];
   const found = [];
   for (const root of roots) {
     for (const spec of await fs.readdir(path.join(root, "node_modules")).catch(() => [])) {
@@ -244,6 +274,21 @@ test("客户端模块依赖图：依赖在前、循环安全、解析不到的�
   assert.equal(plan.ordered[0].file, "/nm/remotes/lib/client.js", "入口要解析成绝对路径");
 });
 
+test('同一官方界面模块由包名与 client 子路径引用时，只执行一次 factory', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-client-alias-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const manifest = { name: '@deepseek-ai/dsh-api-gateway', exports: { './client': './client.js' },
+    dsh: { client: { inject: [] } } };
+  await fs.writeFile(path.join(dir, 'client.js'), '');
+  const plan = orderClientModules([manifest.name, manifest.name + '/client'], () => ({ manifest, dir, relative: './client.js' }));
+  assert.equal(plan.ordered.length, 1);
+  const { target, runtime } = freshRuntime(); let executed = 0;
+  for (const item of plan.ordered) target.__ModuleLoader__.load({ id: manifest.name, factory: () => ({ actual: ++executed }) });
+  assert.equal(runtime.loader.require(manifest.name).actual, 1);
+  assert.equal(runtime.loader.bundle(manifest.name).error, undefined);
+  assert.equal(executed, 1);
+});
+
 test("客户端模块兼容层：缺失模块的导出齐备，未实现导出被记名而不是崩", async () => {
   const { createSlotsModuleShim, createRuntimeClientShim } = await import("../src/pluginRuntime/dshClientShims.ts");
   const unknown = [];
@@ -325,7 +370,9 @@ test("插件 API 桥：只接管同源 /api/*，其余 fetch 原样透传，失�
   const response = await target.fetch("/api/dsh-context/detail", { method: "POST", body: "{}" });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, value: null });
-  assert.deepEqual(calls.at(-1), { path: "/api/dsh-context/detail", method: "POST", body: "{}" });
+  const { requestId, ...payload } = calls.at(-1);
+  assert.equal(typeof requestId, "string");
+  assert.deepEqual(payload, { path: "/api/dsh-context/detail", method: "POST", body: "{}", headers: {} });
 
   // ② 其它请求：原样透传
   const passthrough = await target.fetch("/assets/logo.png");

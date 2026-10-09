@@ -354,6 +354,33 @@ export function createSessionArchive({ dir, legacyFile }) {
       });
     },
 
+    // Publication and source retirement share the same archive operation queue.
+    async publishDshTask(session, source = undefined, signal = undefined) {
+      return withArchive(async () => {
+        signal?.throwIfAborted();
+        if(entries.some(entry=>entry.id===session.id))throw new Error('这个任务编号已经被其他任务使用');
+        if(source){
+          const current=await readSession(source.id);
+          if(!current||current.runtime!=='dsh'||current.createdAt!==source.createdAt||current.workspacePath!==source.workspacePath)
+            throw new Error('原任务已经删除或更换工作目录，请重新复制');
+        }
+        await writeSessionFile(session);byId.set(session.id,session);fingerprints.set(session.id,contentFingerprint(session));
+        entries=[{id:session.id,file:encodeSessionId(session.id)},...entries];await writeIndex();
+      });
+    },
+
+    // One root update preserves all other archive entries and their current order.
+    async replace(session) {
+      return withArchive(async () => {
+        if (!session?.id) return;
+        const key=String(session.id);
+        await writeSessionFile(session);
+        byId.set(key,session);fingerprints.set(key,contentFingerprint(session));
+        if (!entries.some(entry=>entry.id===key)) entries=[{id:key,file:encodeSessionId(key)},...entries];
+        await writeIndex();
+      });
+    },
+
     // 窗口关闭期间唤醒续跑的转录追加（按 role:content 去重，原 persistSessionAppend 语义）
     async appendMessages(sessionId, messages) {
       return withArchive(async () => {

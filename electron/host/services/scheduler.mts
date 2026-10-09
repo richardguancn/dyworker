@@ -128,6 +128,8 @@ export class SchedulerService extends Service {
     const prompt = String(payload?.prompt || "").trim();
     const workspacePath = String(payload?.workspacePath || "").trim();
     const recurrence = String(payload?.recurrence || "daily");
+    const runtime = payload?.runtime ?? "dyworker";
+    if (!["dyworker","dsh"].includes(runtime)) return {ok:false,error:"任务运行方式无效"};
     const nextRun = new Date(payload?.nextRun || "");
     if (!name || !prompt) return { ok: false, error: "计划名称和任务内容不能为空" };
     if (!workspacePath) return { ok: false, error: "请先选择工作文件夹" };
@@ -137,7 +139,7 @@ export class SchedulerService extends Service {
     const existing = payload?.id ? items.find((item) => String(item.id) === String(payload.id)) : null;
     if (existing) {
       Object.assign(existing, {
-        name, prompt, workspacePath, recurrence,
+        name, prompt, workspacePath, recurrence, runtime,
         nextRun: nextRun.toISOString(),
         allowWorkspaceWrites: Boolean(payload?.allowWorkspaceWrites),
         updatedAt: this.now().toISOString(),
@@ -146,7 +148,7 @@ export class SchedulerService extends Service {
       const nowIso = this.now().toISOString();
       items.push({
         id: crypto.randomUUID(),
-        name, prompt, workspacePath, recurrence,
+        name, prompt, workspacePath, recurrence, runtime,
         nextRun: nextRun.toISOString(),
         lastRun: "",
         enabled: true,
@@ -222,12 +224,12 @@ export class SchedulerService extends Service {
     if (recovered) await this.writeScheduleList(items);
   }
 
-  async markFinished(id, success, summary, sessionId = "") {
+  async markFinished(id, success, summary, sessionId = "", outcome = "") {
     const items = await this.list();
     const item = items.find((entry) => String(entry.id) === String(id));
     if (!item) return;
     const now = this.now();
-    item.lastStatus = success ? "success" : "failed";
+    item.lastStatus = outcome === "cancelled" ? "cancelled" : success ? "success" : "failed";
     item.lastSummary = String(summary || "").slice(0, 500);
     item.updatedAt = now.toISOString();
     appendScheduleHistory(item, {

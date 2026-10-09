@@ -28,6 +28,7 @@ function traceKey(trace: TraceEvent): string {
 
 const TRACE_KIND_LABEL: Record<TraceEvent["kind"], string> = {
   "model-request": "模型请求",
+  "model-first-token": "首 token",
   "model-response": "模型响应",
   "tool-call": "工具调用",
   "tool-result": "工具结果",
@@ -37,6 +38,7 @@ const TRACE_KIND_LABEL: Record<TraceEvent["kind"], string> = {
   "plan-update": "计划更新",
   "file-change": "文件变更",
   "context-compacted": "上下文压缩",
+  "context-pruned": "上下文剪枝",
   "agent-finished": "任务结束",
 };
 

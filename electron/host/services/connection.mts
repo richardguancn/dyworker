@@ -1,146 +1,93 @@
 import { Service } from "@deepseek-ai/cordis";
 
-// connection 服务：DSH 插件用它注册自己的 HTTP 路由。
-//
-// 实测（dsh-context 主机半边）：
-//   const register = c.get("connection").fetch.register.bind(connection.fetch);
-//   register({ path: "/api/dsh-context/detail", methods: ["POST"], requestBody: "buffered", fetch: handler });
-// handler 收到一个 Request，返回 Response。
-//
-// 我们不跑真实 HTTP 服务：路由收集在这里，渲染端对 /api/* 的 fetch 经 IPC 进来，
-// 由本服务匹配并执行 handler，再把响应序列化回去。这样插件代码不用改，也不开监听端口。
-
-
 export interface PluginRoute {
   path: string;
-  methods: string[];
+  methods?: string[];
   requestBody?: string;
-  /** DSH 的字段名就是 fetch；handler 只是我们内部叫法，两个都接 */
   fetch?: (request: Request) => Response | Promise<Response>;
   handler?: (request: Request) => Response | Promise<Response>;
-  dispose?: () => void;
 }
-
-export interface RouteDispatchResult {
-  status: number;
-  headers: Record<string, string>;
-  body: string;
-}
-
-// 路由表放在模块级：cordis 交给插件的 connection 是**包装后的对象**（实测
-// `connection === 服务实例` 为 false），实例字段会被写到另一个对象上，导致
-// 插件注册成功但路由表为空。用模块级注册表就与 this 的身份无关。
-const registeredRoutes = new Map<string, PluginRoute>();
-
-function routeKey(path: string, method: string): string {
-  return `${String(method || "GET").toUpperCase()} ${String(path)}`;
-}
-
-/** 注册一条插件路由（模块级：不依赖 this，cordis 交给插件的包装对象不会带走它） */
-export function registerPluginRoute(route: PluginRoute): () => void {
-  // 关键：DSH 插件注册时把处理函数放在 **fetch** 字段上
-  // （register({ path, methods, requestBody, fetch })）。只认 handler 会把插件的路由全部丢掉。
-  const handler = route?.fetch ?? route?.handler;
-  if (!route?.path || typeof handler !== "function") return () => undefined;
-  const path = String(route.path);
-  const methods = (Array.isArray(route.methods) && route.methods.length ? route.methods : ["GET"]).map((m) => String(m).toUpperCase());
-  const entry: PluginRoute = { path, methods, requestBody: route.requestBody, fetch: handler, handler };
-  for (const method of methods) registeredRoutes.set(routeKey(path, method), entry);
-  // 返回的 disposer 刻意**不注销**：实测插件注册进来的路由会被 cordis 的 inject fiber
-  // 重启带走（"注册→立刻注销"循环），路由永远留不住。插件重新注册会覆盖同一个 key，
-  // 因此保留是安全的；真正卸载用 clearPluginRoutes()（由宿主在禁用/卸载插件时调用）。
-  return () => undefined;
-}
-
-/** 清空所有插件路由（宿主在插件禁用/卸载时调用） */
-export function clearPluginRoutes(): void {
-  registeredRoutes.clear();
-}
-
-/** 注销一条插件路由 */
-export function unregisterPluginRoute(path: string): void {
-  const key = String(path);
-  for (const [routeId, entry] of registeredRoutes) {
-    if (entry.path === key) registeredRoutes.delete(routeId);
+export interface RouteDispatchResult { status: number; headers: Record<string, string>; body: string }
+interface RouteEntry { route: PluginRoute; owner: object; calls: Set<Promise<unknown>>; controllers: Set<AbortController> }
+export class PluginRouteRegistry {
+  readonly entries = new Map<string, RouteEntry>();
+  register(route: PluginRoute, owner: object): () => Promise<void> {
+    const handler = route?.fetch ?? route?.handler;
+    if (!/^\/api(?:\/|$)/.test(route?.path || "") || typeof handler !== "function") throw new Error("插件接口需要 /api 路径和处理函数");
+    const methods = (route.methods?.length ? route.methods : ["GET"]).map(m => String(m).toUpperCase());
+    const keys = methods.map(m => `${m} ${route.path}`);
+    if (keys.some(key => this.entries.has(key))) throw new Error(`插件接口已被注册：${route.path}`);
+    const entry: RouteEntry = { route: { ...route, methods, fetch: handler }, owner, calls: new Set(), controllers: new Set() };
+    for (const key of keys) this.entries.set(key, entry);
+    let stopping: Promise<void>;
+    return () => stopping ??= this.remove(entry);
+  }
+  async remove(entry: RouteEntry) {
+    for (const [key, current] of this.entries) if (current === entry) this.entries.delete(key);
+    for (const controller of entry.controllers) controller.abort(new Error("插件接口已停用"));
+    await Promise.allSettled([...entry.calls]);
+  }
+  async clear(owner?: object, routePath?: string) {
+    const entries = [...new Set(this.entries.values())].filter(e => (!owner || e.owner === owner) && (!routePath || e.route.path === routePath));
+    await Promise.all(entries.map(e => this.remove(e)));
+  }
+  list() { return [...new Set(this.entries.values())].map(e => `${e.route.methods.join("/")} ${e.route.path}`); }
+  async dispatch(input: { path: string; method?: string; body?: string; headers?: Record<string, string>; signal?: AbortSignal }): Promise<RouteDispatchResult> {
+    const url = new URL(String(input?.path || "/"), "http://plugin.local");
+    const method = String(input?.method || "GET").toUpperCase();
+    const entry = this.entries.get(`${method} ${url.pathname}`);
+    const response = (status: number, error: string) => ({ status, headers: { "content-type": "application/json" }, body: JSON.stringify({ error }) });
+    if (!entry) return response(404, `没有匹配的插件路由：${method} ${url.pathname}`);
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(input.signal.reason);
+    if (input.signal?.aborted) onAbort(); else input.signal?.addEventListener("abort", onAbort, { once: true });
+    entry.controllers.add(controller);
+    const task = (async () => {
+      try {
+        controller.signal.throwIfAborted();
+        const request = new Request(url, { method, headers: input.headers, signal: controller.signal,
+          body: ["GET", "HEAD"].includes(method) ? undefined : input.body });
+        const result = await entry.route.fetch(request);
+        const body = await result.text();
+        controller.signal.throwIfAborted();
+        return { status: result.status, headers: Object.fromEntries(result.headers), body };
+      } catch (error: any) { return response(controller.signal.aborted ? 410 : 500, String(error?.message || error)); }
+    })();
+    entry.calls.add(task);
+    try { return await task; }
+    finally { entry.calls.delete(task); entry.controllers.delete(controller); input.signal?.removeEventListener("abort", onAbort); }
   }
 }
 
-/** 当前注册的路由 */
-export function listPluginRoutes(): string[] {
-  const seen = new Map<string, PluginRoute>();
-  for (const entry of registeredRoutes.values()) seen.set(entry.path, entry);
-  return [...seen.values()].map((entry) => `${entry.methods.join("/")} ${entry.path}`);
-}
-
-/**
- * connection 服务（cordis Service 子类）。
- *
- * 路由表与处理逻辑都在**模块级**（registeredRoutes / registerPluginRoute / dispatchPluginRoute）：
- * 一是与 this 的身份无关，二是普通对象服务会让 cordis 的 inject fiber 反复重启
- * （实测"注册→立刻注销"循环，路由永远留不住），所以必须用规范的服务形态。
- */
+/** 每个宿主拥有自己的注册表；服务包装对象只读取这个稳定对象，不替换实例字段。 */
 export class ConnectionService extends Service {
-  static name = "connection";
-
-  /** 插件用的门面：connection.fetch.register({ path, methods, requestBody, fetch }) */
-  fetch: {
-    register: (route: any) => () => void;
-    unregister: (path: string) => void;
-  };
-
+  readonly registry = new PluginRouteRegistry();
   constructor(ctx: any) {
     super(ctx, "connection");
-    this.fetch = {
-      register: (route: any) => registerPluginRoute(route),
-      unregister: (path: string) => unregisterPluginRoute(path),
-    };
+    ctx.effect(() => () => this.registry.clear());
   }
-
-  /** 当前注册的路由（只读视图） */
-  get routes(): PluginRoute[] {
-    return [...registeredRoutes.values()];
+  get fetch() { return { register: (route: PluginRoute) => this.register(route), unregister: (routePath: string) => this.unregister(routePath) }; }
+  get routes() { return [...new Set(this.registry.entries.values())].map(e => e.route); }
+  register(route: PluginRoute) {
+    const dispose = this.registry.register(route, this.ctx.fiber);
+    // 注册自身也受调用方 fiber 生命周期管理，即使插件忘记再用 effect 包装。
+    this.ctx.effect(() => dispose);
+    return dispose;
   }
-
-  register(route: PluginRoute): () => void {
-    return registerPluginRoute(route);
+  unregister(routePath: string) { return this.registry.clear(this.ctx.fiber, routePath); }
+  list() { return this.registry.list(); }
+  matches(routePath: string, method = 'GET') {
+    const url = new URL(routePath, 'http://plugin.local');
+    return this.registry.entries.has(`${method.toUpperCase()} ${url.pathname}`);
   }
-
-  unregister(path: string): void {
-    unregisterPluginRoute(path);
-  }
-
-  list(): string[] {
-    return listPluginRoutes();
-  }
-
-  async dispatch(input: { path: string; method?: string; body?: string; headers?: Record<string, string> }): Promise<RouteDispatchResult> {
-    return dispatchPluginRoute(input);
-  }
+  dispatch(input: Parameters<PluginRouteRegistry["dispatch"]>[0]) { return this.registry.dispatch(input); }
 }
 
-/** 执行一条已注册的路由；没有匹配的返回 404（渲染端据此如实报错） */
-export async function dispatchPluginRoute(input: { path: string; method?: string; body?: string; headers?: Record<string, string> }): Promise<RouteDispatchResult> {
-  const method = String(input?.method || "GET").toUpperCase();
-  const route = registeredRoutes.get(routeKey(String(input?.path || ""), method));
-  if (!route) {
-    return { status: 404, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: `没有匹配的插件路由：${method} ${input?.path}` }) };
-  }
-  try {
-    const request = new Request(`http://plugin.local${input.path}`, {
-      method,
-      headers: input.headers || { "content-type": "application/json" },
-      body: method === "GET" || method === "HEAD" ? undefined : (input.body ?? ""),
-    });
-    const response = await (route.fetch ?? route.handler)!(request);
-    const body = await response.text();
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => { headers[key] = value; });
-    return { status: response.status, headers, body };
-  } catch (error: any) {
-    return {
-      status: 500,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ error: String(error?.message || error) }),
-    };
-  }
-}
+// 纯函数调用者的独立注册表，不与任何 Cordis 宿主共享。
+const standalone = new PluginRouteRegistry();
+const standaloneOwner = {};
+export const registerPluginRoute = (route: PluginRoute) => standalone.register(route, standaloneOwner);
+export const unregisterPluginRoute = (routePath: string) => standalone.clear(standaloneOwner, routePath);
+export const clearPluginRoutes = () => standalone.clear();
+export const listPluginRoutes = () => standalone.list();
+export const dispatchPluginRoute = (input: Parameters<PluginRouteRegistry["dispatch"]>[0]) => standalone.dispatch(input);

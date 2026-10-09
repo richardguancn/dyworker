@@ -1,0 +1,7 @@
+{
+  "commit": "5badb15009ae1756c3afe0ae0cef1faafc290ccc",
+  "sources": {
+    "packages/client/connection/src/client/connection.ts": "efe3168500645825630af073428bf88f21e7b92e15d73d12fb849ba4e480bd41",
+    "packages/client/connection/src/recovery-config.ts": "677ba43668fc82c7e9da4c7e79389aae9d594055f49a5073349edd38ee111d6e"
+  }
+}

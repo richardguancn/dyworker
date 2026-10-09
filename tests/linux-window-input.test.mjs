@@ -50,6 +50,8 @@ for (const platform of ["linux", "darwin", "win32"]) {
       resolvedAppearanceTheme: () => "light",
       path: { join: (...parts) => parts.join("/") },
       here: "/app/electron",
+      // preload 路径在 createWindow 里先算出来（缺失时要弹窗报错），此处桩为同一路径
+      preloadPath: "/app/electron/preload.cjs",
     });
     assert.equal(options.frame, platform === "linux");
     assert.equal(options.hasShadow, true);

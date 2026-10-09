@@ -18,30 +18,56 @@
 
 import type { TraceEvent } from "./types";
 
+export type TraceStatus = "completed" | "failed" | "running";
+
 export interface TraceToolCall {
   seq: number;
+  /** 全局唯一键：runId#seq。跨 run 时 seq 会重置，只用 seq 会把不同 run 的调用认成同一个 */
+  key: string;
+  runId: string;
   name: string;
   args: string;
   result: string;
   error: boolean;
   startedAt: string;
+  /** 结果事件的时间；没有结果就是 null（还在跑） */
+  endedAt: string | null;
   durationMs: number | null;
   resultSeq: number | null;
 }
 
 export interface TraceRequest {
   seq: number;
+  /** 全局唯一键：runId#seq（跨 run 时 seq 会重置，直接用 seq 会认错请求） */
+  key: string;
+  runId: string;
   time: string;
+  /** 所属轮次 / 轮内步进：检查面板标题「助手 第 N 轮 · 第 M 步」用 */
+  turn: number;
+  step: number;
   endpoint: string;
   model: string;
   /** 本轮用户输入（从请求载荷里取最后一条 user 消息，取不到就空串） */
   prompt: string;
   /** 助手回复正文 */
   reply: string;
+  /** 推理模型的思考正文（响应载荷里的 reasoning_content） */
+  reasoning: string;
   promptTokens: number | null;
   completionTokens: number | null;
   estimated: boolean;
   durationMs: number | null;
+  /** 响应事件的时间 */
+  endedAt: string | null;
+  /** 首个流式增量（正文或思考）的时间 */
+  firstTokenAt: string | null;
+  /** 首 token 延迟：请求发出 → 首个增量。没采到就是 null */
+  firstTokenMs: number | null;
+  /** 生成时长：首个增量 → 响应结束。没有首 token 时退化成总时长 */
+  generationMs: number | null;
+  /** 吞吐量 tok/s：输出 token / 生成时长 */
+  throughput: number | null;
+  status: TraceStatus;
   tools: TraceToolCall[];
   /** 原始事件，供"原文"页签 */
   raw: { request: TraceEvent | null; response: TraceEvent | null; usage: TraceEvent | null };
@@ -60,10 +86,30 @@ export interface TraceTurn {
   steps: TraceStep[];
   prompt: string;
   reply: string;
+  /** 用户输入落下的时刻（会话消息的 createdAt），时间条「输入」道用它定位 */
+  inputAt: string | null;
   startedAt: string | null;
   durationMs: number | null;
   toolCount: number;
   toolNames: string[];
+}
+
+/** 时间条的道：输入（用户消息）/ 模型（一次请求，含首 token 前的浅色段）/ 工具（一次调用，失败标红） */
+export type TraceSpanLane = "input" | "model" | "tool";
+
+export interface TraceSpan {
+  /** 稳定 key：lane + 全局唯一的记录键 */
+  id: string;
+  lane: TraceSpanLane;
+  turn: number;
+  label: string;
+  startMs: number;
+  endMs: number;
+  /** 首 token 时刻（模型道用它把浅色段和深色段分开）；没有就是 null */
+  firstTokenMs: number | null;
+  error: boolean;
+  /** 选中/跳转目标：key 是全局唯一键（跨 run 安全），seq 只用于显示 */
+  ref: { kind: "input" | "request" | "tool"; key: string; seq: number };
 }
 
 export type TraceMarkerKind = "compaction" | "session-end" | "plan-update" | "phase" | "file-change";
@@ -98,6 +144,10 @@ export interface TraceModel {
   markersByTurn: Map<number, TraceMarker[]>;
   sessionMarkers: TraceMarker[];
   metrics: TraceMetrics;
+  /** 时间条的跨度列表（输入 / 模型 / 工具三道） */
+  spans: TraceSpan[];
+  /** 时间条的时间域 [起, 止]，给横向定位用 */
+  domain: { startMs: number; endMs: number } | null;
   /** 没有归属轮次的零散事件（例如任务开始前的活动） */
   loose: TraceEvent[];
 }
@@ -153,6 +203,7 @@ function lastUserText(payload: any): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message?.role !== "user") continue;
+    if (payload?.dshMessageSources?.[i] === "runtime-context") continue;
     const content = message.content;
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -205,29 +256,51 @@ const MARKER_TITLES: Record<string, TraceMarkerKind> = {
  * 会话消息兜底：trace 里的请求载荷会被截断，用户输入经常捞不全；
  * 而会话消息里的用户输入是完整的。按顺序把第 N 条用户消息配给第 N 轮（回合顺序一致）。
  */
-function userMessagesOf(messages: any[] | undefined): string[] {
+/** 会话消息里的用户输入（文本 + 落下的时刻），与轮次按顺序一一对应 */
+function userEntriesOf(messages: any[] | undefined): Array<{ text: string; time: string }> {
   return (Array.isArray(messages) ? messages : [])
     .filter((message) => String(message?.role || "") === "user")
     .map((message) => {
       const content = message?.content;
-      if (typeof content === "string") return content;
-      if (Array.isArray(content)) {
-        return content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("").trim();
+      let text = "";
+      if (typeof content === "string") text = content;
+      else if (Array.isArray(content)) {
+        text = content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("").trim();
       }
-      return "";
+      return { text, time: String(message?.createdAt || "") };
     })
-    .filter((text) => text.trim().length > 0);
+    .filter((entry) => entry.text.trim().length > 0);
+}
+
+/** 用户输入文本 */
+function userMessagesOf(messages: any[] | undefined): string[] {
+  return userEntriesOf(messages).map((entry) => entry.text);
+}
+
+/** 用户输入的时刻（时间条「输入」道要靠它定位） */
+function userMessageTimesOf(messages: any[] | undefined): string[] {
+  return userEntriesOf(messages).map((entry) => entry.time);
 }
 
 export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[] } = {}): TraceModel {
-  const events = [...(Array.isArray(traces) ? traces : [])].sort((a, b) => Number(a.seq) - Number(b.seq));
+  // 跨 run 时 seq 会重置，只按 seq 排会把不同 run 的事件交织在一起；按时间排（时间相同再按 seq）
+  const events = [...(Array.isArray(traces) ? traces : [])].sort((a, b) => {
+    const left = timeValue(a.time);
+    const right = timeValue(b.time);
+    if (Number.isFinite(left) && Number.isFinite(right) && left !== right) return left - right;
+    return Number(a.seq) - Number(b.seq);
+  });
+  /** 全局唯一键：runId#seq */
+  const eventKey = (event: TraceEvent) => `${String((event as any).runId || "")}#${Number(event.seq)}`;
   const turns = new Map<number, { steps: Map<number, TraceStep> }>();
   const markers: TraceMarker[] = [];
   const loose: TraceEvent[] = [];
 
-  /** 请求按 seq 建索引，供响应/用量按 parentSeq 回填 */
-  const requests = new Map<number, TraceRequest>();
-  const toolCalls = new Map<number, TraceToolCall>();
+  /** 请求按全局键建索引，供响应/用量按 parentSeq 回填（同一个 run 内才有意义） */
+  const requests = new Map<string, TraceRequest>();
+  const toolCalls = new Map<string, TraceToolCall>();
+  /** 首 token 事件按父键建索引（请求 → 首个流式增量的时间） */
+  const firstTokens = new Map<string, string>();
   /** 每个轮次最近一次请求：工具调用属于"发起它的那次请求"，而工具事件自己的 step 往往更大 */
   const lastRequestByTurn = new Map<number, TraceRequest>();
 
@@ -252,30 +325,56 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
       const payload = parseJson(raw);
       const request: TraceRequest = {
         seq: Number(event.seq),
+        key: eventKey(event),
+        runId: String((event as any).runId || ""),
         time: String(event.time || ""),
+        turn,
+        step,
         endpoint: String(payload?.endpoint || pickField(raw, "endpoint") || ""),
         model: String(payload?.model || pickField(raw, "model") || ""),
         prompt: payload ? lastUserText(payload) : pickLastUserText(raw),
         reply: "",
+        reasoning: "",
         promptTokens: null,
         completionTokens: null,
         estimated: false,
         durationMs: null,
+        endedAt: null,
+        firstTokenAt: null,
+        firstTokenMs: null,
+        generationMs: null,
+        throughput: null,
+        status: "running",
         tools: [],
         raw: { request: event, response: null, usage: null },
       };
-      requests.set(request.seq, request);
+      requests.set(request.key, request);
       lastRequestByTurn.set(turn, request);
       stepOf(turn, step).requests.push(request);
       continue;
     }
 
+    if (event.kind === "model-first-token") {
+      const parent = Number(event.parentSeq);
+      const parentKey = Number.isFinite(parent) ? `${String((event as any).runId || "")}#${parent}` : "";
+      if (parentKey && !firstTokens.has(parentKey)) firstTokens.set(parentKey, String(event.time || ""));
+      continue;
+    }
+
     if (event.kind === "model-response") {
       const parent = Number(event.parentSeq);
-      const request = Number.isFinite(parent) ? requests.get(parent) : undefined;
+      const request = Number.isFinite(parent) ? requests.get(`${String((event as any).runId || "")}#${parent}`) : undefined;
       if (request) {
-        request.reply = replyText(parseJson(event.content), String(event.content || ""));
+        const payload = parseJson(event.content);
+        // 只有「载荷压根不是 JSON」时才退化成原文；content:null 的纯工具调用响应要留空，
+        // 让台账行去显示「（仅工具调用）」而不是把一整段 JSON 当正文
+        request.reply = payload ? replyText(payload, "") : String(event.content || "");
+        // 思考流不进正文，但会留在响应载荷里（reasoning_content / reasoning）
+        const reasoning = payload?.reasoning_content ?? payload?.reasoning;
+        request.reasoning = typeof reasoning === "string" ? reasoning : "";
         request.durationMs = diffMs(request.time, event.time);
+        request.endedAt = String(event.time || "");
+        request.status = "completed";
         request.raw.response = event;
       } else {
         loose.push(event);
@@ -285,7 +384,7 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
 
     if (event.kind === "token-usage") {
       const parent = Number(event.parentSeq);
-      const request = Number.isFinite(parent) ? requests.get(parent) : undefined;
+      const request = Number.isFinite(parent) ? requests.get(`${String((event as any).runId || "")}#${parent}`) : undefined;
       const usage = usageOf(event);
       if (request) {
         request.promptTokens = usage.prompt;
@@ -299,28 +398,35 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
     if (event.kind === "tool-call") {
       const call: TraceToolCall = {
         seq: Number(event.seq),
+        key: eventKey(event),
+        runId: String((event as any).runId || ""),
         name: toolNameOf(event),
         args: String(event.content || ""),
         result: "",
         error: false,
         startedAt: String(event.time || ""),
+        endedAt: null,
         durationMs: null,
         resultSeq: null,
       };
-      toolCalls.set(call.seq, call);
+      toolCalls.set(call.key, call);
       // 归属：同一轮最近的那次请求；没有请求就退到本步进里最后一个请求
-      const owner = lastRequestByTurn.get(turn) || stepOf(turn, step).requests.at(-1);
+      const sameRun = lastRequestByTurn.get(turn);
+      const owner = (sameRun && sameRun.runId === String((event as any).runId || "") ? sameRun : null)
+        || stepOf(turn, step).requests.at(-1)
+        || sameRun;
       if (owner) owner.tools.push(call);
       continue;
     }
 
     if (event.kind === "tool-result") {
       const parent = Number(event.parentSeq);
-      const call = Number.isFinite(parent) ? toolCalls.get(parent) : undefined;
+      const call = Number.isFinite(parent) ? toolCalls.get(`${String((event as any).runId || "")}#${parent}`) : undefined;
       if (call) {
         call.result = String(event.content || "");
         call.error = /失败|错误|error/i.test(String(event.title || ""));
         call.durationMs = diffMs(call.startedAt, event.time);
+        call.endedAt = String(event.time || "");
         call.resultSeq = Number(event.seq);
       } else {
         loose.push(event);
@@ -363,6 +469,7 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
         steps,
         prompt: steps.flatMap((step) => step.requests).reverse().find((request) => request.prompt)?.prompt || "",
         reply: steps.flatMap((step) => step.requests).reverse().find((request) => request.reply)?.reply || "",
+        inputAt: null,
         startedAt: first,
         durationMs: total.length ? total.reduce((sum, value) => sum + value, 0) : null,
         toolCount: calls.length,
@@ -378,11 +485,94 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
   const firstTime = events.map((event) => timeValue(event.time)).filter(Number.isFinite).sort()[0];
   const lastTime = events.map((event) => timeValue(event.time)).filter(Number.isFinite).sort().at(-1);
 
-  // 用户输入兜底：trace 载荷截断时用会话消息补（按轮次顺序对应）
+  // 用户输入兜底：trace 载荷截断时用会话消息补（按轮次顺序对应）；
+  // 会话消息的 createdAt 顺带作为时间条「输入」道的定位时刻
   const sessionUserMessages = userMessagesOf(options.messages);
+  const sessionUserTimes = userMessageTimesOf(options.messages);
   orderedTurns.forEach((turn, index) => {
     if (!turn.prompt && sessionUserMessages[index]) turn.prompt = sessionUserMessages[index];
+    if (sessionUserTimes[index]) turn.inputAt = sessionUserTimes[index];
   });
+
+  // 请求计时：首 token 延迟 / 生成时长 / 吞吐量。
+  // 没有首 token 事件（非流式、或只在工具调用里出 token）时，生成时长退化成总时长，
+  // 首 token 延迟留空——宁可显示「未记录」，也不编一个数出来。
+  for (const request of allRequests) {
+    const tokenAt = firstTokens.get(request.key) || null;
+    request.firstTokenAt = tokenAt;
+    request.firstTokenMs = tokenAt ? diffMs(request.time, tokenAt) : null;
+    if (tokenAt && request.endedAt) request.generationMs = diffMs(tokenAt, request.endedAt);
+    if (request.generationMs === null) request.generationMs = request.durationMs;
+    if (request.generationMs && request.generationMs > 0 && request.completionTokens) {
+      request.throughput = (request.completionTokens * 1000) / request.generationMs;
+    }
+  }
+
+  // 时间条跨度：输入（用户消息）/ 模型（一次请求）/ 工具（一次调用，失败标红）
+  const spans: TraceSpan[] = [];
+  for (const turn of orderedTurns) {
+    const requestsOfTurn = turn.steps.flatMap((step) => step.requests);
+    const inputMs = timeValue(turn.inputAt);
+    const turnStartMs = timeValue(turn.startedAt);
+    // createdAt 正常应早于该轮第一次请求；导入/迁移过的会话里它可能晚于整轮（时间戳是导入时刻），
+    // 那种情况退回该轮开始时间，免得输入标记飞到时间条最右边
+    const usableInputMs = Number.isFinite(inputMs) && (!Number.isFinite(turnStartMs) || inputMs <= turnStartMs + 60_000);
+    const inputStart = usableInputMs ? inputMs : turnStartMs;
+    if (Number.isFinite(inputStart)) {
+      // 输入是一次「时刻」不是一段区间：没有输入开始/结束两个时间戳，画成一个最小宽度的标记
+      const inputEnd = inputStart + 1;
+      spans.push({
+        id: `input-${turn.turn}`,
+        lane: "input",
+        turn: turn.turn,
+        label: turn.prompt || `第 ${turn.turn} 轮输入`,
+        startMs: inputStart,
+        endMs: inputEnd,
+        firstTokenMs: null,
+        error: false,
+        ref: { kind: "input", key: `input#${turn.turn}`, seq: turn.turn },
+      });
+    }
+    for (const request of requestsOfTurn) {
+      const startMs = timeValue(request.time);
+      if (!Number.isFinite(startMs)) continue;
+      const endMs = Math.max(timeValue(request.endedAt) || 0, timeValue(request.firstTokenAt) || 0, startMs);
+      spans.push({
+        id: `request-${request.key}`,
+        lane: "model",
+        turn: turn.turn,
+        label: `${request.model || "模型"} · 请求 #${request.seq}`,
+        startMs,
+        endMs: endMs > startMs ? endMs : startMs + 1,
+        firstTokenMs: request.firstTokenAt ? timeValue(request.firstTokenAt) : null,
+        error: request.status === "failed",
+        ref: { kind: "request", key: request.key, seq: request.seq },
+      });
+    }
+    for (const call of requestsOfTurn.flatMap((request) => request.tools)) {
+      const startMs = timeValue(call.startedAt);
+      if (!Number.isFinite(startMs)) continue;
+      const endMs = timeValue(call.endedAt) || (call.durationMs ? startMs + call.durationMs : 0);
+      spans.push({
+        id: `tool-${call.key}`,
+        lane: "tool",
+        turn: turn.turn,
+        label: `${call.name} #${call.seq}`,
+        startMs,
+        endMs: endMs > startMs ? endMs : startMs + 1,
+        firstTokenMs: null,
+        error: call.error,
+        ref: { kind: "tool", key: call.key, seq: call.seq },
+      });
+    }
+  }
+  spans.sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id));
+  const spanTimes = spans.flatMap((span) => [span.startMs, span.endMs]).filter(Number.isFinite);
+  const domainStart = spanTimes.length ? Math.min(...spanTimes) : firstTime;
+  const domainEnd = spanTimes.length ? Math.max(...spanTimes) : lastTime;
+  const domain = Number.isFinite(domainStart) && Number.isFinite(domainEnd)
+    ? { startMs: domainStart as number, endMs: (domainEnd as number) > (domainStart as number) ? (domainEnd as number) : (domainStart as number) + 1 }
+    : null;
 
   const sortedMarkers = markers.sort((a, b) => a.seq - b.seq);
   const markersByTurn = new Map<number, TraceMarker[]>();
@@ -404,6 +594,8 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
     markers: sortedMarkers,
     markersByTurn,
     sessionMarkers,
+    spans,
+    domain,
     loose,
     metrics: {
       spanMs: Number.isFinite(firstTime) && Number.isFinite(lastTime) ? (lastTime as number) - (firstTime as number) : 0,
@@ -417,6 +609,40 @@ export function buildTraceModel(traces: TraceEvent[], options: { messages?: any[
       tools: [...new Set(allCalls.map((call) => call.name))].sort(),
     },
   };
+}
+
+/**
+ * 时间条布局：把跨度映射到一条相对时间轴上。
+ *
+ * 为什么要压缩空闲：真实会话里两次操作之间常有几分钟到几天的空档（等用户、等审批、隔天继续），
+ * 按墙钟画会让所有块挤成一堆——官方在「实际时长」模式下也是这么做的（压缩空闲、保留顺序）。
+ * 返回的 offsetStartMs / offsetEndMs 就是压缩后的坐标，域从 0 起算。
+ */
+export function layoutTraceSpans(
+  spans: TraceSpan[],
+  options: { compressIdle?: boolean } = {},
+) : { endMs: number; items: Array<TraceSpan & { offsetStartMs: number; offsetEndMs: number; offsetFirstTokenMs: number | null }> } | null {
+  const ordered = [...(Array.isArray(spans) ? spans : [])].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  if (!ordered.length) return null;
+  const compress = options.compressIdle !== false;
+  const items: Array<TraceSpan & { offsetStartMs: number; offsetEndMs: number; offsetFirstTokenMs: number | null }> = [];
+  // 第一段的起点的绝对时刻本身就是偏移量：先减掉它，域才从 0 起算
+  let removed = ordered[0].startMs;
+  let coveredUntil = ordered[0].startMs;
+  for (const span of ordered) {
+    if (compress && span.startMs > coveredUntil) removed += span.startMs - coveredUntil;
+    const start = span.startMs - removed;
+    const end = Math.max(start + 1, span.endMs - removed);
+    items.push({
+      ...span,
+      offsetStartMs: start,
+      offsetEndMs: end,
+      offsetFirstTokenMs: span.firstTokenMs === null ? null : span.firstTokenMs - removed,
+    });
+    coveredUntil = Math.max(coveredUntil, span.endMs);
+  }
+  const endMs = items.reduce((max, item) => Math.max(max, item.offsetEndMs), 0);
+  return { endMs: Math.max(1, endMs), items };
 }
 
 /** 关键词过滤：命中标题、用户输入、回复、工具名/参数/结果 */

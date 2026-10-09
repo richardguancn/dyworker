@@ -222,6 +222,7 @@ function normalizeChannels(channels, secretStorage, direction) {
       },
       wechat: { enabled: wechat.enabled === true },
       approvalMode,
+      ...(source.runtime === "dsh" || source.runtime === "dyworker" ? {runtime:source.runtime} : {}),
       modelProfileId: String(source.modelProfileId || ""),
     };
   }
@@ -233,6 +234,7 @@ function normalizeChannels(channels, secretStorage, direction) {
     },
     wechat: { enabled: wechat.enabled === true },
     approvalMode,
+    ...(source.runtime === "dsh" || source.runtime === "dyworker" ? {runtime:source.runtime} : {}),
     modelProfileId: String(source.modelProfileId || ""),
   };
 }

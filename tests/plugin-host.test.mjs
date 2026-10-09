@@ -181,6 +181,8 @@ async function writeBundlePackage(profileDir, pkgName, { patch, extra = {} } = {
     version: "0.9.9",
     type: "module",
     main: "index.mjs",
+    // 此夹具检验原生宿主生命周期与 DSH patch 方言；真实 DSH 进程另有集成验收。
+    dyworker: { runtime: "native" },
     ...extra,
   };
   if (patch !== null) {
@@ -381,16 +383,16 @@ test("兼容性：缺 @deepseek-ai/* 依赖包 → unsupported 并列出缺哪�
   assert.ok(analysis.hostHalf.importError, "主入口 import 失败要能报出来");
 });
 
-test("兼容性：含浏览器半边（dsh.client）→ unsupported 并说明原因", async (t) => {
+test("兼容性：web 客户端可加载，不再被整包误判为不支持", async (t) => {
   const { ctx, profile } = await withHost(t);
   await writeCompatPackage(profile, "has-client", {
     source: `export function apply() {}\nexport default { name: "has-client", apply };`,
     manifestExtra: { dsh: { client: { platform: "web", inject: ["@deepseek-ai/dsh-client-ui-settings"] } } },
   });
   const analysis = await ctx.plugins.compatibility({ spec: "has-client" });
-  assert.equal(analysis.verdict, "unsupported");
+  assert.equal(analysis.verdict, "runnable");
   assert.equal(analysis.clientHalf.platform, "web");
-  assert.match(analysis.reasons.join("；"), /浏览器半边/);
+  assert.match(analysis.reasons.join("；"), /客户端加载能力/);
   assert.match(analysis.matrix, /has-client/);
 });
 
@@ -404,10 +406,10 @@ test("兼容性：运行时 ctx.inject([...]) 的依赖也能扫出来", async (
   await fs.copyFile(path.join(pkgDir, "index.mjs"), path.join(pkgDir, "lib", "index.js"));
   const analysis = await ctx.plugins.compatibility({ spec: "runtime-inject" });
   assert.ok(analysis.hostHalf.hints.includes("sessionProjections"), `应扫到运行时注入：${analysis.hostHalf.hints}`);
-  assert.equal(analysis.verdict, "unsupported", "sessionProjections 本宿主没有");
+  assert.equal(analysis.verdict, "runnable", "sessionProjections 已由宿主提供");
 });
 
-test("兼容性：真实 dsh-context 形态（bundle patch + client 半边）判定为 unsupported", async (t) => {
+test("兼容性：bundle patch + web 客户端可正常安装", async (t) => {
   const { ctx, profile } = await withHost(t);
   await writeBundlePackage(profile, "dsh-context-like", {
     patch: `- insert:\n    - id: dsh-context-like\n      name: dsh-context-like\n`,
@@ -419,12 +421,11 @@ test("兼容性：真实 dsh-context 形态（bundle patch + client 半边）判
     },
   });
   const analysis = await ctx.plugins.compatibility({ spec: "dsh-context-like" });
-  assert.equal(analysis.verdict, "unsupported");
+  assert.equal(analysis.verdict, "runnable");
   assert.ok(analysis.clientHalf, "应识别出浏览器半边");
   const result = await ctx.plugins.install({ spec: "dsh-context-like" });
-  assert.equal(result.ok, false);
-  assert.equal(result.incompatible, true);
-  assert.match(result.matrix, /❌/);
+  assert.equal(result.ok, true);
+  assert.match(result.matrix, /✅/);
 });
 
 test("兼容性：声明依赖解析不到但主入口能 import → 不算阻断（DSH 有内联依赖的情况）", async (t) => {
@@ -437,7 +438,7 @@ test("兼容性：声明依赖解析不到但主入口能 import → 不算阻�
   assert.equal(analysis.hostHalf.importable, true);
   assert.deepEqual(analysis.missingPackages, ["@deepseek-ai/dsh-util-values"]);
   assert.equal(analysis.verdict, "runnable", analysis.reasons.join("；"));
-  assert.match(analysis.reasons.join("；"), /可能已内联/);
+  assert.match(analysis.reasons.join("；"), /可能已内联或未使用/);
   // 真缺依赖（主入口 import 失败）才阻断
   await writeCompatPackage(profile, "really-missing", {
     source: `import "@deepseek-ai/dsh-nope";\nexport function apply() {}\nexport default { name: "really-missing", apply };`,
@@ -454,4 +455,46 @@ test("条目带包描述：手工加进清单的条目也要能显示说明（�
   await ctx.plugins.add({ id: "described", name: "described-plugin" });
   const entry = ctx.plugins.entries()[0];
   assert.equal(entry.description, "described-plugin 的说明文字", "描述应来自包清单 package.json");
+});
+
+test("预检未下载的带版本包名：返回待检查且不修改目录", async (t) => {
+  const { ctx, profile } = await withHost(t);
+  const before = await fs.readdir(profile);
+  const analysis = await ctx.plugins.compatibility({ spec: "not-downloaded@0.63.0" });
+  assert.equal(analysis.name, "not-downloaded");
+  assert.equal(analysis.version, "0.63.0");
+  assert.equal(analysis.verdict, "pending");
+  assert.deepEqual(await fs.readdir(profile), before);
+});
+
+test("兼容性只扫描主机部分，缺少延迟服务仅影响部分功能", async (t) => {
+  const { ctx, profile } = await withHost(t);
+  const dir = await writeCompatPackage(profile, "split-inject", {
+    source: `export const inject = ['sessionProjections']; export function apply(ctx) { ctx.inject(['spillStore'], () => {}); }`,
+    manifestExtra: { dsh: { client: { platform: 'web' } } },
+  });
+  await fs.mkdir(path.join(dir, "lib"), { recursive: true });
+  await fs.copyFile(path.join(dir, "index.mjs"), path.join(dir, "lib/index.js"));
+  await fs.writeFile(path.join(dir, "lib/client.js"), `ctx.inject(['inputTriggers','remote','sidebarRightTabs'], () => {});`);
+  const analysis = await ctx.plugins.compatibility({ spec: "split-inject" });
+  assert.equal(analysis.verdict, "partial");
+  assert.deepEqual(analysis.hostHalf.hints, ['spillStore']);
+  assert.equal(analysis.services.find(s => s.name === 'sessionProjections').state, 'fulfilled');
+  assert.match(analysis.reasons.join('；'), /不阻止主入口加载/);
+  const installed = await ctx.plugins.install({ spec: "split-inject", allowIncompatible: true });
+  assert.equal(installed.ok, true, installed.error);
+});
+
+test("残缺入口能读到清单；补齐依赖后同一进程重新预检成功", async (t) => {
+  const { ctx, profile } = await withHost(t);
+  const dir = await writeCompatPackage(profile, "repair-probe", {
+    source: `import 'probe-dependency'; export function apply() {}`,
+  });
+  assert.equal((await ctx.plugins.compatibility({ spec: "repair-probe" })).verdict, 'unsupported');
+  await writeCompatPackage(profile, 'probe-dependency', { source: `export const ready = true;` });
+  assert.equal((await ctx.plugins.compatibility({ spec: "repair-probe" })).verdict, 'runnable');
+  await fs.rm(path.join(dir, 'index.mjs'));
+  const broken = await ctx.plugins.compatibility({ spec: 'repair-probe' });
+  assert.equal(broken.verdict, 'unsupported');
+  assert.ok(broken.hostHalf.importError);
 });

@@ -7,6 +7,7 @@
 // 插件代码一行不用改，也不新增网络面。
 
 export interface PluginApiFetchPayload {
+  requestId?: string;
   path: string;
   method: string;
   body?: string;
@@ -21,6 +22,7 @@ export interface PluginApiFetchResult {
 
 export interface PluginApiBridgeTarget {
   pluginApiFetch?: (payload: PluginApiFetchPayload) => Promise<PluginApiFetchResult>;
+  pluginApiCancel?: (requestId: string) => Promise<unknown>;
 }
 
 const DEFAULT_HEADERS = { "content-type": "application/json" };
@@ -47,16 +49,24 @@ export function installPluginApiBridge(target: any = globalThis, bridge?: Plugin
 
   const patched = async (input: unknown, init?: any): Promise<Response> => {
     const url = requestUrl(input);
-    if (!isPluginApiPath(url)) return original.call(target, input as any, init);
+    const modelPrices = url === 'https://models.dev/api.json';
+    if (!isPluginApiPath(url) && !modelPrices) return original.call(target, input as any, init);
 
     const api = bridge || (target as any).dyworker;
-    const path = String(url).split("?")[0] || "/api";
+    const path = modelPrices ? '/api/dyworker/public-model-prices' : String(url) || "/api";
     const method = String(init?.method || (input as any)?.method || "GET").toUpperCase();
     const body = typeof init?.body === "string"
       ? init.body
       : typeof (input as any)?.body === "string"
         ? (input as any).body
-        : undefined;
+        : input instanceof Request && !["GET", "HEAD"].includes(method) ? await input.clone().text() : undefined;
+    const headers = Object.fromEntries(new Headers(init?.headers || (input as any)?.headers || {}).entries());
+    const signal = init?.signal || (input as any)?.signal;
+    signal?.throwIfAborted();
+    if (modelPrices && (method !== 'GET' || body !== undefined))
+      return new Response(JSON.stringify({ error: '模型价格资料只允许读取' }), { status: 405, headers: DEFAULT_HEADERS });
+    const requestId = crypto.randomUUID();
+    const abort = () => { void api?.pluginApiCancel?.(requestId); };
 
     if (typeof api?.pluginApiFetch !== "function") {
       // 没有桥（例如网页环境）：如实报错，而不是让插件拿到一个假的成功响应
@@ -64,14 +74,17 @@ export function installPluginApiBridge(target: any = globalThis, bridge?: Plugin
     }
 
     try {
-      const result = await api.pluginApiFetch({ path, method, body });
+      signal?.addEventListener("abort", abort, { once: true });
+      const result = await api.pluginApiFetch({ requestId, path, method, body, headers: modelPrices ? {} : headers });
+      signal?.throwIfAborted();
       return new Response(result?.body ?? "", {
         status: result?.status || 200,
         headers: result?.headers || DEFAULT_HEADERS,
       });
     } catch (error: any) {
+      if (signal?.aborted) throw signal.reason;
       return new Response(JSON.stringify({ error: String(error?.message || error) }), { status: 502, headers: DEFAULT_HEADERS });
-    }
+    } finally { signal?.removeEventListener("abort", abort); }
   };
 
   target.fetch = patched;

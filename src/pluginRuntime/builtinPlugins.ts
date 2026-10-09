@@ -18,7 +18,7 @@ export interface BuiltinLoadResult {
   error?: string;
 }
 
-export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).dyworker): Promise<BuiltinLoadResult[]> {
+export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).dyworker, includeExternal = false): Promise<BuiltinLoadResult[]> {
   const results: BuiltinLoadResult[] = [];
   if (!bridge?.listPlugins) return results;
 
@@ -36,7 +36,7 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
   installClientRuntime();
 
   for (const entry of entries) {
-    if (!entry?.builtin || entry.disabled) continue;
+    if ((!entry?.builtin && !(includeExternal && entry.client)) || entry.disabled) continue;
     try {
       const info = await bridge.pluginClientBundles(entry.id);
       if (!info?.ok) {
@@ -46,7 +46,7 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
       const moduleErrors: string[] = [];
       for (const moduleRef of info.modules || []) {
         try {
-          const loaded = await loadBundleScript(moduleRef.url);
+          const loaded = loadedBundle(moduleRef.spec) || await loadBundleScript(moduleRef.url);
           // 单个模块失败不能静默：插件运行时 require 到它就会报"宿主未提供该模块"，
           // 而真正的原因藏在这里（脚本取不到 / 执行抛错）。
           if (loaded?.error) moduleErrors.push(`${moduleRef.spec}: ${loaded.error}`);
@@ -77,7 +77,7 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
         results.push({ id: entry.id, ok: false, slots: [], error: record.error });
         continue;
       }
-      const applied = await clientHost().load(record.exports, record.id || entry.id);
+      const applied = await clientHost().load(record.exports, entry.id);
       results.push({ id: entry.id, ok: applied.ok, slots: applied.slots, error: applied.error });
     } catch (error: any) {
       results.push({ id: entry.id, ok: false, slots: [], error: String(error?.message || error) });
@@ -89,3 +89,5 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
   }
   return results;
 }
+
+export const loadEnabledClientHalves = (bridge?: any) => loadBuiltinClientHalves(bridge, true);

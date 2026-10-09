@@ -1,0 +1,19 @@
+{
+  "name": "dyworker-context",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "上下文插件：会话区「上下文」标签 + 右侧「上下文」面板 —— 上下文构成 / 按请求趋势 / 上下文事件 / 文件活动 / 计时，另提供跨会话用量汇总路由",
+  "main": "index.js",
+  "exports": {
+    ".": { "default": "./index.js" },
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "client": { "platform": "web", "inject": [] }
+  },
+  "dyworker": {
+    "builtin": true
+  },
+  "license": "MIT"
+}

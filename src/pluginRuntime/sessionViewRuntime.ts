@@ -1,8 +1,5 @@
-// 会话视图运行时：把**我们的会话事件**流折叠成 DSH 插件要的视图数据。
-//
-// 为什么需要我们自己实现：DSH 的这套"事件 → 节点 → 视图快照"驱动在它自己的客户端会话层里
-// （@deepseek-ai/dsh-client-ui-session 等，都是裸 ESM，我们运行时加载不了）。
-// 但驱动逻辑本身不大，而且插件的契约是完整的、可读的：
+// 原生非 DSH 消息的旧视图转换。它没有官方历史、前驱状态、分组和流式结算能力。
+// DSH 会话已使用固定版本的官方 UiConversation，本模块不能作为完整兼容证明。
 //
 //   视图定义（ctx.conversationViews.register）:
 //     { target: "trajectory", create: () => new Builder() }
@@ -20,7 +17,7 @@
 // 我们按同一份契约驱动：同一个 target 的定义共享一个装配器实例，节点按 key 归并，
 // 最后把 snapshot() 交给壳层去喂 props。
 //
-// 这样做是通用的——任何按 DSH 这套契约写的视图插件都能跑，不只是轨迹插件。
+// 此路径只保留原生会话的既有展示，支持范围受下面实现限制。
 
 export interface ConversationEventDefinition {
   kind?: string;
@@ -61,6 +58,11 @@ export class SessionViewRuntime {
   private readonly eventDefinitions = new Map<string, ConversationEventDefinition[]>();
   /** target → 装配器与节点表 */
   private readonly targets = new Map<string, TargetRuntime>();
+  reset(): void {
+    for (const runtime of this.targets.values()) {
+      runtime.builder = runtime.definition.create?.(); runtime.contexts.clear(); runtime.nodes.clear();
+    }
+  }
 
   registerEvent(definition: ConversationEventDefinition): () => void {
     const target = String(definition?.target || "");

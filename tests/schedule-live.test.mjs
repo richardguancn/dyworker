@@ -180,7 +180,9 @@ test("源码契约:渲染端立刻建会话、实时归约、按 id 归并收尾
   assert.match(app, /setSessions\(\(current\) => mergePrependedSession<SessionRecord>\(current, incoming\)\.sessions\)/);
   assert.match(app, /forgetSessionStream\(channelStreamRunsRef\.current, session\.id\)/);
   assert.match(app, /const activeScheduledRun = Boolean\(activeSession\?\.id && scheduledRunSessions\.has\(activeSession\.id\)\)/);
-  assert.match(app, /&& !activeScheduledRun/);
+  assert.doesNotMatch(app, /&& !activeScheduledRun/);
+  assert.match(app, /runningRunIdsRef\.current\.set\(sessionId,runId\)/);
+  assert.match(app, /停止当前计划任务/);
   // 手动触发的计划：run-started 到了就把会话推到眼前；被忙碌守卫拦下时说清已排队
   assert.match(app, /manualRunScheduleRef\.current = id/);
   assert.match(app, /result\.started === false/);

@@ -4,7 +4,7 @@ import test from "node:test";
 // 原生轨迹模型：把我们的 TraceEvent 流归一成"轮次 → 步进 → 请求 → 工具调用"。
 // 用与真实落盘事件同形的合成数据，覆盖配对、时长、标记、指标与搜索。
 
-const { buildTraceModel, traceMatches, formatDuration, formatTokens } = await import("../src/traceModel.ts");
+const { buildTraceModel, traceMatches, formatDuration, formatTokens, layoutTraceSpans } = await import("../src/traceModel.ts");
 
 function requestEvent(seq, turn, step, time, payload = {}) {
   return {
@@ -126,4 +126,98 @@ test("轨迹：时长与 token 的展示格式", () => {
   assert.equal(formatTokens(54282), "54k");
   assert.equal(formatTokens(95_428_000), "95M", "百万级用 M");
   assert.equal(formatTokens(2_500_000), "2.5M");
+});
+
+// —— 对齐官方「轨迹」新增的部分：请求计时 / 泳道跨度 / 思考 / 状态 ——
+
+test("轨迹模型：首 token 事件把总时长拆成首 token 延迟 + 生成，并算吞吐量", () => {
+  const events = [
+    requestEvent(1, 1, 0, "2026-10-04T10:24:14.752Z", { user: "去掉两个入口" }),
+    // 首个流式增量（正文或思考）到达
+    { seq: 2, turn: 1, step: 0, time: "2026-10-04T10:24:15.645Z", kind: "model-first-token", direction: "out", target: "model", title: "首个 token", content: "", parentSeq: 1 },
+    { seq: 3, turn: 1, step: 0, time: "2026-10-04T10:24:17.754Z", kind: "model-response", direction: "out", target: "model", title: "模型响应", parentSeq: 1, content: JSON.stringify({ role: "assistant", content: "已按红框去掉顶栏那两个入口。", reasoning_content: "先看顶栏结构。" }) },
+    { seq: 4, turn: 1, step: 0, time: "2026-10-04T10:24:17.800Z", kind: "token-usage", direction: "out", target: "model", title: "token 用量", content: "", parentSeq: 1, usage: { prompt: 18000, completion: 458, estimated: false } },
+  ];
+  const model = buildTraceModel(events);
+  const request = model.turns[0].steps[0].requests[0];
+  assert.equal(request.turn, 1, "检查面板标题要「第 N 轮」");
+  assert.equal(request.step, 0);
+  assert.equal(request.firstTokenMs, 893, "首 token 延迟 = 首个增量 - 请求");
+  assert.equal(request.generationMs, 2109, "生成 = 响应 - 首个增量");
+  assert.equal(request.durationMs, 3002);
+  assert.equal(request.reasoning, "先看顶栏结构。", "思考在响应载荷里");
+  assert.equal(request.status, "completed");
+  const throughput = Math.round(request.throughput);
+  assert.equal(throughput, 217, "吞吐量 = 输出 token / 生成秒数");
+  // 时间条「模型」块要能画两段色：浅色段到首 token 为止
+  const span = model.spans.find((item) => item.ref.kind === "request" && item.ref.seq === 1);
+  assert.ok(span.firstTokenMs, "跨度上要带首 token 时刻");
+  assert.ok(span.firstTokenMs > span.startMs && span.firstTokenMs < span.endMs);
+});
+
+test("轨迹模型：没有首 token 事件时不编数（生成退化为总时长、TTFT 留空）", () => {
+  const events = [
+    requestEvent(1, 1, 0, "2026-10-04T11:00:00.000Z"),
+    { seq: 2, turn: 1, step: 0, time: "2026-10-04T11:00:03.000Z", kind: "model-response", direction: "out", target: "model", title: "模型响应", parentSeq: 1, content: JSON.stringify({ role: "assistant", content: "好" }) },
+  ];
+  const request = buildTraceModel(events).turns[0].steps[0].requests[0];
+  assert.equal(request.firstTokenMs, null, "没采到就留空，界面写「首 token 时间不可用」");
+  assert.equal(request.firstTokenAt, null);
+  assert.equal(request.generationMs, 3000, "退化为总时长");
+});
+
+test("轨迹模型：时间条三道跨度（输入 / 模型 / 工具）与时间域", () => {
+  const events = [
+    requestEvent(1, 1, 0, "2026-10-04T12:00:01.000Z", { user: "跑一下测试" }),
+    { seq: 2, turn: 1, step: 0, time: "2026-10-04T12:00:02.000Z", kind: "model-response", direction: "out", target: "model", title: "模型响应", parentSeq: 1, content: JSON.stringify({ role: "assistant", content: "开始" }) },
+    { seq: 3, turn: 1, step: 1, time: "2026-10-04T12:00:03.000Z", kind: "tool-call", direction: "in", target: "tool", title: "调用工具 run_command", content: JSON.stringify({ command: "npm test" }) },
+    { seq: 4, turn: 1, step: 1, time: "2026-10-04T12:00:07.000Z", kind: "tool-result", direction: "out", target: "tool", title: "工具 run_command 失败", content: "1 failed", parentSeq: 3 },
+  ];
+  const model = buildTraceModel(events, { messages: [{ role: "user", content: "跑一下测试", createdAt: "2026-10-04T12:00:00.000Z" }] });
+  const lanes = model.spans.reduce((acc, span) => ({ ...acc, [span.lane]: (acc[span.lane] || 0) + 1 }), {});
+  assert.deepEqual(lanes, { input: 1, model: 1, tool: 1 });
+  const input = model.spans.find((span) => span.lane === "input");
+  assert.equal(input.startMs, Date.parse("2026-10-04T12:00:00.000Z"), "输入块定位到用户消息时刻");
+  assert.equal(input.endMs - input.startMs, 1, "输入是一次时刻，画成最小宽度的标记（不是画到第一次请求）");
+  const tool = model.spans.find((span) => span.lane === "tool");
+  assert.equal(tool.error, true, "失败的工具块要标红");
+  assert.equal(tool.endMs - tool.startMs, 4000);
+  assert.equal(model.domain.startMs, Date.parse("2026-10-04T12:00:00.000Z"));
+  assert.equal(model.domain.endMs, Date.parse("2026-10-04T12:00:07.000Z"));
+  assert.equal(model.turns[0].inputAt, "2026-10-04T12:00:00.000Z");
+});
+
+test("轨迹模型：工具结果时间落在跨度上，等待中的调用标 running", () => {
+  const events = [
+    requestEvent(1, 1, 0, "2026-10-04T13:00:00.000Z"),
+    { seq: 2, turn: 1, step: 1, time: "2026-10-04T13:00:01.000Z", kind: "tool-call", direction: "in", target: "tool", title: "调用工具 read_file", content: "{}" },
+    { seq: 3, turn: 1, step: 2, time: "2026-10-04T13:00:02.000Z", kind: "tool-call", direction: "in", target: "tool", title: "调用工具 write_file", content: "{}" },
+  ];
+  const request = buildTraceModel(events).turns[0].steps[0].requests[0];
+  assert.equal(request.tools[0].endedAt, null, "没有结果就没有结束时间");
+  assert.equal(request.tools[0].durationMs, null);
+  assert.equal(request.status, "running");
+  const spans = buildTraceModel(events).spans.filter((span) => span.lane === "tool");
+  assert.equal(spans.length, 2);
+});
+
+test("轨迹模型：时间条布局压缩空闲（隔天的空档不会把活跃段挤成一堆）", () => {
+  const spans = [
+    { id: "a", lane: "model", turn: 1, label: "请求", startMs: 0, endMs: 1000, firstTokenMs: 500, error: false, ref: { kind: "request", seq: 1 } },
+    { id: "b", lane: "tool", turn: 2, label: "工具", startMs: 100_000, endMs: 101_000, firstTokenMs: null, error: false, ref: { kind: "tool", seq: 2 } },
+  ];
+  const compressed = layoutTraceSpans(spans, { compressIdle: true });
+  assert.equal(compressed.endMs, 2000, "100 秒空档被折掉，只留下活跃段");
+  assert.equal(compressed.items[1].offsetStartMs, 1000);
+  assert.equal(compressed.items[0].offsetFirstTokenMs, 500, "首 token 也要按压缩后的坐标走");
+  const raw = layoutTraceSpans(spans, { compressIdle: false });
+  assert.equal(raw.endMs, 101_000, "不压缩时保留真实墙钟");
+  assert.equal(layoutTraceSpans([], {}), null);
+});
+
+test('DSH 轨迹按实际消息来源显示用户要求，运行说明仍完整保留在请求记录',()=>{
+  const event=requestEvent(1,1,0,'2026-10-06T00:00:00.000Z');const payload=JSON.parse(event.content);
+  payload.messages=[{role:'user',content:'实际子任务要求'},{role:'user',content:'运行说明与工作模板'}];payload.dshMessageSources=['user','runtime-context'];event.content=JSON.stringify(payload);
+  const request=buildTraceModel([event]).turns[0].steps[0].requests[0];assert.equal(request.prompt,'实际子任务要求');assert.match(request.raw.request.content,/运行说明与工作模板/);
+  delete payload.dshMessageSources;event.content=JSON.stringify(payload);assert.equal(buildTraceModel([event]).turns[0].steps[0].requests[0].prompt,'运行说明与工作模板');
 });

@@ -9,8 +9,10 @@
 import { Context } from "@deepseek-ai/cordis";
 import { AuditService } from "./services/audit.mts";
 import { SettingsService } from "./services/settings.mts";
+import {PluginCatalogService} from './services/plugin-catalog.mts';
 import { SessionsService } from "./services/session-archive.mts";
 import { AgentService } from "./services/agent.mts";
+import { DshRuntimeService } from "./services/dsh-runtime.mts";
 import { mountPluginHost } from "./plugin-host.mts";
 import { IpcService } from "./services/ipc.mts";
 import { StorageService } from "./services/storage.mts";
@@ -106,6 +108,7 @@ export async function createHost(options: HostOptions) {
   new SessionProjectionCacheService(ctx);
 
   new AuditService(ctx, { filePath: path.join(options.userDataDir, "audit.jsonl") });
+  new PluginCatalogService(ctx,{dir:path.join(options.userDataDir,'plugin-catalog')});
   new SettingsService(ctx, {
     settingsFile: path.join(options.userDataDir, "settings.json"),
     safeStorage: options.safeStorage,
@@ -138,6 +141,7 @@ export async function createHost(options: HostOptions) {
     resolvers: options.agentResolvers || {},
     startBackgroundTask: options.startBackgroundTask || ((p) => p),
   });
+  new DshRuntimeService(ctx, { dir: path.join(options.userDataDir, 'dsh-runtime') });
   await ctx.fiber.await();
   // 插件宿主（可选）：官方 loader + 树文件，见 host/plugin-host.mts 的挂载顺序说明
   if (options.mountPlugins) {

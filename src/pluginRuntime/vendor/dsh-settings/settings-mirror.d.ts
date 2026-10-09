@@ -1,0 +1,1 @@
+export class SettingsDescribeMirror { constructor(ctx: any); getSnapshot(): any; subscribe(listener: () => void): () => void; ensure(): Promise<void>; load(): Promise<void>; acceptView(view: any): void }

@@ -12,6 +12,8 @@ import * as JsxRuntime from "react/jsx-runtime";
 // DSH 的客户端模块（如 dsh-client-ui-settings）会 require("@deepseek-ai/cordis")——
 // 必须给出**同一个** cordis 包，客户端插件与我们的容器才共用一套 Context/Service
 import * as Cordis from "@deepseek-ai/cordis";
+import * as DshClientStore from '@deepseek-ai/dsh-client-store';
+import { createDockkitNamespace, dockkitStyles } from './vendor/dsh-dockkit/index.js';
 import { ClientModuleLoader, type LoadedBundle } from "./moduleLoader.ts";
 import { createPrimitives, type PrimitivesHost } from "./primitives.ts";
 import { SHIMMED_CLIENT_MODULES, createRuntimeClientShim, createSlotsModuleShim } from "./dshClientShims.ts";
@@ -47,6 +49,7 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
   });
 
   const primitives = createPrimitives(options.primitivesHost);
+  const target = options.target ?? (typeof window !== "undefined" ? window : undefined);
   // 本机没装（或软链断掉）的两个 DSH 客户端模块：由我们自己兜底实现，
   // 否则依赖它们的 DSH 客户端模块会在 require 阶段就挂掉
   const shimReport = (moduleName: string, name: string) => {
@@ -56,6 +59,7 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
   loader
     // DSH 客户端模块要用同一个 cordis（容器也是用它建的）
     .provide("@deepseek-ai/cordis", () => Cordis)
+    .provide('@deepseek-ai/dsh-client-store', () => DshClientStore)
     .provide("react", () => React)
     .provide("react-dom", () => ReactDOM)
     .provide("react-dom/client", () => ReactDOMClient)
@@ -63,9 +67,19 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
     .provide("react/jsx-dev-runtime", () => JsxRuntime)
     .provide(PRIMITIVES_MODULE, () => primitives)
     .provide(SHIMMED_CLIENT_MODULES[0], () => createSlotsModuleShim(shimReport))
-    .provide(SHIMMED_CLIENT_MODULES[1], () => createRuntimeClientShim(shimReport));
-
-  const target = options.target ?? (typeof window !== "undefined" ? window : undefined);
+    .provide(SHIMMED_CLIENT_MODULES[1], () => createRuntimeClientShim(shimReport))
+    .provide('@deepseek-ai/dsh-client-ui-dockkit', () => {
+      const doc = target?.document;
+      if (doc && !doc.getElementById('dyworker-dsh-dockkit-styles')) {
+        const style = doc.createElement('style');
+        style.id = 'dyworker-dsh-dockkit-styles'; style.textContent = dockkitStyles;
+        doc.head.appendChild(style);
+      }
+      const helpers = createDockkitNamespace(name => name === 'dyworker/primitives' ? primitives : loader.require(name));
+      // 官方 Tooltip 保持子元素位置和引用；包裹一层 span 会让图表柱形失去高度。
+      primitives.Tooltip = helpers.dyworkerTooltip;
+      return helpers;
+    });
   loader.install(target);
   // 插件的 /api/* fetch 走主进程里它自己注册的路由
   installPluginApiBridge(target);
@@ -115,6 +129,7 @@ export async function loadBundleScript(url: string, { timeoutMs = 15_000 }: { ti
     }, timeoutMs);
     script.onload = () => {
       clearTimeout(timer);
+      script.remove();
       if ((globalThis as any).__DYW_BUNDLE_DEBUG) console.log(`[bundle] onload ${url}`);
       resolve();
     };

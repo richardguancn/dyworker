@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Sparkles, Star, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
-import { CATALOG_CATEGORIES, CATALOG_SNAPSHOT_DATE, filterCatalog, isInstalled } from "./pluginCatalog";
-import { loadBundleScript, loadedBundle } from "./pluginRuntime/index.ts";
+import { filterCatalog, isInstalled, isVerifiedEntry } from "./pluginCatalog";
+import type {CatalogPlugin} from "./pluginCatalog";
+import {BUILTIN_PLUGIN_LABELS} from './pluginLabels';
+import { PluginDetailPage } from './PluginDetailPage';
+import { loadBundleScript, loadedBundle, clientRuntime } from "./pluginRuntime/index.ts";
 import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
-import { requestPluginPanels } from "./PluginSlotView";
+import { requestPluginPanels, PluginSlotView } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
@@ -29,28 +32,41 @@ export function PluginsPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [addOpen, setAddOpen] = useState(false);
   // 客户端半边试跑结果：记录"能加载吗、缺哪些模块、它要哪些客户端服务"
   const [clientRuns, setClientRuns] = useState<Record<string, { state: "loading" | "ok" | "error"; text: string }>>({});
+  const loadingClients = useRef(new Set<string>());
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   // 插件市场：搜索词、分类、以及点「安装」时预填给添加向导的规格
+  const [catalog,setCatalog]=useState<CatalogPlugin[]>([]);
+  const [catalogMeta,setCatalogMeta]=useState({source:'bundled',publishedAt:'',notice:''});
+  const [catalogLoading,setCatalogLoading]=useState(true);
+  const [view,setView]=useState<'installed'|'available'>('installed');
+  const refreshGeneration=useRef(0);
   const [marketQuery, setMarketQuery] = useState("");
   const [marketCategory, setMarketCategory] = useState("");
   const [marketSpec, setMarketSpec] = useState("");
+  const [detailSelection, setDetailSelection] = useState<{ entryId?: string; catalogId?: string } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force=false) => {
     if (!bridge?.listPlugins) return;
+    const generation=++refreshGeneration.current;
+    setCatalogLoading(true);
     try {
-      setData(await bridge.listPlugins());
-      setError("");
+      const [installed,directory]=await Promise.all([bridge.listPlugins(),bridge.pluginCatalog({force})]);
+      if(generation!==refreshGeneration.current)return;
+      setData(installed);setCatalog(directory.plugins);setCatalogMeta(directory);
+      setRefreshKey(value => value + 1);setError('');
     } catch (refreshError: any) {
-      setError(String(refreshError?.message || refreshError));
-    }
+      if(generation===refreshGeneration.current)setError(String(refreshError?.message || refreshError));
+    } finally {if(generation===refreshGeneration.current)setCatalogLoading(false);}
   }, [bridge]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh();return ()=>{refreshGeneration.current++;}; }, [refresh]);
+  const [, updateSlots] = useState(0);
+  useEffect(() => clientHost().subscribe(() => updateSlots(value => value + 1)), []);
 
   /**
    * 加载插件的客户端半边（实验）。
@@ -59,8 +75,12 @@ export function PluginsPage() {
    */
   const loadClientHalf = async (entry: PluginEntryRecord, bundle: PluginBundleRecord | undefined) => {
     const key = entry.id;
+    if (loadingClients.current.has(key)) return;
+    loadingClients.current.add(key);
     setClientRuns((current) => ({ ...current, [key]: { state: "loading", text: "正在加载客户端 bundle…" } }));
     try {
+      await clientHost().unload(entry.id);
+      clientRuntime().loader.invalidate(bundle?.name || entry.name || entry.id);
       const info = await bridge!.pluginClientBundles(bundle?.name || entry.id);
       if (!info?.ok) {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: info?.error || "没有可加载的客户端入口" } }));
@@ -76,7 +96,7 @@ export function PluginsPage() {
       const moduleNotes: string[] = [];
       for (const moduleRef of info.modules || []) {
         try {
-          const loaded = await loadBundleScript(moduleRef.url);
+          const loaded = loadedBundle(moduleRef.spec) || await loadBundleScript(moduleRef.url);
           moduleNotes.push(`${moduleRef.spec}${loaded.error ? "（失败）" : ""}`);
         } catch (error: any) {
           moduleNotes.push(`${moduleRef.spec}（${String(error?.message || error).slice(0, 40)}）`);
@@ -100,13 +120,13 @@ export function PluginsPage() {
         return;
       }
       // 交给客户端插件宿主：它是 cordis 插件，由容器提供 slots/locale 等服务后 apply
-      const pluginRecord = await clientHost().load(record.exports, record.id);
+      const pluginRecord = await clientHost().load(record.exports, entry.id);
       if (!pluginRecord.ok) {
         setClientRuns((current) => ({ ...current, [key]: { state: "error", text: `插件 apply 失败：${pluginRecord.error}` } }));
         return;
       }
       // 它登记进宿主插槽的界面贡献：右侧面板标签会被壳层接进已有工具面板
-      const panels = requestPluginPanels(record.id, pluginRecord.slots);
+      const panels = requestPluginPanels(entry.id, pluginRecord.slots);
       const missing = record.missing.length ? `；缺模块 ${[...new Set(record.missing)].join("、")}` : "";
       const slots = pluginRecord.slots.length ? `；登记插槽 ${pluginRecord.slots.join("、")}` : "；没有登记界面位置";
       const pending = pluginRecord.missingCalls.length ? `；未实现调用 ${[...new Set(pluginRecord.missingCalls)].slice(0, 4).join("、")}` : "";
@@ -115,10 +135,12 @@ export function PluginsPage() {
       const missingModules = info.missingModules?.length ? `；模块未安装 ${info.missingModules.slice(0, 2).join("、")}` : "";
       setClientRuns((current) => ({
         ...current,
-        [key]: { state: "ok", text: `已加载并 apply ${record.id}${modules}${slots}${opened}${missingModules}${missing}${pending}` },
+        [key]: { state: "ok", text: `插件界面已加载：${record.id}${modules}${slots}${opened}${missingModules}${missing}${pending}` },
       }));
     } catch (error: any) {
       setClientRuns((current) => ({ ...current, [key]: { state: "error", text: String(error?.message || error) } }));
+    } finally {
+      loadingClients.current.delete(key);
     }
   };
 
@@ -145,12 +167,68 @@ export function PluginsPage() {
     return map;
   }, [data]);
 
-  const toggle = (entry: PluginEntryRecord) => run(entry.active ? "已停用" : "已启用", () =>
-    (entry.active ? bridge!.disablePlugin(entry.id) : bridge!.enablePlugin(entry.id)));
+  const toggle = (entry: PluginEntryRecord) => run(entry.disabled ? "已启用" : "已停用", async () => {
+    if (!entry.disabled) {
+      const result = await bridge!.disablePlugin(entry.id);
+      // 停用同时把已经加载的界面半边收回来：否则它登记的标签/面板还挂在界面上
+      await clientHost().unload(entry.id);
+      clientRuntime().loader.invalidate(entry.name || entry.id);
+      return result;
+    }
+    const result = await bridge!.enablePlugin(entry.id);
+    if (result?.ok === false) return result;
+    await clientHost().dshSettings.refresh();
+    // 重新启用：把界面半边装回去（与开机自动加载同一条路径）
+    // 内置插件在 profile 里没有 bundle 记录，所以这里不能要求 bundle 存在
+    const bundle = bundleOf.get(entry.id) || bundleOf.get(entry.name);
+    if (entry.client || bundle?.client) await loadClientHalf(entry, bundle);
+    return result;
+  });
+
+  const configurationFor = (entry: PluginEntryRecord) => <div className="plugin-config-editor">
+    {clientHost().contributionsFor('plugins.bundle.config').some(row => row.pluginId === entry.id) ? (
+      <div><p>以下设置保存到当前 DSH 插件会话。</p><PluginSlotView slot="plugins.bundle.config" pluginId={entry.id} sessionId={clientHost().dshSettings.sessionId()} /></div>
+    ) : <p>此插件没有提供当前会话的设置表单。</p>}
+    <details><summary>插件默认设置（高级）</summary><p>会话单独保存的设置优先使用。</p>
+      <textarea aria-label={`${entry.id} 默认设置`} value={editing?.id === entry.id ? editing.text : JSON.stringify(entry.config ?? {}, null, 2)}
+        onChange={event => setEditing({ id: entry.id, text: event.target.value })} spellCheck={false} rows={4} />
+      <div className="plugin-config-actions"><button className="plugins-text-button" disabled={Boolean(busy)} onClick={() => run('已保存配置', async () => {
+        let config;
+        try { config = JSON.parse(editing?.id === entry.id ? editing.text : JSON.stringify(entry.config ?? {})); }
+        catch { return { ok: false, error: '配置必须是合法 JSON' }; }
+        return await bridge!.configurePlugin({ id: entry.id, config });
+      })}>保存</button><button className="plugins-text-button" disabled={Boolean(busy)} onClick={() => setEditing(null)}>取消</button></div>
+    </details>
+  </div>;
+  const verifiedEntries=entries.filter(entry=>isVerifiedEntry(entry,bundleOf.get(entry.name)?.version,catalog));
+  const shownEntries=verifiedEntries.filter(entry=>{
+    const approved=catalog.find(plugin=>isInstalled(plugin,[entry]));
+    const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
+    return !marketQuery.trim()||[entry.id,entry.name,entry.description,bundleOf.get(entry.name)?.description,approved?.displayName,builtin?.name,builtin?.summary,...(approved?.tags||[])].join(' ').toLowerCase().includes(marketQuery.trim().toLowerCase());
+  });
+  const available=filterCatalog(marketQuery,marketCategory,catalog);
+  const detailCatalog = catalog.find(plugin => plugin.id === detailSelection?.catalogId);
+  const detailEntry = verifiedEntries.find(entry => entry.id === detailSelection?.entryId)
+    || (detailCatalog ? entries.find(entry => isInstalled(detailCatalog, [entry])) : undefined);
+  if (detailSelection && (detailEntry||detailCatalog)) return <>
+    {marketSpec && <AddPluginDialog initialSpec={marketSpec} onClose={() => setMarketSpec('')} onInstalled={() => void refresh()} />}
+    <PluginDetailPage entry={detailEntry} bundle={detailEntry ? bundleOf.get(detailEntry.name) : undefined} catalog={detailCatalog || catalog.find(plugin => plugin.packageName === detailEntry?.name)}
+      busy={Boolean(busy)} error={error} notice={notice} refreshKey={refreshKey} configuration={detailEntry ? configurationFor(detailEntry) : undefined}
+      onBack={() => { setDetailSelection(null); setEditing(null); }} onToggle={() => { if (detailEntry) void toggle(detailEntry); }}
+      onUninstall={() => { if (detailEntry) void run('已卸载', async () => {
+        const result = await bridge!.uninstallPlugin(bundleOf.get(detailEntry.name)?.name || detailEntry.id);
+        if (result?.ok !== false) { await clientHost().unload(detailEntry.id); setDetailSelection(null); setEditing(null); }
+        return result;
+      }); }} onInstall={() => {
+        const approved=detailCatalog||catalog.find(plugin=>plugin.packageName===detailEntry?.name);
+        if(approved)setMarketSpec(approved.install);
+      }}
+      onLoadClient={() => { if (detailEntry) void loadClientHalf(detailEntry, bundleOf.get(detailEntry.name)); }}
+      clientResult={detailEntry ? clientRuns[detailEntry.id]?.text : undefined} />
+  </>;
 
   return (
     <section className="plugins-page">
-      {addOpen && <AddPluginDialog onClose={() => setAddOpen(false)} onInstalled={() => void refresh()} />}
       {marketSpec ? (
         <AddPluginDialog
           initialSpec={marketSpec}
@@ -161,13 +239,13 @@ export function PluginsPage() {
       <header className="plugins-page-header">
         <div className="plugins-page-heading">
           <h1>插件</h1>
-          <p>安装、启用和配置插件</p>
+          <p>管理已安装插件，按需添加已验证的功能。</p>
         </div>
         <div className="plugins-page-actions">
-          <button className="icon-button subtle" onClick={() => void refresh()} disabled={Boolean(busy)} aria-label="刷新" title="刷新">
-            {busy === "刷新" ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label="刷新插件清单" title="刷新插件清单">
+            {catalogLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
-          <button className="plugins-add-button" onClick={() => setAddOpen(true)}>
+          <button className="plugins-add-button" onClick={() => {setView('available');setMarketQuery('');setMarketCategory('');}}>
             <Plus size={15} /> 添加插件
           </button>
         </div>
@@ -179,99 +257,50 @@ export function PluginsPage() {
         <div className="plugins-message warn">{data.warnings.slice(0, 3).map((line) => <div key={line}>{line}</div>)}</div>
       ) : null}
 
-      <div className="plugins-group">
-        <div className="plugins-group-title">
-          <span>插件市场</span>
-          <span className="plugins-group-count">
-            精选 {filterCatalog(marketQuery, marketCategory).length} 个 · 办公 / 政务
-          </span>
-        </div>
-        <div className="plugins-market-toolbar">
-          <label className="plugins-market-search">
-            <Search size={14} />
-            <input
-              value={marketQuery}
-              onChange={(event) => setMarketQuery(event.target.value)}
-              placeholder="搜索插件：公文、发票、Excel、PDF…"
-            />
-          </label>
-          <span
-            className="plugins-market-meta"
-            title={`点「安装」会带规格打开添加向导，先跑兼容性判定再决定装不装——市场只负责发现，不跳过检查。`}
-          >
-            star 数 {CATALOG_SNAPSHOT_DATE} 快照
-          </span>
-          <div className="plugins-market-categories">
-            <button
-              className={`plugin-category-chip ${marketCategory ? "" : "on"}`}
-              onClick={() => setMarketCategory("")}
-            >全部</button>
-            {CATALOG_CATEGORIES.map((category) => (
-              <button
-                key={category}
-                className={`plugin-category-chip ${marketCategory === category ? "on" : ""}`}
-                onClick={() => setMarketCategory(category)}
-              >{category}</button>
-            ))}
-          </div>
-        </div>
-        {filterCatalog(marketQuery, marketCategory).map((plugin) => {
-          const installed = isInstalled(plugin, entries);
-          return (
-            <div className="plugin-card market" key={plugin.id}>
-              <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(plugin.repo) } as React.CSSProperties}>
-                <Puzzle size={18} />
-              </div>
-              <div className="plugin-card-body">
-                <div className="plugin-card-title">
-                  <strong>{plugin.repo}</strong>
-                  <span className="plugin-tag"><Star size={11} /> {plugin.stars}</span>
-                  <span className="plugin-tag">{plugin.category}</span>
-                  {plugin.verified ? <span className="plugin-tag ok">本机已验证</span> : null}
-                  {installed ? <span className="plugin-tag">已安装</span> : null}
-                </div>
-                <p className="plugin-card-desc">{plugin.summary}</p>
-                <div className="plugin-card-tools">
-                  {/* 标签最多露 3 个：多了会把这一行挤成噪声，完整列表放 title */}
-                  {plugin.tags.slice(0, 3).map((tag) => <span className="plugin-market-tag" key={tag}>{tag}</span>)}
-                  {plugin.tags.length > 3 ? (
-                    <span className="plugin-market-tag" title={plugin.tags.join("、")}>+{plugin.tags.length - 3}</span>
-                  ) : null}
-                  <button
-                    className="plugins-text-button"
-                    disabled={Boolean(busy) || installed}
-                    onClick={() => setMarketSpec(plugin.install)}
-                    title={installed ? "已经装过了" : `安装 ${plugin.packageName}`}
-                  >
-                    {installed ? <Check size={13} /> : <Plus size={13} />} {installed ? "已安装" : "安装"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        {filterCatalog(marketQuery, marketCategory).length === 0 ? (
-          <p className="plugins-empty">没有匹配的插件，换个关键词试试。</p>
-        ) : null}
+      <div className="plugins-navigation" role="tablist" aria-label="插件列表">
+        <button role="tab" aria-selected={view==='installed'} className={view==='installed'?'active':''} onClick={()=>{setView('installed');setMarketQuery('');}}>已安装 <span>{verifiedEntries.length}</span></button>
+        <button role="tab" aria-selected={view==='available'} className={view==='available'?'active':''} onClick={()=>{setView('available');setMarketQuery('');}}>可安装 <span>{catalog.length}</span></button>
       </div>
-
-      <div className="plugins-group">
-        <div className="plugins-group-title">
-          <span>已安装</span>
-          <span className="plugins-group-count">{entries.length}</span>
+      <div className="plugins-list-toolbar">
+        <label className="plugins-market-search"><Search size={15}/><input aria-label="搜索插件" value={marketQuery} onChange={event=>setMarketQuery(event.target.value)} placeholder="搜索插件名称或功能"/></label>
+        <span className="plugins-catalog-status" role="status">{catalogLoading?'正在更新清单…':catalogMeta.source==='platform'?'清单已从平台更新':catalogMeta.source==='cache'?'使用已保存清单':'随应用提供的清单'}</span>
+      </div>
+      {catalogMeta.notice&&<p className="plugins-catalog-notice">{catalogMeta.notice}</p>}
+      {view==='available'&&<div className="plugins-group" role="tabpanel" aria-label="可安装插件">
+        <div className="plugins-list-heading"><h2>可安装插件</h2><span>仅展示已验证的版本</span></div>
+        <div className="plugins-market-categories">
+          {['',...new Set(catalog.map(plugin=>plugin.category))].map(category=><button key={category} className={`plugin-category-chip ${marketCategory===category?'on':''}`} aria-pressed={marketCategory===category} onClick={()=>setMarketCategory(category)}>{category||'全部'}</button>)}
         </div>
+        {available.map(plugin=>{
+          const existing=entries.find(entry=>isInstalled(plugin,[entry]));
+          const installed=existing&&bundleOf.get(existing.name)?.version===plugin.support.version;
+          return <div className="plugin-card market" key={plugin.id}>
+            <div className="plugin-card-icon" style={{'--plugin-tile':tileColor(plugin.packageName)} as React.CSSProperties}><Puzzle size={20}/></div>
+            <div className="plugin-card-body">
+              <div className="plugin-card-title"><button className="plugin-name-button" onClick={()=>{setError('');setNotice('');setDetailSelection({catalogId:plugin.id});}}>{plugin.displayName}</button><span className="plugin-tag ok"><Check size={11}/>已验证</span></div>
+              <p className="plugin-card-desc">{plugin.summary}</p>
+              <p className="plugin-row-meta">{plugin.category}<span>·</span>v{plugin.support.version}<span>·</span>{plugin.packageName}</p>
+            </div>
+            <button className="plugins-install-action" disabled={Boolean(busy)||catalogLoading||Boolean(installed)} onClick={()=>setMarketSpec(plugin.install)}>{installed?<><Check size={14}/>已安装</>:<><Plus size={14}/>{existing?'安装已验证版本':'安装'}</>}</button>
+          </div>;
+        })}
+        {!catalogLoading&&!available.length&&<p className="plugins-empty">{marketQuery||marketCategory?'没有找到匹配的插件。':'当前没有适用于此版本和系统的已验证插件。'}</p>}
+      </div>}
 
-        {entries.length === 0 && (
+      {view==='installed'&&<div className="plugins-group" role="tabpanel" aria-label="已安装插件">
+        <div className="plugins-list-heading"><h2>已安装插件</h2><span>启用后在适用任务中使用</span></div>
+
+        {!catalogLoading&&shownEntries.length === 0 && (
           <p className="plugins-empty">
-            还没有安装插件。点右上角「添加插件」，填入包名后先「检查兼容性」，确认能跑再安装。
+            {marketQuery?'没有找到匹配的插件。':'还没有安装已验证的插件，可在“可安装”中选择。'}
           </p>
         )}
 
-        {entries.map((entry) => {
+        {shownEntries.map((entry) => {
           const bundle = bundleOf.get(entry.name);
-          const description = bundle?.description || entry.description || "";
-          // 手工加进 dyworker.yml 的插件没有 bundle 记录，客户端半边信息在条目上
-          const clientHalf = bundle?.client || entry.client || null;
+          const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
+          const approved=catalog.find(plugin=>plugin.packageName===entry.name);
+          const description = builtin?.summary||approved?.summary||bundle?.description || entry.description || "";
           return (
             <div className="plugin-card" key={entry.id}>
               <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(entry.name) } as React.CSSProperties}>
@@ -279,10 +308,12 @@ export function PluginsPage() {
               </div>
               <div className="plugin-card-body">
                 <div className="plugin-card-title">
-                  <strong>{entry.id}</strong>
+                  <span data-plugin-package={bundle?.name || entry.name}>
+                    <button className="plugin-name-button" onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{builtin?.name||approved?.displayName||entry.id}</button>
+                  </span>
                   {bundle?.version ? <span className="plugin-tag">v{bundle.version}</span> : null}
-                  {bundle && !bundle.declared ? <span className="plugin-tag">单条目</span> : null}
-                  {entry.disabled ? <span className="plugin-tag">已停用</span> : null}
+
+                  <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.disabled ? "已停用" : entry.active ? "已启动" : entry.state === "session-required" ? "用于 DSH 插件会话" : entry.state === "loading" ? "启动中" : entry.state === "failed" ? "启动失败" : "等待所需能力"}</span>
                   {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
                   {/* 内置插件：随应用分发、开机自动加载，可停用但不能卸载（说明收进悬浮） */}
                   {entry.builtin ? (
@@ -293,61 +324,30 @@ export function PluginsPage() {
                 </div>
                 {description ? <p className="plugin-card-desc">{description}</p> : <p className="plugin-card-desc muted">{entry.name}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
-                {clientHalf ? (
-                  <div className="plugin-card-client">
-                    <span className="plugin-tag">界面半边</span>
-                    <span className="plugin-card-client-meta">
-                      {clientHalf.platform || "web"}
-                      {clientHalf.inject?.length ? ` · 声明依赖 ${clientHalf.inject.length} 个客户端服务` : ""}
-                    </span>
-                    <button
-                      className="plugins-text-button"
-                      disabled={clientRuns[entry.id]?.state === "loading"}
-                      onClick={() => void loadClientHalf(entry, bundle)}
-                    >
-                      {clientRuns[entry.id]?.state === "loading" ? <Loader2 size={13} className="spin" /> : null}
-                      加载界面半边（实验）
-                    </button>
-                    {clientRuns[entry.id] && clientRuns[entry.id].state !== "loading" ? (
-                      <div className={`plugin-client-result ${clientRuns[entry.id].state}`}>
-                        {clientRuns[entry.id].state === "ok" ? <Check size={12} /> : <AlertTriangle size={12} />}
-                        <span>{clientRuns[entry.id].text}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
                 <div className="plugin-card-tools">
-                  <button className="plugins-text-button" onClick={() => setEditing(editing?.id === entry.id ? null : { id: entry.id, text: JSON.stringify(entry.config ?? {}, null, 2) })}>
-                    配置
+                  <button className="plugins-text-button" aria-label={`查看 ${entry.id} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>详情</button>
+                  <button className="plugins-text-button" onClick={() => setDetailSelection({entryId:entry.id})}>
+                    设置
                   </button>
                   {entry.builtin ? null : (
-                    <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", () => bridge!.uninstallPlugin(bundle?.name || entry.id))}>
+                    <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", async () => {
+                      const result=await bridge!.uninstallPlugin(bundle?.name||entry.id);
+                      if(result?.ok!==false)await clientHost().unload(entry.id);
+                      return result;
+                    })}>
                       <Trash2 size={13} /> 卸载
                     </button>
                   )}
                 </div>
                 {editing?.id === entry.id && (
-                  <div className="plugin-config-editor">
-                    <textarea value={editing.text} onChange={(event) => setEditing({ id: entry.id, text: event.target.value })} spellCheck={false} rows={4} />
-                    <div className="plugin-config-actions">
-                      <button className="plugins-text-button" onClick={() => run("已保存配置", async () => {
-                        try {
-                          return await bridge!.configurePlugin({ id: entry.id, config: JSON.parse(editing.text) });
-                        } catch {
-                          return { ok: false, error: "配置必须是合法 JSON" };
-                        }
-                      })}>保存</button>
-                      <button className="plugins-text-button" onClick={() => setEditing(null)}>取消</button>
-                    </div>
-                  </div>
+                  configurationFor(entry)
                 )}
               </div>
               <button
-                className={`plugin-switch ${entry.active ? "on" : ""}`}
+                className={`plugin-switch ${entry.disabled ? "" : "on"}`}
                 role="switch"
-                aria-checked={entry.active}
-                aria-label={`${entry.active ? "停用" : "启用"} ${entry.id}`}
+                aria-checked={!entry.disabled}
+                aria-label={`${entry.disabled ? "启用" : "停用"} ${entry.id}`}
                 disabled={Boolean(busy)}
                 onClick={() => void toggle(entry)}
               >
@@ -356,15 +356,15 @@ export function PluginsPage() {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       <footer className="plugins-page-footer">
-        <span>插件目录：{data?.status?.dir || "—"}</span>
-        {data?.status?.failed ? <span className="bad">{data.status.failed} 个失败</span> : null}
-        <button className="plugins-text-button" onClick={() => run("已重新载入清单", () => bridge!.reloadPlugins())} disabled={Boolean(busy)}>
-          重新载入清单
-        </button>
-        <span className="plugins-hint"><Sparkles size={12} /> 插件工具与内置工具走同一套审批与审计</span>
+        <span><Check size={13}/>清单更新不会自动升级已安装的插件</span>
+        {catalogMeta.publishedAt&&<span>清单发布于 {new Date(catalogMeta.publishedAt).toLocaleDateString('zh-CN')}</span>}
+        <details className="plugins-advanced"><summary>高级管理</summary><div>
+          <span>插件目录：{data?.status?.dir||'—'}</span>
+          <button className="plugins-text-button" onClick={()=>run('已重新载入清单',()=>bridge!.reloadPlugins())} disabled={Boolean(busy)}>重新载入清单</button>
+        </div></details>
       </footer>
     </section>
   );

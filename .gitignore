@@ -17,3 +17,9 @@ docs/verification
 .zcode/
 .zcodeignore
 video/
+.tmp-inspect/
+# 本地插件验收证据：保留方案、脚本和夹具，截图及运行快照不纳入源码。
+docs/research/cordis-dsh-2026-10-05/*.png
+docs/research/cordis-dsh-2026-10-05/*.json
+docs/research/cordis-dsh-2026-10-05/*.tap
+docs/research/plugin-catalog-2026-10-08/*.json

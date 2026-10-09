@@ -1,133 +1,106 @@
-// DSH 客户端插件的模块加载器（宿主侧实现，插件 bundle 无需改动）。
-//
-// DSH 的 web shell 里有一个全局加载器，插件的客户端半边（lib/client.js）就是这样一个
-// 预打包 bundle，开头固定是：
-//
-//   window.__ModuleLoader__.load({
-//     id: "dsh-context",
-//     factory: (require) => { ... module.exports = ...; return module.exports; },
-//   });
-//
-// bundle 内部只 require 极少数运行时模块（实测 dsh-context 只有 react / react-dom /
-// react/jsx-runtime / @deepseek-ai/dsh-client-ui-primitives 四个），其余能力靠
-// cordis 的 inject 拿服务。所以我们只要：① 提供这个加载器；② 提供那几个模块；
-// ③ 把 host 已有的界面容器注册成同名客户端服务（第 2 步）。
-//
-// 本文件刻意不依赖 React/DOM，便于在 Node 里直接对真实 bundle 做验收测试。
+// 官方 0.2.1-alpha.1 模块系统的宿主适配：注册、惰性执行、分块和失效均由官方实现负责。
+import { ClientModuleSystem } from './vendor/dsh-client-modules/system.js';
 
-export type ModuleFactory = (require: (spec: string) => unknown) => unknown;
-
+export type ModuleRequire = ((spec: string) => unknown) & { async: (spec: string) => Promise<unknown> };
+export type ModuleFactory = (require: ModuleRequire) => unknown;
 export interface LoadedBundle {
-  id: string;
-  /** bundle 的 module.exports */
-  exports: unknown;
-  /** 本次加载实际请求过的模块名（按顺序、含重复） */
-  requires: string[];
-  /** 宿主没有提供、因而抛错的模块名 */
-  missing: string[];
-  /** 加载失败原因（成功时为 undefined） */
-  error?: string;
+  id: string; exports: unknown; requires: string[]; missing: string[]; error?: string;
 }
-
 export interface LoaderOptions {
-  /** 诊断用：宿主没提供的模块被请求时回调（同一模块可能多次） */
   onMissingModule?: (spec: string, error: unknown) => void;
+  loadBundle?: (url: string) => Promise<void>;
 }
-
+const strip = (id: string) => id.replace(/\/client$/, '');
 export class ClientModuleLoader {
-  private readonly factories = new Map<string, () => unknown>();
-  private readonly cache = new Map<string, unknown>();
-  private readonly bundles = new Map<string, LoadedBundle>();
+  private readonly records = new Map<string, LoadedBundle>();
   private readonly missingCount = new Map<string, number>();
+  private readonly provided = new Set<string>();
+  private readonly registration: any = { mode: 'queue', pendingQueue: [] };
+  private readonly system: ClientModuleSystem;
+  private target: any;
   private readonly options: LoaderOptions;
-
   constructor(options: LoaderOptions = {}) {
     this.options = options;
+    this.system = new ClientModuleSystem({
+      manifest: { rev: 'dyworker', modules: [], plugins: [] }, staticModules: {},
+      registrationTarget: this.registration, bootstrapModule: { id: 'dyworker-module-runtime', exports: {} },
+      loadBundle: options.loadBundle || (url => this.loadScript(url)),
+    });
   }
-
-  /** 宿主注册自己能提供的模块；同一 spec 重复注册以最后一次为准 */
   provide(spec: string, factory: () => unknown): this {
-    this.factories.set(String(spec), factory);
-    this.cache.delete(String(spec));
+    const id = strip(String(spec));
+    this.provided.add(id);
+    this.system.loadCache.set(id, { id, exports: factory(), styles: [], edges: new Set() });
     return this;
   }
-
-  has(spec: string): boolean {
-    const key = String(spec);
-    return this.factories.has(key) || this.cache.has(key);
-  }
-
-  /** bundle 内部拿到的 require */
+  has(spec: string): boolean { return this.provided.has(strip(spec)) || this.records.has(strip(spec)); }
   require = (spec: string): unknown => {
-    const key = String(spec || "");
-    if (this.cache.has(key)) return this.cache.get(key);
-    const factory = this.factories.get(key);
-    if (!factory) {
-      this.missingCount.set(key, (this.missingCount.get(key) || 0) + 1);
-      const error = new Error(`模块 ${key} 不在宿主提供的模块表里`);
-      this.options.onMissingModule?.(key, error);
-      throw error;
-    }
-    const value = factory();
-    this.cache.set(key, value);
-    return value;
+    const id = strip(String(spec));
+    const record = this.system.loadCache.get(id);
+    if (record) return record.exports;
+    // 仅适配旧的同步入口；执行和递归依赖处理仍采用官方 makeRequire。
+    return this.system.makeRequire('dyworker-module-runtime', new Set())(spec);
   };
-
-  /**
-   * window.__ModuleLoader__.load 的实现。
-   * 失败**不向上抛**：bundle 是外来的第三方代码，抛出去只会污染控制台并可能打断
-   * 后续注入；失败原因记录在 record 里，由界面来展示。
-   */
-  load = (descriptor: { id?: string; factory?: ModuleFactory } | null | undefined): LoadedBundle => {
-    const id = String(descriptor?.id || "");
-    const requires: string[] = [];
-    const missing: string[] = [];
-    const record: LoadedBundle = { id, exports: undefined, requires, missing };
-
-    const scopedRequire = (spec: string) => {
-      requires.push(String(spec));
-      try {
-        return this.require(spec);
-      } catch (error) {
-        missing.push(String(spec));
-        throw error;
-      }
+  load = (descriptor: { id?: string; chunk?: string; factory?: ModuleFactory } | null | undefined): LoadedBundle => {
+    const owner = strip(String(descriptor?.id || ''));
+    const id = descriptor?.chunk ? `${owner}/${descriptor.chunk}` : owner;
+    const record: LoadedBundle = { id, exports: undefined, requires: [], missing: [] };
+    if (!id || typeof descriptor?.factory !== 'function') {
+      record.error = 'bundle 没有提供 id 或 factory'; this.records.set(id, record); return record;
+    }
+    if (!descriptor.chunk) {
+      const current = this.target?.document?.currentScript?.src || (typeof document === 'undefined' ? '' : document.currentScript?.getAttribute('src')) || '';
+      const rev = current ? new URL(current, 'http://plugin.local').searchParams.get('rev') || 'initial' : 'initial';
+      const url = `dyworker-plugin://bundle/??${owner}/client.js&rev=${encodeURIComponent(rev)}`;
+      const modules = this.system.manifest.modules.filter((row: any) => row.id !== owner);
+      modules.push({ id: owner, rev, url, initialUrl: url, inject: [], external: [] });
+      this.system.updateManifest({ rev, modules, plugins: [] }, []);
+    }
+    const wrapped = (require: ModuleRequire) => {
+      const instrument: ModuleRequire = Object.assign((spec: string) => {
+        record.requires.push(spec);
+        try { return require(spec); } catch (error) { this.noteMissing(record, spec, error); throw error; }
+      }, { async: async (spec: string) => {
+        record.requires.push(spec);
+        try { return await require.async(spec); } catch (error) { this.noteMissing(record, spec, error); throw error; }
+      } });
+      return descriptor.factory!(instrument);
     };
-
-    if (typeof descriptor?.factory !== "function") {
-      record.error = "bundle 没有提供 factory";
-      this.bundles.set(id || `anonymous-${this.bundles.size + 1}`, record);
-      return record;
-    }
-
-    try {
-      record.exports = descriptor.factory(scopedRequire);
-    } catch (error: any) {
-      record.error = String(error?.message || error);
-    }
-    this.bundles.set(id || `anonymous-${this.bundles.size + 1}`, record);
+    try { this.registration.load({ id: owner, ...(descriptor.chunk ? { chunk: descriptor.chunk } : {}), factory: wrapped }); }
+    catch (error: any) { record.error = String(error?.message || error); }
+    Object.defineProperty(record, 'exports', { enumerable: true, get: () => {
+      if (record.error) return undefined;
+      try { return this.require(id); }
+      catch (error: any) { record.error = String(error?.message || error); return undefined; }
+    } });
+    this.records.set(id, record);
     return record;
   };
-
-  /** 取某个 bundle 的加载记录 */
-  bundle(id: string): LoadedBundle | undefined {
-    return this.bundles.get(String(id));
+  private noteMissing(record: LoadedBundle, spec: string, error: unknown) {
+    record.missing.push(spec);
+    this.missingCount.set(spec, (this.missingCount.get(spec) || 0) + 1);
+    this.options.onMissingModule?.(spec, error);
   }
-
-  bundles_(): LoadedBundle[] {
-    return [...this.bundles.values()];
+  invalidate(id: string) {
+    const owner = strip(id);
+    this.system.invalidate(owner);
+    if (typeof document !== 'undefined') {
+      for (const style of document.querySelectorAll('style[data-plugin]')) if (style.getAttribute('data-plugin') === owner) style.remove();
+    }
+    for (const key of this.records.keys()) if (key === owner || key.startsWith(`${owner}/client.`)) this.records.delete(key);
   }
-
-  /** 宿主没提供却被请求过的模块，按次数降序——这是"还差什么"的权威数据 */
-  listMissingModules(): Array<{ spec: string; count: number }> {
-    return [...this.missingCount.entries()]
-      .map(([spec, count]) => ({ spec, count }))
-      .sort((a, b) => b.count - a.count || a.spec.localeCompare(b.spec));
-  }
-
-  /** 把加载器挂到目标对象上（浏览器里就是 window） */
-  install(target: any = globalThis): void {
-    if (!target) return;
-    target.__ModuleLoader__ = { load: this.load };
+  bundle(id: string): LoadedBundle | undefined { return this.records.get(strip(String(id))); }
+  bundles_(): LoadedBundle[] { return [...this.records.values()]; }
+  listMissingModules() { return [...this.missingCount].map(([spec, count]) => ({ spec, count })).sort((a,b) => b.count - a.count || a.spec.localeCompare(b.spec)); }
+  install(target: any = globalThis) { this.target = target; if (target) target.__ModuleLoader__ = { load: this.load }; }
+  private async loadScript(url: string) {
+    if (typeof document === 'undefined') throw new Error('当前环境没有 document，无法加载异步插件模块');
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script'); script.src = url;
+      const finish = (error?: Error) => { clearTimeout(timer); script.remove(); if (error) reject(error); else resolve(); };
+      const timer = setTimeout(() => finish(new Error('异步插件模块加载超时')), 15_000);
+      script.onload = () => finish(); script.onerror = () => finish(new Error(`异步插件模块加载失败：${url}`));
+      document.head.append(script);
+    });
   }
 }

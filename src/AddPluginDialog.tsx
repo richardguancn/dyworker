@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, Loader2, X } from "lucide-react";
 import type { PluginCompatibility } from "./types";
 
@@ -13,11 +14,13 @@ const VERDICT_LABEL: Record<string, string> = {
   runnable: "可以运行",
   partial: "部分兼容",
   unsupported: "无法运行",
+  pending: "安装后检查",
 };
 
 function verdictClass(verdict?: string) {
   if (verdict === "runnable") return "ok";
   if (verdict === "partial") return "warn";
+  if (verdict === "pending") return "warn";
   return "bad";
 }
 
@@ -39,6 +42,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     ok: boolean; name: string; entryId?: string; version?: string; description?: string;
     verdict?: string; reasons?: string[]; matrix?: string; source?: string;
     dir?: string; patchFile?: string; detailOpen?: boolean;
+    incompatible?: boolean;
   } | null>(null);
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
@@ -66,6 +70,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     setBusy("check");
     setError("");
     setCompat(null);
+    setLog("");
     try {
       // GitHub / 本地来源先要装进 profile 才能判定，这里只对包名做预检
       if (/^[\w@./-]+$/.test(probe) && !/^[.~/]/.test(probe) && !probe.includes("github.com")) {
@@ -128,11 +133,20 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
           verdict: installed?.verdict,
           reasons: installed?.analysis?.reasons || (installed?.error ? [installed.error] : []),
           matrix: installed?.matrix,
+          incompatible: installed?.incompatible,
+          source: installed?.source?.kind || installed?.downloaded?.kind,
+          version: installed?.analysis?.version,
+          dir: installed?.dir,
+          detailOpen: true,
         });
         return;
       }
       const info = await describeInstalled(installed.name || target);
-      setResult({ ok: true, name: installed.name || target, ...info });
+      setResult({
+        ok: true, name: installed.name || target, ...info,
+        verdict: installed.verdict, reasons: installed.analysis?.reasons, matrix: installed.matrix,
+      });
+      onInstalled();
     } catch (installError: any) {
       setError(String(installError?.message || installError));
     } finally {
@@ -144,15 +158,18 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     if (!bridge || !result?.entryId) return;
     setBusy("enable");
     try {
-      await bridge.enablePlugin(result.entryId);
+      const enabled = await bridge.enablePlugin(result.entryId);
+      if (!enabled?.ok) { setError(enabled?.error || "插件启用失败"); return; }
       onInstalled();
       onClose();
+    } catch (enableError: any) {
+      setError(String(enableError?.message || enableError));
     } finally {
       setBusy("");
     }
   };
 
-  return (
+  return createPortal(
     <div className="dialog-overlay" role="dialog" aria-label="添加插件">
       <div className="add-plugin-dialog">
         {result ? (
@@ -164,7 +181,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
             <div className={`install-result-mark ${result.ok ? "ok" : "bad"}`}>
               {result.ok ? <Check size={26} /> : <AlertTriangle size={26} />}
             </div>
-            <h3 className="install-result-title">{result.ok ? "已安装" : "无法运行"}</h3>
+            <h3 className="install-result-title">{result.ok ? "已安装" : result.incompatible ? (result.verdict === "partial" ? "部分功能不可用" : "无法运行") : "安装失败"}</h3>
 
             <div className="install-result-card">
               <strong>{result.name}</strong>
@@ -197,11 +214,12 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
             ) : (
               <div className="install-result-actions">
                 <button className="plugins-text-button" onClick={() => setResult(null)}>返回</button>
-                <button className="add-plugin-submit" onClick={() => void install(true)} disabled={busy === "install"}>
-                  {busy === "install" ? <Loader2 size={14} className="spin" /> : null} 仍然安装（仅主机半边，不会生效）
-                </button>
+                {result.incompatible && <button className="add-plugin-submit" onClick={() => void install(true)} disabled={busy === "install"}>
+                  {busy === "install" ? <Loader2 size={14} className="spin" /> : null} 仍然安装（部分功能可能不可用）
+                </button>}
               </div>
             )}
+            {error && <div className="plugins-message bad"><AlertTriangle size={14} /> <span>{error}</span></div>}
           </div>
         ) : (
         <>
@@ -277,15 +295,14 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
             <div><strong>GitHub 仓库</strong>：<code>https://github.com/owner/repo</code>，可带分支/子目录 <code>/tree/main/packages/plugin</code></div>
             <div><strong>本地目录</strong>：磁盘上的插件目录或 <code>.tgz</code>，例如 <code>~/dev/my-plugin</code></div>
             <div className="add-plugin-guide-note">
-              含浏览器半边（<code>dsh.client</code>）的 DSH 插件只能加载主机半边；依赖 DSH 专有服务的插件会被判定为不兼容并拒绝安装。
+              支持加载插件界面；兼容性检查会说明缺少哪些能力。部分兼容的插件可继续安装，必要能力缺失的插件可能无法运行。
             </div>
           </div>
         )}
 
         {/^\s*(https?:\/\/)?(www\.)?github\.com\//i.test(input) || /^[.~/]/.test(input.trim()) ? (
           <div className="add-plugin-build-note">
-            GitHub / 本地来源会从源码安装：安装过程会执行该仓库的构建脚本（<code>prepare</code>），
-            这是生成插件运行产物所必需的。介意的话请改用已发布的包名安装。
+            GitHub 或本地目录需要包含已经构建好的插件文件。安装默认不运行插件的安装脚本；只有源码时，请先在可信环境构建，或使用作者发布的包名安装。
           </div>
         ) : null}
 
@@ -306,7 +323,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
           <AlertTriangle size={15} />
           <div>
             <p>请确认插件来源可信。插件在本机以你的权限运行，来源不明的插件可能损坏 DYWorker，或读取和泄露你的数据。</p>
-            <p>插件安装后，暂不支持自动更新。若需升级，请先卸载再安装新版，后续版本会持续改善升级体验。</p>
+            <p>插件不会自动更新。升级时直接添加同一插件的新版本；安装或启动失败会保留原有版本。</p>
           </div>
         </div>
 
@@ -321,7 +338,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
           <div className={`plugins-compat ${verdictClass(compat.verdict)}`}>
             <div className="plugins-compat-head">
               {compat.verdict === "runnable" ? <Check size={14} /> : <AlertTriangle size={14} />}
-              <strong>{compat.name}@{compat.version}</strong>
+              <strong>{compat.name}{compat.version ? `@${compat.version}` : ""}</strong>
               <span>{VERDICT_LABEL[compat.verdict] || compat.verdict}</span>
             </div>
             <ul>{compat.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
@@ -339,6 +356,10 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
         </>
         )}
       </div>
-    </div>
+    </div>,
+    // portal 到 body：.plugins-page 自带 z-index，会把 fixed 弹窗关进它的层叠上下文，
+    // 于是面板拖拽分隔条（z-index: 40）反而压在弹窗之上、竖线切穿弹窗。
+    // 挂到 body 后弹窗与分隔条同在根层叠上下文，弹窗层（z-index: 80）稳定在分隔线之上。
+    document.body,
   );
 }

@@ -15,6 +15,8 @@ export interface PluginPanelRequest {
   pluginId: string;
   key: string;
   label: string;
+  /** 是否顺带把右侧面板打开。内置插件开机注册时只登记标签、不抢用户的版面 */
+  open?: boolean;
 }
 
 type PanelHandler = (request: PluginPanelRequest) => void;
@@ -29,13 +31,15 @@ export function onPluginPanelRequest(handler: PanelHandler): () => void {
     if (!kind) return;
     const label = clientHost().contributionsFor("sidebar.right.pane.tab")
       .map((contribution) => ({
+        pluginId: contribution.pluginId || "",
         key: String(contribution.meta.key ?? contribution.meta.id ?? ""),
         label: typeof contribution.meta.label === "function"
           ? String((contribution.meta.label as () => unknown)())
           : String(contribution.meta.label ?? kind),
       }))
       .find((item) => item.key === kind);
-    handler({ pluginId: "", key: kind, label: label?.label || kind });
+    if (!label) return;
+    handler({ pluginId: label.pluginId, key: kind, label: label.label || kind, open: true });
   });
   return () => { handlers.delete(handler); off(); };
 }
@@ -73,17 +77,18 @@ class PluginSlotBoundary extends React.Component<{ children?: React.ReactNode; l
 const PANEL_SLOTS = ["sidebar.right.pane.tab"] as const;
 
 /** 预取的投影键：DSH 的会话投影名字（目前只有上下文时间线） */
-const PROJECTION_KEYS = ["contextTimeline"] as const;
+const PROJECTION_KEYS = ["contextTimeline", "contextHeaders", "contextActivity"] as const;
 
-export function requestPluginPanels(pluginId: string, slots: string[]): PluginPanelRequest[] {
+export function requestPluginPanels(pluginId: string, slots: string[], options: { open?: boolean } = {}): PluginPanelRequest[] {
   const active = PANEL_SLOTS.filter((slot) => slots.includes(slot));
   if (!active.length) return [];
-  const requests = active.flatMap((slot) => clientHost().contributionsFor(slot)).map((contribution) => {
+  const requests = active.flatMap((slot) => clientHost().contributionsFor(slot)).filter(contribution =>
+    !pluginId || contribution.pluginId === pluginId).map((contribution) => {
     const key = String(contribution.meta.key ?? contribution.meta.id ?? `${pluginId}-${contribution.sequence}`);
     const label = typeof contribution.meta.label === "function"
       ? String((contribution.meta.label as () => unknown)())
       : String(contribution.meta.label ?? pluginId);
-    return { pluginId, key, label };
+    return { pluginId, key, label, open: options.open !== false };
   });
   for (const request of requests) for (const handler of handlers) handler(request);
   return requests;
@@ -93,19 +98,46 @@ export function requestPluginPanels(pluginId: string, slots: string[]): PluginPa
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session, wide, hideEmpty = false }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown; wide?: boolean; hideEmpty?: boolean }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
+  const hasContributions = host.contributionsFor(slot).some(item => (!pluginId || item.pluginId === pluginId)
+    && (!pluginKey || String(item.meta.key ?? item.meta.id ?? '') === pluginKey));
+  const activeTargets = slot === 'conversation.view' ? host.contributionsFor(slot)
+    .filter(item => (!pluginId || item.pluginId === pluginId) && (!pluginKey || String(item.meta.key ?? item.meta.id ?? '') === pluginKey))
+    .map(item => String(item.meta.id ?? item.meta.key ?? '')).filter(Boolean) : [];
+  const targetKey = JSON.stringify(activeTargets);
+  React.useEffect(() => {
+    if (sessionId && (session as any)?.runtime === 'dsh') {
+      for (const target of JSON.parse(targetKey) as string[]) host.activateSessionView(sessionId, target);
+    }
+  }, [host, sessionId, session, targetKey]);
 
   // DSH 客户端契约：壳层给插件视图提供 sessionId 与 useProjection(key)。
   // useProjection 是**同步**钩子（插件在渲染期调用），所以先按已知键预取，再同步返回缓存值；
   // 取不到（null）插件会进入 cold 分支，走它自己的 /api 路由。
   const [projections, setProjections] = React.useState<Record<string, unknown>>({});
+  const [projectionError, setProjectionError] = React.useState('');
   React.useEffect(() => {
-    if (!sessionId) { setProjections({}); return; }
+    if (!sessionId || !hasContributions) { setProjections({}); return; }
     let cancelled = false;
+    let loading = false;
+    const expectedBinding = (session as any)?.runtime === 'dsh' ? (host.ctx as any).sessions.binding(sessionId) : undefined;
+    if (expectedBinding) void host.openSessionHistory(sessionId).catch(error => {
+      if (!cancelled) setProjectionError(String(error?.message || error));
+    });
+    if (expectedBinding) {
+      if (slot === 'conversation.view') void host.refreshSubagents(sessionId).catch(error => {
+        if (!cancelled) setProjectionError(String(error?.message || error));
+      });
+      return () => {cancelled=true;};
+    }
+    setProjections({});
+    setProjectionError('');
     const load = async () => {
+      if (loading || cancelled) return;
+      loading = true;
       const next: Record<string, unknown> = {};
       for (const key of PROJECTION_KEYS) {
         try {
@@ -116,23 +148,29 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
         }
       }
       if (!cancelled) setProjections(next);
+      loading = false;
     };
     void load();
-    return () => { cancelled = true; };
-  }, [sessionId]);
+    const timer = window.setInterval(() => void load(), 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [sessionId, session, hasContributions, slot]);
 
-  const useProjection = React.useCallback((key: string) => projections[String(key)] ?? null, [projections]);
+  const useProjection = React.useCallback((key: string) => ((session as any)?.runtime === 'dsh'
+    ? host.sessionHistoryProjections(sessionId || '')?.[String(key)] : projections[String(key)]) ?? null, [host,sessionId,session,projections]);
 
   // 把会话消息喂给视图运行时（DSH 视图插件订阅的是事件流，不是消息数组）。
   // 喂完它会把装配好的视图快照放进 snapshot.views，插件据此渲染真实内容。
   const sessionMessages = (session as any)?.messages;
   React.useEffect(() => {
+    if ((session as any)?.runtime === 'dsh') return;
     const events = buildSessionEvents(Array.isArray(sessionMessages) ? sessionMessages : []);
-    if (!events.length) return;
-    host.ingestSessionEvents(events);
-  }, [host, sessionMessages]);
+    if (sessionId) host.ingestSessionEvents(events, sessionId);
+  }, [host, sessionId, sessionMessages, (session as any)?.runtime]);
 
   const contributions = host.contributionsFor(slot).filter((contribution) => {
+    // DSH 会话使用原样插件和权威事件；内置上下文组件读取的是本应用的估算接口。
+    if ((session as any)?.runtime === 'dsh' && contribution.pluginId === 'dyworker-context') return false;
+    if (pluginId && contribution.pluginId !== pluginId) return false;
     if (pluginKey) {
       const key = String(contribution.meta.key ?? contribution.meta.id ?? "");
       if (key !== pluginKey) return false;
@@ -141,12 +179,15 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
   });
 
   if (!contributions.length) {
+    if (hideEmpty) return null;
     return React.createElement("div", { className: "plugin-slot-empty" }, "这个位置还没有内容");
   }
 
   return React.createElement(
     "div",
     { className: "plugin-slot-view", "data-plugin": pluginId || "", "data-slot": slot },
+    (projectionError || ((session as any)?.runtime === 'dsh' && (host.sessionHistorySnapshot(sessionId || '')?.openError?.message || host.sessionHistoryControlError(sessionId || '')?.message)))
+      ? React.createElement('p', { className: 'plugin-slot-error' }, projectionError || host.sessionHistorySnapshot(sessionId || '')?.openError?.message || host.sessionHistoryControlError(sessionId || '')?.message) : null,
     contributions.map((contribution) => {
       const meta = contribution.meta as Record<string, unknown>;
       // 插件用 inject(sessionId) 声明它需要的数据；渲染时把结果作为 props 传进去。
@@ -166,10 +207,10 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
       // DSH 会话视图的壳层契约：插件视图从 props 里拿这几个钩子/回调
       //   useSession(selector)  → 读会话快照（views/openState/loadingOlder/hasMore…）
       //   useDuration(selector) → 读插件自己的 duration store（inject 里给的 hooks.duration）
-      // 快照数据下一步按 dsh-context 那套投影的做法从我们的会话折出来；先给出**空但诚实**的形状：
-      // views 里没有 trajectory 时，插件会渲染它自己的空状态，而不是报错或假装有数据。
-      const snapshot = {
-        views: host.sessionViewSnapshots(),
+      const snapshot = (session as any)?.runtime === 'dsh' ? {
+        ...host.sessionHistorySnapshot(sessionId || ''), views:host.sessionViewSnapshots(sessionId || ''),
+      } : {
+        views: host.sessionViewSnapshots(sessionId || ''),
         openState: "ready",
         loadingOlder: false,
         hasMore: false,
@@ -186,6 +227,9 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
       };
       const props = {
         ...injected,
+        wide,
+        useSessions: (selector: (value: unknown) => unknown = value => value) => selector(React.useSyncExternalStore(host.sessionCatalogStore.subscribe, host.sessionCatalogStore.getSnapshot, host.sessionCatalogStore.getSnapshot)),
+        useWorkspaces: (selector: (value: unknown) => unknown = value => value) => selector(React.useSyncExternalStore(host.workspaceListStore.subscribe, host.workspaceListStore.getSnapshot, host.workspaceListStore.getSnapshot)),
         useSession: (selector: (value: unknown) => unknown) => selector(snapshot),
         useDuration: (selector: (value: unknown) => unknown) => selector(readDuration()),
         inspect: undefined,
@@ -205,6 +249,17 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
               ? (host.ctx as any).locale?.bind?.(String(meta.locale)) ?? ((text: string) => text)
               : (text: string) => text),
       };
+      // 官方插槽把 hooks 中的命名数据源转换为 useXxx。读取真实快照并订阅，
+      // 配置保存和异步更新才能使原样插件组件重新渲染。
+      for (const [key, store] of Object.entries((injected.hooks as any) || {})) {
+        const source = store as any;
+        const read = () => typeof source.getSnapshot === 'function' ? source.getSnapshot()
+          : typeof source.get === 'function' ? source.get() : source.getState();
+        if (!source || typeof source.subscribe !== 'function'
+          || !['getSnapshot', 'get', 'getState'].some(method => typeof source[method] === 'function')) continue;
+        (props as any)[`use${key.charAt(0).toUpperCase()}${key.slice(1)}`] = (selector: (value: unknown) => unknown = value => value) =>
+          selector(React.useSyncExternalStore(listener => source.subscribe(listener), read, read));
+      }
       const component = contribution.component;
       const element = typeof component === "function"
         ? React.createElement(component as React.ComponentType<any>, props)

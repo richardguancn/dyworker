@@ -1,9 +1,14 @@
+import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
+import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHost, disposeHost } from "./host/context.mts";
+import { assertDshModelSettings, hasConfiguredModel } from "./host/dsh-runtime/model-settings.mts";
+import { createChildEntry } from './host/dsh-runtime/child-entry.mts';
+import { pluginToolResult } from "./host/services/tools.mts";
 import { snapshotCriticalFiles } from "./host/boot-backup.mts";
 import { UNATTENDED_PENDING_TIMEOUT_MS } from "./host/services/inbox.mts";
 import { channelsPlugin, telemetryPlugin, remoteMessagesPlugin, backgroundTasksPlugin } from "./host/services/runtime-domains.mts";
@@ -273,8 +278,8 @@ protocol.registerSchemesAsPrivileged([
  * 自动化/排查用的安全存储替身：设了 DYWORKER_SKIP_SAFE_STORAGE=1 就不碰系统钥匙串。
  *
  * 为什么需要：用临时 userData 启动做验证时，macOS 会弹「允许访问钥匙串」并要求输入登录密码——
- * 本机调试不该反复打扰用户。替身明确报告"加密不可用"，宿主会走它本来就有的明文回退路径
- * （见下方权限收紧逻辑），因此只影响密钥的存储形式，不影响任何业务逻辑。
+ * 本机调试不该反复打扰用户。替身明确报告"加密不可用"：已有密文保持原样，密钥读取为空，
+ * 新密钥保存会被拒绝。免密回环服务仍可用于隔离验收，不改变正式密钥存储规则。
  */
 const safeStorageForHost = process.env.DYWORKER_SKIP_SAFE_STORAGE
   ? {
@@ -683,6 +688,16 @@ async function providerMessageContent(message) {
   // 不是需要回传给模型的输入；DeepSeek 视觉模型也拒绝 assistant 消息携带图片（400）。
   // 因此对 assistant 角色只保留文本，不把图片展开成 image 块，避免模型输入被服务端拒绝。
   if (message?.role === "assistant") return text || "请处理已选择的附件。";
+  if (Array.isArray(message?.dshAttachments) && message.dshAttachments.length) {
+    const parts = message.dshAttachments.map(part => {
+      if (part?.type === 'file' && typeof part.receiptId === 'string' && part.receiptId) return {type:'dsh-file-receipt', receiptId:part.receiptId};
+      if (part?.type === 'image' && ['image/png','image/jpeg','image/webp','image/gif'].includes(part.mediaType)
+        && typeof part.data === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(part.data))
+        return {type:'image_url', image_url:{url:`data:${part.mediaType};base64,${part.data}`}, ...(part.name ? {name:part.name}: {})};
+      throw new Error('DSH 浏览器附件格式无效');
+    });
+    return [...(text ? [{type:'text',text}]:[]), ...parts];
+  }
   for (const attachment of Array.isArray(message?.attachments) ? message.attachments : []) {
     const filePath = String(attachment?.path || "");
     if (!filePath) continue;
@@ -731,6 +746,17 @@ function transcriptionEndpoint(settings) {
 }
 
 function createWindow() {
+  const preloadPath = path.join(here, "preload.cjs");
+  // 桥接文件缺失时绝不能静默启动：渲染端会失去 window.dyworker，而界面里
+  // 全是 window.dyworker?.xxx(...)，于是每个操作都变成空操作——点「保存设置」
+  // 照样提示已保存，磁盘上却什么都没写（MCP 保存不了的真实原因）。
+  if (!existsSync(preloadPath)) {
+    console.error(`[dyworker] 缺少 preload：${preloadPath}；界面能打开但无法读写配置，请重新构建（npm run build:electron）。`);
+    dialog.showErrorBox(
+      "安装包不完整",
+      `缺少 ${preloadPath}\n\n界面仍会打开，但设置与对话都无法保存。请重新构建或重新安装 DYWorker。`,
+    );
+  }
   const windowOptions = {
     width: 1184,
     height: 736,
@@ -746,7 +772,7 @@ function createWindow() {
     ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 19 } } : {}),
     hasShadow: true,
     webPreferences: {
-      preload: path.join(here, "preload.cjs"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -756,6 +782,13 @@ function createWindow() {
 
   mainWindow = new BrowserWindow(windowOptions as any);
   applyWindowAppearance();
+  // preload 加载失败（文件缺失、语法错误、沙箱限制）以前只在 Linux 记录，
+  // mac 上完全没有日志，现象就是「界面正常、保存全无效」。改为全平台记录。
+  mainWindow.webContents.on("preload-error", (_event, failedPath, error) => {
+    console.log(
+      `[dyworker] preload 加载失败：${failedPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
   if (process.platform === "linux") {
     // Linux 下默认隐藏顶部菜单栏以保持界面纯净，但保留应用菜单及全局恢复入口
     mainWindow.setMenuBarVisibility(false);
@@ -829,11 +862,6 @@ function createWindow() {
       console.log(
         `[dyworker] linux renderer gone: reason=${details?.reason || "unknown"} ` +
           `exitCode=${details?.exitCode ?? "unknown"}`,
-      );
-    });
-    mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
-      console.log(
-        `[dyworker] linux preload error: ${preloadPath}: ${error instanceof Error ? error.message : String(error)}`,
       );
     });
     mainWindow.webContents.on("console-message", (details, level, message, line, sourceId) => {
@@ -1345,6 +1373,8 @@ async function applyTelemetrySettings(settings) {
   const effective = !isDevelopment || devEnabled
     ? settings
     : { ...settings, telemetry: { ...(settings?.telemetry || {}), statsEnabled: false, messagesEnabled: false } };
+  // 设置变更先停止旧订阅并隔离迟到响应，不等待设备设置的网络同步。
+  if (ctx.remoteMessages) await ctx.remoteMessages.configure({ ...(effective?.telemetry || {}), messagesEnabled: false });
   await ctx.telemetryController.configure(effective);
   if (ctx.remoteMessages) await ctx.remoteMessages.configure(effective?.telemetry || {});
 }
@@ -1547,7 +1577,8 @@ const sessionQueue = new SessionQueue();
 // 两种占用合并成同一条会话忙判定后，续跑期间渲染端再发消息才会进队列，
 // 而不是被当成空闲会话并发起第二个 run（两个 run 同时写一个会话会让回复气泡串味）。
 const wakeRuns = new Map();
-const isSessionBusy = (sessionId) => activeAgents.has(String(sessionId)) || wakeRuns.has(String(sessionId));
+const entryRuns = new Map();
+const isSessionBusy = (sessionId) => activeAgents.has(String(sessionId)) || wakeRuns.has(String(sessionId)) || entryRuns.has(String(sessionId));
 let mcpShuttingDown = false;
 
 // ---- 长期记忆 ----
@@ -1601,12 +1632,18 @@ const USAGE_STATS_LIMIT = 20000;
 // 进程内缓存 + 防抖落盘：此前每次用量事件都把整个文件（上限 2 万条、可达数 MB）
 // 读-改-写一遍；现在读一次常驻内存，写入合并到 1 秒一次的尾沿
 let usageStatsCache = null;
+let usageStatsLoadPromise = null;
 let usageStatsWriteTimer = null;
 
 async function readUsageStats() {
-  if (!usageStatsCache) {
-    const items = await readJson(dataFile("usage-stats.json"), []);
-    usageStatsCache = Array.isArray(items) ? items : [];
+  if (usageStatsCache === null) {
+    if (!usageStatsLoadPromise) {
+      usageStatsLoadPromise = readJson(dataFile("usage-stats.json"), []).then((items) => {
+        // 初始化共用一次读取；读取期间若已清空，不让旧记录覆盖清空结果。
+        if (usageStatsCache === null) usageStatsCache = Array.isArray(items) ? items : [];
+      }).finally(() => { usageStatsLoadPromise = null; });
+    }
+    await usageStatsLoadPromise;
   }
   return usageStatsCache;
 }
@@ -1620,7 +1657,8 @@ function scheduleUsageStatsWrite() {
 }
 
 async function appendUsageStat(event) {
-  const items = await readUsageStats();
+  await readUsageStats();
+  const items = usageStatsCache;
   items.push({
     time: new Date().toISOString(),
     model: String(event.model || "未命名模型"),
@@ -1765,8 +1803,12 @@ async function mcpExtraTools(settings) {
           },
         });
       }
-    } catch {
-      // 单个服务器连不上不影响其他工具
+    } catch (error: any) {
+      // 单个服务器连不上不影响其他工具；但必须留日志，否则用户配了 MCP 后
+      // 界面上毫无反馈（工具列表里既没有它、也没有任何报错），只能靠猜。
+      console.warn(
+        `[mcp] 服务器「${server.name || server.command}」连接失败：${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
   return extra;
@@ -1817,7 +1859,7 @@ function agentExtraTools(mcpTools) {
   // 会话检索工具全路径开放（桌面/定时/续跑/渠道）：纯只读、数据源是本机会话存档，无审批风险。
   // 插件工具（plugin__*）也在这里进入模型可见的工具面，风险由 host/risk.mts 按名字判定为
   // 有副作用，因此和外部工具一样要走审批与审计。
-  return [...mcpTools, ...browserToolDefinitions(), ...sessionToolDefinitions(), ...ctx.tools.definitions()];
+  return [...mcpTools, ...browserToolDefinitions(), ...filePreviewToolDefinitions(), ...sessionToolDefinitions(), ...ctx.tools.definitions()];
 }
 
 function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "" } = {} as any) {
@@ -1843,6 +1885,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     });
   }
   const route = async (name, args) => {
+    if (name === "open_file") return requestFilePreview(args, { workspacePath, sessionId, renderer });
     // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
     if (SESSION_TOOL_NAMES.has(String(name))) {
       const sessions = await readAllSessions();
@@ -1851,13 +1894,13 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
     // 插件工具：经 ctx.tools 派发（内部做风险闸门与审计留痕）
     if (ctx.tools.owns(name)) {
-      const executed = await ctx.tools.execute(name, args, { sessionId, runId, source: "agent" });
+      const executed = await ctx.tools.execute(name, args, { sessionId, runId, source: "agent", signal, workspacePath });
       if (!executed.ok) throw new Error(executed.error || "插件工具执行失败");
-      return executed.result;
+      return pluginToolResult(executed.result);
     }
     return callMcpTool(settings, name, args, { signal });
   };
-  route.dispose = () => browserAgent.dispose();
+  route.dispose = async () => { await ctx.plugins.stopRun(sessionId, runId); await browserAgent.dispose(); };
   return route;
 }
 
@@ -2049,6 +2092,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     // 渲染端据此切换“排队中→执行中”并记录可停止的 runId
     emit({ type: "queue-start", count: sessionQueue.count(sessionId) });
     const settings = payload?.settings || {};
+    assertDshModelSettings(payload?.runtime ?? ctx.sessions.get(sessionId)?.runtime, settings);
     const workspacePath = String(payload?.workspacePath || "").trim();
     const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
     const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
@@ -2061,7 +2105,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     }
     if (agentState.cancelled) return cancelledResponse();
 
-    if (!settings.endpoint || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredModel(settings)) {
       let filesNote = "";
       try {
         const entries = workspacePath ? await fs.readdir(workspacePath) : [];
@@ -2138,6 +2182,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     // 桌面入口只声明差异：流式合并 emit、pending-map 审批、abort 信号与循环事件
     const finalResult = await ctx.agent.run({
       settings,
+      runtime: payload?.runtime,
       workspacePath,
       sessionId,
       approvalMode,
@@ -2158,12 +2203,18 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         agentState.pending.set(action.id, resolve);
         emit({ type: "approval-request", action });
       }),
-      requestUserInput: (request) => new Promise<any>((resolve) => {
+      requestUserInput: (request, questionSignal?: AbortSignal) => new Promise<any>((resolve) => {
         agentState.pending.set(`q:${request.id}`, resolve);
         emit({ type: "ask-user", request });
+        if (questionSignal) {
+          const abort = () => { agentState.pending.delete(`q:${request.id}`); resolve({ ok: false, reason: '任务已停止' }); };
+          questionSignal.addEventListener('abort', abort, { once: true });
+          agentState.pending.set(`q:${request.id}`, value => { questionSignal.removeEventListener('abort', abort); resolve(value); });
+          if (questionSignal.aborted) abort();
+        }
       }),
       emit: (agentEvent) => {
-        if (agentEvent?.type === "skill-updated") void updateSkill(agentEvent.item);
+        if (agentEvent?.type === "skill-updated" && !agentEvent.persisted) void updateSkill(agentEvent.item);
         emit(agentEvent);
       },
       isCancelled: () => agentState.cancelled,
@@ -2348,9 +2399,13 @@ const shellDeps = {
   // 会话忙判定（前台 run ∪ 唤醒续跑）：agent:send 的排队判定必须与调度器共用同一份
   isSessionBusy,
   // 唤醒续跑中止信号（agent:cancel 用来打断无人值守续跑）
-  wakeRuns,
+  wakeRuns, entryRuns,
   emitToSession,
   executeAgentRun,
+  executeChildRun: createChildEntry({sessions:ctx.sessions,agent:ctx.agent,readSettings,
+    isShuttingDown:()=>mcpShuttingDown,isSessionBusy,activeAgents,
+    queueCount:(id)=>sessionQueue.count(id),drainSessionQueue,trackStart:trackTaskStart,trackEnd:trackTaskEnd,
+    emit:(sender,envelope)=>{try {if(sender&&!sender.isDestroyed())sender.send('agent:event',envelope);}catch {}}}),
   // 设置保存要联动的域（睡眠拦截/审核模型/语音/渠道/运营）
   saveSettings,
   applyPreventSleep,
@@ -2495,7 +2550,7 @@ function sendScheduleRunStarted(payload) {
 // app:initial-state 读回），不再丢失运行记录
 async function persistSessionRecord(session) {
   try {
-    await sessionArchive.upsert(session);
+    await sessionArchive.replace(session);
   } catch (error: any) {
     console.log(`[schedules] 转录落盘失败：${error?.message || error}`);
   }
@@ -2582,14 +2637,14 @@ async function resumeWake(wake, options: any = {}) {
       });
     }
     const settings = await readSettings();
-    if (!settings.endpoint || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredModel(settings)) {
       throw new Error("模型还没有配置，无法续跑挂起的任务");
     }
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const workingContext = await workingContextForSession(wake.sessionId);
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
-    const collector = createTranscriptCollector();
+    const collector = createTranscriptCollector({runId:wakeRunId});
     // 到点续跑的生效审批模式：interactive 提升为 auto；reviewer（替我审批）保持 reviewer，
     // 让审核助手继续逐条把关——工作区内的低风险操作（含带 rm/ffmpeg 的复合命令）由助手放行，
     // 只在越界、外发、破坏性或助手判不准时才转人工收件箱。降级成 auto 会让工作区内的 ask
@@ -2598,6 +2653,7 @@ async function resumeWake(wake, options: any = {}) {
     // 折算规则见 settings.mts 的 wakeApprovalMode / unattendedApprovalMode（有单测钉住）。
     const approvalMode = wakeApprovalMode(settings.approvalMode, wake.approvalMode);
     const result = await ctx.agent.run({
+      runId:wakeRunId,
       settings,
       workspacePath: wake.workspacePath,
       sessionId: wake.sessionId,
@@ -2621,7 +2677,7 @@ async function resumeWake(wake, options: any = {}) {
           title: `续跑任务申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        });
+        }, {signal:wakeAbort.signal});
         ctx.scheduler.running = false;
         try {
           const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -2630,7 +2686,7 @@ async function resumeWake(wake, options: any = {}) {
           ctx.scheduler.running = true;
         }
       },
-      requestUserInput: (request) => {
+      requestUserInput: (request, questionSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "question",
           sessionId: wake.sessionId,
@@ -2638,7 +2694,8 @@ async function resumeWake(wake, options: any = {}) {
           question: request.question,
           options: request.options,
           title: "续跑任务提问",
-        });
+          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+        }, { signal: questionSignal ? AbortSignal.any([questionSignal,wakeAbort.signal]) : wakeAbort.signal });
         ctx.scheduler.running = false;
         try {
           return ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -2646,27 +2703,34 @@ async function resumeWake(wake, options: any = {}) {
           ctx.scheduler.running = true;
         }
       },
-      emit: (agentEvent) => collector.handle(agentEvent),
+      emit: (agentEvent) => {
+        collector.handle(agentEvent);
+        if (mainWindow && !mainWindow.isDestroyed() && CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type))
+          mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:agentEvent});
+      },
       afterWakeRegister: async (wakeResult) => {
         if (wake.scheduleId) await ctx.scheduler.markSleeping(wake.scheduleId, wakeResult.wake, wake.sessionId);
       },
     });
     if (result.status !== "sleeping" && wake.scheduleId) {
-      await ctx.scheduler.markFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId);
+      await ctx.scheduler.markFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId, result.status);
     }
     const wakeContent = result.status === "sleeping" && result.wake
       ? `${result.finalText || ""}\n\n已再次挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim()
       : undefined;
     const wakeMessages = collector.buildMessages(`（到点自动唤醒）${wakeText}`, result, wakeContent);
+    const savedWake=await ctx.sessions.getAsync(wake.sessionId);
+    if (savedWake) await ctx.sessions.replace({...savedWake,messages:mergeDshTranscript(savedWake.messages || [],wakeMessages),updatedAt:new Date().toISOString()});
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("sessions:append", {
-        sessionId: wake.sessionId,
+        runId:wakeRunId,sessionId: wake.sessionId,
         workspacePath: wake.workspacePath,
         messages: wakeMessages,
       });
+      mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:{type:'agent-finished',result}});
     } else {
       // 窗口未运行：续跑转录追加落盘（按消息内容去重）
-      await persistSessionAppend(wake.sessionId, wakeMessages);
+      if (!savedWake) await persistSessionAppend(wake.sessionId, wakeMessages);
     }
   } catch (error: any) {
     const errorReason = error instanceof Error ? error.message : String(error);
@@ -2721,7 +2785,14 @@ async function resumeWake(wake, options: any = {}) {
 
 // ---- 定时任务完整留痕：镜像渲染端 App.tsx 的 agent 事件归约，headless 运行也产出完整过程 ----
 // （活动流、文件变更、计划、用时），不再只存最终一句话。
-function createTranscriptCollector() {
+function createTranscriptCollector(options: any = {}) {
+  const runId = options.runId || crypto.randomUUID();
+  const userId = options.userMessage?.id || `${runId}:user`;
+  const assistantId = `${runId}:assistant`;
+  let turns: any[] = [];
+  let messages: any[] = [];
+  let activeTurn: string | undefined;
+  const patch = (update) => { messages = patchDshAssistant(messages,{assistantId,runId,turnId:activeTurn},update); };
   const activities = [];
   let changes = null;
   let plan = null;
@@ -2731,17 +2802,29 @@ function createTranscriptCollector() {
   return {
     handle(agentEvent) {
       if (!agentEvent || typeof agentEvent !== "object") return;
-      if (agentEvent.type === "activity" && agentEvent.activity) {
+      if (agentEvent.type === 'dsh-conversation') {
+        turns = agentEvent.turns;
+        activeTurn = turns.at(-1)?.user.id;
+        if (!messages.length) messages = [
+          {...options.userMessage,id:userId,role:'user',content:turns[0]?.user.text || '',createdAt:new Date(startedAt).toISOString(),runId},
+          {id:assistantId,role:'assistant',content:'',createdAt:new Date(startedAt).toISOString(),runId,activities:[]},
+        ];
+        messages = reconcileDshMessages(messages,turns,{userId,assistantId,runId,live:true});
+      } else if (agentEvent.type === "activity" && agentEvent.activity) {
         activities.push({ ...agentEvent.activity });
+        patch(message=>({...message,activities:[...(message.activities || []),{...agentEvent.activity}]}));
       } else if (agentEvent.type === "activity-update") {
         const activity = activities.find((item) => item.id === agentEvent.id);
         if (activity) {
           activity.status = agentEvent.status;
           if (agentEvent.detail !== undefined) activity.detail = agentEvent.detail;
         }
+        messages = messages.map(message=>({...message,activities:message.activities?.map(item=>item.id===agentEvent.id ? {...item,status:agentEvent.status,...(agentEvent.detail !== undefined ? {detail:agentEvent.detail} : {})} : item)}));
       } else if (agentEvent.type === "file-change") {
+        patch(message=>({...message,changes:agentEvent.changes}));
         changes = agentEvent.changes;
       } else if (agentEvent.type === "plan-update") {
+        patch(message=>({...message,plan:agentEvent.steps}));
         plan = agentEvent.steps;
       } else if (agentEvent.type === "assistant-reasoning") {
         reasoning = String(agentEvent.text || "");
@@ -2756,10 +2839,10 @@ function createTranscriptCollector() {
     // `"" ?? fallback` 仍是空串，落盘/回传的助手正文变空。
     buildMessages(userText, result, assistantContent?: string) {
       const finalPlan = plan;
-      return [
-        { role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
+      const base = [
+        { ...options.userMessage, id:userId, runId, role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
         {
-          role: "assistant",
+          id:assistantId, runId, role: "assistant",
           content: assistantContent ?? (result.finalText || result.reason || "（没有产出内容）"),
           createdAt: new Date().toISOString(),
           activities: activities.map((item) => ({ ...item })),
@@ -2772,6 +2855,12 @@ function createTranscriptCollector() {
           ...(result?.workingContext ? { workingContext: result.workingContext } : {}),
         },
       ];
+      const finalTurns = result.dshTurns || turns;
+      if (!finalTurns.length) return base;
+      if (!messages.length) messages = base;
+      else patch(message=>({...message,...base[1],id:message.id,
+        activities:message.activities || [],reasoning:message.reasoning || base[1].reasoning}));
+      return reconcileDshMessages(messages,finalTurns,{userId,assistantId,runId,finalContent:assistantContent});
     },
   };
 }
@@ -2784,14 +2873,17 @@ async function runScheduledTask(record, meta) {
   const scheduleSessionId = crypto.randomUUID();
   // 实时转发的运行标识 + 会话标题：与渠道运行同一套信封（用 scheduleRun 打标区分）
   const scheduleRunId = scheduleSessionId;
+  const scheduleAbort = new AbortController();
+  entryRuns.set(scheduleSessionId,{runId:scheduleRunId,abort:scheduleAbort});
   const scheduleTitle = `计划：${String(record.name || "未命名").slice(0, 24)}`;
   const scheduleStartedAt = new Date().toISOString();
-  const collector = createTranscriptCollector();
+  const collector = createTranscriptCollector({runId:scheduleRunId});
   // 起跑前先建会话：界面立刻能看到"这次运行",后续事件边跑边填,不用等任务结束
   sendScheduleRunStarted({
     sessionId: scheduleSessionId,
     runId: scheduleRunId,
     scheduleId: String(record.id || ""),
+    runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
     title: scheduleTitle,
     workspacePath: record.workspacePath,
     prompt: record.prompt,
@@ -2816,26 +2908,29 @@ async function runScheduledTask(record, meta) {
   // 下发完整转录（渲染端按会话 id 归并，不会出现两条同 id 会话）。
   const finishSession = async (messages) => {
     const session = {
-      id: scheduleSessionId,
+      id: scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
       title: scheduleTitle,
       workspacePath: record.workspacePath,
       createdAt: scheduleStartedAt,
       updatedAt: new Date().toISOString(),
       messages,
     };
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("sessions:prepend", session);
-    } else {
-      // 窗口未运行：转录直接落盘，下次启动读回
-      await persistSessionRecord(session);
-    }
+    const priorSession=await ctx.sessions.getAsync(scheduleSessionId);
+    session.messages=mergeDshTranscript(priorSession?.messages || [],session.messages);
+    await persistSessionRecord(session);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("sessions:prepend", session);
   };
   try {
     const settings = await readSettings();
-    if (!settings.endpoint || !settings.model || !settings.apiKey) {
+    if (!hasConfiguredModel(settings)) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
+    await ctx.sessions.upsert({id:scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
+      title:scheduleTitle,workspacePath:record.workspacePath,createdAt:scheduleStartedAt,updatedAt:scheduleStartedAt,
+      messages:[{id:`${scheduleRunId}:user`,runId:scheduleRunId,role:'user',content:record.prompt,createdAt:scheduleStartedAt}]});
     const result = await ctx.agent.run({
+      runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',runId:scheduleRunId,
+      signal:scheduleAbort.signal,isCancelled:()=>scheduleAbort.signal.aborted,
       settings,
       workspacePath: record.workspacePath,
       sessionId: scheduleSessionId,
@@ -2856,7 +2951,7 @@ async function runScheduledTask(record, meta) {
           title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        });
+        }, {signal:scheduleAbort.signal});
         ctx.scheduler.running = false;
         try {
           const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -2865,7 +2960,7 @@ async function runScheduledTask(record, meta) {
           ctx.scheduler.running = true;
         }
       },
-      requestUserInput: (request) => {
+      requestUserInput: (request, questionSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "question",
           sessionId: scheduleSessionId,
@@ -2873,7 +2968,8 @@ async function runScheduledTask(record, meta) {
           question: request.question,
           options: request.options,
           title: `定时任务「${record.name || "未命名"}」提问`,
-        });
+          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+        }, { signal: questionSignal ? AbortSignal.any([questionSignal,scheduleAbort.signal]) : scheduleAbort.signal });
         ctx.scheduler.running = false;
         try {
           return ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -2900,7 +2996,7 @@ async function runScheduledTask(record, meta) {
       await finishSession(sleepingMessages);
       return;
     }
-    await ctx.scheduler.markFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId);
+    await ctx.scheduler.markFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId, result.status);
     await finishSession(collector.buildMessages(record.prompt, result));
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error);
@@ -2916,8 +3012,10 @@ async function runScheduledTask(record, meta) {
       console.log(`[schedules] 失败收尾落盘失败：${finishError?.message || finishError}`);
     }
   } finally {
+    entryRuns.delete(scheduleSessionId);
     trackTaskEnd();
     ctx.scheduler.running = false;
+    drainSessionQueue(scheduleSessionId);
     broadcastSchedulesChanged();
   }
 }
@@ -3033,6 +3131,7 @@ ctx.plugin(channelsPlugin(() => createChannelManager({
     }
     if (!channelTaskKeys.has(key)) return false;
     channelTaskAborts.add(key);
+    for (const run of entryRuns.values()) if (run.chatKey===key) run.abort.abort();
     return true;
   },
   // 排队提示附带当前阻塞原因,让用户知道在等什么
@@ -3234,6 +3333,7 @@ const CHANNEL_STREAM_EVENT_TYPES = new Set([
   "activity-update",
   "assistant-text",
   "assistant-reasoning",
+  "dsh-conversation",
   "file-change",
   "plan-update",
   "loop-state",
@@ -3321,6 +3421,9 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   // userMessage 构造需要等待附件信息，放在 try 内完成（语音转写也改变文本内容）。
   let userText = "";
   let userMessage = null;
+  let channelRuntime;
+  const channelAbort = new AbortController();
+  entryRuns.set(sessionId,{runId:channelRunId,abort:channelAbort,chatKey:myKey});
   const sendUserMessage = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (isNewChat) {
@@ -3328,7 +3431,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         id: sessionId,
         title: String(chatRecord.title || `${channelLabel}消息`).slice(0, 40),
         workspacePath,
-        channel,
+        channel,runtime:channelRuntime,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         messages: [userMessage],
@@ -3339,9 +3442,14 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   };
   // 完成/挂起时只追加助手消息(buildMessages 的 [user, assistant] 里 user 已经上过屏)。
   // 带 runId：渲染端若已有本 run 的流式占位气泡则原位替换，而不是追加第二条。
-  const sendAssistantMessages = (messages) => {
+  const sendAssistantMessages = async (messages) => {
+    const saved=await ctx.sessions.getAsync(sessionId) || {id:sessionId,channel,title:String(chatRecord.title || `${channelLabel}消息`).slice(0,40),workspacePath,
+      createdAt:new Date().toISOString(),messages:userMessage ? [userMessage] : []};
+    await ctx.sessions.replace({...saved,workspacePath,runtime:channelRuntime || saved.runtime || 'dyworker',
+      messages:mergeDshTranscript(saved.messages || [],messages),updatedAt:new Date().toISOString()});
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, runId: channelRunId, messages });
+    const transcript = messages.some(message=>message.dshTurnId) ? messages : messages.filter(message=>message.role!=='user');
+    mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, runId: channelRunId, messages:transcript });
   };
   // 渠道任务实时透传：把运行中的关键 agent 事件（活动/正文/计划/循环状态）转发到渲染端，
   // 让渠道会话像桌面任务一样边跑边显示，而不是等全部结束才一次性 append。
@@ -3389,7 +3497,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         };
         const switchMessage = { role: "assistant", content: switchText, createdAt: new Date().toISOString() };
         sendUserMessage();
-        sendAssistantMessages([switchMessage]);
+        await sendAssistantMessages([switchMessage]);
         await reply(switchText).catch(() => { });
         return;
       }
@@ -3401,7 +3509,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     const taskSettings = profile
       ? { ...settings, endpoint: profile.endpoint, model: profile.model, apiKey: profile.apiKey, reasoningEffort: profile.reasoningEffort || "" }
       : settings;
-    if (!taskSettings.endpoint || !taskSettings.model || !taskSettings.apiKey) {
+    if (!hasConfiguredModel(taskSettings)) {
       throw new Error("模型还没有配置,请先在电脑端完成设置");
     }
     if (!workspacePath) {
@@ -3423,19 +3531,28 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         }
       }
     }
+    const prior = await visibleConversationForSession(sessionId, "", "");
+    const storedSession = await ctx.sessions.getAsync(sessionId);
+    channelRuntime = settings.channels?.runtime || storedSession?.runtime || 'dyworker';
     // 入站媒体 → 桌面附件（缩略图/文件名）；模型可见内容由 providerMessageContent 展开
     const attachments = await buildChannelAttachments(media);
     userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${effectiveText}`;
     userMessage = {
+      id:`${channelRunId}:user`,runId:channelRunId,
       role: "user",
       content: userText,
       createdAt: new Date().toISOString(),
       ...(attachments.length ? { attachments } : {}),
     };
+    const now=new Date().toISOString();
+    await ctx.sessions.replace({...storedSession,id:sessionId,runtime:channelRuntime,channel,
+      title:storedSession?.title || String(chatRecord.title || `${channelLabel}消息`).slice(0,40),workspacePath,
+      createdAt:storedSession?.createdAt || now,updatedAt:now,messages:[...(storedSession?.messages || []),userMessage]});
     sendUserMessage();
     // 渠道任务与桌面会话保持统一的审批权限（使用全局设置/桌面当前选择的审批模式）
     const approvalMode = normalizeApprovalMode(settings?.approvalMode);
-    let baseRouter = createExtraToolRouter(taskSettings, workspacePath);
+    let routerExecution: any = { sessionId, runId: channelRunId };
+    let baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
     // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
     const routeExtraTool = async (name, args) => {
       if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
@@ -3445,8 +3562,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         if (result.ok) {
           // 后续工具与本次任务收尾都用新目录；浏览器/MCP 路由也切到新工作区
           workspacePath = result.path;
-          baseRouter.dispose();
-          baseRouter = createExtraToolRouter(taskSettings, workspacePath);
+          await baseRouter.dispose();
+          baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
           routeExtraTool.dispose = () => baseRouter.dispose();
         }
         return result;
@@ -3454,14 +3571,19 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       return baseRouter(name, args);
     };
     routeExtraTool.dispose = () => baseRouter.dispose();
-    const collector = createTranscriptCollector();
-    const prior = await visibleConversationForSession(sessionId, "", "");
+    routeExtraTool.setExecutionContext = (execution: any) => {
+      routerExecution = { ...execution, sessionId, runId: channelRunId };
+      baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
+    };
+    const collector = createTranscriptCollector({runId:channelRunId,userMessage});
     const workingContext = await workingContextForSession(sessionId);
     // 模型可见内容：文本 + 图片块（复用桌面端 providerMessageContent）
     const contentForModel = await providerMessageContent({ content: userText, attachments });
     // 用「正在输入」状态提示处理中，不再以文字消息形式打扰
     await sendTyping().catch(() => { });
+    forwardChannelEvent({type:"queue-start",count:0});
     const result = await ctx.agent.run({
+      runtime:channelRuntime,runId:channelRunId,signal:channelAbort.signal,
       settings: taskSettings,
       // getter 形式：switch_workspace 中途切换后，记忆落盘/唤醒登记跟随最新目录
       workspacePath: () => workspacePath,
@@ -3473,7 +3595,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       auditExtras: { channel },
       extraTools: channelMediaToolDefinitions(),
       onExtraTool: routeExtraTool,
-      isCancelled: () => channelTaskAborts.has(myKey),
+      isCancelled: () => channelTaskAborts.has(myKey) || channelAbort.signal.aborted,
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
       // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
       requestApproval: async (action) => {
@@ -3484,7 +3606,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           title: `${channelLabel}消息申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        });
+        }, {signal:channelAbort.signal});
         registerPending({ itemId: pending.itemId, kind: "approval" });
         // IM 是纯文本：影响要点以纯文本列表附带，与桌面端 Markdown 渲染同一份内容
         const impactText = action.impact ? `\n\n操作影响：\n${action.impact}` : "";
@@ -3498,17 +3620,18 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         }
         return Boolean(resolution?.ok);
       },
-      requestUserInput: async (request) => {
+      requestUserInput: async (request, questionSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "question",
           sessionId,
           question: request.question,
           options: request.options,
           title: `${channelLabel}消息提问`,
-        });
+          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+        }, { signal: questionSignal ? AbortSignal.any([questionSignal,channelAbort.signal]) : channelAbort.signal });
         registerPending({ itemId: pending.itemId, kind: "question", options: request.options || [] });
-        const optionsText = (request.options || []).map((option, index) => `${index + 1}. ${option}`).join("\n");
-        await reply(`❓ ${request.question}${optionsText ? `\n\n${optionsText}\n回复序号或直接回答。` : ""}\n10 分钟未回复将按已有信息继续。`.trim()).catch(() => { });
+        const optionsText = (request.options || []).map((option, index) => `${index + 1}. ${option}${request.optionDescriptions?.[index] ? `：${request.optionDescriptions[index]}` : ''}`).join("\n");
+        await reply(`❓ ${request.question}${request.detail ? `\n\n${request.detail}` : ''}${optionsText ? `\n\n${optionsText}\n${request.multiSelect ? '多项选择请打开桌面的任务提问卡；也可以在这里直接补充文字回答。' : '回复序号或直接回答。'}` : ""}\n10 分钟未回复将按已有信息继续。`.trim()).catch(() => { });
         const resolution = await ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续");
         clearPending();
         return resolution;
@@ -3522,12 +3645,13 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果。
       // 半截正文保留在留痕里（与桌面端"已按你的要求停止"同口径），用户不至于丢失已生成的内容。
       const partial = String(result.finalText || "").trim();
-      const cancelledContent = partial ? `${partial}\n\n（用户通过渠道消息停止了任务）` : "（用户通过渠道消息停止了任务）";
-      sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, cancelledContent).slice(1));
+      const stopNote = channelTaskAborts.has(myKey) ? "（用户通过渠道消息停止了任务）" : "已按你的要求停止。";
+      const cancelledContent = partial ? `${partial}\n\n${stopNote}` : stopNote;
+      await sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, cancelledContent));
       // 收尾事件：渲染端据此清掉运行标记（正常完成路径在 reply 之后同样会发）
       forwardChannelEvent({
         type: "agent-finished",
-        result: { status: "cancelled", finalText: result.finalText || "", durationMs: Date.now() - taskStartedAt },
+        result: { ...result, status: "cancelled", finalText: result.finalText || "", durationMs: Date.now() - taskStartedAt },
       });
       return;
     }
@@ -3543,11 +3667,11 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       });
       const note = `已主动挂起,将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动继续(原因:${result.wake.reason})。`;
       await reply(note).catch(() => { });
-      sendAssistantMessages(collector.buildMessages(userText, result, `${result.finalText || ""}\n\n${note}`.trim()).slice(1));
+      await sendAssistantMessages(collector.buildMessages(userText, result, `${result.finalText || ""}\n\n${note}`.trim()));
       // 挂起同样是本轮收尾：渲染端清掉运行标记,到点续跑由调度路径另行起会话
       forwardChannelEvent({
         type: "agent-finished",
-        result: { status: "sleeping", finalText: result.finalText || "", wake: result.wake, durationMs: Date.now() - taskStartedAt },
+        result: { ...result, status: "sleeping", finalText: result.finalText || "", wake: result.wake, durationMs: Date.now() - taskStartedAt },
       });
       return;
     }
@@ -3584,18 +3708,18 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       // 出站媒体同步进桌面会话：和入站一样走 Attachment 描述，让图片/文件在对话里可见
       const outboundAttachments = await buildChannelAttachments(pendingMedia);
       const built = collector.buildMessages(userText, result, `${finalText}${sentNote}`);
-      if (outboundAttachments.length) (built[1] as any).attachments = outboundAttachments;
-      sendAssistantMessages(built.slice(1));
+      if (outboundAttachments.length) (built.at(-1) as any).attachments = outboundAttachments;
+      await sendAssistantMessages(built);
     } else {
       await reply(finalText).catch(() => { });
-      sendAssistantMessages(collector.buildMessages(userText, result).slice(1));
+      await sendAssistantMessages(collector.buildMessages(userText, result));
     }
     // 通知渲染端本轮渠道任务已结束：渲染端据此给流式气泡打上最终状态、清掉运行标记。
     // 结果体带 plan/changes/durationMs，渲染端用它把已实时展示的 assistant 消息收口为最终形态。
     forwardChannelEvent({
       type: "agent-finished",
       result: {
-        status: result.status,
+        ...result, status: result.status,
         reason: result.reason,
         finalText: result.finalText,
         wake: result.wake,
@@ -3609,7 +3733,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     // IM 侧给简明原因(截掉原始 JSON/堆栈),完整信息留在桌面会话里
     const friendly = (message.replace(/\s*[{[].*$/s, "") || message).slice(0, 200);
     await reply(`出错了:${friendly}`).catch(() => { });
-    sendAssistantMessages([{ role: "assistant", content: `出错了:${message}`, createdAt: new Date().toISOString() }]);
+    await sendAssistantMessages([{ role: "assistant", content: `出错了:${message}`, createdAt: new Date().toISOString() }]);
     forwardChannelEvent({
       type: "agent-finished",
       result: { status: "error", reason: message, durationMs: Date.now() - taskStartedAt },
@@ -3617,6 +3741,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   } finally {
     clearPending();
     trackTaskEnd();
+    entryRuns.delete(sessionId);
+    drainSessionQueue(sessionId);
     runningChannelTaskCount = Math.max(0, runningChannelTaskCount - 1);
     channelTaskKeys.delete(myKey);
     channelTaskAborts.delete(myKey);
@@ -3654,6 +3780,17 @@ app.whenReady().then(async () => {
     });
     try {
       const url = new URL(request.url);
+      if (url.hostname === "bundle") {
+        const combo = url.search.startsWith("??") ? url.search.slice(2).split("&")[0] : null;
+        const resource = combo || url.pathname.slice(1);
+        const end = resource.lastIndexOf("/");
+        if (end < 1) return notFound("插件资源地址不合法");
+        const owner = decodeURIComponent(resource.slice(0, end));
+        const fileName = decodeURIComponent(resource.slice(end + 1));
+        const rev = /[?&]rev=([^&]+)/.exec(request.url)?.[1];
+        const file = await ctx.plugins.clientResourceFile(owner, fileName, rev && decodeURIComponent(rev));
+        return new Response(await fs.readFile(file, "utf8"), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } });
+      }
       const segments = url.pathname.split("/").filter(Boolean);
       if (!segments.length) return notFound("协议地址不合法");
       const index = Number(segments[segments.length - 1] ?? "0");

@@ -414,6 +414,31 @@ test("文本中间也能触发 @ 与 / 候选菜单，引用文件可点击打�
   assert.match(app, /skillNames=\{messageSkillNames\}/);
 });
 
+test("@ 可引用历史会话：候选列出、内联 token、发送附带摘要、气泡可点击跳转", () => {
+  // 会话 token 用 @「标题」定界：标题可含空格，不与 @文件 的 \S 正则互相截断
+  assert.match(app, /const SESSION_TOKEN_REGEX = \/@「\(\[\^「」@\]\+\)」\/g/);
+  // @ 候选里混排历史会话（排除当前会话/空会话/已归档），置顶与最近更新优先，上限 4 条
+  assert.match(app, /session\.messages\.length > 0 && !session\.archived && session\.id !== activeSession\?\.id/);
+  assert.match(app, /id: `session:\$\{session\.id\}`/);
+  // 选中后在 @ 位置原地插入 token，并记录 标题→id（同名会话不串）
+  assert.match(app, /const token = `@「\$\{session\.title\}」 `/);
+  assert.match(app, /sessionTokenIdsRef\.current\.set\(session\.title, session\.id\)/);
+  // 发送时解析 token：sessionRefs 随消息落盘，摘要块拼进 content 发给模型，正文保留 token 作 displayContent
+  assert.match(app, /const resolvedSessionRefs: Array<\{ id: string; title: string \}> = \[\]/);
+  assert.match(app, /formatSessionReference\(session\)/);
+  assert.match(app, /content: skillsBlock \+ modelContent \+ pastedText \+ annotationText \+ sessionText/);
+  assert.match(app, /sessionRefs\.length \? \{ sessionRefs \} : \{\}/);
+  assert.match(types, /sessionRefs\?: Array<\{ id: string; title: string \}>/);
+  // 摘要块带尾部对话与 read_session 指引，且受字符预算约束，不整段灌历史
+  assert.match(app, /SESSION_REF_TOTAL_CHARS/);
+  assert.match(app, /read_session 工具按 sessionId=/);
+  // 镜像层与气泡共用 renderInlineTokens 高亮会话 token；气泡点击切到被引会话
+  assert.match(app, /sessionTitles: activeSessionTitles/);
+  assert.match(app, /const openMessageSession = \(title: string\)/);
+  assert.match(app, /sessionTitles=\{messageSessionTitles\}/);
+  assert.match(styles, /\.session-token/);
+});
+
 test("消息支持复制、时间显示和编辑后重新发送", () => {
   assert.match(app, /formatMessageTime/);
   assert.match(app, /copyMessage/);
@@ -904,7 +929,8 @@ test("composer uses the Codex permission menu and keeps secondary controls compa
   // 语音输入开关已回到输入框（mic 按钮接通 toggleVoiceInput，见本地语音契约测试）
   // 对照 Codex：运行中发送键与停止键合并为一个圆形按钮（有内容时是发送，空输入时是停止）
   assert.match(app, /activeTaskRunning && !canSend/);
-  assert.match(app, /发送键变成停止键/);
+  assert.match(app, /aria-label="停止当前任务"/);
+  assert.match(app, /cancelTask\(activeSession\.id, runId\)/);
   // 任务完成播放提示音（WebAudio 合成，不依赖资源文件）
   assert.match(app, /playCompletionSound/);
   assert.match(app, /AudioContext/);
@@ -1350,7 +1376,8 @@ test("codex alignment surfaces are wired end to end", () => {
   // agent:send 入口已拆到 host/plugins/agent-ipc.mts；这里校验的是桌面任务执行体
   // executeAgentRun 内的顺序：显式记忆先于模型配置检查（配置缺失时也要先记下用户明说的记忆）
   const agentSend = main.slice(main.indexOf("async function executeAgentRun"));
-  assert.ok(agentSend.indexOf("const explicitMemories") < agentSend.indexOf("if (!settings.endpoint"));
+  assert.ok(agentSend.indexOf("const explicitMemories") < agentSend.indexOf("if (!hasConfiguredModel(settings))"));
+  assert.ok(agentSend.indexOf("assertDshModelSettings(") < agentSend.indexOf("const explicitMemories"));
   assert.match(agent, /externalPathsForTool/);
   assert.match(agent, /withModelTimeout/);
   // 工作区外路径:用户批准的目录授权在本次任务内覆盖子路径,审核助手放行仍单次
@@ -1587,7 +1614,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   // 7. 渠道会话:立即上屏(先发用户消息)、失败也留痕、列表渠道徽标、可固定渠道模型
   assert.match(main, /sendUserMessage\(\)/);
   assert.match(main, /sendAssistantMessages/);
-  assert.match(main, /channel,\s*\n\s*createdAt/);
+  assert.match(main, /channel,\s*runtime:channelRuntime,\s*createdAt/);
   assert.match(main, /出错了:\$\{message\}/);
   assert.match(main, /modelProfileId/);
   assert.match(settingsStorage, /modelProfileId/);
@@ -1598,7 +1625,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(main, /await sendTyping\(\)/);
   assert.doesNotMatch(main, /收到,正在处理…/);
   assert.match(main, /outboundAttachments = await buildChannelAttachments\(pendingMedia\)/);
-  assert.match(main, /\(built\[1\] as any\)\.attachments = outboundAttachments/);
+  assert.match(main, /\(built\.at\(-1\) as any\)\.attachments = outboundAttachments/);
   assert.match(styles, /\.session-channel-badge/);
 
   // 7b. 渠道会话实时进度：运行期间把关键 agent 事件流式转发渲染端，
@@ -1671,6 +1698,12 @@ test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   assert.match(app, /menuPageShown = toolPanelMenuOpen \|\| toolPanelTabs\.length === 0/);
   assert.match(app, /pristineMenuPage = toolPanelTabs\.length === 0/);
   assert.match(app, /\{!pristineMenuPage && toolPanelTabs\.map/);
+  // 只有插件登记的标签、且用户没点过任何一个时，也留在菜单页：
+  // 内置插件开机异步登记，否则 activeToolPanelTab 回退到 tabs[0]，
+  // 会变成「一打开右侧面板就是插件内容」
+  assert.match(app, /pluginTabOnlyPendingChoice = !activeToolPanelTabId/);
+  assert.match(app, /toolPanelTabs\.every\(\(tab\) => tab\.kind === "plugin"\)/);
+  assert.match(app, /menuPageShown = toolPanelMenuOpen \|\| toolPanelTabs\.length === 0 \|\| pluginTabOnlyPendingChoice/);
   // 关掉最后一个标签页回到菜单页，而不是再开一个空白浏览器
   assert.doesNotMatch(app, /kind: "browser", title: "新标签页", url: "" \}\);\s*\n\s*setActiveToolPanelTabId\(id\)/);
   // 快捷键标签按平台切换（macOS 符号 / Windows·Linux 文字）
@@ -1765,7 +1798,7 @@ test("会话存档保存链路做写放大治理：流式暂停常规保存 + �
   assert.match(app, /saveSessions\(buildSessionSavePayload\(sessions\)\)/);
   // 有任务运行（流式输出让 sessions 以分片频率变化）时暂停 180ms
   // 常规保存，只保留低频兜底快照；任务结束后常规保存立即恢复
-  assert.match(app, /if \(runningSessionIds\.size\) return;\s*\n\s*const timeout = window\.setTimeout\(\(\) => void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessions\)\), 180\)/);
+  assert.match(app, /if \(runningSessionIds\.size\) return;\s*\n\s*const timeout = window\.setTimeout\(\(\) => void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessions\)\)\.then/);
   assert.match(app, /SESSION_STREAMING_SAVE_INTERVAL_MS/);
   assert.match(app, /setInterval\(\(\) => \{\s*void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessionsRef\.current\)\)/);
 });

@@ -1,10 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, ExternalLink } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { SystemMessage } from "./types";
 
 // 运营消息中心面板（方案 §6）：与审批收件箱共用入口，以「任务待办 / 系统消息」切换。
 // 消息来自主进程本地存储（独立于任务收件箱，不使用 createInboxItem 的审批承诺语义）；
-// 打开消息才记已读，点击白名单链接才记已点击。正文按纯文本渲染，不执行任何 HTML。
+// 打开消息才记已读，点击 HTTPS 链接才记已点击。正文支持 Markdown，不执行 HTML。
+
+export function SystemMessageMarkdown({ body, onOpenLink }: {
+  body: string;
+  onOpenLink: (url: string) => void;
+}) {
+  return (
+    <div className="system-message-text markdown-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        components={{
+          a: ({ href, children }) => /^https:\/\//i.test(href || "")
+            ? <a href={href} onClick={(event) => { event.preventDefault(); onOpenLink(href!); }}>{children}</a>
+            : <span>{children}</span>,
+          // 运营消息不自动联网加载图片，保留图片说明。
+          img: ({ alt }) => <span>{alt || "[图片]"}</span>,
+          table: ({ children }) => <div className="system-message-table"><table>{children}</table></div>,
+        }}
+      >{body}</ReactMarkdown>
+    </div>
+  );
+}
 
 const CATEGORY_LABELS: Record<string, string> = {
   announcement: "公告",
@@ -74,11 +98,11 @@ export function SystemMessagesPanel({ focusMessageId, onFocusConsumed }: {
     ));
   };
 
-  const openLink = (message: SystemMessage) => {
+  const openLink = (message: SystemMessage, url = message.link) => {
     // 跳转仅允许 https 地址（主进程 openBrowserExternal 二次校验）
-    if (!/^https:\/\//i.test(message.link)) return;
+    if (!/^https:\/\//i.test(url)) return;
     void window.dyworker?.markSystemMessageClicked?.(message.message_id)
-      .then(() => window.dyworker?.openBrowserExternal?.(message.link));
+      .then(() => window.dyworker?.openBrowserExternal?.(url));
   };
 
   if (!messages) {
@@ -119,7 +143,7 @@ export function SystemMessagesPanel({ focusMessageId, onFocusConsumed }: {
                 {message.revoked
                   ? <p className="system-message-note">这条消息已被发布方撤回，内容仅供参考。</p>
                   : (
-                    <pre className="system-message-text">{message.body}</pre>
+                    <SystemMessageMarkdown body={message.body} onOpenLink={(url) => openLink(message, url)} />
                   )}
                 {message.link && !message.revoked && (
                   <button type="button" className="button-secondary system-message-link" onClick={() => openLink(message)}>

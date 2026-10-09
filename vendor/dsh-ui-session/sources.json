@@ -1,0 +1,14 @@
+{
+  "commit": "5badb15009ae1756c3afe0ae0cef1faafc290ccc",
+  "sources": {
+    "packages/client/ui-session/src/client/index.ts": "0cb0ce97ad1753c3c9747948c8d0894661fd498c083c6fdf44f8e87257e65ba0",
+    "packages/client/ui-session/src/client/session-provider.tsx": "28c2ca1782551c8854c3544a7cb07f40741d2e6c72e2a383aedcc5475028704e",
+    "packages/client/ui-renderer/src/client/registry.ts": "6b8b6b969d8bcf0314ea20438a223f3a90e1bd516571faecae5c3c01008ecf21",
+    "packages/client/ui-renderer/src/client/errors.ts": "594e7de016772aa6ffa3b00a83387b891d660cfb6cbbe719e82ec28871b8edac",
+    "packages/client/ui-slots/src/index.ts": "27a453937cdcc28923c37ad90cd01489e458e205dc03032629183087b5b585d0",
+    "packages/client/ui-slots/src/renderer.ts": "ee834aafc19367922c139d41f677233fbdfcc042b4deff9f616aa43220ee09ee",
+    "packages/client/ui-slots/src/store.ts": "4233ae32911848aa771910286e5f41b4c683e8c5b16da190935082ac4249cca0",
+    "packages/util/values/src/index.ts": "b550a5db58f714197e49c3a5bfb4c241f33b859c95f772957a50d89c3b917fd8",
+    "packages/util/values/src/partial-json.ts": "d06228f26e0c670dc18615082b5be283f72a1562220c977c3c5d54edc0b5971e"
+  }
+}

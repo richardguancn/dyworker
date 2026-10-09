@@ -1,3 +1,4 @@
+import { FilePreviewPanel } from "./FilePreviewPanel";
 import {
   AlarmClock,
   AlertTriangle,
@@ -5,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpRight,
   AtSign,
+  Slash,
   BarChart3,
   Bell,
   Bot,
@@ -83,26 +85,35 @@ import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, Key
 import { createPortal } from "react-dom";
 import { PluginsPage } from "./PluginsPage";
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
-import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
-import { loadBuiltinClientHalves } from "./pluginRuntime/builtinPlugins.ts";
+import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
+import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
+import { detectTrigger } from './pluginRuntime/vendor/dsh-input-controller/index.js';
+import { DshChildHistory } from './DshChildHistory';
+import { reconcileDshTurns, patchDshAssistant, mergeCreatedDshTask } from './dshTurns';
+import { DshComposer } from './DshComposer';
+import type { ComposerHandle } from './pluginRuntime/dshDraftEditor.ts';
+import { loadEnabledClientHalves } from "./pluginRuntime/builtinPlugins.ts";
 import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import { TokenActivity } from "./TokenActivityPanel";
 import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
 import { TraceConsole } from "./TraceConsole";
-import { TraceView } from "./TraceView";
 import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
-import { forgetSessionStream, forgetStreamMessage, isChannelRunEnvelope, isScheduleRunEnvelope, mergePrependedSession, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
+import { forgetSessionStream, forgetStreamMessage, isChannelRunEnvelope, isScheduleRunEnvelope, isWakeRunEnvelope, mergePrependedSession, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
+import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-runtime/model-settings.mts";
+import { recordTaskFailure } from './taskFailure.ts';
+import { assistantImageAttachments } from './assistantImages.ts';
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
+import { formatMcpArgs, splitMcpArgs } from "./mcpArgs";
 
 const now = new Date().toISOString();
 // 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
@@ -420,7 +431,7 @@ function makeSession(workspacePath = ""): SessionRecord {
 function keepSingleUnstartedSession(items: SessionRecord[]) {
   let kept = false;
   return items.filter((session) => {
-    if (session.archived || session.messages.length > 0) return true;
+    if (session.runtime === 'dsh' || session.archived || session.messages.length > 0) return true;
     if (kept) return false;
     kept = true;
     return true;
@@ -441,6 +452,35 @@ function pathDirname(filePath: string) {
 function shortTitle(content: string) {
   const title = content.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim();
   return title.length > 28 ? `${title.slice(0, 28)}…` : title || "新任务";
+}
+
+// @「标题」会话引用发给模型时的上下文块：标题/id/更新时间 + 最近几条对话摘要。
+// 只内联尾部摘要（单条 400 字、总预算 1600 字），更早的内容让模型按 id 用
+// read_session 工具自取，避免整段历史灌进上下文（对齐 session-tools.mts 的体积护栏）
+const SESSION_REF_MESSAGE_CHARS = 400;
+const SESSION_REF_TOTAL_CHARS = 1600;
+function formatSessionReference(session: SessionRecord): string {
+  const messages = session.messages
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.content.trim())
+    .map((message) => ({ role: message.role, text: message.content.replace(/\s+/g, " ").trim() }));
+  // 从最新往前取，超预算即止，最后倒回时间顺序
+  const picked: typeof messages = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const text = messages[i].text.length > SESSION_REF_MESSAGE_CHARS
+      ? `${messages[i].text.slice(0, SESSION_REF_MESSAGE_CHARS)}…`
+      : messages[i].text;
+    if (picked.length && used + text.length > SESSION_REF_TOTAL_CHARS) break;
+    used += text.length;
+    picked.push({ ...messages[i], text });
+  }
+  picked.reverse();
+  const lines = picked.map((item) => `[${item.role === "user" ? "用户" : "助手"}] ${item.text}`);
+  return [
+    `【引用会话「${session.title}」｜id=${session.id}｜更新于 ${formatMessageTime(session.updatedAt)}｜共 ${session.messages.length} 条消息】`,
+    ...lines,
+    `以上是尾部摘要；需要该会话更早的完整上下文时，用 read_session 工具按 sessionId=${session.id} 读取。`,
+  ].join("\n");
 }
 
 // 任务完成提示音：两声短促的上行音（E5 → B5），用 WebAudio 合成，不依赖音频资源文件。
@@ -598,11 +638,19 @@ function ClampedUserText({
   tokenNames,
   skillNames,
   onFileToken,
+  sessionTitles,
+  onSessionToken,
+  pluginReferences,
+  onPluginReference,
 }: {
   text: string;
   tokenNames?: Set<string>;
   skillNames?: Set<string>;
   onFileToken?: (name: string) => void;
+  sessionTitles?: Set<string>;
+  onSessionToken?: (title: string) => void;
+  pluginReferences?: ChatMessage['pluginReferences'];
+  onPluginReference?: (reference: NonNullable<ChatMessage['pluginReferences']>[number]) => void;
 }) {
   const active = text.length > LONG_TEXT_GATE;
   const { ref, overflowing, expanded, setExpanded } = useClampToggle<HTMLSpanElement>(active);
@@ -612,7 +660,17 @@ function ClampedUserText({
         ref={ref}
         className={`user-message-text${active && !expanded ? " clamped" : ""}${expanded ? " expanded" : ""}`}
       >
-        {renderInlineTokens(text, tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: "bubble", onFileToken })}
+        {pluginReferences?.length ? (() => {
+          const pieces: ReactNode[] = []; let cursor = 0;
+          for (const [index, ref] of pluginReferences.entries()) {
+            if (ref.offset < cursor || ref.offset + ref.length > text.length || text.slice(ref.offset, ref.offset + ref.length) !== ref.clipboardText) return text;
+            pieces.push(renderInlineTokens(text.slice(cursor, ref.offset), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: `bubble-before-ref:${index}`, onFileToken, sessionTitles, onSessionToken }));
+            pieces.push(<button key={`plugin-ref:${index}`} className="message-plugin-reference" type="button" title={ref.label}
+              onClick={() => onPluginReference?.(ref)}>{ref.label}</button>);
+            cursor = ref.offset + ref.length;
+          }
+          pieces.push(renderInlineTokens(text.slice(cursor), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: 'bubble-after-refs', onFileToken, sessionTitles, onSessionToken })); return pieces;
+        })() : renderInlineTokens(text, tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: "bubble", onFileToken, sessionTitles, onSessionToken })}
       </span>
       {overflowing && (
         <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
@@ -832,12 +890,14 @@ interface ComposerPasteBlock {
 }
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
-// 把文本中的 @文件名 与 /技能名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
-// 引用文件/技能按输入顺序随正文展示，而不是单独堆成一排 chip
+// 把文本中的 @文件名、@「会话标题」 与 /技能名 token 渲染成内联高亮（输入框镜像与用户气泡共用）：
+// 引用文件/技能/会话按输入顺序随正文展示，而不是单独堆成一排 chip
 const FILE_TOKEN_REGEX = /@([^\s@]+)/g;
 // /技能名 遇空格、@ 或下一个 / 即止；@文件名 允许携带路径（如 @src/pages/list）
 const SKILL_TOKEN_REGEX = /\/([^\s/@]+)/g;
 const INLINE_TOKEN_REGEX = /(@[^\s@]+|\/[^\s/@]+)/g;
+// @「标题」会话引用 token：会话标题可含空格，用全角括号定界才能与后续正文无歧义地切分
+const SESSION_TOKEN_REGEX = /@「([^「」@]+)」/g;
 
 // 正文里出现的 /token 名字集合：判断技能引用是否已内联在正文中
 function skillTokensInText(text: string): Set<string> {
@@ -852,44 +912,80 @@ function renderInlineTokens(
   text: string,
   fileNames: Set<string>,
   skillNames: Set<string>,
-  options?: { keyPrefix?: string; onFileToken?: (name: string) => void },
+  options?: {
+    keyPrefix?: string;
+    onFileToken?: (name: string) => void;
+    sessionTitles?: Set<string>;
+    onSessionToken?: (title: string) => void;
+  },
 ): ReactNode {
   if (!text) return null;
-  if (!fileNames.size && !skillNames.size) return text;
-  const { keyPrefix = "", onFileToken } = options || {};
+  const { keyPrefix = "", onFileToken, sessionTitles, onSessionToken } = options || {};
+  if (!fileNames.size && !skillNames.size && !sessionTitles?.size) return text;
   const parts: ReactNode[] = [];
-  let last = 0;
   let index = 0;
-  INLINE_TOKEN_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = INLINE_TOKEN_REGEX.exec(text))) {
-    const token = match[0];
-    const name = token.slice(1);
-    const isFile = token.startsWith("@") && fileNames.has(name);
-    const isSkill = token.startsWith("/") && skillNames.has(name);
-    if (!isFile && !isSkill) continue;
-    if (match.index > last) parts.push(text.slice(last, match.index));
-    if (isFile) {
+
+  // 普通片段：沿用 @文件 / /技能 的正则扫描，只在 [from,to) 窗口内取 token
+  const emitPlain = (from: number, to: number) => {
+    INLINE_TOKEN_REGEX.lastIndex = from;
+    let match: RegExpExecArray | null;
+    while ((match = INLINE_TOKEN_REGEX.exec(text)) && match.index < to) {
+      const token = match[0];
+      const name = token.slice(1);
+      const isFile = token.startsWith("@") && fileNames.has(name);
+      const isSkill = token.startsWith("/") && skillNames.has(name);
+      if (!isFile && !isSkill) continue;
+      if (match.index > from) parts.push(text.slice(from, match.index));
+      if (isFile) {
+        parts.push(
+          <span
+            className={`file-token${onFileToken ? " clickable" : ""}`}
+            key={`${keyPrefix}-${index++}`}
+            title={onFileToken ? `打开 ${name}` : undefined}
+            onClick={onFileToken ? () => onFileToken(name) : undefined}
+          >@{name}</span>,
+        );
+      } else {
+        parts.push(<span className="skill-token" key={`${keyPrefix}-${index++}`}>/{name}</span>);
+      }
+      from = match.index + token.length;
+    }
+    if (from < to) parts.push(text.slice(from, to));
+  };
+
+  // 会话 token 用括号定界单独扫；命中区间交给 emitPlain 之外的分支渲染，
+  // 避免 @「标题」 被 @文件 正则截成半截（标题里的空格同样不受影响）
+  if (sessionTitles?.size) {
+    let last = 0;
+    SESSION_TOKEN_REGEX.lastIndex = 0;
+    let sessionMatch: RegExpExecArray | null;
+    while ((sessionMatch = SESSION_TOKEN_REGEX.exec(text))) {
+      const title = sessionMatch[1];
+      if (!sessionTitles.has(title)) continue;
+      emitPlain(last, sessionMatch.index);
       parts.push(
         <span
-          className={`file-token${onFileToken ? " clickable" : ""}`}
+          className={`session-token${onSessionToken ? " clickable" : ""}`}
           key={`${keyPrefix}-${index++}`}
-          title={onFileToken ? `打开 ${name}` : undefined}
-          onClick={onFileToken ? () => onFileToken(name) : undefined}
-        >@{name}</span>,
+          title={onSessionToken ? `打开会话 ${title}` : undefined}
+          onClick={onSessionToken ? () => onSessionToken(title) : undefined}
+        >@「{title}」</span>,
       );
-    } else {
-      parts.push(<span className="skill-token" key={`${keyPrefix}-${index++}`}>/{name}</span>);
+      last = sessionMatch.index + sessionMatch[0].length;
     }
-    last = match.index + token.length;
+    emitPlain(last, text.length);
+  } else {
+    emitPlain(0, text.length);
   }
-  if (last < text.length) parts.push(text.slice(last));
   return parts;
 }
 
 type ToolPanelTab = {
   id: string;
-  kind: "browser" | "files" | "review" | "chat" | "tasks" | "plugin";
+  kind: "browser" | "files" | "review" | "chat" | "tasks" | "plugin" | "preview";
+  filePath?: string;
+  previewWorkspacePath?: string;
+  previewRevision?: number;
   /** kind === "plugin"：插件登记的右侧面板标签（sidebar.right.pane.tab 插槽） */
   pluginId?: string;
   pluginKey?: string;
@@ -2052,7 +2148,11 @@ function FilesSplitPanel({
   onRefresh,
   onError,
   onInsertFile,
+  onPreviewFile,
+  onChoosePreviewFile,
 }: {
+  onPreviewFile: (path: string) => void;
+  onChoosePreviewFile: () => void;
   workspacePath: string;
   workspaceEntries: WorkspaceEntry[];
   workspaceOpen: boolean;
@@ -2229,10 +2329,7 @@ function FilesSplitPanel({
     setSaveError("");
     setSaveState("idle");
     if (!previewKind) {
-      // 二进制/未知类型交给系统默认应用
-      if (!window.dyworker?.openPath) return;
-      const result = await window.dyworker.openPath(entry.path);
-      if (!result.ok) onError(result.error || "无法打开文件");
+      onPreviewFile(entry.path);
       return;
     }
     setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: true });
@@ -2247,7 +2344,7 @@ function FilesSplitPanel({
         if ("binary" in result && result.binary) {
           // 后缀像文本但内容是二进制：交给系统打开
           setSelection(null);
-          void window.dyworker?.openPath(entry.path);
+          onPreviewFile(entry.path);
           return;
         }
         setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: result.error || "文件读取失败" });
@@ -2279,6 +2376,7 @@ function FilesSplitPanel({
       <div className="file-split-preview">
         <div className="file-split-preview-inner">
           <div className="code-panel-header">
+            <button className="code-open-external" onClick={onChoosePreviewFile}>选择文件</button>
             {selection ? (
               <div className="code-breadcrumb" title={selection.path}>
                 {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
@@ -3728,21 +3826,37 @@ function ApprovalCard({ action, onResolve }: { action: ApprovalAction; onResolve
 
 function QuestionCard({ request, onResolve }: { request: QuestionRequest; onResolve: (answer: string) => void }) {
   const [text, setText] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  useEffect(() => { setText(''); setSelected([]); }, [request.id]);
   const submit = (answer: string) => {
     const trimmed = answer.trim();
-    if (trimmed) onResolve(trimmed);
+    if (request.answerFormat === 'dsh') {
+      if (!trimmed && !selected.length) return;
+      onResolve(JSON.stringify({ format: 'dsh-question-answer-v1', selected: request.multiSelect ? selected : [],
+        ...(trimmed ? { custom: trimmed } : {}) }));
+    } else if (trimmed) onResolve(trimmed);
   };
   return (
     <div className="approval-card question-card">
       <div className="approval-card-header">
         <MessageCircleQuestion size={15} />
-        <strong>助手向你提问</strong>
+        <strong>{request.header || '助手向你提问'}</strong>
       </div>
       <p className="question-text">{request.question}</p>
+      {request.detail && <div className="question-text"><MarkdownSnippet content={request.detail} /></div>}
+      {request.multiSelect && <p className="question-text">可以选择多项，再点击“提交回答”。</p>}
       {request.options.length > 0 && (
         <div className="question-options">
-          {request.options.map((option) => (
-            <button key={option} className="button-secondary" onClick={() => submit(option)}>{option}</button>
+          {request.options.map((option, index) => (
+            <div key={option}>
+              <button className="button-secondary" aria-pressed={request.multiSelect ? selected.includes(option) : undefined}
+                onClick={() => {
+                  if (request.multiSelect) setSelected(current => current.includes(option) ? current.filter(item => item !== option) : [...current, option]);
+                  else if (request.answerFormat === 'dsh') onResolve(JSON.stringify({ format: 'dsh-question-answer-v1', selected: [option] }));
+                  else submit(option);
+                }}>{option}</button>
+              {request.optionDescriptions?.[index] && <small className="question-option-description">{request.optionDescriptions[index]}</small>}
+            </div>
           ))}
         </div>
       )}
@@ -3759,7 +3873,7 @@ function QuestionCard({ request, onResolve }: { request: QuestionRequest; onReso
           placeholder="输入你的回答…"
           autoFocus={!request.options.length}
         />
-        <button type="submit" className="button-primary" disabled={!text.trim()}>提交回答</button>
+        <button type="submit" className="button-primary" disabled={!text.trim() && !selected.length}>提交回答</button>
       </form>
     </div>
   );
@@ -4008,14 +4122,17 @@ function InboxDialog({ items, onClose, onResolve, onDismiss, initialTab = "inbox
                   <MarkdownSnippet content={item.impact} />
                 </div>
               )}
-              {item.kind === "question" && item.options && item.options.length > 0 && (
+              {item.kind === 'question' && item.questionPresentation && <QuestionCard
+                request={{ ...item.questionPresentation, id: item.id, question: item.question || '', options: item.options || [] }}
+                onResolve={answer => void resolve(item, { answer })} />}
+              {item.kind === "question" && !item.questionPresentation && item.options && item.options.length > 0 && (
                 <div className="question-options">
                   {item.options.map((option) => (
                     <button key={option} className="button-secondary" onClick={() => void resolve(item, { answer: option })}>{option}</button>
                   ))}
                 </div>
               )}
-              {item.kind === "question" && (
+              {item.kind === "question" && !item.questionPresentation && (
                 <div className="question-input-row">
                   <input
                     value={answers[item.id] || ""}
@@ -4474,6 +4591,7 @@ function defaultNextRun() {
 }
 
 interface ScheduleDraft {
+  runtime?: "dyworker" | "dsh";
   name: string;
   prompt: string;
   recurrence: ScheduleRecord["recurrence"];
@@ -4483,6 +4601,7 @@ interface ScheduleDraft {
 }
 
 const scheduleHistoryStatusLabels: Record<string, string> = {
+  cancelled: "已停止",
   success: "完成",
   failed: "失败",
   sleeping: "挂起",
@@ -4514,7 +4633,7 @@ function PlansPanel({
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<ScheduleDraft>({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "" });
+  const [draft, setDraft] = useState<ScheduleDraft>({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "", runtime:"dyworker" });
 
   useEffect(() => {
     if (!seed) return;
@@ -4528,7 +4647,7 @@ function PlansPanel({
     setSaving(false);
     if (ok) {
       setFormOpen(false);
-      setDraft({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "" });
+      setDraft({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "", runtime:"dyworker" });
     }
   };
 
@@ -4542,6 +4661,11 @@ function PlansPanel({
         <div className="plan-form">
           <input value={draft.name} placeholder="计划名称，例如：每周五周报提醒" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           <textarea value={draft.prompt} rows={3} placeholder="到时间要助手做什么，例如：汇总工作区本周的文档改动，整理成周报草稿" onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} />
+          <label>任务运行方式
+            <select aria-label="计划任务运行方式" value={draft.runtime || 'dyworker'} onChange={event=>setDraft({...draft,runtime:event.target.value==='dsh' ? 'dsh' : 'dyworker'})}>
+              <option value="dyworker">办公助手</option><option value="dsh">DSH 插件会话</option>
+            </select>
+          </label>
           <div className="plan-form-row">
             <select value={draft.recurrence} onChange={(event) => setDraft({ ...draft, recurrence: event.target.value as ScheduleRecord["recurrence"] })}>
               <option value="once">一次</option>
@@ -4588,10 +4712,10 @@ function PlansPanel({
                 <Trash2 size={13} />
               </button>
             </div>
-            <p>{recurrenceLabels[plan.recurrence] || plan.recurrence} · 下次 {formatScheduleTime(plan.nextRun)}</p>
+            <p>{plan.runtime === "dsh" ? "DSH 插件会话 · " : ""}{recurrenceLabels[plan.recurrence] || plan.recurrence} · 下次 {formatScheduleTime(plan.nextRun)}</p>
             {plan.lastStatus && (
               <p className={`plan-status ${plan.lastStatus}`}>
-                {plan.lastStatus === "running" ? "正在执行…" : plan.lastStatus === "sleeping" ? plan.lastSummary || "已挂起等待唤醒" : plan.lastStatus === "success" ? `上次完成：${plan.lastSummary || "正常"}` : `上次失败：${plan.lastSummary || "未知原因"}`}
+                {plan.lastStatus === "running" ? "正在执行…" : plan.lastStatus === "sleeping" ? plan.lastSummary || "已挂起等待唤醒" : plan.lastStatus === "cancelled" ? "上次已停止" : plan.lastStatus === "success" ? `上次完成：${plan.lastSummary || "正常"}` : `上次失败：${plan.lastSummary || "未知原因"}`}
               </p>
             )}
             {plan.history?.length ? (
@@ -4906,29 +5030,6 @@ function UsageStatsPanel({ records }: { records: UsageRecord[] | null }) {
           </>
         )}
     </>
-  );
-}
-
-function UsageStatsDialog({ records, onClose, onClear }: { records: UsageRecord[] | null; onClose: () => void; onClear: () => void }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="settings-dialog usage-dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="dialog-header">
-          <div>
-            <span className="dialog-kicker">Token 用量</span>
-            <h2>用量统计</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭用量统计">
-            <X size={18} />
-          </button>
-        </div>
-        <UsageStatsPanel records={records} />
-        <div className="dialog-actions">
-          <button type="button" className="button-secondary" onClick={onClear}>清空记录</button>
-          <button type="button" className="button-primary" onClick={onClose}>完成</button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -5359,7 +5460,12 @@ function TelemetrySettingsSection({ draft, setDraft }: {
   const [deleteResult, setDeleteResult] = useState("");
 
   useEffect(() => {
-    void window.dyworker?.getTelemetryStatus?.().then((next) => setStatus(next || null));
+    let disposed = false;
+    const refresh = () => void window.dyworker?.getTelemetryStatus?.()
+      .then((next) => { if (!disposed) setStatus(next || null); }).catch(() => {});
+    refresh();
+    const timer = window.setInterval(refresh, 5_000);
+    return () => { disposed = true; window.clearInterval(timer); };
   }, []);
 
   const patch = (partial: Partial<TelemetrySettings>) => {
@@ -5457,6 +5563,7 @@ function TelemetrySettingsSection({ draft, setDraft }: {
             {status.lastSyncAt ? ` · 最近同步 ${new Date(status.lastSyncAt).toLocaleString("zh-CN")}` : ""}
             {status.clockOffsetMs ? ` · 本机时钟偏差约 ${Math.round(status.clockOffsetMs / 1000)} 秒（已标记待审）` : ""}
             {status.lastError ? ` · 最近错误：${status.lastError}` : ""}
+            {status.nextRegistrationRetryAt ? ` · 将于 ${new Date(status.nextRegistrationRetryAt).toLocaleString("zh-CN")} 自动重试，待上传数据会保留` : ""}
           </p>
         </>
       )}
@@ -5523,6 +5630,13 @@ function ChannelsPanel({ value, onSave }: {
 
   return (
     <>
+      <div className="dialog-section-title">渠道任务运行方式</div>
+      <label>任务运行方式
+        <select aria-label="渠道任务运行方式" value={channels.runtime || ''} disabled={saving}
+          onChange={event=>void saveChannels({...channels,runtime:event.target.value==='dsh' ? 'dsh' : event.target.value==='dyworker' ? 'dyworker' : undefined},'渠道任务运行方式已更新')}>
+          <option value="">沿用会话设置</option><option value="dyworker">办公助手</option><option value="dsh">DSH 插件会话</option>
+        </select>
+      </label>
       <div className="dialog-section-title">渠道任务模型</div>
       <div className="mcp-server-row">
         <span className="mcp-server-name">
@@ -5686,6 +5800,8 @@ function SettingsDialog({
   const [draft, setDraft] = useState(value);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
   const [mcpDraft, setMcpDraft] = useState({ name: "", command: "", args: "" });
+  // 正在编辑的 MCP 服务器 id（空串 = 表单处于"新增"状态）
+  const [mcpEditingId, setMcpEditingId] = useState("");
   const [saving, setSaving] = useState(false);
   const [navQuery, setNavQuery] = useState("");
   const [profileId, setProfileId] = useState(() => (
@@ -5694,7 +5810,7 @@ function SettingsDialog({
   const profiles = draft.profiles || [];
   const activeLabel = settingsNav.flatMap((group) => group.items).find((item) => item.id === tab)?.label || "设置";
   const preset = providerPresets.find((item) => item.id === providerId) || providerPresets[providerPresets.length - 1];
-  const modelComplete = Boolean(draft.endpoint.trim() && draft.model.trim() && draft.apiKey.trim());
+  const modelComplete = hasConfiguredModel(draft);
   // 内置本地审核模型：状态与下载进度（模型 tab 打开时才拉取）
   const [reviewerLocal, setReviewerLocal] = useState<ReviewerLocalStatus | null>(null);
   const [reviewerDownloading, setReviewerDownloading] = useState(false);
@@ -5717,11 +5833,17 @@ function SettingsDialog({
   // Esc 关闭设置（与现有弹窗一致；菜单的 Esc 监听只在菜单打开时挂载，互不干扰）
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // 正在编辑 MCP 服务器时，Esc 先退出编辑，不直接关掉整个设置弹窗
+      if (mcpEditingId) {
+        resetMcpDraft();
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [onClose, mcpEditingId]);
 
   const runCredentialProbe = async () => {
     if (!draft.endpoint.trim() || !draft.model.trim()) {
@@ -6068,6 +6190,58 @@ function SettingsDialog({
     if (saved) onClose();
   };
 
+  // MCP 服务器是列表型配置：添加/编辑/启用/删除之后再要求点一次「保存设置」很容易漏
+  // （用户反馈：点完「添加」以为已经生效，其实只进了草稿，关掉弹窗就白填了）。
+  // 这里改成动作即保存：四个操作都立刻落盘。保存基座用上次已保存的 value、只替换
+  // mcpServers，避免把其它页签里还没点保存的草稿一起写进去；失败则回滚到已保存状态，
+  // 由错误提示说明原因，不让界面停在一个"看着改好了、其实没存"的状态。
+  const persistMcpServers = async (nextServers: ProviderSettings["mcpServers"], message: string) => {
+    setDraft((current) => ({ ...current, mcpServers: nextServers }));
+    const saved = await onSave({ ...value, mcpServers: nextServers }, message);
+    if (!saved) setDraft((current) => ({ ...current, mcpServers: value.mcpServers }));
+    return saved;
+  };
+
+  const resetMcpDraft = () => {
+    setMcpEditingId("");
+    setMcpDraft({ name: "", command: "", args: "" });
+  };
+
+  // 编辑已有服务器：把配置回填进同一张表单（参数按引号还原），保存时沿用原 id 与启用状态
+  const startEditMcpServer = (server: ProviderSettings["mcpServers"][number]) => {
+    setMcpEditingId(server.id);
+    setMcpDraft({ name: server.name, command: server.command, args: formatMcpArgs(server.args) });
+  };
+
+  // 新增与「保存修改」共用一段逻辑：编辑时按 id 原地替换，不会多出一行
+  const saveMcpDraft = () => {
+    const command = mcpDraft.command.trim();
+    if (!command) return;
+    const existing = mcpEditingId ? draft.mcpServers.find((item) => item.id === mcpEditingId) : undefined;
+    const entry = {
+      id: existing?.id || crypto.randomUUID(),
+      name: mcpDraft.name.trim() || command,
+      command,
+      args: splitMcpArgs(mcpDraft.args),
+      enabled: existing ? existing.enabled : true,
+    };
+    const nextServers = existing
+      ? draft.mcpServers.map((item) => (item.id === existing.id ? entry : item))
+      : [...draft.mcpServers, entry];
+    // 保存成功才退出编辑/清空表单：失败时保留输入，修好之后可以直接重试
+    void persistMcpServers(nextServers, existing ? `已更新「${entry.name}」` : `已添加并生效：${entry.name}`)
+      .then((saved) => { if (saved) resetMcpDraft(); });
+  };
+
+  // 这三个输入框在设置表单内部，直接按回车会触发整个表单提交（= 关掉弹窗），所以回车一律
+  // 走「保存」；但中文输入法用回车确认候选词，那种回车必须放过，否则名称会被截断着存进去。
+  const mcpDraftKeyDown = (event: { key: string; nativeEvent?: { isComposing?: boolean }; preventDefault: () => void }) => {
+    if (event.key !== "Enter") return;
+    if (event.nativeEvent?.isComposing) return;
+    event.preventDefault();
+    saveMcpDraft();
+  };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="settings-dialog settings-v2" onMouseDown={(event) => event.stopPropagation()}>
@@ -6174,6 +6348,7 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
         </label>
+        {isLocalModelEndpoint(draft.endpoint) ? <p className="dialog-note">本机服务如果不要求密钥，可以留空；若服务要求验证，请填写对应密钥。</p> : null}
         <div className="credential-probe">
           <button type="button" className="button-secondary" onClick={() => void runCredentialProbe()} disabled={probing || saving}>
             {probing ? <LoaderCircle className="spin" size={14} /> : null}
@@ -6474,16 +6649,21 @@ function SettingsDialog({
         {tab === "mcp" && (<>
         <div className="dialog-section-title">MCP 工具服务器（可选）</div>
         <p className="dialog-note">本机应用操作已作为基础能力接入：macOS 与 Linux 均使用应用内置的桌面操控服务，无需额外安装；首次使用请允许 DYWorker 的辅助功能权限（macOS 另需屏幕录制权限用于查看界面截图）。</p>
+        <p className="dialog-note">下面的添加、修改、启用、删除都会立即保存并生效，不用再点底部按钮；点某一行右侧的铅笔可以改它的名称/命令/参数，下一个任务就能用。</p>
         {draft.mcpServers.map((server) => (
           <div className="mcp-server-row" key={server.id}>
             <label className="skill-switch" title={server.enabled ? "点击停用" : "点击启用"}>
               <input
                 type="checkbox"
                 checked={server.enabled}
-                onChange={(event) => setDraft({
-                  ...draft,
-                  mcpServers: draft.mcpServers.map((item) => item.id === server.id ? { ...item, enabled: event.target.checked } : item),
-                })}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  const label = server.name || server.command;
+                  void persistMcpServers(
+                    draft.mcpServers.map((item) => item.id === server.id ? { ...item, enabled } : item),
+                    enabled ? `已启用「${label}」` : `已停用「${label}」`,
+                  );
+                }}
               />
             </label>
             <span className="mcp-server-name">
@@ -6493,49 +6673,61 @@ function SettingsDialog({
             <button
               type="button"
               className="icon-button subtle tiny"
+              aria-label="编辑这个 MCP 服务器"
+              title="编辑"
+              onClick={() => startEditMcpServer(server)}
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              className="icon-button subtle tiny"
               aria-label="删除这个 MCP 服务器"
-              onClick={() => setDraft({ ...draft, mcpServers: draft.mcpServers.filter((item) => item.id !== server.id) })}
+              onClick={() => {
+                const label = server.name || server.command;
+                void persistMcpServers(
+                  draft.mcpServers.filter((item) => item.id !== server.id),
+                  `已删除「${label}」`,
+                ).then((saved) => { if (saved && mcpEditingId === server.id) resetMcpDraft(); });
+              }}
             >
               <Trash2 size={13} />
             </button>
           </div>
         ))}
-        <div className="mcp-add-form">
+        <div className={`mcp-add-form${mcpEditingId ? " editing" : ""}`}>
+          {mcpEditingId && (
+            <p className="mcp-edit-hint">
+              正在编辑「{(draft.mcpServers.find((item) => item.id === mcpEditingId) || {}).name || "该服务器"}」：改完点「保存修改」，或
+              <button type="button" className="mcp-edit-cancel" onClick={resetMcpDraft}>取消编辑</button>
+            </p>
+          )}
           <input
             value={mcpDraft.name}
             placeholder="名称，例如：内部知识库"
             onChange={(event) => setMcpDraft({ ...mcpDraft, name: event.target.value })}
+            onKeyDown={mcpDraftKeyDown}
           />
           <input
             value={mcpDraft.command}
             placeholder="命令，例如：npx 或 /usr/local/bin/my-mcp"
             onChange={(event) => setMcpDraft({ ...mcpDraft, command: event.target.value })}
+            onKeyDown={mcpDraftKeyDown}
           />
           <input
             value={mcpDraft.args}
-            placeholder="参数，例如：-y @scope/mcp-server --dir /data"
+            placeholder='参数，例如：-y @scope/mcp-server --dir /data；含空格的整段用引号括起来'
             onChange={(event) => setMcpDraft({ ...mcpDraft, args: event.target.value })}
+            onKeyDown={mcpDraftKeyDown}
           />
           <button
             type="button"
             className="button-secondary"
             disabled={!mcpDraft.command.trim()}
-            onClick={() => {
-              setDraft({
-                ...draft,
-                mcpServers: [...draft.mcpServers, {
-                  id: crypto.randomUUID(),
-                  name: mcpDraft.name.trim() || mcpDraft.command.trim(),
-                  command: mcpDraft.command.trim(),
-                  args: mcpDraft.args.split(" ").filter(Boolean),
-                  enabled: true,
-                }],
-              });
-              setMcpDraft({ name: "", command: "", args: "" });
-            }}
+            onClick={saveMcpDraft}
           >
-            <Plus size={14} />
-            添加
+            {mcpEditingId ? <Check size={14} /> : <Plus size={14} />}
+            {mcpEditingId ? "保存修改" : "添加并生效"}
           </button>
         </div>
         </>)}
@@ -6752,7 +6944,7 @@ function SettingsDialog({
           <button type="button" className="button-secondary" onClick={onClose}>取消</button>
           <button type="submit" className="button-primary" disabled={saving || (tab === "model" && !modelComplete)}>
             {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            {tab === "model" ? "保存并使用" : "保存设置"}
+            {tab === "model" ? "保存并使用" : tab === "mcp" ? "完成" : "保存设置"}
           </button>
         </div>
           </form>
@@ -7054,9 +7246,14 @@ export function App() {
   const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
   const [workspaceMenuPath, setWorkspaceMenuPath] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [mentionMenu, setMentionMenu] = useState<{ kind: "slash" | "at"; query: string; start: number } | null>(null);
+  const [mentionMenu, setMentionMenu] = useState<{ kind: "slash" | "at"; query: string; start: number; end?: number; programmatic?: boolean } | null>(null);
+  const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionSkills, setMentionSkills] = useState<SkillRecord[]>([]);
+  const [pluginInputCandidates, setPluginInputCandidates] = useState<RegisteredInputCandidate[]>([]);
+  const [pluginInputRevision, setPluginInputRevision] = useState(0);
+  const [dshChildHistory, setDshChildHistory] = useState<{ id: string; rootSessionId: string; displayTitle: string } | null>(null);
+  const closeDshChildHistory = useCallback(() => setDshChildHistory(null), []);
   const [activeSkills, setActiveSkills] = useState<SkillRecord[]>([]);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
   // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
@@ -7117,7 +7314,6 @@ export function App() {
       runTraceEventsRef.current.set(record.runId, next.length > 5000 ? next.slice(-5000) : next);
     }
   };
-  const [usageStatsOpen, setUsageStatsOpen] = useState(false);
   const [usageStats, setUsageStats] = useState<UsageRecord[] | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: "idle", currentVersion: "" });
   const [appUpdateDialogOpen, setAppUpdateDialogOpen] = useState(false);
@@ -7181,11 +7377,13 @@ export function App() {
   const searchMatchRangesRef = useRef<Array<{ row: HTMLDivElement; range: Range }>>([]);
   // 上一次自动滚动定位的命中标识（query#index），避免流式更新时反复滚动
   const searchScrollKeyRef = useRef<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<ComposerHandle | null>(null);
   // @引用高亮镜像层：与 textarea 同步滚动，保持 token 背景对齐
   const composerMirrorRef = useRef<HTMLDivElement>(null);
   // @token → 实际选择的文件路径：同名文件时以用户候选菜单里点选的那个为准
   const mentionTokenPathsRef = useRef<Map<string, string>>(new Map());
+  // @「标题」token → 实际选择的会话 id：同名会话时以用户点选的那个为准（与文件同构）
+  const sessionTokenIdsRef = useRef<Map<string, string>>(new Map());
   // 每个浏览器标签页一个常驻 webview：切换标签不销毁页面（对照 Codex 浏览器）
   const browserWebviewsRef = useRef<Map<string, BrowserWebviewElement>>(new Map());
   // 地址栏编辑草稿：输入过程中不把中间态写进标签页（导航同步会覆盖回来）
@@ -7211,6 +7409,7 @@ export function App() {
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
   const newTaskGuardRef = useRef(false);
+  const sessionRenameRequestsRef = useRef(new Map<string, {title:string;token:symbol}>());
 
   // 会话更新与通知工具：定义在状态之后、各 effect 之前，供渠道实时事件监听器与 runTask 共用
   const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
@@ -7313,30 +7512,37 @@ export function App() {
   const composerRef = useRef(composer);
   const composerPastesRef = useRef(composerPastes);
   const annotationsRef = useRef(annotations);
-  const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[]; annotations: MessageAnnotation[] }>>({});
+  const attachmentsRef = useRef(attachments);
+  const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[]; annotations: MessageAnnotation[]; attachments: Attachment[] }>>({});
   const lastActiveIdRef = useRef(activeId);
+  const [composerSessionId, setComposerSessionId] = useState(activeId);
   useEffect(() => { composerRef.current = composer; }, [composer]);
   useEffect(() => { composerPastesRef.current = composerPastes; }, [composerPastes]);
   useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
+  useEffect(() => { attachmentsRef.current = attachments; clientHost().cancelInput(lastActiveIdRef.current); }, [attachments]);
   useEffect(() => {
     sessionDraftsRef.current[lastActiveIdRef.current] = {
       text: composerRef.current,
       pastes: composerPastesRef.current,
       annotations: annotationsRef.current,
+      attachments: attachmentsRef.current,
     };
-  }, [composer, composerPastes, annotations]);
+  }, [composer, composerPastes, annotations, attachments]);
   useEffect(() => {
     if (lastActiveIdRef.current === activeId) return;
     sessionDraftsRef.current[lastActiveIdRef.current] = {
       text: composerRef.current,
       pastes: composerPastesRef.current,
       annotations: annotationsRef.current,
+      attachments: attachmentsRef.current,
     };
     lastActiveIdRef.current = activeId;
+    setComposerSessionId(activeId);
     const draft = sessionDraftsRef.current[activeId];
     setComposer(draft?.text || "");
     setComposerPastes(draft?.pastes || []);
     setAnnotations(draft?.annotations || []);
+    setAttachments(draft?.attachments || []);
     setExpandedPasteId("");
   }, [activeId]);
 
@@ -7374,9 +7580,13 @@ export function App() {
     } catch {
       saved = null;
     }
-    if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) {
+    // 插件登记的标签不算「用户自己配的面板布局」：过滤掉再判断，避免内置插件
+    // 让每个会话都被记成"以前开过面板"，切会话时把面板连插件内容一起弹出来
+    const savedTabs = (saved && Array.isArray(saved.tabs) ? saved.tabs : []).filter((tab) => tab.kind !== "plugin");
+    if (!saved || !savedTabs.length) {
       // 目标会话没有自己的面板布局：清空当前 tabs，避免上一会话的浏览器
       // 标签页和 webview 原样穿透到本会话界面（后台任务还会继续操作它）
+      toolPanelTabsRef.current = [];
       setToolPanelTabs([]);
       setActiveToolPanelTabId("");
       return;
@@ -7385,13 +7595,14 @@ export function App() {
     // 已挂载的 webview 撞 React key 导致跨会话复用同一个有状态页面；统一重映射
     // 为本次运行的全局唯一 id，并同步 activeTabId
     const idMap = new Map<string, string>();
-    const remappedTabs = saved.tabs.map((tab) => {
+    const remappedTabs = savedTabs.map((tab) => {
       const nextId = `${tab.kind}-${toolPanelTabSequenceRef.current++}`;
       idMap.set(tab.id, nextId);
       return { ...tab, id: nextId };
     });
+    toolPanelTabsRef.current = remappedTabs;
     setToolPanelTabs(remappedTabs);
-    const savedActiveWasValid = saved.tabs.some((tab) => tab.id === saved.activeTabId);
+    const savedActiveWasValid = savedTabs.some((tab) => tab.id === saved.activeTabId);
     setActiveToolPanelTabId(savedActiveWasValid ? idMap.get(saved.activeTabId!)! : "");
     if (typeof saved.width === "number" && saved.width >= 300) setToolPanelWidth(saved.width);
     if (typeof saved.open === "boolean") setRightPanelOpen(saved.open);
@@ -7401,14 +7612,17 @@ export function App() {
     if (!ready || !activeId) return;
     const key = `${PANEL_LAYOUT_PREFIX}${activeId}`;
     try {
-      if (!toolPanelTabs.length) {
-        // 会话没有自定义面板布局：不落盘（避免空状态覆盖已保存布局），并清理旧键
+      // 插件登记进来的标签不落盘：它们每次开机由插槽同步重建，
+      // 一旦写进布局，就会把「这个会话以前开过面板」记成事实，下次切回来面板自己弹出来
+      const persistableTabs = toolPanelTabs.filter((tab) => tab.kind !== "plugin");
+      if (!persistableTabs.length) {
+        // 没有用户自建的标签页（含只有插件标签的情况）：不落盘，并清理旧键
         localStorage.removeItem(key);
         return;
       }
       localStorage.setItem(key, JSON.stringify({
-        tabs: toolPanelTabs,
-        activeTabId: activeToolPanelTabId,
+        tabs: persistableTabs,
+        activeTabId: persistableTabs.some((tab) => tab.id === activeToolPanelTabId) ? activeToolPanelTabId : "",
         width: toolPanelWidth,
         open: rightPanelOpen,
         savedAt: Date.now(),
@@ -7650,6 +7864,11 @@ export function App() {
     let cancelled = false;
     const load = async () => {
       if (!window.dyworker) {
+        // 桌面壳里没有桥接 = preload 没加载成功：界面显示的是内置演示数据、
+        // 所有保存都是空操作，必须让用户看见，不能装作一切正常。
+        if (/Electron\//.test(navigator.userAgent)) {
+          setError("桌面桥接没有加载（preload 缺失）：当前界面是内置演示数据，设置和对话都无法保存。请重新构建并重启 DYWorker。");
+        }
         setReady(true);
         return;
       }
@@ -7721,7 +7940,9 @@ export function App() {
     // 说明）；任务结束 runningSessionIds 变化后本 effect 重跑，最终内容
     // 会按 180ms 防抖立即落盘，流式期间的内容不会丢
     if (runningSessionIds.size) return;
-    const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(buildSessionSavePayload(sessions)), 180);
+    const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(buildSessionSavePayload(sessions)).then((result) => {
+      if (result?.ok && clientHost().dshSettings.sessionId()) void clientHost().dshSettings.refresh();
+    }), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions, activeId, runningSessionIds]);
 
@@ -7891,9 +8112,9 @@ export function App() {
   }, [ready, workspacePath, settingsOpen]);
 
   useEffect(() => {
-    if ((!usageStatsOpen && !(settingsOpen && settingsTab === "usage")) || !window.dyworker) return;
+    if (!(settingsOpen && settingsTab === "usage") || !window.dyworker) return;
     void window.dyworker.listUsageStats().then(setUsageStats);
-  }, [usageStatsOpen, settingsOpen, settingsTab]);
+  }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
     const updater = window.dyworker;
@@ -7928,6 +8149,8 @@ export function App() {
       // 否则气泡永远停在"正在执行"，侧栏的转圈也不会停
       forgetSessionStream(channelStreamRunsRef.current, session.id);
       channelStreamIdsRef.current.delete(session.id);
+      const finishedRun = [...session.messages].reverse().find(message => message.role === 'assistant')?.runId;
+      if (finishedRun && runningRunIdsRef.current.get(session.id) === finishedRun) runningRunIdsRef.current.delete(session.id);
       setScheduledRunSessions((current) => {
         if (!current.has(session.id)) return current;
         const next = new Set(current);
@@ -7961,19 +8184,20 @@ export function App() {
       if (!sessionId) return;
       const runId = String(payload?.runId || sessionId);
       const startedAt = payload?.startedAt || new Date().toISOString();
-      const assistantId = crypto.randomUUID();
+      const assistantId = `${runId}:assistant`;
+      runningRunIdsRef.current.set(sessionId,runId);
       // 占位气泡登记放在 updater 外：StrictMode 下 updater 会被双调，ref 写入必须只发生一次
       registerStreamMessage(channelStreamRunsRef.current, runId, { sessionId, messageId: assistantId });
       channelStreamIdsRef.current.set(sessionId, assistantId);
       setSessions((current) => mergePrependedSession<SessionRecord>(current, {
-        id: sessionId,
+        id: sessionId,runtime:payload?.runtime === 'dsh' ? 'dsh' : 'dyworker',
         title: payload?.title || "计划任务",
         workspacePath: String(payload?.workspacePath || ""),
         createdAt: startedAt,
         updatedAt: startedAt,
         messages: [
-          { id: crypto.randomUUID(), role: "user", content: String(payload?.prompt || ""), createdAt: startedAt },
-          { id: assistantId, role: "assistant", content: "", createdAt: startedAt, activities: [] },
+          { id: `${runId}:user`,runId,role: "user", content: String(payload?.prompt || ""), createdAt: startedAt },
+          { id: assistantId,runId,role: "assistant", content: "", createdAt: startedAt, activities: [] },
         ],
       }).sessions);
       setRunningSessionIds((current) => new Set(current).add(sessionId));
@@ -8151,25 +8375,28 @@ export function App() {
     // 每个流式会话当前正在更新的 assistant 占位消息 id（按 sessionId 记录）
     const channelStreamIds = channelStreamIdsRef.current;
     const streamRuns = channelStreamRunsRef.current;
+    const activeDshTurns = new Map<string,string>();
     const patchChannelAssistant = (sessionId: string, updater: (current: ChatMessage) => ChatMessage) => {
       const targetId = channelStreamIds.get(sessionId);
       if (!targetId) return;
+      const runId = [...streamRuns.entries()].find(([,ref])=>ref.sessionId===sessionId && ref.messageId===targetId)?.[0] || '';
+      const turnId = activeDshTurns.get(runId);
       updateSession(sessionId, (session) => ({
         ...session,
-        messages: session.messages.map((message) => (message.id === targetId ? updater(message) : message)),
+        messages: patchDshAssistant(session.messages,{assistantId:targetId,runId,turnId},updater),
       }));
     };
     const ensureChannelAssistant = (sessionId: string, runId: string): string => {
       const existing = channelStreamIds.get(sessionId);
       if (existing) return existing;
-      const id = crypto.randomUUID();
+      const id = `${runId}:assistant`;
       channelStreamIds.set(sessionId, id);
       // 登记 runId → 占位位置：收尾 sessions:append 凭它原位替换占位气泡，而不是追加第二条
       registerStreamMessage(streamRuns, runId, { sessionId, messageId: id });
       updateSession(sessionId, (session) => ({
         ...session,
         messages: [...session.messages, {
-          id,
+          id, runId,
           role: "assistant",
           content: "",
           createdAt: new Date().toISOString(),
@@ -8180,6 +8407,23 @@ export function App() {
     };
     const unsubscribe = window.dyworker.onAgentEvent((sessionAgentEvent) => {
       const { sessionId, runId, event } = sessionAgentEvent;
+      if (sessionAgentEvent.childRun) {
+        if (event.type === 'queue-start') {
+          runningRunIdsRef.current.set(sessionId,runId);
+          setRunningSessionIds(current => new Set(current).add(sessionId));
+        } else if (runningRunIdsRef.current.get(sessionId) === runId) {
+          if (event.type === 'approval-request') setPendingApprovals(current => ({...current,[sessionId]:event.action}));
+          if (event.type === 'ask-user') setPendingQuestions(current => ({...current,[sessionId]:event.request}));
+          if (event.type === 'agent-finished') {
+            runningRunIdsRef.current.delete(sessionId);
+            setRunningSessionIds(current => {const next=new Set(current);next.delete(sessionId);return next;});
+            setPendingApprovals(current => {const next={...current};delete next[sessionId];return next;});
+            setPendingQuestions(current => {const next={...current};delete next[sessionId];return next;});
+            showSessionNotice(sessionId,event.result.status === 'done' ? '子任务本轮已结束' : event.result.reason || '子任务已停止');
+          }
+        }
+        return;
+      }
       // 自动会话标题在全局监听器处理（桌面与渠道运行都算）：按 sessionId 更新，
       // 不依赖 runTask 的 runId 专属监听器，任务先结束、标题后生成也能收到
       if (event.type === "session-title") {
@@ -8192,14 +8436,30 @@ export function App() {
       // 只处理带运行标记的转发事件：桌面会话由 runTask 内注册的专属监听器处理，
       // 桌面端在渠道会话里发起的运行（信封无 channelRun 标记）也归它，这里必须跳过
       const scheduledRun = isScheduleRunEnvelope(sessionAgentEvent);
-      if (!isChannelRunEnvelope(sessionAgentEvent) && !scheduledRun) return;
+      const wakingRun = isWakeRunEnvelope(sessionAgentEvent);
+      if (!isChannelRunEnvelope(sessionAgentEvent) && !scheduledRun && !wakingRun) return;
       const target = sessionsRef.current.find((session) => session.id === sessionId);
       if (!target) return;
       // 渠道归约只认渠道会话（桌面端可能在同一个渠道会话里起运行，那是 runTask 的事）；
       // 计划运行只认本次运行已经建好占位气泡的会话（run-started 先到，标识在 channelStreamIds 里）
-      if (!scheduledRun && !target.channel) return;
+      if (!scheduledRun && !wakingRun && !target.channel) return;
+      if (wakingRun && runningRunIdsRef.current.get(sessionId)!==runId) return;
       if (scheduledRun && !channelStreamIds.has(sessionId)) return;
-      if (event.type === "queue-start") {
+      if (event.type === 'dsh-conversation') {
+        const assistantId = ensureChannelAssistant(sessionId,runId);
+        activeDshTurns.set(runId,event.turns.at(-1)?.user.id || '');
+        updateSession(sessionId,session=> {
+          let messages = session.messages;
+          let user = messages.find(message=>message.role==='user' && message.runId===runId);
+          if (!user) {
+            user={id:`${runId}:user`,role:'user',runId,content:event.turns[0]?.user.text || '',createdAt:new Date().toISOString()};
+            const index=messages.findIndex(message=>message.id===assistantId);
+            messages=[...messages.slice(0,index),user,...messages.slice(index)];
+          }
+          return {...session,messages:reconcileDshTurns(messages,event.turns,{userId:user.id!,assistantId,runId,live:true})};
+        });
+      } else if (event.type === "queue-start") {
+        runningRunIdsRef.current.set(sessionId,runId);
         ensureChannelAssistant(sessionId, runId);
         setRunningSessionIds((current) => new Set(current).add(sessionId));
         setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
@@ -8223,10 +8483,10 @@ export function App() {
           ...current,
           activities: patchActivityTree(current.activities || [], event.id, event.status, event.detail, event.durationMs, event.commentary),
         }));
-      } else if (event.type === "assistant-text") {
+      } else if (event.type === "assistant-text" && !activeDshTurns.has(runId)) {
         ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, content: event.text }));
-      } else if (event.type === "assistant-reasoning") {
+      } else if (event.type === "assistant-reasoning" && !activeDshTurns.has(runId)) {
         ensureChannelAssistant(sessionId, runId);
         patchChannelAssistant(sessionId, (current) => ({ ...current, reasoning: event.text }));
       } else if (event.type === "plan-update") {
@@ -8262,6 +8522,15 @@ export function App() {
             taskStatus: result.status,
           };
         });
+        if (result.dshTurns?.length && channelStreamIds.has(sessionId)) {
+          const assistantId=channelStreamIds.get(sessionId)!;
+          updateSession(sessionId,session=> {
+            const user=session.messages.find(message=>message.role==='user' && message.runId===runId);
+            return user ? {...session,messages:reconcileDshTurns(session.messages,result.dshTurns!,{userId:user.id!,assistantId,runId})} : session;
+          });
+        }
+        activeDshTurns.delete(runId);
+        if (runningRunIdsRef.current.get(sessionId) === runId) runningRunIdsRef.current.delete(sessionId);
         channelStreamIds.delete(sessionId);
         forgetStreamMessage(streamRuns, runId);
         setRunningSessionIds((current) => {
@@ -8670,7 +8939,8 @@ export function App() {
 
   const createTask = (targetWorkspacePath = workspacePath) => {
     const nextWorkspacePath = String(targetWorkspacePath || "");
-    const unstartedSession = sessions.find((session) => !session.archived && session.messages.length === 0);
+    // DSH 空任务已经可以拥有独立存档，不能当作可迁移目录的普通草稿复用。
+    const unstartedSession = sessions.find((session) => session.runtime !== 'dsh' && !session.archived && session.messages.length === 0);
     if (unstartedSession) {
       setActiveId(unstartedSession.id);
       setWorkspaceMenuPath(null);
@@ -8700,12 +8970,31 @@ export function App() {
   };
 
   // 从指定消息处分叉：复制会话开头到该消息(含)的内容为新会话，原会话保持不变（对照 Codex fork）
-  const forkSession = (session: SessionRecord, messageIndex: number) => {
+  const forkSession = async (session: SessionRecord, messageIndex: number) => {
+    if (session.runtime === 'dsh') {
+      try {
+        const message = session.messages[messageIndex];
+        if (!message?.dshMessageId) throw new Error('这条消息还没有完整保存，请稍后再复制');
+        const reply = await window.dyworker?.dshOperation?.({sessionId: '', action: 'session-fork', payload: {
+          sourceRootId: session.id, address: {kind: 'session', sessionId: session.id},
+          messageId: message.dshMessageId, ...(message.dshTurnId ? {turnId: message.dshTurnId} : {}),
+        }});
+        if (!reply?.ok || !reply.value?.nativeSession) throw new Error(reply?.error?.message || '复制任务失败');
+        const forked = reply.value.nativeSession as SessionRecord;
+        clientHost().acceptCreatedSession(forked);
+        setSessions(current => [forked, ...current.filter(row => row.id !== forked.id)]);
+        selectSession(forked);
+        shouldScrollToBottomRef.current = forked.id;
+        setNotice('已从此处分叉出新任务，可继续独立对话');
+      } catch (error) { setNotice(error instanceof Error ? error.message : '复制任务失败'); }
+      return;
+    }
     const now = new Date().toISOString();
     const forked: SessionRecord = {
       id: crypto.randomUUID(),
       title: `${session.title}（分支）`,
       workspacePath: session.workspacePath,
+      ...(session.runtime ? { runtime: session.runtime } : {}),
       ...(session.goal ? { goal: session.goal } : {}),
       createdAt: now,
       updatedAt: now,
@@ -8855,11 +9144,35 @@ export function App() {
     }
   };
 
-  const renameSession = (id: string, title: string) => {
+  const renameSession = async (id: string, title: string) => {
     const trimmed = title.trim();
     setRenamingId(null);
     if (!trimmed) return;
-    updateSession(id, (session) => ({ ...session, title: trimmed.slice(0, 40), titleCustom: true }));
+    const requested = trimmed.slice(0, 40);
+    const existing = sessionsRef.current.find(session => session.id === id);
+    if (!existing) return;
+    if (existing.runtime !== 'dsh') {
+      updateSession(id, session => ({...session,title:requested,titleCustom:true}));
+      return;
+    }
+    // Enter and blur may settle the same edit; only the current accepted write updates the view.
+    if (sessionRenameRequestsRef.current.get(id)?.title === requested) return;
+    const request = {title:requested,token:Symbol(id)};
+    sessionRenameRequestsRef.current.set(id,request);
+    try {
+      if (!window.dyworker?.dshOperation) throw new Error('当前应用不能保存 DSH 任务标题');
+      const reply = await window.dyworker.dshOperation({sessionId:id,action:'session-rename',
+        payload:{address:{kind:'session',sessionId:id},title:requested}});
+      if (!reply?.ok || typeof reply.value?.title !== 'string')
+        throw new Error(reply?.error?.message || '任务重命名失败');
+      if (sessionRenameRequestsRef.current.get(id) !== request) return;
+      updateSession(id, session => ({...session,title:reply.value.title,titleCustom:true}));
+    } catch (error) {
+      if (sessionRenameRequestsRef.current.get(id) === request)
+        setNotice(error instanceof Error ? error.message : '任务重命名失败');
+    } finally {
+      if (sessionRenameRequestsRef.current.get(id) === request) sessionRenameRequestsRef.current.delete(id);
+    }
   };
 
   const workspaceFiles = useMemo(() => {
@@ -8884,6 +9197,19 @@ export function App() {
     return workspaceFiles.find((file) => file.name === name);
   };
 
+  // 把 @「标题」token 解析成会话：优先用候选菜单点选时记录的 id（同名会话不串），
+  // 退回按标题匹配（最新优先），并排除当前会话——引用自己没有意义
+  const resolveTokenSession = (title: string): SessionRecord | undefined => {
+    const recorded = sessionTokenIdsRef.current.get(title);
+    if (recorded) {
+      const exact = sessions.find((session) => session.id === recorded);
+      if (exact) return exact;
+    }
+    return sessions
+      .filter((session) => session.title === title && session.id !== activeSession?.id && session.messages.length > 0)
+      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
+  };
+
   // 输入框正文里能解析成文件引用的 @token：镜像层只为这些 token 画高亮
   const activeTokenNames = useMemo(() => {
     const names = new Set<string>();
@@ -8900,6 +9226,19 @@ export function App() {
   // 正文里已选技能的 /技能名：与 @文件 一样在镜像层画内联高亮
   const activeSkillNames = useMemo(() => new Set(activeSkills.map((skill) => skill.name)), [activeSkills]);
 
+  // 正文里能解析成会话引用的 @「标题」token：镜像层同样画高亮
+  const activeSessionTitles = useMemo(() => {
+    const titles = new Set<string>();
+    if (!composer) return titles;
+    SESSION_TOKEN_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = SESSION_TOKEN_REGEX.exec(composer))) {
+      if (!titles.has(match[1]) && resolveTokenSession(match[1])) titles.add(match[1]);
+    }
+    return titles;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composer, sessions]);
+
   // 打开气泡里被引用的文件（@token 点击）：优先用消息里记录的附件路径，桌面版调主进程，预览环境给提示
   const openReferencedFile = async (name: string, knownPath?: string) => {
     const filePath = knownPath || resolveTokenFile(name)?.path;
@@ -8907,12 +9246,7 @@ export function App() {
       setNotice(`没有找到文件 ${name}，可能已移动或删除`);
       return;
     }
-    if (window.dyworker?.openPath) {
-      const result = await window.dyworker.openPath(filePath);
-      if (result && !result.ok) setNotice(result.error || `打开 ${name} 失败`);
-    } else {
-      setNotice(`预览环境无法打开本地文件：${filePath}`);
-    }
+    openFilePreview(filePath, workspacePath);
   };
 
   // 在光标处插入「@文件名 」内联 token：引用随正文按顺序展示（对齐 Codex 的 @ 引用体验）
@@ -8962,7 +9296,7 @@ export function App() {
     setNotice(`长文本已折叠（${text.length.toLocaleString()} 字），发送时会自动附带`);
   };
 
-  const handleComposerPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  const handleComposerPaste = async (event: ClipboardEvent<HTMLElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
     const image = imageItem?.getAsFile();
     if (!image) {
@@ -8980,10 +9314,11 @@ export function App() {
       return;
     }
     try {
+      const owner = activeIdRef.current;
       const bytes = Array.from(new Uint8Array(await image.arrayBuffer()));
       let attachment: Attachment | undefined;
       if (window.dyworker?.saveClipboardImage) {
-        const result = await window.dyworker.saveClipboardImage({ data: bytes, mimeType: image.type || "image/png" });
+        const result = await window.dyworker.saveClipboardImage({ data: bytes, mimeType: image.type || "image/png", sessionId: owner });
         if (!result.ok || !result.attachment) throw new Error(result.error || "剪贴板图片保存失败");
         attachment = result.attachment;
       } else {
@@ -9001,6 +9336,11 @@ export function App() {
           isImage: true,
           previewUrl,
         };
+      }
+      if (activeIdRef.current !== owner) {
+        const draft = sessionDraftsRef.current[owner];
+        if (draft) draft.attachments = [...draft.attachments, attachment].slice(0, 12);
+        return;
       }
       setAttachments((current) => current.some((entry) => entry.path === attachment!.path)
         ? current
@@ -9161,7 +9501,7 @@ export function App() {
   };
 
   // 输入框右键：复制 / 剪切 / 粘贴
-  const handleComposerContextMenu = (event: MouseEvent<HTMLTextAreaElement>) => {
+  const handleComposerContextMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -9261,8 +9601,63 @@ export function App() {
     }, 0);
   };
 
-  const mentionItems = useMemo((): { id: string; title: string; detail: string; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string }[] => {
+  useEffect(() => clientHost().subscribeInputSources(() => setPluginInputRevision(value => value + 1)), []);
+  useEffect(() => clientHost().subscribe(() => setPluginInputRevision(value => value + 1)), []);
+  useEffect(() => { if (mentionMenu?.programmatic) textareaRef.current?.focus(); }, [mentionMenu?.programmatic, activeSession?.id]);
+  useEffect(() => {
+    if (!mentionMenu?.programmatic || activeSession?.runtime !== 'dsh') return;
+    const dismiss = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('.mention-menu, .composer-input-wrap, .add-menu-wrap')) return;
+      clientHost().dismissInputMenu(activeSession.id); setMentionMenu(null);
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, [mentionMenu?.programmatic, activeSession?.id, activeSession?.runtime]);
+  useEffect(() => {
+    const id = activeSession?.id; if (!id || activeSession.runtime !== 'dsh') return;
+    const read = (changedId: string) => {
+      if (changedId !== id) return;
+      const menu = clientHost().inputMenuSnapshot(id);
+      if (menu?.launched && menu.state.hit && clientHost().inputReady(id)) {
+        const hit = menu.state.hit;
+        setPluginInputCandidates(menu.candidates);
+        setMentionMenu(previous => previous?.programmatic && previous.kind === (hit.trigger === '/' ? 'slash' : 'at')
+          && previous.query === hit.query && previous.start === hit.span.start && previous.end === hit.span.end ? previous
+          : { kind: hit.trigger === '/' ? 'slash' : 'at', query: hit.query, start: hit.span.start, end: hit.span.end, programmatic: true });
+        setMentionIndex(0);
+      } else setMentionMenu(previous => previous?.programmatic ? null : previous);
+    };
+    const off = clientHost().subscribeInputMenus(read); read(id); return off;
+  }, [activeSession?.id, activeSession?.runtime]);
+  useEffect(() => {
+    const controller = new AbortController();
+    if (mentionMenu?.programmatic) return () => controller.abort();
+    setPluginInputCandidates([]);
+    if (mentionMenu && activeSession?.runtime === 'dsh') {
+      void clientHost().inputCandidates(activeSession.id, mentionMenu.query, mentionMenu.start, composer, controller.signal,
+        mentionMenu.kind === 'slash' ? '/' : '@', mentionMenu.end)
+        .then(items => { if (!controller.signal.aborted) setPluginInputCandidates(items); })
+        .catch(error => { if (!controller.signal.aborted) setError(`插件命令读取失败：${String(error?.message || error)}`); });
+    }
+    return () => controller.abort();
+  }, [mentionMenu, activeSession?.id, activeSession?.runtime, composer, pluginInputRevision]);
+  useEffect(() => {
+    if (activeSession?.id) clientHost().setInputDraft(activeSession.id, composer);
+  }, [activeSession?.id, composer]);
+  useEffect(() => clientHost().subscribeInputConsumer((sessionId, text, edit) => {
+    if (activeSession?.id !== sessionId) return false;
+    setComposer(text);
+    if (edit?.continue) { dismissedPluginMention.current = null; syncComposerDerivedState(text, edit.caret); }
+    else setMentionMenu(null);
+    window.setTimeout(() => { textareaRef.current?.focus(); if (edit) textareaRef.current?.setSelectionRange(edit.caret, edit.caret); }, 0);
+    return true;
+  }), [activeSession?.id]);
+
+  const mentionItems = useMemo((): { id: string; title: string; detail: string; pluginInput?: RegisteredInputCandidate; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string; session?: SessionRecord }[] => {
     if (!mentionMenu) return [];
+    if (mentionMenu.programmatic) return pluginInputCandidates.map(item => ({ id: item.id,
+      title: item.candidate.label || `${mentionMenu.kind === 'slash' ? '/' : '@'}${item.candidate.name}`,
+      detail: item.candidate.description || (mentionMenu.kind === 'slash' ? '插件命令' : '插件引用'), pluginInput: item }));
     const query = mentionMenu.query.toLowerCase();
     if (mentionMenu.kind === "slash") {
       const commands = builtinCommands
@@ -9277,40 +9672,85 @@ export function App() {
           detail: `${skill.sourceLabel || "本地模板"} · ${skill.description}`,
           skill,
         }));
-      return [...commands, ...skills];
+      const plugins = pluginInputCandidates.map(item => ({ id: item.id, title: `/${item.candidate.name}`,
+        detail: item.candidate.description || item.candidate.label || '插件命令', pluginInput: item }));
+      return [...plugins, ...commands, ...skills];
     }
-    return workspaceFiles
+    // @ 候选 = 历史会话 + 工作区文件：会话按置顶/最近更新排在前面（上限 4 条），
+    // 空会话（还没跑过任务）与当前会话对引用没有价值，不进候选。
+    // 会话过滤前去掉定界括号：点回已插入的 @「标题」token 重新唤起菜单时，查询自带「」
+    const sessionQuery = query.replace(/[「」]/g, "");
+    const sessionCandidates = sessions
+      .filter((session) => session.messages.length > 0 && !session.archived && session.id !== activeSession?.id)
+      .filter((session) => !sessionQuery || session.title.toLowerCase().includes(sessionQuery))
+      .sort((a, b) => (Boolean(b.pinned) !== Boolean(a.pinned) ? (Boolean(b.pinned) ? 1 : -1) : String(b.updatedAt).localeCompare(String(a.updatedAt))))
+      .slice(0, 4)
+      .map((session) => ({
+        id: `session:${session.id}`,
+        title: `@「${session.title}」`,
+        detail: `历史会话 · ${formatMessageTime(session.updatedAt)} · ${session.messages.length} 条消息${session.channel === "qq" ? " · QQ" : session.channel === "wechat" ? " · 微信" : ""}`,
+        session,
+      }));
+    const fileCandidates = workspaceFiles
       .filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query))
       .slice(0, 8)
       .map((file) => ({ id: file.path, title: file.name, detail: file.path, file }));
-  }, [mentionMenu, mentionSkills, workspaceFiles]);
+    const plugins = pluginInputCandidates.map(item => ({ id: item.id, title: item.candidate.label || `@${item.candidate.name}`,
+      detail: item.candidate.description || '插件引用', pluginInput: item }));
+    return [...plugins, ...sessionCandidates, ...fileCandidates];
+  }, [mentionMenu, mentionSkills, workspaceFiles, sessions, activeSession, pluginInputCandidates]);
 
   // 候选菜单触发（对照 Codex/Claude 的 @、/ 引用）：以光标位置为准检测紧邻的触发 token，
   // 文本中间随时可触发；触发符前只允许行首/空白/中日韩字符——邮箱(a@b)与路径(src/)这类
   // 连续 ASCII 里夹杂的 @// 不打扰候选菜单
   const updateComposer = (value: string, caret?: number) => {
     setComposer(value);
+    syncComposerDerivedState(value, caret);
+  };
+
+  // 候选菜单与技能引用的同步：只按文本与光标位置推导，绝不回写 composer。
+  // 与 updateComposer 拆开是因为 onSelect 会被 React 合成到 keydown/keyup 上，
+  // 而这两个事件的派发发生在 DOM 更新之前：回车发送刚把 composer 清空时读到的
+  // DOM 仍是旧正文，回写就把清空撤销了（实测：消息发出、输入框内容还在）。
+  const syncComposerDerivedState = (value: string, caret?: number) => {
     const position = Math.min(Math.max(caret ?? value.length, 0), value.length);
+    if (activeSession?.runtime === 'dsh' && mentionMenu?.programmatic) {
+      clientHost().trackInputMenu(activeSession.id, value, position);
+      if (clientHost().inputMenuSnapshot(activeSession.id)?.launched) return;
+    }
     const before = value.slice(0, position);
     const slashMatch = before.match(/(?:^|[\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\/([^\s@/]*)$/);
     // @ 引用允许在路径中出现 /（如 @src/pages/list），输入 / 不再中断候选菜单
     const atMatch = before.match(/(?:^|[\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])@([^\s@]*)$/);
-    const matched = slashMatch
+    const detected = activeSession?.runtime === 'dsh'
+      ? detectTrigger(clientHost().inputProjection(activeSession.id, value), clientHost().inputCaret(activeSession.id, position),
+        { tier: clientHost().inputClaim(activeSession.id) ? 'claimed' : 'plain' }) : null;
+    const matched = activeSession?.runtime === 'dsh'
+      ? detected ? { kind: detected.trigger === '/' ? 'slash' as const : 'at' as const, query: detected.query } : null
+      : slashMatch
       ? { kind: "slash" as const, query: slashMatch[1] }
       : atMatch
         ? { kind: "at" as const, query: atMatch[1] }
         : null;
     if (matched) {
+      const start = detected?.span.start ?? position - matched.query.length - 1;
+      const dismissed = dismissedPluginMention.current;
+      if (matched.kind === 'slash' && dismissed?.sessionId === activeSession?.id && dismissed.text === value
+        && dismissed.start === start && dismissed.query === matched.query) {
+        setMentionMenu(null); return;
+      }
+      dismissedPluginMention.current = null;
       if (matched.kind === "slash" && mentionMenu?.kind !== "slash") {
         void window.dyworker?.listSkills?.(workspacePath).then((items) => {
           setSkills(items);
           setMentionSkills(items);
         });
       }
-      setMentionMenu({ kind: matched.kind, query: matched.query, start: position - matched.query.length - 1 });
+      setMentionMenu({ kind: matched.kind, query: matched.query, start, end: detected?.span.end ?? position });
       setMentionIndex(0);
-    } else if (mentionMenu) {
-      setMentionMenu(null);
+    } else {
+      dismissedPluginMention.current = null;
+      if (mentionMenu) setMentionMenu(null);
     }
     // 技能引用以 /技能名 内联 token 留在正文里：删掉 token 即移除引用（与 @文件 一致）
     if (activeSkills.length) {
@@ -9319,9 +9759,25 @@ export function App() {
     }
   };
 
-  const applyMention = (index: number) => {
+  const applyMention = (index: number, action: 'pick' | 'drill' = 'pick') => {
     const item = mentionItems[index];
     if (!item || !mentionMenu) return;
+    if (item.pluginInput && activeSession?.runtime === 'dsh') {
+      try {
+        dismissedPluginMention.current = { sessionId: activeSession.id, text: composer,
+          start: mentionMenu.start, query: mentionMenu.query };
+        const draftRev = clientHost().setInputDraft(activeSession.id, composer);
+        clientHost().pickInputCandidate(activeSession.id, item.pluginInput, { start: mentionMenu.start,
+          end: mentionMenu.end ?? mentionMenu.start + mentionMenu.query.length + 1, draftRev }, action);
+        if (action === 'pick') setMentionMenu(null);
+      } catch (error) { dismissedPluginMention.current = null; setError(String((error as any)?.message || error)); }
+      return;
+    }
+    const nativeSpan = activeSession?.runtime === 'dsh' ? clientHost().inputEditor(activeSession.id)?.clipboardSpan({
+      start: mentionMenu.start, end: mentionMenu.end ?? mentionMenu.start + mentionMenu.query.length + 1,
+    }) : undefined;
+    const nativeStart = nativeSpan?.start ?? mentionMenu.start;
+    const nativeEnd = nativeSpan?.end ?? mentionMenu.start + mentionMenu.query.length + 1;
     if (mentionMenu.kind === "slash" && item.id === "builtin:new") {
       setMentionMenu(null);
       setComposer("");
@@ -9344,10 +9800,27 @@ export function App() {
     } else if (mentionMenu.kind === "at" && item.file) {
       // 文件引用：在 @ 位置原地插入内联 token，引用按输入顺序留在正文里
       const token = `@${item.file.name} `;
-      const start = mentionMenu.start;
-      const end = start + mentionMenu.query.length + 1;
+      const start = nativeStart;
+      const end = nativeEnd;
       mentionTokenPathsRef.current.set(item.file.name, item.file.path);
       setComposer(composer.slice(0, start) + token + composer.slice(end));
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + token.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
+    } else if (mentionMenu.kind === "at" && item.session) {
+      // 会话引用：在 @ 位置原地插入「@「标题」」内联 token，标题用全角括号定界（可含空格）
+      const session = item.session;
+      const token = `@「${session.title}」 `;
+      const start = nativeStart;
+      const end = nativeEnd;
+      sessionTokenIdsRef.current.set(session.title, session.id);
+      setComposer(composer.slice(0, start) + token + composer.slice(end));
+      setNotice(`已引用会话：${session.title}`);
       window.setTimeout(() => {
         const target = textareaRef.current;
         if (target) {
@@ -9360,8 +9833,8 @@ export function App() {
       // 技能引用：在 / 触发位置原地插入 /技能名 内联 token，前后正文保留（与 @文件 同一融合呈现）
       const skill = item.skill;
       const token = `/${skill.name} `;
-      const start = mentionMenu.start;
-      const end = start + mentionMenu.query.length + 1;
+      const start = nativeStart;
+      const end = nativeEnd;
       setActiveSkills((current) => current.some((entry) => entry.id === skill.id) ? current : [...current, skill]);
       setComposer(composer.slice(0, start) + token + composer.slice(end));
       window.setTimeout(() => {
@@ -9402,11 +9875,12 @@ export function App() {
   };
 
   const chooseAttachments = async () => {
+    const owner = activeIdRef.current;
     setAddMenuOpen(false);
     setError("");
     try {
       const result = window.dyworker
-        ? await window.dyworker.chooseAttachments()
+        ? await window.dyworker.chooseAttachments(owner)
         : {
             canceled: false,
             attachments: [{
@@ -9419,6 +9893,11 @@ export function App() {
           };
       if (result.canceled || !result.attachments.length) {
         setNotice("未添加附件");
+        return;
+      }
+      if (activeIdRef.current !== owner) {
+        const draft = sessionDraftsRef.current[owner];
+        if (draft) draft.attachments = [...draft.attachments, ...result.attachments].slice(0, 12);
         return;
       }
       setAttachments((current) => {
@@ -9632,8 +10111,13 @@ export function App() {
   }, [activeToolPanelTabId, activeToolPanelKind, toolPanelTabs.map((tab) => tab.kind === "browser" ? `${tab.id}:${tab.loadedUrl || ""}` : tab.id).join("|")]);
 
   // 菜单页可见性派生：没有任何标签页时始终显示菜单页（即使全局 closeAll 把菜单状态关掉，
-  // 比如拖动面板边框触发的外部点击关闭），避免出现空面板
-  const menuPageShown = toolPanelMenuOpen || toolPanelTabs.length === 0;
+  // 比如拖动面板边框触发的外部点击关闭），避免出现空面板。
+  // 再加一条：面板里只有插件登记的标签、而用户一个都没点过时，也留在菜单页——
+  // 内置插件是开机异步登记的，否则 activeToolPanelTab 会回退到 tabs[0]，
+  // 表现成「一打开右侧面板就是插件内容」（实测被用户抓到）。
+  const pluginTabOnlyPendingChoice = !activeToolPanelTabId && toolPanelTabs.length > 0
+    && toolPanelTabs.every((tab) => tab.kind === "plugin");
+  const menuPageShown = toolPanelMenuOpen || toolPanelTabs.length === 0 || pluginTabOnlyPendingChoice;
   // 纯净菜单页:还没有任何标签页时,菜单页不显示标签栏和 + 按钮(对照 Codex)
   const pristineMenuPage = toolPanelTabs.length === 0;
 
@@ -9673,7 +10157,7 @@ export function App() {
   // 不需要用户去插件页点"加载界面半边"。失败只记录，不影响启动。
   useEffect(() => {
     let cancelled = false;
-    void loadBuiltinClientHalves().then((results) => {
+    void loadEnabledClientHalves().then((results) => {
       if (cancelled) return;
       const failed = results.filter((result) => !result.ok);
       if (failed.length) console.warn("[plugin] 内置插件客户端半边加载失败：", failed);
@@ -9683,15 +10167,67 @@ export function App() {
 
   // 客户端宿主取会话的数据来源：插件用 ctx.sessions.binding(id) 拿它渲染轨迹等视图
   useEffect(() => {
+    clientHost().dshSettings.setSession(activeSession?.runtime === 'dsh' ? activeSession.id : '');
     clientHost().setSessionProvider((sessionId) =>
-      activeSession && String(activeSession.id) === String(sessionId) ? activeSession : undefined);
-  }, [activeSession]);
+      sessions.find(session => String(session.id) === String(sessionId)));
+    clientHost().setCollections(() => ({ items: sessions, current: activeSession }), () => ({
+      items: [...new Set(sessions.map(session => session.workspacePath).filter(Boolean))].map(path => ({ id: path, path,
+        title: String(path).split(/[\\/]/).filter(Boolean).at(-1) || String(path),
+        sessionIds: sessions.filter(session => session.workspacePath === path).map(session => session.id) })),
+      current: workspacePath ? { id: workspacePath, path: workspacePath } : null,
+      archivedSessionIds: sessions.filter(session => session.archived).map(session => session.id),
+    }));
+  }, [activeSession, sessions, workspacePath]);
+
+  useEffect(() => {
+    const host=clientHost();
+    void host.selectMainSession(activeSession?.runtime==='dsh'?activeSession.id:'').catch(error=>{
+      console.warn('[plugin] 当前任务界面读取失败：',error);
+    });
+    return ()=>{void host.selectMainSession('').catch(()=>{});};
+  }, [activeSession?.id, activeSession?.runtime]);
+
+  // 插件贡献的右侧面板标签：跟着客户端宿主的插槽表走。
+  // 为什么不用 requestPluginPanels 那种一次性调用：内置插件是开机异步加载的，
+  // 谁先谁后取决于时序；订阅插槽变化就不会漏，也不会重复（按 pageKey 去重）。
+  // 只登记标签、**不自动展开右侧栏**——开机抢版面会打断用户。
+  useEffect(() => {
+    const host = clientHost();
+    const sync = () => {
+      const contributions = host.contributionsFor("sidebar.right.pane.tab").filter(contribution =>
+        activeSession?.runtime !== 'dsh' || contribution.pluginId !== 'dyworker-context');
+      setToolPanelTabs((current) => {
+        let next = current.filter(tab => tab.kind !== "plugin" || contributions.some(contribution =>
+          String(contribution.meta.key ?? contribution.meta.id ?? "") === tab.pluginKey
+          && (!tab.pluginId || contribution.pluginId === tab.pluginId)));
+        for (const contribution of contributions) {
+          const key = String(contribution.meta.key ?? contribution.meta.id ?? "").trim();
+          if (!key) continue;
+          const label = typeof contribution.meta.label === "function"
+            ? String((contribution.meta.label as () => unknown)())
+            : String(contribution.meta.label ?? key);
+          const owner = contribution.pluginId || "";
+          const id = `plugin-${encodeURIComponent(owner)}-${encodeURIComponent(key)}`;
+          const existing = next.find((tab) => tab.kind === "plugin" && tab.pluginKey === key && (!tab.pluginId || tab.pluginId === owner));
+          if (existing) {
+            if (existing.title !== label || existing.pluginId !== owner || existing.id !== id) next = next.map((tab) => (tab.id === existing.id ? { ...tab, id, title: label, pluginId: owner } : tab));
+            continue;
+          }
+          next = [...next, { id, kind: "plugin" as const, title: label, pluginId: owner, pluginKey: key }];
+        }
+        return next;
+      });
+    };
+    sync();
+    return host.subscribe(sync);
+  }, [activeSession?.runtime]);
 
   // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
   useEffect(() => {
     const host = clientHost();
     const sync = () => {
-      setPluginConversationViews(host.contributionsFor("conversation.view").map((contribution) => ({
+      setPluginConversationViews(host.contributionsFor("conversation.view").filter(contribution =>
+        activeSession?.runtime !== 'dsh' || contribution.pluginId !== 'dyworker-context').map((contribution) => ({
         key: String(contribution.meta.key ?? contribution.meta.id ?? ""),
         label: typeof contribution.meta.label === "function"
           ? String((contribution.meta.label as () => unknown)())
@@ -9700,24 +10236,19 @@ export function App() {
     };
     sync();
     return host.subscribe(sync);
-  }, []);
+  }, [activeSession?.runtime]);
 
   // 切会话（含新建任务）时回到对话标签，避免停在上一个会话的插件视图上
   useEffect(() => { setConversationView("chat"); }, [activeId]);
 
+
   // 插件登记右侧面板标签（sidebar.right.pane.tab 插槽）时，接进已有的工具面板：
   // 不新造界面容器，直接开一个 plugin 类型的标签页承载插件组件。
   useEffect(() => onPluginPanelRequest((request) => {
-    setRightPanelOpen(true);
-    const existing = toolPanelTabs.find((tab) => tab.kind === "plugin" && tab.pluginKey === request.key);
-    if (existing) {
-      updateToolPanelTab(existing.id, { title: request.label });
-      focusToolPanelTab(existing.id);
-      return;
-    }
-    const sequence = toolPanelTabSequenceRef.current++;
-    const id = `plugin-${sequence}`;
-    setToolPanelTabs((current) => [...current, {
+    if (request.open !== false) setRightPanelOpen(true);
+    const id = `plugin-${encodeURIComponent(request.pluginId)}-${encodeURIComponent(request.key)}`;
+    setToolPanelTabs((current) => [...current.filter(tab => tab.kind !== "plugin"
+      || tab.pluginKey !== request.key || tab.pluginId !== request.pluginId), {
       id,
       kind: "plugin" as const,
       title: request.label,
@@ -9725,7 +10256,7 @@ export function App() {
       pluginKey: request.key,
     }]);
     setActiveToolPanelTabId(id);
-  }), [toolPanelTabs, updateToolPanelTab, focusToolPanelTab]);
+  }), []);
 
   const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false, initialUrl?: string) => {
     if (!createNew) {
@@ -9750,6 +10281,58 @@ export function App() {
     setToolPanelMenuOpen(false);
     return tab.id;
   };
+
+  const openFilePreview = (filePath: string, root: string) => {
+    const current = toolPanelTabsRef.current;
+    const existing = current.find(tab => tab.kind === "preview" && tab.filePath === filePath && tab.previewWorkspacePath === root);
+    const id = existing?.id || `preview-${toolPanelTabSequenceRef.current++}`;
+    const next: ToolPanelTab[] = existing
+      ? current.map(tab => tab.id === id ? { ...tab, previewRevision: (tab.previewRevision || 0) + 1 } : tab)
+      : [...current, { id, kind: "preview", title: filePath.split(/[\\/]/).pop() || "文件预览", filePath, previewWorkspacePath: root }];
+    toolPanelTabsRef.current = next;
+    setToolPanelTabs(next);
+    setActiveToolPanelTabId(id);
+    setRightPanelOpen(true);
+    setToolPanelMenuOpen(false);
+    setToolPanelAddMenuOpen(false);
+  };
+  const choosePreviewFile = async () => {
+    try {
+      const choice = await window.dyworker?.choosePreviewFile();
+      if (choice && !choice.canceled && choice.path && choice.workspacePath) openFilePreview(choice.path, choice.workspacePath);
+    } catch (error) { setError(`打开文件失败：${String(error)}`); }
+  };
+  const openFilePreviewRef = useRef(openFilePreview);
+  openFilePreviewRef.current = openFilePreview;
+  const pendingFilePreviews = useRef(new Map<string, Array<{ path: string; workspacePath: string }>>());
+  useEffect(() => window.dyworker?.onFilePanelRequest?.(request => {
+    if (!request.ownerSessionId) return;
+    if (request.ownerSessionId !== activeIdRef.current) {
+      const queued = pendingFilePreviews.current.get(request.ownerSessionId) || [];
+      pendingFilePreviews.current.set(request.ownerSessionId, [...queued.filter(item => item.path !== request.path || item.workspacePath !== request.workspacePath), request].slice(-50));
+      return;
+    }
+    openFilePreviewRef.current(request.path, request.workspacePath);
+  }), []);
+  useEffect(() => {
+    if (!ready) return;
+    const pending = pendingFilePreviews.current.get(activeId);
+    if (pending) {
+      pendingFilePreviews.current.delete(activeId);
+      for (const request of pending) openFilePreviewRef.current(request.path, request.workspacePath);
+    }
+  }, [activeId, ready]);
+
+  useEffect(() => {
+    const strip = document.querySelector(".tool-panel-tab-strip");
+    const tab = strip?.querySelector<HTMLElement>(`[data-tool-panel-tab-id="${activeToolPanelTabId}"]`);
+    if (strip && tab) {
+      const stripRect = strip.getBoundingClientRect();
+      const tabRect = tab.getBoundingClientRect();
+      if (tabRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - tabRect.left;
+      else if (tabRect.right > stripRect.right) strip.scrollLeft += tabRect.right - stripRect.right;
+    }
+  }, [activeToolPanelTabId, rightPanelOpen, appliedToolPanelWidth]);
 
   const closeToolPanelTab = (id: string) => {
     const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
@@ -10099,18 +10682,58 @@ export function App() {
     setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
   };
 
-  const sendMessage = async (overridePrompt?: string, overrideSessionId?: string, overrideRunId?: string) => {
+  const sendMessage = async (overridePrompt?: string, overrideSessionId?: string, overrideRunId?: string,
+    pluginSubmission?: import('./pluginRuntime/conversation').ConversationSubmission) => {
+    if (pluginSubmission) {
+      pluginSubmission.signal.throwIfAborted();
+      const owned = sessions.find(session => session.id === pluginSubmission.sessionId);
+      if (!owned || owned.runtime !== 'dsh') throw new Error('插件会话已关闭，输入未发送');
+      if (!settings.identity) throw new Error('请先选择 DYWorker 的使用身份');
+      if (!window.dyworker?.sendTask) throw new Error('当前应用没有真实任务发送入口');
+      if (!owned.workspacePath) throw new Error('插件会话需要选择工作文件夹');
+      if (sleepingSessions[owned.id]) throw new Error('此任务正在等待唤醒，输入已保留');
+      if (!pluginSubmission.text.trim() && !pluginSubmission.attachments.length) throw new Error('消息和附件均为空');
+    }
+    let dshDraft: Awaited<ReturnType<ReturnType<typeof clientHost>['serializeInputDraft']>>;
+    if (overridePrompt === undefined && activeSession?.runtime === 'dsh') {
+      try {
+        if (!clientHost().inputReady(activeSession.id)) throw new Error('引用编辑器正在准备，请稍后重试');
+        const scopedInput = clientHost().sessionInput((clientHost().ctx as any).sessions.scope(activeSession.id));
+        if (scopedInput.state.getSnapshot().attachmentIds.length) {
+          scopedInput.submit('queue', 'enter'); return;
+        }
+        clientHost().setInputDraft(activeSession.id, composer);
+        const owner = activeSession.id; const selected = attachments;
+        const current = () => activeIdRef.current === owner && attachmentsRef.current === selected;
+        if (await clientHost().matchInputEnter(owner, composer.trim(), {
+          count: selected.length, current,
+          async serialize(signal) {
+            signal.throwIfAborted();
+            if (!window.dyworker?.serializeCommandAttachments) throw new Error('当前应用不能传递插件命令附件');
+            if (selected.some(file => !file.commandGrantId)) throw new Error('附件需要重新选择后才能交给插件命令');
+            const result = await window.dyworker.serializeCommandAttachments({ sessionId: owner, grantIds: selected.map(file => file.commandGrantId!) });
+            signal.throwIfAborted();
+            if (!result.ok || !result.attachments) throw new Error(result.error || '附件保存失败');
+            return result.attachments;
+          },
+          consume() { if (selected.length && current()) setAttachments([]); },
+        }, setNotice)) { setMentionMenu(null); return; }
+        dshDraft = await clientHost().serializeInputDraft(activeSession.id);
+      } catch (error) { showSessionError(activeSession.id, String((error as any)?.message || error)); return; }
+    }
     if (!settings.identity) {
       setNotice("请先选择 DYWorker 的使用身份");
       return;
     }
     const isOverride = typeof overridePrompt === "string";
     const targetSession = overrideSessionId
-      ? sessions.find((session) => session.id === overrideSessionId) || activeSession
+      ? sessions.find((session) => session.id === overrideSessionId) || (pluginSubmission ? undefined : activeSession)
       : activeSession;
     if (!targetSession) return;
 
-    let content = isOverride ? overridePrompt.trim() : composer.trim();
+    let content = isOverride ? overridePrompt.trim() : (dshDraft?.clipboardText ?? composer).trim();
+    const clipboardLeading = (dshDraft?.clipboardText ?? composer).length - (dshDraft?.clipboardText ?? composer).trimStart().length;
+    const isPluginReference = (at: number) => dshDraft?.references.some(ref => at + clipboardLeading >= ref.offset && at + clipboardLeading < ref.offset + ref.length);
     if (!isOverride && (!content && !attachments.length && !activeSkills.length && !composerPastes.length && !annotations.length)) return;
     const queueSupported = Boolean(window.dyworker?.sendTask);
     // 任务运行期间仍允许发送：桌面版进入消息队列，等当前任务结束后自动执行
@@ -10137,6 +10760,9 @@ export function App() {
     let pastedText = "";
     let selectedAttachments: Attachment[] = [];
     let selectedSkills = activeSkills;
+    // @「标题」引用的历史会话：解析出的引用与模型可见的摘要块
+    let sessionRefs: Array<{ id: string; title: string }> = [];
+    let sessionText = "";
 
     if (!isOverride) {
       // /new：开启全新会话（对齐渠道快捷指令与斜杠菜单）
@@ -10190,6 +10816,7 @@ export function App() {
       FILE_TOKEN_REGEX.lastIndex = 0;
       let tokenMatch: RegExpExecArray | null;
       while ((tokenMatch = FILE_TOKEN_REGEX.exec(content))) {
+        if (isPluginReference(tokenMatch.index)) continue;
         const file = resolveTokenFile(tokenMatch[1]);
         if (file && !seenTokenPaths.has(file.path)) {
           seenTokenPaths.add(file.path);
@@ -10197,6 +10824,25 @@ export function App() {
         }
       }
       mentionTokenPathsRef.current.clear();
+      // @「标题」会话引用：解析出被引会话，尾部摘要块随消息正文发给模型；
+      // 气泡按 sessionRefs 高亮 token 并支持点击跳转，完整上下文由模型按 id 自取
+      const resolvedSessionRefs: Array<{ id: string; title: string }> = [];
+      const sessionBlocks: string[] = [];
+      const seenSessionIds = new Set<string>();
+      SESSION_TOKEN_REGEX.lastIndex = 0;
+      let sessionMatch: RegExpExecArray | null;
+      while ((sessionMatch = SESSION_TOKEN_REGEX.exec(content))) {
+        if (isPluginReference(sessionMatch.index)) continue;
+        const session = resolveTokenSession(sessionMatch[1]);
+        if (session && !seenSessionIds.has(session.id)) {
+          seenSessionIds.add(session.id);
+          resolvedSessionRefs.push({ id: session.id, title: session.title });
+          sessionBlocks.push(formatSessionReference(session));
+        }
+      }
+      sessionRefs = resolvedSessionRefs;
+      sessionText = sessionBlocks.length ? `\n\n${sessionBlocks.join("\n\n")}` : "";
+      sessionTokenIdsRef.current.clear();
       selectedAttachments = [
         ...tokenAttachments,
         ...attachments.filter((attachment) => !seenTokenPaths.has(attachment.path)),
@@ -10214,6 +10860,8 @@ export function App() {
     const taskSessionId = targetSession.id;
     newTaskGuardRef.current = false;
     const taskRunId = overrideRunId || crypto.randomUUID();
+    const cancelPluginInput = () => { void window.dyworker?.cancelTask(targetSession.id, taskRunId); };
+    if (pluginSubmission) { pluginSubmission.signal.throwIfAborted(); pluginSubmission.signal.addEventListener('abort', cancelPluginInput, {once:true}); }
     let queuedResponse = false;
     const messageRunId = editingQueuedRunId || overrideRunId || taskRunId;
     const targetTaskRunning = Boolean(targetSession.id && runningSessionIds.has(targetSession.id));
@@ -10236,19 +10884,26 @@ export function App() {
         }).join("\n\n")}\n\n以下是我的任务:\n`
       : "";
     const typedContent = content;
-    const modelContent = typedContent || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。");
+    const modelContent = dshDraft?.references.length ? dshDraft.text : typedContent || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。");
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       runId: messageRunId,
-      content: skillsBlock + modelContent + pastedText + annotationText,
-      ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length ? {
-        displayContent: typedContent,
+      content: skillsBlock + modelContent + pastedText + annotationText + sessionText,
+      ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length || sessionRefs.length || dshDraft?.references.length ? {
+        displayContent: dshDraft?.references.length ? dshDraft.clipboardText : typedContent,
         ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
       } : {}),
       ...(pastedBlocks.length ? { pasteBlocks: pastedBlocks.map((block, index) => ({ id: `paste-${index}`, text: block.text })) } : {}),
       ...(messageAnnotations.length ? { annotations: messageAnnotations } : {}),
+      ...(sessionRefs.length ? { sessionRefs } : {}),
+      ...(dshDraft?.references.length ? { pluginReferences: dshDraft.references } : {}),
+      ...(pluginSubmission?.presentation?.references.length ? {
+        displayContent: pluginSubmission.presentation.text, pluginReferences: pluginSubmission.presentation.references,
+      } : {}),
       attachments: selectedAttachments,
+      ...(pluginSubmission?.attachments.length ? {dshAttachments:[...pluginSubmission.attachments] as ChatMessage['dshAttachments']} : {}),
+      ...(pluginSubmission?.attachmentNames?.length ? {dshAttachmentNames:[...pluginSubmission.attachmentNames]} : {}),
       createdAt: new Date().toISOString(),
     };
     const baseMessages = editingTarget && editingMessage
@@ -10262,7 +10917,7 @@ export function App() {
       ...(goalDriven ? { goal: content } : {}),
       ...(editingTarget ? { workingContext: undefined } : {}),
       title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : targetSession.title,
-      workspacePath: workspacePath || targetSession.workspacePath || "",
+      workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath || targetSession.workspacePath || "",
       updatedAt: new Date().toISOString(),
       messages: [
         ...baseMessages,
@@ -10278,14 +10933,18 @@ export function App() {
       return;
     }
 
+    let requestAssistantId: string | undefined;
     try {
       if (window.dyworker?.sendTask) {
         const assistantId = crypto.randomUUID();
+        requestAssistantId = assistantId;
+        let activeDshTurnId: string | undefined;
         const taskStartedAt = Date.now();
         const patchAssistant = (updater: (current: ChatMessage) => ChatMessage) => {
+          const turnId = activeDshTurnId;
           updateSession(targetSession.id, (session) => ({
             ...session,
-            messages: session.messages.map((current) => current.id === assistantId ? updater(current) : current),
+            messages: patchDshAssistant(session.messages,{assistantId,runId:messageRunId,turnId},updater),
           }));
         };
         updateSession(targetSession.id, (session) => ({
@@ -10311,7 +10970,7 @@ export function App() {
             } else if (result.status === "cancelled") {
               content = content ? `${content}\n\n已按你的要求停止。` : "已按你的要求停止。";
             } else if (result.status === "error") {
-              content = result.reason || content || "任务执行出错";
+              content = [content,result.reason].filter(Boolean).join("\n\n") || "任务执行出错";
             }
             const plan = result.plan?.length ? result.plan : current.plan;
             return {
@@ -10329,6 +10988,11 @@ export function App() {
               ...(result.workingContext !== undefined ? { workingContext: result.workingContext } : {}),
             };
           });
+          if (result.dshTurns?.length && updatedSession.messages.at(-1)?.id) {
+            updateSession(targetSession.id, session => ({...session,messages:reconcileDshTurns(session.messages,result.dshTurns!,{
+              userId:updatedSession.messages.at(-1)!.id!,assistantId,runId:messageRunId,
+            })}));
+          }
           if (result.workingContext !== undefined) {
             updateSession(targetSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
           }
@@ -10364,7 +11028,12 @@ export function App() {
         const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
           if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
           const agentEvent = sessionAgentEvent.event;
-          if (agentEvent.type === "activity") {
+          if (agentEvent.type === "dsh-conversation" && updatedSession.messages.at(-1)?.id) {
+            activeDshTurnId = agentEvent.turns.at(-1)?.user.id;
+            updateSession(targetSession.id, session => ({...session,messages:reconcileDshTurns(session.messages,agentEvent.turns,{
+              userId:updatedSession.messages.at(-1)!.id!,assistantId,runId:messageRunId,live:true,
+            })}));
+          } else if (agentEvent.type === "activity") {
             // 子代理分支活动（带 branch）挂到父活动（dispatch_agent）的 children 上，
             // 随 message.activities 落盘；不再走单独的全局缓存（会跨会话串数据）
             if (agentEvent.activity.branch) {
@@ -10393,9 +11062,9 @@ export function App() {
             const runPrevious = runTraceEventsRef.current.get(taskRunId) || [];
             const runNext = [...runPrevious, agentEvent.trace];
             runTraceEventsRef.current.set(taskRunId, runNext.length > 5000 ? runNext.slice(-5000) : runNext);
-          } else if (agentEvent.type === "assistant-text") {
+          } else if (agentEvent.type === "assistant-text" && !activeDshTurnId) {
             patchAssistant((current) => ({ ...current, content: agentEvent.text }));
-          } else if (agentEvent.type === "assistant-reasoning") {
+          } else if (agentEvent.type === "assistant-reasoning" && !activeDshTurnId) {
             patchAssistant((current) => ({ ...current, reasoning: agentEvent.text }));
           } else if (agentEvent.type === "file-change") {
             patchAssistant((current) => ({ ...current, changes: agentEvent.changes }));
@@ -10512,7 +11181,8 @@ export function App() {
         try {
           const response = await window.dyworker.sendTask({
             settings,
-            workspacePath,
+            runtime: updatedSession.runtime,
+            workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath,
             sessionId: updatedSession.id,
             contextLimit: modelContextLimit(settings.model, settings.endpoint),
             workingContext: updatedSession.workingContext,
@@ -10584,15 +11254,14 @@ export function App() {
     } catch (requestError) {
       const detail = requestError instanceof Error ? requestError.message : String(requestError);
       showSessionError(taskSessionId, detail);
-      updateSession(activeSession.id, (session) => ({
+      updateSession(taskSessionId, (session) => ({
         ...session,
-        messages: [...session.messages, {
-          role: "assistant",
-          content: `请求没有完成：${detail}`,
-          createdAt: new Date().toISOString(),
-        }],
+        messages: recordTaskFailure(session.messages, { assistantId: requestAssistantId, runId: messageRunId,
+          detail, createdAt: new Date().toISOString() }),
       }));
+      if (pluginSubmission) throw requestError;
     } finally {
+      pluginSubmission?.signal.removeEventListener('abort', cancelPluginInput);
       if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
         runningRunIdsRef.current.delete(taskSessionId);
       }
@@ -10624,6 +11293,65 @@ export function App() {
       }
     }
   };
+
+  useEffect(() => {
+    clientHost().setNativeAttachmentProvider(owner => {
+      const selected = attachmentsRef.current;
+      if (activeIdRef.current !== owner || !selected.length) return undefined;
+      const current = () => activeIdRef.current === owner && attachmentsRef.current === selected;
+      return {count:selected.length,names:selected.map(file=>file.name),current,
+        async serialize(signal) {
+          signal.throwIfAborted();
+          if (!current()) throw new Error('附件或会话已经变化，输入已保留');
+          if (!window.dyworker?.serializeCommandAttachments || selected.some(file => !file.commandGrantId))
+            throw new Error('附件需要重新选择后才能发送');
+          const result = await window.dyworker.serializeCommandAttachments({sessionId:owner,grantIds:selected.map(file=>file.commandGrantId!)});
+          signal.throwIfAborted();
+          if (!current()) throw new Error('附件或会话已经变化，输入已保留');
+          if (!result.ok || !result.attachments) throw new Error(result.error || '附件保存失败');
+          return result.attachments;
+        },
+        consume() { if (current()) setAttachments([]); },
+      };
+    });
+    const offQueue = clientHost().subscribeInputQueue(change => {
+      updateSession(change.sessionId, session => ({...session,messages:change.action.kind === 'remove'
+        ? session.messages.filter(message => message.id !== change.itemId)
+        : change.action.kind === 'edit' ? session.messages.map(message => message.id === change.itemId
+          ? {...message,content:change.action.content.map((part:any) => part.text).join('\n'),dshAttachments:undefined,dshAttachmentNames:undefined,
+            displayContent:undefined,pluginReferences:undefined} : message) : session.messages}));
+    });
+    clientHost().setInputSubmit(async input => {
+      if (runningSessionIds.has(input.sessionId)) {
+        input.signal.throwIfAborted();
+        const requestId = crypto.randomUUID();
+        const response = await window.dyworker?.dshOperation({sessionId:input.sessionId,action:'input-admit',payload:{
+          requestId,mode:input.mode,content:[...(input.text ? [{type:'text',text:input.text}] : []),...input.attachments],
+        }});
+        if (!response?.ok) {
+          if (response?.error?.code !== 'dyworker/input-unavailable') throw new Error(response?.error?.message || '插件输入未发送');
+          // 原任务刚结束时，按应用正常入口取得下一轮授权；空闲状态下即时补充也是新一轮。
+        } else {
+          const accepted = response.value;
+          if (accepted?.accepted !== true || typeof accepted.messageId !== 'string') throw new Error('任务没有返回已接收消息的确认');
+          updateSession(input.sessionId, session => {
+            if (session.messages.some(message => message.id === accepted.messageId)) return session;
+            const message: ChatMessage = {id:accepted.messageId,role:'user',content:input.text,createdAt:new Date().toISOString(),
+              ...(input.attachmentNames?.length ? {dshAttachmentNames:[...input.attachmentNames]} : {}),
+              ...(input.presentation?.references.length ? {displayContent:input.presentation.text,pluginReferences:input.presentation.references} : {}),
+              ...(input.attachments.length ? {dshAttachments:[...input.attachments] as ChatMessage['dshAttachments']} : {})};
+            const messages = [...session.messages,message];
+            return {...session,messages,updatedAt:message.createdAt};
+          });
+          await clientHost().refreshInputInbox(input.sessionId);
+          return {kind:'success'};
+        }
+      }
+      await sendMessage(input.text, input.sessionId, undefined, input);
+      return {kind:'success'};
+    });
+    return () => {offQueue();clientHost().setInputSubmit(undefined);clientHost().setNativeAttachmentProvider(undefined);};
+  });
 
   // 浏览器 Computer Use 控制：响应“继续交给助手”广播，真正恢复任务执行 (F4 / 补充要求 4)
   const browserResumeGuardRef = useRef(false);
@@ -10658,8 +11386,13 @@ export function App() {
     };
   }, [activeId, runningSessionIds, sessions, settings, workspacePath]);
 
-  const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onComposerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === ' ' && !event.metaKey && !event.ctrlKey && !event.altKey && activeSession?.runtime === 'dsh') {
+      try { if (clientHost().matchInputSpace(activeSession.id, composer, textareaRef.current?.selectionStart ?? composer.length)) {
+        event.preventDefault(); return;
+      } } catch (error) { event.preventDefault(); setError(String((error as any)?.message || error)); return; }
+    }
     if (mentionMenu) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -10673,16 +11406,20 @@ export function App() {
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        applyMention(mentionIndex);
+        applyMention(mentionIndex, event.key === 'Tab' && !event.shiftKey && mentionItems[mentionIndex]?.pluginInput?.candidate.drill ? 'drill' : 'pick');
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
+        if (activeSession?.runtime === 'dsh') clientHost().dismissInputMenu(activeSession.id);
         setMentionMenu(null);
         return;
       }
     }
     // ESC 中断：无候选菜单时按 ESC 终止当前会话正在运行的任务（对齐 Codex 的 ESC 打断）
+    if (event.key === 'Escape' && activeSession && clientHost().cancelInput(activeSession.id)) {
+      event.preventDefault(); return;
+    }
     if (event.key === "Escape" && activeSession && runningSessionIds.has(activeSession.id)) {
       const runId = runningRunIdsRef.current.get(activeSession.id);
       if (runId && window.dyworker?.cancelTask) {
@@ -10701,6 +11438,14 @@ export function App() {
   const saveProviderSettings = async (nextSettings: ProviderSettings, successMessage = "设置已保存") => {
     if (bootstrapFailedRef.current) {
       setError("启动时未能读到本地配置，已阻止保存以免覆盖磁盘上的数据；请重启应用后重试。");
+      return false;
+    }
+    // 桥接缺失必须报错而不是"保存成功"：window.dyworker?.saveSettings 是可选链，
+    // 没有 preload 时会静默返回 undefined，被当成保存成功——用户看到「设置已保存」，
+    // 磁盘上一个字都没写（设置里改不动的现场）。浏览器里单独跑界面预览时没有桥接
+    // 属于正常情况，那种场景不报错。
+    if (!window.dyworker?.saveSettings && /Electron\//.test(navigator.userAgent)) {
+      setError("桌面桥接没有加载（preload 缺失），设置无法写入磁盘。请重新构建并重启 DYWorker；若重启后依旧如此，说明安装包不完整。");
       return false;
     }
     try {
@@ -10869,7 +11614,7 @@ export function App() {
     });
   };
 
-  const hasModel = Boolean(settings.endpoint && settings.model && settings.apiKey);
+  const hasModel = hasConfiguredModel(settings);
   // 当前提供方预设支持的推理强度档位（本地部署也有开/关思考），输入框下方快捷切换用
   const activeReasoningEfforts = useMemo(
     () => providerPresets.find((item) => item.id === matchProvider(settings.endpoint))?.reasoningEfforts || [],
@@ -10904,11 +11649,9 @@ export function App() {
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   // 例外一：挂起等待唤醒期间禁止发送（发送键变灰），必须先「立即继续」或「取消唤醒」
-  // 例外二：定时计划运行中的会话禁止发送（后台那轮计划不是本会话的排队任务，并行写会互相覆盖）
   const canSend = Boolean(
     (composer.trim() || attachments.length || activeSkills.length || composerPastes.length || annotations.length)
     && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
-    && !activeScheduledRun
     && !activeSleeping
     && voiceState !== "transcribing",
   );
@@ -10937,6 +11680,29 @@ export function App() {
       void window.dyworker.refreshWorkspace(path).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
     }
   };
+
+  // 插件要求跳转会话（上下文仪表盘的会话卡片）：交给已有的 selectSession 走完整流程
+  useEffect(() => window.dyworker?.onDshSessionCreated?.(({session}) => {
+    if (session.runtime !== 'dsh') return;
+    clientHost().acceptCreatedSession(session);
+    setSessions(current => mergeCreatedDshTask(current,session));
+  }), []);
+
+  useEffect(() => window.dyworker?.onDshSessionRenamed?.(({sessionId,title}) => {
+    updateSession(sessionId,session => session.runtime === 'dsh' ? {...session,title,titleCustom:true} : session);
+  }), []);
+
+  useEffect(() => onOpenSessionRequest((sessionId) => {
+    const target = sessions.find((session) => String(session.id) === String(sessionId)) || clientHost().nativeSession(sessionId);
+    if (target) {
+      setSessions(current => current.some(row => row.id === target.id) ? current : [target, ...current]);
+      selectSession(target);
+    }
+    else {
+      const child = clientHost().subagent(sessionId);
+      if (child) setDshChildHistory(child);
+    }
+  }), [sessions, selectSession]);
 
   const jumpToConversationTurn = (turnIndex: number) => {
     setHoveredTurnIndex(turnIndex);
@@ -11101,8 +11867,15 @@ export function App() {
     if (!activeSession || message.role !== "user") return;
     // 任务运行期间只允许编辑排队中、尚未开始执行的消息
     if (activeTaskRunning && !(message.runId && queuedRunIds.has(message.runId))) return;
+    const text = messageVisibleText(message);
+    if (activeSession.runtime === 'dsh') {
+      const editor = clientHost().inputEditor(activeSession.id);
+      if (!editor || !clientHost().inputReady(activeSession.id)) { setNotice('本会话输入尚未就绪，请稍后重试'); return; }
+      try { editor.restore({ text, references: message.pluginReferences || [] }); editor.refreshSources(); }
+      catch (error) { setNotice(`无法恢复这条消息的引用：${error instanceof Error ? error.message : String(error)}`); return; }
+    }
     setEditingMessage({ sessionId: activeSession.id, messageIndex, original: message });
-    setComposer(messageVisibleText(message));
+    setComposer(text);
     setAttachments(message.attachments ? [...message.attachments] : []);
     setActiveSkills(message.skillsUsed?.length ? skills.filter((skill) => message.skillsUsed?.includes(skill.name)) : []);
     // 引用注释一并恢复进 composer，重发时按编辑后的版本重新编号拼进正文
@@ -11495,6 +12268,8 @@ export function App() {
   return (
     <>
     {/* 外观背景装饰层：背景色 → 背景图 → 遮罩，pointer-events/aria-hidden 保证不占交互 */}
+    <PluginSlotView slot="shell.overlay" hideEmpty />
+    {dshChildHistory && <DshChildHistory target={dshChildHistory} onClose={closeDshChildHistory} />}
     <div className="appearance-backdrop" aria-hidden="true" />
     <div
       className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
@@ -11670,6 +12445,7 @@ export function App() {
           </section>
         </div>
 
+        <div className="sidebar-plugin-actions"><PluginSlotView slot="sidebar.footer.action" wide hideEmpty /></div>
         <div className="sidebar-footer">
           <button className="profile-button">
             <span className="avatar"><UserRound size={14} /></span>
@@ -11709,7 +12485,8 @@ export function App() {
               title="展开侧栏"
               onClick={() => setSidebarOpen(true)}
             >
-              <PanelRightIcon size={18} />
+              {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
+              <PanelLeftIcon size={18} />
             </button>
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
@@ -11867,17 +12644,6 @@ export function App() {
               )}
             </button>
             <button
-              className={`icon-button subtle ${usageStatsOpen ? "active" : ""}`}
-              aria-label="用量统计"
-              title="用量统计：按模型累计 token 用量"
-              onClick={() => {
-                setUsageStatsOpen(true);
-                if (window.dyworker) void window.dyworker.listUsageStats().then(setUsageStats);
-              }}
-            >
-              <BarChart3 size={17} />
-            </button>
-            <button
               className={`icon-button subtle ${conversationSearchOpen ? "active" : ""}`}
               aria-label="搜索会话内容"
               title="搜索会话内容：在当前会话的对话内容中查找（⌘F / Ctrl+F）"
@@ -11887,14 +12653,6 @@ export function App() {
               }}
             >
               <Search size={17} />
-            </button>
-            <button
-              className={`icon-button subtle ${debugOpen ? "active" : ""}`}
-              aria-label="轨迹控制台"
-              title="轨迹控制台：按轮次/步骤查看模型请求、工具调用、活动与文件变更的完整时间线（可回放历史）"
-              onClick={() => setDebugOpen((value) => !value)}
-            >
-              <Terminal size={17} />
             </button>
             {!rightPanelOpen && (
               <button
@@ -11922,14 +12680,9 @@ export function App() {
             className={`conversation-tab ${conversationView === "chat" ? "active" : ""}`}
             onClick={() => setConversationView("chat")}
           >对话</button>
-          {/* 轨迹：原生实现（数据来自我们自己的 TraceEvent 流）。
-              以前这里是 DSH 官方轨迹插件贡献的标签，已移除——不依赖那套会话视图壳层。 */}
-          <button
-            role="tab"
-            aria-selected={conversationView === "trace"}
-            className={`conversation-tab ${conversationView === "trace" ? "active" : ""}`}
-            onClick={() => setConversationView("trace")}
-          >轨迹</button>
+          {/* 「轨迹」不再硬编码在这里：它由内置插件 dyworker-trajectory 注册进
+              conversation.view 插槽（与官方 DSH 的轨迹插件同一套契约），
+              视图代码仍是 src/TraceView，插件负责注册与按会话取 trace。 */}
           {pluginConversationViews.map((view) => (
             <button
               key={view.key}
@@ -11943,18 +12696,8 @@ export function App() {
 
         {conversationView !== "chat" && (
           <section className="conversation-view-panel">
-            {conversationView === "trace" ? (
-              /* 原生轨迹视图（数据来自我们自己的 TraceEvent 流；不再依赖 DSH 的轨迹插件） */
-              <TraceView
-                traces={activeSessionTraceEvents}
-                messages={activeSession?.messages}
-                sessionId={activeSession?.id}
-                onClose={() => setConversationView("chat")}
-              />
-            ) : (
-              /* 插件贡献的会话区视图（DSH 的 conversation.view 插槽）仍然接在这里 */
-              <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
-            )}
+            {/* 会话区视图一律由插件贡献（conversation.view 插槽）：轨迹、上下文都是插件 */}
+            <PluginSlotView slot="conversation.view" pluginKey={conversationView} sessionId={activeSession?.id} session={activeSession} />
           </section>
         )}
 
@@ -12119,6 +12862,10 @@ export function App() {
                 const messageSkillNames = message.role === "user"
                   ? new Set(message.skillsUsed ?? [])
                   : new Set<string>();
+                // 用户气泡：@「标题」会话 token 高亮，点击切到被引会话
+                const messageSessionTitles = message.role === "user"
+                  ? new Set((message.sessionRefs ?? []).map((ref) => ref.title))
+                  : new Set<string>();
                 // 旧消息兼容：正文里没有 /技能名 token 时才退回 chip 展示（新消息已内联融合）
                 const legacySkillChips = message.role === "user"
                   ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
@@ -12131,6 +12878,7 @@ export function App() {
                   || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
                   || Boolean(message.pasteBlocks?.length)
                   || Boolean(message.annotations?.length)
+                  || Boolean(message.dshAttachmentNames?.length)
                 );
                 // 气泡里只有注释 chip：不套气泡边框，chip 直接裸放（套框显得笨重）
                 const bubbleBare = message.role === "user"
@@ -12143,6 +12891,27 @@ export function App() {
                 const openMessageFile = (name: string) => {
                   const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
                   void openReferencedFile(name, recorded?.path);
+                };
+                const assistantImages = message.role === 'assistant' ? assistantImageAttachments(message) : [];
+                const userImages: Attachment[] = message.role === 'user' ? [
+                  ...(message.attachments?.filter(attachment=>attachment.isImage) || []),
+                  ...(message.dshAttachments || []).flatMap((part,index)=>part.type === 'image' ? [{
+                    name:part.name || message.dshAttachmentNames?.[index] || '图片附件',path:'',mimeType:part.mediaType,
+                    size:Math.floor(part.data.length * 3 / 4),isImage:true,previewUrl:`data:${part.mediaType};base64,${part.data}`,
+                  }] : []),
+                ] : [];
+                // 点击气泡里的会话引用：切到对应会话（会话可能已被删除，找不到就提示）
+                const openMessageSession = (title: string) => {
+                  const ref = (message.sessionRefs ?? []).find((entry) => entry.title === title);
+                  const target = ref && sessions.some((session) => session.id === ref.id)
+                    ? ref.id
+                    : sessions.find((session) => session.title === title && session.id !== activeSession?.id)?.id;
+                  if (target) {
+                    setActiveId(target);
+                    setNotice("已切换到引用的会话");
+                  } else {
+                    setNotice(`会话「${title}」已不存在，可能已被删除`);
+                  }
                 };
                 return (
                 <div
@@ -12160,14 +12929,14 @@ export function App() {
                     <>
                       <div className="user-message-stack">
                         {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
-                        {Boolean(message.attachments?.some((attachment) => attachment.isImage)) && (
+                        {Boolean(userImages.length) && (
                           <div className="message-attachments">
-                            {message.attachments?.filter((attachment) => attachment.isImage).map((attachment) => (
+                            {userImages.map((attachment,index) => (
                               attachment.path || attachment.previewUrl ? (
                                 <ImageAttachmentView
-                                  key={`${message.createdAt}-${attachment.path || attachment.previewUrl}`}
+                                  key={`${message.createdAt}-${index}-${attachment.path || attachment.previewUrl}`}
                                   attachment={attachment}
-                                  onPreview={(payload) => openImagePreview(payload, message.attachments?.filter((attachment) => attachment.isImage))}
+                                  onPreview={(payload) => openImagePreview(payload, userImages)}
                                 />
                               ) : (
                                 <span key={`${message.createdAt}-${attachment.path}`}>
@@ -12183,6 +12952,9 @@ export function App() {
                           className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
                           onContextMenu={(event) => handleMessageContextMenu(event, message)}
                         >
+                        {!!message.dshAttachmentNames?.length && <span className="message-inline-refs" aria-label="已发送的插件附件">
+                          {message.dshAttachmentNames.map((name,at)=><span className="ref-chip" key={at}><FileText size={13} /><span>{name}</span></span>)}
+                        </span>}
                         {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
                           <span className="message-inline-refs">
                             {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
@@ -12217,6 +12989,14 @@ export function App() {
                             tokenNames={inlineTokenNames}
                             skillNames={messageSkillNames}
                             onFileToken={openMessageFile}
+                            sessionTitles={messageSessionTitles}
+                            onSessionToken={openMessageSession}
+                            pluginReferences={message.pluginReferences}
+                            onPluginReference={ref => {
+                              try {
+                                if (!clientHost().openInputReference(activeSession.id, ref)) setNotice('此引用暂时不能打开，请确认对应插件已启用');
+                              } catch (error) { setError(String((error as any)?.message || error)); }
+                            }}
                           />
                         )}
                         {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
@@ -12264,6 +13044,10 @@ export function App() {
                           streaming={isStreamingMessage}
                         />
                       )}
+                      {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
+                        {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
+                          attachment={attachment} onPreview={payload => openImagePreview(payload, assistantImages)} />)}
+                      </div>}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           {Boolean(messageVisibleText(message).trim()) && (
@@ -12367,6 +13151,7 @@ export function App() {
               <div className="message-row assistant">
                 <QuestionCard
                   request={{
+                    ...activeSessionPendingInboxQuestion.questionPresentation,
                     id: activeSessionPendingInboxQuestion.id,
                     question: activeSessionPendingInboxQuestion.question || "请回答任务提问",
                     options: activeSessionPendingInboxQuestion.options || [],
@@ -12653,6 +13438,10 @@ export function App() {
             )}
             {mentionMenu && (
               <div className="mention-menu" role="listbox">
+                {activeSession?.runtime === 'dsh' && clientHost().inputHeaders(activeSession.id).map(crumb => (
+                  <button key={`${crumb.source}:${crumb.index}`} type="button" className="plugin-input-crumb" disabled={crumb.current}
+                    aria-label={`返回 ${crumb.label}`} onClick={() => clientHost().pickInputCrumb(activeSession.id, crumb.source, crumb.index)}>{crumb.label}</button>
+                ))}
                 {mentionItems.length ? mentionItems.map((item, index) => (
                   <button
                     key={item.id}
@@ -12665,9 +13454,13 @@ export function App() {
                     <span><strong>{item.title}</strong><small>{item.detail}</small></span>
                   </button>
                 )) : (
-                  <p className="mention-empty">{mentionMenu.kind === "slash" ? "没有匹配的技能" : "没有匹配的文件"}</p>
+                  <p className="mention-empty">{mentionMenu.kind === "slash" ? "没有匹配的技能" : "没有匹配的会话或文件"}</p>
                 )}
               </div>
+            )}
+            {activeSession?.runtime === 'dsh' && clientHost().inputClaim(activeSession.id) && (
+              <p className="plugin-input-claim" role="status">命令：{clientHost().inputClaim(activeSession.id)?.name}
+                {clientHost().inputClaim(activeSession.id)?.invalid ? ' · 插件已停用，请重新选择' : clientHost().inputClaim(activeSession.id)?.hint ? ` · ${clientHost().inputClaim(activeSession.id)?.hint}` : ''}</p>
             )}
             {composerPastes.length > 0 && (
               <div className="composer-paste-folds">
@@ -12799,22 +13592,34 @@ export function App() {
                   </button>
                 </span>
               ))}
+              {activeSession?.runtime === 'dsh' && <div className="dsh-input-overlay">
+                <PluginSlotView key={activeSession.id} slot="conversation.input.overlay"
+                  sessionId={activeSession.id} session={activeSession} hideEmpty />
+              </div>}
               <div className="composer-input-wrap">
-                {/* 镜像层：渲染在 textarea 之下，给正文里的 @文件 token 画内联高亮底色 */}
+                {activeSession?.runtime === 'dsh' && composerSessionId !== activeId ? <p role="status">正在恢复本会话输入…</p> : activeSession?.runtime === 'dsh' ? <DshComposer key={activeSession.id} sessionId={activeSession.id}
+                  value={composer} inputRef={textareaRef} onChange={updateComposer} onSelect={syncComposerDerivedState}
+                  onKeyDown={onComposerKeyDown} onContextMenu={handleComposerContextMenu}
+                  onPaste={event => void handleComposerPaste(event)}
+                  onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} /> : <>
+                {/* 镜像层：渲染在 textarea 之下，给正文里的 @文件/@「会话」token 画内联高亮底色 */}
                 <div className="composer-mirror" ref={composerMirrorRef} aria-hidden>
-                  {renderInlineTokens(composer, activeTokenNames, activeSkillNames, { keyPrefix: "mirror" })}
+                  {renderInlineTokens(composer, activeTokenNames, activeSkillNames, { keyPrefix: "mirror", sessionTitles: activeSessionTitles })}
                 </div>
                 <textarea
-                  ref={textareaRef}
+                  ref={node => { textareaRef.current = node; }}
                   value={composer}
                   onChange={(event) => updateComposer(event.target.value, event.target.selectionStart ?? event.target.value.length)}
                   onPaste={(event) => void handleComposerPaste(event)}
                   onSelect={(event) => {
-                    // 光标点击/移动时同步候选菜单：点回 @token//token 后面可重新唤起，移开即关闭
+                    // 光标点击/移动时同步候选菜单：点回 @token//token 后面可重新唤起，移开即关闭。
+                    // 这里只同步菜单、不写 composer：React 会把 onSelect 合成到 keydown/keyup，
+                    // 而这两个事件派发在 DOM 更新之前，照抄 DOM 会把刚清空的正文写回去
+                    // （实测 bug：回车发送后消息已发出、输入框内容还在）
                     if (composingRef.current) return;
                     const target = event.currentTarget;
                     if (target.selectionStart !== target.selectionEnd) return;
-                    updateComposer(target.value, target.selectionStart ?? target.value.length);
+                    syncComposerDerivedState(target.value, target.selectionStart ?? target.value.length);
                   }}
                   onContextMenu={handleComposerContextMenu}
                   onKeyDown={onComposerKeyDown}
@@ -12830,6 +13635,7 @@ export function App() {
                   spellCheck={false}
                   rows={3}
                 />
+                </>}
               </div>
             </div>
             <div className="composer-toolbar">
@@ -12837,6 +13643,7 @@ export function App() {
                 <div className="add-menu-wrap" data-menu-root>
                   <button
                     className={`icon-button ${addMenuOpen ? "active" : ""}`}
+                    onMouseDown={event => { if (activeSession?.runtime === 'dsh') event.preventDefault(); }}
                     onClick={() => setAddMenuOpen((value) => !value)}
                     aria-label="添加内容"
                     aria-expanded={addMenuOpen}
@@ -12853,6 +13660,16 @@ export function App() {
                         <Paperclip size={16} />
                         <span><strong>添加附件</strong><small>支持文本、代码和图片</small></span>
                       </button>
+                      {activeSession?.runtime === 'dsh' && clientHost().inputSourcesForLaunch().map(source =>
+                        <button role="menuitem" key={`input-source:${source.trigger}:${source.name}`}
+                          onMouseDown={event => event.preventDefault()} onClick={() => {
+                          setAddMenuOpen(false);
+                          try { clientHost().toggleInputSource(activeSession.id, source.name, source.trigger); }
+                          catch (error) { setNotice(String((error as any)?.message || error)); }
+                        }}>
+                          {source.trigger === '/' ? <Slash size={16} /> : <AtSign size={16} />}
+                          <span><strong>{source.name}</strong><small>{source.trigger === '/' ? '选择插件命令' : '插入插件引用'}</small></span>
+                        </button>)}
                     </div>
                   )}
                 </div>
@@ -13011,21 +13828,8 @@ export function App() {
                 >
                   {voiceState === "transcribing" ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} />}
                 </button>
-                {/* 对照 Codex：运行中且没有可发送内容时，发送键变成停止键，只保留一个圆形按钮；
-                    输入框有内容时仍是发送键（点击后消息进入队列）。
-                    定时计划运行中的会话没有可取消的 runId（那轮计划在主进程后台跑），
-                    这里只显示转圈，不给一个点了没反应的停止键 */}
+                {/* 所有入口都登记可取消的运行标识；没有输入时停止，有输入时提交追加要求。 */}
                 {activeTaskRunning && !canSend ? (
-                  activeScheduledRun ? (
-                    <button
-                      className="send-button"
-                      disabled
-                      aria-label="计划任务正在后台运行"
-                      title="计划任务正在后台运行，暂时不能从这里停止"
-                    >
-                      <LoaderCircle size={16} className="spin" />
-                    </button>
-                  ) : (
                     <button
                       className="send-button stop"
                       onClick={() => {
@@ -13034,11 +13838,10 @@ export function App() {
                         if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
                       }}
                       aria-label="停止当前任务"
-                      title="停止当前任务（排队中的消息仍会继续执行）"
+                      title={activeScheduledRun ? "停止当前计划任务（排队中的消息仍会继续执行）" : "停止当前任务（排队中的消息仍会继续执行）"}
                     >
                       <Square size={14} fill="currentColor" />
                     </button>
-                  )
                 ) : (
                   <button
                     className="send-button"
@@ -13073,8 +13876,9 @@ export function App() {
 
       <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label="右侧工具栏">
         <div className="tool-panel-tabs" role="tablist" aria-label="打开的文件和网页">
+          <div className="tool-panel-tab-strip">
           {!pristineMenuPage && toolPanelTabs.map((tab) => (
-            <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} role="presentation">
+            <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} data-tool-panel-tab-id={tab.id} role="presentation">
               <button
                 className="tool-panel-tab-main"
                 role="tab"
@@ -13088,7 +13892,7 @@ export function App() {
                     : tab.favicon
                       ? <img className="browser-tab-favicon" src={tab.favicon} alt="" aria-hidden="true" />
                       : <Globe size={16} />
-                  : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
+                  : tab.kind === "preview" ? <FileText size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
                 <span>{tab.title}</span>
               </button>
               <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
@@ -13096,6 +13900,7 @@ export function App() {
               </button>
             </div>
           ))}
+          </div>
           {!pristineMenuPage && toolPanelAddMenu}
           <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
             {!pristineMenuPage && (
@@ -13123,7 +13928,13 @@ export function App() {
           {menuPageShown && <div className="tool-panel-menu-page" data-menu-root>{toolPanelMenu}</div>}
           {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "plugin" && (
             <section className="plugin-slot-panel">
-              <PluginSlotView pluginId={activeToolPanelTab.pluginId} pluginKey={activeToolPanelTab.pluginKey} />
+              {/* 面板里的插件视图同样要拿得到当前会话：轨迹/上下文这类视图都是会话级的 */}
+              <PluginSlotView
+                pluginId={activeToolPanelTab.pluginId}
+                pluginKey={activeToolPanelTab.pluginKey}
+                sessionId={activeSession?.id}
+                session={activeSession}
+              />
             </section>
           )}
           {!menuPageShown && activeToolPanelTab && activeToolPanelKind === "browser" && (
@@ -13385,9 +14196,15 @@ export function App() {
             </section>
           )}
 
+          {!menuPageShown && activeToolPanelKind === "preview" && activeToolPanelTab?.filePath && (
+            <FilePreviewPanel key={`${activeId}:${activeToolPanelTab.id}:${activeToolPanelTab.previewRevision || 0}`} path={activeToolPanelTab.filePath} workspacePath={activeToolPanelTab.previewWorkspacePath || workspacePath} />
+          )}
+
           {!menuPageShown && activeToolPanelKind === "files" && (
             <section className="tool-file-browser file-split-panel">
               <FilesSplitPanel
+                onPreviewFile={(path) => openFilePreview(path, workspacePath)}
+                onChoosePreviewFile={() => void choosePreviewFile()}
                 workspacePath={workspacePath}
                 workspaceEntries={workspaceEntries}
                 workspaceOpen={workspaceOpen}
@@ -13663,16 +14480,6 @@ export function App() {
           onCheck={() => void checkAppUpdate()}
           onDownload={downloadAppUpdate}
           onInstall={installAppUpdate}
-        />
-      )}
-      {usageStatsOpen && (
-        <UsageStatsDialog
-          records={usageStats}
-          onClose={() => setUsageStatsOpen(false)}
-          onClear={() => {
-            setUsageStats([]);
-            void window.dyworker?.clearUsageStats();
-          }}
         />
       )}
       {fullAccessDialogOpen && (

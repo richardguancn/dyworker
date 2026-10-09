@@ -12,11 +12,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readJson as readJsonFile, writeJson as writeJsonFile } from "../io.mts";
 
-declare module "@deepseek-ai/cordis" {
-  interface Context {
-    storage: StorageService;
-  }
-}
+// The native host and the original DSH context each own a different storage
+// service. Do not globally merge this native type into DSH's Context.storage.
+// Native consumers use this exported service type within their host boundary.
 
 function isInside(root, target) {
   return target === root || target.startsWith(root + path.sep);

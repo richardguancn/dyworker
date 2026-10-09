@@ -124,7 +124,7 @@ test("管理通道：真正缺失服务的插件被拒绝；同名语义不同�
     name: "needs-projection", version: "1.0.0", type: "module", main: "index.mjs",
   }), "utf8");
   await fs.writeFile(path.join(missingDir, "index.mjs"),
-    `export const inject = ["sessionProjections"];\nexport function apply() {}\nexport default { name: "needs-projection", inject, apply };`, "utf8");
+    `export const inject = ["sessionPersistence"];\nexport function apply() {}\nexport default { name: "needs-projection", inject, apply };`, "utf8");
 
   const compat = await call(ipc, "plugins:compatibility", "needs-projection");
   assert.equal(compat.verdict, "unsupported");
@@ -192,7 +192,7 @@ test("安装到 profile：默认带 --ignore-scripts 与 --save-exact，并钉�
   });
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
-  assert.ok(String(calls[0].command).endsWith("npm"), `命令应是解析出的 npm 路径，实际 ${calls[0].command}`);
+  assert.ok(String(calls[0].command).endsWith("npm-cli.js"), `应优先使用应用自带 npm，实际 ${calls[0].command}`);
   assert.ok(calls[0].args.includes("--ignore-scripts"), "默认禁跑安装脚本");
   assert.ok(calls[0].args.includes("--save-exact"), "钉住版本");
   assert.ok(calls[0].args.includes("demo-plugin@1.2.3"), "安装的是指定版本");
@@ -305,6 +305,30 @@ test("npm 路径探测：Finder 启动的窄 PATH 下仍能找到 nvm/homebrew �
 
   // 都没有时返回 null（调用方给出可执行的替代路径）
   assert.equal(await resolveNpmPath({ env: { PATH: "/nonexistent", NVM_DIR: "/nonexistent" }, exists: async () => false }), null);
+});
+
+test("应用自带包管理器在 PATH 没有 Node/npm 时完成安装，且不执行安装脚本", async (t) => {
+  const { resolveNpmPath, spawnRunner, hostPackageDir } = await import("../electron/host/plugin-install.mts");
+  const root = await tempDir(t);
+  const source = path.join(root, "source");
+  const profile = path.join(root, "profile");
+  const marker = path.join(root, "script-ran");
+  await fs.mkdir(source);
+  await fs.mkdir(profile);
+  await fs.writeFile(path.join(profile, "package.json"), JSON.stringify({ name: "clean-profile", private: true }));
+  await fs.writeFile(path.join(source, "package.json"), JSON.stringify({ name: "clean-plugin", version: "1.2.3",
+    scripts: { prepare: `node -e "require('fs').writeFileSync('script-ran','bad')"` } }));
+  await fs.writeFile(path.join(source, "index.js"), "module.exports = 'original-package';");
+  const command = await resolveNpmPath({ env: { PATH: "", NVM_DIR: path.join(root, "missing") }, loginPath: "" });
+  assert.equal(command, path.join(hostPackageDir("npm"), "bin", "npm-cli.js"));
+  const result = await spawnRunner(command, ["install", "--prefix", profile, "--ignore-scripts", "--no-audit", "--no-fund", source], {
+    cwd: profile, env: { PATH: "", HOME: root, SystemRoot: process.env.SystemRoot,
+      npm_config_userconfig: path.join(root, "empty.npmrc"), npm_config_cache: path.join(root, "cache") }, timeoutMs: 30_000 });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(await fs.readFile(path.join(profile, "node_modules", "clean-plugin", "package.json"))).version, "1.2.3");
+  assert.equal(await fs.readFile(path.join(profile, "node_modules", "clean-plugin", "index.js"), "utf8"), "module.exports = 'original-package';");
+  await assert.rejects(fs.access(marker), { code: "ENOENT" });
+  await assert.rejects(fs.access(path.join(source, "script-ran")), { code: "ENOENT" });
 });
 
 // ---- 三种安装来源：包名 / GitHub 仓库 / 本地目录 ----
@@ -502,7 +526,7 @@ test("包名识别：重复安装时 diff 为空，靠依赖 spec 匹配 / 仓�
   }
 });
 
-test("脚本策略：注册表来源默认不跑安装脚本，git/本地来源必须允许（否则 TS 仓库没有构建产物）", async () => {
+test("脚本策略：所有来源默认不跑安装脚本，源码包应提供预先构建的产物", async () => {
   const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
   const capture = async (input) => {
     const calls = [];
@@ -518,14 +542,14 @@ test("脚本策略：注册表来源默认不跑安装脚本，git/本地来源�
   assert.equal(npm.result.ranInstallScripts, false);
 
   const git = await capture("https://github.com/owner/repo");
-  assert.ok(!git.args.includes("--ignore-scripts"), "git 来源需要 prepare 现场构建");
-  assert.equal(git.result.ranInstallScripts, true);
+  assert.ok(git.args.includes("--ignore-scripts"), "git 来源也不能在检查前执行 prepare");
+  assert.equal(git.result.ranInstallScripts, false);
 });
 
 test("安装源：自定义地址走 --registry，非法地址明确报错", async () => {
   const { installPackageIntoProfile, resolveNpmRegistry } = await import("../electron/host/plugin-install.mts");
   // 解析
-  assert.equal(resolveNpmRegistry("default", null), null);
+  assert.equal(resolveNpmRegistry("default", null), "https://registry.npmjs.org");
   assert.equal(resolveNpmRegistry("cn", null), "https://registry.npmmirror.com");
   assert.equal(resolveNpmRegistry("custom", "https://npm.corp.local/"), "https://npm.corp.local");
   assert.throws(() => resolveNpmRegistry("custom", ""), /不能为空/);
@@ -593,7 +617,7 @@ test("客户端半边：宿主能解析入口并给出协议 URL，路径不会�
   assert.equal(info.entries[0].relative, "lib/client.js");
   assert.equal(info.entries[0].primary, true);
   // URL 里只有条目 id 与序号——协议处理器再回到宿主解析真实路径，URL 本身没有文件路径可用
-  assert.equal(info.entries[0].url, "dyworker-plugin://client/with-client/0");
+  assert.match(info.entries[0].url, /^dyworker-plugin:\/\/client\/with-client\/0\?rev=/);
 
   const file = await ctx.plugins.clientBundleFile("with-client", 0);
   // macOS 的 /var 是 /private/var 的软链，比较前统一取 realpath
@@ -658,10 +682,11 @@ test("DSH 插件 peer 运行时依赖：只挑 @deepseek-ai/*（排除 cordis）
   }
 });
 
-test("插件 HTTP 路由服务：可注册 / 派发 / 列出，路由粘性且卸载时统一清理", async () => {
+test("插件 HTTP 路由服务：可派发和列出，注销后不可调用且不共享全局表", async () => {
   const { ConnectionService, clearPluginRoutes, listPluginRoutes } = await import("../electron/host/services/connection.mts");
   const { Context } = await import("@deepseek-ai/cordis");
-  const service = new ConnectionService(new Context());
+  const ctx = new Context();
+  const service = new ConnectionService(ctx);
 
   // DSH 插件全部走 connection.fetch.register 注册路由，门面必须在
   // （处理函数字段名是 fetch，路由表在模块级——两处都踩过坑，见 connection.mts 注释）
@@ -697,10 +722,10 @@ test("插件 HTTP 路由服务：可注册 / 派发 / 列出，路由粘性且�
 
   // 路由注册是**粘性**的：cordis 的 inject fiber 重启会把 effect 的 disposer 调一遍，
   // 若在这里注销，插件的路由永远留不住（实测"注册→立刻注销"循环）。真正卸载走 clearPluginRoutes。
-  off();
-  assert.ok(listPluginRoutes().includes("POST /api/demo/ping"), "disposer 不该把路由注销掉");
-  clearPluginRoutes();
-  assert.deepEqual(listPluginRoutes(), [], "统一清理要能把所有插件路由清空");
+  await off();
+  assert.equal((await service.dispatch({ path: "/api/demo/ping", method: "POST" })).status, 404);
+  assert.deepEqual(listPluginRoutes(), [], "服务实例不能写入全局注册表");
+  await ctx.fiber.dispose();
 });
 
 test("会话投影：把我们的消息流折成 DSH 的 contextTimeline 状态（字段形状对齐消费端）", async () => {
@@ -826,43 +851,29 @@ test("内置插件：目录扫描、默认启用、并在条目上打内置标�
   }
 });
 
-test("插件市场：清单条目完整、可搜索、可判定已安装", async () => {
-  const { PLUGIN_CATALOG, CATALOG_CATEGORIES, filterCatalog, catalogSorted, isInstalled } = await import("../src/pluginCatalog.ts");
-
-  assert.ok(PLUGIN_CATALOG.length >= 10, `精选清单不该太空，实际 ${PLUGIN_CATALOG.length} 条`);
-  const ids = new Set();
-  for (const plugin of PLUGIN_CATALOG) {
-    assert.ok(plugin.id && plugin.repo.includes("/"), `条目要有 owner/repo：${plugin.id}`);
-    assert.ok(plugin.packageName, `条目要有包名：${plugin.id}`);
-    assert.ok(Number.isFinite(plugin.stars) && plugin.stars >= 0, `star 数要是数字：${plugin.id}`);
-    assert.ok(plugin.summary.length > 6, `条目要有说明：${plugin.id}`);
-    assert.ok(CATALOG_CATEGORIES.includes(plugin.category), `分类要在目录里：${plugin.id} → ${plugin.category}`);
-    assert.ok(plugin.install.startsWith("github:") || plugin.install === plugin.packageName,
-      `安装规格要么是 github:owner/repo，要么是包名：${plugin.id} → ${plugin.install}`);
-    assert.equal(ids.has(plugin.id), false, `条目重复：${plugin.id}`);
-    ids.add(plugin.id);
+test("插件清单：只收录已验证的具体版本，支持搜索和安装判定", async () => {
+  const { PLUGIN_CATALOG, filterCatalog, catalogSorted, isInstalled, isVerifiedEntry } = await import("../src/pluginCatalog.ts");
+  assert.deepEqual(PLUGIN_CATALOG.map(p=>p.install).sort(),['@deepseek-ai/dsh-tool-todo@0.2.1-alpha.1','dsh-office-tools@1.0.5']);
+  assert.equal(new Set(PLUGIN_CATALOG.map(p=>p.id)).size,PLUGIN_CATALOG.length);
+  for(const plugin of PLUGIN_CATALOG){
+    assert.equal(plugin.install,`${plugin.packageName}@${plugin.support.version}`);
+    assert.ok(plugin.support.scope&&plugin.support.date&&plugin.displayName);
   }
-
-  // 办公 / 政务要有份量（用户要的是这条线）
-  const office = PLUGIN_CATALOG.filter((p) => p.category === "办公");
-  const gov = PLUGIN_CATALOG.filter((p) => p.category === "政务公文");
-  assert.ok(office.length >= 3, "办公分类要有足够条目");
-  assert.ok(gov.length >= 3, "政务公文分类要有足够条目");
-
-  // 排序：star 从高到低
-  const sorted = catalogSorted();
-  for (let i = 1; i < sorted.length; i += 1) assert.ok(sorted[i - 1].stars >= sorted[i].stars, "按 star 降序");
-
-  // 搜索：中文关键词与英文标签都能命中
-  assert.ok(filterCatalog("公文").some((p) => p.repo === "linhut/gongwen-skill"));
-  assert.ok(filterCatalog("excel").length > 0);
-  assert.equal(filterCatalog("", "政务公文").every((p) => p.category === "政务公文"), true);
-  assert.equal(filterCatalog("这个肯定搜不到").length, 0);
-
-  // 已安装判定：包名或仓库名任一命中即算装了
-  const dshContext = PLUGIN_CATALOG.find((p) => p.id === "bowenliang123/dsh-context");
-  assert.equal(isInstalled(dshContext, [{ id: "dsh-context", name: "dsh-context" }]), true);
-  assert.equal(isInstalled(dshContext, [{ id: "x", name: "别的插件" }]), false);
+  assert.equal(filterCatalog('excel')[0].packageName,'dsh-office-tools');
+  assert.equal(filterCatalog('待办')[0].packageName,'@deepseek-ai/dsh-tool-todo');
+  assert.equal(filterCatalog('', '政务公文').length,0);
+  assert.equal(filterCatalog('这个肯定搜不到').length,0);
+  assert.deepEqual(catalogSorted(),catalogSorted([...PLUGIN_CATALOG].reverse()));
+  const plugin=PLUGIN_CATALOG.find(p=>p.packageName==='dsh-office-tools');
+  const entry={id:'custom-id',name:'dsh-office-tools'};
+  assert.equal(isInstalled(plugin,[entry]),true);
+  assert.equal(isVerifiedEntry(entry,'1.0.5'),true);
+  assert.equal(isVerifiedEntry(entry,'1.0.6'),false);
+  assert.equal(isVerifiedEntry(entry,undefined),false);
+  assert.equal(isVerifiedEntry({id:'unknown',name:'unknown'},'1.0.0'),false);
+  assert.equal(isVerifiedEntry({id:plugin.id,name:'unknown'},'1.0.5'),false,'不能用相同显示编号冒充已验证包');
+  assert.equal(isVerifiedEntry({id:'builtin',name:'builtin',builtin:true},undefined,[]),true);
+  assert.equal(isVerifiedEntry(entry,'1.0.5',[]),false);
 });
 
 test("客户端模块闭包：扫客户端半边的 require，纯库模块回退主入口", async (t) => {
@@ -1010,4 +1021,159 @@ test("会话事件形状：插件必读字段一个都不能缺（缺了就渲�
   const turnEnd = byType("turn/end")[0];
   assert.equal(typeof turnEnd.data.turn, "number");
   assert.equal(typeof turnEnd.data.reason.kind, "string");
+});
+
+test("版本查询沿用所选来源、筛选声明范围，不依赖版本列表顺序", async () => {
+  const { newestVersion } = await import('../electron/host/plugin-install.mts');
+  let received;
+  const version = await newestVersion('@deepseek-ai/example', {
+    npmPath: '/fake/npm', source: 'custom', customRegistry: 'https://packages.example.com/', range: '^1.0.0',
+    run: async (command, args, options) => {
+      received = { args, options };
+      return { code: 0, stdout: JSON.stringify(['2.0.0', '1.5.0-rc.1', '1.0.0']), stderr: '' };
+    },
+  });
+  assert.equal(version, '1.5.0-rc.1');
+  assert.ok(received.args.includes('--registry=https://packages.example.com'));
+  assert.ok(received.options.env.PATH.includes('/fake'));
+});
+
+test("安装自动修复残缺和过旧依赖，并递归补齐间接依赖", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const rootName = 'runtime-repair';
+  const dep = '@deepseek-ai/repair-dep';
+  const leaf = '@deepseek-ai/repair-leaf';
+  const calls = [];
+  let installDir = profile;
+  const writePackage = async (name, version, source, peers = {}) => {
+    const dir = path.join(installDir, 'node_modules', name);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name, version, type: 'module', main: 'index.js', peerDependencies: peers }));
+    await fs.writeFile(path.join(dir, 'index.js'), source);
+  };
+  // 旧包清单存在但入口已丢失，不能把它当成安装完成。
+  await writePackage(dep, '0.0.1-rc.1', '');
+  await fs.rm(path.join(profile, 'node_modules', dep, 'index.js'));
+  const result = await ctx.plugins.installPackage({
+    input: rootName, source: 'custom', customRegistry: 'https://packages.example.com', npmPath: '/fake/npm',
+    run: async (command, args) => {
+      calls.push(args);
+      if (args[0] === 'view') return { code: 0, stdout: JSON.stringify(['0.0.1-rc.1', '1.0.0']), stderr: '' };
+      installDir = args[args.indexOf('--prefix') + 1];
+      const target = args.at(-1);
+      if (target === rootName) await writePackage(rootName, '1.0.0', `import '${dep}'; export function apply(ctx) { globalThis.__repairApplied = true; }`, { [dep]: '>=1.0.0' });
+      else if (target === `${dep}@1.0.0`) await writePackage(dep, '1.0.0', `import '${leaf}'; export const dependency = true;`, { [leaf]: '^1.0.0' });
+      else if (target === `${leaf}@1.0.0`) await writePackage(leaf, '1.0.0', 'export const leaf = true;');
+      else assert.fail(`unexpected target ${target}`);
+      return { code: 0, stdout: 'installed', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(globalThis.__repairApplied, true);
+  assert.deepEqual(result.dependencies.installed, [`${dep}@1.0.0`, `${leaf}@1.0.0`]);
+  assert.ok(calls.every(args => args.includes('--registry=https://packages.example.com')));
+  assert.ok(calls.filter(args => args[0] === 'install').every(args => args.includes('--ignore-scripts')));
+  assert.ok(calls.filter(args => args[0] === 'install').every(args => args.includes('--legacy-peer-deps')));
+});
+
+test("只补实际使用的依赖，不递归下载声明的宿主服务", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const name = 'small-plugin';
+  const dir = await writePluginPackage(profile, name);
+  const manifest = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'));
+  manifest.peerDependencies = { '@deepseek-ai/dsh-agent': '*', '@deepseek-ai/dsh-sandbox': '*', '@deepseek-ai/schemastery': '*' };
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify(manifest));
+  await fs.writeFile(path.join(dir, 'index.mjs'), "import schema from '@deepseek-ai/schemastery'; export function apply() {};");
+  const result = await ctx.plugins.ensureRuntimePeers(name, {
+    run: async () => assert.fail('宿主已有公共库和未使用的服务都不应下载'),
+  });
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(result.installed, []);
+  assert.ok(result.reused.includes('@deepseek-ai/schemastery'));
+  assert.ok((await fs.lstat(path.join(profile, 'node_modules/@deepseek-ai/schemastery'))).isSymbolicLink());
+});
+
+test("客户端依赖只扫描客户端入口，不带入同包的后台依赖", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const root = await writePluginPackage(profile, 'client-only-dependency');
+  const dep = '@deepseek-ai/browser-library';
+  const helper = '@deepseek-ai/browser-helper';
+  const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+  manifest.dsh = { client: { entry: './client.js', inject: [dep] } };
+  await fs.writeFile(path.join(root, 'client.js'), `require('${dep}'); require('react'); require('@deepseek-ai/dsh-client-ui-primitives');`);
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify(manifest));
+  const library = await writePluginPackage(profile, dep);
+  const libraryManifest = JSON.parse(await fs.readFile(path.join(library, 'package.json'), 'utf8'));
+  libraryManifest.exports = { '.': './index.mjs', './client': './client.js' };
+  await fs.writeFile(path.join(library, 'package.json'), JSON.stringify(libraryManifest));
+  await fs.writeFile(path.join(library, 'index.mjs'), "import '@deepseek-ai/dsh-sandbox';");
+  await fs.writeFile(path.join(library, 'client.js'), `require('${helper}');`);
+  const result = await ctx.plugins.ensureRuntimePeers('client-only-dependency', {
+    run: async (command, args) => {
+      if (args[0] === 'view') { assert.equal(args[1], helper); return { code: 0, stdout: '["1.0.0"]' }; }
+      assert.equal(args.at(-1), `${helper}@1.0.0`);
+      await writePluginPackage(profile, helper);
+      return { code: 0, stdout: '' };
+    },
+  });
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(result.installed, [`${helper}@1.0.0`]);
+  assert.ok(result.reused.includes('react'));
+  assert.ok(result.reused.includes('@deepseek-ai/dsh-client-ui-primitives'));
+});
+
+test("依赖下载失败回传真实原因和来源，不能强行启用或当成成功", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const name = 'dependency-failure';
+  const result = await ctx.plugins.installPackage({
+    input: name, source: 'cn', npmPath: '/fake/npm', allowIncompatible: true,
+    run: async (command, args) => {
+      if (args[0] === 'view') return { code: 1, stdout: '', stderr: 'network error' };
+      const dir = await writePluginPackage(args[args.indexOf('--prefix') + 1], name);
+      const manifest = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'));
+      manifest.peerDependencies = { '@deepseek-ai/unavailable-dep': '^1.0.0' };
+      await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify(manifest));
+      await fs.writeFile(path.join(dir, 'index.mjs'), "import '@deepseek-ai/unavailable-dep'; export function apply() {}");
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, 'dependencies');
+  assert.equal(result.source.source, 'cn');
+  assert.equal(result.source.kind, 'npm');
+  assert.match(result.error, /unavailable-dep/);
+  assert.deepEqual(ctx.plugins.entries(), []);
+});
+
+test("npm 冲突代码不会被长日志末尾淹没", async () => {
+  const result = await installPackageIntoProfile({
+    input: 'peer-conflict', dir: '/tmp/profile', npmPath: '/fake/npm',
+    run: async () => ({ code: 1, stdout: '', stderr: 'npm error code ERESOLVE\n' + 'detail\n'.repeat(20) + 'npm error log file' }),
+  });
+  assert.match(result.error, /ERESOLVE/);
+});
+
+test("客户端 bundle 未声明的 require 依赖也会自动补齐", async (t) => {
+  const { ctx, profile } = await hostWithManagement(t);
+  const pkg = 'client-literal-install';
+  const dep = '@deepseek-ai/literal-client-dep';
+  const dir = await writePluginPackage(profile, pkg);
+  const manifest = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8'));
+  manifest.dsh = { client: { platform: 'web' } };
+  manifest.exports = { '.': './index.mjs', './client': './lib/client.js' };
+  await fs.mkdir(path.join(dir, 'lib'));
+  await fs.writeFile(path.join(dir, 'lib/client.js'), `require('${dep}');`);
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify(manifest));
+  const result = await ctx.plugins.ensureRuntimePeers(pkg, {
+    npmPath: '/fake/npm', source: 'cn',
+    run: async (command, args) => {
+      assert.ok(args.includes('--registry=https://registry.npmmirror.com'));
+      if (args[0] === 'view') return { code: 0, stdout: '["1.0.0"]' };
+      assert.equal(args.at(-1), `${dep}@1.0.0`);
+      await writePluginPackage(profile, dep);
+      return { code: 0, stdout: '' };
+    },
+  });
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(result.installed, [`${dep}@1.0.0`]);
 });

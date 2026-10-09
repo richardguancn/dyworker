@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createTelemetryStore } from "./telemetry-store.mts";
+import { normalizeTelemetryServiceUrl } from "./settings.mts";
 
 // DYWorker 使用统计桌面端（方案《APP使用统计与消息推送实施方案-2026-09-24》§4/§7.2）。
 // 本文件包含三部分：
@@ -272,9 +273,10 @@ export function createActivityTracker({
 // ---- HTTP 基础 ----
 
 // 认证失败保留状态码；已撤销设备不能通过重新登记自动恢复。
-function httpError(message, status) {
+function httpError(message, status, retryAfterMs = null) {
   const error = new Error(message);
   error.status = status;
+  error.retryAfterMs = retryAfterMs;
   return error;
 }
 
@@ -297,7 +299,7 @@ async function fetchJson(fetchImpl, url, { method = "GET", token = "", body, tim
     } catch {
       payload = null;
     }
-    return { status: response.status, ok: response.ok, payload };
+    return { status: response.status, ok: response.ok, payload, retryAfter: response.headers?.get?.("Retry-After") || "" };
   } finally {
     clearTimeout(timer);
   }
@@ -366,7 +368,17 @@ export function createInstallationClient({ fetchImpl = (url, init) => fetch(url,
           messages_enabled: messagesEnabled === true,
         },
       });
-      if (!result.ok) throw httpError(`设备登记失败：HTTP ${result.status}`, result.status);
+      if (!result.ok) {
+        let retryAfterMs = null;
+        if (result.status === 429) {
+          const header = String(result.retryAfter || "").trim();
+          const seconds = /^\d+$/.test(header) ? Number(header) : Number(result.payload?.retry_after_seconds);
+          const deadline = header && !/^\d+$/.test(header) ? Date.parse(header) : NaN;
+          retryAfterMs = Number.isFinite(seconds) && seconds >= 0 ? Math.max(1_000, seconds * 1_000)
+            : Number.isFinite(deadline) ? Math.max(1_000, deadline - now()) : 60 * 60_000;
+        }
+        throw httpError(result.status === 429 ? "设备登记请求过于频繁" : `设备登记失败：HTTP ${result.status}`, result.status, retryAfterMs);
+      }
       const data = responseData(result);
       const nextToken = data?.device_secret && data?.installation_id === installationId ? `${installationId}.${data.device_secret}` : "";
       if (!nextToken) throw new Error("设备登记响应缺少凭据");
@@ -482,7 +494,7 @@ export function createTelemetryController({
 
   let settings = null;
   // 上一次 configure 后统计是否处于有效开启：标量快照，调用方原地修改设置对象也不影响判断
-  let state = { installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(), consent_generation: 0, service_url: "", registered: false, revoked: false };
+  let state = { registration_retry_at: 0, registration_failures: 0, registration_error: "", registration_blocked: false, installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(), consent_generation: 0, service_url: "", registered: false, revoked: false };
   let credentialMode = "none"; // safe-storage | session | none
   let tracker = null;
   let uploadTimer = null;
@@ -522,14 +534,20 @@ export function createTelemetryController({
 
   function loadStateOnce() {
     stateLoaded ??= (async () => {
+      let legacyUnboundState = false;
       try {
         const raw = JSON.parse(await fs.readFile(stateFile, "utf8"));
         if (raw && typeof raw === "object" && /^[0-9a-f-]{36}$/i.test(String(raw.installation_id || ""))) {
+          legacyUnboundState = !Object.hasOwn(raw, "service_url");
           state = {
             installation_id: String(raw.installation_id) as any,
             created_at: String(raw.created_at || state.created_at),
             consent_generation: Math.max(0, Math.floor(Number(raw.consent_generation) || 0)),
             service_url: String(raw.service_url || ""),
+            registration_retry_at: Math.max(0, Number(raw.registration_retry_at) || 0),
+            registration_failures: Math.max(0, Number(raw.registration_failures) || 0),
+            registration_error: String(raw.registration_error || ""),
+            registration_blocked: raw.registration_blocked === true || ["设备登记失败：HTTP 409", "平台已登记此安装，但本机缺少登记凭证，请联系管理员恢复原登记"].includes(raw.registration_error),
             registered: raw.registered === true,
             revoked: raw.revoked === true,
           };
@@ -551,6 +569,14 @@ export function createTelemetryController({
       } catch {
         // 凭据文件缺失时走重新登记
       }
+      if (state.registration_blocked) {
+        state.registration_error = "平台已登记此安装，但本机缺少登记凭证，请联系管理员恢复原登记";
+        state.registration_retry_at = 0;
+      }
+      lastError = state.registration_error;
+      // 旧版身份继续沿用，不能通过换 ID 绕过冲突或清掉待上传记录。
+      // 未绑定服务的历史凭据不发送到新站点，缺失凭据需由管理员恢复原登记。
+      if (legacyUnboundState) await clearCredentials();
     })();
     return stateLoaded;
   }
@@ -581,7 +607,7 @@ export function createTelemetryController({
   }
 
   const telemetrySettings = () => settings?.telemetry || {};
-  const serviceUrl = () => String(telemetrySettings().serviceUrl || "").trim();
+  const serviceUrl = () => normalizeTelemetryServiceUrl(telemetrySettings().serviceUrl);
   const effectiveStats = () => telemetrySettings().statsEnabled === true && serviceUrl().length > 0;
   const effectiveMessages = () => telemetrySettings().messagesEnabled === true && serviceUrl().length > 0;
 
@@ -590,8 +616,12 @@ export function createTelemetryController({
     if (state.revoked || client.isRevoked()) throw new Error("此设备已撤销，已停止联网，请联系管理员");
     if (client.getToken()) return;
     if (state.registered) throw new Error("无法读取此设备的安全凭据，请恢复系统安全存储后重试");
+    if (state.registration_blocked) throw new Error("平台已登记此安装，但本机缺少登记凭证，请联系管理员恢复原登记");
+    if (state.registration_retry_at > now()) throw new Error(state.registration_error || "设备登记暂缓，稍后自动重试");
     await persistState();
-    const { token } = await client.register({
+    let token;
+    try {
+      ({ token } = await client.register({
       installationId: state.installation_id,
       appVersion,
       platform,
@@ -599,7 +629,24 @@ export function createTelemetryController({
       releaseChannel,
       statsEnabled: effectiveStats(),
       messagesEnabled: effectiveMessages(),
-    });
+      }));
+    } catch (error: any) {
+      state.registration_failures += 1;
+      state.registration_blocked = error?.status === 409;
+      const delay = error?.status === 429 ? (error.retryAfterMs || 60 * 60_000)
+        : Math.min(60_000 * 2 ** Math.min(state.registration_failures - 1, 5), 30 * 60_000);
+      state.registration_retry_at = state.registration_blocked ? 0 : now() + delay;
+      state.registration_error = state.registration_blocked
+        ? "平台已登记此安装，但本机缺少登记凭证，请联系管理员恢复原登记"
+        : error instanceof Error ? error.message : String(error);
+      await persistState();
+      if (state.registration_blocked) throw new Error(state.registration_error);
+      throw error;
+    }
+    state.registration_blocked = false;
+    state.registration_retry_at = 0;
+    state.registration_failures = 0;
+    state.registration_error = "";
     await saveCredentials(token);
     state.registered = true;
     await persistState();
@@ -723,7 +770,7 @@ export function createTelemetryController({
         if (nextUrl && state.service_url && state.service_url !== nextUrl) {
           await clearCredentials();
           await store.clear();
-          state = { installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(),
+          state = { registration_retry_at: 0, registration_failures: 0, registration_error: "", registration_blocked: false, installation_id: crypto.randomUUID(), created_at: new Date(now()).toISOString(),
             consent_generation: 0, service_url: nextUrl, registered: false, revoked: false };
           client.setToken("");
           client.resetRevocation();
@@ -850,6 +897,8 @@ export function createTelemetryController({
         queue: queueStats,
         lastSyncAt,
         lastError,
+        nextRegistrationRetryAt: !client.getToken() && state.registration_retry_at > now()
+          ? new Date(state.registration_retry_at).toISOString() : "",
         clockOffsetMs: client.getClockOffsetMs(),
         collecting: Boolean(tracker),
       };

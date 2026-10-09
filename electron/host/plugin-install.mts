@@ -14,6 +14,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import semver from "semver";
 
 
 /**
@@ -70,6 +71,10 @@ export async function resolveNpmPath({ explicit, env = process.env, exists = def
   if (explicit) return explicit;
   if (env?.DYWORKER_NPM) return env.DYWORKER_NPM;
 
+  // 应用自带 npm 的入口由同一个 Electron/Node 执行，无需 PATH 中存在 node/npm。
+  const bundled = path.join(hostPackageDir("npm"), "bin", "npm-cli.js");
+  if (path.isAbsolute(bundled) && await exists(bundled)) return bundled;
+
   const candidates = [];
   // 用户真实环境优先（登录 shell），其次进程 PATH，最后才是静态兜底路径。
   const seen = new Set();
@@ -115,7 +120,7 @@ async function defaultExists(target) {
 export const INSTALL_SOURCES = {
   default: {
     label: "官方源",
-    npmRegistry: null,
+    npmRegistry: "https://registry.npmjs.org",
     githubPrefixes: [""],
   },
   // 自定义地址：内网/私有 npm 源。GitHub 仍走直连（私有源不代表有 git 代理）。
@@ -207,19 +212,29 @@ export const DEFAULT_TIMEOUT_MS = 180_000;
 /** 默认实现：把包管理器跑起来，收集 stdout/stderr 与退出码 */
 export function spawnRunner(command, args, options: any = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const useNode = path.basename(command) === "npm-cli.js";
+    const child = spawn(useNode ? process.execPath : command, useNode ? [command, ...args] : args, {
       cwd: options.cwd,
-      env: options.env || process.env,
+      env: useNode ? { ...(options.env || process.env), ELECTRON_RUN_AS_NODE: "1" } : options.env || process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     const timer = setTimeout(() => {
       if (settled) return;
-      settled = true;
-      child.kill("SIGKILL");
-      resolve({ code: -1, stdout, stderr: `${stderr}\n[超时] 超过 ${options.timeoutMs}ms 未结束，已中止` });
+      timedOut = true;
+      // 包管理器可能启动下载/解包子进程；整个安装进程组结束后才能回滚目录。
+      if (process.platform === 'win32' && child.pid) {
+        const killer = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+        killer.on('error', () => child.kill('SIGKILL'));
+      } else {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      }
     }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
     child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
@@ -233,7 +248,8 @@ export function spawnRunner(command, args, options: any = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      resolve({ code: timedOut ? -1 : code, stdout, stderr: timedOut
+        ? `${stderr}\n[超时] 超过 ${options.timeoutMs || DEFAULT_TIMEOUT_MS}ms 未结束，安装进程已退出` : stderr });
     });
   });
 }
@@ -287,7 +303,8 @@ export async function installPackageIntoProfile({
   // 的 PATH 很窄，即使解析出了 npm 的绝对路径，它仍会因为找不到 node 而以 127 失败
   // （真实报错：env: node: No such file or directory）。git 依赖的 prepare 阶段同样需要 node。
   const npmBinDir = path.dirname(resolvedNpm);
-  const loginPath = injectedLoginPath !== undefined ? injectedLoginPath : await resolveLoginShellPath();
+  const bundledNpm = path.basename(resolvedNpm) === "npm-cli.js";
+  const loginPath = injectedLoginPath !== undefined ? injectedLoginPath : bundledNpm ? "" : await resolveLoginShellPath();
   const childDirs = [];
   const seenDir = new Set();
   const addDir = (dir) => {
@@ -305,10 +322,8 @@ export async function installPackageIntoProfile({
 
   const baseArgs = ["install", "--prefix", dir, "--save-exact", "--no-audit", "--no-fund"];
   if (legacyPeerDeps) baseArgs.push("--legacy-peer-deps");
-  // 注册表来源的包是构建好的产物，默认不跑安装脚本；
-  // git / 本地来源往往需要 prepare 现场构建（TS 源码仓库的 lib/ 不在仓库里），
-  // 因此这类来源默认允许脚本，并在界面上明确告知。
-  const shouldIgnoreScripts = parsed.kind === "npm" ? ignoreScripts : false;
+  // 所有来源默认只安装已构建产物；源码仓库也不自动执行 prepare。
+  const shouldIgnoreScripts = ignoreScripts !== false;
   if (shouldIgnoreScripts) baseArgs.push("--ignore-scripts");
   if (registry) baseArgs.push(`--registry=${registry}`);
 
@@ -351,7 +366,9 @@ export async function installPackageIntoProfile({
         version: parsed.kind === "npm" ? (version || parsed.version || null) : null,
       };
     }
-    attempts.push({ label, error: `退出码 ${result.code}：${(result.stderr || result.stdout || "").trim().split("\n").slice(-2).join(" ")}` });
+    const output = String(result.stderr || result.stdout || "");
+    const npmCode = /npm (?:error|ERR!) code (\S+)/.exec(output)?.[1];
+    attempts.push({ label, error: `${npmCode ? `[${npmCode}] ` : ""}退出码 ${result.code}：${output.trim().split("\n").slice(-8).join(" ")}` });
   }
 
   const detail = attempts.map((item) => `${item.label} → ${item.error}`).join("；");
@@ -440,8 +457,8 @@ export async function readProfileDependencies(dir) {
  * "Cannot find package '@deepseek-ai/dsh-scope'" 之类，插件永远不会 apply。
  *
  * 两条硬约束：
- *   1. 取**最新发布版**（含 prerelease）：这些包的 latest dist-tag 长期停在旧的 0.0.1-rc.1，
- *      直接 npm install 会装到过旧版本，所以用 versions 列表取最后一个。
+ *   1. 取满足声明范围的最新发布版（含 prerelease）：latest 标签可能停在旧版本，
+ *      必须从 versions 列表筛选，不能把旧版或不满足声明的新版本当成可用。
  *   2. `@deepseek-ai/cordis` 绝不能装成独立副本：插件的 Context/Service 必须与宿主同一个模块实例，
  *      否则 cordis 认不出对方的服务。这里用软链指向宿主自己那份。
  */
@@ -462,26 +479,31 @@ export function dshClientModuleNames(manifest: any): string[] {
   return declared.map(String).filter((name) => name.startsWith("@deepseek-ai/") && name !== "@deepseek-ai/cordis");
 }
 
-/** 取一个包的最新发布版本（含 prerelease）；取不到返回 null */
-export async function newestVersion(pkg: string, { run = spawnRunner, npmPath }: any = {}): Promise<string | null> {
+/** 从所选源取满足声明范围的最新发布版本（含 prerelease）；取不到返回 null */
+export async function newestVersion(pkg: string, { run = spawnRunner, npmPath, source = "default", customRegistry, range = "*" }: any = {}): Promise<string | null> {
   const resolved = await resolveNpmPath({ explicit: npmPath });
   if (!resolved) return null;
   try {
-    const result = await run(resolved, ["view", pkg, "versions", "--json"], { timeoutMs: 60_000 });
+    const registry = resolveNpmRegistry(source, customRegistry);
+    const loginPath = path.basename(resolved) === "npm-cli.js" ? "" : await resolveLoginShellPath();
+    const env = { ...process.env, PATH: [loginPath, process.env.PATH, path.dirname(resolved)].filter(Boolean).join(path.delimiter) };
+    const args = ["view", pkg, "versions", "--json"];
+    if (registry) args.push(`--registry=${registry}`);
+    const result = await run(resolved, args, { timeoutMs: 60_000, env });
     if (result.code !== 0) return null;
     const parsed = JSON.parse(result.stdout);
     const list = Array.isArray(parsed) ? parsed : [parsed];
-    return list.length ? String(list[list.length - 1]) : null;
+    return semver.maxSatisfying(list.map(String), range, { includePrerelease: true });
   } catch {
     return null;
   }
 }
 
-/** 宿主自己那份 cordis 的目录（插件必须解析到同一份，否则 Service/Context 不共享） */
-export function hostCordisDir(): string {
+/** 宿主随应用分发的公共库目录，供插件复用。 */
+export function hostPackageDir(name: string): string {
   try {
     const require = createRequire(import.meta.url);
-    const resolved = path.dirname(require.resolve("@deepseek-ai/cordis/package.json"));
+    const resolved = path.dirname(require.resolve(`${name}/package.json`));
     // 打包后这个路径会落在 app.asar 里。asar 只对 Electron 打过补丁的 fs 透明，
     // **Node 的 ESM 加载器读不了** —— 插件 import 时就是 "Cannot find package"。
     // 因此打包时把 cordis 解包（asarUnpack），这里把 asar 路径映射到 app.asar.unpacked。
@@ -499,6 +521,8 @@ export function hostCordisDir(): string {
     return "";
   }
 }
+
+export function hostCordisDir(): string { return hostPackageDir("@deepseek-ai/cordis"); }
 
 /** 让插件能解析到宿主同一份 cordis（软链；已存在则覆盖） */
 export async function linkHostCordis(dir: string, hostCordisDir: string): Promise<void> {

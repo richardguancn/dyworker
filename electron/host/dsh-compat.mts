@@ -10,13 +10,18 @@
 //   1. 模块能否被 import —— 它依赖的 @deepseek-ai/* 包在 profile 里是否齐；
 //   2. 声明的服务需求 —— 模块导出的 inject / static inject（cordis 真正读取的那份），
 //      外加对 ctx.inject([...]) 的静态扫描（运行时注入，读不到导出）；
-//   3. 是否有浏览器半边（dsh.client）—— 那半边需要 DSH 的 Web shell，我们跑不了。
+//   3. 客户端平台（dsh.client）—— web 可由渲染端加载，其他平台尚不支持。
 //
-// 本文件为纯分析逻辑：只读文件、不碰 ctx、不 import electron。
+// 静态读取与受限子进程探测；不在应用进程导入插件，不依赖 Electron。
 import fs from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { spawnPluginProcess, terminatePluginProcess } from "./dsh-runtime/process.mts";
+import { DSH_RUNTIME_SERVICES, DSH_SESSION_SERVICES, isDshPackage } from "./dsh-runtime/baseline.mts";
+import { probeDshSessionPlugin } from "./dsh-runtime/session-compat.mts";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { HOST_CLIENT_MODULES } from "./plugin-client.mts";
 
 // 本宿主提供的服务名（与 host/context.mts 的注册保持一致）
 export const HOST_SERVICES = [
@@ -39,6 +44,7 @@ export const HOST_SERVICES = [
   "plugins",
   // 插件工具服务：插件通过它注册自己的工具（统一走 plugin__<plugin>__<tool> 命名与审批）
   "tools",
+  "connection", "sessionProjections", "sessionProjectionCache",
 ];
 
 // 已知的 DSH 服务名（扫描本机 DSH 发布包得到），用于把"缺什么"说成人话
@@ -75,22 +81,31 @@ export function classifyService(name) {
 }
 
 /** 从模块导出里读 cordis 真正使用的 inject 声明 */
-export async function readDeclaredInject(entryUrl) {
-  try {
-    const mod = await import(entryUrl);
-    const inject = mod?.inject ?? mod?.default?.inject;
-    return Array.isArray(inject) ? inject.map(String) : [];
-  } catch (error: any) {
-    return { importError: String(error?.message || error) };
-  }
+export async function readDeclaredInject(entryUrl: string, { profileDir, packageDir, timeoutMs = 10_000 }: any = {}) {
+  return new Promise<string[] | { importError: string }>((resolve) => {
+    let settled = false;
+    const child = spawnPluginProcess("probe", { profileDir: profileDir || path.dirname(fileURLToPath(entryUrl)), packageDir: packageDir || path.dirname(fileURLToPath(entryUrl)) });
+    const finish = async (value: any) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      await terminatePluginProcess(child);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish({ importError: "插件检查超时，检查进程已停止" }), timeoutMs);
+    child.once("message", (result: any) => finish(result?.importError ? { importError: result.importError } : result.inject || []));
+    child.once("error", error => finish({ importError: error.message }));
+    child.once("exit", code => { if (!settled) finish({ importError: `插件检查进程意外退出（${code}）` }); });
+    child.send({ entryUrl, profileDir: profileDir || path.dirname(fileURLToPath(entryUrl)) });
+  });
 }
 
-/** 静态扫描：运行时注入（ctx.inject([...])）与 static inject，导出里读不到 */
+/** 静态扫描主机部分的运行时注入和内部服务声明；客户端服务不计入主机需求 */
 export async function scanInjectHints(pkgDir) {
   const names = new Set();
   let files = [];
   try {
-    files = (await fs.readdir(path.join(pkgDir, "lib"))).filter((name) => name.endsWith(".js"));
+    files = (await fs.readdir(path.join(pkgDir, "lib"))).filter((name) => name.endsWith(".js") && !name.startsWith("client"));
   } catch {
     return [];
   }
@@ -127,6 +142,7 @@ export function missingDshPackages(profileManifest, manifest) {
   ].filter((name) => name.startsWith("@deepseek-ai/"));
   const missing = [];
   for (const name of new Set(declared)) {
+    if ((manifest.dsh?.client || manifest.dyworker?.client) && HOST_CLIENT_MODULES.has(name)) continue;
     try {
       profileRequire.resolve(name);
     } catch {
@@ -143,26 +159,43 @@ export function missingDshPackages(profileManifest, manifest) {
  *   clientHalf, missingPackages, services, verdict, reasons
  * }}
  */
-export async function analyzePlugin(profileManifest, spec, manifest, pkgDir) {
-  const main = manifest.main || "index.js";
+export async function analyzePlugin(profileManifest, spec, manifest, pkgDir, { config = {} }: any = {}) {
+  const exported = manifest.exports?.["."] ?? (typeof manifest.exports === "string" ? manifest.exports : null);
+  const main = (typeof exported === "string" ? exported : exported?.import || exported?.default) || manifest.main || "index.js";
   const entry = path.join(pkgDir, main);
   const entryUrl = pathToFileURL(entry).href;
 
-  const declared = await readDeclaredInject(entryUrl);
+  const declared = await readDeclaredInject(entryUrl, { profileDir: path.dirname(profileManifest), packageDir: pkgDir });
   const hints = await scanInjectHints(pkgDir);
   const importError = Array.isArray(declared) ? null : declared.importError;
   const inject = Array.isArray(declared) ? declared : [];
 
-  const services = [...new Set([...inject, ...hints])].map(classifyService);
+  const isolated = isDshPackage(manifest);
+  const requiresSession = isolated && ([...inject, ...hints] as string[]).some(name =>
+    !DSH_RUNTIME_SERVICES.includes(name) && DSH_SESSION_SERVICES.includes(name));
+  const sessionCheck = requiresSession && !importError && inject.every(name => DSH_SESSION_SERVICES.includes(name))
+    ? await probeDshSessionPlugin({ profileDir: path.dirname(profileManifest), packageDir: pkgDir, entryUrl, config }) : null;
+  const available = sessionCheck?.ok ? sessionCheck.services : DSH_RUNTIME_SERVICES;
+  const services = [...new Set<string>([...inject, ...hints] as string[])].map(name => isolated
+    ? available.includes(name)
+      ? { name, state: "fulfilled", reason: "由固定版本的官方 DSH 运行环境提供" }
+      : { name, state: "missing", reason: `独立运行环境暂未提供 ${name}` }
+    : classifyService(name));
   const missingPackages = missingDshPackages(profileManifest, manifest);
-  const client = manifest.dsh?.client || null;
+  const client = manifest.dyworker?.client || manifest.dsh?.client || null;
 
   const reasons = [];
   let verdict = "runnable";
+  if (sessionCheck?.ok) reasons.push('已在临时 DSH 会话中实际启动；使用时请选择“DSH 插件会话”');
+  else if (sessionCheck) reasons.push(`DSH 会话启动检查失败：${sessionCheck.error}`);
 
   if (client) {
-    verdict = "unsupported";
-    reasons.push(`含浏览器半边（dsh.client，platform=${client.platform || "?"}）：需要 DSH 的 Web shell 与 dsh-client-* 服务，本宿主不加载客户端插件`);
+    if (client.platform && client.platform !== "web") {
+      verdict = "unsupported";
+      reasons.push(`客户端平台 ${client.platform} 暂不支持，当前只支持 web 插件界面`);
+    } else {
+      reasons.push("包含插件界面，宿主已提供客户端加载能力；具体功能仍取决于插件所需服务");
+    }
   }
   if (importError) {
     verdict = "unsupported";
@@ -173,12 +206,17 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir) {
   } else if (missingPackages.length) {
     // 声明了但解析不到、主入口却 import 成功 → 该依赖被上游内联/提升，不构成阻断。
     // （实测：DSH 部分包声明 @deepseek-ai/dsh-util-values，但并未单独发布。）
-    reasons.push(`声明依赖 ${missingPackages.join(", ")} 未单独安装，但主入口可正常 import（可能已内联）`);
+    reasons.push(`声明的包 ${missingPackages.join(", ")} 未单独安装，但主入口可正常加载；可能已内联或未使用，不需要仅按声明补装`);
   }
-  const blocking = services.filter((service) => service.state === "missing");
+  const blocking = services.filter((service) => service.state === "missing" && inject.includes(service.name));
   if (blocking.length) {
     if (verdict !== "unsupported") verdict = "unsupported";
     reasons.push(`依赖本宿主未提供的服务：${blocking.map((service) => service.name).join(", ")}——cordis 的 inject 永不满足，插件不会被 apply`);
+  }
+  const deferred = services.filter((service) => service.state === "missing" && !inject.includes(service.name));
+  if (deferred.length) {
+    if (verdict === "runnable") verdict = "partial";
+    reasons.push(`部分功能所需服务尚未提供：${deferred.map((service) => service.name).join(", ")}；这些功能等待服务就绪，不阻止主入口加载`);
   }
   const nameOnly = services.filter((service) => service.state === "name-only");
   if (nameOnly.length) {
@@ -198,6 +236,7 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir) {
     clientHalf: client ? { platform: client.platform || "", inject: client.inject || [] } : null,
     missingPackages,
     services,
+    runtime: sessionCheck?.ok ? "dsh-session" : isolated ? "tool-bridge" : "host",
     verdict,
     reasons,
   };

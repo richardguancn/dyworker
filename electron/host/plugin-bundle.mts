@@ -10,7 +10,7 @@
 //     id 定位、name 校验、未命中告警的行为与 dsh 完全一致。
 //
 // 本文件为纯逻辑：只读文件、算数据，不碰 ctx，也不 import electron。
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -44,6 +44,13 @@ function findPackageRoot(entry, spec) {
 
 /** 解析 profile 里的包名 → 包目录（用 profile 自己的解析上下文） */
 export function resolvePackageDir(profileManifest, spec) {
+  // 残缺安装也要能读到清单，否则会把“已安装但缺入口”误报成“未安装”。
+  if (/^(?:@[\w.-]+\/)?[\w.-]+$/.test(spec)) {
+    const direct = path.join(path.dirname(profileManifest), "node_modules", spec);
+    try {
+      if (JSON.parse(readFileSync(path.join(direct, "package.json"), "utf8")).name === spec) return realpathSync(direct);
+    } catch { /* 再按模块解析规则查找 */ }
+  }
   const profileRequire = createRequire(profileManifest);
   const entries = [];
   try {

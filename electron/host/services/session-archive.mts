@@ -58,6 +58,9 @@ export class SessionsService extends Service {
     return this.archive.upsert(session);
   }
 
+  replace(session) { return this.archive.replace(session); }
+  publishDshTask(session,source?,signal?) { return this.archive.publishDshTask(session,source,signal); }
+
   appendMessages(sessionId, messages) {
     return this.archive.appendMessages(sessionId, messages);
   }

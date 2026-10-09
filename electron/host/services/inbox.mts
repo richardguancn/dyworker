@@ -62,7 +62,7 @@ export class InboxService extends Service {
   }
 
   // 创建挂起条目并返回决议 promise（promise 上带 itemId，渠道审批按 id 路由 IM 回复）
-  create(partial) {
+  create(partial, { signal } = {} as any) {
     const item = {
       id: crypto.randomUUID(),
       kind: partial.kind === "question" ? "question" : "approval",
@@ -72,8 +72,9 @@ export class InboxService extends Service {
       ...(partial.title ? { title: String(partial.title).slice(0, 200) } : {}),
       ...(partial.details ? { details: String(partial.details).slice(0, 2000) } : {}),
       ...(partial.impact ? { impact: String(partial.impact).slice(0, 800) } : {}),
-      ...(partial.question ? { question: String(partial.question).slice(0, 1000) } : {}),
-      ...(Array.isArray(partial.options) && partial.options.length ? { options: partial.options.map(String).slice(0, 5) } : {}),
+      ...(partial.question ? { question: partial.questionPresentation ? String(partial.question) : String(partial.question).slice(0, 1000) } : {}),
+      ...(Array.isArray(partial.options) && partial.options.length ? { options: partial.questionPresentation ? partial.options.map(String) : partial.options.map(String).slice(0, 5) } : {}),
+      ...(partial.questionPresentation ? { questionPresentation: partial.questionPresentation } : {}),
       createdAt: new Date().toISOString(),
       status: "pending",
     };
@@ -89,6 +90,12 @@ export class InboxService extends Service {
       this.broadcast();
       this.notify(item);
     }).catch(() => { });
+    if (signal) {
+      const abort = () => this.expireNow(item.id, '所属任务已停止，提问已取消');
+      signal.addEventListener('abort', abort, { once: true });
+      void pending.then(() => signal.removeEventListener('abort', abort));
+      if (signal.aborted) abort();
+    }
     return pending;
   }
 
