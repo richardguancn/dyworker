@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { createClientRuntime } from "../src/pluginRuntime/index.ts";
 import { ClientPluginHost } from "../src/pluginRuntime/clientHost.ts";
@@ -95,6 +96,10 @@ function post(route, body) {
 }
 
 test("内置插件：包形状能被宿主扫描并解析出两半", async () => {
+  // Git 检出的时间不能证明产物是否过期；重新生成并逐字比较内容。
+  execFileSync(process.execPath, [path.join(repoRoot, "scripts/build-plugins.mjs"), "--check"], {
+    cwd: repoRoot, timeout: 30000, stdio: "pipe",
+  });
   for (const name of PLUGINS) {
     const { dir, manifest } = await readManifest(name);
     assert.equal(manifest.name, name);
@@ -104,12 +109,6 @@ test("内置插件：包形状能被宿主扫描并解析出两半", async () =>
     const entries = resolveClientEntries(manifest, dir);
     assert.equal(entries[0]?.primary, true, `${name} 的 ./client 必须是主入口`);
     await fs.access(entries[0].file);
-    // 产物必须比源码新（改源码忘了跑 build:plugins 时，这条会先失败）
-    const [source, target] = await Promise.all([
-      fs.stat(path.join(dir, "src", "client.tsx")).then((stat) => stat.mtimeMs).catch(() => 0),
-      fs.stat(entries[0].file).then((stat) => stat.mtimeMs),
-    ]);
-    assert.ok(target >= source, `${name} 的 client.js 落后于 src/client.tsx，请跑 npm run build:plugins`);
     // 主机半边是纯 ESM（builtin 不参与 TS 编译），形状必须是 cordis 插件
     const host = await import(path.join(dir, manifest.main));
     assert.equal(host.name, name);
