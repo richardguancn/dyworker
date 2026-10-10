@@ -50,6 +50,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: 复用 Electron 和打包工具下载
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: desktop-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            desktop-tools-${{ runner.os }}-${{ runner.arch }}-
       - name: 安装依赖
         run: npm ci
       - name: 构建并运行检查
@@ -72,6 +85,7 @@ jobs:
             output/electron/*.deb
             output/electron/latest*.yml
           if-no-files-found: error
+          compression-level: 0
 
   publish:
     name: 发布 GitHub Release

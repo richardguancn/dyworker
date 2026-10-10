@@ -61,7 +61,6 @@ import {
   Package,
   Palette,
   PanelRight,
-  PanelRightClose,
   Paperclip,
   Pencil,
   Pin,
@@ -95,6 +94,9 @@ import { applyReasoningStream } from "./reasoningStream";
 import { PluginsPage } from "./PluginsPage";
 import { ModsPanelView } from './ModsPluginsPage';
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
+import type { PluginPanelRequest } from "./PluginSlotView";
+import { availablePluginPanels, pluginPanelTab, PluginPanelPreferences } from "./pluginPanelTabs";
+import type { PluginPanelTab } from "./pluginPanelTabs";
 import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
 import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
 import { detectTrigger } from './pluginRuntime/vendor/dsh-input-controller/index.js';
@@ -2383,159 +2385,155 @@ function FilesSplitPanel({
 
   return (
     <div className={`file-split ${treeVisible ? "" : "tree-hidden"}`}>
-      <div className="file-split-preview">
-        <div className="file-split-preview-inner">
-          <div className="code-panel-header">
-            <button className="code-open-external" onClick={onChoosePreviewFile}>选择文件</button>
-            {selection ? (
-              <div className="code-breadcrumb" title={selection.path}>
-                {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
-                  <span className="code-breadcrumb-item" key={index}>
-                    {index > 0 && <span className="code-breadcrumb-sep">›</span>}
-                    <span className={index === segments.length - 1 ? "code-breadcrumb-current" : ""}>{segment}</span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="code-breadcrumb" />
-            )}
-            {selection && saveState !== "idle" && !selection.loading && !selection.error && (
-              <span className={`file-save-state ${saveState}`}>
-                {saveState === "pending" ? "待保存" : saveState === "saving" ? "保存中…" : "已保存"}
+      <div className="code-panel-header">
+        <button className="code-open-external file-root-button" aria-label="选择文件" title={workspacePath || "选择文件"} onClick={onChoosePreviewFile}>/</button>
+        {selection ? (
+          <div className="code-breadcrumb" title={selection.path}>
+            {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
+              <span className="code-breadcrumb-item" key={index}>
+                {index > 0 && <span className="code-breadcrumb-sep">›</span>}
+                <span className={index === segments.length - 1 ? "code-breadcrumb-current" : ""}>{segment}</span>
               </span>
-            )}
-            {selection && selection.kind === "markdown" && (
-              <button
-                className="code-open-external"
-                onClick={() => setShowSource((value) => !value)}
-                disabled={selection.loading || Boolean(selection.error)}
-                title={showSource ? "返回即时渲染编辑" : "查看 Markdown 源代码"}
-              >
-                {showSource ? "查看预览" : "查看源代码"}
-              </button>
-            )}
-            {selection && (
-              <button
-                className="code-open-external primary"
-                onClick={() => void window.dyworker?.revealInFolder?.(selection.path)}
-                disabled={selection.loading}
-                title="在系统文件管理器中打开所在目录"
-              >
-                <FolderOpen size={13} />
-                打开
-              </button>
-            )}
-            <button
-              className="icon-button subtle tiny file-tree-toggle"
-              onClick={() => setTreeVisible((value) => !value)}
-              aria-label={treeVisible ? "隐藏文件树" : "显示文件树"}
-              aria-pressed={treeVisible}
-              title={treeVisible ? "隐藏文件树" : "显示文件树"}
-            >
-              {treeVisible ? <PanelRightClose size={15} /> : <PanelRight size={15} />}
-            </button>
-          </div>
-          {!selection ? (
-            <div className="browser-empty-state">
-              <FolderOpen size={46} />
-              <strong>打开文件</strong>
-              <span>从工作区目录树中选择文件</span>
-            </div>
-          ) : (
-            <>
-            {saveError && <p className="panel-empty error-text">{saveError}</p>}
-            {selection.loading ? (
-              <p className="panel-empty">正在读取文件…</p>
-            ) : selection.error ? (
-              <p className="panel-empty error-text">{selection.error}</p>
-            ) : selection.kind === "markdown" ? (
-              // Codex 式即时渲染编辑：光标在行首显示该行源码，其余位置渲染态直接编辑；
-              // showSource 切换为纯源码模式
-              <MarkdownLiveEditorPane
-                key={selection.path}
-                path={selection.path}
-                name={selection.name}
-                value={editContent}
-                plainSource={showSource}
-                onChange={(value) => handleEditChange(selection.path, value)}
-                onSaveRequest={() => void flushSaves()}
-              />
-            ) : (
-              // 文本文件打开即编辑状态，自动保存
-              <textarea
-                className="file-editor"
-                value={editContent}
-                onChange={(event) => handleEditChange(selection.path, event.target.value)}
-                onKeyDown={handleEditorKeyDown}
-                spellCheck={false}
-                aria-label={`编辑 ${selection.name}`}
-              />
-            )}
-            </>
-          )}
-        </div>
-      </div>
-      {treeVisible && (
-        <div
-          className="file-split-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整文件树宽度"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            treeResizeRef.current = {
-              startX: event.clientX,
-              startWidth: treeRef.current?.getBoundingClientRect().width || 280,
-            };
-            document.body.classList.add("resizing-panels");
-          }}
-        />
-      )}
-      {treeVisible && (
-      <div
-        className={`file-split-tree ${treeWidth ? "pinned" : ""}`}
-        ref={treeRef}
-        style={treeWidth ? { flex: `0 0 ${treeWidth}px`, width: treeWidth } : undefined}
-      >
-        <div className="file-split-tree-header">
-          <span className="file-split-tree-path" title={workspacePath}>
-            <Folder size={14} />
-            <span>{workspacePath ? displayWorkspace(workspacePath) : "未选择工作目录"}</span>
-          </span>
-          <button className="icon-button subtle tiny" onClick={onRefresh} aria-label="刷新文件列表" title="刷新文件列表" disabled={!workspacePath}>
-            <RefreshCw size={13} />
-          </button>
-        </div>
-        {workspacePath && (
-          <div className="tool-file-filter">
-            <Search size={14} />
-            <input
-              placeholder="筛选文件…"
-              aria-label="筛选文件"
-              value={fileFilter}
-              onChange={(event) => setFileFilter(event.target.value)}
-            />
-            {fileFilterActive && (
-              <button className="icon-button subtle tiny" aria-label="清除筛选" title="清除筛选" onClick={() => setFileFilter("")}>
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        )}
-        {workspaceOpen && (workspaceEntries.length ? (visibleEntries.length ? (
-          <div className="workspace-tree">
-            {visibleEntries.map((entry) => (
-              <WorkspaceNode entry={entry} key={entry.path} onOpenFile={(item) => void previewFile(item)} onInsertFile={onInsertFile} forceExpand={fileFilterActive} />
             ))}
           </div>
         ) : (
-          <p className="panel-empty">没有匹配「{fileFilter.trim()}」的文件。</p>
-        )) : (
-          workspacePath ? <p className="panel-empty">这个文件夹是空的。</p> : null
-        ))}
-        {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+          <div className="code-breadcrumb" />
+        )}
+        {selection && saveState !== "idle" && !selection.loading && !selection.error && (
+          <span className={`file-save-state ${saveState}`}>
+            {saveState === "pending" ? "待保存" : saveState === "saving" ? "保存中…" : "已保存"}
+          </span>
+        )}
+        {selection && selection.kind === "markdown" && (
+          <button
+            className="code-open-external"
+            onClick={() => setShowSource((value) => !value)}
+            disabled={selection.loading || Boolean(selection.error)}
+            title={showSource ? "返回即时渲染编辑" : "查看 Markdown 源代码"}
+          >
+            {showSource ? "查看预览" : "查看源代码"}
+          </button>
+        )}
+        {selection && (
+          <button
+            className="code-open-external primary"
+            onClick={() => void window.dyworker?.revealInFolder?.(selection.path)}
+            disabled={selection.loading}
+            title="在系统文件管理器中打开所在目录"
+          >
+            <FolderOpen size={13} />
+            打开
+          </button>
+        )}
+        <button className="icon-button subtle tiny" onClick={onRefresh} aria-label="刷新文件列表" title="刷新文件列表" disabled={!workspacePath}>
+          <RefreshCw size={13} />
+        </button>
+        <button
+          className="icon-button subtle tiny file-tree-toggle"
+          onClick={() => setTreeVisible((value) => !value)}
+          aria-label={treeVisible ? "隐藏文件树" : "显示文件树"}
+          aria-pressed={treeVisible}
+          title={treeVisible ? "隐藏文件树" : "显示文件树"}
+        >
+          <FolderOpen size={18} />
+        </button>
       </div>
-      )}
+      <div className="file-split-body">
+        <div className="file-split-preview">
+          <div className="file-split-preview-inner">
+            {!selection ? (
+              <div className="browser-empty-state">
+                <FolderOpen size={46} />
+                <strong>打开文件</strong>
+                <span>从工作区目录树中选择文件</span>
+              </div>
+            ) : (
+              <>
+              {saveError && <p className="panel-empty error-text">{saveError}</p>}
+              {selection.loading ? (
+                <p className="panel-empty">正在读取文件…</p>
+              ) : selection.error ? (
+                <p className="panel-empty error-text">{selection.error}</p>
+              ) : selection.kind === "markdown" ? (
+                // Codex 式即时渲染编辑：光标在行首显示该行源码，其余位置渲染态直接编辑；
+                // showSource 切换为纯源码模式
+                <MarkdownLiveEditorPane
+                  key={selection.path}
+                  path={selection.path}
+                  name={selection.name}
+                  value={editContent}
+                  plainSource={showSource}
+                  onChange={(value) => handleEditChange(selection.path, value)}
+                  onSaveRequest={() => void flushSaves()}
+                />
+              ) : (
+                // 文本文件打开即编辑状态，自动保存
+                <textarea
+                  className="file-editor"
+                  value={editContent}
+                  onChange={(event) => handleEditChange(selection.path, event.target.value)}
+                  onKeyDown={handleEditorKeyDown}
+                  spellCheck={false}
+                  aria-label={`编辑 ${selection.name}`}
+                />
+              )}
+              </>
+            )}
+          </div>
+        </div>
+        {treeVisible && (
+          <div
+            className="file-split-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整文件树宽度"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              treeResizeRef.current = {
+                startX: event.clientX,
+                startWidth: treeRef.current?.getBoundingClientRect().width || 280,
+              };
+              document.body.classList.add("resizing-panels");
+            }}
+          />
+        )}
+        {treeVisible && (
+        <div
+          className={`file-split-tree ${treeWidth ? "pinned" : ""}`}
+          ref={treeRef}
+          style={treeWidth ? { flex: `0 0 ${treeWidth}px`, width: treeWidth } : undefined}
+        >
+          {workspacePath && (
+            <div className="tool-file-filter">
+              <Search size={14} />
+              <input
+                placeholder="筛选文件…"
+                aria-label="筛选文件"
+                value={fileFilter}
+                onChange={(event) => setFileFilter(event.target.value)}
+              />
+              {fileFilterActive && (
+                <button className="icon-button subtle tiny" aria-label="清除筛选" title="清除筛选" onClick={() => setFileFilter("")}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          )}
+          {workspaceOpen && (workspaceEntries.length ? (visibleEntries.length ? (
+            <div className="workspace-tree">
+              {visibleEntries.map((entry) => (
+                <WorkspaceNode entry={entry} key={entry.path} onOpenFile={(item) => void previewFile(item)} onInsertFile={onInsertFile} forceExpand={fileFilterActive} />
+              ))}
+            </div>
+          ) : (
+            <p className="panel-empty">没有匹配「{fileFilter.trim()}」的文件。</p>
+          )) : (
+            workspacePath ? <p className="panel-empty">这个文件夹是空的。</p> : null
+          ))}
+          {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+        </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -7069,6 +7067,8 @@ export function App() {
   );
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
   const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
+  const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
+  const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
   const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("");
   const [browserOpening, setBrowserOpening] = useState(false);
   const [toolPanelMenuOpen, setToolPanelMenuOpen] = useState(false);
@@ -10092,40 +10092,19 @@ export function App() {
     return ()=>{void host.selectMainSession('').catch(()=>{});};
   }, [activeSession?.id, activeSession?.runtime]);
 
-  // 插件贡献的右侧面板标签：跟着客户端宿主的插槽表走。
-  // 为什么不用 requestPluginPanels 那种一次性调用：内置插件是开机异步加载的，
-  // 谁先谁后取决于时序；订阅插槽变化就不会漏，也不会重复（按 pageKey 去重）。
-  // 只登记标签、**不自动展开右侧栏**——开机抢版面会打断用户。
+  // 异步登记只同步可用页面；关闭选择独立保存，不能被宿主刷新覆盖。
   useEffect(() => {
     const host = clientHost();
     const sync = () => {
       const contributions = host.contributionsFor("sidebar.right.pane.tab").filter(contribution =>
         activeSession?.runtime !== 'dsh' || contribution.pluginId !== 'dyworker-context');
-      setToolPanelTabs((current) => {
-        let next = current.filter(tab => tab.kind !== "plugin" || contributions.some(contribution =>
-          String(contribution.meta.key ?? contribution.meta.id ?? "") === tab.pluginKey
-          && (!tab.pluginId || contribution.pluginId === tab.pluginId)));
-        for (const contribution of contributions) {
-          const key = String(contribution.meta.key ?? contribution.meta.id ?? "").trim();
-          if (!key) continue;
-          const label = typeof contribution.meta.label === "function"
-            ? String((contribution.meta.label as () => unknown)())
-            : String(contribution.meta.label ?? key);
-          const owner = contribution.pluginId || "";
-          const id = `plugin-${encodeURIComponent(owner)}-${encodeURIComponent(key)}`;
-          const existing = next.find((tab) => tab.kind === "plugin" && tab.pluginKey === key && (!tab.pluginId || tab.pluginId === owner));
-          if (existing) {
-            if (existing.title !== label || existing.pluginId !== owner || existing.id !== id) next = next.map((tab) => (tab.id === existing.id ? { ...tab, id, title: label, pluginId: owner } : tab));
-            continue;
-          }
-          next = [...next, { id, kind: "plugin" as const, title: label, pluginId: owner, pluginKey: key }];
-        }
-        return next;
-      });
+      const available = availablePluginPanels(contributions);
+      setPluginPanelChoices(available);
+      setToolPanelTabs(current => pluginPanelPreferences.reconcile(current, available));
     };
     sync();
     return host.subscribe(sync);
-  }, [activeSession?.runtime]);
+  }, [ready, activeId, activeSession?.runtime, pluginPanelPreferences]);
 
   // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
   useEffect(() => {
@@ -10147,21 +10126,19 @@ export function App() {
   useEffect(() => { setConversationView("chat"); }, [activeId]);
 
 
-  // 插件登记右侧面板标签（sidebar.right.pane.tab 插槽）时，接进已有的工具面板：
-  // 不新造界面容器，直接开一个 plugin 类型的标签页承载插件组件。
-  useEffect(() => onPluginPanelRequest((request) => {
+  const openPluginPanel = useCallback((request: PluginPanelRequest) => {
+    const panel = pluginPanelTab(request.pluginId, request.key, request.label);
+    if (!pluginPanelPreferences.open(panel, request.open !== false)) return;
     if (request.open !== false) setRightPanelOpen(true);
-    const id = `plugin-${encodeURIComponent(request.pluginId)}-${encodeURIComponent(request.key)}`;
-    setToolPanelTabs((current) => [...current.filter(tab => tab.kind !== "plugin"
-      || tab.pluginKey !== request.key || tab.pluginId !== request.pluginId), {
-      id,
-      kind: "plugin" as const,
-      title: request.label,
-      pluginId: request.pluginId,
-      pluginKey: request.key,
-    }]);
-    setActiveToolPanelTabId(id);
-  }), []);
+    setToolPanelTabs(current => [...current.filter(tab => tab.kind !== "plugin"
+      || tab.pluginKey !== panel.pluginKey || (tab.pluginId || "") !== panel.pluginId), panel]);
+    if (request.open !== false) {
+      setActiveToolPanelTabId(panel.id);
+      setToolPanelMenuOpen(false);
+    }
+  }, [pluginPanelPreferences]);
+
+  useEffect(() => onPluginPanelRequest(openPluginPanel), [openPluginPanel]);
 
   const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false, initialUrl?: string) => {
     if (!createNew) {
@@ -10240,6 +10217,8 @@ export function App() {
   }, [activeToolPanelTabId, rightPanelOpen, appliedToolPanelWidth]);
 
   const closeToolPanelTab = (id: string) => {
+    const closing = toolPanelTabs.find(tab => tab.id === id);
+    if (closing) pluginPanelPreferences.close(closing);
     const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
     // 关掉最后一个标签页时回到菜单页，而不是再开一个空白浏览器（对照 Codex）
     if (!nextTabs.length) {
@@ -12057,6 +12036,15 @@ export function App() {
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("tasks"); },
     },
+    ...pluginPanelChoices.map(panel => ({
+      key: panel.id,
+      icon: <SquarePlus size={18} />,
+      label: panel.title,
+      shortcut: "",
+      active: activeToolPanelTabId === panel.id,
+      visible: true,
+      onClick: () => openPluginPanel({ pluginId: panel.pluginId, key: panel.pluginKey, label: panel.title }),
+    })),
   ];
 
   const toolPanelMenu = (
@@ -12084,6 +12072,7 @@ export function App() {
   // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端始终可选）
   const addMenuItems = toolPanelMenuItems.filter((item) => {
     if (item.key === "terminal") return true;
+    if (item.key.startsWith("plugin-")) return !toolPanelTabs.some(tab => tab.id === item.key);
     const kind = item.key === "side-chat" ? "chat" : item.key;
     return !toolPanelTabs.some((tab) => tab.kind === kind);
   });
@@ -12226,7 +12215,7 @@ export function App() {
 
   const conversationHeader = (
         <header className="topbar">
-          <div className="topbar-left no-drag">
+          <div className="topbar-left">
             <button
               className="icon-button subtle sidebar-toggle"
               aria-label="展开侧栏"

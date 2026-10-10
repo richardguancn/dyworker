@@ -81,8 +81,8 @@ electron/
   带异步停止动作的域（runtime-domains）disposer 返回 promise，因此
   `disposeHost` 解析完成即代表域停机会话 flush 完成。
 - **打包**：`main` 指向构建产物 `dist/electron/main.mjs`，而 `dist/` 被 gitignore，
-  所以 `npm run verify` 必须先跑 `build:electron`——发布 CI 与
-  `package*` 脚本都只依赖 `verify`。
+  所以 `npm run verify` 必须先生成两端产物。`scripts/build.mjs` 先生成插件，
+  再并行处理主进程和渲染端；完整检查成功后才保存本机复用记录。
 
 ## 服务清单
 
@@ -197,12 +197,17 @@ main.mts 里运营域初始化已前移到 `createWindow()` 之前。
   产物文件名与旧布局一致；`scripts/build-electron.mjs` 附带拷贝
   preload/scripts/reviewer-policy 等静态资源。
 - 主进程产物在 `dist/electron/`，渲染产物在 `dist/client/`；`dist/` 不入库，
-  因此 **`npm run verify` 先 `build:electron`**（发布 CI 与 `package*` 都走 verify），
+  因此 **`npm run verify` 先构建再测试**（发布 CI 每次运行完整测试；`package*`
+  仅在输入、依赖、运行环境和产物都与本机已通过记录一致时复用检查），
   主进程代码里引用渲染产物用 `../client`（相对产物目录，不是 `../dist/client`）。
 - 测试：`node --test`（Node ≥22.18 原生类型剥离）直跑 `.mts` 源码；
   host/服务测试不依赖 electron。
 - 打包：electron-builder `files: dist/client/**, dist/electron/**`，
   asarUnpack 指向 dist 布局。
+- `output/.build-cache/` 保存输入摘要和产物内容摘要。源码按内容而非时间戳判断；
+  依赖目录按文件大小、时间和链接目标判断。缺失、变化、失败或 `--force` 会撤销复用。
+  `verify` 始终跑全部测试；`package* -- --force` 强制重建并检查。
+  同一工作区的构建命令互斥，检查期间输入/产物有变化则失败且不保存通过记录。
 - 渐进类型化债务：`electron/migration-types.d.ts`（Error 索引签名等宽限）
   与各处 `as any` 随域类型化逐步收紧删除。
 

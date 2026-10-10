@@ -83,7 +83,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
    * 第 1 步只验证"能不能被加载器加载起来"——bundle 会执行并注册，但界面上还不会出现
    * 它贡献的面板（那需要第 2 步把宿主已有的面板注册成 dsh-client-* 服务）。
    */
-  const loadClientHalf = async (entry: PluginEntryRecord, bundle: PluginBundleRecord | undefined) => {
+  const loadClientHalf = async (entry: PluginEntryRecord, bundle: PluginBundleRecord | undefined, options: { open?: boolean } = {}) => {
     const key = entry.id;
     if (loadingClients.current.has(key)) return;
     loadingClients.current.add(key);
@@ -136,11 +136,11 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
         return;
       }
       // 它登记进宿主插槽的界面贡献：右侧面板标签会被壳层接进已有工具面板
-      const panels = requestPluginPanels(entry.id, pluginRecord.slots);
+      const panels = requestPluginPanels(entry.id, pluginRecord.slots, options);
       const missing = record.missing.length ? `；缺模块 ${[...new Set(record.missing)].join("、")}` : "";
       const slots = pluginRecord.slots.length ? `；登记插槽 ${pluginRecord.slots.join("、")}` : "；没有登记界面位置";
       const pending = pluginRecord.missingCalls.length ? `；未实现调用 ${[...new Set(pluginRecord.missingCalls)].slice(0, 4).join("、")}` : "";
-      const opened = panels.length ? `；已开右侧面板 ${panels.map((panel) => panel.label).join("、")}` : "";
+      const opened = panels.length ? `；${options.open === false ? "已登记" : "已开"}右侧面板 ${panels.map((panel) => panel.label).join("、")}` : "";
       const modules = moduleNotes.length ? `；客户端模块 ${moduleNotes.length} 个（${moduleNotes.slice(0, 3).join("、")}${moduleNotes.length > 3 ? "…" : ""}）` : "";
       const missingModules = info.missingModules?.length ? `；模块未安装 ${info.missingModules.slice(0, 2).join("、")}` : "";
       setClientRuns((current) => ({
@@ -191,7 +191,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
     // 重新启用：把界面半边装回去（与开机自动加载同一条路径）
     // 内置插件在 profile 里没有 bundle 记录，所以这里不能要求 bundle 存在
     const bundle = bundleOf.get(entry.id) || bundleOf.get(entry.name);
-    if (entry.client || bundle?.client) await loadClientHalf(entry, bundle);
+    if (entry.client || bundle?.client) await loadClientHalf(entry, bundle, { open: false });
     return result;
   });
 

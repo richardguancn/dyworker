@@ -337,11 +337,11 @@ html .reference-layout .tool-panel { border-left-color: var(--layout-divider); }
 .reference-layout .panel-resize-handle::after { background: transparent; }
 .reference-layout .panel-resize-handle:hover::after,
 body.resizing-panels .reference-layout .panel-resize-handle::after { background: color-mix(in srgb, var(--ink) 12%, transparent); }
-.reference-layout .tool-panel-tabs { min-height: 54px; padding: 7px 82px 7px 12px; gap: 8px; border-bottom-color: var(--layout-divider); background: var(--sidebar); }
-.reference-layout .tool-panel-tab { height: 38px; border-radius: 12px; }
-.reference-layout .tool-panel-tab-main { height: 38px; font-size: calc(14px * var(--font-ui-scale)); }
+.reference-layout .tool-panel-tabs { min-height: var(--titlebar-height); height: var(--titlebar-height); flex: none; padding: 5px 82px 5px 8px; gap: 8px; border-bottom: 0; background: transparent; }
+.reference-layout .tool-panel-tab { height: 34px; border-radius: 10px; }
+.reference-layout .tool-panel-tab-main { height: 34px; font-size: calc(14px * var(--font-ui-scale)); }
 .reference-layout .tool-panel-tab.active { background: var(--sidebar-active); }
-.reference-layout .tool-panel-tabs-actions { top: 10px; right: 12px; gap: 6px; }
+.reference-layout .tool-panel-tabs-actions { top: 8px; right: 12px; gap: 6px; }
 html .settings-page .plugins-page { position: static; inset: auto; padding: 0; background: transparent; overflow: visible; }
 html .settings-page .plugins-page.plugins-formats { padding: 0; }
 html .settings-page .plugins-navigation { margin: 0 0 24px; }
@@ -357,3 +357,33 @@ html .settings-page .mcp-field input:not([type="checkbox"]),
 html .settings-page .mcp-field textarea { border-color: var(--border); background: transparent; color: var(--ink); font-size: calc(14px * var(--font-ui-scale)); }
 html .settings-page .mcp-field textarea { height: auto; min-height: 72px; resize: vertical; }
 html .settings-page .mcp-server-row .skill-switch { display: flex; margin: 0; flex: none; }
+
+/* The file tabs share the window title row; the file toolbar spans both panes. */
+.reference-layout .conversation-tabs { border-bottom-color: var(--layout-divider); }
+.reference-layout .conversation-tab.active::after { background: var(--layout-divider); }
+.reference-layout .titlebar-conversation,
+.reference-layout .topbar-left,
+.reference-layout .topbar-left > svg,
+.reference-layout .topbar-left > strong { -webkit-app-region: drag; user-select: none; }
+.reference-layout .topbar-left button { -webkit-app-region: no-drag; }
+.reference-layout:not(.platform-linux):not(.right-panel-collapsed) .titlebar-conversation { right: calc(var(--tool-panel-width) + var(--frame-gap)); }
+.reference-layout:not(.platform-linux) .tool-panel { grid-row: 1 / 3; border-left: 0; background: transparent; }
+.reference-layout:not(.platform-linux) .tool-panel::before { content: ""; position: absolute; z-index: 4; top: 12px; left: 0; height: 20px; border-left: 1px solid var(--layout-divider); pointer-events: none; }
+.reference-layout .tool-panel-scroll { background: var(--surface); border-left: 1px solid var(--layout-divider); border-radius: 0 12px 12px 0; }
+.reference-layout .titlebar-right { position: relative; z-index: 6; }
+.reference-layout.platform-linux .tool-panel-tabs { min-height: 44px; height: 44px; }
+.reference-layout.platform-win32 .tool-panel-tabs { padding-right: 218px; }
+.reference-layout.platform-win32 .tool-panel-tabs-actions { right: 148px; }
+.reference-layout .file-split { flex-direction: column; }
+.reference-layout .file-split-body { display: flex; flex: 1; min-height: 0; }
+.reference-layout .file-split > .code-panel-header { position: relative; min-height: 44px; flex: none; border-bottom-color: var(--layout-divider); }
+.reference-layout .file-split-preview { border-right-color: var(--layout-divider); }
+.reference-layout .file-split-tree { padding-top: 8px; }
+.reference-layout .file-split-tree:not(.pinned) { min-width: 0; }
+.reference-layout .file-root-button { min-width: 28px; min-height: 30px; border: 1px solid var(--layout-divider); border-radius: 12px; }
+.reference-layout .file-tree-toggle { width: 32px; height: 32px; border-radius: 50%; }
+.reference-layout .file-tree-toggle[aria-pressed="true"] { color: var(--accent); background: var(--sidebar-active); }
+@media (max-width: 820px) {
+  .reference-layout:not(.platform-linux) .tool-panel { top: 0; }
+  .reference-layout:not(.platform-linux):not(.right-panel-collapsed) .titlebar-conversation { right: 84px; }
+}
