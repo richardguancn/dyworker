@@ -1,5 +1,4 @@
-import { ModsPluginsPage } from './ModsPluginsPage';
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { filterCatalog, isInstalled, isVisibleInstalledPlugin } from "./pluginCatalog";
@@ -10,6 +9,7 @@ import { loadBundleScript, loadedBundle, clientRuntime } from "./pluginRuntime/i
 import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
 import { requestPluginPanels, PluginSlotView } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
+import { ModsPluginsPage } from './ModsPluginsPage';
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
 //
@@ -28,12 +28,13 @@ function tileColor(seed: string) {
   return TILE_COLORS[hash % TILE_COLORS.length];
 }
 
-export function PluginsPage({sessionId,onCreate}:{sessionId?:string;onCreate:()=>void}) {
+export function PluginsPage({onCreate,sessionId,mcpPanel}:{onCreate:()=>void;sessionId?:string;mcpPanel:ReactNode}) {
   const [format,setFormat]=useState('dsh');
   return <div className="plugins-page plugins-formats"><div className="plugins-navigation" role="tablist" aria-label="插件类型">
     <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>DSH 插件</button>
     <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>Claude Mods</button>
-  </div>{format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
+    <button role="tab" aria-selected={format==='mcp'} onClick={()=>setFormat('mcp')}>MCP</button>
+  </div>{format==='mcp'?mcpPanel:format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
 }
 function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const [data, setData] = useState<PluginListResult | null>(null);

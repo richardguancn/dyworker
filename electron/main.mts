@@ -55,6 +55,9 @@ import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComput
 import { applyBuiltinMemoryOverrides, buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, normalizeMemoryItem, normalizeMemories } from "./memory.mts";
 import { applyConsolidation, buildConsolidationMessages, ensureWiki, integrateItems, listWikiPages, parseConsolidationResult, readWikiPages, removeWikiMemory, serializeMemoryRow, updateWikiMemory } from "./memory-wiki.mts";
 import { McpClient } from "./mcp.mts";
+import { HttpMcpClient } from "./mcp-http.mts";
+import { resolveMcpServer } from "./mcp-config.mts";
+import { importMcpBundle } from "./mcp-bundle.mts";
 import { countUndecryptableSecrets, decryptChannelSecret, encryptChannelSecret, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, unattendedApprovalMode, wakeApprovalMode } from "./settings.mts";
 import { discoverFileSkills, mergeSkillRecords } from "./skills.mts";
 import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "./session-tools.mts";
@@ -1729,7 +1732,7 @@ function mcpServersOf(settings) {
   const configured = list.filter((server) =>
     server
     && server.enabled !== false
-    && String(server.command || "").trim()
+    && String(server.transport === "http" ? server.url : server.command || "").trim()
     && String(server.id || "") !== COMPUTER_USE_SERVER_ID);
   return builtInComputerUseServer ? [builtInComputerUseServer, ...configured] : configured;
 }
@@ -1741,19 +1744,22 @@ function mcpServerArgs(server) {
 
 async function getMcpClient(server) {
   if (mcpShuttingDown) throw new Error("应用正在退出，已停止新建本机操作连接");
-  const key = String(server.id || server.name || server.command);
+  const key = JSON.stringify(server);
   const existing = mcpClients.get(key);
-  if (existing?.process) return existing;
+  if (existing?.process || existing?.connected) return existing;
   const pendingConnection = mcpClientConnections.get(key);
   if (pendingConnection) return pendingConnection;
-  const connection = (async () => {
-    const client = new McpClient({
-      command: String(server.command),
-      args: mcpServerArgs(server),
-      cwd: server.cwd ? String(server.cwd) : undefined,
-      env: server.env && typeof server.env === "object" ? server.env : undefined,
-      requestTimeoutMs: server.requestTimeoutMs,
-    });
+  const connection = Promise.resolve().then(async () => {
+    // Register the pending connection before awaiting cleanup, so simultaneous tasks share it.
+    for (const [oldKey, client] of mcpClients) {
+      const old = JSON.parse(oldKey);
+      if (oldKey !== key && old.id === server.id && !client.pending?.size && !client.activeRequests) {
+        mcpClients.delete(oldKey);
+        await client.close();
+      }
+    }
+    const resolved = resolveMcpServer({...server, args: mcpServerArgs(server)});
+    const client = server.transport === "http" ? new HttpMcpClient(resolved) : new McpClient(resolved);
     try {
       await client.connect();
       if (mcpShuttingDown) {
@@ -1766,7 +1772,7 @@ async function getMcpClient(server) {
       await client.close();
       throw error;
     }
-  })();
+  });
   mcpClientConnections.set(key, connection);
   try {
     return await connection;
@@ -1831,7 +1837,7 @@ async function callMcpTool(settings, fullName, args, { signal } = {} as any) {
       });
       return { ok: !result.isError, result: result.text, images: result.images };
     } catch (error: any) {
-      if (!client.process) mcpClients.delete(String(server.id || server.name || server.command));
+      if (!client.process && !client.connected) mcpClients.delete(JSON.stringify(server));
       if (signal?.aborted) return { ok: false, result: "任务已停止" };
       if (server.id === COMPUTER_USE_SERVER_ID) {
         const guidance = process.platform === "linux"
@@ -2412,6 +2418,11 @@ const shellDeps = {
     queueCount:(id)=>sessionQueue.count(id),drainSessionQueue,trackStart:trackTaskStart,trackEnd:trackTaskEnd,
     emit:(sender,envelope)=>{try {if(sender&&!sender.isDestroyed())sender.send('agent:event',envelope);}catch {}}}),
   // 设置保存要联动的域（睡眠拦截/审核模型/语音/渠道/运营）
+  importMcpBundle: async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {properties: ['openFile'], filters: [{name: 'MCP Bundle', extensions: ['mcpb']}]});
+    if (result.canceled) return {canceled: true};
+    return {ok: true, server: await importMcpBundle(result.filePaths[0], path.join(app.getPath('userData'), 'mcp-bundles'))};
+  },
   saveSettings,
   applyPreventSleep,
   applyReviewerModelDir,

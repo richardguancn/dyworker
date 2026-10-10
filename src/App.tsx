@@ -74,6 +74,7 @@ import {
   Scissors,
   ShieldAlert,
   SquarePlus,
+  Puzzle,
   SquarePen,
   SquareTerminal,
   Sparkles,
@@ -121,7 +122,7 @@ import { assistantImageAttachments } from './assistantImages.ts';
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
-import { formatMcpArgs, splitMcpArgs } from "./mcpArgs";
+import { McpSettingsPanel } from "./McpSettingsPanel";
 
 const now = new Date().toISOString();
 // 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
@@ -5358,7 +5359,7 @@ function AppUpdateDialog({
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "mcp" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
 const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings; keywords?: string[] }[] }[] = [
@@ -5373,9 +5374,9 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
     { id: "appearance", label: "外观", icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "theme", "font"] },
     { id: "power", label: "电源", icon: Moon },
     { id: "updates", label: "应用更新", icon: RefreshCw },
-    { id: "mcp", label: "MCP 工具", icon: Bot },
   ] },
   { group: "资源", items: [
+    { id: "plugins", label: "插件", icon: Puzzle, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
     { id: "memories", label: "记忆", icon: History },
     { id: "skills", label: "技能", icon: FileCode2 },
     { id: "skill-libraries", label: "技能库", icon: Globe },
@@ -5771,7 +5772,11 @@ function SettingsDialog({
   planSeed,
   appUpdate,
   onCheckUpdate,
+  onCreatePlugin,
+  sessionId,
 }: {
+  onCreatePlugin: () => void;
+  sessionId?: string;
   value: ProviderSettings;
   onClose: () => void;
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
@@ -5807,9 +5812,6 @@ function SettingsDialog({
 }) {
   const [draft, setDraft] = useState(value);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
-  const [mcpDraft, setMcpDraft] = useState({ name: "", command: "", args: "" });
-  // 正在编辑的 MCP 服务器 id（空串 = 表单处于"新增"状态）
-  const [mcpEditingId, setMcpEditingId] = useState("");
   const [saving, setSaving] = useState(false);
   const [navQuery, setNavQuery] = useState("");
   const [profileId, setProfileId] = useState(() => (
@@ -5842,16 +5844,11 @@ function SettingsDialog({
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      // 正在编辑 MCP 服务器时，Esc 先退出编辑，不直接关掉整个设置弹窗
-      if (mcpEditingId) {
-        resetMcpDraft();
-        return;
-      }
       onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, mcpEditingId]);
+  }, [onClose]);
 
   const runCredentialProbe = async () => {
     if (!draft.endpoint.trim() || !draft.model.trim()) {
@@ -6198,58 +6195,6 @@ function SettingsDialog({
     if (saved) onClose();
   };
 
-  // MCP 服务器是列表型配置：添加/编辑/启用/删除之后再要求点一次「保存设置」很容易漏
-  // （用户反馈：点完「添加」以为已经生效，其实只进了草稿，关掉弹窗就白填了）。
-  // 这里改成动作即保存：四个操作都立刻落盘。保存基座用上次已保存的 value、只替换
-  // mcpServers，避免把其它页签里还没点保存的草稿一起写进去；失败则回滚到已保存状态，
-  // 由错误提示说明原因，不让界面停在一个"看着改好了、其实没存"的状态。
-  const persistMcpServers = async (nextServers: ProviderSettings["mcpServers"], message: string) => {
-    setDraft((current) => ({ ...current, mcpServers: nextServers }));
-    const saved = await onSave({ ...value, mcpServers: nextServers }, message);
-    if (!saved) setDraft((current) => ({ ...current, mcpServers: value.mcpServers }));
-    return saved;
-  };
-
-  const resetMcpDraft = () => {
-    setMcpEditingId("");
-    setMcpDraft({ name: "", command: "", args: "" });
-  };
-
-  // 编辑已有服务器：把配置回填进同一张表单（参数按引号还原），保存时沿用原 id 与启用状态
-  const startEditMcpServer = (server: ProviderSettings["mcpServers"][number]) => {
-    setMcpEditingId(server.id);
-    setMcpDraft({ name: server.name, command: server.command, args: formatMcpArgs(server.args) });
-  };
-
-  // 新增与「保存修改」共用一段逻辑：编辑时按 id 原地替换，不会多出一行
-  const saveMcpDraft = () => {
-    const command = mcpDraft.command.trim();
-    if (!command) return;
-    const existing = mcpEditingId ? draft.mcpServers.find((item) => item.id === mcpEditingId) : undefined;
-    const entry = {
-      id: existing?.id || crypto.randomUUID(),
-      name: mcpDraft.name.trim() || command,
-      command,
-      args: splitMcpArgs(mcpDraft.args),
-      enabled: existing ? existing.enabled : true,
-    };
-    const nextServers = existing
-      ? draft.mcpServers.map((item) => (item.id === existing.id ? entry : item))
-      : [...draft.mcpServers, entry];
-    // 保存成功才退出编辑/清空表单：失败时保留输入，修好之后可以直接重试
-    void persistMcpServers(nextServers, existing ? `已更新「${entry.name}」` : `已添加并生效：${entry.name}`)
-      .then((saved) => { if (saved) resetMcpDraft(); });
-  };
-
-  // 这三个输入框在设置表单内部，直接按回车会触发整个表单提交（= 关掉弹窗），所以回车一律
-  // 走「保存」；但中文输入法用回车确认候选词，那种回车必须放过，否则名称会被截断着存进去。
-  const mcpDraftKeyDown = (event: { key: string; nativeEvent?: { isComposing?: boolean }; preventDefault: () => void }) => {
-    if (event.key !== "Enter") return;
-    if (event.nativeEvent?.isComposing) return;
-    event.preventDefault();
-    saveMcpDraft();
-  };
-
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="settings-dialog settings-v2" onMouseDown={(event) => event.stopPropagation()}>
@@ -6306,7 +6251,9 @@ function SettingsDialog({
           />
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
-        ) : ["model", "voice", "search", "power", "updates", "telemetry", "mcp"].includes(tab) ? (
+        ) : tab === "plugins" ? (
+          <PluginsPage onCreate={onCreatePlugin} sessionId={sessionId} mcpPanel={<McpSettingsPanel value={value} onSave={onSave} />} />
+        ) : ["model", "voice", "search", "power", "updates", "telemetry"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
         <div className="dialog-section-title">已保存的模型</div>
@@ -6654,91 +6601,6 @@ function SettingsDialog({
         </label>
         <p className="dialog-note">搜索按模型厂商路由：Kimi 开放平台用 Kimi 官方搜索（公式 web_search，按次计费）；DeepSeek 模型用 DeepSeek 服务端搜索（复用会话密钥，每次搜索计一次模型调用）；GLM（智谱）模型用智谱 Web Search API（复用会话密钥，按次计费，境内引擎）；其他模型默认也用 DeepSeek 搜索（需在此配置密钥）。以上都不可用时回退：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
         </>)}
-        {tab === "mcp" && (<>
-        <div className="dialog-section-title">MCP 工具服务器（可选）</div>
-        <p className="dialog-note">本机应用操作已作为基础能力接入：macOS 与 Linux 均使用应用内置的桌面操控服务，无需额外安装；首次使用请允许 DYWorker 的辅助功能权限（macOS 另需屏幕录制权限用于查看界面截图）。</p>
-        <p className="dialog-note">下面的添加、修改、启用、删除都会立即保存并生效，不用再点底部按钮；点某一行右侧的铅笔可以改它的名称/命令/参数，下一个任务就能用。</p>
-        {draft.mcpServers.map((server) => (
-          <div className="mcp-server-row" key={server.id}>
-            <label className="skill-switch" title={server.enabled ? "点击停用" : "点击启用"}>
-              <input
-                type="checkbox"
-                checked={server.enabled}
-                onChange={(event) => {
-                  const enabled = event.target.checked;
-                  const label = server.name || server.command;
-                  void persistMcpServers(
-                    draft.mcpServers.map((item) => item.id === server.id ? { ...item, enabled } : item),
-                    enabled ? `已启用「${label}」` : `已停用「${label}」`,
-                  );
-                }}
-              />
-            </label>
-            <span className="mcp-server-name">
-              <strong>{server.name || server.command}</strong>
-              <small>{server.command} {server.args.join(" ")}</small>
-            </span>
-            <button
-              type="button"
-              className="icon-button subtle tiny"
-              aria-label="编辑这个 MCP 服务器"
-              title="编辑"
-              onClick={() => startEditMcpServer(server)}
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              type="button"
-              className="icon-button subtle tiny"
-              aria-label="删除这个 MCP 服务器"
-              onClick={() => {
-                const label = server.name || server.command;
-                void persistMcpServers(
-                  draft.mcpServers.filter((item) => item.id !== server.id),
-                  `已删除「${label}」`,
-                ).then((saved) => { if (saved && mcpEditingId === server.id) resetMcpDraft(); });
-              }}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        ))}
-        <div className={`mcp-add-form${mcpEditingId ? " editing" : ""}`}>
-          {mcpEditingId && (
-            <p className="mcp-edit-hint">
-              正在编辑「{(draft.mcpServers.find((item) => item.id === mcpEditingId) || {}).name || "该服务器"}」：改完点「保存修改」，或
-              <button type="button" className="mcp-edit-cancel" onClick={resetMcpDraft}>取消编辑</button>
-            </p>
-          )}
-          <input
-            value={mcpDraft.name}
-            placeholder="名称，例如：内部知识库"
-            onChange={(event) => setMcpDraft({ ...mcpDraft, name: event.target.value })}
-            onKeyDown={mcpDraftKeyDown}
-          />
-          <input
-            value={mcpDraft.command}
-            placeholder="命令，例如：npx 或 /usr/local/bin/my-mcp"
-            onChange={(event) => setMcpDraft({ ...mcpDraft, command: event.target.value })}
-            onKeyDown={mcpDraftKeyDown}
-          />
-          <input
-            value={mcpDraft.args}
-            placeholder='参数，例如：-y @scope/mcp-server --dir /data；含空格的整段用引号括起来'
-            onChange={(event) => setMcpDraft({ ...mcpDraft, args: event.target.value })}
-            onKeyDown={mcpDraftKeyDown}
-          />
-          <button
-            type="button"
-            className="button-secondary"
-            disabled={!mcpDraft.command.trim()}
-            onClick={saveMcpDraft}
-          >
-            {mcpEditingId ? <Check size={14} /> : <Plus size={14} />}
-            {mcpEditingId ? "保存修改" : "添加并生效"}
-          </button>
-        </div>
-        </>)}
         {tab === "voice" && (<>
         <div className="dialog-section-title">语音转写</div>
         <label>
@@ -6952,7 +6814,7 @@ function SettingsDialog({
           <button type="button" className="button-secondary" onClick={onClose}>取消</button>
           <button type="submit" className="button-primary" disabled={saving || (tab === "model" && !modelComplete)}>
             {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            {tab === "model" ? "保存并使用" : tab === "mcp" ? "完成" : "保存设置"}
+            {tab === "model" ? "保存并使用" : "保存设置"}
           </button>
         </div>
           </form>
@@ -12566,7 +12428,7 @@ export function App() {
       )}
 
       <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
-        {pluginsPageOpen && <PluginsPage onCreate={() => setCreationKind("plugin")} sessionId={activeSession?.id} />}
+        {pluginsPageOpen && <PluginsPage onCreate={() => setCreationKind("plugin")} sessionId={activeSession?.id} mcpPanel={<McpSettingsPanel value={settings} onSave={saveProviderSettings} />} />}
         <header className="topbar">
           <div className="topbar-left no-drag">
             <button
@@ -14467,6 +14329,8 @@ export function App() {
 
       {settingsOpen && (
         <SettingsDialog
+          onCreatePlugin={() => setCreationKind("plugin")}
+          sessionId={activeSession?.id}
           value={settings}
           onClose={() => setSettingsOpen(false)}
           onSave={saveProviderSettings}

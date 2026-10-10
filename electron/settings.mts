@@ -1,3 +1,4 @@
+import { normalizeMcpServers } from "./mcp-config.mts";
 import crypto from "node:crypto";
 import { DEFAULT_UPDATE_URL, normalizeUpdateUrl } from "./app-updater.mts";
 import { normalizeSkillLibraries } from "./skill-libraries.mts";
@@ -198,6 +199,11 @@ export function preserveUndecryptableSecrets(serialized, stored, secretStorage) 
       qq: { ...serialized.channels.qq, appSecret: String(storedQq.appSecret), appSecretEncrypted: true },
     };
   }
+  serialized.mcpServers = (serialized.mcpServers || []).map(server => {
+    const old = (stored.mcpServers || []).find(item => item.id === server.id);
+    if (old && shouldKeep(server.privateConfig, old.privateConfig, old.privateConfigEncrypted)) return {...server, privateConfig: old.privateConfig, privateConfigEncrypted: true};
+    return server;
+  });
   return serialized;
 }
 
@@ -338,7 +344,13 @@ export function deserializeSettings(stored, secretStorage) {
     approvalMode: normalizeApprovalMode(source.approvalMode),
     preventSleep: normalizePreventSleep(source.preventSleep),
     updateUrl: normalizeUpdateUrl(source.updateUrl || DEFAULT_UPDATE_URL),
-    mcpServers: Array.isArray(source.mcpServers) ? source.mcpServers : [],
+    mcpServers: (Array.isArray(source.mcpServers) ? source.mcpServers : []).filter(server => server && typeof server === "object").map(server => {
+      const {privateConfig, privateConfigEncrypted, ...publicConfig} = server;
+      if (!privateConfig) return publicConfig;
+      const plain = decryptSecret(privateConfig, privateConfigEncrypted, secretStorage);
+      if (!plain) return {...publicConfig, configUnavailable: true};
+      try { return {...publicConfig, ...JSON.parse(plain)}; } catch { return {...publicConfig, configUnavailable: true}; }
+    }),
     channels: normalizeChannels(source.channels, secretStorage, "deserialize"),
     skillLibraries: normalizeSkillLibraries(source.skillLibraries),
     // 厂商原生工具开关：缺失字段按默认值补齐（enableNativeTools 默认开、$web_search 默认关）
@@ -390,15 +402,7 @@ export function serializeSettings(settings, secretStorage) {
     approvalMode: normalizeApprovalMode(settings?.approvalMode),
     preventSleep: normalizePreventSleep(settings?.preventSleep),
     updateUrl: normalizeUpdateUrl(settings?.updateUrl || DEFAULT_UPDATE_URL),
-    mcpServers: (Array.isArray(settings?.mcpServers) ? settings.mcpServers : [])
-      .filter((server) => server && String(server.command || "").trim())
-      .map((server) => ({
-        id: String(server.id || crypto.randomUUID()),
-        name: String(server.name || server.command || "").trim(),
-        command: String(server.command || "").trim(),
-        args: Array.isArray(server.args) ? server.args.map(String) : String(server.args || "").split(" ").filter(Boolean),
-        enabled: server.enabled !== false,
-      })),
+    mcpServers: normalizeMcpServers(settings?.mcpServers),
     skillLibraries: normalizeSkillLibraries(settings?.skillLibraries),
     enableNativeTools: settings?.enableNativeTools !== false,
     nativeToolsDisabled: Array.isArray(settings?.nativeToolsDisabled) ? settings.nativeToolsDisabled.map(String) : ["memory", "excel"],
@@ -445,7 +449,12 @@ export function serializeSettings(settings, secretStorage) {
     approvalMode: normalized.approvalMode,
     preventSleep: normalized.preventSleep,
     updateUrl: normalized.updateUrl,
-    mcpServers: normalized.mcpServers,
+    mcpServers: normalized.mcpServers.map(server => {
+      const {env, headers, bundle, ...publicConfig} = server;
+      if (!Object.keys(env || {}).length && !Object.keys(headers || {}).length && !bundle) return publicConfig;
+      const secret = encryptSecret(JSON.stringify({env, headers, bundle}), secretStorage);
+      return {...publicConfig, privateConfig: secret.value, privateConfigEncrypted: secret.encrypted};
+    }),
     channels: normalizeChannels(settings?.channels, secretStorage, "serialize"),
     skillLibraries: normalized.skillLibraries,
     enableNativeTools: normalized.enableNativeTools,

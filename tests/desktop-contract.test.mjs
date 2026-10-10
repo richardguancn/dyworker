@@ -1030,7 +1030,7 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /signal: abortController\.signal/);
   assert.doesNotMatch(main, /await client\.close\(\);\n\s*mcpClients\.delete/);
   assert.match(main, /请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用/);
-  assert.match(app, /本机应用操作已作为基础能力接入/);
+  assert.match(main, /builtInComputerUseServer \? \[builtInComputerUseServer, \.\.\.configured\]/);
   assert.match(packageJson, /electron\/scripts\/linux_computer_use\.py/);
   assert.match(packageJson, /electron\/scripts\/macos_computer_use\.js/);
 });

@@ -9,6 +9,11 @@ export function settingsIpcPlugin(deps) {
     apply(ctx) {
       const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, reconcileChannels, applyTelemetrySettings } = deps;
 
+      trustedHandle("settings:import-mcp-bundle", async () => {
+        try { return await deps.importMcpBundle(); }
+        catch (error: any) { return {ok: false, error: error.message || String(error)}; }
+      });
+
       // 保存设置的副作用编排：落盘走 ctx.settings 服务（saveSettings 内部转发），
       // 睡眠拦截/审核模型目录/语音引擎/渠道重连/运营设置都是壳层领域，经 deps 注入
       trustedHandle("settings:save", async (_event, settings) => {

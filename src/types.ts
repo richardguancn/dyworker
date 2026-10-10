@@ -484,6 +484,17 @@ export interface BrowserControlState {
 }
 
 export interface McpServerConfig {
+  configUnavailable?: boolean;
+  transport?: "stdio" | "http";
+  url?: string;
+  bearerTokenEnvVar?: string;
+  headers?: Record<string, string>;
+  envHeaders?: Record<string, string>;
+  env?: Record<string, string>;
+  envPassthrough?: string[];
+  cwd?: string;
+  bundle?: { manifest: Record<string, any>; directory: string; userConfig: Record<string, any> };
+
   id: string;
   name: string;
   command: string;
@@ -986,6 +997,7 @@ export interface DyworkerBridge {
   onBrowserControlState?(callback: (state: BrowserControlState) => void): () => void;
   /** 浏览器 Computer Use：监听控制恢复广播（用于自动触发续跑任务） */
   onBrowserControlResumed?(callback: (payload: { ownerSessionId?: string; runId?: string; tabId?: string }) => void): () => void;
+  importMcpBundle(): Promise<{ canceled?: boolean; ok?: boolean; error?: string; server?: McpServerConfig }>;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   // ---- 外观自定义（独立于模型设置存储；浏览器预览环境无此桥接，调用方需按 undefined 降级） ----
   getAppearance?(): Promise<AppearanceSnapshot>;
