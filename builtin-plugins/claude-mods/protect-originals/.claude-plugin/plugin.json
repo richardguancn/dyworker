@@ -1,0 +1,12 @@
+{
+  "name": "protect-originals",
+  "version": "1.0.0",
+  "description": "保护指定目录内的原始资料。",
+  "userConfig": {
+    "folder": {
+      "type": "string",
+      "default": "原始资料",
+      "description": "需要保护的资料目录名称"
+    }
+  }
+}

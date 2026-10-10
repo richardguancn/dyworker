@@ -220,7 +220,8 @@ export class DshRuntimeService extends Service {
     if (!entry) {
       const runtime = new OfficialDshSession({ profileDir: this.ctx.plugins.dir,
         dataDir: path.join(this.config.dir, createHash('sha256').update(sessionId).digest('hex')),
-        workspacePath: options.workspacePath, sessionId, model: settings.model, plugins: specification, extraTools, fixedExtraTools: nativeToolNames });
+        workspacePath: options.workspacePath, sessionId, model: settings.model, plugins: specification, extraTools, fixedExtraTools: nativeToolNames,
+        mods:this.ctx.get('mods') });
       entry = { runtime, busy: true, version, ownerIds: specification.map((item: any) => item.id) };
       this.sessions.set(sessionId, entry);
     } else entry.busy = true;
@@ -615,7 +616,7 @@ export class DshRuntimeService extends Service {
       const existing=this.sessions.get(sessionId);
       if(existing){await existing.ready;return existing;}
       const runtime = new OfficialDshSession({ profileDir: this.ctx.plugins.dir, sessionId, model: settings.model,
-        workspacePath: session.workspacePath, plugins: specification,
+        workspacePath: session.workspacePath, plugins: specification, mods:this.ctx.get('mods'),
         dataDir: path.join(this.config.dir, createHash('sha256').update(sessionId).digest('hex')),
         approve: async () => false, async *generate() { throw new Error('当前 DSH 会话没有已授权的模型任务'); } });
       const entry = { runtime, busy: true, version: JSON.stringify([session.workspacePath, settings.model, specification]), ownerIds: specification.map((item: any) => item.id), ready: runtime.start() };

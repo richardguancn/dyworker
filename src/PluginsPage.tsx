@@ -1,3 +1,4 @@
+import { ModsPluginsPage } from './ModsPluginsPage';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
@@ -27,7 +28,14 @@ function tileColor(seed: string) {
   return TILE_COLORS[hash % TILE_COLORS.length];
 }
 
-export function PluginsPage() {
+export function PluginsPage({sessionId}:{sessionId?:string}) {
+  const [format,setFormat]=useState('dsh');
+  return <div className="plugins-page plugins-formats"><div className="plugins-navigation" role="tablist" aria-label="插件类型">
+    <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>DSH 插件</button>
+    <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>Claude Mods</button>
+  </div>{format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage/>}</div>;
+}
+function DshPluginsPage() {
   const [data, setData] = useState<PluginListResult | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");

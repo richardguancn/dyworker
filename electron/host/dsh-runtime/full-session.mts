@@ -22,6 +22,7 @@ export class OfficialDshSession {
   requests = new Map<string, AbortController>();
   extraGrants = new Map<string, string>();
   ptcGrants = new Map<string, string>();
+  modCalls = new Set<string>();
   ptcExecutor: PtcExecutor;
   persistenceContext: any;
   sessionHeaders = new Map<string, any>();
@@ -53,6 +54,7 @@ export class OfficialDshSession {
       plugins: (this.options.plugins || []).map(({ id, entryUrl, config, options }: any) => ({ id, entryUrl, config, options })),
       extraTools: this.options.extraTools || [],
       fixedExtraTools: this.options.fixedExtraTools || [],
+      modsEnabled:Boolean(this.options.mods),
       dataDir: await fs.realpath(this.options.dataDir), workspacePath: await fs.realpath(this.options.workspacePath) };
     this.options.workspacePath = input.workspacePath;
     this.persistenceContext = new Context();
@@ -137,7 +139,7 @@ export class OfficialDshSession {
       const stream = this.streams.get(message.streamId); this.streams.delete(message.streamId);
       stream?.controller.abort(); void stream?.iterator.return?.(); return;
     }
-    if (!['model-open', 'model-next', 'tool-approval', 'extra-tool', 'ptc-run', 'user-question', 'file-handle', 'persistence', 'attachment'].includes(message.type)) return;
+    if (!['model-open', 'model-next', 'tool-approval', 'mods-before', 'mods-after', 'extra-tool', 'ptc-run', 'user-question', 'file-handle', 'persistence', 'attachment'].includes(message.type)) return;
     if (this.lifecycle.signal.aborted) {
       if (this.child?.connected) this.child.send({ type: message.type === 'file-handle' ? 'file-handle-result' : 'parent-result',
         id: message.id, error: 'DSH 会话已停止' });
@@ -238,6 +240,12 @@ export class OfficialDshSession {
         controller.signal.addEventListener('abort', aborted, { once: true });
         try { value = await stream.iterator.next(); }
         finally { controller.signal.removeEventListener('abort', aborted); }
+      } else if (message.type === 'mods-before') {
+        if(!this.ownsSession(message.tool?.sessionId)||!this.options.mods)throw new Error('模组操作不属于当前会话');
+        value=await this.options.mods.prepareTool(message.tool.sessionId,message.tool.name,message.tool.args,controller.signal);
+        if(value.key)this.modCalls.add(value.key);
+      } else if (message.type === 'mods-after') {
+        if(!this.options.mods||!this.modCalls.delete(message.key))throw new Error('模组结果不属于当前 DSH 操作');value=await this.options.mods.finishTool(message.key,message.result);
       } else if (message.type === 'tool-approval') {
         // 身份及工作目录由父进程确定；插件不能要求换到另一会话或权限模式。
         value = this.ownsSession(message.tool?.sessionId) && typeof this.options.approve === 'function'
@@ -335,6 +343,7 @@ export class OfficialDshSession {
       await Promise.allSettled([...this.operations]);
       this.streams.clear();
       this.extraGrants.clear();
+      for(const key of this.modCalls)this.options.mods?.cancelTool(key);this.modCalls.clear();
       this.ptcGrants.clear();
       await this.ptcExecutor?.close();
       await Promise.all([...this.handles.values()].map(handle => handle.close())); this.handles.clear();

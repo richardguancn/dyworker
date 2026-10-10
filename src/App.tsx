@@ -87,6 +87,7 @@ import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, Key
 import { createPortal } from "react-dom";
 import { applyReasoningStream } from "./reasoningStream";
 import { PluginsPage } from "./PluginsPage";
+import { ModsPanelView } from './ModsPluginsPage';
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
 import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
@@ -12529,7 +12530,7 @@ export function App() {
       )}
 
       <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
-        {pluginsPageOpen && <PluginsPage />}
+        {pluginsPageOpen && <PluginsPage sessionId={activeSession?.id} />}
         <header className="topbar">
           <div className="topbar-left no-drag">
             <button
@@ -13613,6 +13614,7 @@ export function App() {
                   </button>
                 </span>
               ))}
+              {activeSession && <ModsPanelView sessionId={activeSession.id} />}
               {activeSession?.runtime === 'dsh' && <div className="dsh-input-overlay">
                 <PluginSlotView key={activeSession.id} slot="conversation.input.overlay"
                   sessionId={activeSession.id} session={activeSession} hideEmpty />

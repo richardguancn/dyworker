@@ -65,6 +65,7 @@ export class AgentService extends Service {
       });
     onExtraTool?.setExecutionContext?.({ sessionId, runId: options.runId || options.routerOptions?.runId || randomUUID(), signal });
     const emit = (agentEvent) => {
+      if (agentEvent?.type === 'token-usage') this.ctx.mods.recordUsage(sessionId,agentEvent,runtime==='dsh'?options.contextLimit:options.contextLimit||128000);
       if (agentEvent?.type === "skill-saved" && !agentEvent.persisted) void this.resolvers.appendSkill(agentEvent.item);
       if (agentEvent?.type === "token-usage") void this.resolvers.appendUsageStat(agentEvent);
       options.emit?.(agentEvent);
@@ -73,6 +74,7 @@ export class AgentService extends Service {
     let iterationMessages = options.conversation;
     try {
       while (true) {
+        await this.ctx.mods.dispatch(sessionId,'turn.start',{turnId:options.runId||sessionId},async()=>({}),signal);
         if (options.loopStateEvents) {
           emit({ type: "loop-state", active: loop.enabled, iteration: loop.iteration, maximum: loop.maximum, status: "正在执行" });
         }
@@ -108,6 +110,7 @@ export class AgentService extends Service {
           beforeToolExecute: async ({ name, args }) => {
             return await this.ctx.waterfall("tools/pre-execute", name, args, null, () => null);
           },
+          aroundToolCall: ({name,args,execute})=>this.ctx.mods.aroundTool(sessionId,name,args,execute,signal),
           emit,
           isCancelled,
           signal,
@@ -118,6 +121,7 @@ export class AgentService extends Service {
           requestApproval: options.requestApproval,
           requestUserInput: options.requestUserInput,
         });
+        await this.ctx.mods.dispatch(sessionId,'turn.complete',{turnId:options.runId||sessionId,answer:result.finalText||'',isAborted:isCancelled()},async()=>({}),signal.aborted?undefined:signal);
         // 每轮任务结束前都做记忆复盘落盘（四个入口原行为一致）
         const memoryWorkspacePath = resolveWorkspacePath();
         for (const memory of this.resolvers.memoriesFromAgentResult(result)) {

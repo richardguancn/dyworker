@@ -50,8 +50,11 @@ export class SessionsService extends Service {
     return this.archive.getActiveId();
   }
 
-  applyDelta(delta) {
-    return this.archive.applyDelta(delta);
+  async applyDelta(delta) {
+    const result=await this.archive.applyDelta(delta);
+    const mods=this.ctx.get('mods');
+    if(mods)await Promise.all((delta.removed||[]).map(id=>mods.end(id)));
+    return result;
   }
 
   upsert(session) {

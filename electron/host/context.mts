@@ -7,6 +7,7 @@
 //     fiber 激活后方可经 ctx.<name> 访问）。
 //   - disposeHost 逆序执行各 fiber 的 effect 清理（flush、停定时器、断监听）。
 import { Context } from "@deepseek-ai/cordis";
+import { ModsService } from './services/mods.mts';
 import { AuditService } from "./services/audit.mts";
 import { SettingsService } from "./services/settings.mts";
 import {PluginCatalogService} from './services/plugin-catalog.mts';
@@ -101,6 +102,7 @@ export async function createHost(options: HostOptions) {
   });
   new WindowService(ctx, contracts);
   new ToolsService(ctx);
+  new ModsService(ctx, {dir:path.join(options.userDataDir,'claude-mods')});
   // DSH 宿主服务适配：插件的主机半边靠它们注册 HTTP 路由、读会话、取投影
   // （实测 dsh-context 用 connection.fetch.register / sessions.get / sessionProjections.stateOf）
   new ConnectionService(ctx);

@@ -3,6 +3,8 @@ import { createOfficialDshContext } from './official-context.mts';
 import { installFileHandleBridge } from './file-handles.mts';
 import { registerPluginModules } from '../plugin-module-cache.mts';
 import { randomUUID } from 'node:crypto';
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
+import { isDeepStrictEqual } from 'node:util';
 import { persistenceProxy } from './persistence-proxy.mts';
 import { mountDshProfile } from './profile.mts';
 import { createPtcProxy } from './ptc-proxy.mts';
@@ -86,6 +88,7 @@ process.once('message', async (input: any) => {
     const fixedControls = new Map(['job_list', 'job_output', 'job_kill'].map(name => [name, ctx.tools.get(name)]));
     const fixedExtraTools = new Map<string, any>();
     const fingerprint = (exec: any) => JSON.stringify([exec.agent?.id, exec.name, exec.arguments]);
+    const modCalls=new Map<any,string>();
     ctx.on('tools/pre-execute', async (exec: any, next: any) => {
       if (exec.name === 'ask_user_question' && ctx.tools.get(exec.name, exec.agent) !== questionTool)
         throw new Error('不能替换应用提供的用户提问工具');
@@ -95,11 +98,30 @@ process.once('message', async (input: any) => {
         throw new Error('不能替换应用提供的后台任务工具');
       if (fixedExtraTools.has(exec.name) && ctx.tools.get(exec.name, exec.agent) !== fixedExtraTools.get(exec.name))
         throw new Error('不能替换应用提供的工作模板或记忆工具');
+      if(input.modsEnabled){
+        const decision=await ask('mods-before',{tool:{sessionId:exec.agent?.id,name:exec.name,args:exec.arguments}},exec.signal);
+        if(decision.skip)return {kind:'deny',reason:decision.result?.message?.content||'模组阻止了此操作'};
+        const changed=!isDeepStrictEqual(exec.arguments,decision.args);
+        modCalls.set(exec.token,decision.key);exec.arguments=decision.args;
+        const tool=ctx.tools.get(exec.name,exec.agent);
+        const violations=changed?validateJsonSchemaValue(tool.parameters,exec.arguments,''):[];
+        if(violations.length)return {kind:'deny',reason:'模组改写后的参数不符合工具要求'};
+      }
       const signature = fingerprint(exec);
       const allowed = await ask('tool-approval', { tool: { sessionId: exec.agent?.id, callId: exec.callId,
         name: exec.name, args: exec.arguments } }, exec.signal);
       if (allowed === true) grants.set(exec.token, signature);
       return next();
+    });
+    ctx.on('tools/post-execute',async(exec:any,result:any,next:any)=>{
+      const key=modCalls.get(exec.token);if(!key)return next();modCalls.delete(exec.token);
+      const decision=await next();
+      const final=decision.kind==='block'?{...result,content:decision.feedback,isError:true}
+        :{...result,...decision.content!==undefined?{content:decision.content}:{}};
+      const revised=await ask('mods-after',{key,result:final},exec.signal);
+      // 官方策略的阻止结果和结构化输出优先，模组不能绕过已有策略。
+      if(decision.kind==='block'||Object.hasOwn(decision,'value'))return decision;
+      return {...decision,content:revised.content};
     });
     // 官方最终检查在所有可扩展策略之后执行；未经过父进程允许的调用没有许可。
     ctx.tools.guard((exec: any) => {

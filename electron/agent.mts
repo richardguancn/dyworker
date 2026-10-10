@@ -5109,6 +5109,7 @@ export async function runAgent({
   // 钩子规则（hooks）未做出决定时才被咨询，只能追加 block/require_approval，
   // 不能放行已被规则阻止的操作。返回 { action, message? } 或 null。
   beforeToolExecute = null,
+  aroundToolCall = null,
   goal = "",
   standingRules = [],
   trustTempDirs = true,
@@ -5920,7 +5921,7 @@ export async function runAgent({
       }
 
       // 执行单个工具调用；返回 { finished } 表示交付，{ message } 表示要回传给模型的工具结果
-      const executeToolCall = async (toolCall) => {
+      const executeCoreToolCall = async (toolCall) => {
         const name = String(toolCall?.function?.name || "");
         const args = parseArguments(toolCall);
         // Kimi 公式工具 / 内置 $web_search 的联网审批映射：kimi 的 web_search 复用本地 web_search、
@@ -6684,6 +6685,16 @@ export async function runAgent({
       };
 
       // 只读工具与 dispatch_agent（子代理相互独立）可以并行执行，加快资料收集与子任务分发
+      const executeToolCall = async (toolCall) => {
+        if (typeof aroundToolCall !== 'function') return executeCoreToolCall(toolCall);
+        try { const originalArgs=JSON.parse(String(toolCall?.function?.arguments||'{}'));if(!originalArgs||typeof originalArgs!=='object'||Array.isArray(originalArgs))return executeCoreToolCall(toolCall); }
+        catch { return executeCoreToolCall(toolCall); }
+        try {
+          const outcome = await aroundToolCall({name:String(toolCall?.function?.name || ''),args:parseArguments(toolCall),
+            execute:args=>executeCoreToolCall({...toolCall,function:{...toolCall.function,arguments:JSON.stringify(args)}})});
+          return outcome?.message ? {...outcome,message:{role:'tool',tool_call_id:toolCall.id,...outcome.message}} : outcome;
+        } catch (error) { return {message:{role:'tool',tool_call_id:toolCall.id,content:`失败\n模组处理未完成：${String(error?.message||error)}`}}; }
+      };
       const parallelizable = (call) => {
         const name = String(call?.function?.name || "");
         return READ_ONLY_TOOLS.has(name) || name === "dispatch_agent";

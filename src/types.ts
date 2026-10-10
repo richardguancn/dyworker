@@ -1143,6 +1143,15 @@ export interface DyworkerBridge {
   onBackgroundTaskUpdate(callback: (event: { type: string; task: BackgroundTaskRecord }) => void): () => void;
   // 插件管理（通道名见 electron/preload.cjs）
   listPlugins(): Promise<PluginListResult>;
+  modsList():Promise<{entries:any[];catalog:any[];scope:string}>;
+  modsInstall(input:{catalogId?:string;directory?:string;config?:unknown}):Promise<{ok:boolean;error?:string}>;
+  modsCheck(directory:string):Promise<{ok:boolean;errors:string[]}>;
+  modsEnable(input:{id:string;enabled:boolean}):Promise<{ok:boolean}>;
+  modsConfigure(input:{id:string;config:unknown}):Promise<{ok:boolean}>;
+  modsUninstall(id:string):Promise<{ok:boolean}>;
+  modsSnapshot(input:{sessionId:string}):Promise<any[]>;
+  modsAction(input:{sessionId:string;id:string;command?:string;args?:string;event?:string;actionId?:string;value?:unknown}):Promise<any>;
+  modsChooseDirectory():Promise<string|null>;
   pluginCatalog(payload?:{force?:boolean}): Promise<{
     plugins:import('./pluginCatalog').CatalogPlugin[];revision:string;publishedAt:string;
     source:'bundled'|'cache'|'platform';fetchedAt:number|null;notice:string;

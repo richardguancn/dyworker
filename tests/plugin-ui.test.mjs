@@ -26,7 +26,7 @@ test("侧边栏入口：位于「新建任务」按钮正下方（用户指定�
   assert.match(app, /<Sparkles size=\{17\} \/>\s*插件/, "入口文案与图标");
   assert.match(app, /setPluginsPageOpen\(\(open\) => !open\)/, "入口应切换插件页");
   assert.match(app, /className=\{`sidebar-plugins-button \$\{pluginsPageOpen \? "active" : ""\}`\}/, "当前在插件页时入口要高亮");
-  assert.match(app, /\{pluginsPageOpen && <PluginsPage \/>\}/, "插件页应渲染在主内容区");
+  assert.match(app, /\{pluginsPageOpen && <PluginsPage[^\n]*\/>\}/, "插件页应渲染在主内容区");
 });
 
 test("通道名两侧一致：preload 暴露的 plugins:* 与主进程注册的完全对应", () => {
@@ -67,7 +67,7 @@ test("插件页是「页面」而不是「弹窗」：无遮罩层，渲染在�
   assert.ok(!panel.includes("plugins-overlay"), "不应再使用遮罩弹窗");
   assert.ok(!panel.includes("createPortal"), "不应挂在 portal 上");
   // main-panel 的类名里还会带会话区视图状态（conversation-view-open），断言只看关键部分
-  assert.match(app, /<main className=\{`main-panel \$\{pluginsPageOpen \? "plugins-page-open" : ""\}[^`]*`\}>\s*\n\s*\{pluginsPageOpen && <PluginsPage \/>\}/,
+  assert.match(app, /<main className=\{`main-panel \$\{pluginsPageOpen \? "plugins-page-open" : ""\}[^`]*`\}>\s*\n\s*\{pluginsPageOpen && <PluginsPage[^\n]*\/>\}/,
     "插件页应直接渲染在 main-panel 内");
   assert.match(app, /useEffect\(\(\) => \{\s*\n\s*if \(!activeId\) return;\s*\n\s*setPluginsPageOpen\(false\);/, "切换会话时应回到聊天");
   // 版式：行式卡片 + 开关（对齐 DSH）

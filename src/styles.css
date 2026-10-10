@@ -17670,3 +17670,42 @@ pre.trv-trace-inspector-body {
  .plugins-page-footer>span:nth-child(2) { margin-left:0; }
 }
 @media(prefers-reduced-motion:reduce) { .plugins-navigation button::after,.plugins-page .plugin-card,.plugins-install-action { transition:none; } }
+
+/* macOS/Windows 隐藏系统标题栏时，插件页标题和顶部类型栏承担窗口拖动。 */
+.app-shell:not(.platform-linux) .plugins-page-header,
+.app-shell:not(.platform-linux) .plugin-detail-header,
+.app-shell:not(.platform-linux) .plugins-formats > .plugins-navigation {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* 标题里的操作控件仍接收点击，不能被窗口拖动区域覆盖。 */
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea),
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea) * {
+  -webkit-app-region: no-drag;
+}
+
+/* Claude Mods 共用插件列表，任务面板保持轻量。 */
+.mods-setting { display:flex; gap:12px; align-items:center; margin:10px 0; }
+.mods-setting input { padding:6px 8px; border:1px solid var(--line,#ddd); border-radius:6px; }
+.mods-panels { display:grid; gap:8px; margin:8px 0; }
+.mods-panel { padding:8px 12px; border:1px solid var(--line,#e2e2e2); border-radius:8px; font-size:12px; }
+.mods-panel:empty { display:none; }
+.mods-panel strong { display:block; margin-bottom:5px; }
+.mods-box { display:flex; flex-wrap:wrap; }
+.mods-box button { border:1px solid var(--line,#ddd); border-radius:6px; padding:4px 10px; background:transparent; color:inherit; }
+.plugins-page.plugins-formats { padding-top:0; }
+.platform-darwin.sidebar-collapsed .plugins-page.plugins-formats { padding-left:84px; }
+.plugins-formats > .plugins-page { position:static; inset:auto; padding:0; overflow:visible; flex-shrink:0; }
+.plugins-navigation button[aria-selected="true"] { color:var(--ink); }
+.plugins-navigation button[aria-selected="true"]::after { transform:scaleX(1); }
+.mods-page .plugins-page-header h1 { margin:0; font-size:26px; }
+.mods-page .plugins-page-header p,.mods-page .plugin-card-body > p { color:var(--muted); font-size:13px; line-height:1.7; }
+.mods-page button:not([role="tab"]) { border:1px solid var(--border); border-radius:8px; padding:8px 12px; background:var(--card); color:var(--ink); cursor:pointer; }
+.mods-page button:disabled { opacity:.55; cursor:default; }
+.mods-page details { margin:8px 0; font-size:13px; line-height:1.7; }
+.mods-page summary { cursor:pointer; color:var(--muted); }
+.mods-page .plugins-market-search { flex:0 0 auto; width:100%; max-width:440px; min-height:42px; box-sizing:border-box; }
+.attachment-strip > .mods-panels { flex:0 0 100%; min-width:0; max-height:180px; overflow:auto; overflow-wrap:anywhere; }
+.mods-page details { margin:8px 0; }
+.mods-page details p { margin:6px 0; }

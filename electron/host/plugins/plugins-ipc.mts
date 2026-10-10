@@ -16,6 +16,18 @@ export function pluginsIpcPlugin() {
     inject: ["plugins", "ipc", "loader", "pluginCatalog"],
     apply(ctx) {
       const host = ctx.plugins;
+      const mods=ctx.get('mods');
+      for(const [channel,handler]of Object.entries({
+        'mods:list':()=>mods.list(),
+        'mods:install':(_event,input)=>mods.install(input),
+        'mods:check':(_event,directory)=>mods.check(String(directory||'')),
+        'mods:enable':(_event,input)=>mods.enable(input.id,!!input.enabled),
+        'mods:configure':(_event,input)=>mods.configure(input.id,input.config),
+        'mods:uninstall':(_event,id)=>mods.uninstall(String(id||'')),
+        'mods:snapshot':async(_event,input)=>{if(!await ctx.sessions.getAsync(input?.sessionId))return [];return mods.snapshot(input.sessionId);},
+        'mods:action':async(_event,input)=>{if(!await ctx.sessions.getAsync(input?.sessionId))throw new Error('请选择已有会话');return mods.action(input.sessionId,input.id,input);},
+        'mods:choose-directory':async()=>{const result=await ctx.get('window').dialog.showOpenDialog({properties:['openDirectory'],title:'选择 Claude Mod 目录'});return result.canceled?null:result.filePaths?.[0]||null;},
+      }))ctx.effect(()=>ctx.ipc.handle(channel,handler));
       const historyRelay = createHistoryRelay((rootId,action,payload,options) => ctx.get('dshRuntime').request(rootId,action,payload,options));
       ctx.effect(() => () => historyRelay.dispose());
 
