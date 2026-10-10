@@ -43,7 +43,14 @@ test('官方多文件配置按声明顺序合成，入口相对各配置文件�
   assert.deepEqual(composeRows([], [bundle.patches])[0].config, { value: 2 });
   assert.deepEqual(composeRows([], [bundle.patches])[0].config, { value: 2 });
   assert.deepEqual(bundle.patches, original);
+  const beforeInstall = await host.plugins.compatibility({ spec: 'layer-bundle' });
+  assert.equal(beforeInstall.verdict, 'runnable');
+  assert.equal(beforeInstall.hostHalf.metadataOnly, true);
+  assert.equal(beforeInstall.hostHalf.importable, null);
   assert.equal((await host.plugins.install({ spec: 'layer-bundle' })).ok, true);
+  const afterInstall = await host.plugins.compatibility({ spec: 'layer-bundle' });
+  assert.equal(afterInstall.verdict, beforeInstall.verdict);
+  assert.deepEqual(afterInstall.hostHalf, beforeInstall.hostHalf);
   assert.deepEqual(globalThis.__layerConfiguration, { value: 2 });
   assert.equal((await host.plugins.setEnabled('layer-bundle', false)).ok, true);
   assert.equal(globalThis.__layerConfiguration, null);

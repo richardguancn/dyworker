@@ -23,6 +23,20 @@ const BUNDLE_FIELDS = ["dyworker", "dsh"];
 
 export class BundleError extends Error {}
 
+/** DYWorker 支持子任务和后台工作，待办默认允许同时进行；显式配置保持原值。 */
+export function pluginConfigDefaults(name: string, config: any) {
+  if (name !== '@deepseek-ai/dsh-tool-todo') return config;
+  if (config == null) return { allowParallelInProgress: true };
+  if (typeof config !== 'object' || Array.isArray(config)) return config;
+  return { allowParallelInProgress: true, ...config };
+}
+
+function applyConfigDefaults(row: any): any {
+  const config = row.group && Array.isArray(row.config)
+    ? row.config.map(applyConfigDefaults) : pluginConfigDefaults(row.name, row.config);
+  return config === undefined ? row : { ...row, config };
+}
+
 /** 从入口文件向上找到包根（用 package.json 的 name 确认，避免落到上一级） */
 function findPackageRoot(entry, spec) {
   let dir = path.dirname(entry);
@@ -115,7 +129,7 @@ export async function readBundlePatch(pkgDir, manifest) {
  */
 export function composeRows(baseRows, bundlePatches, warn: any = () => {}) {
   // 官方启动时将所有层合成一次；克隆插入项，避免后续覆盖污染保存的原层。
-  return applyEntryPatches(structuredClone(baseRows || []), structuredClone((bundlePatches || []).flat()), warn);
+  return applyEntryPatches(structuredClone(baseRows || []), structuredClone((bundlePatches || []).flat()), warn).map(applyConfigDefaults);
 }
 
 /** 包名（spec）→ 默认条目 id：取最后一段并去掉 scope */

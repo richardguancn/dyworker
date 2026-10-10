@@ -17,7 +17,7 @@
 // 不读也不写 DSH 的 package.json / pnpm-lock / cordis.yml。
 //
 // 与 electron 的边界：本文件不 import electron，目录由壳层注入。
-import { composeRows, describeBundle, readPackageManifest, resolvePackageDir } from "./plugin-bundle.mts";
+import { composeRows, describeBundle, readPackageManifest, resolvePackageDir, pluginConfigDefaults } from "./plugin-bundle.mts";
 import { analyzePlugin, formatMatrix } from "./dsh-compat.mts";
 import { HOST_CLIENT_MODULES, orderClientModules, readStaticRequires, resolveClientEntries, resolveModuleEntries, splitModuleSpec } from "./plugin-client.mts";
 import { detectInstalledPackageName, hostCordisDir, hostPackageDir, installPackageIntoProfile, linkHostCordis, newestVersion, parsePluginSource, readProfileDependencies, spawnRunner } from "./plugin-install.mts";
@@ -83,7 +83,8 @@ function normalizeRow(row: any) {
   if (!id) throw new Error("插件条目缺少 id");
   if (!name) throw new Error(`插件条目 ${id} 缺少 name（模块名）`);
   const out: any = { id, name };
-  if (row?.config != null) out.config = row.config;
+  const config = pluginConfigDefaults(name, row?.config);
+  if (config != null) out.config = config;
   for (const key of ['disabled', 'group', 'inject']) if (row?.[key] != null) out[key] = row[key];
   if (row?.group && Array.isArray(out.config)) out.config = out.config.map(normalizeRow);
   // 内置标记要透传：界面据此显示「内置」，停用/启用也走同一条路径
@@ -465,6 +466,16 @@ export class PluginHostService extends Service {
     return { ok: true, count: this.rows.length };
   }
 
+  /** 安装预检使用与最终装载相同的配置，包括现有用户覆盖。 */
+  installationRows(described) {
+    const bundles = [...this.bundles];
+    const index = bundles.findIndex(bundle => bundle.name === described.name);
+    if (index >= 0) bundles[index] = described;
+    else bundles.push(described);
+    const overlay = Object.entries(this.overrides).map(([id, patch]) => ({ id, ...(patch as any) }));
+    return composeRows(this.baseRows, [...bundles.map(bundle => bundle.patches), overlay]);
+  }
+
   /** 安装一个插件包：解析包 → 读它的 bundle patch → 叠加合成 → 落盘 */
   async install({ spec, id, allowIncompatible = false }: any = {}) {
     const name = String(spec || "").trim();
@@ -473,8 +484,10 @@ export class PluginHostService extends Service {
 
     // 兼容性判定前置：不兼容的包直接拒绝，避免"装上了但什么都不做"
     const manifest = await readPackageManifest(described.dir);
+    const rows = this.installationRows(described);
     const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir,
-      { metadataOnly: described.declared && !includesModule(composeRows([], [described.patches]), name) });
+      { config: rows.find(row => row.name === name)?.config ?? {},
+        metadataOnly: described.declared && !includesModule(rows, name) });
     this.lastAnalysis = analysis;
     if (analysis.verdict !== "runnable" && !allowIncompatible) {
       return {
@@ -489,6 +502,7 @@ export class PluginHostService extends Service {
     }
     const existing = this.bundles.findIndex((bundle) => bundle.name === name);
     const record = {
+      ...(existing >= 0 ? this.bundles[existing] : {}),
       name,
       packageName: described.packageName,
       version: described.version,
@@ -566,8 +580,9 @@ export class PluginHostService extends Service {
       staging.install = async ({ spec, allowIncompatible }) => {
         const described = await describeBundle(staging.profileManifest(), spec);
         const manifest = await readPackageManifest(described.dir);
-        const config = composeRows([], [described.patches]).find(item => item.name === spec)?.config || {};
-        const metadataOnly = described.declared && !includesModule(composeRows([], [described.patches]), spec);
+        const rows = staging.installationRows(described);
+        const config = rows.find(item => item.name === spec)?.config ?? {};
+        const metadataOnly = described.declared && !includesModule(rows, spec);
         const analysis = await analyzePlugin(staging.profileManifest(), spec, manifest, described.dir, { config, metadataOnly });
         if (analysis.verdict !== "runnable" && !allowIncompatible) return { ok: false, error: analysis.reasons.join("；"), analysis };
         if (allowIncompatible && analysis.versionIssue && !analysis.versionIssue.exempted)
@@ -583,6 +598,14 @@ export class PluginHostService extends Service {
     }, async prepared => {
       refreshPluginModules(this.dir); this.descriptions.clear(); this.clients.clear();
       const result = await this.install({ spec: prepared.name, allowIncompatible });
+      if (result.ok) {
+        const bundle = this.bundles.find(row => row.name === prepared.name);
+        if (bundle) {
+          bundle.source = prepared.source;
+          if (version) bundle.pinnedVersion = version;
+          await this.persistBundles();
+        }
+      }
       return { ...prepared, ...result, dir: this.dir };
     }, async () => {
       refreshPluginModules(this.dir); this.descriptions.clear(); this.clients.clear();
@@ -979,7 +1002,10 @@ export class PluginHostService extends Service {
     }
     const manifest = await readPackageManifest(described.dir);
     const row = this.rows.find(row => row.name === name || row.id === spec);
-    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir, { config: row?.config ?? {} });
+    const rows = this.installationRows(described);
+    const config = row?.config ?? rows.find(item => item.name === name)?.config ?? {};
+    const metadataOnly = described.declared && !includesModule(rows, name);
+    const analysis = await analyzePlugin(this.profileManifest(), name, manifest, described.dir, { config, metadataOnly });
     return { ...analysis, matrix: formatMatrix(analysis) };
   }
 
@@ -1015,6 +1041,7 @@ export class PluginHostService extends Service {
   /** 解析 + 预检 import + 交给 loader 启动（预检失败要能立刻被界面看到：
    *  loader 内部对 import 失败只记一条 logger 就静默跳过） */
   async activate(row, creating) {
+    row = normalizeRow(row);
     const resolved = this.resolveSpecifier(row.name);
     // 含 DSH 插件的组整体交给官方会话加载器，保留组内提供服务和依赖等待。
     if (row.group && Array.isArray(row.config) && await this.containsDshPlugin(row.config)) {
@@ -1295,6 +1322,7 @@ export class PluginHostService extends Service {
       try {
         await this.deactivate(id);
         await this.activate({ ...this.rows.find(item => item.id === id), config: config ?? null }, true);
+        this.failures.delete(id);
       } catch (error: any) {
         this.failures.set(id, String(error?.message || error));
       }

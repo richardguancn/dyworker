@@ -321,6 +321,9 @@ export async function installPackageIntoProfile({
   const childEnv = { ...process.env, PATH: childDirs.join(path.delimiter) };
 
   const baseArgs = ["install", "--prefix", dir, "--save-exact", "--no-audit", "--no-fund"];
+  // 本地目录复制到 profile；npm 默认的软链接会把依赖解析带回源码目录，
+  // 导致宿主已补齐的 peer 仍不可见，也会让已安装插件随源码修改而意外变化。
+  if (parsed.kind === "local") baseArgs.push("--install-links");
   if (legacyPeerDeps) baseArgs.push("--legacy-peer-deps");
   // 所有来源默认只安装已构建产物；源码仓库也不自动执行 prepare。
   const shouldIgnoreScripts = ignoreScripts !== false;
