@@ -495,10 +495,10 @@ test('DSH 保存模板沿用人工确认，拒绝与钩子阻止不写入；文�
         tool_calls:[{id:'guard-write',type:'function',function:{name,arguments:JSON.stringify(args)}}]}):reply({role:'assistant',content:'操作未完成'});}});
     assert.equal(result.status,'done');return requests;
   };
-  await run('decline-native','save_skill',{name:'不得保存的模板',instructions:'不得落盘'});assert.equal(asks,1);
+  await run('decline-native','save_skill',{name:'不得保存的模板',description:'检查人工拒绝后不保存',instructions:'不得落盘'});assert.equal(asks,1);
   assert.ok(!(await host.skills.readStored()).some(row=>row.name==='不得保存的模板'));
   host.agent.resolvers.readHooks=async()=>[{event:'before_tool',tool:'save_skill',action:'block'}];
-  await run('hook-native','save_skill',{name:'不得保存的模板',instructions:'不得落盘'},{approvalMode:'full-access'});
+  await run('hook-native','save_skill',{name:'不得保存的模板',description:'检查规则阻止后不保存',instructions:'不得落盘'},{approvalMode:'full-access'});
   assert.equal(asks,1);assert.ok(!(await host.skills.readStored()).some(row=>row.name==='不得保存的模板'));
   host.agent.resolvers.readHooks=async()=>[];
   host.agent.resolvers.readSkills=async()=>[{id:'file-template',name:'文件模板',enabled:true,readOnly:true,path:'/source/SKILL.md',instructions:'原来的执行要求'}];

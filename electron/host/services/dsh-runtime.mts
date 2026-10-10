@@ -82,7 +82,8 @@ export class DshRuntimeService extends Service {
     void operation.finally(() => { if (this.overviewPending === operation) this.overviewPending = undefined; }).catch(() => {});
     return operation;
   }
-  private writeNative(job: () => Promise<any>) {
+  // 两种任务入口共用这条写入队列，保存技能时互不覆盖。
+  writeNative(job: () => Promise<any>) {
     const operation = this.nativeWrites.then(job);
     this.nativeWrites = operation.then(() => {}, () => {});
     return operation;

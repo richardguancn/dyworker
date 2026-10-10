@@ -1582,7 +1582,7 @@ export function toolDefinitions() {
     functionTool("list_skills", "列出所有已启用的工作模板。需要寻找可复用流程时使用。", {}, []),
     functionTool("load_skill", "读取一个工作模板的完整执行要求。",
       { skill_id: stringProperty("模板编号") }, ["skill_id"]),
-    functionTool("save_skill", "把本次已验证的、五步以上且可能重复的成功做法保存为工作模板。执行前用户会确认。",
+    functionTool("save_skill", "保存用户明确要求制作的可复用技能，或把本次已验证的、五步以上且可能重复的成功做法保存为工作模板。制作技能时先检查执行要求完整、可独立复用，不要求凑足五步。执行前用户会确认。",
       {
         name: stringProperty("简短明确的模板名称"),
         description: stringProperty("模板适合处理什么任务"),
@@ -2698,7 +2698,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 保存成体系的流程、口径或用户明确说「以后就按这个来」的内容时，给记忆起一个简短名字（name，30 字以内），用户以后可以按名字引用。\n"
     + "- 用户纠正了已有记忆时，用 supersedes 并填写被取代的记忆编号；只是补充细节时用 refines。没有明确对应记忆时用 extends。\n"
     + "- 对用户本人的稳定信息（职务分工、分管领域、惯用的格式与语气偏好、常见对接单位）用 save_memory 保存到「用户画像」分类，随任务积累对用户的了解，以后用于定制表达和取舍。\n"
-    + "- 如果一个成功任务包含五步以上且很可能重复，可以在完成后调用 save_skill，提出把做法保存为工作模板；应用会让用户确认。\n"
+    + "- 用户明确要求创建或制作可复用技能时，检查完整执行要求后可用 save_skill 保存，不要求凑足五步。普通任务中，如果成功做法包含五步以上且很可能重复，可以在完成后调用 save_skill，提出保存为工作模板；应用会让用户确认。\n"
     + "- 使用某个工作模板完成任务的过程中，如果实践验证了更优做法或发现模板有缺漏、过时步骤，交付前用 update_skill 把改进后的完整执行要求写回模板（应用会让用户确认）；没有确信心得就不要改。",
 
     "# 沟通风格\n"
@@ -5110,6 +5110,7 @@ export async function runAgent({
   // 不能放行已被规则阻止的操作。返回 { action, message? } 或 null。
   beforeToolExecute = null,
   aroundToolCall = null,
+  skillStore = null,
   goal = "",
   standingRules = [],
   trustTempDirs = true,
@@ -6430,6 +6431,7 @@ export async function runAgent({
               break;
             }
             case "list_skills": {
+              if (skillStore?.read) skills = await skillStore.read();
               const enabled = skills.filter((skill) => skill && skill.enabled !== false);
               result = enabled.length
                 ? enabled.map((skill) => `- ${skill.id}｜${skill.name}｜${skill.sourceLabel || "本地"}：${skill.description}`).join("\n")
@@ -6437,7 +6439,8 @@ export async function runAgent({
               break;
             }
             case "load_skill": {
-              const skill = skills.find((item) => String(item.id) === String(args.skill_id || ""));
+              if (skillStore?.read) skills = await skillStore.read();
+              const skill = skills.find((item) => item.enabled !== false && String(item.id) === String(args.skill_id || ""));
               if (!skill) throw new Error(`没有找到模板：${args.skill_id || ""}`);
               result = `【${skill.name}】${skill.description}\n执行要求：\n${skill.instructions}`;
               break;
@@ -6449,12 +6452,21 @@ export async function runAgent({
                 instructions: String(args.instructions || "").trim(),
               };
               if (!savedSkill.name || !savedSkill.instructions) throw new Error("模板名称和执行要求不能为空");
-              traceEmit({ type: "skill-saved", item: savedSkill });
-              result = `工作模板「${savedSkill.name}」已保存，以后的任务可以复用`;
+              if (skillStore?.append) {
+                const record = await skillStore.append(savedSkill);
+                if (!record?.id) throw new Error("工作模板未保存");
+                savedSkill = record;
+                traceEmit({ type: "skill-saved", item: record, persisted: true });
+                result = `工作模板「${record.name}」已保存，编号：${record.id}`;
+              } else {
+                traceEmit({ type: "skill-saved", item: savedSkill });
+                result = `工作模板「${savedSkill.name}」已保存，以后的任务可以复用`;
+              }
               break;
             }
             case "update_skill": {
-              const skill = skills.find((item) => String(item.id) === String(args.skill_id || ""));
+              if (skillStore?.read) skills = await skillStore.read();
+              const skill = skills.find((item) => item.enabled !== false && String(item.id) === String(args.skill_id || ""));
               if (!skill) throw new Error(`没有找到模板：${args.skill_id || ""}`);
               if (skill.readOnly) throw new Error(`文件技能「${skill.name}」由 ${skill.path || "来源目录"} 管理，请直接修改对应的 SKILL.md`);
               const instructions = String(args.instructions || "").trim();
@@ -6465,7 +6477,11 @@ export async function runAgent({
                 description: String(args.description || "").trim() || skill.description,
                 instructions,
               };
-              traceEmit({ type: "skill-updated", item: updated });
+              if (skillStore?.update) {
+                const record = await skillStore.update(updated);
+                if (!record) throw new Error("工作模板已移除，未更新");
+                traceEmit({ type: "skill-updated", item: record, persisted: true });
+              } else traceEmit({ type: "skill-updated", item: updated });
               result = `工作模板「${skill.name}」已更新，下次使用将按改进后的要求执行`;
               break;
             }
@@ -6511,6 +6527,7 @@ export async function runAgent({
                 conversation: [{ role: "user", content: task }],
                 memories,
                 skills,
+                skillStore,
                 history,
                 loop: { enabled: false, iteration: 1, maximum: 1 },
                 approvalMode,

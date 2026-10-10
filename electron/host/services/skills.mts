@@ -10,6 +10,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { discoverFileSkills, mergeSkillRecords } from "../../skills.mts";
 import { readJson, writeJson } from "../io.mts";
+import { authoringSkills } from "../../authoring-skills.ts";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -18,6 +19,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const builtInSkills = [
+  ...authoringSkills,
   {
     id: "builtin-official-draft",
     name: "公文起草",

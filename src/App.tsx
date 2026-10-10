@@ -1,6 +1,10 @@
 import { GoalBanner } from "./GoalBanner";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
+import { ExtensionCreationDialog } from './ExtensionCreationDialog';
+import type { ExtensionCreationRequest } from './ExtensionCreationDialog';
+import { authoringSkill } from '../electron/authoring-skills';
+import type { AuthoringKind } from '../electron/authoring-skills';
 import {
   AlarmClock,
   AlertTriangle,
@@ -4291,6 +4295,7 @@ function SkillsPanel({
   onEdit,
   onRefresh,
   onOpen,
+  onCreate,
 }: {
   items: SkillRecord[];
   onToggle: (id: string, enabled: boolean) => void;
@@ -4298,6 +4303,7 @@ function SkillsPanel({
   onEdit: (skill: SkillRecord) => void;
   onRefresh: () => void;
   onOpen: (skill: SkillRecord) => void;
+  onCreate: () => void;
 }) {
   const [query, setQuery] = useState("");
   const filteredItems = useMemo(() => {
@@ -4317,10 +4323,13 @@ function SkillsPanel({
           </div>
           <small>自动读取用户目录与当前工作区中的 SKILL.md</small>
         </div>
+        <div className="skill-management-actions">
+        <button type="button" className="button-primary" onClick={onCreate}><Plus size={13} />创建技能</button>
         <button type="button" className="button-secondary" onClick={onRefresh}>
           <RefreshCw size={13} />
           刷新技能
         </button>
+        </div>
       </div>
       <div className="skill-search-field">
         <Search size={14} />
@@ -5745,6 +5754,7 @@ function SettingsDialog({
   onEditSkill,
   onRefreshSkills,
   onOpenSkill,
+  onCreateSkill,
   schedules,
   workspaceReady,
   currentWorkspacePath,
@@ -5777,6 +5787,7 @@ function SettingsDialog({
   onEditSkill: (skill: SkillRecord) => void;
   onRefreshSkills: () => void;
   onOpenSkill: (skill: SkillRecord) => void;
+  onCreateSkill: () => void;
   schedules: ScheduleRecord[];
   workspaceReady: boolean;
   currentWorkspacePath?: string;
@@ -6955,6 +6966,7 @@ function SettingsDialog({
             onEdit={onEditSkill}
             onRefresh={onRefreshSkills}
             onOpen={onOpenSkill}
+            onCreate={onCreateSkill}
           />
         ) : tab === "skill-libraries" ? (
           <SkillLibrariesPanel value={value} onSave={onSave} onRefreshSkills={onRefreshSkills} />
@@ -7204,6 +7216,7 @@ export function App() {
   // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
   const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
+  const [creationKind, setCreationKind] = useState<AuthoringKind | null>(null);
   // 设置面板里的手动编辑：正在编辑的记忆行 / 工作模板（非空即打开编辑对话框）
   const [memoryEdit, setMemoryEdit] = useState<WikiMemoryRow | null>(null);
   const [skillEdit, setSkillEdit] = useState<SkillRecord | null>(null);
@@ -8966,6 +8979,29 @@ export function App() {
     setEditingMessage(null);
     closeFilePanelTabs();
     setNotice("");
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  };
+
+  const prepareExtensionCreation = ({ kind, requirement, workspacePath: targetDirectory }: ExtensionCreationRequest) => {
+    const bundled = authoringSkill(kind);
+    const creator: SkillRecord = skills.find(item => item.id === bundled.id) || {
+      ...bundled, enabled: true, builtIn: true, source: 'builtin', sourceLabel: '内置', createdAt: new Date().toISOString(),
+    };
+    const session = { ...makeSession(targetDirectory), title: kind === 'plugin' ? '制作插件' : '制作技能' };
+    const text = `/${creator.name}\n请根据以下需求制作${kind === 'plugin' ? 'DYWorker 插件' : '可复用技能'}，完成后实际检查并说明如何使用。\n\n${requirement}`;
+    // 先登记新会话的草稿，避免会话切换时的草稿恢复覆盖制作需求。
+    sessionDraftsRef.current[session.id] = { text, pastes: [], annotations: [], attachments: [] };
+    setSessions(current => [session, ...current]);
+    setActiveId(session.id);
+    setActiveSkills([creator]);
+    setEditingMessage(null);
+    setMentionMenu(null);
+    setCreationKind(null);
+    setSettingsOpen(false);
+    setPluginsPageOpen(false);
+    setConversationView('chat');
+    applyWorkspaceSelection(targetDirectory);
+    setNotice('制作需求已准备，发送后开始制作。');
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
@@ -12530,7 +12566,7 @@ export function App() {
       )}
 
       <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
-        {pluginsPageOpen && <PluginsPage sessionId={activeSession?.id} />}
+        {pluginsPageOpen && <PluginsPage onCreate={() => setCreationKind("plugin")} sessionId={activeSession?.id} />}
         <header className="topbar">
           <div className="topbar-left no-drag">
             <button
@@ -14402,6 +14438,9 @@ export function App() {
         />
       )}
 
+      {creationKind && <ExtensionCreationDialog kind={creationKind} workspacePath={composerWorkspacePath}
+        onClose={() => setCreationKind(null)} onPrepare={prepareExtensionCreation} />}
+
       {skillEdit && (
         <SkillEditDialog
           skill={skillEdit}
@@ -14467,6 +14506,7 @@ export function App() {
           onOpenSkill={(skill) => {
             if (skill.path) void window.dyworker?.openPath(skill.path);
           }}
+          onCreateSkill={() => setCreationKind('skill')}
           schedules={schedules}
           workspaceReady={Boolean(workspacePath)}
           currentWorkspacePath={workspacePath}

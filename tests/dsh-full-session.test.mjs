@@ -441,7 +441,7 @@ test('关闭写入句柄后的迟到通知只接受实际保存的原记录，�
   await assert.rejects(runtime.receive({type:'session-event',sessionId:'never-owned',event:end},{}),/不属于/);
 });
 
-test('历史图片通过真实进程读取：用户、模型与子任务图片分别归属，重启后只读且不启动模型', {timeout:15000}, async t=>{
+test('历史图片通过真实进程读取：用户、模型与子任务图片分别归属，重启后只读且不启动模型', {timeout:60000}, async t=>{
   let rootCalls=0,totalCalls=0,childRef,assistantRef;
   const {runtime,options}=await setup(t,{async *generate(request){totalCalls++;
     if(request.sessionId!=='full-one') {

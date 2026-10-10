@@ -93,6 +93,11 @@ export class AgentService extends Service {
           memoryPages: await this.resolvers.readMemoryPages(sessionId),
           memoryReviewDue: true,
           skills: await this.resolvers.readSkills(workspacePath),
+          skillStore: {
+            read: () => this.resolvers.readSkills(resolveWorkspacePath()),
+            append: item => this.ctx.dshRuntime.writeNative(async () => { signal.throwIfAborted(); return this.ctx.skills.append(item); }),
+            update: item => this.ctx.dshRuntime.writeNative(async () => { signal.throwIfAborted(); return this.ctx.skills.update(item); }),
+          },
           history: this.resolvers.history(),
           loop,
           approvalMode,

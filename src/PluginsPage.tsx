@@ -2,7 +2,7 @@ import { ModsPluginsPage } from './ModsPluginsPage';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
 import { AddPluginDialog } from "./AddPluginDialog";
-import { filterCatalog, isInstalled, isVerifiedEntry } from "./pluginCatalog";
+import { filterCatalog, isInstalled, isVisibleInstalledPlugin } from "./pluginCatalog";
 import type {CatalogPlugin} from "./pluginCatalog";
 import {BUILTIN_PLUGIN_LABELS} from './pluginLabels';
 import { PluginDetailPage } from './PluginDetailPage';
@@ -28,14 +28,14 @@ function tileColor(seed: string) {
   return TILE_COLORS[hash % TILE_COLORS.length];
 }
 
-export function PluginsPage({sessionId}:{sessionId?:string}) {
+export function PluginsPage({sessionId,onCreate}:{sessionId?:string;onCreate:()=>void}) {
   const [format,setFormat]=useState('dsh');
   return <div className="plugins-page plugins-formats"><div className="plugins-navigation" role="tablist" aria-label="插件类型">
     <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>DSH 插件</button>
     <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>Claude Mods</button>
-  </div>{format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage/>}</div>;
+  </div>{format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
 }
-function DshPluginsPage() {
+function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const [data, setData] = useState<PluginListResult | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -53,6 +53,7 @@ function DshPluginsPage() {
   const [marketQuery, setMarketQuery] = useState("");
   const [marketCategory, setMarketCategory] = useState("");
   const [marketSpec, setMarketSpec] = useState("");
+  const [localInstallOpen, setLocalInstallOpen] = useState(false);
   const [detailSelection, setDetailSelection] = useState<{ entryId?: string; catalogId?: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -208,7 +209,7 @@ function DshPluginsPage() {
       })}>保存</button><button className="plugins-text-button" disabled={Boolean(busy)} onClick={() => setEditing(null)}>取消</button></div>
     </details>
   </div>;
-  const verifiedEntries=entries.filter(entry=>isVerifiedEntry(entry,bundleOf.get(entry.name)?.version,catalog));
+  const verifiedEntries=entries.filter(entry=>isVisibleInstalledPlugin(entry,bundleOf.get(entry.name),catalog));
   const shownEntries=verifiedEntries.filter(entry=>{
     const approved=catalog.find(plugin=>isInstalled(plugin,[entry]));
     const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
@@ -219,7 +220,7 @@ function DshPluginsPage() {
   const detailEntry = verifiedEntries.find(entry => entry.id === detailSelection?.entryId)
     || (detailCatalog ? entries.find(entry => isInstalled(detailCatalog, [entry])) : undefined);
   if (detailSelection && (detailEntry||detailCatalog)) return <>
-    {marketSpec && <AddPluginDialog initialSpec={marketSpec} onClose={() => setMarketSpec('')} onInstalled={() => void refresh()} />}
+    {(marketSpec || localInstallOpen) && <AddPluginDialog initialSpec={marketSpec} onClose={() => { setMarketSpec(''); setLocalInstallOpen(false); }} onInstalled={() => void refresh()} />}
     <PluginDetailPage entry={detailEntry} bundle={detailEntry ? bundleOf.get(detailEntry.name) : undefined} catalog={detailCatalog || catalog.find(plugin => plugin.packageName === detailEntry?.name)}
       busy={Boolean(busy)} error={error} notice={notice} refreshKey={refreshKey} configuration={detailEntry ? configurationFor(detailEntry) : undefined}
       onBack={() => { setDetailSelection(null); setEditing(null); }} onToggle={() => { if (detailEntry) void toggle(detailEntry); }}
@@ -237,10 +238,10 @@ function DshPluginsPage() {
 
   return (
     <section className="plugins-page">
-      {marketSpec ? (
+      {marketSpec || localInstallOpen ? (
         <AddPluginDialog
           initialSpec={marketSpec}
-          onClose={() => setMarketSpec("")}
+          onClose={() => { setMarketSpec(""); setLocalInstallOpen(false); }}
           onInstalled={() => void refresh()}
         />
       ) : null}
@@ -250,6 +251,8 @@ function DshPluginsPage() {
           <p>管理已安装插件，按需添加已验证的功能。</p>
         </div>
         <div className="plugins-page-actions">
+          <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> 创建插件</button>
+          <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>安装本地插件</button>
           <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label="刷新插件清单" title="刷新插件清单">
             {catalogLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
@@ -320,6 +323,7 @@ function DshPluginsPage() {
                     <button className="plugin-name-button" onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{builtin?.name||approved?.displayName||entry.id}</button>
                   </span>
                   {bundle?.version ? <span className="plugin-tag">v{bundle.version}</span> : null}
+                  {bundle?.source?.kind === 'local' && !entry.builtin ? <span className="plugin-tag">本地制作</span> : null}
 
                   <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.disabled ? "已停用" : entry.active ? "已启动" : entry.state === "session-required" ? "用于 DSH 插件会话" : entry.state === "loading" ? "启动中" : entry.state === "failed" ? "启动失败" : "等待所需能力"}</span>
                   {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
