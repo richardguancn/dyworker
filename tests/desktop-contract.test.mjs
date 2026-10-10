@@ -1121,20 +1121,21 @@ test("Windows 保留自绘标题栏，mac 用原生隐藏标题栏 + 红绿灯�
   assert.match(app, /dyworker\?\.minimize/);
   assert.match(app, /dyworker\?\.toggleMaximize/);
   assert.match(app, /dyworker\?\.close/);
-  // 单独的全宽标题栏：菜单与三个窗口按钮固定在右上角（mac 上由 native-window-frame 隐藏）
+  // 独立的全宽工具栏：mac 使用原生红绿灯，Windows 保留三个窗口按钮。
   assert.match(app, /className="titlebar"/);
-  assert.match(app, /titlebar-brand/);
+  assert.match(app, /className="navigation-rail"/);
   assert.match(app, /titlebar-right/);
-  // mac 与 linux 一样隐藏自绘标题栏；品牌行与收起侧栏后的顶栏避让内嵌红绿灯
-  assert.match(styles, /platform-darwin \.sidebar-brand-row \{[^}]*padding-left: 84px/);
-  assert.match(styles, /platform-darwin\.sidebar-collapsed \.topbar \{[^}]*padding-left: 84px/);
+  // mac 保留独立工具栏，红绿灯只占用工具栏左侧空间。
+  const layout = readSource(new URL("../src/layout.css", import.meta.url));
+  assert.match(layout, /platform-darwin \.titlebar \{[^}]*padding-left: 96px/);
+  assert.match(layout, /platform-darwin \.window-controls/);
 });
 
 test("linux 使用系统边框与阴影，不扩大窗口输入区域", () => {
   assert.match(main, /frame: process\.platform === "linux"/);
   assert.match(main, /hasShadow: true/);
   assert.doesNotMatch(main, /transparent: true|LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
-  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux" \|\| platform === "darwin"\)/);
+  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux"\)/);
   assert.match(styles, /html\.native-window-frame \{\s*--titlebar-height: 0px/);
   assert.match(styles, /html\.native-window-frame \.titlebar \{\s*display: none/);
   assert.doesNotMatch(styles, /html\.window-shadow/);
@@ -1715,20 +1716,19 @@ test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   assert.match(app, /key === "p"/);
 });
 
-test("应用更新入口在设置的应用更新页,发现新版本时侧栏设置按钮旁出现下载按钮", () => {
+test("应用更新入口在设置的应用更新页,发现新版本时主导航底部出现下载按钮", () => {
   // 侧栏下载按钮：available/downloading/downloaded 三态
   assert.match(app, /function AppUpdateAction\(/);
   assert.match(app, /icon-button subtle app-update-button/);
-  assert.match(app, /aria-label="设置"[\s\S]{0,200}Settings size=\{18\}/);
+  assert.match(app, /className="rail-profile" aria-label="设置"/);
   // 下载中把按钮变成圆环进度（SVG circle + dashoffset）
   assert.match(app, /app-update-ring/);
   assert.match(app, /strokeDashoffset/);
   assert.match(app, /strokeDasharray=\{circumference\}/);
   assert.match(styles, /\.app-update-ring-bar/);
   assert.match(styles, /\.app-update-ring-track/);
-  // 侧栏 footer 里按钮在设置按钮旁
-  assert.match(app, /sidebar-footer-actions/);
-  assert.match(styles, /\.sidebar-footer-actions/);
+  // 更新按钮仍与设置入口放在同一组，移到常驻主导航底部。
+  assert.match(app, /rail-footer[\s\S]*?<AppUpdateAction[\s\S]*?rail-profile/);
   // 更新内容（releaseNotes）展示
   assert.match(app, /app-update-notes/);
   assert.match(app, /status\.releaseNotes/);

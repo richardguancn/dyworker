@@ -3272,6 +3272,7 @@ body.resizing-panels .app-shell {
      第一条消息会顶到标签栏上（用户报「第一条消息跟上面没空隙」）。
      与标签栏之间的留白交给 .conversation-column 的 padding-top。 */
   inset: calc(var(--topbar-height) + var(--conversation-tabs-height)) 0 0;
+  overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #c9cac4 transparent;
@@ -3678,8 +3679,9 @@ body.resizing-panels .app-shell {
 
 .conversation-turn-preview {
   position: absolute;
-  top: 0;
+  top: 50%;
   left: 42px;
+  transform: translateY(-50%);
   width: min(480px, calc(100vw - 180px));
   display: grid;
   gap: 7px;
@@ -3696,7 +3698,7 @@ body.resizing-panels .app-shell {
 
 .conversation-turn-preview::before {
   position: absolute;
-  top: 16px;
+  top: 50%;
   left: -6px;
   width: 10px;
   height: 10px;
@@ -3704,7 +3706,7 @@ body.resizing-panels .app-shell {
   border-bottom: 1px solid rgba(74, 77, 69, 0.16);
   border-left: 1px solid rgba(74, 77, 69, 0.16);
   background: rgba(255, 253, 247, 0.97);
-  transform: rotate(45deg);
+  transform: translateY(-50%) rotate(45deg);
 }
 
 .conversation-turn-preview strong {
@@ -16052,6 +16054,14 @@ html[data-theme="dark"] {
   padding-left: 8px;
 }
 
+/* 子任务原始输出保留换行，但长行必须在记录内折行，不能撑宽整个对话视口。 */
+.process-subagent-detail pre {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* 4. 紧凑工具调用行 (对标 Codex 图 2、图 3: "✎ 编辑了文件") */
 .process-action-item {
   width: fit-content;
@@ -16060,6 +16070,7 @@ html[data-theme="dark"] {
 
 .process-action-header {
   display: inline-flex;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
   padding: 2px 6px;
@@ -16084,6 +16095,7 @@ html[data-theme="dark"] {
 
 .process-action-icon {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   color: #72776e;
 }
@@ -16097,6 +16109,7 @@ html[data-theme="dark"] {
 }
 
 .process-action-title {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -16417,9 +16430,31 @@ html[data-theme="dark"] {
 }
 
 .plugins-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+/* macOS/Windows 隐藏系统标题栏时，插件页标题和顶部类型栏承担窗口拖动。 */
+.app-shell:not(.platform-linux) .plugins-page-header,
+.app-shell:not(.platform-linux) .plugin-detail-header,
+.app-shell:not(.platform-linux) .plugins-formats > .plugins-navigation {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* 标题里的操作控件仍接收点击，不能被窗口拖动区域覆盖。 */
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea),
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea) * {
+  -webkit-app-region: no-drag;
+}
 .plugins-page-heading h1 { margin: 0; font-size: calc(21px * var(--font-ui-scale, 1)); font-weight: 700; }
 .plugins-page-heading p { margin: 4px 0 0; color: var(--muted); font-size: calc(12.5px * var(--font-ui-scale, 1)); }
 .plugins-page-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.skill-management-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.extension-creation-overlay { z-index: 140; }
+.extension-creation-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow-y: auto; padding: 24px; border-radius: 16px; background: var(--card); color: var(--ink); box-shadow: 0 24px 80px #0003; }
+.extension-creation-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.extension-creation-heading h3 { margin: 0; }
+.extension-creation-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; }
+.extension-creation-folder strong { display: block; font-size: 13px; }
+.extension-creation-folder small { display: block; margin-top: 6px; max-width: 340px; overflow-wrap: anywhere; color: var(--muted); }
+@media (max-width: 780px) { .plugins-page-header { flex-wrap: wrap; } .plugins-page-actions { flex-wrap: wrap; } }
 
 /* 主按钮：用 ink/card 反色，深浅色自动成立（浅色=深底浅字，深色=浅底深字） */
 .plugins-add-button {
@@ -17671,20 +17706,6 @@ pre.trv-trace-inspector-body {
 }
 @media(prefers-reduced-motion:reduce) { .plugins-navigation button::after,.plugins-page .plugin-card,.plugins-install-action { transition:none; } }
 
-/* macOS/Windows 隐藏系统标题栏时，插件页标题和顶部类型栏承担窗口拖动。 */
-.app-shell:not(.platform-linux) .plugins-page-header,
-.app-shell:not(.platform-linux) .plugin-detail-header,
-.app-shell:not(.platform-linux) .plugins-formats > .plugins-navigation {
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-/* 标题里的操作控件仍接收点击，不能被窗口拖动区域覆盖。 */
-.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea),
-.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea) * {
-  -webkit-app-region: no-drag;
-}
-
 /* Claude Mods 共用插件列表，任务面板保持轻量。 */
 .mods-setting { display:flex; gap:12px; align-items:center; margin:10px 0; }
 .mods-setting input { padding:6px 8px; border:1px solid var(--line,#ddd); border-radius:6px; }
@@ -17709,16 +17730,6 @@ pre.trv-trace-inspector-body {
 .attachment-strip > .mods-panels { flex:0 0 100%; min-width:0; max-height:180px; overflow:auto; overflow-wrap:anywhere; }
 .mods-page details { margin:8px 0; }
 .mods-page details p { margin:6px 0; }
-
-.skill-management-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.extension-creation-overlay { z-index: 140; }
-.extension-creation-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow-y: auto; padding: 24px; border-radius: 16px; background: var(--card); color: var(--ink); box-shadow: 0 24px 80px #0003; }
-.extension-creation-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.extension-creation-heading h3 { margin: 0; }
-.extension-creation-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; }
-.extension-creation-folder strong { display: block; font-size: 13px; }
-.extension-creation-folder small { display: block; margin-top: 6px; max-width: 340px; overflow-wrap: anywhere; color: var(--muted); }
-@media (max-width: 780px) { .plugins-page-header { flex-wrap: wrap; } .plugins-page-actions { flex-wrap: wrap; } }
 
 .mcp-settings-panel { min-width: 0; }
 .mcp-list-heading, .mcp-list-heading > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

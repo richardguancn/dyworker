@@ -770,10 +770,9 @@ function createWindow() {
     show: process.platform === "linux",
     title: "DYWorker",
     frame: process.platform === "linux",
-    // mac 隐藏系统标题栏，窗口内容直接贴顶；原生红绿灯嵌进第一行工具栏
-    // （侧栏品牌行/顶栏高 54px，按钮高约 16px，y=(54-16)/2=19 垂直居中，x=14 对齐左侧留白），
-    // 该行本身就是 -webkit-app-region: drag 拖拽区，窗口拖动不受影响
-    ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 19 } } : {}),
+    // mac 原生红绿灯位于独立的 44px 窗口工具栏，聊天侧栏品牌行不再占用窗口控件空间。
+    // 16px 原生按钮在该行垂直居中；工具栏仍支持拖动窗口。
+    ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 14 } } : {}),
     hasShadow: true,
     webPreferences: {
       preload: preloadPath,

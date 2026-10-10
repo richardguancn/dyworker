@@ -14,12 +14,12 @@ export interface PanelDefaults {
 }
 
 export const LIGHT_DEFAULTS: PanelDefaults = {
-  surface: "#f8f6ee",
-  sidebar: "#f2efe5",
-  sidebarActive: "#efecdf",
-  card: "#fffdf7",
+  surface: "#fafafa",
+  sidebar: "#f7f7f7",
+  sidebarActive: "#e9e9e9",
+  card: "#fafafa",
   bubble: "#efeee9",
-  windowBg: "#f7f7f4",
+  windowBg: "#f0f0f0",
 };
 
 export const DARK_DEFAULTS: PanelDefaults = {

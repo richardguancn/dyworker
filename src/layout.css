@@ -1,0 +1,359 @@
+/* Desktop frame: persistent navigation rail, resizable sidebar, shared rounded content surface. */
+:root {
+  --rail-width: 52px;
+  --frame-gap: 5px;
+  --titlebar-height: 44px;
+  --window-surface: #f0f0f0;
+  --surface: #fafafa;
+  --sidebar: #f7f7f7;
+  --sidebar-active: #e9e9e9;
+  --card: #fafafa;
+}
+html[data-theme="dark"] { --window-surface: #181916; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) { --window-surface: #181916; }
+}
+html .reference-layout {
+  --chat-width: min(740px, calc(100% - 48px));
+  height: 100%;
+  padding: 0 var(--frame-gap) var(--frame-gap) 0;
+  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--tool-panel-width);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+  background: var(--window-surface);
+}
+html .reference-layout.sidebar-collapsed { grid-template-columns: var(--rail-width) 0 minmax(0, 1fr) var(--tool-panel-width); }
+html .reference-layout.right-panel-collapsed { grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) 0; }
+html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-columns: var(--rail-width) 0 minmax(0, 1fr) 0; }
+.reference-layout .titlebar {
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+.reference-layout.platform-darwin .titlebar { padding-left: 96px; }
+.reference-layout.platform-darwin .window-controls,
+.reference-layout.platform-linux .window-controls { display: none; }
+.reference-layout .titlebar-right { align-items: center; gap: 8px; }
+.reference-layout .titlebar .icon-button { width: 28px; height: 28px; color: var(--muted); }
+.reference-layout .navigation-rail {
+  grid-row: 2;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 7px;
+  z-index: 45;
+  min-height: 0;
+}
+.reference-layout .rail-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.reference-layout .rail-button:hover { background: var(--sidebar-hover); color: var(--ink); }
+.reference-layout .rail-button.active { background: var(--sidebar-active); color: var(--ink); }
+.reference-layout .rail-footer { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.reference-layout .rail-profile { display: flex; border: 0; padding: 4px; background: transparent; cursor: pointer; border-radius: 50%; }
+.reference-layout .avatar { width: 24px; height: 24px; }
+.reference-layout .rail-more-wrap { position: relative; }
+.reference-layout .rail-menu { top: 0; left: calc(100% + 8px); right: auto; width: max-content; min-width: 172px; }
+.reference-layout .rail-menu button { display: flex; align-items: center; gap: 9px; }
+.reference-layout .sidebar {
+  grid-column: 2;
+  border-radius: 12px 0 0 12px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+.reference-layout .sidebar-brand-row { height: 52px; padding: 0 14px 0 16px; border: 0; }
+.reference-layout .sidebar-brand-row .brand-button { display: flex; padding: 0; font-size: calc(18px * var(--font-ui-scale)); }
+.reference-layout .sidebar-brand-actions { flex: none; justify-content: flex-end; gap: 6px; }
+.reference-layout .sidebar-brand-actions .icon-button { width: 26px; height: 28px; color: var(--muted); }
+.reference-layout .new-task-button {
+  justify-content: flex-start;
+  flex: none;
+  height: 36px;
+  margin: 0 10px 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: calc(14px * var(--font-ui-scale));
+  font-weight: 500;
+}
+.reference-layout .new-task-button:hover { background: var(--sidebar-hover); }
+.reference-layout .sidebar-scroll { padding: 0 10px 14px; }
+.reference-layout .sidebar-section { padding: 0; margin: 0 0 10px; }
+.reference-layout .recent-section-toggle { justify-content: flex-start; gap: 5px; padding: 9px 6px; color: var(--muted); font-size: calc(13px * var(--font-ui-scale)); font-weight: 500; }
+.reference-layout .workspace-session-list { margin-top: 3px; }
+.reference-layout .sidebar-plugin-actions:empty { display: none; }
+.reference-layout .sidebar-plugin-actions { margin-top: auto; }
+.reference-layout .main-panel {
+  grid-column: 3;
+  background: var(--surface-strong, var(--surface));
+  border-radius: 0;
+}
+.reference-layout.right-panel-collapsed .main-panel { border-radius: 0 12px 12px 0; }
+.reference-layout.sidebar-collapsed .main-panel { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
+.reference-layout .tool-panel { grid-column: 4; border-radius: 0 12px 12px 0; background: var(--surface); }
+.reference-layout .panel-resize-handle { top: var(--titlebar-height); bottom: var(--frame-gap); }
+.reference-layout .panel-resize-left { left: calc(var(--rail-width) + var(--sidebar-width) - 4px); }
+.reference-layout .panel-resize-right { right: calc(var(--tool-panel-width) + var(--frame-gap) - 4px); }
+.reference-layout .topbar { background: transparent; padding-left: 20px; }
+.reference-layout .topbar .sidebar-toggle { display: none; }
+.reference-layout .conversation-column { width: var(--chat-width); }
+.reference-layout .empty-session:not(.conversation-view-open) .topbar,
+.reference-layout .empty-session:not(.conversation-view-open) .conversation-tabs { display: none; }
+.reference-layout .empty-session:not(.conversation-view-open) .conversation-viewport { inset: 0; }
+.reference-layout .empty-session .empty-conversation {
+  position: absolute;
+  left: 50%;
+  top: 39%;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 48px);
+  min-height: 0;
+}
+.reference-layout .empty-conversation .empty-mark {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--quiet);
+}
+.reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
+.reference-layout .composer-dock { padding: 0 0 16px; }
+.reference-layout .composer-card { width: var(--chat-width); min-height: 100px; padding: 12px 12px 9px; border-radius: 23px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
+.reference-layout .composer-card:focus-within { box-shadow: var(--shadow-sm); }
+.reference-layout .composer-project-bar {
+  width: min(712px, calc(100% - 76px));
+  min-height: 44px;
+  margin-bottom: -8px;
+  padding: 7px 14px 15px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  border-radius: 16px 16px 0 0;
+  background: color-mix(in srgb, var(--sidebar) 55%, var(--sidebar-active));
+  color: var(--muted);
+  font-size: calc(13px * var(--font-ui-scale));
+  pointer-events: auto;
+}
+.reference-layout .composer-project-selection { display: flex; align-items: center; min-width: 0; gap: 4px; }
+.reference-layout .composer-project-button { border: 0; display: flex; align-items: center; gap: 7px; padding: 2px 0; background: transparent; color: inherit; cursor: pointer; min-width: 0; }
+.reference-layout .composer-project-button:hover { color: var(--ink); }
+.reference-layout .composer-project-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.reference-layout .composer-context-item { color: var(--muted); }
+.reference-layout .composer-context-item svg { color: inherit; flex: none; }
+.reference-layout .composer-project-branch { overflow: hidden; }
+.reference-layout .composer-project-branch span { overflow: hidden; text-overflow: ellipsis; }
+.reference-layout .composer-pending { width: min(712px, calc(100% - 76px)); }
+.reference-layout .goal-banner { width: var(--chat-width); }
+.reference-layout .composer-toolbar { flex-wrap: nowrap; gap: 8px; min-height: 32px; }
+.reference-layout .composer-actions { flex-wrap: nowrap; }
+.reference-layout .composer-send-actions { margin-left: auto; }
+.reference-layout .composer-mode { color: var(--ink); max-width: 210px; }
+.reference-layout .composer-send-actions .model-menu { left: auto; right: 0; }
+.reference-layout .send-button { border-radius: 50%; width: 28px; height: 28px; }
+/* Native lights now belong to the separate titlebar, so plugin pages need no left inset. */
+.reference-layout.platform-darwin.sidebar-collapsed .plugins-page.plugins-formats { padding-left: 24px; }
+@media (max-width: 1120px) {
+  .reference-layout .composer-mode { max-width: 150px; }
+  .reference-layout .composer-project-branch { display: none; }
+}
+@media (max-width: 820px) {
+  html .reference-layout,
+  html .reference-layout.sidebar-collapsed,
+  html .reference-layout.right-panel-collapsed,
+  html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-columns: var(--rail-width) 0 minmax(0, 1fr) 0; }
+  .reference-layout .sidebar { position: absolute; grid-row: auto; grid-column: auto; z-index: 35; top: var(--titlebar-height); bottom: var(--frame-gap); left: var(--rail-width); width: min(var(--sidebar-width), calc(100% - 110px)); height: auto; opacity: 1; pointer-events: auto; border-radius: 12px; box-shadow: var(--shadow-lg); }
+  .reference-layout.sidebar-collapsed .sidebar { opacity: 0; pointer-events: none; }
+  .reference-layout .main-panel { border-radius: 12px; }
+  .reference-layout .tool-panel { grid-row: auto; grid-column: auto; top: var(--titlebar-height); bottom: var(--frame-gap); height: auto; width: min(var(--tool-panel-width), calc(100% - var(--rail-width) - 12px)); }
+  html .reference-layout { --chat-width: calc(100% - 28px); }
+  .reference-layout .composer-project-bar,
+  .reference-layout .composer-pending { width: calc(100% - 44px); gap: 12px; }
+  .reference-layout .composer-mode { max-width: 110px; }
+  .reference-layout .composer-effort-select { max-width: 70px; }
+  .reference-layout .context-ring-wrap { display: none; }
+  .reference-layout .composer-toolbar { flex-wrap: wrap; }
+  .reference-layout .composer-project-button span { max-width: 130px; }
+  .reference-layout .empty-conversation h1 { font-size: calc(24px * var(--font-ui-scale)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html .reference-layout { transition: none; }
+}
+
+.reference-layout .composer-card textarea { height: 40px; min-height: 40px; }
+.reference-layout .dsh-composer-input { min-height: 40px; }
+
+.reference-layout.sidebar-collapsed .sidebar,
+.reference-layout.right-panel-collapsed .tool-panel { visibility: hidden; }
+
+.reference-layout .composer-project-bar > .composer-context-item { color: var(--ink); }
+/* Keep the existing custom background and glass settings visible through the frame. */
+html[data-translucent="true"] .reference-layout { background: transparent; }
+
+/* A subtle seam joins the sidebar to the content, with a short continuation in the titlebar. */
+html .reference-layout {
+  --layout-divider: color-mix(in srgb, var(--ink) 7%, transparent);
+  --titlebar-content-left: calc(var(--rail-width) + var(--sidebar-width));
+}
+html .reference-layout.sidebar-collapsed { --titlebar-content-left: var(--rail-width); }
+html .reference-layout.platform-darwin.sidebar-collapsed { --titlebar-content-left: 142px; }
+html .reference-layout .sidebar { border-right-color: var(--layout-divider); }
+.reference-layout .titlebar-conversation {
+  position: absolute;
+  left: var(--titlebar-content-left);
+  right: 84px;
+  top: 0;
+  height: var(--titlebar-height);
+  min-width: 0;
+}
+.reference-layout.platform-win32 .titlebar-conversation { right: 220px; }
+.reference-layout .titlebar-conversation::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  border-left: 1px solid var(--layout-divider);
+}
+html .reference-layout .titlebar-conversation .topbar {
+  position: relative;
+  inset: auto;
+  height: 100%;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+.reference-layout .titlebar-conversation .topbar-left { flex: 1; overflow: hidden; }
+.reference-layout .titlebar-conversation .topbar-left strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-layout .main-panel { --topbar-height: 0px; }
+.reference-layout .conversation-viewport { scrollbar-gutter: stable both-edges; }
+.reference-layout:not(.has-conversation-views) .main-panel { --conversation-tabs-height: 0px; }
+.reference-layout:not(.has-conversation-views) .conversation-tabs { display: none; }
+html.native-window-frame .reference-layout .main-panel { --topbar-height: 44px; }
+.reference-layout .composer-toolbar { flex-wrap: wrap; }
+.reference-layout.settings-page-open .sidebar,
+.reference-layout.settings-page-open .main-panel,
+.reference-layout.settings-page-open .tool-panel,
+.reference-layout.settings-page-open .panel-resize-handle { visibility: hidden; }
+.reference-layout.settings-page-open .titlebar-left,
+.reference-layout.settings-page-open .titlebar-right > .icon-button { visibility: hidden; }
+.reference-layout .navigation-rail { z-index: 85; }
+
+/* Settings uses the same full-height two-column frame as the task page. */
+html .settings-page {
+  --settings-divider: color-mix(in srgb, var(--ink) 7%, transparent);
+  position: fixed;
+  z-index: 80;
+  inset: var(--titlebar-height) var(--frame-gap) var(--frame-gap) var(--rail-width);
+  border-radius: 12px;
+  overflow: hidden;
+}
+html .settings-page .settings-dialog {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  grid-template-columns: var(--settings-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--surface);
+}
+html .settings-page .settings-nav {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  padding: 0 8px 20px;
+  gap: 2px;
+  border: 0;
+  border-right: 1px solid var(--settings-divider);
+  background: var(--sidebar);
+  min-width: 0;
+  overflow: hidden;
+}
+.settings-page .settings-nav-scroll { min-height: 0; flex: 1; overflow-y: auto; margin: 0 -8px; padding: 0 8px; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 12%, transparent) transparent; }
+.settings-nav-heading { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 0 8px; flex: none; }
+.settings-nav-heading h1 { margin: 0; font-size: calc(18px * var(--font-ui-scale)); font-weight: 600; }
+html .settings-page .settings-nav-search { height: 36px; flex: none; padding: 0 12px; margin: 0 0 8px; border: 0; border-radius: 20px; background: var(--sidebar-active); }
+html .settings-page .settings-nav-search input { color: var(--ink); font-size: calc(14px * var(--font-ui-scale)); }
+html .settings-page .settings-nav-group { display: block; padding: 10px 8px 7px; color: var(--muted); font-size: calc(13px * var(--font-ui-scale)); font-weight: 400; }
+html .settings-page .settings-nav-item { width: 100%; min-height: 31px; padding: 6px 8px; color: var(--ink); font-size: calc(14px * var(--font-ui-scale)); }
+html .settings-page .settings-nav-item svg { width: 16px; height: 16px; flex: none; }
+html .settings-page .settings-nav-item.active { background: var(--sidebar-active); box-shadow: none; font-weight: 500; }
+html .settings-page .settings-content { min-width: 0; padding: 72px 24px 56px; background: var(--surface); }
+.settings-page .settings-content > * { width: min(728px, 100%); margin-left: auto; margin-right: auto; flex-shrink: 0; }
+html .settings-page .dialog-header { margin-bottom: 44px; padding: 0; border: 0; }
+html .settings-page .dialog-header h2 { margin: 0; font-size: calc(28px * var(--font-ui-scale)); font-weight: 600; }
+html .settings-page .dialog-section-title { font-size: calc(14px * var(--font-ui-scale)); }
+html .settings-page .dialog-section-title { padding: 0; margin-top: 44px; margin-bottom: 18px; border: 0; color: var(--ink); font-weight: 500; }
+html .settings-page form > .dialog-section-title:first-child,
+html .settings-page .appearance-panel > .dialog-section-title:first-child { margin-top: 0; }
+html .settings-page .settings-nav,
+html .settings-page .settings-content { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ink) 12%, transparent) transparent; }
+html .settings-page .appearance-row { border-bottom-color: var(--settings-divider); }
+html .settings-page .appearance-row-label { min-width: 0; max-width: 100%; white-space: normal; }
+html .settings-page .appearance-row-label small { white-space: normal; }
+@media (max-width: 820px) {
+  html .reference-layout { --titlebar-content-left: var(--rail-width); }
+  html .reference-layout.platform-darwin { --titlebar-content-left: 142px; }
+  .reference-layout .titlebar-conversation .topbar-left > svg { display: none; }
+  .reference-layout .titlebar-conversation .branch-menu-wrap { display: none; }
+  html .settings-page .settings-dialog { grid-template-columns: min(190px, 35%) minmax(0, 1fr); }
+  html .settings-page .settings-content { padding: 32px 18px 40px; }
+  html .settings-page .dialog-header { margin-bottom: 30px; }
+}
+@media (max-width: 540px) {
+  html .settings-page .settings-dialog { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 40%) minmax(0, 1fr); }
+  html .settings-page .settings-nav { border-right: 0; border-bottom: 1px solid var(--settings-divider); }
+  html .settings-page .settings-content { padding: 24px 16px 32px; }
+  html .settings-page .dialog-header h2 { font-size: calc(24px * var(--font-ui-scale)); }
+  .reference-layout .titlebar-conversation .topbar { padding: 0 6px; }
+}
+
+/* One pale seam per panel; avoid doubling the line with the resize hit area. */
+html .reference-layout { --layout-divider: color-mix(in srgb, var(--ink) 4%, transparent); }
+html .reference-layout .tool-panel { border-left-color: var(--layout-divider); }
+.reference-layout .panel-resize-handle::after { background: transparent; }
+.reference-layout .panel-resize-handle:hover::after,
+body.resizing-panels .reference-layout .panel-resize-handle::after { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.reference-layout .tool-panel-tabs { min-height: 54px; padding: 7px 82px 7px 12px; gap: 8px; border-bottom-color: var(--layout-divider); background: var(--sidebar); }
+.reference-layout .tool-panel-tab { height: 38px; border-radius: 12px; }
+.reference-layout .tool-panel-tab-main { height: 38px; font-size: calc(14px * var(--font-ui-scale)); }
+.reference-layout .tool-panel-tab.active { background: var(--sidebar-active); }
+.reference-layout .tool-panel-tabs-actions { top: 10px; right: 12px; gap: 6px; }
+html .settings-page .plugins-page { position: static; inset: auto; padding: 0; background: transparent; overflow: visible; }
+html .settings-page .plugins-page.plugins-formats { padding: 0; }
+html .settings-page .plugins-navigation { margin: 0 0 24px; }
+
+/* Scope form rules so settings labels do not change plugin search boxes or switches. */
+html .settings-page .plugins-page .plugins-page-heading h1 { display: none; }
+html .settings-page .plugins-page .plugins-page-actions { flex-wrap: wrap; }
+html .settings-page .plugins-page .plugins-page-header { flex-wrap: wrap; align-items: center; }
+html .settings-page .plugins-market-search { display: flex; align-items: center; margin: 0; font-weight: 400; }
+html .settings-page .settings-content .plugins-market-search input { border: 0; padding: 0; background: transparent; height: 24px; box-shadow: none; }
+html .settings-page .mcp-field { display: flex; margin: 0; font-size: calc(14px * var(--font-ui-scale)); font-weight: 400; color: var(--ink); }
+html .settings-page .mcp-field input:not([type="checkbox"]),
+html .settings-page .mcp-field textarea { border-color: var(--border); background: transparent; color: var(--ink); font-size: calc(14px * var(--font-ui-scale)); }
+html .settings-page .mcp-field textarea { height: auto; min-height: 72px; resize: vertical; }
+html .settings-page .mcp-server-row .skill-switch { display: flex; margin: 0; flex: none; }

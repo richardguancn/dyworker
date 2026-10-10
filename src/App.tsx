@@ -43,6 +43,7 @@ import {
   ListTree,
   Hand,
   History,
+  House,
   KeyRound,
   Landmark,
   ListTodo,
@@ -5740,6 +5741,7 @@ function ChannelsPanel({ value, onSave }: {
 }
 
 function SettingsDialog({
+  sidebarWidth,
   value,
   onClose,
   onSave,
@@ -5777,6 +5779,7 @@ function SettingsDialog({
 }: {
   onCreatePlugin: () => void;
   sessionId?: string;
+  sidebarWidth: number;
   value: ProviderSettings;
   onClose: () => void;
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
@@ -6196,13 +6199,17 @@ function SettingsDialog({
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="settings-dialog settings-v2" onMouseDown={(event) => event.stopPropagation()}>
-        <aside className="settings-nav">
+    <section className="settings-page" aria-label="设置" style={{ "--settings-sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+      <div className="settings-dialog settings-v2">
+        <aside className="settings-nav" aria-label="设置导航">
+          <div className="settings-nav-heading"><h1>设置</h1>
+            <button className="icon-button subtle" type="button" onClick={onClose} aria-label="关闭设置"><X size={18} /></button>
+          </div>
           <div className="settings-nav-search">
             <Search size={13} />
-            <input value={navQuery} placeholder="搜索设置…" onChange={(event) => setNavQuery(event.target.value)} />
+            <input aria-label="搜索设置" value={navQuery} placeholder="搜索设置…" onChange={(event) => setNavQuery(event.target.value)} />
           </div>
+          <div className="settings-nav-scroll">
           {settingsNav.map((group) => {
             const query = navQuery.trim().toLowerCase();
             const items = group.items.filter((item) => !query
@@ -6229,17 +6236,10 @@ function SettingsDialog({
               </div>
             );
           })}
+          </div>
         </aside>
         <div className="settings-content">
-        <div className="dialog-header">
-          <div>
-            <span className="dialog-kicker">设置</span>
-            <h2>{activeLabel}</h2>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭设置">
-            <X size={18} />
-          </button>
-        </div>
+        <div className="dialog-header"><h2>{activeLabel}</h2></div>
         {tab === "identity" ? (
           <IdentitySettingsPanel
             value={draft}
@@ -6859,7 +6859,7 @@ function SettingsDialog({
         )}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -7028,8 +7028,9 @@ export function App() {
   const [composerModelsLoading, setComposerModelsLoading] = useState(false);
   const composerModelsKeyRef = useRef("");
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
+  const [railMenuOpen, setRailMenuOpen] = useState(false);
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   const [conversationView, setConversationView] = useState("chat");
   const [pluginConversationViews, setPluginConversationViews] = useState<Array<{ key: string; label: string }>>([]);
@@ -7039,7 +7040,7 @@ export function App() {
     if (!activeId) return;
     setPluginsPageOpen(false);
   }, [activeId]);
-  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [sidebarWidth, setSidebarWidth] = useState(240);
   const [toolPanelWidth, setToolPanelWidth] = useState(() => {
     const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
     return Math.min(520, Math.max(340, Math.round(viewportWidth * 0.28)));
@@ -7049,7 +7050,10 @@ export function App() {
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === "undefined" ? 1280 : window.innerWidth);
   useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
+    const onResize = () => {
+      setViewportWidth(window.innerWidth);
+      if (window.innerWidth <= 820) setSidebarOpen(false);
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -7057,11 +7061,11 @@ export function App() {
   // 夹取的是“生效宽度”而不是存储值：回到大窗口时用户拖出的宽度偏好自动恢复
   const appliedToolPanelWidth = Math.min(
     toolPanelWidth,
-    Math.max(360, viewportWidth - (sidebarOpen ? sidebarWidth : 0) - 420),
+    Math.max(360, viewportWidth - 58 - (sidebarOpen ? sidebarWidth : 0) - 420),
   );
   const appliedSidebarWidth = Math.min(
     sidebarWidth,
-    Math.max(260, viewportWidth - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420),
+    Math.max(220, viewportWidth - 58 - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420),
   );
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
   const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
@@ -7675,13 +7679,14 @@ export function App() {
   }, []);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen || queueMenuRunId !== null;
+  const anyMenuOpen = railMenuOpen || sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen || queueMenuRunId !== null;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
       setSessionMenuId(null);
       setWorkspaceMenuPath(null);
       setTopMenuOpen(false);
+      setRailMenuOpen(false);
       setAddMenuOpen(false);
       setModelMenuOpen(false);
       setApprovalMenuOpen(false);
@@ -7712,11 +7717,11 @@ export function App() {
       const resize = panelResizeRef.current;
       if (!resize) return;
       if (resize.edge === "left") {
-        const maxWidth = Math.max(260, window.innerWidth - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420);
-        setSidebarWidth(Math.min(Math.max(event.clientX, 220), Math.min(520, maxWidth)));
+        const maxWidth = Math.max(220, window.innerWidth - 58 - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420);
+        setSidebarWidth(Math.min(Math.max(resize.startWidth + event.clientX - resize.startX, 220), Math.min(520, maxWidth)));
       } else {
-        const nextWidth = window.innerWidth - event.clientX;
-        const maxWidth = Math.max(360, window.innerWidth - (sidebarOpen ? appliedSidebarWidth : 0) - 420);
+        const nextWidth = resize.startWidth + resize.startX - event.clientX;
+        const maxWidth = Math.max(360, window.innerWidth - 58 - (sidebarOpen ? appliedSidebarWidth : 0) - 420);
         setToolPanelWidth(Math.min(Math.max(nextWidth, 320), maxWidth));
       }
     };
@@ -7775,11 +7780,11 @@ export function App() {
   }, []);
 
   // Linux 系统标题栏占用窗口外框，页面不再重复显示自绘标题栏；
-  // mac 用 titleBarStyle:hidden 隐藏系统标题栏，原生红绿灯内嵌到第一行工具栏，同样不显示自绘标题栏。
+  // mac 保留应用工具栏，原生红绿灯位于该行左侧；只有 Linux 使用系统标题栏。
   // 用 useLayoutEffect：首帧绘制前就把类挂到 <html> 上，启动时不闪现自绘标题栏
   useLayoutEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("native-window-frame", platform === "linux" || platform === "darwin");
+    root.classList.toggle("native-window-frame", platform === "linux");
     root.classList.toggle("window-maximized", windowMaximized);
   }, [platform, windowMaximized]);
 
@@ -8813,6 +8818,8 @@ export function App() {
   };
 
   const createTask = (targetWorkspacePath = workspacePath) => {
+    setPluginsPageOpen(false);
+    setConversationView("chat");
     const nextWorkspacePath = String(targetWorkspacePath || "");
     // DSH 空任务已经可以拥有独立存档，不能当作可迁移目录的普通草稿复用。
     const unstartedSession = sessions.find((session) => session.runtime !== 'dsh' && !session.archived && session.messages.length === 0);
@@ -11984,7 +11991,7 @@ export function App() {
     panelResizeRef.current = {
       edge,
       startX: event.clientX,
-      startWidth: edge === "left" ? sidebarWidth : toolPanelWidth,
+      startWidth: edge === "left" ? appliedSidebarWidth : appliedToolPanelWidth,
     };
     document.body.classList.add("resizing-panels");
   };
@@ -12217,218 +12224,7 @@ export function App() {
     </div>
   );
 
-  return (
-    <>
-    {/* 外观背景装饰层：背景色 → 背景图 → 遮罩，pointer-events/aria-hidden 保证不占交互 */}
-    <PluginSlotView slot="shell.overlay" hideEmpty />
-    {dshChildHistory && <DshChildHistory target={dshChildHistory} onClose={closeDshChildHistory} />}
-    <div className="appearance-backdrop" aria-hidden="true" />
-    <div
-      className={`app-shell platform-${platform || "linux"} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
-      style={panelStyle}
-    >
-      <header className="titlebar" aria-label="标题栏">
-        <div className="titlebar-left">
-          <span className="titlebar-brand">DYWorker</span>
-        </div>
-        <div className="titlebar-right">
-          <div className="window-controls" aria-label="窗口控制">
-            <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
-              <Minus size={15} />
-            </button>
-            <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
-              <Square size={11} />
-            </button>
-            <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
-              <X size={15} />
-            </button>
-          </div>
-        </div>
-      </header>
-      <aside className="sidebar" aria-label="任务侧栏">
-        <div className="native-controls-space" />
-        <div className="sidebar-brand-row">
-          <span className="brand-button" aria-label="DYWorker">
-            <span>DYWorker</span>
-          </span>
-          <div className="sidebar-brand-actions">
-            <button className="icon-button subtle" aria-label="搜索任务" onClick={() => setQuery((value) => value ? "" : " ")}>
-              <Search size={18} />
-            </button>
-            <button
-              className="icon-button subtle"
-              aria-label="收起侧栏"
-              title="收起侧栏"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <PanelLeftIcon size={18} />
-            </button>
-          </div>
-        </div>
-
-        <button className="new-task-button" onClick={() => createTask()}>
-          <MessageSquarePlus size={18} />
-          新建任务
-        </button>
-
-        <button
-          className={`sidebar-plugins-button ${pluginsPageOpen ? "active" : ""}`}
-          onClick={() => setPluginsPageOpen((open) => !open)}
-          aria-label="插件"
-          aria-current={pluginsPageOpen ? "page" : undefined}
-        >
-          <Sparkles size={17} />
-          插件
-        </button>
-
-        {query !== "" && (
-          <div className="sidebar-search-wrap">
-            <Search size={15} />
-            <input autoFocus value={query.trimStart()} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务" />
-            <button className="bare-button" onClick={() => setQuery("")} aria-label="关闭搜索"><X size={14} /></button>
-          </div>
-        )}
-
-        <div className="sidebar-scroll">
-          {workspaceSessionGroups.workspaces.length > 0 && (
-            <section className="sidebar-section workspace-session-section">
-              <div className="workspace-session-list">
-                {workspaceSessionGroups.workspaces.map((group) => {
-                  const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
-                  const isSearching = query.trim() !== "";
-                  const totalSessions = group.sessions.length;
-                  const hasActiveHiddenSession = group.sessions.slice(WORKSPACE_SESSION_LIMIT).some((session) => session.id === activeId);
-                  const isSessionsExpanded = isSearching || (workspaceSessionsExpanded[group.path] ?? (hasActiveHiddenSession ? true : false));
-                  const visibleGroupSessions = isSessionsExpanded || totalSessions <= WORKSPACE_SESSION_LIMIT
-                    ? group.sessions
-                    : group.sessions.slice(0, WORKSPACE_SESSION_LIMIT);
-                  const showToggle = totalSessions > WORKSPACE_SESSION_LIMIT && !isSearching;
-                  return (
-                    <div className={`workspace-session-group ${expanded ? "expanded" : ""} ${group.pinned ? "pinned" : ""}`} key={group.path} data-menu-root>
-                      <div className="workspace-session-row">
-                        <button
-                          className="workspace-session-heading"
-                          onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
-                          aria-expanded={expanded}
-                          title={group.path}
-                        >
-                          {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
-                          <span>{displayWorkspace(group.path)}</span>
-                          {group.pinned && <Pin size={12} className="workspace-pin-indicator" aria-label="已置顶" />}
-                        </button>
-                        <div className="workspace-session-actions">
-                          <button
-                            className="icon-button subtle tiny"
-                            aria-label={`${displayWorkspace(group.path)} 更多操作`}
-                            title="更多操作"
-                            aria-expanded={workspaceMenuPath === group.path}
-                            onClick={() => {
-                              setSessionMenuId(null);
-                              setWorkspaceMenuPath((current) => current === group.path ? null : group.path);
-                            }}
-                          >
-                            <MoreHorizontal size={15} />
-                          </button>
-                          <button
-                            className="icon-button subtle tiny"
-                            aria-label={`在 ${displayWorkspace(group.path)} 中新建对话`}
-                            title="新建对话"
-                            onClick={() => createTask(group.path)}
-                          >
-                            <SquarePen size={15} />
-                          </button>
-                        </div>
-                      </div>
-                      {workspaceMenuPath === group.path && (
-                        <div className="session-menu workspace-menu" role="menu">
-                          <button role="menuitem" onClick={() => toggleWorkspacePin(group.path)}>
-                            <Pin size={15} />
-                            <span>{group.pinned ? "取消置顶项目" : "置顶项目"}</span>
-                          </button>
-                          <button role="menuitem" onClick={() => void openWorkspaceInFileManager(group.path)}>
-                            <FolderOpen size={15} />
-                            <span>{fileManagerLabel}</span>
-                          </button>
-                        </div>
-                      )}
-                      {expanded && (
-                        <div className="session-list workspace-session-items">
-                          {visibleGroupSessions.map(renderSessionItem)}
-                          {showToggle && (
-                            <button
-                              type="button"
-                              className="workspace-sessions-toggle"
-                              onClick={() => {
-                                setWorkspaceSessionsExpanded((current) => ({
-                                  ...current,
-                                  [group.path]: !isSessionsExpanded,
-                                }));
-                              }}
-                            >
-                              {isSessionsExpanded ? "收起显示" : "展开显示"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          <section className="sidebar-section recent-section">
-            <button
-              className="recent-section-toggle"
-              onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, __recent__: !recentExpanded }))}
-              aria-expanded={recentExpanded}
-            >
-              {recentExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              <span>最近</span>
-            </button>
-            {recentExpanded && workspaceSessionGroups.recent.length ? (
-              <div className="session-list">{workspaceSessionGroups.recent.map(renderSessionItem)}</div>
-            ) : null}
-            {sessions.some((session) => session.archived) && (
-              <button className="archived-toggle" onClick={() => setShowArchived((value) => !value)}>
-                {showArchived ? "隐藏归档任务" : `显示归档任务（${sessions.filter((session) => session.archived).length}）`}
-              </button>
-            )}
-          </section>
-        </div>
-
-        <div className="sidebar-plugin-actions"><PluginSlotView slot="sidebar.footer.action" wide hideEmpty /></div>
-        <div className="sidebar-footer">
-          <button className="profile-button">
-            <span className="avatar"><UserRound size={14} /></span>
-            <span>本地工作区</span>
-          </button>
-          <div className="sidebar-footer-actions">
-            <AppUpdateAction
-              status={appUpdate}
-              onOpen={() => setAppUpdateDialogOpen(true)}
-              onDownload={downloadAppUpdate}
-              onInstall={() => setAppUpdateDialogOpen(true)}
-            />
-            <button className="icon-button subtle" onClick={() => setSettingsOpen(true)} aria-label="设置">
-              <Settings size={18} />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {sidebarOpen && (
-        <div
-          className="panel-resize-handle panel-resize-left"
-          role="separator"
-          aria-label="调整左侧面板宽度"
-          aria-orientation="vertical"
-          onPointerDown={(event) => beginPanelResize("left", event)}
-        />
-      )}
-
-      <main className={`main-panel ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
-        {pluginsPageOpen && <PluginsPage onCreate={() => setCreationKind("plugin")} sessionId={activeSession?.id} mcpPanel={<McpSettingsPanel value={settings} onSave={saveProviderSettings} />} />}
+  const conversationHeader = (
         <header className="topbar">
           <div className="topbar-left no-drag">
             <button
@@ -12442,9 +12238,9 @@ export function App() {
             </button>
             <Folder size={18} />
             <strong>{activeSession?.title || "新任务"}</strong>
-            {taskMenu}
           </div>
           <div className="topbar-right no-drag">
+            {taskMenu}
             {gitInfo && (
               <div className="branch-menu-wrap" data-menu-root>
                 <button
@@ -12579,6 +12375,112 @@ export function App() {
               </div>
             )}
             <button
+              className={`icon-button subtle ${conversationSearchOpen ? "active" : ""}`}
+              aria-label="搜索会话内容"
+              title="搜索会话内容：在当前会话的对话内容中查找（⌘F / Ctrl+F）"
+              onClick={() => {
+                setConversationSearchOpen(true);
+                requestAnimationFrame(() => conversationSearchInputRef.current?.select());
+              }}
+            >
+              <Search size={17} />
+            </button>
+
+          </div>
+        </header>
+  );
+
+  return (
+    <>
+    {/* 外观背景装饰层：背景色 → 背景图 → 遮罩，pointer-events/aria-hidden 保证不占交互 */}
+    <PluginSlotView slot="shell.overlay" hideEmpty />
+    {dshChildHistory && <DshChildHistory target={dshChildHistory} onClose={closeDshChildHistory} />}
+    <div className="appearance-backdrop" aria-hidden="true" />
+    <div
+      className={`app-shell reference-layout platform-${platform || "linux"} ${settingsOpen ? "settings-page-open" : ""} ${pluginConversationViews.length ? "has-conversation-views" : ""} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
+      style={panelStyle}
+    >
+      <header className="titlebar" aria-label="标题栏">
+        <div className="titlebar-left">
+          <button className="icon-button subtle" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
+            title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
+        </div>
+        {!settingsOpen && !pluginsPageOpen && Boolean(activeSession?.messages.length) && platform !== "linux" && (
+          <div className="titlebar-conversation">{conversationHeader}</div>
+        )}
+        <div className="titlebar-right">
+            {!rightPanelOpen && (
+              <button
+                className="icon-button subtle tool-panel-toggle"
+                aria-label="展开右侧工具栏"
+                title="展开右侧工具栏"
+                onClick={() => {
+                  setRightPanelOpen(true);
+                  // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
+                  setToolPanelMenuOpen(toolPanelTabs.length === 0);
+                }}
+              >
+                <PanelRightIcon size={18} />
+              </button>
+            )}
+          <div className="window-controls" aria-label="窗口控制">
+            <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
+              <Minus size={15} />
+            </button>
+            <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
+              <Square size={11} />
+            </button>
+            <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+      </header>
+      <nav className="navigation-rail" aria-label="主导航">
+        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen ? "active" : ""}`}
+          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen ? "page" : undefined}
+          onClick={() => { setPluginsPageOpen(false); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
+          <House size={21} />
+        </button>
+        <button className={`rail-button ${settingsOpen && settingsTab === "plans" ? "active" : ""}`}
+          aria-label="计划任务" title="计划任务" onClick={() => { setSettingsTab("plans"); setSettingsOpen(true); setRailMenuOpen(false); }}>
+          <AlarmClock size={20} />
+        </button>
+        <button className={`rail-button sidebar-plugins-button ${settingsOpen && settingsTab === "plugins" ? "active" : ""}`}
+          onClick={() => { setPluginsPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
+          aria-label="插件" title="插件" aria-current={settingsOpen && settingsTab === "plugins" ? "page" : undefined}>
+          <Sparkles size={20} />
+        </button>
+        <div className="rail-more-wrap" data-menu-root>
+          <button className={`rail-button ${railMenuOpen ? "active" : ""}`} aria-label="更多菜单" title="更多"
+            aria-haspopup="menu" aria-expanded={railMenuOpen} onClick={() => setRailMenuOpen(open => !open)}><MoreHorizontal size={21} /></button>
+          {railMenuOpen && <div className="session-menu rail-menu" role="menu">
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); createTask(); }}><SquarePen size={16} />新建任务</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}><Settings size={16} />设置</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSidebarOpen(true); setShowArchived(value => !value); }}><History size={16} />{showArchived ? "隐藏归档任务" : "显示归档任务"}</button>
+          </div>}
+        </div>
+        <div className="rail-footer">
+          {platform === "linux" && <button className="rail-button" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
+            title={sidebarOpen ? "收起侧栏" : "展开侧栏"} onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>}
+          {platform === "linux" && !rightPanelOpen && <button className="rail-button" aria-label="展开右侧工具栏" title="展开右侧工具栏"
+            onClick={() => { setRightPanelOpen(true); setToolPanelMenuOpen(toolPanelTabs.length === 0); }}><PanelRightIcon size={18} /></button>}
+          <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
+            onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
+          <button className="rail-profile" aria-label="设置" title="设置" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
+            <span className="avatar"><UserRound size={15} /></span>
+          </button>
+        </div>
+      </nav>
+      <aside className="sidebar" aria-label="任务侧栏">
+        <div className="native-controls-space" />
+        <div className="sidebar-brand-row">
+          <span className="brand-button" aria-label="DYWorker">
+            <span>DYWorker</span>
+          </span>
+          <div className="sidebar-brand-actions">
+            <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
               aria-label="收件箱"
               title="收件箱：任务待办的审批与提问、系统消息（公告/版本提醒/维护通知）"
@@ -12595,33 +12497,152 @@ export function App() {
                 </span>
               )}
             </button>
-            <button
-              className={`icon-button subtle ${conversationSearchOpen ? "active" : ""}`}
-              aria-label="搜索会话内容"
-              title="搜索会话内容：在当前会话的对话内容中查找（⌘F / Ctrl+F）"
-              onClick={() => {
-                setConversationSearchOpen(true);
-                requestAnimationFrame(() => conversationSearchInputRef.current?.select());
-              }}
-            >
-              <Search size={17} />
+
+            <button className="icon-button subtle" aria-label="搜索任务" onClick={() => setQuery((value) => value ? "" : " ")}>
+              <Search size={18} />
             </button>
-            {!rightPanelOpen && (
-              <button
-                className="icon-button subtle tool-panel-toggle"
-                aria-label="展开右侧工具栏"
-                title="展开右侧工具栏"
-                onClick={() => {
-                  setRightPanelOpen(true);
-                  // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
-                  setToolPanelMenuOpen(toolPanelTabs.length === 0);
-                }}
-              >
-                <PanelRightIcon size={18} />
+
+          </div>
+        </div>
+
+        <button className="new-task-button" onClick={() => createTask()}>
+          <SquarePen size={18} />
+          新建任务
+        </button>
+
+        {query !== "" && (
+          <div className="sidebar-search-wrap">
+            <Search size={15} />
+            <input autoFocus value={query.trimStart()} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务" />
+            <button className="bare-button" onClick={() => setQuery("")} aria-label="关闭搜索"><X size={14} /></button>
+          </div>
+        )}
+
+        <div className="sidebar-scroll">
+          <section className="sidebar-section workspace-session-section">
+            <button className="recent-section-toggle" aria-expanded={workspaceGroupOpen.__projects__ !== false}
+              onClick={() => setWorkspaceGroupOpen(current => ({ ...current, __projects__: current.__projects__ === false }))}>
+              <span>项目</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </button>
+            {workspaceGroupOpen.__projects__ !== false && <div className="workspace-session-list">
+                {workspaceSessionGroups.workspaces.map((group) => {
+                  const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
+                  const isSearching = query.trim() !== "";
+                  const totalSessions = group.sessions.length;
+                  const hasActiveHiddenSession = group.sessions.slice(WORKSPACE_SESSION_LIMIT).some((session) => session.id === activeId);
+                  const isSessionsExpanded = isSearching || (workspaceSessionsExpanded[group.path] ?? (hasActiveHiddenSession ? true : false));
+                  const visibleGroupSessions = isSessionsExpanded || totalSessions <= WORKSPACE_SESSION_LIMIT
+                    ? group.sessions
+                    : group.sessions.slice(0, WORKSPACE_SESSION_LIMIT);
+                  const showToggle = totalSessions > WORKSPACE_SESSION_LIMIT && !isSearching;
+                  return (
+                    <div className={`workspace-session-group ${expanded ? "expanded" : ""} ${group.pinned ? "pinned" : ""}`} key={group.path} data-menu-root>
+                      <div className="workspace-session-row">
+                        <button
+                          className="workspace-session-heading"
+                          onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
+                          aria-expanded={expanded}
+                          title={group.path}
+                        >
+                          {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+                          <span>{displayWorkspace(group.path)}</span>
+                          {group.pinned && <Pin size={12} className="workspace-pin-indicator" aria-label="已置顶" />}
+                        </button>
+                        <div className="workspace-session-actions">
+                          <button
+                            className="icon-button subtle tiny"
+                            aria-label={`${displayWorkspace(group.path)} 更多操作`}
+                            title="更多操作"
+                            aria-expanded={workspaceMenuPath === group.path}
+                            onClick={() => {
+                              setSessionMenuId(null);
+                              setWorkspaceMenuPath((current) => current === group.path ? null : group.path);
+                            }}
+                          >
+                            <MoreHorizontal size={15} />
+                          </button>
+                          <button
+                            className="icon-button subtle tiny"
+                            aria-label={`在 ${displayWorkspace(group.path)} 中新建对话`}
+                            title="新建对话"
+                            onClick={() => createTask(group.path)}
+                          >
+                            <SquarePen size={15} />
+                          </button>
+                        </div>
+                      </div>
+                      {workspaceMenuPath === group.path && (
+                        <div className="session-menu workspace-menu" role="menu">
+                          <button role="menuitem" onClick={() => toggleWorkspacePin(group.path)}>
+                            <Pin size={15} />
+                            <span>{group.pinned ? "取消置顶项目" : "置顶项目"}</span>
+                          </button>
+                          <button role="menuitem" onClick={() => void openWorkspaceInFileManager(group.path)}>
+                            <FolderOpen size={15} />
+                            <span>{fileManagerLabel}</span>
+                          </button>
+                        </div>
+                      )}
+                      {expanded && (
+                        <div className="session-list workspace-session-items">
+                          {visibleGroupSessions.map(renderSessionItem)}
+                          {showToggle && (
+                            <button
+                              type="button"
+                              className="workspace-sessions-toggle"
+                              onClick={() => {
+                                setWorkspaceSessionsExpanded((current) => ({
+                                  ...current,
+                                  [group.path]: !isSessionsExpanded,
+                                }));
+                              }}
+                            >
+                              {isSessionsExpanded ? "收起显示" : "展开显示"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>}
+            </section>
+
+          <section className="sidebar-section recent-section">
+            <button
+              className="recent-section-toggle"
+              onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, __recent__: !recentExpanded }))}
+              aria-expanded={recentExpanded}
+            >
+              <span>最近</span>
+              {recentExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+            {recentExpanded && workspaceSessionGroups.recent.length ? (
+              <div className="session-list">{workspaceSessionGroups.recent.map(renderSessionItem)}</div>
+            ) : null}
+            {sessions.some((session) => session.archived) && (
+              <button className="archived-toggle" onClick={() => setShowArchived((value) => !value)}>
+                {showArchived ? "隐藏归档任务" : `显示归档任务（${sessions.filter((session) => session.archived).length}）`}
               </button>
             )}
-          </div>
-        </header>
+          </section>
+        </div>
+
+        <div className="sidebar-plugin-actions"><PluginSlotView slot="sidebar.footer.action" wide hideEmpty /></div>
+      </aside>
+
+      {sidebarOpen && (
+        <div
+          className="panel-resize-handle panel-resize-left"
+          role="separator"
+          aria-label="调整左侧面板宽度"
+          aria-orientation="vertical"
+          onPointerDown={(event) => beginPanelResize("left", event)}
+        />
+      )}
+
+      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
+        {platform === "linux" && conversationHeader}
 
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
@@ -12733,7 +12754,7 @@ export function App() {
                 || (hoveredTurnIndex === null && turnIndex === conversationTurns.length - 1);
               const waveDistance = hoveredTurnIndex === null
                 ? null
-                : Math.min(Math.abs(turnIndex - hoveredTurnIndex), 3);
+                : Math.abs(turnIndex - hoveredTurnIndex);
               return (
                 <div className="conversation-turn-marker-wrap" key={`${turn.messageIndex}-${turnIndex}`}>
                   <button
@@ -12778,15 +12799,8 @@ export function App() {
           <div className="conversation-column">
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
-                <span className="empty-mark"><Sparkles size={25} /></span>
-                <h1>从一个工作任务开始</h1>
-                <p>{workspacePath
-                  ? "选择工作文件夹，然后告诉 DYWorker 你希望完成什么。"
-                  : "还没有工作文件夹也能先提问；需要读取或保存文件时，先选择工作文件夹。"}</p>
-                <button className="button-secondary" onClick={() => void chooseWorkspace()}>
-                  <FolderOpen size={16} />
-                  选择工作文件夹
-                </button>
+                <span className="empty-mark"><Sparkles size={44} strokeWidth={1.3} /></span>
+                <h1>我们要完成什么？</h1>
               </div>
             ) : (
               activeSession.messages.map((message, index) => {
@@ -13310,42 +13324,23 @@ export function App() {
           )}
           {activeSession?.goal && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
             session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
+          {!activeSession?.messages.length && <div className="composer-project-bar" aria-label="当前工作上下文">
+            <div className="composer-project-selection">
+              <button type="button" className="composer-project-button" onClick={() => void chooseWorkspace()}
+                title={composerWorkspacePath || "选择工作文件夹"}>
+                <Folder size={16} /><span>{composerWorkspacePath ? workspaceContext?.name || displayWorkspace(composerWorkspacePath) : "选择项目"}</span>
+              </button>
+              {composerWorkspacePath && <button type="button" className="icon-button subtle tiny" onClick={clearWorkspace}
+                aria-label="移除当前工作目录" title="不在项目中工作"><X size={13} /></button>}
+            </div>
+            {workspaceContext?.branch && <span className="composer-context-item composer-project-branch"><GitBranch size={15} /><span>{workspaceContext.branch}</span></span>}
+          </div>}
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
             onDragOver={handleComposerDragOver}
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {showComposerContext && (
-              <div className="composer-context" aria-label="当前工作上下文">
-                <div className="context-folder-wrap">
-                  <button
-                    type="button"
-                    className="context-folder-clear"
-                    onClick={clearWorkspace}
-                    aria-label="移除当前工作目录"
-                    title="不在项目中工作"
-                  >
-                    <X size={13} strokeWidth={2.4} />
-                    <span className="workspace-clear-tooltip" role="tooltip">不在项目中工作</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="context-folder-chip"
-                    onClick={() => void chooseWorkspace()}
-                    title={composerWorkspacePath}
-                  >
-                    <span>{workspaceContext?.name || displayWorkspace(composerWorkspacePath)}</span>
-                  </button>
-                </div>
-                {workspaceContext?.branch && (
-                  <span className="composer-context-item">
-                    <GitBranch size={17} />
-                    <span>{workspaceContext.branch}</span>
-                  </span>
-                )}
-              </div>
-            )}
             {editingMessage?.sessionId === activeSession?.id && (
               <div className="message-editing-banner" role="status">
                 <Pencil size={13} />
@@ -13554,7 +13549,7 @@ export function App() {
                   inputMode="text"
                   autoComplete="off"
                   spellCheck={false}
-                  rows={3}
+                  rows={2}
                 />
                 </>}
               </div>
@@ -13594,6 +13589,48 @@ export function App() {
                     </div>
                   )}
                 </div>
+                <div className="approval-mode-wrap" data-menu-root>
+                  <button
+                    type="button"
+                    className={`approval-mode-button ${approvalMenuOpen ? "active" : ""} ${approvalMode === "full-access" ? "warning" : ""}`}
+                    onClick={() => setApprovalMenuOpen((value) => !value)}
+                    aria-haspopup="menu"
+                    aria-expanded={approvalMenuOpen}
+                    title={activeApprovalMode.description}
+                  >
+                    <ActiveApprovalIcon size={15} />
+                    <span>{activeApprovalMode.label}</span>
+                  </button>
+                  {approvalMenuOpen && (
+                    <div className="approval-mode-menu" role="menu">
+                      <div className="approval-mode-menu-title">应如何批准 DYWorker 操作？</div>
+                      {composerApprovalModes.map((option) => {
+                        const OptionIcon = option.icon;
+                        const selected = option.value === approvalMode;
+                        return (
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            className={`${selected ? "selected" : ""} ${option.warning ? "warning" : ""}`}
+                            key={option.value}
+                            onClick={() => selectApprovalMode(option.value)}
+                          >
+                            <OptionIcon size={19} />
+                            <span>
+                              <strong>{option.label}</strong>
+                              <small>{option.description}</small>
+                            </span>
+                            {selected && <Check size={16} className="approval-mode-check" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
+              </div>
+              <div className="composer-actions composer-send-actions">
                 <div className="model-menu-wrap" data-menu-root>
                   <button
                     className={`composer-mode ${modelMenuOpen ? "active" : ""}`}
@@ -13696,48 +13733,7 @@ export function App() {
                     ))}
                   </select>
                 )}
-                <div className="approval-mode-wrap" data-menu-root>
-                  <button
-                    type="button"
-                    className={`approval-mode-button ${approvalMenuOpen ? "active" : ""} ${approvalMode === "full-access" ? "warning" : ""}`}
-                    onClick={() => setApprovalMenuOpen((value) => !value)}
-                    aria-haspopup="menu"
-                    aria-expanded={approvalMenuOpen}
-                    title={activeApprovalMode.description}
-                  >
-                    <ActiveApprovalIcon size={15} />
-                    <span>{activeApprovalMode.label}</span>
-                  </button>
-                  {approvalMenuOpen && (
-                    <div className="approval-mode-menu" role="menu">
-                      <div className="approval-mode-menu-title">应如何批准 DYWorker 操作？</div>
-                      {composerApprovalModes.map((option) => {
-                        const OptionIcon = option.icon;
-                        const selected = option.value === approvalMode;
-                        return (
-                          <button
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={selected}
-                            className={`${selected ? "selected" : ""} ${option.warning ? "warning" : ""}`}
-                            key={option.value}
-                            onClick={() => selectApprovalMode(option.value)}
-                          >
-                            <OptionIcon size={19} />
-                            <span>
-                              <strong>{option.label}</strong>
-                              <small>{option.description}</small>
-                            </span>
-                            {selected && <Check size={16} className="approval-mode-check" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
-              </div>
-              <div className="composer-actions">
+
                 {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
                 <button
                   type="button"
@@ -14331,6 +14327,7 @@ export function App() {
         <SettingsDialog
           onCreatePlugin={() => setCreationKind("plugin")}
           sessionId={activeSession?.id}
+          sidebarWidth={appliedSidebarWidth}
           value={settings}
           onClose={() => setSettingsOpen(false)}
           onSave={saveProviderSettings}

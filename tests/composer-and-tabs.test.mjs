@@ -80,10 +80,12 @@ test("会话视图标签栏不遮挡消息区：视口与搜索条都排在标�
 });
 
 test("侧栏收起/展开用同一个图标，不换图", () => {
+  const toolbar = app.slice(app.indexOf('<header className="titlebar"'), app.indexOf('</header>', app.indexOf('<header className="titlebar"')));
+  assert.match(toolbar, /aria-label=\{sidebarOpen \? "收起侧栏" : "展开侧栏"\}/);
+  assert.match(toolbar, /onClick=\{\(\) => setSidebarOpen\(open => !open\)\}/);
+  assert.match(toolbar, /<PanelLeftIcon size=\{18\} \/>/);
   const collapsed = buttonBlock("展开侧栏");
-  const expanded = buttonBlock("收起侧栏");
-  assert.match(expanded, /<PanelLeftIcon size=\{18\} \/>/, "侧栏内「收起侧栏」用面板图标");
-  assert.match(collapsed, /<PanelLeftIcon size=\{18\} \/>/, "顶栏「展开侧栏」要用同一个面板图标");
-  assert.doesNotMatch(collapsed, /<PanelRightIcon/, "收起态不能再换成另一张图");
+  assert.match(collapsed, /<PanelLeftIcon size=\{18\} \/>/);
+  assert.doesNotMatch(collapsed, /<PanelRightIcon/);
   assert.match(app, /function PanelLeftIcon/, "面板图标组件应仍然存在");
 });

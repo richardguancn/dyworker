@@ -7,6 +7,7 @@ import { bootstrapAppearance } from "./appearance/controller";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./appearance/appearance.css";
+import "./layout.css";
 
 // 先读取并应用已保存外观（含受控 data-theme），再渲染首帧，避免启动后闪默认主题；
 // 任何失败（无桥接/超时/损坏）都回落默认值继续渲染

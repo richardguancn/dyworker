@@ -14,19 +14,15 @@ const dialog = read("../src/AddPluginDialog.tsx");
 const preload = read("../electron/preload.cjs");
 const ipcPlugin = read("../electron/host/plugins/plugins-ipc.mts");
 
-test("侧边栏入口：位于「新建任务」按钮正下方（用户指定的位置）", () => {
-  const newTaskIndex = app.indexOf('className="new-task-button"');
+test("插件入口位于常驻主导航，打开插件页时高亮", () => {
+  const railStart = app.indexOf('className="navigation-rail"');
+  const railEnd = app.indexOf('</nav>', railStart);
   const pluginsIndex = app.indexOf("sidebar-plugins-button");
-  assert.ok(newTaskIndex > 0, "应有「新建任务」按钮");
-  assert.ok(pluginsIndex > 0, "应有「插件」入口");
-  assert.ok(pluginsIndex > newTaskIndex, "「插件」入口必须在「新建任务」下方");
-  // 两者之间不应插入其他按钮（位置贴合）
-  const between = app.slice(newTaskIndex, pluginsIndex);
-  assert.ok(!/className="[^"]*button/.test(between.replace(/className="new-task-button"/, "")), "两者之间不应夹其他按钮");
-  assert.match(app, /<Sparkles size=\{17\} \/>\s*插件/, "入口文案与图标");
-  assert.match(app, /setPluginsPageOpen\(\(open\) => !open\)/, "入口应切换插件页");
-  assert.match(app, /className=\{`sidebar-plugins-button \$\{pluginsPageOpen \? "active" : ""\}`\}/, "当前在插件页时入口要高亮");
-  assert.match(app, /\{pluginsPageOpen && <PluginsPage[^\n]*\/>\}/, "插件页应渲染在主内容区");
+  assert.ok(railStart > 0 && pluginsIndex > railStart && pluginsIndex < railEnd);
+  assert.match(app.slice(railStart, railEnd), /aria-label="插件"/);
+  assert.match(app.slice(railStart, railEnd), /setSettingsTab\("plugins"\); setSettingsOpen\(true\)/);
+  assert.match(app.slice(railStart, railEnd), /settingsOpen && settingsTab === "plugins" \? "active" : ""/);
+  assert.match(app, /tab === "plugins" \? \([\s\S]{0,250}<PluginsPage/);
 });
 
 test("通道名两侧一致：preload 暴露的 plugins:* 与主进程注册的完全对应", () => {
@@ -66,10 +62,9 @@ test("添加插件弹窗：支持 包名 / GitHub 地址 / 本地目录 三种�
 test("插件页是「页面」而不是「弹窗」：无遮罩层，渲染在主内容区内，切会话自动返回", () => {
   assert.ok(!panel.includes("plugins-overlay"), "不应再使用遮罩弹窗");
   assert.ok(!panel.includes("createPortal"), "不应挂在 portal 上");
-  // main-panel 的类名里还会带会话区视图状态（conversation-view-open），断言只看关键部分
-  assert.match(app, /<main className=\{`main-panel \$\{pluginsPageOpen \? "plugins-page-open" : ""\}[^`]*`\}>\s*\n\s*\{pluginsPageOpen && <PluginsPage[^\n]*\/>\}/,
-    "插件页应直接渲染在 main-panel 内");
-  assert.match(app, /useEffect\(\(\) => \{\s*\n\s*if \(!activeId\) return;\s*\n\s*setPluginsPageOpen\(false\);/, "切换会话时应回到聊天");
+  assert.match(app, /tab === "plugins" \? \([\s\S]{0,250}<PluginsPage/, "插件页在设置内容区内");
+  assert.match(app, /id: "plugins", label: "插件"/, "设置菜单应提供插件入口");
+  assert.doesNotMatch(app, /id: "mcp", label: "MCP 工具"/, "MCP 合并进插件页");
   // 版式：行式卡片 + 开关（对齐 DSH）
   assert.match(panel, /plugin-card-icon/, "行首应有图标块");
   assert.match(panel, /plugin-switch/, "行尾应有开关");
