@@ -36,3 +36,5 @@ async function start() {
 }
 
 void start();
+
+import "./fileBrowser.css";

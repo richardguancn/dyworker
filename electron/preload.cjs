@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld("dyworker", {
   getWorkspaceContext: (path) => ipcRenderer.invoke("workspace:context", path),
   readWorkspaceMarkdown: (workspacePath, filePath) => ipcRenderer.invoke("workspace:read-markdown", { workspacePath, filePath }),
   readFilePreview: (workspacePath, filePath) => ipcRenderer.invoke("workspace:preview-file", { workspacePath, filePath }),
+  fileBrowserPaths: (workspacePath, filePath) => ipcRenderer.invoke('workspace:file-paths', { workspacePath, filePath }),
+  openFileTerminal: (workspacePath, filePath) => ipcRenderer.invoke('workspace:file-terminal', { workspacePath, filePath }),
+  saveFileAs: (workspacePath, filePath, content) => ipcRenderer.invoke('workspace:file-save-as', { workspacePath, filePath, content }),
+  fileAppIcon: (workspacePath, filePath) => ipcRenderer.invoke('workspace:file-icon', { workspacePath, filePath }),
   choosePreviewFile: () => ipcRenderer.invoke("workspace:choose-preview-file"),
   onFilePanelRequest: (callback) => {
     const listener = (_event, request) => callback(request);

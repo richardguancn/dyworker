@@ -60,6 +60,9 @@ const providers = readSource(new URL("../src/providers.ts", import.meta.url));
 const types = readSource(new URL("../src/types.ts", import.meta.url));
 const markdownLiveEditor = readSource(new URL("../src/markdownLiveEditor.ts", import.meta.url));
 const styles = readSource(new URL("../src/styles.css", import.meta.url));
+const fileBrowserCss = readSource(new URL("../src/fileBrowser.css", import.meta.url));
+const fileBrowserToolbar = readSource(new URL("../src/FileBrowserToolbar.tsx", import.meta.url));
+const fileTextEditor = readSource(new URL("../src/FileTextEditor.tsx", import.meta.url));
 const html = readSource(new URL("../index.html", import.meta.url));
 
 test("desktop controls are connected across renderer, preload, and main process", () => {
@@ -506,8 +509,10 @@ test("Markdown 编辑器：行首光标透视源码，其余行隐藏语法标�
 test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Codex 风格）", () => {
   assert.match(app, /isTextPreviewFile/);
   assert.match(app, /TEXT_PREVIEW_EXTENSIONS/);
-  // 打开即编辑：不再有独立编辑按钮，textarea 直接可编辑
-  assert.match(app, /className="file-editor"/);
+  // 打开即编辑：不再有独立编辑按钮，编辑器直接可编辑
+  assert.match(app, /FileTextEditor/);
+  assert.match(fileTextEditor, /className="file-text-editor"/);
+  assert.match(fileTextEditor, /EditorView\.editable\.of\(!readOnly\)/);
   assert.doesNotMatch(app, /CodeView/);
   assert.doesNotMatch(app, /highlight\.js\/lib\/common/);
   // 自动保存：防抖落盘 + 切文件/卸载前冲刷 + 崩溃备份草稿
@@ -519,14 +524,14 @@ test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Co
   assert.match(app, /file-save-state/);
   assert.match(app, /codeBreadcrumbSegments/);
   // 「打开」按钮改为在系统文件管理器中定位文件所在目录（shell.showItemInFolder）
-  assert.match(app, /revealInFolder/);
-  assert.match(app, /在系统文件管理器中打开所在目录/);
+  assert.match(fileBrowserToolbar, /revealInFolder/);
+  assert.match(fileBrowserToolbar, /打开所在文件夹/);
   // markdown 默认即时渲染编辑，可切换纯源码编辑
-  assert.match(app, /查看源代码/);
-  assert.match(app, /查看预览/);
+  assert.match(fileBrowserToolbar, /查看源代码/);
+  assert.match(fileBrowserToolbar, /查看预览/);
   // 右侧文件树显示开关（默认开启）与拖拽调宽分隔条
   assert.match(app, /treeVisible/);
-  assert.match(app, /隐藏文件树/);
+  assert.match(fileBrowserToolbar, /隐藏文件树/);
   assert.match(app, /file-split-resizer/);
   assert.match(preload, /revealInFolder/);
   assert.match(workspaceIpcSource, /trustedHandle\("workspace:reveal"/);
@@ -540,6 +545,48 @@ test("文本文件打开即编辑并自动保存：面包屑与文件筛选（Co
   assert.match(styles, /\.file-save-state/);
   assert.match(styles, /\.code-breadcrumb/);
   assert.match(styles, /\.tool-file-filter/);
+});
+
+test("文件浏览工具栏补齐复制路径、打开方式和更多菜单（对照参考界面）", () => {
+  // 面包屑 + 复制路径（三种路径可选）+ 文件查找/预览 + 更多 + 打开 + 文件树
+  assert.match(fileBrowserToolbar, /file-browser-breadcrumb/);
+  assert.match(fileBrowserToolbar, /复制路径/);
+  assert.match(fileBrowserToolbar, /绝对路径/);
+  assert.match(fileBrowserToolbar, /相对于项目的路径/);
+  assert.match(fileBrowserToolbar, /相对于仓库根目录/);
+  assert.match(fileBrowserToolbar, /复制文件内容/);
+  assert.match(fileBrowserToolbar, /启用自动换行/);
+  assert.match(fileBrowserToolbar, /禁用自动换行/);
+  assert.match(fileBrowserToolbar, /打开方式/);
+  assert.match(fileBrowserToolbar, /默认应用/);
+  assert.match(fileBrowserToolbar, /终端/);
+  assert.match(fileBrowserToolbar, /另存为…/);
+  // 复制结果有回执，失败有原因
+  assert.match(fileBrowserToolbar, /已复制/);
+  assert.match(fileBrowserToolbar, /file-browser-action-error/);
+  // 工具栏不再有独立的查找/预览按钮，markdown 的源码切换放进「更多」菜单
+  assert.doesNotMatch(fileBrowserToolbar, /<FileSearch size=\{18\} \/>/);
+  assert.doesNotMatch(fileBrowserCss, /\.file-browser-pill\.icon\.square/);
+  assert.match(fileBrowserToolbar, /onToggleSource && <button role="menuitem"/);
+  // 「打开」显示文件默认应用的图标，取不到时回退到通用图标
+  assert.match(fileBrowserToolbar, /fileAppIcon/);
+  assert.match(fileBrowserToolbar, /file-browser-app-icon/);
+  assert.match(fileBrowserCss, /\.file-browser-app-icon/);
+  // 菜单按内容自适应宽度，并按面板与窗口收边
+  assert.match(fileBrowserCss, /width: max-content/);
+  assert.match(fileBrowserToolbar, /getBoundingClientRect\(\)\.width/);
+  assert.match(fileBrowserToolbar, /file-browser-menu/);
+  // 文件浏览页和独立预览页共用同一套工具栏
+  assert.match(app, /<FileBrowserToolbar/);
+  assert.match(readSource(new URL("../src/FilePreviewPanel.tsx", import.meta.url)), /<FileBrowserToolbar/);
+  // 主进程通道：路径解析、终端、另存为、默认应用图标
+  assert.match(workspaceIpcSource, /trustedHandle\('workspace:file-paths'/);
+  assert.match(workspaceIpcSource, /trustedHandle\('workspace:file-terminal'/);
+  assert.match(workspaceIpcSource, /trustedHandle\('workspace:file-save-as'/);
+  assert.match(workspaceIpcSource, /trustedHandle\('workspace:file-icon'/);
+  assert.match(preload, /fileBrowserPaths/);
+  assert.match(preload, /openFileTerminal/);
+  assert.match(preload, /fileAppIcon/);
 });
 
 test("审阅面板按 Git 基线逐文件展示 diff（Codex 风格）", () => {

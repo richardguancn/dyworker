@@ -44,17 +44,18 @@ export default defineConfig({
     chunkSizeWarningLimit: 1100,
     rollupOptions: {
       output: {
-        // 首屏 vendor 分包：react 框架与 markdown 渲染链（react-markdown/remark/rehype/
-        // highlight.js）更新频率不同，拆开利于缓存并行加载；mermaid/CodeMirror 已是动态分包
-        manualChunks: {
-          react: ["react", "react-dom"],
-          markdown: [
-            "react-markdown",
-            "remark-gfm",
-            "remark-math",
-            "rehype-katex",
-            "highlight.js",
-          ],
+        // 按共享依赖分包，避免客户端插件运行时和文件编辑器挤进应用入口。
+        // React 分组必须覆盖 react-dom/client 的实际模块，根入口不包含 createRoot 的实现。
+        // Mermaid/ECharts 保持现有动态加载；两个编辑器共享 CodeMirror 分包。
+        manualChunks(id) {
+          const moduleId = id.replace(/\\/g, "/");
+          // 按实际模块路径归组，避免入口列表的递归依赖收集把 React 吸入其他分包。
+          // CommonJS 公共助手与 React 放在一起，防止 React 反向依赖应用入口。
+          if (moduleId.includes("commonjsHelpers") || /\/node_modules\/(react|react-dom|scheduler)\//.test(moduleId)) return "react";
+          if (/\/node_modules\/(lexical|@lexical\/[^/]+)\//.test(moduleId)) return "draft-editor";
+          if (/\/node_modules\/(@codemirror|@lezer)\//.test(moduleId)) return "codemirror";
+          if (moduleId.includes("/src/pluginRuntime/") || moduleId.includes("/node_modules/@deepseek-ai/")) return "plugin-runtime";
+          if (/\/node_modules\/(react-markdown|remark-[^/]+|rehype-[^/]+|highlight\.js|katex)\//.test(moduleId)) return "markdown";
         },
       },
     },

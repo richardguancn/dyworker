@@ -959,6 +959,10 @@ export interface DyworkerBridge {
   markImportedLocalStorageDone(origin: string): Promise<{ ok: boolean }>;
   readWorkspaceMarkdown(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; error?: string }>;
   readFilePreview(workspacePath: string, filePath: string): Promise<FilePreviewResult>;
+  fileBrowserPaths(workspacePath: string, filePath: string): Promise<{ ok: boolean; absolute?: string; projectRelative?: string; repositoryRelative?: string; error?: string }>;
+  openFileTerminal(workspacePath: string, filePath: string): Promise<{ ok: boolean; error?: string }>;
+  saveFileAs(workspacePath: string, filePath: string, content?: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
+  fileAppIcon(workspacePath: string, filePath: string): Promise<{ ok: boolean; data?: string; error?: string }>;
   choosePreviewFile(): Promise<{ canceled: boolean; path?: string; workspacePath?: string }>;
   onFilePanelRequest(callback: (request: { path: string; workspacePath: string; ownerSessionId: string }) => void): () => void;
   readWorkspaceFile(workspacePath: string, filePath: string): Promise<{ ok: boolean; content?: string; binary?: boolean; error?: string }>;

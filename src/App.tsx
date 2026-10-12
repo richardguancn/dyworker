@@ -1,6 +1,8 @@
 import { GoalBanner } from "./GoalBanner";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
+import { FileBrowserToolbar } from "./FileBrowserToolbar";
+import { FileTextEditor } from "./FileTextEditor";
 import { ExtensionCreationDialog } from './ExtensionCreationDialog';
 import { getModelReasoningConfig, reasoningModelKey, updateReasoningOverride } from '../electron/model-reasoning.ts';
 import type { ExtensionCreationRequest } from './ExtensionCreationDialog';
@@ -2084,6 +2086,7 @@ function MarkdownLiveEditorPane({
   name,
   value,
   plainSource,
+  wrap,
   onChange,
   onSaveRequest,
 }: {
@@ -2091,13 +2094,15 @@ function MarkdownLiveEditorPane({
   name: string;
   value: string;
   plainSource: boolean;
+  wrap: boolean;
   onChange: (value: string) => void;
   onSaveRequest: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<MarkdownLiveEditorHandle | null>(null);
-  const optionsRef = useRef({ value, plainSource });
-  optionsRef.current = { value, plainSource };
+  const [editorError, setEditorError] = useState("");
+  const optionsRef = useRef({ value, plainSource, wrap });
+  optionsRef.current = { value, plainSource, wrap };
 
   useEffect(() => {
     let disposed = false;
@@ -2108,12 +2113,13 @@ function MarkdownLiveEditorPane({
       handle = createMarkdownLiveEditor(hostRef.current, {
         value: optionsRef.current.value,
         plainSource: optionsRef.current.plainSource,
+        wrap: optionsRef.current.wrap,
         placeholderText: "点击输入 Markdown…",
         onChange,
         onSaveRequest,
       });
       editorRef.current = handle;
-    });
+    }).catch(error => { if (!disposed) setEditorError(`文档编辑器加载失败：${error instanceof Error ? error.message : String(error)}`); });
     return () => {
       disposed = true;
       handle?.destroy();
@@ -2128,6 +2134,8 @@ function MarkdownLiveEditorPane({
     editorRef.current?.setPlainSource(plainSource);
   }, [plainSource]);
 
+  useEffect(() => { editorRef.current?.setWrap(wrap); }, [wrap]);
+
   // 外部内容同步（草稿恢复、落盘后回读）；编辑中不回写
   useEffect(() => {
     editorRef.current?.setValue(value);
@@ -2138,11 +2146,11 @@ function MarkdownLiveEditorPane({
       className={`markdown-live-editor${plainSource ? " plain-source" : ""}`}
       ref={hostRef}
       aria-label={`编辑 ${name}`}
-    />
+    >{editorError && <p role="alert" className="panel-empty error-text">{editorError}</p>}</div>
   );
 }
 
-function FilesSplitPanel({
+export function FilesSplitPanel({
   workspacePath,
   workspaceEntries,
   workspaceOpen,
@@ -2165,6 +2173,8 @@ function FilesSplitPanel({
   const [selection, setSelection] = useState<FilePanelSelection | null>(null);
   // markdown 默认即时渲染编辑（Codex 式：行首显示源码、其余渲染态），可切换为纯源码编辑
   const [showSource, setShowSource] = useState(false);
+  const [wrap, setWrap] = useState(true);
+  const previewRequest = useRef(0);
   // 右侧文件树开关（默认开启）与拖拽调宽（null = 跟随默认弹性宽度）
   const [treeVisible, setTreeVisible] = useState(true);
   const [treeWidth, setTreeWidth] = useState<number | null>(null);
@@ -2286,6 +2296,7 @@ function FilesSplitPanel({
   };
 
   useEffect(() => {
+    previewRequest.current += 1;
     void flushSaves();
     setSelection(null);
     setFileFilter("");
@@ -2323,6 +2334,7 @@ function FilesSplitPanel({
   }, []);
 
   const previewFile = async (entry: WorkspaceEntry) => {
+    const request = ++previewRequest.current;
     const previewKind: "markdown" | "code" | "" = isMarkdownFile(entry.path) ? "markdown" : isTextPreviewFile(entry.path) ? "code" : "";
     // 切走前把上一个文件的待保存内容落盘
     void flushSaves();
@@ -2341,6 +2353,7 @@ function FilesSplitPanel({
     }
     try {
       const result = await readFile.call(window.dyworker, workspacePath, entry.path);
+      if (request !== previewRequest.current) return;
       if (!result.ok) {
         if ("binary" in result && result.binary) {
           // 后缀像文本但内容是二进制：交给系统打开
@@ -2360,73 +2373,24 @@ function FilesSplitPanel({
       latestEditRef.current = { path: entry.path, content: initial };
       if (draft && draft.content !== diskContent) scheduleSave(entry.path, draft.content);
     } catch (previewError) {
+      if (request !== previewRequest.current) return;
       setSelection({ path: entry.path, name: entry.name, kind: previewKind, content: "", loading: false, error: `文件读取失败：${previewError instanceof Error ? previewError.message : String(previewError)}` });
-    }
-  };
-
-  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Ctrl/Cmd+S 立即落盘（不等防抖）
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      void flushSaves();
     }
   };
 
   return (
     <div className={`file-split ${treeVisible ? "" : "tree-hidden"}`}>
-      <div className="code-panel-header">
-        <button className="code-open-external file-root-button" aria-label="选择文件" title={workspacePath || "选择文件"} onClick={onChoosePreviewFile}>/</button>
-        {selection ? (
-          <div className="code-breadcrumb" title={selection.path}>
-            {codeBreadcrumbSegments(selection.path, workspacePath).map((segment, index, segments) => (
-              <span className="code-breadcrumb-item" key={index}>
-                {index > 0 && <span className="code-breadcrumb-sep">›</span>}
-                <span className={index === segments.length - 1 ? "code-breadcrumb-current" : ""}>{segment}</span>
-              </span>
-            ))}
-          </div>
-        ) : (
-          <div className="code-breadcrumb" />
-        )}
-        {selection && saveState !== "idle" && !selection.loading && !selection.error && (
-          <span className={`file-save-state ${saveState}`}>
-            {saveState === "pending" ? "待保存" : saveState === "saving" ? "保存中…" : "已保存"}
-          </span>
-        )}
-        {selection && selection.kind === "markdown" && (
-          <button
-            className="code-open-external"
-            onClick={() => setShowSource((value) => !value)}
-            disabled={selection.loading || Boolean(selection.error)}
-            title={showSource ? "返回即时渲染编辑" : "查看 Markdown 源代码"}
-          >
-            {showSource ? "查看预览" : "查看源代码"}
-          </button>
-        )}
-        {selection && (
-          <button
-            className="code-open-external primary"
-            onClick={() => void window.dyworker?.revealInFolder?.(selection.path)}
-            disabled={selection.loading}
-            title="在系统文件管理器中打开所在目录"
-          >
-            <FolderOpen size={13} />
-            打开
-          </button>
-        )}
-        <button className="icon-button subtle tiny" onClick={onRefresh} aria-label="刷新文件列表" title="刷新文件列表" disabled={!workspacePath}>
-          <RefreshCw size={13} />
-        </button>
-        <button
-          className="icon-button subtle tiny file-tree-toggle"
-          onClick={() => setTreeVisible((value) => !value)}
-          aria-label={treeVisible ? "隐藏文件树" : "显示文件树"}
-          aria-pressed={treeVisible}
-          title={treeVisible ? "隐藏文件树" : "显示文件树"}
-        >
-          <FolderOpen size={18} />
-        </button>
-      </div>
+      <FileBrowserToolbar
+        path={selection?.path} workspacePath={workspacePath} content={editContent}
+        textReady={Boolean(selection && !selection.loading && !selection.error)}
+        wrap={wrap} onToggleWrap={() => setWrap(value => !value)}
+        treeVisible={treeVisible} onToggleTree={() => setTreeVisible(value => !value)}
+        onChooseFile={onChoosePreviewFile} onRefresh={onRefresh}
+        onToggleSource={selection?.kind === "markdown" ? () => setShowSource(value => !value) : undefined}
+        showSource={showSource}
+        beforeOpen={async () => { await flushSaves(); if (pendingSavesRef.current.size || savingRef.current) throw new Error("文件尚未保存，请保存完成后再打开"); }}
+        status={selection && saveState !== "idle" && !selection.loading && !selection.error ? <span className={`file-save-state ${saveState}`}>{saveState === "pending" ? "待保存" : saveState === "saving" ? "保存中…" : "已保存"}</span> : undefined}
+      />
       <div className="file-split-body">
         <div className="file-split-preview">
           <div className="file-split-preview-inner">
@@ -2452,19 +2416,14 @@ function FilesSplitPanel({
                   name={selection.name}
                   value={editContent}
                   plainSource={showSource}
+                  wrap={wrap}
                   onChange={(value) => handleEditChange(selection.path, value)}
                   onSaveRequest={() => void flushSaves()}
                 />
               ) : (
                 // 文本文件打开即编辑状态，自动保存
-                <textarea
-                  className="file-editor"
-                  value={editContent}
-                  onChange={(event) => handleEditChange(selection.path, event.target.value)}
-                  onKeyDown={handleEditorKeyDown}
-                  spellCheck={false}
-                  aria-label={`编辑 ${selection.name}`}
-                />
+                <FileTextEditor key={selection.path} name={selection.name} value={editContent} wrap={wrap}
+                  onChange={(value) => handleEditChange(selection.path, value)} onSave={() => void flushSaves()} />
               )}
               </>
             )}
@@ -14117,7 +14076,7 @@ export function App() {
           )}
 
           {!menuPageShown && activeToolPanelKind === "preview" && activeToolPanelTab?.filePath && (
-            <FilePreviewPanel key={`${activeId}:${activeToolPanelTab.id}:${activeToolPanelTab.previewRevision || 0}`} path={activeToolPanelTab.filePath} workspacePath={activeToolPanelTab.previewWorkspacePath || workspacePath} />
+            <FilePreviewPanel key={`${activeId}:${activeToolPanelTab.id}:${activeToolPanelTab.previewRevision || 0}`} path={activeToolPanelTab.filePath} workspacePath={activeToolPanelTab.previewWorkspacePath || workspacePath} onChooseFile={() => void choosePreviewFile()} onPathChange={path => setToolPanelTabs(current => current.map(tab => tab.id === activeToolPanelTab.id ? { ...tab, filePath: path, title: path.split(/[\\/]/).pop() || "文件预览" } : tab))} />
           )}
 
           {!menuPageShown && activeToolPanelKind === "files" && (

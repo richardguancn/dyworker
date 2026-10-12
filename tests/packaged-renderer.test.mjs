@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import viteConfig from "../vite.config.mjs";
 
 const entryPath = path.resolve("dist/client/index.html");
 
@@ -31,5 +32,16 @@ test("packaged renderer assets resolve beside the local HTML entry", () => {
       fs.existsSync(fileURLToPath(resolvedUrl)),
       `${reference} resolves to a missing packaged file: ${fileURLToPath(resolvedUrl)}`,
     );
+  }
+});
+
+test("packaged renderer JavaScript stays within the configured chunk budget", () => {
+  const assetsPath = path.join(path.dirname(entryPath), "assets");
+  const scripts = fs.readdirSync(assetsPath).filter((name) => name.endsWith(".js"));
+  assert.ok(scripts.length > 0, "the build should contain JavaScript assets");
+  const limit = viteConfig.build.chunkSizeWarningLimit * 1000;
+  for (const name of scripts) {
+    const size = fs.statSync(path.join(assetsPath, name)).size;
+    assert.ok(size <= limit, `${name} is ${size} bytes, exceeding the ${limit}-byte chunk budget`);
   }
 });

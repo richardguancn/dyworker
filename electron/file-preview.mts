@@ -6,7 +6,7 @@ const OFFICE = new Set([".doc", ".docx", ".docm", ".xlsx", ".xlsm", ".xls", ".pp
 const TEXT = new Set([".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml", ".xml", ".log", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".sql", ".sh", ".html", ".htm", ".ini", ".toml", ".c", ".cpp", ".h", ".java", ".go", ".rs", ".vue", ".svelte"]);
 export const MAX_PREVIEW_BYTES = 32 * 1024 * 1024;
 
-export async function resolvePreviewFile(workspacePath, filePath) {
+export async function resolvePreviewFile(workspacePath, filePath, enforceSizeLimit = true) {
   if (!workspacePath || !filePath) throw new Error("缺少工作目录或文件路径");
   const root = await fs.realpath(workspacePath);
   const target = await fs.realpath(path.resolve(root, filePath));
@@ -14,7 +14,7 @@ export async function resolvePreviewFile(workspacePath, filePath) {
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("文件不在当前工作目录内");
   const stat = await fs.stat(target);
   if (!stat.isFile()) throw new Error("请选择文件，不能预览文件夹");
-  if (stat.size > MAX_PREVIEW_BYTES) throw new Error("文件超过 32 MB，请使用系统应用打开");
+  if (enforceSizeLimit && stat.size > MAX_PREVIEW_BYTES) throw new Error("文件超过 32 MB，请使用系统应用打开");
   return { path: target, name: path.basename(target), size: stat.size };
 }
 

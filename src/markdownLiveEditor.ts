@@ -26,11 +26,13 @@ export interface MarkdownLiveEditorOptions {
   onSaveRequest?: () => void;
   /** 纯源码模式（「查看源代码」）：关闭装饰渲染 */
   plainSource?: boolean;
+  wrap?: boolean;
   placeholderText?: string;
 }
 
 export interface MarkdownLiveEditorHandle {
   setPlainSource(plain: boolean): void;
+  setWrap(wrap: boolean): void;
   /** 外部内容同步（草稿恢复等）；编辑器持有焦点时不回写，避免打断输入 */
   setValue(value: string): void;
   focus(): void;
@@ -416,9 +418,10 @@ const liveMarkdownDecorations = [
 
 export function createMarkdownLiveEditor(host: HTMLElement, options: MarkdownLiveEditorOptions): MarkdownLiveEditorHandle {
   const renderCompartment = new Compartment();
+  const wrapCompartment = new Compartment();
   const extensions: Extension[] = [
     markdown({ extensions: GFM }),
-    EditorView.lineWrapping,
+    wrapCompartment.of(options.wrap === false ? [] : EditorView.lineWrapping),
     history(),
     keymap.of([
       {
@@ -440,6 +443,7 @@ export function createMarkdownLiveEditor(host: HTMLElement, options: MarkdownLiv
   ];
   const view = new EditorView({ state: EditorState.create({ doc: options.value, extensions }), parent: host });
   return {
+    setWrap(wrap: boolean) { view.dispatch({ effects: wrapCompartment.reconfigure(wrap ? EditorView.lineWrapping : []) }); },
     setPlainSource(plain: boolean) {
       view.dispatch({ effects: renderCompartment.reconfigure(plain ? [] : liveMarkdownDecorations) });
     },

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFilePreview } from "../../file-preview.mts";
+import { fileAppIcon, fileBrowserPaths, openFileTerminal, saveFileAs } from '../../file-browser.mts';
 // IPC 域插件：工作区（workspace:* / workspace-pins:*）。
 // 领域能力来自 electron/workspace.mts（纯函数，直接 import）；
 // 桌面边界（原生目录选择器/系统打开/文件管理器定位）与状态文件由壳层注入。
@@ -10,7 +11,7 @@ export function workspaceIpcPlugin(deps) {
   return {
     name: "ipc:workspace",
     apply(ctx) {
-      const { trustedHandle, dataFile, readJson, writeJson, dialog, shell, getMainWindow, isTrustedRendererUrl } = deps;
+      const { trustedHandle, dataFile, readJson, writeJson, dialog, shell, app, getMainWindow, isTrustedRendererUrl } = deps;
 
       trustedHandle("workspace:choose", async () => {
         const result = await dialog.showOpenDialog(getMainWindow(), {
@@ -24,6 +25,11 @@ export function workspaceIpcPlugin(deps) {
 
       trustedHandle("workspace:preview-file", (_event, payload) =>
         readFilePreview(String(payload?.workspacePath || ""), String(payload?.filePath || "")));
+
+      trustedHandle('workspace:file-paths', (_event, payload) => fileBrowserPaths(String(payload?.workspacePath || ''), String(payload?.filePath || '')));
+      trustedHandle('workspace:file-terminal', (_event, payload) => openFileTerminal(String(payload?.workspacePath || ''), String(payload?.filePath || '')));
+      trustedHandle('workspace:file-save-as', (_event, payload) => saveFileAs(String(payload?.workspacePath || ''), String(payload?.filePath || ''), { dialog, parent: getMainWindow(), content: payload?.content }));
+      trustedHandle('workspace:file-icon', (_event, payload) => fileAppIcon(app, String(payload?.workspacePath || ''), String(payload?.filePath || '')));
 
       trustedHandle("workspace:choose-preview-file", async () => {
         const result = await dialog.showOpenDialog(getMainWindow(), { title: "打开文件预览", properties: ["openFile"] });
