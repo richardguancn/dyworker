@@ -92,10 +92,12 @@ export function AppearanceSettingsPanel() {
 
   return (
     <div className="appearance-panel">
+      <div className="appearance-fields">
       <ThemeSection draft={draft} />
       <BackgroundSection draft={draft} imageUrl={store.imageUrl} imageError={store.imageError} previewOnly={store.previewOnly} />
       <GlassSection draft={draft} capabilities={store.capabilities} effective={store.effective} />
       <TypographySection draft={draft} />
+      </div>
       <ActionsBar store={store} />
     </div>
   );
@@ -245,12 +247,12 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
       <div className="dialog-section-title">背景</div>
       <ColorRow draft={draft} resolved="light" />
       <ColorRow draft={draft} resolved="dark" />
-      <div className="appearance-row">
+      <div className="appearance-row appearance-control-row">
         <span className="appearance-row-label">
           背景透明度
           <small>只调整背景，文字保持清晰；无图片时透出基础底色</small>
         </span>
-        <div className="appearance-slider-row" style={{ flex: 1 }}>
+        <div className="appearance-slider-row">
           <input
             type="range"
             min={0}
@@ -567,9 +569,9 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
           ))}
         </div>
       </div>
-      <div className="appearance-row">
+      <div className="appearance-row appearance-control-row">
         <span className="appearance-row-label">正文字号<small>只放大聊天与 Markdown 阅读内容，代码与日志保持等宽字体</small></span>
-        <div className="appearance-slider-row" style={{ flex: 1 }}>
+        <div className="appearance-slider-row">
           <input
             type="range"
             min={14}
@@ -641,10 +643,12 @@ function ActionsBar({ store }: { store: ReturnType<typeof useAppearanceStore> })
 
   return (
     <div className="appearance-actions">
+      <div className="appearance-action-status" role="status">
       {store.dirty && <span className="appearance-status">预览中，保存后保留</span>}
       {store.previewOnly && <span className="appearance-status">当前环境仅预览，外观不会保存</span>}
-      {status && <span className={`appearance-status ${status.kind}`}>{status.text}</span>}
-      <span className="spacer" />
+      {status && (status.kind === "error" || !store.dirty) && <span className={`appearance-status ${status.kind}`}>{status.text}</span>}
+      </div>
+      <div className="appearance-action-buttons">
       <button type="button" className="button-secondary" onClick={() => { resetDraft(); setStatus(null); }}>
         恢复默认
       </button>
@@ -654,6 +658,7 @@ function ActionsBar({ store }: { store: ReturnType<typeof useAppearanceStore> })
       <button type="button" className="button-primary" onClick={() => void save()} disabled={saving || store.previewOnly || !store.dirty}>
         {saving ? "保存中…" : "保存外观"}
       </button>
+      </div>
     </div>
   );
 }

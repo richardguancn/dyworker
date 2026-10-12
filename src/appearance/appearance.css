@@ -128,14 +128,20 @@ html[data-translucent="true"] .identity-dialog {
   background: var(--surface-strong, var(--surface));
 }
 
-/* 主区域与独立标题栏沿用侧栏材质。内部卡片不重复叠加底色，
+/* 主区域沿用侧栏材质。内部卡片不重复叠加底色，
    避免相同透明度叠两层后变成更厚重的黑块/白块。
    输入框（composer-card）例外：它悬浮在对话流上方、正文从其后流过，
    必须用 --card-raised 托底保证可读，见上方单独规则。 */
-html[data-translucent="true"] .main-panel,
+html[data-translucent="true"] .main-panel {
+  background: var(--sidebar);
+}
+
+/* 标题栏（含深色态）不铺底色：它与左侧图标栏一样直接贴在系统材质/桌面上。
+   铺一层侧栏色会让顶部变成一条实色带，而下面透出桌面的图标栏是裸材质，
+   两者在左上角撞出一条明显分界（实测 2026-10-11）。 */
 html[data-translucent="true"] .titlebar,
 html[data-theme="dark"][data-translucent="true"] .titlebar {
-  background: var(--sidebar);
+  background: transparent;
 }
 
 html[data-translucent="true"] .topbar,
@@ -178,11 +184,14 @@ html[data-translucent="true"] .new-task-button:hover {
    填充色沿用 var 面板色（玻璃开启时 derivePalette 强制面板保留透出），
    玻璃专属的是背景模糊、边缘高光与层次阴影。 */
 
-/* 玻璃边缘高光 + 层次阴影（inset 高光为主，赋予 macOS 玻璃边缘晶莹感） */
+/* 玻璃边缘高光只用于内容表面。任务顶栏位于全宽标题栏内，
+   给它加高光/阴影会把透明标题栏切成独立矩形。桌面右侧面板跨两行，
+   材质放到正文容器，避免标签栏在标题栏内再形成一个玻璃块。 */
 html[data-glass]:not([data-glass="off"]) .sidebar,
-html[data-glass]:not([data-glass="off"]) .topbar,
 html[data-glass]:not([data-glass="off"]) .main-panel,
-html[data-glass]:not([data-glass="off"]) .tool-panel,
+html[data-glass]:not([data-glass="off"]) .app-shell:not(.reference-layout) .tool-panel,
+html[data-glass]:not([data-glass="off"]) .reference-layout.platform-linux .tool-panel,
+html[data-glass]:not([data-glass="off"]) .reference-layout:not(.platform-linux) .tool-panel-scroll,
 html[data-glass]:not([data-glass="off"]) .composer-card {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.42),
@@ -195,9 +204,10 @@ html[data-glass]:not([data-glass="off"]) .composer-card {
 }
 
 html[data-theme="dark"][data-glass]:not([data-glass="off"]) .sidebar,
-html[data-theme="dark"][data-glass]:not([data-glass="off"]) .topbar,
 html[data-theme="dark"][data-glass]:not([data-glass="off"]) .main-panel,
-html[data-theme="dark"][data-glass]:not([data-glass="off"]) .tool-panel,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .app-shell:not(.reference-layout) .tool-panel,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .reference-layout.platform-linux .tool-panel,
+html[data-theme="dark"][data-glass]:not([data-glass="off"]) .reference-layout:not(.platform-linux) .tool-panel-scroll,
 html[data-theme="dark"][data-glass]:not([data-glass="off"]) .composer-card {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
@@ -205,10 +215,20 @@ html[data-theme="dark"][data-glass]:not([data-glass="off"]) .composer-card {
     0 6px 22px rgba(0, 0, 0, 0.24);
 }
 
+/* 共用内容表面的相邻区域保持平整，避免玻璃投影沿左右分隔线叠加。 */
+html[data-glass]:not([data-glass="off"]) .app-shell.reference-layout .sidebar,
+html[data-glass]:not([data-glass="off"]) .app-shell.reference-layout .main-panel,
+html[data-glass]:not([data-glass="off"]) .app-shell.reference-layout .tool-panel,
+html[data-glass]:not([data-glass="off"]) .app-shell.reference-layout .tool-panel .tool-panel-scroll {
+  box-shadow: none;
+}
+
 /* 标准模式只在外层面板做一次背景模糊；内层控件直接透出该材质。 */
 html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .sidebar,
 html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .main-panel,
-html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .tool-panel {
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .app-shell:not(.reference-layout) .tool-panel,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .reference-layout.platform-linux .tool-panel,
+html[data-glass]:not([data-glass="off"]):not([data-glass-lightweight="true"]) .reference-layout:not(.platform-linux) .tool-panel-scroll {
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.25);
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.25);
 }
@@ -253,8 +273,10 @@ html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
 /* 减少动态效果：禁用玻璃相关过渡 */
 @media (prefers-reduced-motion: reduce) {
   html[data-glass]:not([data-glass="off"]) .sidebar,
-  html[data-glass]:not([data-glass="off"]) .topbar,
-  html[data-glass]:not([data-glass="off"]) .tool-panel,
+  html[data-glass]:not([data-glass="off"]) .main-panel,
+  html[data-glass]:not([data-glass="off"]) .app-shell:not(.reference-layout) .tool-panel,
+  html[data-glass]:not([data-glass="off"]) .reference-layout.platform-linux .tool-panel,
+  html[data-glass]:not([data-glass="off"]) .reference-layout:not(.platform-linux) .tool-panel-scroll,
   html[data-glass]:not([data-glass="off"]) .composer-card,
   .appearance-backdrop::after {
     transition: none;
@@ -266,8 +288,45 @@ html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
 .appearance-panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+html .settings-page .settings-content:has(> .appearance-panel) {
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+html .settings-page .settings-content > .appearance-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.appearance-fields {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
   gap: 14px;
-  padding-bottom: 4px;
+  padding: 0 6px 24px 0;
+}
+
+.appearance-fields > * { flex-shrink: 0; }
+
+html .settings-page .appearance-fields .dialog-section-title {
+  margin: 24px 0 0;
+}
+
+html .settings-page .appearance-fields .dialog-section-title:first-child {
+  margin-top: 0;
+}
+
+.appearance-fields .mcp-server-name small {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.6;
 }
 
 .appearance-row {
@@ -438,12 +497,47 @@ html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
-.appearance-slider-row input[type="range"] {
+/* 滑块不是文字输入框，明确覆盖设置页及深色主题的通用输入样式。 */
+html .settings-dialog .settings-content .appearance-slider-row input[type="range"] {
   flex: 1;
-  min-width: 120px;
+  width: 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   accent-color: var(--accent);
+  cursor: pointer;
+}
+
+html .settings-dialog .settings-content .appearance-slider-row input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.appearance-control-row {
+  gap: 16px;
+}
+
+.appearance-control-row .appearance-row-label {
+  flex: 1 1 240px;
+  min-width: 0;
+  line-height: 1.6;
+}
+
+.appearance-control-row .appearance-row-label small {
+  display: block;
+  margin: 2px 0 0;
+}
+
+.appearance-control-row .appearance-slider-row {
+  flex: 1 1 220px;
 }
 
 .appearance-slider-value {
@@ -517,18 +611,45 @@ html[data-theme="dark"][data-has-bg-image="true"] .tool-summary {
 }
 
 .appearance-actions {
-  position: sticky;
-  bottom: 0;
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin: 6px -4px -4px;
-  padding: 10px 4px 2px;
-  background: linear-gradient(transparent, var(--card) 30%);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
 }
 
-.appearance-actions .spacer {
-  flex: 1;
+.appearance-action-status {
+  display: flex;
+  flex: 1 1 150px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.appearance-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.appearance-action-buttons button {
+  white-space: nowrap;
+}
+
+@container (max-width: 540px) {
+  .appearance-control-row {
+    gap: 6px;
+  }
+
+  .appearance-control-row .appearance-row-label,
+  .appearance-control-row .appearance-slider-row {
+    flex-basis: 100%;
+  }
 }
 
 .appearance-status {

@@ -29,6 +29,7 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
   border: 0;
   background: transparent;
   backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .reference-layout.platform-darwin .titlebar { padding-left: 96px; }
 .reference-layout.platform-darwin .window-controls,
@@ -245,6 +246,7 @@ html .reference-layout .titlebar-conversation .topbar {
   border: 0;
   background: transparent;
   backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .reference-layout .titlebar-conversation .topbar-left { flex: 1; overflow: hidden; }
 .reference-layout .titlebar-conversation .topbar-left strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

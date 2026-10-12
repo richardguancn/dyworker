@@ -450,7 +450,11 @@ test("防残影保护：系统背景下未设置背景图时通配禁用页面�
 test("顶栏与标题栏背景随透明度与面板色联动（data-translucent 下避免重复叠加底色）", async () => {
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
   assert.match(css, /html\[data-translucent="true"\]\s*\.topbar[\s\S]*?background:\s*transparent/);
-  assert.match(css, /html\[data-translucent="true"\]\s*\.titlebar[\s\S]*?background:\s*var\(--sidebar\)/);
+  assert.match(css, /html\[data-translucent="true"\]\s*\.main-panel[\s\S]*?background:\s*var\(--sidebar\)/);
+  // 标题栏不铺侧栏材质：它与左侧图标栏一样直接贴系统材质/桌面，
+  // 否则顶部会成一条实色带，和下面透出桌面的图标栏断开（实测 2026-10-11）。
+  assert.match(css, /html\[data-translucent="true"\]\s*\.titlebar[\s\S]*?background:\s*transparent/);
+  assert.doesNotMatch(css, /\.titlebar[\s\S]{0,40}background:\s*var\(--sidebar\)/);
 });
 
 test("macOS 液态玻璃效果：main-panel 参与毛玻璃模糊，背景图带有景深平滑与文本可读性微阴影", async () => {
