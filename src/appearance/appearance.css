@@ -86,6 +86,12 @@ html[data-translucent="true"] .sidebar {
   border-right-color: var(--border);
 }
 
+/* 深色态的顶部提亮只属于不透出模式：透出（玻璃/自定义色/背景图）时左侧栏
+   与正文区一样用面板材质，避免侧栏被那条不透明的渐变盖住。 */
+html[data-translucent="true"] .reference-layout .sidebar {
+  background: var(--sidebar);
+}
+
 html[data-translucent="true"] .sidebar-search,
 html[data-translucent="true"] .sidebar-search input {
   background: var(--surface);

@@ -14,7 +14,8 @@
   --conversation-tabs-height: 34px;
   --titlebar-height: 48px;
   --surface: #f8f6ee;
-  --sidebar: #f2efe5;
+  /* 左侧栏与正文区共用一个底色，不做深浅区分（用户实报：左右区域背景要统一） */
+  --sidebar: #f8f6ee;
   --sidebar-hover: rgba(72, 74, 68, 0.05);
   --sidebar-active: #efecdf;
   --card: #fffdf7;
@@ -8540,7 +8541,8 @@ body.resizing-panels .app-shell {
     background: #181916;
     color-scheme: dark;
     --surface: #181916;
-    --sidebar: #20211e;
+    /* 左侧栏与正文区共用一个底色（用户实报：左右区域背景要统一） */
+    --sidebar: #181916;
     --sidebar-hover: rgba(255, 255, 255, 0.055);
     --sidebar-active: #2a2b27;
     --card: #252622;
@@ -8577,6 +8579,12 @@ html:not([data-theme]) .topbar {
 
 
   html:not([data-theme]) .main-panel {
+    background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
+  }
+
+
+  /* 深色态的顶部提亮要和正文区一致，左侧栏不能是另一块平色 */
+  html:not([data-theme]) .reference-layout .sidebar {
     background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
   }
 
@@ -10041,7 +10049,8 @@ html:not([data-theme]) .step-track {
     background: #181916;
     color-scheme: dark;
     --surface: #181916;
-    --sidebar: #20211e;
+    /* 左侧栏与正文区共用一个底色（用户实报：左右区域背景要统一） */
+    --sidebar: #181916;
     --sidebar-hover: rgba(255, 255, 255, 0.055);
     --sidebar-active: #2a2b27;
     --card: #252622;
@@ -10078,6 +10087,12 @@ html[data-theme="dark"] .topbar {
 
 
   html[data-theme="dark"] .main-panel {
+    background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
+  }
+
+
+  /* 深色态的顶部提亮要和正文区一致，左侧栏不能是另一块平色 */
+  html[data-theme="dark"] .reference-layout .sidebar {
     background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
   }
 

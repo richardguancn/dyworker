@@ -15,7 +15,8 @@ export interface PanelDefaults {
 
 export const LIGHT_DEFAULTS: PanelDefaults = {
   surface: "#fafafa",
-  sidebar: "#f7f7f7",
+  // 侧栏与正文区同色：左侧栏不再是另一个色号（用户实报：左右区域背景要统一）
+  sidebar: "#fafafa",
   sidebarActive: "#e9e9e9",
   card: "#fafafa",
   bubble: "#efeee9",
@@ -24,7 +25,7 @@ export const LIGHT_DEFAULTS: PanelDefaults = {
 
 export const DARK_DEFAULTS: PanelDefaults = {
   surface: "#181916",
-  sidebar: "#20211e",
+  sidebar: "#181916",
   sidebarActive: "#2a2b27",
   card: "#252622",
   bubble: "#2a2b27",
@@ -140,7 +141,8 @@ export function derivePalette(
   const entries: Array<[string, string | null, number]> = [
     ["--surface", mixColor(baseHex, defaults.surface, 0.5), alpha],
     ["--surface-strong", mixColor(baseHex, defaults.surface, 0.5), alpha],
-    ["--sidebar", mixColor(baseHex, defaults.sidebar, 0.35), alpha],
+    // 侧栏与正文区同色：混入比例必须和 --surface 一致，否则自定义色/透明度下又会出现左右两块底
+    ["--sidebar", mixColor(baseHex, defaults.surface, 0.5), alpha],
     ["--sidebar-active", mixColor(baseHex, defaults.sidebarActive, 0.3), alpha],
     // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致；alpha 与侧边栏一致
     ["--card", mixColor(baseHex, defaults.card, 0.42), alpha],

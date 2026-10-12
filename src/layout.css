@@ -5,7 +5,8 @@
   --titlebar-height: 44px;
   --window-surface: #f0f0f0;
   --surface: #fafafa;
-  --sidebar: #f7f7f7;
+  /* 左侧栏与正文区共用同一块底：两边底色必须一致（用户实报） */
+  --sidebar: #fafafa;
   --sidebar-active: #e9e9e9;
   --card: #fafafa;
 }
