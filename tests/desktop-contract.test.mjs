@@ -1963,3 +1963,14 @@ test("渲染端：引导失败后禁止任何写回", () => {
   assert.match(app, /if \(bootstrapFailedRef\.current\) \{\n\s+return failSave\(/, "手动保存设置也要被拦住");
   assert.match(app, /settingsSaveErrorRef\.current = message/, "保存失败原因要交给设置页");
 });
+
+// 过程思考项默认收起：内容只在用户点击时展开，流式进行中也不自动展开。
+// 真实反馈：一段长推理自动展开会把整条过程流顶开，下面的过程行被挤出视野。
+test("渲染端：过程思考项默认收起", () => {
+  const start = app.indexOf("function ProcessThoughtItem");
+  const end = app.indexOf("function ProcessSubagentItem");
+  assert.ok(start > 0 && end > start, "App.tsx 里应有 ProcessThoughtItem");
+  const block = app.slice(start, end);
+  assert.match(block, /const \[open, setOpen\] = useState\(false\)/, "初始状态必须是收起");
+  assert.doesNotMatch(block, /useState\(Boolean\(streaming\)\)/, "不得再按流式自动展开");
+});

@@ -3502,7 +3502,9 @@ function ActivityList({ activities }: { activities: ActivityRecord[] }) {
 }
 
 function ProcessThoughtItem({ text, durationMs, streaming }: { text: string; durationMs?: number; streaming?: boolean }) {
-  const [open, setOpen] = useState(Boolean(streaming));
+  // 默认收起：思考内容只在用户点击时展开，流式进行中也不自动展开，
+  // 否则一段长推理会把过程流整片顶开（行标题会用「正在深度思考…」提示仍在进行）
+  const [open, setOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
