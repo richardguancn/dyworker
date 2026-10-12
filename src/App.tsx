@@ -6910,6 +6910,8 @@ function ForkBranchIcon({ size = 16 }: { size?: number }) {
 
 export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
+  // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
+  const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
   const [activeId, setActiveId] = useState(previewSessions[0].id);
   const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext | null>(null);
@@ -7289,11 +7291,11 @@ export function App() {
   const recordingChunksRef = useRef<Blob[]>([]);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
-  const newTaskGuardRef = useRef(false);
   const sessionRenameRequestsRef = useRef(new Map<string, {title:string;token:symbol}>());
 
   // 会话更新与通知工具：定义在状态之后、各 effect 之前，供渠道实时事件监听器与 runTask 共用
   const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
+    setNewTaskDraft((current) => current?.id === id ? updater(current) : current);
     setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
   };
 
@@ -7754,17 +7756,19 @@ export function App() {
       try {
         const state = await window.dyworker.getInitialState();
         if (cancelled) return;
-        const loaded = keepSingleUnstartedSession(state.sessions.length ? state.sessions : [makeSession(state.workspacePath)]);
+        const loaded = keepSingleUnstartedSession(state.sessions);
+        const initialDraft = loaded.length ? null : makeSession(state.workspacePath);
+        setNewTaskDraft(initialDraft);
         setSessions(loaded.map(session => session.goal && !session.goalState
           ? { ...session, ...startGoal(session.goal) }
           : session));
         // 种子保存基线：首次保存不需要把整档重发一遍
         savedSessionsRef.current = new Map(loaded.map((session) => [session.id, session]));
         // 恢复上次选中的会话；已不存在（被删/来自旧版本存档）则回退到列表第一项
-        const restoredActiveId = loaded.some((session) => session.id === state.activeSessionId) ? state.activeSessionId : loaded[0].id;
-        setActiveId(restoredActiveId || loaded[0].id);
+        const restoredActiveId = loaded.some((session) => session.id === state.activeSessionId) ? state.activeSessionId : loaded[0]?.id;
+        setActiveId(restoredActiveId || initialDraft!.id);
         // 全局工作目录可能被上次的无目录会话清空，优先用当前会话保存的目录
-        setWorkspacePath(loaded[0].workspacePath || state.workspacePath);
+        setWorkspacePath(loaded.find(session => session.id === restoredActiveId)?.workspacePath || state.workspacePath);
         setWorkspaceEntries(state.workspaceEntries);
         setSettings(state.settings);
         setPinnedWorkspacePaths(state.pinnedWorkspacePaths || []);
@@ -7810,7 +7814,7 @@ export function App() {
       changed: changed.map(session => session.goalState?.status === "active" ? { ...session, goalState: { ...session.goalState, elapsedMs: goalElapsed(session), activeSince: Date.now() } } : session),
       removed,
       order: current.map((session) => session.id),
-      activeId: activeIdRef.current,
+      activeId: currentIds.has(activeIdRef.current) ? activeIdRef.current : "",
       meta: current.map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath })),
     };
   };
@@ -8471,7 +8475,7 @@ export function App() {
     syncAtBottom();
   }, [sessions, runningSessionIds, activeId]);
 
-  const activeSession = sessions.find((session) => session.id === activeId) || sessions[0];
+  const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
   // 输入区展示的工作目录以当前会话为准，全局值仅作兜底（老会话可能保存了自己的目录）
   const composerWorkspacePath = String(activeSession?.workspacePath || workspacePath || "").trim();
   // 后台任务拓扑按当前会话隔离：只取本会话消息 runId 对应的轨迹，避免切换会话后串看别的会话。
@@ -8824,25 +8828,22 @@ export function App() {
     setPluginsPageOpen(false);
     setConversationView("chat");
     const nextWorkspacePath = String(targetWorkspacePath || "");
-    // DSH 空任务已经可以拥有独立存档，不能当作可迁移目录的普通草稿复用。
-    const unstartedSession = sessions.find((session) => session.runtime !== 'dsh' && !session.archived && session.messages.length === 0);
-    if (unstartedSession) {
-      setActiveId(unstartedSession.id);
-      setWorkspaceMenuPath(null);
-      if (unstartedSession.workspacePath !== nextWorkspacePath) {
-        updateSession(unstartedSession.id, (session) => ({ ...session, workspacePath: nextWorkspacePath }));
-        applyWorkspaceSelection(nextWorkspacePath);
-      }
+    if (newTaskDraft) {
+      setActiveId(newTaskDraft.id);
+      updateSession(newTaskDraft.id, draft => ({ ...draft, workspacePath: nextWorkspacePath }));
+      applyWorkspaceSelection(nextWorkspacePath);
+      setActiveSkills([]);
+      setEditingMessage(null);
+      closeFilePanelTabs();
+      setNotice("");
       window.setTimeout(() => textareaRef.current?.focus(), 0);
       return;
     }
-    if (newTaskGuardRef.current) return;
-    newTaskGuardRef.current = true;
 
     // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
     // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
     const session = makeSession(nextWorkspacePath);
-    setSessions((current) => [session, ...current]);
+    setNewTaskDraft(session);
     setActiveId(session.id);
     applyWorkspaceSelection(nextWorkspacePath);
     setComposer("");
@@ -8916,7 +8917,6 @@ export function App() {
 
   const deleteSession = (id: string) => {
     setSessionMenuId(null);
-    newTaskGuardRef.current = false;
     // 会话删除时,它登记的待唤醒一并取消,避免无主的自动续跑
     void window.dyworker?.cancelWakesForSession?.(id);
     setSleepingSessions((current) => {
@@ -8939,7 +8939,8 @@ export function App() {
         setWorkspacePath("");
         setWorkspaceEntries([]);
         setActiveId(fresh.id);
-        return [fresh];
+        setNewTaskDraft(fresh);
+        return [];
       }
       if (id === activeId) setActiveId(remaining[0].id);
       return remaining;
@@ -9046,7 +9047,7 @@ export function App() {
         const fresh = makeSession();
         setWorkspacePath("");
         setWorkspaceEntries([]);
-        setSessions((current) => [fresh, ...current]);
+        setNewTaskDraft(fresh);
         setActiveId(fresh.id);
       }
     }
@@ -10890,7 +10891,6 @@ export function App() {
     }
 
     const taskSessionId = targetSession.id;
-    newTaskGuardRef.current = false;
     const taskRunId = overrideRunId || crypto.randomUUID();
     const cancelPluginInput = () => { void window.dyworker?.cancelTask(targetSession.id, taskRunId); };
     if (pluginSubmission) { pluginSubmission.signal.throwIfAborted(); pluginSubmission.signal.addEventListener('abort', cancelPluginInput, {once:true}); }
@@ -10958,8 +10958,15 @@ export function App() {
       ],
     };
     setEditingMessage(null);
-    sessionsRef.current = sessionsRef.current.map(session => session.id === targetSession.id ? updatedSession : session);
-    setSessions((current) => current.map((session) => session.id === targetSession.id ? updatedSession : session));
+    // 首条有效消息提交时，才把页面草稿提升为真实会话；在异步发送前同步快照。
+    const submittedSessions = sessionsRef.current.some(session => session.id === targetSession.id)
+      ? sessionsRef.current.map(session => session.id === targetSession.id ? updatedSession : session)
+      : [updatedSession, ...sessionsRef.current];
+    sessionsRef.current = submittedSessions;
+    setSessions(current => current.some(session => session.id === targetSession.id)
+      ? current.map(session => session.id === targetSession.id ? updatedSession : session)
+      : [updatedSession, ...current]);
+    setNewTaskDraft(current => current?.id === targetSession.id ? null : current);
 
     if (isQueuedEdit) {
       setNotice("排队中的消息已更新，将在当前任务结束后按新内容执行");
