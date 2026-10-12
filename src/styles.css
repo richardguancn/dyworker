@@ -8702,13 +8702,16 @@ html:not([data-theme]) .browser-toolbar {
 
   html:not([data-theme]) .tool-panel-tab-close,
 html:not([data-theme]) .tool-panel-new-tab,
+html:not([data-theme]) .tool-panel-tab-scroll,
 html:not([data-theme]) .tool-panel-content-heading {
     color: #8b9187;
   }
 
 
   html:not([data-theme]) .tool-panel-tab-close:hover,
-html:not([data-theme]) .tool-panel-new-tab:hover {
+html:not([data-theme]) .tool-panel-new-tab:hover,
+html:not([data-theme]) .tool-panel-tab-scroll:hover,
+html:not([data-theme]) .tool-panel-tab-scroll:focus-visible {
     background: rgba(255, 255, 255, 0.055);
     color: #e0e3db;
   }
@@ -10200,13 +10203,16 @@ html[data-theme="dark"] .browser-toolbar {
 
   html[data-theme="dark"] .tool-panel-tab-close,
 html[data-theme="dark"] .tool-panel-new-tab,
+html[data-theme="dark"] .tool-panel-tab-scroll,
 html[data-theme="dark"] .tool-panel-content-heading {
     color: #8b9187;
   }
 
 
   html[data-theme="dark"] .tool-panel-tab-close:hover,
-html[data-theme="dark"] .tool-panel-new-tab:hover {
+html[data-theme="dark"] .tool-panel-new-tab:hover,
+html[data-theme="dark"] .tool-panel-tab-scroll:hover,
+html[data-theme="dark"] .tool-panel-tab-scroll:focus-visible {
     background: rgba(255, 255, 255, 0.055);
     color: #e0e3db;
   }
@@ -17751,9 +17757,41 @@ pre.trv-trace-inspector-body {
 .file-preview-markdown table { border-collapse: collapse; }
 .file-preview-markdown th, .file-preview-markdown td { padding: 6px 10px; border: 1px solid rgba(128,132,124,.25); }
 .tool-panel-scroll:has(> .file-preview-panel) { padding: 0; overflow: hidden; }
-.tool-panel-tab-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+/* 右侧面板标签条：标签多到放不下时整条可横向滚动。
+   溢出方向上有内容时两端渐隐，并在该端浮出滚动按钮（不溢出时都不出现）。 */
+.tool-panel-tab-strip-wrap { position: relative; display: flex; flex: 1; min-width: 0; align-items: center; }
+.tool-panel-tab-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .tool-panel-tab-strip::-webkit-scrollbar { display: none; }
 .tool-panel-tab-strip .tool-panel-tab { flex: 0 0 auto; min-width: 120px; max-width: 230px; }
+/* 渐隐分两段：最外面 16px 完全透明（滚动按钮就落在这里，不会被标签内容顶着），
+   再往外 24px 渐显，让「后面还有标签」看得出来。 */
+.tool-panel-tab-strip[data-overflow-start="true"] { -webkit-mask-image: linear-gradient(to right, transparent 16px, #000 40px); mask-image: linear-gradient(to right, transparent 16px, #000 40px); }
+.tool-panel-tab-strip[data-overflow-end="true"] { -webkit-mask-image: linear-gradient(to left, transparent 16px, #000 40px); mask-image: linear-gradient(to left, transparent 16px, #000 40px); }
+.tool-panel-tab-strip[data-overflow-start="true"][data-overflow-end="true"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 16px, #000 40px, #000 calc(100% - 40px), transparent calc(100% - 16px));
+  mask-image: linear-gradient(to right, transparent 16px, #000 40px, #000 calc(100% - 40px), transparent calc(100% - 16px));
+}
+.tool-panel-tab-scroll {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 28px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #8d918a;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tool-panel-tab-scroll.prev { left: 0; }
+.tool-panel-tab-scroll.next { right: 0; }
+.tool-panel-tab-scroll:hover,
+.tool-panel-tab-scroll:focus-visible { background: rgba(72, 74, 68, 0.09); color: #4e534b; }
 .plugin-input-claim { margin: 4px 12px; color: var(--muted); font-size: 12px; }
 .mention-menu .plugin-input-crumb { display: inline-flex; width: auto; padding: 4px 8px; font-size: 12px; }
 

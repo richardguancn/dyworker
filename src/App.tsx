@@ -7097,6 +7097,9 @@ export function App() {
   );
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
   const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
+  // 标签条横向溢出状态：两侧滚动按钮与渐隐遮罩只在真正放不下时出现
+  const [toolPanelTabOverflow, setToolPanelTabOverflow] = useState({ start: false, end: false });
+  const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
   const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
   const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("");
@@ -10339,16 +10342,79 @@ export function App() {
     }
   }, [activeId, ready]);
 
+  // 标签条两侧是否还有被藏起来的标签：滚动按钮与渐隐遮罩按这个状态出现。
+  // 标签不多时保持原来的样子（整条空白区仍是窗口拖拽区）。
+  const syncToolPanelTabOverflow = useCallback(() => {
+    const strip = toolPanelTabStripRef.current;
+    if (!strip) return;
+    const maxScrollLeft = strip.scrollWidth - strip.clientWidth;
+    const next = {
+      start: strip.scrollLeft > 1,
+      end: maxScrollLeft - strip.scrollLeft > 1,
+    };
+    setToolPanelTabOverflow((current) => (
+      current.start === next.start && current.end === next.end ? current : next
+    ));
+  }, []);
+
   useEffect(() => {
-    const strip = document.querySelector(".tool-panel-tab-strip");
+    const strip = toolPanelTabStripRef.current;
+    if (!strip) return;
+    syncToolPanelTabOverflow();
+    const observer = new ResizeObserver(() => syncToolPanelTabOverflow());
+    observer.observe(strip);
+    strip.addEventListener("scroll", syncToolPanelTabOverflow, { passive: true });
+    return () => {
+      observer.disconnect();
+      strip.removeEventListener("scroll", syncToolPanelTabOverflow);
+    };
+  }, [syncToolPanelTabOverflow, rightPanelOpen, pristineMenuPage, toolPanelTabs.length]);
+
+  // 标签多起来之后要能滚：Chromium 不会把鼠标竖向滚轮转成横向滚动，
+  // 这里把滚轮位移交给标签条，滚到头就放行（外层其它滚动区不受影响）。
+  useEffect(() => {
+    const strip = toolPanelTabStripRef.current;
+    if (!strip) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) return;
+      const maxScrollLeft = strip.scrollWidth - strip.clientWidth;
+      if (maxScrollLeft <= 0) return;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? strip.clientWidth : 1;
+      const delta = (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) * unit;
+      if (!delta) return;
+      const next = Math.max(0, Math.min(maxScrollLeft, strip.scrollLeft + delta));
+      if (next === strip.scrollLeft) return;
+      strip.scrollLeft = next;
+      event.preventDefault();
+    };
+    strip.addEventListener("wheel", onWheel, { passive: false });
+    return () => strip.removeEventListener("wheel", onWheel);
+  }, [rightPanelOpen, pristineMenuPage, toolPanelTabs.length]);
+
+  // 标签条整体重排（新增/关闭标签、面板宽度变化、面板展开收起）后重新判断溢出
+  useEffect(() => {
+    syncToolPanelTabOverflow();
+  }, [syncToolPanelTabOverflow, toolPanelTabs, appliedToolPanelWidth]);
+
+  // 当前标签必须可见：切标签、开新标签、拖宽面板后都把它带进视野
+  useEffect(() => {
+    const strip = toolPanelTabStripRef.current;
     const tab = strip?.querySelector<HTMLElement>(`[data-tool-panel-tab-id="${activeToolPanelTabId}"]`);
     if (strip && tab) {
       const stripRect = strip.getBoundingClientRect();
       const tabRect = tab.getBoundingClientRect();
       if (tabRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - tabRect.left;
       else if (tabRect.right > stripRect.right) strip.scrollLeft += tabRect.right - stripRect.right;
+      syncToolPanelTabOverflow();
     }
-  }, [activeToolPanelTabId, rightPanelOpen, appliedToolPanelWidth]);
+  }, [activeToolPanelTabId, rightPanelOpen, appliedToolPanelWidth, syncToolPanelTabOverflow]);
+
+  const scrollToolPanelTabStrip = (direction: -1 | 1) => {
+    const strip = toolPanelTabStripRef.current;
+    if (!strip) return;
+    const step = Math.max(180, Math.round(strip.clientWidth * 0.7));
+    strip.scrollBy({ left: direction * step, behavior: "smooth" });
+  };
 
   const closeToolPanelTab = (id: string) => {
     const closing = toolPanelTabs.find(tab => tab.id === id);
@@ -13991,7 +14057,13 @@ export function App() {
 
       <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label="右侧工具栏">
         <div className="tool-panel-tabs" role="tablist" aria-label="打开的文件和网页">
-          <div className="tool-panel-tab-strip">
+          <div className="tool-panel-tab-strip-wrap">
+          <div
+            className="tool-panel-tab-strip"
+            ref={toolPanelTabStripRef}
+            data-overflow-start={toolPanelTabOverflow.start ? "true" : "false"}
+            data-overflow-end={toolPanelTabOverflow.end ? "true" : "false"}
+          >
           {!pristineMenuPage && toolPanelTabs.map((tab) => (
             <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} data-tool-panel-tab-id={tab.id} role="presentation">
               <button
@@ -13999,6 +14071,7 @@ export function App() {
                 role="tab"
                 aria-selected={tab.id === activeToolPanelTabId}
                 onClick={() => focusToolPanelTab(tab.id)}
+                onFocus={(event) => event.currentTarget.closest<HTMLElement>(".tool-panel-tab")?.scrollIntoView({ block: "nearest", inline: "nearest" })}
                 title={tab.title}
               >
                 {tab.kind === "browser"
@@ -14015,6 +14088,27 @@ export function App() {
               </button>
             </div>
           ))}
+          </div>
+          {!pristineMenuPage && toolPanelTabOverflow.start && (
+            <button
+              className="tool-panel-tab-scroll prev"
+              aria-label="向前滚动标签页"
+              title="向前滚动标签页"
+              onClick={() => scrollToolPanelTabStrip(-1)}
+            >
+              <ChevronLeft size={16} />
+            </button>
+          )}
+          {!pristineMenuPage && toolPanelTabOverflow.end && (
+            <button
+              className="tool-panel-tab-scroll next"
+              aria-label="向后滚动标签页"
+              title="向后滚动标签页"
+              onClick={() => scrollToolPanelTabStrip(1)}
+            >
+              <ChevronRight size={16} />
+            </button>
+          )}
           </div>
           {rightPanelOpen && !pristineMenuPage && toolPanelAddMenu}
           <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
