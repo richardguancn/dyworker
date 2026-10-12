@@ -40,7 +40,7 @@ for (const maximized of [false, true]) {
 }
 
 for (const platform of ["linux", "darwin", "win32"]) {
-  test(`窗口选项使用实色内容，Linux 由系统提供边框和阴影：${platform}`, () => {
+  test(`窗口不使用系统标题栏，保留实色内容和桌面阴影：${platform}`, () => {
     const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
     const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
       process: { platform },
@@ -53,7 +53,7 @@ for (const platform of ["linux", "darwin", "win32"]) {
       // preload 路径在 createWindow 里先算出来（缺失时要弹窗报错），此处桩为同一路径
       preloadPath: "/app/electron/preload.cjs",
     });
-    assert.equal(options.frame, platform === "linux");
+    assert.equal(options.frame, false);
     assert.equal(options.hasShadow, true);
     assert.equal(options.backgroundColor, "#f7f7f4");
     assert.notEqual(options.transparent, true);

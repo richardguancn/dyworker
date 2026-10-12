@@ -7817,14 +7817,11 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Linux 系统标题栏占用窗口外框，页面不再重复显示自绘标题栏；
-  // mac 保留应用工具栏，原生红绿灯位于该行左侧；只有 Linux 使用系统标题栏。
-  // 用 useLayoutEffect：首帧绘制前就把类挂到 <html> 上，启动时不闪现自绘标题栏
+  // 所有平台共用应用工具栏；最大化状态在首帧绘制前同步。
   useLayoutEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("native-window-frame", platform === "linux");
     root.classList.toggle("window-maximized", windowMaximized);
-  }, [platform, windowMaximized]);
+  }, [windowMaximized]);
 
   useEffect(() => {
     if (!window.dyworker) return;
@@ -12581,7 +12578,7 @@ export function App() {
             title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
         </div>
-        {!settingsOpen && !pluginsPageOpen && platform !== "linux" && (
+        {!settingsOpen && !pluginsPageOpen && (
           <div className="titlebar-conversation">{conversationHeader}</div>
         )}
         <div className="titlebar-right">
@@ -12639,10 +12636,6 @@ export function App() {
           </div>}
         </div>
         <div className="rail-footer">
-          {platform === "linux" && <button className="rail-button" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
-            title={sidebarOpen ? "收起侧栏" : "展开侧栏"} onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>}
-          {platform === "linux" && !rightPanelOpen && <button className="rail-button" aria-label="展开右侧工具栏" title="展开右侧工具栏"
-            onClick={() => { setRightPanelOpen(true); setToolPanelMenuOpen(toolPanelTabs.length === 0); }}><PanelRightIcon size={18} /></button>}
           <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
             onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
           <button className="rail-profile" aria-label="设置" title="设置" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
@@ -12819,8 +12812,6 @@ export function App() {
       )}
 
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
-        {platform === "linux" && conversationHeader}
-
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
         <div className="conversation-tabs" role="tablist" aria-label="会话视图">

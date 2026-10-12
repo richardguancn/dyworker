@@ -11526,15 +11526,6 @@ html[data-theme="dark"] .step-track {
   }
 
 
-/* Linux 的标题栏、边框和阴影由系统绘制；应用内容贴满客户区。 */
-html.native-window-frame {
-  --titlebar-height: 0px;
-}
-
-html.native-window-frame .titlebar {
-  display: none;
-}
-
 /* 消息渠道面板 */
 .channel-status {
   display: flex;

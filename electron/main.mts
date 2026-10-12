@@ -273,7 +273,7 @@ function applyWindowAppearance() {
   mainWindow.webContents?.invalidate?.();
 }
 
-// Linux 使用系统边框与阴影，不再为自绘阴影扩大应用的输入区域。
+// Linux 使用不透明的无标题栏窗口，由桌面环境提供阴影；不为自绘阴影扩大输入区域。
 // 系统主题变化只在「跟随系统」时生效：显式主题下 themeSource 已固定，此事件不会因系统明暗切换而触发。
 nativeTheme.on("updated", () => {
   applyWindowAppearance();
@@ -784,7 +784,9 @@ function createWindow() {
     backgroundColor: windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
     show: process.platform === "linux",
     title: "DYWorker",
-    frame: process.platform === "linux",
+    // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
+    // 保持不透明，不恢复旧的透明阴影留白或整窗鼠标穿透。
+    frame: false,
     // mac 原生红绿灯位于独立的 44px 窗口工具栏，聊天侧栏品牌行不再占用窗口控件空间。
     // 16px 原生按钮在该行垂直居中；工具栏仍支持拖动窗口。
     ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 14 } } : {}),

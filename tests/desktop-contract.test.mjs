@@ -1206,8 +1206,8 @@ test("外观自定义链路贯穿渲染端、preload 与主进程", () => {
   assert.doesNotMatch(appearanceController, /setOpacity/);
 });
 
-test("Windows 保留自绘标题栏，mac 用原生隐藏标题栏 + 红绿灯内嵌工具栏", () => {
-  assert.match(main, /frame: process\.platform === "linux"/);
+test("Linux/Windows 使用应用标题栏，mac 保留内嵌红绿灯", () => {
+  assert.match(main, /frame: false/);
   // mac：隐藏系统标题栏，原生红绿灯定位进第一行工具栏（不与自绘按钮重复）
   assert.match(main, /titleBarStyle: "hidden"/);
   assert.match(main, /trafficLightPosition/);
@@ -1227,13 +1227,15 @@ test("Windows 保留自绘标题栏，mac 用原生隐藏标题栏 + 红绿灯�
   assert.match(layout, /platform-darwin \.window-controls/);
 });
 
-test("linux 使用系统边框与阴影，不扩大窗口输入区域", () => {
-  assert.match(main, /frame: process\.platform === "linux"/);
+test("linux 隐藏系统标题栏，保留桌面阴影且不扩大窗口输入区域", () => {
+  assert.match(main, /frame: false/);
   assert.match(main, /hasShadow: true/);
   assert.doesNotMatch(main, /transparent: true|LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
-  assert.match(app, /classList\.toggle\("native-window-frame", platform === "linux"\)/);
-  assert.match(styles, /html\.native-window-frame \{\s*--titlebar-height: 0px/);
-  assert.match(styles, /html\.native-window-frame \.titlebar \{\s*display: none/);
+  assert.doesNotMatch(app + styles, /native-window-frame/);
+  assert.doesNotMatch(app, /platform === "linux" && conversationHeader|platform !== "linux" && \(/);
+  const layout = readSource(new URL("../src/layout.css", import.meta.url));
+  assert.doesNotMatch(layout, /platform-linux \.window-controls[^}]*display: none/);
+  assert.match(layout, /:is\(\.platform-win32, \.platform-linux\) \.tool-panel-tabs \{ padding-right: 218px/);
   assert.doesNotMatch(styles, /html\.window-shadow/);
   assert.doesNotMatch(main, /setIgnoreMouseEvents\(true/);
   assert.doesNotMatch(app, /setIgnoreMouse\??\./);
