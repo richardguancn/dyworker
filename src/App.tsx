@@ -129,6 +129,7 @@ import { assistantImageAttachments } from './assistantImages.ts';
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
+import { contentEchoesProcessCommentary } from "./processCommentary.ts";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 
 const now = new Date().toISOString();
@@ -13174,7 +13175,7 @@ export function App() {
                         collapsedActivities={collapsedActivities}
                         onToggleCollapse={toggleActivityCollapse}
                       />
-                      {message.content && (
+                      {message.content && !contentEchoesProcessCommentary(message, { streaming: isStreamingMessage }) && (
                         <InteractiveMessage
                           content={stripControlMarkersCached(message.content)}
                           streaming={isStreamingMessage}
