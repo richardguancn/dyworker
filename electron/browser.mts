@@ -9,6 +9,9 @@ export class BrowserAgent {
   openPanel;
 closePanel;
 getContents;
+listTabs;
+activateTab;
+closeTab;
 controlManager;
 workspacePath;
 downloads;
@@ -16,10 +19,13 @@ downloadSession;
 downloadHandler;
 currentContext;
 reservedDownloadPaths;
-constructor({ openPanel, closePanel, getContents, controlManager, onStateChange } = {} as any) {
+constructor({ openPanel, closePanel, getContents, listTabs, activateTab, closeTab, controlManager, onStateChange } = {} as any) {
     this.openPanel = openPanel;
     this.closePanel = closePanel;
     this.getContents = getContents;
+    this.listTabs = listTabs;
+    this.activateTab = activateTab;
+    this.closeTab = closeTab;
     this.controlManager = controlManager || new BrowserControlManager({ onStateChange });
     this.workspacePath = "";
     this.downloads = [];
@@ -330,6 +336,111 @@ constructor({ openPanel, closePanel, getContents, controlManager, onStateChange 
     };
   }
 
+  /** 面板里的浏览器标签页清单；宿主没有这项能力（老宿主 / 测试桩）时返回 null */
+  panelTabs() {
+    if (typeof this.listTabs !== "function") return null;
+    const tabs = this.listTabs(this.currentContext.ownerSessionId);
+    return Array.isArray(tabs) ? tabs : null;
+  }
+
+  /** browser__tabs list：列出面板里全部标签页，标出当前显示与助手受控的那个 */
+  tabListResult() {
+    const tabs = this.panelTabs();
+    if (!tabs) {
+      // 兼容老宿主：只有「当前受控标签页」一个概念
+      const session = this.controlManager.session;
+      const currentUrl = session?.webContents?.getURL?.() || "";
+      const currentTitle = session?.webContents?.getTitle?.() || "";
+      return {
+        ok: true,
+        result: `当前受控标签页：\n- 标签页 ID: ${session?.tabId || "active"}${session?.webContentsId ? ` (webContents: ${session.webContentsId})` : ""}，网址: ${currentUrl || "about:blank"}，标题: ${currentTitle || "（未命名）"}`
+      };
+    }
+    if (!tabs.length) {
+      return { ok: true, result: "右侧浏览器面板当前没有打开的标签页（可用 browser__open 打开网页）" };
+    }
+    const controlledId = this.controlManager.session?.webContentsId;
+    const lines = tabs.map((tab) => {
+      const marks = [];
+      if (tab.active) marks.push("当前显示");
+      if (tab.webContentsId && controlledId && tab.webContentsId === controlledId) marks.push("助手受控页");
+      const mark = marks.length ? `（${marks.join("、")}）` : "";
+      return `- ${tab.id}${mark} ${tab.title || "（未命名）"}：${tab.url || "空白页"}`;
+    });
+    return { ok: true, result: `右侧浏览器标签页（共 ${tabs.length} 个）：\n${lines.join("\n")}` };
+  }
+
+  /** browser__tabs activate：切到指定标签页，并把控制权移到它的页面上 */
+  async activateTabById(rawTabId) {
+    const tabId = String(rawTabId || "").trim();
+    if (!tabId) return { ok: false, result: "browser__tabs activate 必须提供 tabId 参数" };
+    // 兼容老宿主：没有标签页管理能力时保持原有「比对当前受控标签」的语义
+    if (typeof this.activateTab !== "function") {
+      const session = await this.ensureActiveSession();
+      if (!session) return { ok: false, result: "右侧浏览器面板还没有打开网页" };
+      if ((session.tabId || "active") !== tabId) return { ok: false, result: `找不到指定的标签页 ID: ${tabId}` };
+      return { ok: true, result: `已切换至标签页 ${tabId}` };
+    }
+    const result = await this.activateTab(tabId, this.currentContext.ownerSessionId);
+    if (!result?.ok) return { ok: false, result: result?.result || `找不到指定的标签页 ID: ${tabId}` };
+    if (!result.contents) {
+      // 切到了空白标签页：可见页面已经不是受控页，控制会话跟着暂停，
+      // 避免助手继续操作背后那个看不见的旧页面
+      this.controlManager.pause({ reason: "已切换到空白标签页，操作已暂停" });
+      return { ok: true, result: `已切换到标签页 ${tabId}，它还是空白页：用 browser__open 可以在这里打开网址` };
+    }
+    try {
+      await this.controlManager.acquireControl({
+        ownerSessionId: this.currentContext.ownerSessionId,
+        runId: this.currentContext.runId,
+        tabId,
+        webContents: result.contents,
+        workspacePath: this.workspacePath
+      });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("HUMAN_TAKEOVER:")) {
+        return { ok: false, errorCode: "HUMAN_TAKEOVER", result: msg.replace(/^HUMAN_TAKEOVER:\s*/, "") };
+      }
+      if (msg.startsWith("TARGET_BUSY:")) {
+        return { ok: false, errorCode: "TARGET_BUSY", result: msg.replace(/^TARGET_BUSY:\s*/, "") };
+      }
+      return { ok: false, result: `无法接管该标签页：${msg}` };
+    }
+    this.attachDownloadHandler(result.contents);
+    let obs = null;
+    try {
+      obs = await this.controlManager.observe({ context: this.currentContext });
+    } catch {
+      // 忽略初次观察可能出现的加载中报错
+    }
+    const where = result.tab?.url || result.contents.getURL?.() || "";
+    return {
+      ok: true,
+      result: obs?.result
+        ? `已切换到标签页 ${tabId}：${where}\n\n当前页面：\n${obs.result}`
+        : `已切换到标签页 ${tabId}：${where}`,
+      images: obs?.images || [],
+      data: obs?.data || null
+    };
+  }
+
+  /** browser__tabs close <tabId>：关掉指定标签页（不传 tabId 时关闭整个面板） */
+  async closeTabById(rawTabId) {
+    const tabId = String(rawTabId || "").trim();
+    if (!tabId) return { ok: false, result: "缺少 tabId：关闭整个浏览器面板请用 browser__close" };
+    if (typeof this.closeTab !== "function") return { ok: false, result: "当前宿主不支持按 ID 关闭标签页" };
+    const controlledContentsId = this.controlManager.session?.webContentsId;
+    const target = (this.panelTabs() || []).find((tab) => tab.id === tabId);
+    // 关掉的正是助手受控的页面：先把控制会话收干净，别等 webview 销毁时的兜底
+    if (target && controlledContentsId && target.webContentsId === controlledContentsId) {
+      this.controlManager.stop({ reason: "助手关闭了正在操作的标签页" });
+    }
+    const result = await this.closeTab(tabId, this.currentContext.ownerSessionId);
+    if (!result?.ok) return { ok: false, result: result?.result || `找不到指定的标签页 ID: ${tabId}` };
+    return { ok: true, result: `已关闭标签页 ${tabId}` };
+  }
+
   async handle(name, args = {} as any) {
     // 关键检查点：后台无宿主 Agent 或空身份禁止控制浏览器 (F2_background_no_renderer)
     if (!this.currentContext.ownerSessionId && !this.openPanel) {
@@ -467,42 +578,33 @@ constructor({ openPanel, closePanel, getContents, controlManager, onStateChange 
       }
 
       case "browser__tabs": {
-        // 严格检查归属：其他任务禁止窥探当前标签页 (F2_foreign_tabs)
+        // 严格检查归属：其他任务禁止窥探当前标签页 (F2_foreign_tabs)。
+        // 例外：还没有任何控制会话时（面板刚打开、助手还没接管页面）允许列出、
+        // 切换、关闭本任务面板里的标签页——它们本来就属于当前会话。
         const ownerCheck = this.controlManager.checkTaskOwnership(this.currentContext);
-        if (!ownerCheck.ok) {
+        if (!ownerCheck.ok && this.controlManager.session) {
           return { ok: false, errorCode: "TARGET_UNAVAILABLE", result: ownerCheck.error };
         }
 
         const action = args?.action || "list";
         if (action === "list") {
-          const session = this.controlManager.session;
-          const currentUrl = session?.webContents?.getURL?.() || "";
-          const currentTitle = session?.webContents?.getTitle?.() || "";
-          const currentTabId = session?.tabId || "active";
-          return {
-            ok: true,
-            result: `当前受控标签页：\n- 标签页 ID: ${currentTabId}${session?.webContentsId ? ` (webContents: ${session.webContentsId})` : ""}，网址: ${currentUrl || "about:blank"}，标题: ${currentTitle || "（未命名）"}`
-          };
+          return this.tabListResult();
         }
         if (action === "open") {
           if (!args?.url) return { ok: false, result: "browser__tabs open 必须提供 url 参数" };
           return this.open(args.url, args.tabId);
         }
         if (action === "activate") {
-          const session = await this.ensureActiveSession();
-          if (!session) return { ok: false, result: "无法激活标签页：未找到活动浏览器会话" };
-          const targetTabId = args?.tabId;
-          if (!targetTabId || session.tabId !== targetTabId) {
-            return { ok: false, result: `找不到指定的标签页 ID: ${targetTabId}` };
-          }
-          return { ok: true, result: `已切换至标签页 ${targetTabId}` };
+          return this.activateTabById(args?.tabId);
         }
         if (action === "close") {
+          // 指定 tabId：关掉那一个标签页；不指定：维持原有语义，关闭整个浏览器面板
+          if (args?.tabId) return this.closeTabById(args.tabId);
           if (this.closePanel) {
             await this.closePanel();
-            return { ok: true, result: `已关闭标签页 ${args?.tabId || ""}` };
+            return { ok: true, result: "已关闭右侧浏览器面板" };
           }
-          return { ok: true, result: "已关闭标签页" };
+          return { ok: true, result: "已关闭右侧浏览器面板" };
         }
         return { ok: false, result: `未知的标签页操作：${action}` };
       }
@@ -640,10 +742,10 @@ export function browserToolDefinitions() {
   return [
     tool(
       "browser__open",
-      "在当前任务窗口右侧的浏览器面板中打开网页。支持 localhost 与内网地址。操作真实可见，打开后自动返回页面结构和截图。处于用户接管状态时禁止调用。",
+      "在当前任务窗口右侧的浏览器面板中打开网页：默认新开一个标签页，不覆盖已经打开的页面（当前标签页还是空白页时先用它；同一网址已开着则直接切过去）。传 tabId 时在该标签页里打开。支持 localhost 与内网地址。操作真实可见，打开后自动返回页面结构和截图。处于用户接管状态时禁止调用。",
       {
         url: stringArg("HTTP/HTTPS 网址"),
-        tabId: stringArg("可选：目标标签页 ID")
+        tabId: stringArg("可选：在指定标签页里打开（ID 来自 browser__tabs list）")
       },
       ["url"]
     ),
@@ -727,7 +829,7 @@ export function browserToolDefinitions() {
     ),
     tool(
       "browser__tabs",
-      "管理右侧浏览器的标签页（列出受控标签页、打开新标签页、切换激活或关闭）。",
+      "管理右侧浏览器的标签页：list 列出全部标签页（含 ID、标题、网址、当前显示与助手受控页），open 新开标签页打开网址，activate 切换到指定标签页继续操作（要传 list 里的 tabId），close 关闭指定标签页（要传 tabId；不传 tabId 则关闭整个浏览器面板）。",
       {
         action: { type: "string", enum: ["list", "open", "activate", "close"], description: "标签页操作动作" },
         url: stringArg("open 动作时的目标网址"),

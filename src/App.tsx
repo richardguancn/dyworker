@@ -1191,6 +1191,9 @@ const BROWSER_DEVICE_PRESETS = [
   { name: "平板", width: 820, height: 1180 },
 ];
 
+// 浏览器标签页标题：网址去掉协议与路径只留主机名；页面加载完成后会被真实标题覆盖
+const browserTabTitleOf = (url: string) => url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页";
+
 const BROWSER_MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 let browserDefaultUserAgent = "";
 
@@ -7627,7 +7630,16 @@ export function App() {
     searchMatchRangesRef.current = [];
   }, [conversationSearchOpen, activeId]);
 
-  // 模型浏览器工具与手动浏览共用右侧面板，避免再弹出独立窗口。
+  // 助手发来的浏览器面板指令转发到下面定义的标签页操作（打开 / 切换 / 关闭）：
+  // 经 ref 转发，监听只挂一次也能拿到最新状态
+  const browserPanelCommandsRef = useRef<{
+    open: (url: string, tabId?: string) => void;
+    activate: (tabId: string) => void;
+    close: (tabId: string) => void;
+  } | null>(null);
+
+  // 模型浏览器工具与手动浏览共用右侧面板：助手每打开一个网页就开一个新标签页
+  // （当前标签页还没打开过网页时先复用它），不再把用户看着的那个页面顶掉。
   useEffect(() => {
     const unsubscribe = window.dyworker?.onBrowserPanelRequest((request) => {
       // 归属校验：后台会话的面板请求（打开或关闭）只在它正是当前激活会话时
@@ -7635,36 +7647,23 @@ export function App() {
       // 正在看的其他会话界面上（穿透）
       const requestOwner = String(request.ownerSessionId || "");
       if (requestOwner && requestOwner !== String(activeIdRef.current || "")) return;
-      if (request.action === "close") {        setRightPanelOpen(false);
+      if (request.action === "close") {
+        setRightPanelOpen(false);
+        return;
+      }
+      if (request.action === "activate") {
+        const tabId = String(request.tabId || "");
+        if (tabId) browserPanelCommandsRef.current?.activate(tabId);
+        return;
+      }
+      if (request.action === "close-tab") {
+        const tabId = String(request.tabId || "");
+        if (tabId) browserPanelCommandsRef.current?.close(tabId);
         return;
       }
       const url = String(request.url || "").trim();
       if (!url) return;
-      setRightPanelOpen(true);
-      setToolPanelTabs((current) => {
-        const browserTab = current.find((tab) => tab.kind === "browser");
-        if (browserTab) {
-          setActiveToolPanelTabId(browserTab.id);
-          return current.map((tab) => tab.id === browserTab.id
-            ? {
-                ...tab,
-                url,
-                loadedUrl: url,
-                title: url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
-                loadError: "",
-              }
-            : tab);
-        }
-        const id = `browser-${toolPanelTabSequenceRef.current++}`;
-        setActiveToolPanelTabId(id);
-        return [...current, {
-          id,
-          kind: "browser",
-          title: url.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
-          url,
-          loadedUrl: url,
-        }];
-      });
+      browserPanelCommandsRef.current?.open(url, String(request.tabId || ""));
     });
     return unsubscribe;
   }, []);
@@ -7677,6 +7676,7 @@ export function App() {
       setSessionMenuId(null);
       setWorkspaceMenuPath(null);
       setTopMenuOpen(false);
+      setConversationToolsOpen(false);
       setRailMenuOpen(false);
       setAddMenuOpen(false);
       setModelMenuOpen(false);
@@ -9820,7 +9820,8 @@ export function App() {
     if (modOnly && key === "t") {
       event.preventDefault();
       setRightPanelOpen(true);
-      openToolPanelTab("browser");
+      // 新标签页：浏览器可以多开，不覆盖已打开的页面
+      openBrowserTab();
     } else if (modOnly && key === "p") {
       event.preventDefault();
       setRightPanelOpen(true);
@@ -9857,6 +9858,89 @@ export function App() {
   activeToolPanelTabIdRef.current = activeToolPanelTabId;
   const toolPanelTabsRef = useRef<ToolPanelTab[]>([]);
   toolPanelTabsRef.current = toolPanelTabs;
+  // 助手要求关闭标签页时复用面板自己的关闭逻辑（面板 Tab 索引更新在下面统一处理）
+  const closeToolPanelTabRef = useRef<((id: string) => void) | null>(null);
+
+  // 浏览器标签页可以多开（对照真实浏览器）。开新页时的复用规则，按优先级：
+  // 1. 网址已经在某个标签页里打开：切到那个标签页，不重复开同一页；
+  // 2. 助手打开网页时还有没打开过网页的空标签页（起始页）：先用它，不堆叠空标签页；
+  // 3. 其余情况新开一个标签页。用户按 ⌘T / 点 + 属于这一类：每次都新开一个
+  //    （和真实浏览器一致），只有助手的打开才复用空白页。
+  // 助手打开网页同样走这里：旧页面留在自己的标签页里，不会被新网址顶掉。
+  const openBrowserTab = (initialUrl?: string, options: { reuseBlank?: boolean } = {}) => {
+    const target = String(initialUrl || "").trim();
+    const browserTabs = toolPanelTabsRef.current.filter((tab) => tab.kind === "browser");
+    if (target) {
+      const sameUrl = browserTabs.find((tab) => (tab.loadedUrl || tab.url || "") === target);
+      if (sameUrl) {
+        setRightPanelOpen(true);
+        setActiveToolPanelTabId(sameUrl.id);
+        setToolPanelMenuOpen(false);
+        return sameUrl.id;
+      }
+    }
+    const reuseBlank = options.reuseBlank === true;
+    const blank = reuseBlank ? browserTabs.find((tab) => !tab.loadedUrl) : undefined;
+    const id = blank?.id || `browser-${toolPanelTabSequenceRef.current++}`;
+    setToolPanelTabs((current) => {
+      if (blank && !target) {
+        // 空标签页任务栏复用：保持原样，只切过去
+        return current;
+      }
+      if (blank) {
+        return current.map((tab) => tab.id === blank.id
+          ? { ...tab, url: target, loadedUrl: target, title: browserTabTitleOf(target), loadError: "", favicon: "" }
+          : tab);
+      }
+      const created: ToolPanelTab = target
+        ? { id, kind: "browser", title: browserTabTitleOf(target), url: target, loadedUrl: target }
+        : { id, kind: "browser", title: "新标签页", url: "" };
+      return [...current, created];
+    });
+    setRightPanelOpen(true);
+    setActiveToolPanelTabId(id);
+    setToolPanelMenuOpen(false);
+    return id;
+  };
+
+  // 助手指定的标签页切换：切到指定标签页（由主进程等待渲染端上报后接管控制）
+  const activateBrowserTabById = (tabId: string) => {
+    const tab = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
+    if (!tab) return false;
+    setRightPanelOpen(true);
+    setActiveToolPanelTabId(tab.id);
+    setToolPanelMenuOpen(false);
+    return true;
+  };
+
+  // 助手指定的标签页关闭：复用关闭按钮那套（最后一个标签页关掉就回到菜单页）
+  const closeBrowserTabById = (tabId: string) => {
+    const closing = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
+    if (!closing) return false;
+    closeToolPanelTabRef.current?.(tabId);
+    return true;
+  };
+
+  // 面板里的浏览器标签页清单上报主进程：助手的标签页工具据此列出、切换、关闭
+  const reportBrowserTabState = () => {
+    if (!window.dyworker?.reportBrowserTabs) return;
+    const tabs = toolPanelTabsRef.current.filter((tab) => tab.kind === "browser").map((tab) => {
+      let webContentsId = 0;
+      try {
+        webContentsId = browserWebviewsRef.current.get(tab.id)?.getWebContentsId?.() || 0;
+      } catch {
+        webContentsId = 0;
+      }
+      return {
+        id: tab.id,
+        title: tab.title || "",
+        url: tab.loadedUrl || tab.url || "",
+        active: tab.id === activeToolPanelTabIdRef.current,
+        webContentsId,
+      };
+    });
+    window.dyworker.reportBrowserTabs({ ownerSessionId: activeIdRef.current, tabs });
+  };
 
   const patchBrowserTab = (tabId: string, patch: Partial<ToolPanelTab>) => {
     setToolPanelTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, ...patch } : tab));
@@ -9870,6 +9954,7 @@ export function App() {
 
   // 主进程路由 agent 浏览器工具的目标：当前激活标签页的 webview
   const reportActiveBrowserContents = () => {
+    reportBrowserTabState();
     const webview = browserWebviewsRef.current.get(activeToolPanelTabIdRef.current);
     try {
       const id = webview?.getWebContentsId?.();
@@ -9999,8 +10084,9 @@ export function App() {
     return callback;
   };
 
-  // 激活标签页或其 webview 变化后上报主进程
+  // 激活标签页或其 webview 变化后上报主进程：可见页（控制目标）+ 浏览器标签页清单
   useEffect(() => {
+    reportBrowserTabState();
     if (activeToolPanelKind !== "browser") return;
     reportActiveBrowserContents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -10223,6 +10309,27 @@ export function App() {
       const index = toolPanelTabs.findIndex((tab) => tab.id === id);
       setActiveToolPanelTabId(nextTabs[Math.max(0, index - 1)]?.id || nextTabs[0].id);
     }
+  };
+  closeToolPanelTabRef.current = closeToolPanelTab;
+  browserPanelCommandsRef.current = {
+    open: (url: string, tabId?: string) => {
+      const target = tabId
+        ? toolPanelTabsRef.current.find((tab) => tab.id === tabId && tab.kind === "browser")
+        : undefined;
+      // 助手点名了某个标签页：在那个标签页里打开（不另开），否则按多开规则开新页
+      if (target) {
+        setRightPanelOpen(true);
+        setToolPanelTabs((current) => current.map((tab) => tab.id === target.id
+          ? { ...tab, url, loadedUrl: url, title: browserTabTitleOf(url), loadError: "", favicon: "" }
+          : tab));
+        setActiveToolPanelTabId(target.id);
+        setToolPanelMenuOpen(false);
+        return;
+      }
+      openBrowserTab(url, { reuseBlank: true });
+    },
+    activate: activateBrowserTabById,
+    close: closeBrowserTabById,
   };
 
   const browserSuggestionQuery = (browserUrlDraft && browserUrlDraft.tabId === activeToolPanelTab?.id ? browserUrlDraft.value : activeToolPanelTab?.url || "").trim().toLowerCase();
@@ -12056,9 +12163,11 @@ export function App() {
     </div>
   );
 
-  // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端始终可选）
+  // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端始终可选）。
+  // 浏览器例外：它支持多开，每次点都新开一个标签页，所以始终出现在列表里。
   const addMenuItems = toolPanelMenuItems.filter((item) => {
     if (item.key === "terminal") return true;
+    if (item.key === "browser") return true;
     if (item.key.startsWith("plugin-")) return !toolPanelTabs.some(tab => tab.id === item.key);
     const kind = item.key === "side-chat" ? "chat" : item.key;
     return !toolPanelTabs.some((tab) => tab.kind === kind);
@@ -12072,6 +12181,12 @@ export function App() {
           key={item.key}
           onClick={() => {
             setToolPanelAddMenuOpen(false);
+            // 浏览器项在这里是「新开一个标签页」，与菜单页里的「打开浏览器」区分开
+            if (item.key === "browser") {
+              setRightPanelOpen(true);
+              openBrowserTab();
+              return;
+            }
             item.onClick();
           }}
         >
@@ -13932,6 +14047,14 @@ export function App() {
                     <ArrowUpRight size={16} />
                   </button>
                 </div>
+                <button
+                  className="browser-toolbar-button"
+                  aria-label="新建标签页"
+                  title={shortcutLabel("新建标签页（⌘T）", "新建标签页（Ctrl+T）")}
+                  onClick={() => openBrowserTab()}
+                >
+                  <Plus size={17} />
+                </button>
                 <div className="browser-more-wrap" data-menu-root>
                   <button
                     className={`browser-toolbar-more ${browserMoreOpen ? "active" : ""}`}
@@ -14075,7 +14198,12 @@ export function App() {
                         src: tab.loadedUrl,
                         partition: "persist:dyworker-browser",
                         title: tab.title,
-                        allowpopups: false,
+                        // 页面里 target=_blank / window.open 的链接要交给我们处理成
+                        // 面板内的新标签页（主进程 setWindowOpenHandler 一律 deny，
+                        // 不会真的弹原生窗口）：不允许弹窗时这些请求根本不会上报，
+                        // 表现就是点了没反应的链接。React 对未知标签只认字符串属性，
+                        // 传布尔 true 不会落到 DOM 属性上（实测拿不到），故用空串。
+                        allowpopups: "",
                       })}
                       {isActive && tab.loadError && (
                         <div className="browser-error-state">

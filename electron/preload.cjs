@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   openBrowser: (payload) => ipcRenderer.invoke("browser:open", payload),
   // 上报当前显示的内置浏览器 webview 及其所属激活会话：agent 的 browser__* 工具只作用于可见页面
   setActiveBrowserContents: (webContentsId, ownerSessionId) => ipcRenderer.send("browser:active-contents", webContentsId, ownerSessionId),
+  // 上报面板里的浏览器标签页清单：助手的 browser__tabs 工具据此列出、切换、关闭标签页
+  reportBrowserTabs: (payload) => ipcRenderer.send("browser:tab-state", payload),
   // 在系统默认浏览器打开网址
   openBrowserExternal: (url) => ipcRenderer.invoke("browser:open-external", url),
   // 设备模拟（手机/平板视图）：width/height 为 0 时关闭

@@ -231,6 +231,97 @@ test("BrowserAgent 端到端闭环：打开页面、观察、填写、选择与�
   agent.dispose();
 });
 
+test("BrowserAgent: 多标签页工具 list/activate/close 走面板清单，切页后重新接管控制", async () => {
+  const pageA = createMockWebContents(); // id 101，示例表单页
+  const pageB = createMockWebContents();
+  pageB.id = 202;
+  pageB.getURL = () => "https://example.com/two";
+  let activeContents = pageA;
+  const commands = [];
+  const tabs = () => [
+    { id: "browser-1", title: "一号页", url: "https://example.com/form", active: activeContents === pageA, webContentsId: 101 },
+    { id: "browser-2", title: "二号页", url: "https://example.com/two", active: activeContents === pageB, webContentsId: 202 },
+  ];
+  const agent = new BrowserAgent({
+    openPanel: async () => ({ ok: true, contents: activeContents }),
+    closePanel: async () => {},
+    getContents: () => activeContents,
+    listTabs: () => tabs(),
+    activateTab: async (tabId) => {
+      const tab = tabs().find((item) => item.id === tabId);
+      if (!tab) return { ok: false, result: `找不到标签页 ${tabId}` };
+      commands.push(`activate:${tabId}`);
+      activeContents = tabId === "browser-2" ? pageB : pageA;
+      return { ok: true, contents: activeContents, tab };
+    },
+    closeTab: async (tabId) => {
+      const tab = tabs().find((item) => item.id === tabId);
+      if (!tab) return { ok: false, result: `找不到标签页 ${tabId}` };
+      commands.push(`close:${tabId}`);
+      return { ok: true };
+    }
+  });
+  agent.setContext({ ownerSessionId: "session-test", runId: "run-test" });
+
+  // 1. list：两个标签页都在，标出当前显示的那个
+  const listed = await agent.handle("browser__tabs", { action: "list" });
+  assert.equal(listed.ok, true);
+  assert.ok(listed.result.includes("共 2 个"));
+  assert.ok(listed.result.includes("browser-1"));
+  assert.ok(listed.result.includes("browser-2"));
+
+  // 2. activate：切到第二个标签页，控制权跟着转到它的页面
+  const activated = await agent.handle("browser__tabs", { action: "activate", tabId: "browser-2" });
+  assert.equal(activated.ok, true);
+  assert.deepEqual(commands, ["activate:browser-2"]);
+  assert.equal(agent.controlManager.session.webContentsId, 202);
+
+  // 3. 受控页在清单里被标出来
+  const listedAgain = await agent.handle("browser__tabs", { action: "list" });
+  assert.ok(listedAgain.result.includes("助手受控页"));
+
+  // 4. close 指定标签页：关掉的正是受控页时，控制会话一起停掉
+  const closed = await agent.handle("browser__tabs", { action: "close", tabId: "browser-2" });
+  assert.equal(closed.ok, true);
+  assert.deepEqual(commands, ["activate:browser-2", "close:browser-2"]);
+  assert.equal(agent.controlManager.getStatus().status, "stopped");
+
+  // 5. 找不到的标签页明确报错，不能默默退化成别的页面
+  const missing = await agent.handle("browser__tabs", { action: "activate", tabId: "browser-9" });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.result.includes("browser-9"));
+
+  // 6. 切到空白标签页：控制会话暂停，不让助手继续操作背后看不见的旧页面
+  const blankTabAgent = new BrowserAgent({
+    openPanel: async () => ({ ok: true, contents: pageA }),
+    closePanel: async () => {},
+    getContents: () => pageA,
+    listTabs: () => [{ id: "browser-3", title: "新标签页", url: "", active: true, webContentsId: 0 }],
+    activateTab: async () => ({ ok: true, contents: null, tab: { id: "browser-3", url: "" } })
+  });
+  blankTabAgent.setContext({ ownerSessionId: "session-test", runId: "run-test" });
+  await blankTabAgent.handle("browser__open", { url: "https://example.com/form" });
+  const blankSwitch = await blankTabAgent.handle("browser__tabs", { action: "activate", tabId: "browser-3" });
+  assert.equal(blankSwitch.ok, true);
+  assert.ok(blankSwitch.result.includes("空白页"));
+  assert.equal(blankTabAgent.controlManager.getStatus().status, "paused");
+
+  // 7. 宿主没有标签页管理能力时仍保持老语义：list 退回「当前受控标签页」
+  const legacy = new BrowserAgent({
+    openPanel: async () => ({ ok: true, contents: pageA }),
+    closePanel: async () => {},
+    getContents: () => pageA
+  });
+  legacy.setContext({ ownerSessionId: "session-test", runId: "run-test" });
+  const legacyList = await legacy.handle("browser__tabs", { action: "list" });
+  assert.equal(legacyList.ok, true);
+  assert.ok(legacyList.result.includes("当前受控标签页"));
+
+  agent.dispose();
+  blankTabAgent.dispose();
+  legacy.dispose();
+});
+
 test("BrowserAgent: 会话切换后激活 webview 归属他人，后台任务不得接管别人的页面（跨会话穿透）", async () => {
   const ownContents = createMockWebContents();
   const foreignContents = createMockWebContents();

@@ -744,6 +744,54 @@ test("内置浏览器为 Codex 式多标签：webview 常驻、导航状态同�
   assert.match(main, /getContents: \(ownerSessionId\) => activeEmbeddedBrowserContents\(\{ forOwnerSessionId: ownerSessionId \}\)/);
 });
 
+test("内置浏览器可以多开标签页：⌘T/+ 菜单/工具栏 + 都新开，助手不再顶掉旧页面", () => {
+  // 打开入口：新标签页统一走 openBrowserTab（已有网址/空白页复用规则在里面）
+  assert.match(app, /const openBrowserTab = \(initialUrl\?: string/);
+  assert.match(app, /kind: "browser", title: "新标签页", url: "" \}/);
+  // ⌘T / Ctrl+T 是新标签页，不是「切到唯一那个浏览器标签页」
+  assert.match(app, /if \(modOnly && key === "t"\) \{[\s\S]{0,160}openBrowserTab\(\);/);
+  // 用户开的标签页一律新开；只有助手打开网页时才会先用掉空白标签页
+  assert.match(app, /const reuseBlank = options\.reuseBlank === true;/);
+  assert.match(app, /openBrowserTab\(url, \{ reuseBlank: true \}\)/);
+  // + 菜单里的浏览器项始终在，点一次开一个新标签页
+  assert.match(app, /if \(item\.key === "browser"\) return true;/);
+  assert.match(app, /if \(item\.key === "browser"\) \{[\s\S]{0,120}openBrowserTab\(\);/);
+  // 浏览器工具栏上的新建标签页按钮
+  assert.match(app, /aria-label="新建标签页"/);
+  // 助手打开网页：开新标签页，不再把现有唯一标签页的网址改掉
+  assert.match(app, /browserPanelCommandsRef\.current\?\.open\(url, String\(request\.tabId \|\| ""\)\)/);
+  assert.doesNotMatch(app, /const browserTab = current\.find\(\(tab\) => tab\.kind === "browser"\)/);
+  // 助手点名了标签页：在那个标签页里打开，不另开
+  assert.match(app, /tab\.id === tabId && tab\.kind === "browser"/);
+  // 标签页清单上报主进程（webContentsId 供主进程定位对应 webview）
+  assert.match(app, /reportBrowserTabState/);
+  assert.match(app, /ownerSessionId: activeIdRef\.current, tabs \}/);
+  assert.match(preload, /reportBrowserTabs: \(payload\) => ipcRenderer\.send\("browser:tab-state", payload\)/);
+  assert.match(main, /ipcMain\.on\("browser:tab-state"/);
+  assert.match(main, /function browserPanelTabsFor\(ownerSessionId\)/);
+  assert.match(main, /webContentsId: embeddedBrowserContentsById\.has\(Number\(tab\.webContentsId\)\)/);
+  // 网页自己开的新窗口（target=_blank / window.open）在面板里开新标签页，而不是静默丢弃
+  assert.match(main, /contents\.setWindowOpenHandler\(\(\{ url \}\) => \{/);
+  // webview 必须允许弹窗请求，否则这些请求根本不上报（React 未知标签只认字符串属性）
+  assert.match(app, /allowpopups: ""/);
+  assert.match(main, /action: "open",\s*\n\s*url: target\.toString\(\),/);
+  assert.match(main, /browserPanelTabState\.tabs\.length < BROWSER_PANEL_TAB_LIMIT/);
+  // 助手自动操作期间不开新标签页（否则新页面会把自动化打断成人工确认）
+  assert.match(main, /const automating = browserControlManager\.getStatus\(\)\.status === "running"/);
+  // 主进程把切换/关闭指令发给渲染端并等上报，不自己推断面板状态
+  assert.match(main, /function activateBrowserPanelTab\(renderer, tabId/);
+  assert.match(main, /function closeBrowserPanelTab\(renderer, tabId/);
+  assert.match(main, /activateTab: \(tabId, ownerSessionId\) => activateBrowserPanelTab\(renderer, tabId, \{ ownerSessionId \}\)/);
+  assert.match(main, /closeTab: \(tabId, ownerSessionId\) => closeBrowserPanelTab\(renderer, tabId, \{ ownerSessionId \}\)/);
+  // 助手的标签页工具是真的：list 给全量标签页，activate 切过去并重新接管，close 关指定标签页
+  assert.match(browserSource, /listTabs;\s*\nactivateTab;\s*\ncloseTab;/);
+  assert.match(browserSource, /browser__tabs activate 必须提供 tabId 参数/);
+  assert.match(browserSource, /return this\.tabListResult\(\);/);
+  assert.match(browserSource, /return this\.activateTabById\(args\?\.tabId\);/);
+  assert.match(browserSource, /if \(args\?\.tabId\) return this\.closeTabById\(args\.tabId\);/);
+  assert.match(browserSource, /助手受控页/);
+});
+
 test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设备视图", () => {
   // ===== 密码和自动填充 =====
   // webview 专用 preload 只暴露“报告密码表单提交”，页面无法触及 ipcRenderer

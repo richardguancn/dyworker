@@ -982,6 +982,11 @@ export interface DyworkerBridge {
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;
   /** 上报当前显示的内置浏览器 webview 及其所属激活会话，agent 的 browser__* 工具只作用于可见页面 */
   setActiveBrowserContents?(webContentsId: number, ownerSessionId?: string): void;
+  /** 上报面板里的浏览器标签页清单，agent 的 browser__tabs 工具据此列出、切换、关闭标签页 */
+  reportBrowserTabs?(payload: {
+    ownerSessionId?: string;
+    tabs: Array<{ id: string; title: string; url: string; active: boolean; webContentsId: number }>;
+  }): void;
   /** 在系统默认浏览器打开 http/https 网址 */
   openBrowserExternal?(url: string): Promise<{ ok: boolean; error?: string }>;
   /** 内置浏览器设备模拟（手机/平板视图），宽高为 0 时关闭 */
@@ -998,7 +1003,8 @@ export interface DyworkerBridge {
   clearBrowserData?(kinds: { cookies: boolean; cache: boolean; siteData: boolean }): Promise<{ ok: boolean; error?: string }>;
   /** 内置浏览器下载进度广播 */
   onBrowserDownloadProgress?(callback: (record: { id: string; filename: string; path: string; received: number; total: number; state: "progressing" | "interrupted" | "completed" | "cancelled"; startedAt: number }) => void): () => void;
-  onBrowserPanelRequest(callback: (request: { action: "open" | "close"; url?: string; ownerSessionId?: string }) => void): () => void;
+  /** 助手发来的浏览器面板指令：open 打开网页（默认新标签页）、activate/close-tab 操作指定标签页、close 收起面板 */
+  onBrowserPanelRequest(callback: (request: { action: "open" | "close" | "activate" | "close-tab"; url?: string; tabId?: string; ownerSessionId?: string }) => void): () => void;
   /** 浏览器 Computer Use：用户主动接管控制权 */
   takeoverBrowserControl?(): Promise<{ ok: boolean; status?: string; result?: string }>;
   /** 浏览器 Computer Use：用户交还控制权让助手继续 */
