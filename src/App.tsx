@@ -4988,7 +4988,7 @@ function UsageStatsPanel({ records }: { records: UsageRecord[] | null }) {
 
   return (
     <>
-      {records !== null && summary.length > 0 && <TokenActivity records={records} />}
+      {records !== null && <TokenActivity records={records} />}
       {records === null ? (
           <p className="dialog-note">正在读取…</p>
         ) : summary.length === 0 ? (

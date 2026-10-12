@@ -46,7 +46,7 @@ interface CellSpec {
 }
 
 function buildOption(mode: ActivityMode, data: TokenActivityData, width: number, palette: ActivityPalette): Record<string, unknown> {
-  const rows = mode === "daily" ? 7 : MAX_BLOCKS;
+  const rows = mode === "daily" ? 7 : data.total > 0 ? MAX_BLOCKS : 1;
   let pitch = width / WEEK_COUNT;
   let offsetX = 0;
   if (pitch > 16) {
@@ -67,6 +67,19 @@ function buildOption(mode: ActivityMode, data: TokenActivityData, width: number,
       prevMonth = month;
     }
   });
+  // 窄窗口中保证月份之间留有间距；年初和年末月份相同仍分别保留时间边界。
+  let lastLabelX = -Infinity;
+  let lastLabelCol = -1;
+  const finalLabelCol = [...labelsByCol.keys()].at(-1);
+  for (const col of labelsByCol.keys()) {
+    const x = Math.min(offsetX + col * pitch, gridRight - 34);
+    if (x - lastLabelX < 38) {
+      if (col !== finalLabelCol) { labelsByCol.delete(col); continue; }
+      labelsByCol.delete(lastLabelCol);
+    }
+    lastLabelX = x;
+    lastLabelCol = col;
+  }
 
   const specs: CellSpec[] = [];
   data.weeks.forEach((week, col) => {
@@ -101,11 +114,24 @@ function buildOption(mode: ActivityMode, data: TokenActivityData, width: number,
   const renderItem = (params: { dataIndex: number }) => {
     const spec = specs[params.dataIndex];
     if (!spec) return { type: "group" as const, children: [] };
-    const children: unknown[] = spec.rects.map((rect) => ({
+    const children: unknown[] = mode === "daily" ? [] : [{
+      // 零用量也可悬停，命中区域覆盖整列，不把空白误当成缺失数据。
+      type: "rect",
+      shape: { x: offsetX + spec.col * pitch, y: 0, width: pitch, height: rows * pitch },
+      style: { fill: "rgba(0,0,0,0)" },
+    }];
+    if (mode !== "daily" && spec.rects.length === 0) {
+      children.push({
+        type: "rect",
+        shape: { x: colX(spec.col), y: rows * pitch - 3, width: cell, height: 2, r: 1 },
+        style: { fill: palette.empty },
+      });
+    }
+    children.push(...spec.rects.map((rect) => ({
       type: "rect",
       shape: { x: rect.x, y: rect.y, width: cell, height: cell, r: Math.min(3, cell * 0.3) },
       style: { fill: rect.color },
-    }));
+    })));
     const label = spec.first ? labelsByCol.get(spec.col) : undefined;
     if (label) {
       // 末列的标签贴右缘溢出时改右对齐，避免被裁掉
@@ -173,7 +199,7 @@ export function TokenActivity({ records }: { records: UsageRecord[] }) {
     return () => observer.disconnect();
   }, []);
 
-  const rows = mode === "daily" ? 7 : MAX_BLOCKS;
+  const rows = mode === "daily" ? 7 : data.total > 0 ? MAX_BLOCKS : 1;
   // 高度与 buildOption 用同一套 pitch 口径（宽容器下格子 16px 封顶），避免底部多出空白
   const pitch = Math.min(16, width / WEEK_COUNT);
   const height = width > 0 ? Math.round(rows * pitch) + LABEL_HEIGHT : 0;
@@ -233,6 +259,13 @@ export function TokenActivity({ records }: { records: UsageRecord[] }) {
         role="img"
         aria-label={`Token 活动图，近一年合计 ${formatTokenCN(data.total)} 个 Token`}
       />
+      <div className="token-activity-caption">
+        <span>{data.total > 0 ? `近一年合计 ${formatTokenCN(data.total)} 个 Token` : "近一年暂无使用记录"}</span>
+        <span className="token-activity-legend">
+          <i style={{ background: PALETTES[theme].empty }} />无用量
+          <i style={{ background: PALETTES[theme].block }} />{mode === "cumulative" ? "累计用量" : "有用量"}
+        </span>
+      </div>
     </div>
   );
 }

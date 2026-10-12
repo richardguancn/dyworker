@@ -8428,11 +8428,27 @@ body.resizing-panels .app-shell {
 .token-activity-tabs button.active {
   color: var(--ink);
   font-weight: 650;
+  background: var(--sidebar-active);
 }
 
 .token-activity-chart {
   width: 100%;
 }
+
+.token-activity-head { flex-wrap: wrap; }
+.token-activity-caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+}
+.token-activity-legend { display: inline-flex; align-items: center; gap: 6px; }
+.token-activity-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.token-activity-legend i + i { margin-left: 8px; }
 
 .usage-table {
   width: 100%;
