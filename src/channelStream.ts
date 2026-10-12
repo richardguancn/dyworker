@@ -88,8 +88,8 @@ export function mergePrependedSession<T extends PrependedSession>(
 }
 
 // 收尾消息落库归约（纯函数，可安全放进 setState updater）：
-// placeholderMessageId 命中消息列表 → 原位替换（保留占位 id，React key 与「已处理」折叠
-// 状态稳定）；未命中（无占位、桌面运行、占位已被清掉）→ 原样追加。
+// placeholderMessageId 命中消息列表 → 由助手回复继承占位 id；用户消息保留自身 id。
+// 同时归并已有用户消息与重复收尾，避免相同 id 的气泡破坏 React 的会话切换。
 export function reconcileChannelAppend<T extends AppendMessage>(
   messages: T[],
   placeholderMessageId: string | null,
@@ -102,14 +102,15 @@ export function reconcileChannelAppend<T extends AppendMessage>(
   }
   const index = placeholderMessageId ? messages.findIndex((message) => message.id === placeholderMessageId) : -1;
   if (index < 0) {
-    return { messages: [...messages, ...incoming], replacedMessageId: null };
+    return { messages: mergeDshTranscript(messages, incoming), replacedMessageId: null };
   }
+  const assistantIndex = incoming.findIndex((message) => message.role === 'assistant');
   const replacement = incoming.map((message, offset) => ({
     ...message,
-    id: offset === 0 ? placeholderMessageId! : message.id,
+    id: offset === assistantIndex ? placeholderMessageId! : message.id,
   }));
   return {
-    messages: [...messages.slice(0, index), ...replacement, ...messages.slice(index + 1)],
+    messages: mergeDshTranscript(messages, replacement, placeholderMessageId),
     replacedMessageId: placeholderMessageId,
   };
 }

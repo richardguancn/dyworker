@@ -85,6 +85,32 @@ test("reconcileChannelAppend:占位气泡不在消息列表时退化为追加", 
   assert.equal(outcome.messages[1].content, "最终");
 });
 
+test("唤醒收尾保留用户与助手各自标识，不产生导致新会话残留的重复标识", () => {
+  const existing = [
+    { id: "old-user", role: "user", content: "原始要求" },
+    { id: "wake:assistant", runId: "wake", role: "assistant", content: "流式回复" },
+  ];
+  const incoming = [
+    { id: "wake:user", runId: "wake", role: "user", content: "到点自动唤醒" },
+    { id: "wake:assistant", runId: "wake", role: "assistant", content: "最终回复" },
+  ];
+  const outcome = reconcileChannelAppend(existing, "wake:assistant", incoming);
+  assert.deepEqual(outcome.messages.map(message => message.id), ["old-user", "wake:user", "wake:assistant"]);
+  assert.deepEqual(outcome.messages.map(message => message.content), ["原始要求", "到点自动唤醒", "最终回复"]);
+  assert.equal(new Set(outcome.messages.map(message => message.id)).size, outcome.messages.length);
+  assert.deepEqual(reconcileChannelAppend(existing, "wake:assistant", incoming), outcome);
+  assert.equal(existing[1].content, "流式回复");
+});
+
+test("渠道收尾合并已有用户消息，重复到达的收尾消息不重复显示", () => {
+  const user = { id: "channel:user", runId: "channel", role: "user", content: "渠道要求" };
+  const existing = [user, { id: "channel:assistant", runId: "channel", role: "assistant", content: "片段" }];
+  const incoming = [user, { id: "channel:assistant", runId: "channel", role: "assistant", content: "渠道最终回复" }];
+  const outcome = reconcileChannelAppend(existing, "channel:assistant", incoming);
+  assert.deepEqual(outcome.messages, incoming);
+  assert.deepEqual(reconcileChannelAppend(outcome.messages, null, incoming).messages, incoming);
+});
+
 test("reconcileChannelAppend:没有占位 id 时原样追加", () => {
   const existing = [{ id: "m1", role: "assistant", content: "旧" }];
   // 工作目录切换等早期路径没有流式气泡

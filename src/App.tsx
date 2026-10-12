@@ -12931,7 +12931,7 @@ export function App() {
           }}
           onMouseUp={handleConversationMouseUp}
         >
-          <div className="conversation-column">
+          <div className="conversation-column" key={activeSession?.id}>
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
                 <span className="empty-mark"><Sparkles size={44} strokeWidth={1.3} /></span>
@@ -13019,7 +13019,8 @@ export function App() {
                   className={`message-row ${message.role}`}
                   // key 用稳定的消息 id：此前拼 createdAt-index，任务收尾改写 createdAt 会让
                   // 流式期间建好的整棵子树（高亮代码、mermaid 图）整体卸载重建
-                  key={message.id || `${message.createdAt}-${index}`}
+                  // 旧版唤醒收尾曾给用户和助手写入同一个 id；按角色区分以兼容这些历史记录。
+                  key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
                   ref={(node) => {
                     // 会话内搜索需要所有消息行的引用；用户消息行同时供回合导航使用
                     messageRowRefs.current[index] = node;
