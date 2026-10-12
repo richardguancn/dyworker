@@ -1,0 +1,120 @@
+{
+  "repository": "https://github.com/FeiZhuLulu/DeepSeek-Bot",
+  "commit": "351ae74b1c1bef0c21bf914a2687046a526190ee",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "files": {
+    "upstream/README.md": {
+      "source": "ds-bot/README.md",
+      "sha256": "efe61fe2cc660f02aa6df2b16feeaff2aca22284d628d39dcad74d175b7a4e32"
+    },
+    "upstream/index.js": {
+      "source": "ds-bot/index.js",
+      "sha256": "87cbab51117b71752358a51cb6cd1606bf830bd2139fba91988a374d26684314"
+    },
+    "upstream/package.json": {
+      "source": "ds-bot/package.json",
+      "sha256": "a9e545193f17a5198fc8f9b05199bcaad1d984d42ad489f5e350dc9fa0c11fa7"
+    },
+    "upstream/src/host/agents.js": {
+      "source": "ds-bot/src/host/agents.js",
+      "sha256": "162860ce1d9d2950203b036f9e5df37c49af5acd5043b2a6e5bd2dff8a9dcbff"
+    },
+    "upstream/src/host/browser.js": {
+      "source": "ds-bot/src/host/browser.js",
+      "sha256": "a918f3869b8472fc7394de1255e370a762083e58f3cade58217adee9a8193134"
+    },
+    "upstream/src/host/channel.js": {
+      "source": "ds-bot/src/host/channel.js",
+      "sha256": "14204f64b5875fcb9f7df80fa55154f639d69c462c11a72f7b954ae575140225"
+    },
+    "upstream/src/host/chat-index.js": {
+      "source": "ds-bot/src/host/chat-index.js",
+      "sha256": "6ad7efefa31d7aaaa0ecbde2a369a28c59a36383203ff72dc50e5e98e5a007e7"
+    },
+    "upstream/src/host/connectors.js": {
+      "source": "ds-bot/src/host/connectors.js",
+      "sha256": "95f8d052c68f6b53e969224041285c258ca97ab2acab56485051cdc9e71f1b29"
+    },
+    "upstream/src/host/constants.js": {
+      "source": "ds-bot/src/host/constants.js",
+      "sha256": "f8d63af3bc2890b44fbc159c2c7450d2eea432cd7ab50d839bea1b0e26cf7927"
+    },
+    "upstream/src/host/delivery.js": {
+      "source": "ds-bot/src/host/delivery.js",
+      "sha256": "b8b5cdeb7764a352de21267be4a017cce4af1367878c784933a5d12cc2c2747d"
+    },
+    "upstream/src/host/diagnostics.js": {
+      "source": "ds-bot/src/host/diagnostics.js",
+      "sha256": "243bd2795424fddff71431c8b62d35850723bcf1155bf6cf0eb511532285d7e3"
+    },
+    "upstream/src/host/groups.js": {
+      "source": "ds-bot/src/host/groups.js",
+      "sha256": "60ef99595ea4102e91e6e5bebd5a7a24894cfd9026752fb60c17d2bbfd20835c"
+    },
+    "upstream/src/host/home-lock.js": {
+      "source": "ds-bot/src/host/home-lock.js",
+      "sha256": "2b20ffd884be5c19460ec27e79b5cef20a90cebc5460bf059ed2c784b79f30f3"
+    },
+    "upstream/src/host/images.js": {
+      "source": "ds-bot/src/host/images.js",
+      "sha256": "ab7b377c87a62f0d7d5a00c5503bdf651bbf01334960046a8722aeedf1863866"
+    },
+    "upstream/src/host/memory.js": {
+      "source": "ds-bot/src/host/memory.js",
+      "sha256": "50940d59c44e8142b1d0642784504eb407baa40852a616f5889334c4e4711e2d"
+    },
+    "upstream/src/host/models.js": {
+      "source": "ds-bot/src/host/models.js",
+      "sha256": "75bba612a2611c30ae57a87e4e89e9e7b2acb37e87f5e7cd7013bb1de4d524e1"
+    },
+    "upstream/src/host/parts.js": {
+      "source": "ds-bot/src/host/parts.js",
+      "sha256": "ea59cec972aae95b506ad273d234f6948d23d0999f3df388728dc3efc35e637b"
+    },
+    "upstream/src/host/prompt.js": {
+      "source": "ds-bot/src/host/prompt.js",
+      "sha256": "1150479d00c9dc3ba930da451fbcfff6e189bd97ee08af6dc54ece7419270cb2"
+    },
+    "upstream/src/host/roster.js": {
+      "source": "ds-bot/src/host/roster.js",
+      "sha256": "7e4a02fb3f52624194f631b2bfa740ff0843ab1141db5051ff054de6f36e7ebc"
+    },
+    "upstream/src/host/schedules.js": {
+      "source": "ds-bot/src/host/schedules.js",
+      "sha256": "e9cd85636acb8a4a7f55ad2b00cb4573effe08b339a3077ff8dcc4dc8c527a7a"
+    },
+    "upstream/src/host/secrets.js": {
+      "source": "ds-bot/src/host/secrets.js",
+      "sha256": "53e04ad7596687b75a408abbb24cf61d321417d63c17025d423b17f7c3f2b6c6"
+    },
+    "upstream/src/host/steward.js": {
+      "source": "ds-bot/src/host/steward.js",
+      "sha256": "13d92b92415e1b4031077efdab7236e3c8e33d92386acbae13eb1ae821b62696"
+    },
+    "upstream/src/host/store.js": {
+      "source": "ds-bot/src/host/store.js",
+      "sha256": "cbc080b720a69051089b65cd76ce33d2ac6d80bb8ed41c6adbe1168c8a45f6c9"
+    },
+    "upstream/src/host/text.js": {
+      "source": "ds-bot/src/host/text.js",
+      "sha256": "dea9361865bc027c1c1fb97e9740ea928bed77872fe8224f0ae802709411f713"
+    },
+    "upstream/src/host/tools.js": {
+      "source": "ds-bot/src/host/tools.js",
+      "sha256": "4dc7828dcfbb385de5043271557f0bdc6e7e4fa0538958448ef9d50499b73901"
+    },
+    "upstream/src/host/turns.js": {
+      "source": "ds-bot/src/host/turns.js",
+      "sha256": "2070dc01a4166385ef01d5255542ed2a584413ea638c5a403f38a16406754220"
+    },
+    "upstream/src/host/update.js": {
+      "source": "ds-bot/src/host/update.js",
+      "sha256": "c8ed903bf4d370d0893ea2af56c6c473aa344075bdd30af4c49f8b8a9da9da88"
+    },
+    "upstream/src/host/usage.js": {
+      "source": "ds-bot/src/host/usage.js",
+      "sha256": "3c18c81cb2d1395ad242987f615849e6fdddaedb3004f8a1e31b8599816b4936"
+    }
+  }
+}

@@ -19,7 +19,7 @@ import { resolveClientEntries } from "../electron/host/plugin-client.mts";
 
 const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const builtinRoot = path.join(repoRoot, "builtin-plugins");
-const PLUGINS = ["dyworker-trajectory", "dyworker-context"];
+const PLUGINS = ["dyworker-trajectory", "dyworker-context", "dyworker-terminal", "ds-bot"];
 
 async function readManifest(name) {
   const dir = path.join(builtinRoot, name);
@@ -128,8 +128,9 @@ test("内置插件：客户端 bundle 在插槽表里留下轨迹 / 上下文的
   const views = host.contributionsFor("conversation.view").map((item) => String(item.meta.key ?? item.meta.id));
   assert.deepEqual(views.sort(), ["context", "trajectory"], "会话区应有「轨迹」「上下文」两个插件视图");
   const panels = host.contributionsFor("sidebar.right.pane.tab").map((item) => String(item.meta.key ?? item.meta.id));
-  // 右侧面板只留仪表盘：会话区已有「上下文」标签，紧凑面板重复了
-  assert.deepEqual(panels, ["context-dashboard"], "右侧面板只登记「上下文仪表盘」");
+  // 右侧登记上下文仪表盘和独立的机器人团队。
+  assert.deepEqual(panels, ["context-dashboard", "bot-team"], "右侧面板登记上下文仪表盘和机器人团队");
+  assert.equal(host.contributionsFor("workspace.terminal")[0]?.meta.key, "terminal");
   // 标签文案来自插件自己（壳层直接渲染 meta.label()）
   const trajectory = host.contributionsFor("conversation.view").find((item) => item.meta.key === "trajectory");
   assert.equal(trajectory.meta.label(), "轨迹");
