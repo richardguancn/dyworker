@@ -98,7 +98,7 @@ export function requestPluginPanels(pluginId: string, slots: string[], options: 
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session, wide, hideEmpty = false }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown; wide?: boolean; hideEmpty?: boolean }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session, wide, hideEmpty = false, workspacePath, visible, onClose }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown; wide?: boolean; hideEmpty?: boolean; workspacePath?: string; visible?: boolean; onClose?: () => void }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
@@ -228,6 +228,7 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
       const props = {
         ...injected,
         wide,
+        workspacePath, visible, onClose,
         useSessions: (selector: (value: unknown) => unknown = value => value) => selector(React.useSyncExternalStore(host.sessionCatalogStore.subscribe, host.sessionCatalogStore.getSnapshot, host.sessionCatalogStore.getSnapshot)),
         useWorkspaces: (selector: (value: unknown) => unknown = value => value) => selector(React.useSyncExternalStore(host.workspaceListStore.subscribe, host.workspaceListStore.getSnapshot, host.workspaceListStore.getSnapshot)),
         useSession: (selector: (value: unknown) => unknown) => selector(snapshot),

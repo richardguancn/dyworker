@@ -81,6 +81,7 @@ export interface PluginLoadRecord {
 
 /** 宿主真正渲染的插槽。没列在这里的插槽，插件的 inject 会自动跳过。 */
 export const HOST_SLOTS = [
+  "workspace.terminal",
   // 会话区的视图标签（dsh-context 默认位置就是这里）
   "conversation.view",
   // 右侧面板的标签（我们的工具面板就是它）

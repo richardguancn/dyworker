@@ -638,9 +638,10 @@ test("+ 按钮打开下拉菜单，终端在底部打开且面板界面无变化
   assert.match(app, /toolPanelAddMenuOpen/);
   assert.match(app, /setToolPanelAddMenuOpen\(\(value\) => !value\)/);
   // 终端在底部展开，不关闭菜单页、不切换标签页
-  assert.match(app, /终端在底部展开，面板保持菜单页不动/);
+  assert.match(app, /终端在底部展开，右侧菜单保持可用/);
   assert.match(app, /if \(item\.key !== "terminal"\) setToolPanelMenuOpen\(false\)/);
-  assert.match(app, /setDebugOpen\(\(value\) => !value\)/);
+  assert.match(app, /onClick: toggleTerminal/);
+  assert.match(app, /slot="workspace\.terminal" pluginId="dyworker-terminal"/);
   assert.match(styles, /\.tool-panel-add-menu/);
   // 标签栏层叠上下文必须高于面板内的吸顶表头（z-index:2），否则表头会盖住下拉菜单顶部条目并拦截点击
   assert.match(styles, /\.tool-panel-tabs\s*\{[^}]*z-index:\s*[3-9]/s);

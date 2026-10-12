@@ -1,0 +1,28 @@
+.terminal-dock { position: absolute; inset: auto 0 0; z-index: 24; height: min(310px, 48%); border-top: 1px solid var(--border); }
+.terminal-dock[hidden] { display: none !important; }
+.terminal-dock:has(.expanded) { height: calc(100% - var(--topbar-height, 0px)); }
+.terminal-dock .plugin-slot-view, .terminal-dock .plugin-slot-item { height: 100%; min-height: 0; padding: 0; }
+.terminal-panel { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); color: var(--ink); }
+.terminal-header { display: flex; align-items: center; flex: 0 0 49px; gap: 7px; padding: 5px 10px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--ink) 3%, var(--surface)); }
+.terminal-tabs { display: flex; gap: 5px; overflow-x: auto; min-width: 0; max-width: calc(100% - 120px); }
+.terminal-tab { display: flex; flex: 0 0 auto; align-items: center; border-radius: 9px; color: var(--ink-muted); }
+.terminal-tab.active { background: color-mix(in srgb, var(--ink) 7%, var(--surface)); color: var(--ink); }
+.terminal-tab > button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: none; color: inherit; border: 0; cursor: pointer; }
+.terminal-tab > button[role=tab] { max-width: 240px; font-size: 14px; }
+.terminal-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-tab .terminal-tab-close { padding: 7px; margin-right: 3px; }
+.terminal-control { flex: 0 0 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; color: var(--ink-muted); background: none; cursor: pointer; }
+.terminal-control:hover, .terminal-tab-close:hover { background: var(--sidebar-hover); color: var(--ink); }
+.terminal-header-space { flex: 1; }
+.terminal-body { position: relative; flex: 1; min-height: 0; margin: 0 5px 5px; overflow: hidden; border-radius: 9px; }
+.terminal-screen-wrap { position: absolute; inset: 0; }
+.terminal-screen-wrap[hidden] { display: none; }
+.terminal-screen { height: 100%; padding: 10px 14px; background: var(--surface); color: var(--ink); }
+.terminal-screen .xterm { height: 100%; }
+.terminal-exit { position: absolute; bottom: 8px; right: 14px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--surface-strong); }
+.terminal-error { flex: 0 0 auto; padding: 6px 15px; margin: 0; color: var(--danger, #b74238); font-size: 13px; }
+.main-panel.terminal-open:not(.plugins-page-open):not(:has(.terminal-panel.expanded)) > .conversation-viewport,
+.main-panel.terminal-open:not(.plugins-page-open):not(:has(.terminal-panel.expanded)) > .conversation-view-panel { bottom: min(310px, 48%); }
+.main-panel.terminal-open:not(.plugins-page-open):not(:has(.terminal-panel.expanded)) > .composer-dock { bottom: min(310px, 48%); }
+.main-panel.terminal-open:has(.terminal-panel.expanded) > .composer-dock { visibility: hidden; }
+.main-panel.conversation-view-open > .terminal-dock:not([hidden]) { display: block; }

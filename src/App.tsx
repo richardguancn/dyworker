@@ -7124,6 +7124,24 @@ export function App() {
   const [atBottom, setAtBottom] = useState(true);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalMounted, setTerminalMounted] = useState(false);
+  const [terminalAvailable, setTerminalAvailable] = useState(false);
+  useEffect(() => {
+    const host = clientHost();
+    const sync = () => {
+      const available = host.contributionsFor("workspace.terminal").some(item => item.pluginId === "dyworker-terminal");
+      setTerminalAvailable(available);
+      if (!available) setTerminalOpen(false);
+    };
+    sync();
+    return host.subscribe(sync);
+  }, []);
+  const toggleTerminal = () => {
+    if (!terminalAvailable) { setNotice("请先启用内置终端插件。"); return; }
+    setTerminalMounted(true);
+    setTerminalOpen(value => !value);
+  };
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   // debug-log 事件频率与模型流式对齐，逐条 setState 会让整个 App 高频重渲染；
   // 先进 ref 缓冲，1 秒合并刷入一次（TraceConsole 是诊断视图，秒级延迟无感知）
@@ -9809,7 +9827,7 @@ export function App() {
       openToolPanelTab("files");
     } else if (modOnly && key === "j") {
       event.preventDefault();
-      setDebugOpen((value) => !value);
+      toggleTerminal();
     } else if (event.ctrlKey && event.shiftKey && key === "g" && !event.metaKey && !event.altKey) {
       event.preventDefault();
       setRightPanelOpen(true);
@@ -11949,7 +11967,7 @@ export function App() {
     "--tool-panel-width": `${appliedToolPanelWidth}px`,
   } as CSSProperties;
 
-  // 右侧面板菜单项（首页菜单页与 + 下拉菜单共用）。终端在底部打开，不改变面板内容，因此不关闭菜单页。
+  // 右侧面板菜单项（首页菜单页与 + 下拉菜单共用）。终端由内置插件在底部打开。
   const toolPanelMenuItems = [
     {
       key: "review",
@@ -11965,9 +11983,9 @@ export function App() {
       icon: <SquareTerminal size={18} />,
       label: "终端",
       shortcut: shortcutLabel("⌘J", "Ctrl+J"),
-      active: debugOpen,
-      visible: true,
-      onClick: () => { setDebugOpen((value) => !value); },
+      active: terminalOpen,
+      visible: terminalAvailable,
+      onClick: toggleTerminal,
     },
     {
       key: "browser",
@@ -12024,7 +12042,7 @@ export function App() {
           className={item.active ? "active" : ""}
           key={item.key}
           onClick={() => {
-            // 终端在底部展开，面板保持菜单页不动（对照 Codex：点击终端后界面无变化）
+            // 终端在底部展开，右侧菜单保持可用。
             if (item.key !== "terminal") setToolPanelMenuOpen(false);
             item.onClick();
           }}
@@ -12599,7 +12617,7 @@ export function App() {
         />
       )}
 
-      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""}`}>
+      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
         {platform === "linux" && conversationHeader}
 
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
@@ -13094,6 +13112,14 @@ export function App() {
             <span key={marker.id} className="annotation-marker" style={{ top: marker.top, left: marker.left }}>{marker.n}</span>
           ))}
         </div>
+
+        {terminalMounted && terminalAvailable && (
+          <div className="terminal-dock" hidden={!terminalOpen}>
+            <PluginSlotView slot="workspace.terminal" pluginId="dyworker-terminal" pluginKey="terminal"
+              workspacePath={activeSession?.workspacePath || workspacePath} visible={terminalOpen}
+              onClose={() => setTerminalOpen(false)} />
+          </div>
+        )}
 
         {debugOpen && (
           <TraceConsole

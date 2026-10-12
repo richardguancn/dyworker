@@ -916,6 +916,12 @@ export interface ScheduleRunStarted {
 }
 
 export interface DyworkerBridge {
+  createTerminal(payload: { workspacePath?: string; cols: number; rows: number }): Promise<{ ok: boolean; id?: string; cwd?: string; pid?: number; error?: string }>;
+  readTerminal(payload: { id: string }): Promise<{ ok: boolean; chunks?: { seq: number; data: string }[]; seq?: number; exited?: boolean; exitCode?: number; error?: string }>;
+  writeTerminal(payload: { id: string; data: string }): Promise<{ ok: boolean; error?: string }>;
+  resizeTerminal(payload: { id: string; cols: number; rows: number }): Promise<{ ok: boolean; error?: string }>;
+  closeTerminal(payload: { id: string }): Promise<{ ok: boolean; error?: string }>;
+  onTerminalEvent(callback: (event: { id: string; seq?: number; data?: string; exited?: boolean; exitCode?: number }) => void): () => void;
   /** 同步平台标识（preload 直接读 process.platform）：首帧渲染即用，不经过 IPC */
   readonly platform: string;
   getInitialState(): Promise<{

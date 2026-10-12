@@ -1,0 +1,12 @@
+{
+  "name": "dyworker-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "在当前工作文件夹中打开交互终端。",
+  "main": "index.js",
+  "exports": { ".": { "default": "./index.js" }, "./client": "./client.js" },
+  "dsh": { "client": { "platform": "web", "inject": [] } },
+  "dyworker": { "builtin": true },
+  "license": "MIT"
+}
