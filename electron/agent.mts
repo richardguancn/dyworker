@@ -907,7 +907,7 @@ export function checkOfficialDocumentText(content) {
   return { issues, passed };
 }
 
-async function checkOfficialDocument(workspace, relativePath) {
+export async function checkOfficialDocument(workspace, relativePath) {
   const extension = path.extname(String(relativePath || "")).toLowerCase();
   if (extension && !textExtensions.has(extension)) {
     throw new Error("格式检查目前支持文本类公文（.md/.txt 等）；Word 公文可先让助手整理为文本稿再检查");
@@ -976,7 +976,7 @@ export function calculateWorkdays({ startDate, days, endDate }) {
 
 // ---- 政府办公工具：Word（.docx）导出 ----
 
-async function exportWordDocument(workspace, relativePath, title, content) {
+export async function exportWordDocument(workspace, relativePath, title, content) {
   const target = String(relativePath || "").trim();
   if (!target.toLowerCase().endsWith(".docx")) throw new Error("导出路径必须以 .docx 结尾");
   const file = workspace.resolve(target);
@@ -993,7 +993,7 @@ async function exportWordDocument(workspace, relativePath, title, content) {
 
 // ---- 政府办公工具：Excel（.xlsx）统计表导出 ----
 
-async function exportExcelWorkbook(workspace, relativePath, sheets) {
+export async function exportExcelWorkbook(workspace, relativePath, sheets) {
   const target = String(relativePath || "").trim();
   if (!target.toLowerCase().endsWith(".xlsx")) throw new Error("导出路径必须以 .xlsx 结尾");
   const list = Array.isArray(sheets) ? sheets : [];
@@ -1016,7 +1016,7 @@ async function exportExcelWorkbook(workspace, relativePath, sheets) {
 }
 
 // 当前日期时间（防止模型凭训练数据猜日期）
-function currentDatetime() {
+export function currentDatetime() {
   const now = new Date();
   const pad = (value) => String(value).padStart(2, "0");
   const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
@@ -1233,7 +1233,7 @@ async function searchBocha(fetchImpl, apiKey, query, limit = 10) {
 // 本地部署的 Qwen（vLLM 等）没有服务端搜索后端，detectProvider 返回 null，自动落到后面的后端。
 // Kimi 开放平台端点下本地 web_search 已被公式 web_search 替代（见 runAgent 工具装配），走不到这里。
 // domesticSearchOnly=true 时跳过必应（微软服务，敏感查询不宜出境），只用境内引擎。
-async function webSearch(fetchImpl, query, limit = 10, options = {} as any) {
+export async function webSearch(fetchImpl, query, limit = 10, options = {} as any) {
   const trimmed = String(query || "").replace(/\s+/g, " ").trim();
   // 结果首行标注搜索来源，方便用户与模型分辨实际走的后端（Kimi 公式搜索不走这里）
   const withSource = (source, text) => `搜索来源：${source}\n\n${text}`;
@@ -1356,7 +1356,7 @@ async function govSearchOfficial(fetchImpl, query, limit = 8) {
 }
 
 // 政府官网权威来源搜索：先走中国政府网官方接口，失败时回退国内引擎 site:gov.cn 过滤
-async function govSearch(fetchImpl, query, limit = 8, options = {} as any) {
+export async function govSearch(fetchImpl, query, limit = 8, options = {} as any) {
   const trimmed = String(query || "").replace(/\s+/g, " ").trim();
   try {
     const official = await govSearchOfficial(fetchImpl, trimmed, limit);
@@ -1382,7 +1382,7 @@ async function govSearch(fetchImpl, query, limit = 8, options = {} as any) {
   return `${note}\n\n${chosen.join("\n\n")}`;
 }
 
-async function fetchPublicPage(fetchImpl, rawUrl, redirects = 5) {
+export async function fetchPublicPage(fetchImpl, rawUrl, redirects = 5) {
   let current = String(rawUrl);
   for (let hop = 0; hop <= redirects; hop++) {
     const check = isSafePublicUrl(current);
@@ -1419,7 +1419,7 @@ function stringProperty(description) {
 }
 
 // read_file 分页：默认最多 2000 行，超出时告知模型总行数并引导用 offset 续读（借鉴 Claude Code Read 的 offset/limit 设计）
-function sliceLines(content, offset, limit) {
+export function sliceLines(content, offset, limit) {
   const lines = String(content).split("\n");
   const start = Math.max(1, Math.floor(Number(offset) || 1));
   const max = Math.min(5000, Math.max(1, Math.floor(Number(limit) || 2000)));
@@ -1458,7 +1458,7 @@ const OCR_MIME_BY_EXTENSION = new Map([
 const OCR_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const OCR_PDF_MAX_BYTES = 50 * 1024 * 1024;
 
-async function runOcrFile(workspace, settings, fetchImpl, args) {
+export async function runOcrFile(workspace, settings, fetchImpl, args) {
   if (detectProvider(settings.endpoint) !== "glm" || !String(settings.apiKey || "").trim()) {
     throw new Error("ocr_file 的识别服务来自智谱开放平台（GLM-OCR）：请在设置中把模型服务切换为 GLM（智谱）并配置密钥后再试");
   }

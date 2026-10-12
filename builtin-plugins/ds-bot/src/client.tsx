@@ -24,6 +24,7 @@ const css = `
 .dy-bots .dy-bot-fields{flex:1;min-height:0;overflow:auto}.dy-bots .dy-bot-member{flex-direction:row;align-items:center}.dy-bots .dy-bot-send{flex-shrink:0}.dy-bots .dy-bot-send button{margin-left:auto}
 .dy-bots .dy-bot-active{border-color:var(--accent,#497cff)}.dy-bots .dy-bot-empty{margin:auto;text-align:center;line-height:1.8;color:var(--muted,#777)}
 .dy-bots .dy-bot-memory{padding:12px;border-bottom:1px solid var(--border,#ddd);white-space:pre-wrap;line-height:1.6}.dy-bots .dy-bot-memory button{display:block;margin-top:8px}
+.dy-bots .dy-bot-approval{border:1px solid var(--accent,#497cff);line-height:1.6}.dy-bots .dy-bot-approval pre{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;color:var(--muted,#777);max-height:180px;overflow:auto}
 `;
 
 function TeamPanel({ visible = true }: { visible?: boolean }) {
@@ -32,6 +33,7 @@ function TeamPanel({ visible = true }: { visible?: boolean }) {
   const [history, setHistory] = useState<any>({ events: [] }), [view, setView] = useState('chat');
   const [form, setForm] = useState<any>(null), [memory, setMemory] = useState<any>(null), [memoryDraft, setMemoryDraft] = useState('');
   const [notice, setNotice] = useState(''), [confirmDelete, setConfirmDelete] = useState(false), [questionAnswer, setQuestionAnswer] = useState('');
+  const [approvals, setApprovals] = useState<any[]>([]);
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const bodyRef = useRef<HTMLDivElement>(null), pinned = useRef(true);
   const items = [...(team?.bots || []), ...(team?.rooms || [])];
@@ -41,6 +43,8 @@ function TeamPanel({ visible = true }: { visible?: boolean }) {
   const question = team?.questions?.[questionSessionId];
   const noModel = !team?.models?.length || (!isRoom && !entry?.model);
   const readOnly = !!team?.readOnly;
+  // 机器人调用 DYWorker 的能力时，需要确认的会在这里问：按当前对话筛出待确认项。
+  const pendingApproval = approvals.find(item => [sessionId, entry?.id, entry?.sessionId].includes(item.sessionId));
 
   const refresh = async (signal?: AbortSignal) => {
     const value = await call('state', { locale: 'zh-CN' }, signal);
@@ -49,8 +53,11 @@ function TeamPanel({ visible = true }: { visible?: boolean }) {
     const chosen = all.find(item => item.id === selectedRef.current) || all.find(item => item.id === value.mainBotId) || all[0];
     if (chosen) {
       setSelected(chosen.id);
-      const next = await call('dyworker-history', { sessionId: chosen.sessionId || chosen.id }, signal);
+      const conversationId = chosen.sessionId || chosen.id;
+      const next = await call('dyworker-history', { sessionId: conversationId }, signal);
       if (!signal?.aborted && (!selectedRef.current || selectedRef.current === chosen.id)) setHistory(next);
+      const pending = await call('dyworker-approvals', { sessionId: conversationId }, signal);
+      if (!signal?.aborted) setApprovals(pending?.items || []);
     }
     if (!signal?.aborted) setConnectionError('');
   };
@@ -103,7 +110,8 @@ function TeamPanel({ visible = true }: { visible?: boolean }) {
   const messages = conversationMessages(history);
   return <div className="dy-bots"><style>{css}</style>
     <div className="dy-bot-row"><h3>机器人团队</h3><button disabled={busy || !team || readOnly} onClick={() => create('bot')}>新建机器人</button><button disabled={busy || (team?.bots?.length || 0) < 2 || readOnly} title={(team?.bots?.length || 0) < 2 ? '至少需要两个机器人' : undefined} onClick={() => create('room')}>新建群聊</button></div>
-    <p className="dy-bot-sub">为机器人安排角色，单独交流或让它们在群聊中协作。</p>
+    <p className="dy-bot-sub">为机器人安排角色，单独交流或让它们在群聊中协作。机器人可以使用工作文件夹里的文件、命令和联网工具；需要确认的操作会在这里问你。</p>
+    {approvals.length > 0 && !pendingApproval && <p role="status" className="dy-bot-sub">还有 {approvals.length} 项操作等待确认，请切换到对应的对话处理。</p>}
     {(error || connectionError) && <div role="alert" className="dy-bot-alert dy-bot-error">{error || connectionError}</div>}
     {team?.readOnly && <div className="dy-bot-alert">{team.readOnly}</div>}
     {!team ? <div className="dy-bot-empty">{error || connectionError ? <button onClick={() => void perform(async () => {})}>重试</button> : '正在打开机器人团队…'}</div> : <>
@@ -123,6 +131,7 @@ function TeamPanel({ visible = true }: { visible?: boolean }) {
             {messages.map((message, index) => <div className="dy-bot-message" data-role={message.role} key={message.key || index}><small>{message.who || (message.role === 'user' ? '你' : entry.name)}</small>{message.text}</div>)}
             {history.running && <p role="status" className="dy-bot-sub">正在回复…</p>}
             {history.error && <p role="alert" className="dy-bot-error">{history.error}</p>}
+            {pendingApproval && <div className="dy-bot-alert dy-bot-approval" data-approval={pendingApproval.id}><p><strong>需要你确认</strong></p><p>{pendingApproval.title}</p><pre>{pendingApproval.details}</pre><div className="dy-bot-row"><button disabled={busy || readOnly} onClick={() => void perform(async () => { await call('dyworker-approve', { id: pendingApproval.id, allow: true }); })}>允许</button><button disabled={busy || readOnly} onClick={() => void perform(async () => { await call('dyworker-approve', { id: pendingApproval.id, allow: false }); })}>拒绝</button></div></div>}
             {question && <div className="dy-bot-alert"><p>{question.question}</p>{question.detail && <p className="dy-bot-sub">{question.detail}</p>}<div className="dy-bot-row">{question.options?.map((option: any) => <button key={option.label} disabled={busy || readOnly} onClick={() => void perform(async () => { await call('answer-question', { sessionId: questionSessionId, questionId: question.id, answer: { selected: [option.label] } }); })}>{option.label}</button>)}</div><label>自行回答<input value={questionAnswer} onChange={event => setQuestionAnswer(event.target.value)} /></label><button disabled={busy || !questionAnswer.trim() || readOnly} onClick={() => void perform(async () => { await call('answer-question', { sessionId: questionSessionId, questionId: question.id, answer: { custom: questionAnswer } }); setQuestionAnswer(''); })}>提交回答</button></div>}
           </div>
           <form className="dy-bot-send" onSubmit={event => { event.preventDefault(); const text = draft.trim(); if (!text) return; void perform(async () => { await call('send', { sessionId, text }); setDraft(''); pinned.current = true; }); }}>

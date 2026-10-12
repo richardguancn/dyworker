@@ -5,6 +5,16 @@ import path from 'node:path';
 import { generateWithDyworker } from '../dsh-runtime/model-adapter.mts';
 import { hasConfiguredModel } from '../dsh-runtime/model-settings.mts';
 import { SessionHistoryController } from '../dsh-runtime/vendor/session-history.mjs';
+import { Workspace, loadProjectInstructions } from '../../agent.mts';
+import { skillContextSummary } from '../../skills.mts';
+import { selectWikiPages } from '../../memory-wiki.mts';
+import { normalizeApprovalMode } from '../../settings.mts';
+import { createBotApproval, createBotHarnessTools } from '../dsh-runtime/bot-harness.mts';
+
+// 机器人自己不做第二套权限判断：审批模式沿用应用设置，人工确认落到「机器人团队」面板。
+const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+/** 机器人从桌面任务继承的工具里，界面相关的那部分不接：由会话检索、插件工具、MCP 工具补足。 */
+const BOT_DELEGATED_TOOL_NAMES = new Set(['list_sessions', 'search_sessions', 'read_session']);
 
 // The application and the official runtime have separate Cordis tools/storage
 // contracts. Resolve runtime exports without merging their declaration worlds.
@@ -28,10 +38,12 @@ export function botModelProfiles(settings: any) {
 
 // The upstream host uses only public DSH services. Its independent Session store
 // keeps root Bots alive together without borrowing ordinary task ownership.
-export async function createBotTeam({ dataDir, entryUrl, readSettings, generate = generateWithDyworker }: any) {
+export async function createBotTeam({ dataDir, entryUrl, readSettings, host, generate = generateWithDyworker }: any) {
   const workspacePath = path.join(dataDir, 'workspace');
   await fs.mkdir(workspacePath, { recursive: true });
   const ctx: any = await createOfficialDshContext({ dataDir, workspacePath });
+  // 机器人自己的运行环境里没有应用服务（技能、记忆、审批审计、插件工具都在宿主上下文里）。
+  const hostCtx: any = host || ctx;
   const handles = new Map<string, any>(), opening = new Map<string, Promise<any>>();
   const selections = new Map<string, any>();
   const errors = new Map<string, string>();
@@ -47,6 +59,65 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
   let closed = false, profiles: any[] = [], adapterKey = '', registration: any;
   const lifetime = new AbortController();
   const history = new SessionHistoryController(ctx, observation => observation[Symbol.dispose]());
+  const resolvers = hostCtx.agent?.resolvers || {};
+  const botWorkspace = new Workspace(workspacePath, {});
+  const approvals = new Map<string, { record: any; settle: (value: boolean) => void }>();
+  const routers = new Map<string, any>();
+  let appSettings: any = {};
+  const refreshSettings = async () => {
+    try { appSettings = (await readSettings()) || {}; } catch (error: any) { if (error?.code !== 'ENOENT') appSettings = {}; }
+    return appSettings;
+  };
+  const approvalMode = () => normalizeApprovalMode(appSettings.approvalMode);
+  // 需要人工确认的操作在「机器人团队」面板弹确认卡：同意即执行，超时或停用按拒绝处理。
+  // signal 结束时（用户停止、机器人团队停用）确认卡随之消失，不留挂起项。
+  const requestApproval = ({ id, kind, title, details, sessionId, signal }: any) => new Promise<boolean>(resolve => {
+    const finish = (value: boolean) => {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', aborted);
+      approvals.delete(id);
+      resolve(value);
+    };
+    const aborted = () => finish(false);
+    const timer = setTimeout(() => finish(false), APPROVAL_TIMEOUT_MS);
+    timer.unref?.();
+    approvals.set(id, { record: { id, kind, title, details, sessionId, createdAt: Date.now() },
+      settle: finish });
+    if (signal?.aborted) aborted(); else signal?.addEventListener?.('abort', aborted, { once: true });
+  });
+  const approve = createBotApproval({ workspace: botWorkspace, workspacePath, getApprovalMode: approvalMode,
+    hooks: async () => (typeof resolvers.readHooks === 'function' ? await resolvers.readHooks(workspacePath) : []),
+    standingRules: async () => (typeof resolvers.readStandingRules === 'function' ? await resolvers.readStandingRules() : []),
+    settings: () => appSettings, requestApproval,
+    audit: (item: any) => hostCtx.audit?.record?.({ ...item, approvalMode: approvalMode() }) });
+  const routeFor = (sessionId: string) => {
+    let route = routers.get(sessionId);
+    if (!route && typeof resolvers.createExtraToolRouter === 'function') {
+      route = resolvers.createExtraToolRouter(appSettings, workspacePath, { sessionId, signal: lifetime.signal });
+      routers.set(sessionId, route);
+    }
+    return route;
+  };
+  const inheritedContext = async (sessionId: string) => {
+    const skills = hostCtx.skills?.read ? await hostCtx.skills.read(workspacePath).catch(() => []) : [];
+    const pages = selectWikiPages(await (resolvers.readMemoryPages?.(sessionId) ?? []), { workspacePath, query: '', limit: 3 });
+    const instructions = await loadProjectInstructions(workspacePath).catch(() => '');
+    return [
+      `机器人能力说明：你可以像 DYWorker 任务一样直接使用工作文件夹里的文件工具、运行命令、联网检索与办公文档导出，工作文件夹是 ${workspacePath}。`,
+      '需要改动文件、执行命令、访问联网或写入长期记忆时，应用会按当前审批设置判断；需要你确认的操作会在「机器人团队」面板弹出确认卡，等用户点「允许」后再执行，被拒绝时不要绕过。',
+      skills.length ? `可用工作模板（先用 load_skill 读取完整要求）：\n${skillContextSummary(skills)}` : '',
+      instructions ? `工作文件里的 AGENTS.md 约定（与用户当前要求冲突时以当前要求为准）：\n${instructions}` : '',
+      pages.length ? `相关长期记忆（仅作背景，与当前要求冲突时以当前要求为准）：\n${pages.map((page: any) => `## ${page.title}\n${String(page.content || '').slice(0, 1600)}`).join('\n\n')}` : '',
+    ].filter(Boolean).join('\n\n');
+  };
+  async function inheritHarnessContext(id: string, agent: any) {
+    const existing = agent?.session?.snapshotEvents?.() || [];
+    if (existing.some((event: any) => event.type === 'user/message'
+      && JSON.stringify(event.data?.content || '').includes('机器人能力说明'))) return;
+    const text = await inheritedContext(id);
+    agent.inject(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'runtime-context' } } as any));
+    await ctx.sessions.flush(agent.session);
+  }
 
   class Models extends LlmAdapter {
     providerInfo(provider: string) { return { id: provider, name: profiles.find(p => p.provider === provider)?.name || 'DYWorker' }; }
@@ -63,7 +134,8 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
         // that would claim it displayed a card the user cannot answer.
         stream: (request: any) => generate(settings, { ...request,
           tools: request.tools?.filter((tool: any) => !['request_secret', 'list_secrets'].includes(tool.name)),
-          system: `${request.system || ''}\n\nDYWorker 团队面板当前不提供凭据卡片、独立浏览器或 GitHub 连接。不得声称已经显示这些界面或请求用户把密码和密钥贴进聊天。`,
+          system: `${request.system || ''}\n\nDYWorker 团队面板当前不提供凭据卡片、独立浏览器面板或 GitHub 连接。不得声称已经显示这些界面或请求用户把密码和密钥贴进聊天。`
+            + '你可以使用工作文件夹里的文件、命令与联网工具；需要用户确认的操作会在面板弹出确认卡，被拒绝时不要绕过，也不要重复尝试同一操作。',
           signal: AbortSignal.any([request.signal, lifetime.signal]) }, { attachments: ctx.attachments }) };
     }
     async *stream(request: any) {
@@ -92,6 +164,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
       const handle = await ctx.agents.resume({ resumeSessionId: id,
         agentOptions: selection.current || {}, setup: (scope: any) => { installModelSelection(scope, selection); } });
       handles.set(id, handle); selections.set(id, selection);
+      await inheritHarnessContext(id, handle.agent).catch(() => {});
       return handle;
     })();
     opening.set(id, pending);
@@ -102,6 +175,11 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
     const header = live?.header || (await ctx.sessionPersistence.stat(id))?.header;
     if (!header || path.resolve(header.cwd) !== path.resolve(workspacePath)) throw new Error('对话不属于机器人团队');
   }
+  /** 读一次上游机器人状态；文件还没生成时返回空对象，不抛错。 */
+  const readBotState = async () => {
+    try { return JSON.parse(await fs.readFile(path.join(dataDir, 'bot/state.json'), 'utf8')) || {}; }
+    catch { return {}; }
+  };
   try {
     ctx.provide('workspaceRegistry', {
       get: (id: string) => id === workspace.id ? workspace : undefined,
@@ -123,6 +201,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
         const handle = await ctx.agents.create({ sessionId, meta: { cwd: workspacePath },
           agentOptions: selection.current || {}, setup: (scope: any) => { installModelSelection(scope, selection); } });
         handles.set(sessionId, handle); selections.set(sessionId, selection);
+        await inheritHarnessContext(sessionId, handle.agent).catch(() => {});
         return { sessionId };
       },
       resolveAgent: async (id: string) => ({ agent: await resolveAgent(id) }),
@@ -161,6 +240,25 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
     });
     ctx.on('agent/error', ({ agent, error }: any) => errors.set(agent.id,
       error?.code === 'AUTH' ? '模型验证失败，请检查模型设置' : String(error?.message || '模型请求失败').slice(0, 500)));
+    // 机器人继承桌面任务的能力：工具面、审批、工作文件夹约定都走应用同一批实现。
+    await refreshSettings();
+    const mcpTools = typeof resolvers.mcpExtraTools === 'function' ? await resolvers.mcpExtraTools(appSettings) : [];
+    const appTools: any[] = (typeof resolvers.agentExtraTools === 'function' ? resolvers.agentExtraTools(mcpTools) : mcpTools) || [];
+    const delegated = appTools.map((tool: any) => tool.function ?? tool)
+      .filter((tool: any) => BOT_DELEGATED_TOOL_NAMES.has(tool?.name) || String(tool?.name || '').startsWith('plugin__')
+        || String(tool?.name || '').startsWith('mcp__'));
+    const harness = createBotHarnessTools({ ctx, hostCtx, workspacePath, workspace: botWorkspace, approve,
+      readSettings: refreshSettings, extraDefinitions: delegated,
+      routeExtra: async (name: string, args: any, exec: any) => {
+        const route = routeFor(String(exec?.sessionId || ''));
+        if (!route) throw new Error('机器人团队没有可用的应用工具入口');
+        return route(name, args);
+      } });
+    for (const tool of harness.tools) ctx.tools.register({ name: tool.name, description: tool.description || tool.name,
+      parameters: tool.parameters || { type: 'object', properties: {} },
+      execute: async (args: any, exec: any) => ({ text: await harness.execute(tool.name, args, exec) }),
+      output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
+        render: (_args: any, value: any) => [{ type: 'text', text: String(value?.text ?? '') }] } });
     await syncModels();
     await ctx.plugin(await import(entryUrl), { home: path.join(dataDir, 'bot'), workspace: workspacePath,
       mainName: '总管', mainRole: '团队协调', browser: false, updateCheck: false, github: false });
@@ -172,11 +270,32 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
     async dispatch(request: Request) {
       if (closed) throw new Error('机器人团队已停用');
       await syncModels();
+      await refreshSettings();
       const body: any = await request.clone().json();
+      if (body.endpoint === 'dyworker-approvals') {
+        // 面板按「对话」筛选：机器人的对话 id 是机器人编号，而确认卡记录的是实际运行的会话编号，
+        // 两者用上游状态里的分段信息对齐，避免卡片挂到错误的对话上。
+        const wanted = String(body.payload?.sessionId || '');
+        const state: any = wanted ? await readBotState() : null;
+        const bot: any = state ? Object.values(state.bots || {}).find((item: any) => item.id === wanted || item.sessionId === wanted) : null;
+        const room: any = state ? state.rooms?.[wanted] : null;
+        const ids = new Set<string>([wanted, String(bot?.sessionId || ''),
+          ...((bot?.segments || []).map((part: any) => String(part.sessionId || ''))),
+          ...Object.values(room?.sessions || {}).map((value: any) => String(value || ''))].filter(Boolean));
+        const records = [...approvals.values()].map(entry => entry.record);
+        return Response.json({ ok: true, value: { items: wanted ? records.filter(item => ids.has(String(item.sessionId || ''))) : records,
+          total: records.length } });
+      }
+      if (body.endpoint === 'dyworker-approve') {
+        const entry = approvals.get(String(body.payload?.id || ''));
+        if (!entry) return Response.json({ ok: true, value: { resolved: false } });
+        entry.settle(body.payload?.allow === true);
+        return Response.json({ ok: true, value: { resolved: true } });
+      }
       if (body.endpoint === 'dyworker-history') {
         const id = String(body.payload?.sessionId || '');
         await authorize(id);
-        const state = JSON.parse(await fs.readFile(path.join(dataDir, 'bot/state.json'), 'utf8'));
+        const state = await readBotState();
         const room = state.rooms?.[id];
         const bot: any = Object.values(state.bots || {}).find((entry: any) => entry.id === id || entry.sessionId === id);
         const ids = [...new Set<string>([...(bot?.segments || []).map((part: any) => part.sessionId), id])];
@@ -205,6 +324,9 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
     async dispose() {
       if (closed) return;
       closed = true; lifetime.abort(new Error('机器人团队已停用'));
+      for (const entry of approvals.values()) entry.settle(false);
+      await Promise.allSettled([...routers.values()].map(route => route.dispose?.()));
+      routers.clear();
       await saving;
       await Promise.allSettled([...opening.values()]);
       await Promise.allSettled([...handles.values()].map(handle => handle.dispose()));
@@ -214,16 +336,19 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, generate 
 }
 
 export class BotTeamService extends Service {
-  constructor(ctx: any) { super(ctx, 'botTeam'); }
-  mount(entryUrl: string) {
+  options: any;
+  constructor(ctx: any, options: any = {}) { super(ctx, 'botTeam'); this.options = options; }
+  mount(entryUrl: string, options: any = {}) {
     // Opening the app only registers the plugin. First use starts its own data store.
     const host: any = this.ctx;
+    const settings = { ...(this.options || {}), ...(options || {}) };
     let pending: Promise<any> | undefined, closed = false;
     return {
       dispatch: async (request: Request) => {
         if (closed) throw new Error('机器人团队已停用');
         const team = await (pending ??= createBotTeam({ dataDir: path.join(host.storage.hostDir, 'ds-bot'),
-          entryUrl, readSettings: () => host.settings.read() }).catch(error => { pending = undefined; throw error; }));
+          entryUrl, host, readSettings: () => host.settings.read(), ...settings })
+          .catch(error => { pending = undefined; throw error; }));
         if (closed) { await team.dispose(); throw new Error('机器人团队已停用'); }
         return team.dispatch(request);
       },
