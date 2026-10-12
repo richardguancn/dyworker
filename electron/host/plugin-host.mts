@@ -638,14 +638,15 @@ export class PluginHostService extends Service {
     };
     refreshPluginModules(this.dir);
 
-    // git / 本地来源装完后要回到"按包名上树"的流程：从 profile 依赖 diff 里找出装进来的包名
+    // git / 本地来源装完后要回到"按包名上树"的流程：从 profile 依赖 diff 里找出装进来的包名。
+    // 子目录来源例外：包名是克隆下来的 manifest 里读的（仓库名和包名经常不一致，猜不得）。
     let parsedInput: any = null;
     try {
       parsedInput = parsePluginSource(rawInput);
     } catch {
       parsedInput = null;
     }
-    let packageName = downloaded.kind === "npm" ? String(parsedInput?.name || "") : "";
+    let packageName = downloaded.kind === "npm" ? String(parsedInput?.name || "") : String(downloaded.packageName || "");
     if (!packageName) {
       packageName = await detectInstalledPackageName(this.dir, before, { parsed: parsedInput, rawInput }) || rawInput;
     }

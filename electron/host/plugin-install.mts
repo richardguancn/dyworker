@@ -147,8 +147,29 @@ export const INSTALL_SOURCES = {
 };
 
 /**
+ * 解析 git 地址尾部的片段：`#<ref>`，可再带 `path:<子目录>`。
+ *
+ * 两种分隔都见过：npm 自己的是 `::`（npm-package-arg 按 `::` 切分再认 `path:`），
+ * 而 DSH 插件 README 里写给用户的是 `&`（如 `github:owner/repo#v0.1.0&path:/ds-bot`），
+ * 所以两种都收。
+ */
+function parseGitFragment(fragment) {
+  let branch = "";
+  let subdir = "";
+  for (const part of String(fragment || "").split(/&|::/).map((item) => item.trim()).filter(Boolean)) {
+    const sub = /^path:(.*)$/i.exec(part);
+    if (sub) {
+      subdir = sub[1].replace(/^\/+|\/+$/g, "");
+      continue;
+    }
+    if (!branch) branch = part;
+  }
+  return { branch, subdir };
+}
+
+/**
  * 识别用户填的是什么：
- *   - GitHub 仓库地址（含 /tree/<branch>/<subdir> 子目录写法）
+ *   - GitHub 仓库地址（含 /tree/<branch>/<subdir> 子目录写法、github:owner/repo 简写、#分支、path:子目录）
  *   - 本地目录 / tarball 路径
  *   - npm 包名（可带 @版本 或 @scope/name）
  * 返回 { kind, ... }，调用方据此决定用哪种 npm 参数。
@@ -157,15 +178,19 @@ export function parsePluginSource(input) {
   const raw = String(input || "").trim();
   if (!raw) throw new Error("请输入插件包名、GitHub 仓库地址或本地目录路径");
 
-  // GitHub（也接受 git+https / .git 结尾）
-  const github = raw.match(/^(?:git\+)?(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/tree\/([^/\s]+)(?:\/([^\s#?]+))?)?$/i);
-  if (github) {
-    const [, owner, repo, branch, subdir] = github;
-    return { kind: "github", owner, repo, branch: branch || "", subdir: subdir || "", raw };
+  // GitHub（也接受 git+https / .git 结尾 / github:owner/repo 简写 / #分支 / path:子目录）
+  const githubUrl = raw.match(/^(?:git\+)?(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/tree\/([^/\s]+)(?:\/([^\s#?]+))?)?(?:#(.+))?$/i);
+  const githubShort = raw.match(/^github:([^/\s]+)\/([^#\s]+?)(?:\.git)?(?:#(.+))?$/i);
+  if (githubUrl || githubShort) {
+    const [, owner, repo] = githubUrl || githubShort;
+    const tree = githubUrl ? { branch: githubUrl[3] || "", subdir: githubUrl[4] || "" } : { branch: "", subdir: "" };
+    const fragment = parseGitFragment(githubUrl ? githubUrl[5] : githubShort[3]);
+    return { kind: "github", owner, repo, branch: tree.branch || fragment.branch, subdir: tree.subdir || fragment.subdir, raw };
   }
-  if (/^git@github\.com:/i.test(raw)) {
-    const [, owner, repo] = raw.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i) || [];
-    if (owner) return { kind: "github", owner, repo, branch: "", subdir: "", raw };
+  const ssh = raw.match(/^git@github\.com:([^/\s]+)\/([^#\s]+?)(?:\.git)?(?:#(.+))?$/i);
+  if (ssh) {
+    const fragment = parseGitFragment(ssh[3]);
+    return { kind: "github", owner: ssh[1], repo: ssh[2], branch: fragment.branch, subdir: fragment.subdir, raw };
   }
 
   // 本地目录 / 文件（含 ~ 展开、Windows 盘符）
@@ -195,16 +220,39 @@ export function resolveNpmRegistry(source, customRegistry) {
   return raw.replace(/\/+$/, "");
 }
 
-/** 构造 GitHub 安装规格；前缀为空即直连 */
-export function githubInstallSpecs({ owner, repo, branch, subdir }: any, prefixes = [""]) {
+/**
+ * 构造 GitHub 安装规格；前缀为空即直连。
+ *
+ * **只用于仓库根就是插件的仓库**：npm 装 git 依赖时硬要求仓库根有 package.json，
+ * 没有任何写法能表达"仓库里的某个子目录"（`#ref//sub` 会被当成 commit-ish，
+ * npm 自己的 `#ref::path:/sub` 也只是被 npm-package-arg 解析、无人消费）。
+ * 子目录插件的走法见 installGithubSubdir。
+ */
+export function githubInstallSpecs({ owner, repo, branch }: any, prefixes = [""]) {
   const base = `github.com/${owner}/${repo}`;
-  const suffix = branch ? (subdir ? `//${subdir}` : "") : "";
   const ref = branch ? `#${branch}` : "";
   return prefixes.map((prefix) => {
-    if (!prefix) return `git+https://${base}.git${ref}${suffix}`;
+    if (!prefix) return `git+https://${base}.git${ref}`;
     // 代理前缀形如 https://gitclone.com/ → https://gitclone.com/github.com/o/r.git
-    return `git+${prefix}${base}.git${ref}${suffix}`;
+    return `git+${prefix}${base}.git${ref}`;
   });
+}
+
+/** 克隆地址：与安装规格同一批镜像前缀，子目录安装要先自己克隆 */
+export function githubCloneUrls({ owner, repo }: any, prefixes = [""]) {
+  return prefixes.map((prefix) => (prefix ? `${prefix}github.com/${owner}/${repo}.git` : `https://github.com/${owner}/${repo}.git`));
+}
+
+/** 克隆目录名：owner/repo/ref 都来自用户粘贴的地址，不能直接拼进路径 */
+function safeSegment(value: any) {
+  return String(value || "").replace(/[^\w.@+-]+/g, "_").replace(/^\.+/, "_") || "_";
+}
+
+/** 结尾几行输出 + 退出码，用于失败明细（npm/git 的有用信息都在末尾） */
+function lastLines(result: any, count = 3) {
+  const output = String(result?.stderr || result?.stdout || "").trim();
+  const tail = output ? output.split("\n").slice(-count).join(" ").trim() : "无输出";
+  return `退出码 ${result?.code}：${tail}`;
 }
 
 export const DEFAULT_TIMEOUT_MS = 180_000;
@@ -321,14 +369,23 @@ export async function installPackageIntoProfile({
   const childEnv = { ...process.env, PATH: childDirs.join(path.delimiter) };
 
   const baseArgs = ["install", "--prefix", dir, "--save-exact", "--no-audit", "--no-fund"];
-  // 本地目录复制到 profile；npm 默认的软链接会把依赖解析带回源码目录，
-  // 导致宿主已补齐的 peer 仍不可见，也会让已安装插件随源码修改而意外变化。
-  if (parsed.kind === "local") baseArgs.push("--install-links");
+  // 本地目录（含克隆下来的 GitHub 子目录）复制到 profile；npm 默认的软链接会把依赖解析带回
+  // 源码目录，导致宿主已补齐的 peer 仍不可见，也会让已安装插件随源码修改而意外变化。
+  const fromLocalDir = parsed.kind === "local" || (parsed.kind === "github" && !!parsed.subdir);
+  if (fromLocalDir) baseArgs.push("--install-links");
   if (legacyPeerDeps) baseArgs.push("--legacy-peer-deps");
   // 所有来源默认只安装已构建产物；源码仓库也不自动执行 prepare。
   const shouldIgnoreScripts = ignoreScripts !== false;
   if (shouldIgnoreScripts) baseArgs.push("--ignore-scripts");
   if (registry) baseArgs.push(`--registry=${registry}`);
+
+  // GitHub 子目录：npm 表达不了"仓库里的某个子目录"，只能克隆后按本地包装
+  if (parsed.kind === "github" && parsed.subdir) {
+    return installGithubSubdir({
+      parsed, dir, baseArgs, resolvedNpm, run, timeoutMs, env: childEnv,
+      prefixes: preset.githubPrefixes, rawInput,
+    });
+  }
 
   // 不同来源 → 不同的安装目标；GitHub 走镜像回退链，逐个试
   const targets = [];
@@ -370,11 +427,12 @@ export async function installPackageIntoProfile({
       };
     }
     const output = String(result.stderr || result.stdout || "");
-    const npmCode = /npm (?:error|ERR!) code (\S+)/.exec(output)?.[1];
-    attempts.push({ label, error: `${npmCode ? `[${npmCode}] ` : ""}退出码 ${result.code}：${output.trim().split("\n").slice(-8).join(" ")}` });
+    const code = npmErrorCode(result);
+    attempts.push({ label, error: `${code ? `[${code}] ` : ""}退出码 ${result.code}：${output.trim().split("\n").slice(-8).join(" ")}` });
   }
 
   const detail = attempts.map((item) => `${item.label} → ${item.error}`).join("；");
+  const hint = subdirHint(detail, parsed);
   return {
     ok: false,
     spec: rawInput,
@@ -383,9 +441,128 @@ export async function installPackageIntoProfile({
     args: targets.map((item) => item.target),
     attempts,
     error: parsed.kind === "github" && attempts.length > 1
-      ? `所有安装源都失败（已尝试直连与镜像）：${detail}`
-      : `安装失败：${detail}`,
+      ? `所有安装源都失败（已尝试直连与镜像）：${detail}${hint}`
+      : `安装失败：${detail}${hint}`,
   };
+}
+
+/**
+ * 从 GitHub 仓库的**子目录**装插件（monorepo 里的插件包）。
+ *
+ * 为什么必须自己克隆：npm 装 git 依赖只认仓库根的 package.json。
+ *   - `git+...#main//ds-bot`：整个片段被当成 commit-ish，git 报
+ *     `pathspec 'main//ds-bot' did not match any file(s) known to git`；
+ *   - npm 文档式的 `...#main::path:/ds-bot`：npm-package-arg 确实会解析出 gitSubdir，
+ *     但 npm 11.7 全树里没有任何地方消费它（只有 npa.js 提到该字段），照样去仓库根读 manifest。
+ * 于是仓库根没有 package.json 的 monorepo（如 DS Bot：包在 ds-bot/）在 npm 下无解。
+ *
+ * 克隆落在 profile 内的隐藏目录，而不是临时目录：npm 会把依赖记成 `file:<路径>`，
+ * 临时目录删掉后这条依赖就悬空，之后 profile 里任何一次 `npm install` 都会整条失败。
+ * 放在 profile 内还有个好处是依赖记录写的是相对路径，profile 整体搬走也不会断。
+ */
+async function installGithubSubdir({ parsed, dir, baseArgs, resolvedNpm, run, timeoutMs, env, prefixes, rawInput }: any) {
+  const subdir = String(parsed.subdir).replace(/^\/+|\/+$/g, "");
+  const ref = String(parsed.branch || "");
+  const cloneDir = path.join(dir, GIT_SOURCE_DIR,
+    `${safeSegment(parsed.owner)}__${safeSegment(parsed.repo)}@${safeSegment(ref || "HEAD")}`);
+  const target = path.resolve(cloneDir, subdir);
+  // 子目录是从地址里抠出来的：不许用 .. 跑到克隆目录外面去
+  if (target !== cloneDir && !target.startsWith(cloneDir + path.sep)) {
+    return { ok: false, spec: rawInput, kind: "github", subdir, error: `子目录 ${parsed.subdir} 越出了仓库范围，无法安装` };
+  }
+
+  // commit SHA 浅克隆拿不到（--depth 1 只取默认分支的尖端），只能完整克隆再 checkout
+  const sha = /^[0-9a-f]{7,40}$/i.test(ref);
+  const cloneArgs = ["clone", ...(sha ? [] : ["--depth", "1", ...(ref ? ["--branch", ref] : [])])];
+  const attempts = [];
+  for (const url of githubCloneUrls(parsed, prefixes)) {
+    try {
+      await fs.rm(cloneDir, { recursive: true, force: true });
+      await fs.mkdir(path.dirname(cloneDir), { recursive: true });
+      const cloned = await run("git", [...cloneArgs, url, cloneDir], { cwd: dir, timeoutMs, env });
+      if (cloned.code !== 0) {
+        attempts.push({ label: url, error: `克隆失败：${lastLines(cloned)}` });
+        continue;
+      }
+      if (sha) {
+        const checkout = await run("git", ["checkout", "--force", ref], { cwd: cloneDir, timeoutMs, env });
+        if (checkout.code !== 0) {
+          attempts.push({ label: url, error: `checkout ${ref} 失败：${lastLines(checkout)}` });
+          continue;
+        }
+      }
+      const manifest = await readManifestOrNull(target);
+      if (!manifest?.name) {
+        attempts.push({ label: url, error: `子目录 ${subdir} 里没有 package.json（地址里的子目录写错了？）` });
+        continue;
+      }
+      const args = [...baseArgs, target];
+      const installed = await run(resolvedNpm, args, { cwd: dir, timeoutMs, env });
+      if (installed.code === 0) {
+        return {
+          ok: true,
+          spec: rawInput,
+          kind: "github",
+          subdir,
+          /** 包名直接取自克隆下来的 manifest：仓库名（DeepSeek-Bot）和包名（ds-bot）经常不一致 */
+          packageName: manifest.name,
+          command: resolvedNpm,
+          args,
+          ranInstallScripts: !baseArgs.includes("--ignore-scripts"),
+          stdout: installed.stdout,
+          cloneDir,
+        };
+      }
+      const code = npmErrorCode(installed);
+      attempts.push({ label: url, error: `${code ? `[${code}] ` : ""}${lastLines(installed)}` });
+    } catch (error: any) {
+      // git 不存在时是 spawn ENOENT：这类失败换个源也没用，但明细里要说清楚
+      const message = error?.code === "ENOENT" ? `找不到 git（子目录安装需要先克隆仓库）：${error.message}` : String(error?.message || error);
+      attempts.push({ label: url, error: message });
+    }
+  }
+  const detail = attempts.map((item) => `${item.label} → ${item.error}`).join("；");
+  return {
+    ok: false,
+    spec: rawInput,
+    kind: "github",
+    subdir,
+    cloneDir,
+    attempts,
+    error: `子目录插件安装失败：需要克隆 ${parsed.owner}/${parsed.repo}#${ref || "HEAD"} 再装入 ${subdir}。${detail}`,
+  };
+}
+
+/** 克隆下来的仓库放在 profile 里的哪（隐藏目录，不和 node_modules 混在一起） */
+const GIT_SOURCE_DIR = ".dyworker-git-sources";
+
+/** 从包管理器输出里抠出 npm 错误码（报错时最有用的一行） */
+function npmErrorCode(result: any) {
+  const output = String(result?.stderr || result?.stdout || "");
+  return /npm (?:error|ERR!) code (\S+)/.exec(output)?.[1] || "";
+}
+
+/**
+ * npm 装 git 依赖失败后的补充提示：仓库根没有 package.json。
+ *
+ * 这是 monorepo 插件最典型的失败（插件包在子目录里，如 DS Bot 的 ds-bot/），
+ * 而 npm 原生报错只有 `_cacache/tmp/git-cloneXXX/package.json ENOENT`——
+ * 用户完全看不出下一步该往地址里填什么。识别到这个特征就顺手把可用写法写出来。
+ */
+function subdirHint(output: string, parsed: any) {
+  if (parsed?.kind !== "github" || parsed.subdir) return "";
+  if (!/ENOENT/.test(output) || !/git-clone\w*[\\/]package\.json/.test(output)) return "";
+  return `。该仓库根目录没有 package.json，插件多半在子目录里：把地址写到插件所在子目录再装，`
+    + `例如 https://github.com/${parsed.owner}/${parsed.repo}/tree/<分支>/<子目录>`;
+}
+
+/** 读目录里的 package.json；读不到或不是合法 JSON 都返回 null（调用方给可读错误） */
+async function readManifestOrNull(dir: string) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 /**

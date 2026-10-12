@@ -355,14 +355,189 @@ test("来源识别：包名 / GitHub / 本地目录 各自解析正确", async (
   assert.equal(parsePluginSource("/abs/path/plugin").kind, "local");
 });
 
-test("GitHub 安装规格：直连 + 镜像前缀，子目录/分支写法带进 spec", async () => {
+test("来源识别：github:owner/repo#ref 与 path: 片段（插件 README 推荐的写法）", async () => {
+  const { parsePluginSource } = await import("../electron/host/plugin-install.mts");
+  const bare = parsePluginSource("github:owner/repo");
+  assert.equal(bare.kind, "github");
+  assert.equal(bare.owner, "owner");
+  assert.equal(bare.repo, "repo");
+  assert.equal(bare.branch, "");
+  assert.equal(bare.subdir, "");
+
+  // DS Bot 的 README 就是这么写的：github:FeiZhuLulu/DeepSeek-Bot#v0.1.0&path:/ds-bot
+  const amp = parsePluginSource("github:FeiZhuLulu/DeepSeek-Bot#v0.1.0&path:/ds-bot");
+  assert.equal(amp.kind, "github");
+  assert.equal(amp.repo, "DeepSeek-Bot");
+  assert.equal(amp.branch, "v0.1.0");
+  assert.equal(amp.subdir, "ds-bot");
+
+  // npm-package-arg 自己的写法是 :: 分隔
+  const colon = parsePluginSource("github:owner/repo#main::path:/packages/plugin");
+  assert.equal(colon.branch, "main");
+  assert.equal(colon.subdir, "packages/plugin");
+});
+
+test("GitHub 安装：仓库根没有 package.json 时，报错要指向子目录写法", async () => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  // 用户只写到 /tree/main 时，npm 的真实报错只有 _cacache/tmp/git-cloneXXX/package.json ENOENT，
+  // 完全看不出下一步该填什么——而这正是 monorepo 插件的典型失败。
+  const result = await installPackageIntoProfile({
+    dir: "/tmp/profile",
+    input: "https://github.com/FeiZhuLulu/DeepSeek-Bot/tree/main",
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async () => ({ code: 254, stdout: "", stderr: [
+      "npm error code ENOENT",
+      "npm error syscall open",
+      "npm error path /Users/x/.npm/_cacache/tmp/git-cloneAbC123/package.json",
+      "npm error enoent Could not read package.json: Error: ENOENT: no such file or directory",
+    ].join("\n") }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /子目录/);
+  assert.match(result.error, /FeiZhuLulu\/DeepSeek-Bot\/tree/, "要把能用的地址形态写出来");
+});
+
+test("GitHub 安装规格：直连 + 镜像前缀，分支带进 spec", async () => {
   const { githubInstallSpecs } = await import("../electron/host/plugin-install.mts");
-  const direct = githubInstallSpecs({ owner: "o", repo: "r", branch: "", subdir: "" }, [""]);
+  const direct = githubInstallSpecs({ owner: "o", repo: "r", branch: "" }, [""]);
   assert.deepEqual(direct, ["git+https://github.com/o/r.git"]);
-  const mirrored = githubInstallSpecs({ owner: "o", repo: "r", branch: "main", subdir: "packages/p" },
-    ["https://gitclone.com/", ""]);
-  assert.equal(mirrored[0], "git+https://gitclone.com/github.com/o/r.git#main//packages/p");
-  assert.equal(mirrored[1], "git+https://github.com/o/r.git#main//packages/p");
+  const mirrored = githubInstallSpecs({ owner: "o", repo: "r", branch: "main" }, ["https://gitclone.com/", ""]);
+  assert.equal(mirrored[0], "git+https://gitclone.com/github.com/o/r.git#main");
+  assert.equal(mirrored[1], "git+https://github.com/o/r.git#main");
+});
+
+test("GitHub 克隆地址：子目录安装用同一批镜像前缀派生克隆地址", async () => {
+  const { githubCloneUrls } = await import("../electron/host/plugin-install.mts");
+  assert.deepEqual(githubCloneUrls({ owner: "o", repo: "r" }, [""]), ["https://github.com/o/r.git"]);
+  assert.deepEqual(githubCloneUrls({ owner: "o", repo: "r" }, ["https://gitclone.com/", ""]),
+    ["https://gitclone.com/github.com/o/r.git", "https://github.com/o/r.git"]);
+});
+
+// npm 装不了 git 依赖的子目录：仓库根的 package.json 是硬要求，
+// `#main//sub` 会被当成 commit-ish，npm 自己的 `#main::path:/sub` 也解析了没人用
+// （npm 11.7 全树只有 npm-package-arg 提到 gitSubdir）。monorepo 插件因此只能克隆后按本地包装。
+test("GitHub 子目录安装：先克隆仓库，再把子目录当本地包装进 profile", async (t) => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  const profile = await tempDir(t);
+  const calls = [];
+  const result = await installPackageIntoProfile({
+    dir: profile,
+    input: "https://github.com/FeiZhuLulu/DeepSeek-Bot/tree/main/ds-bot",
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "git") {
+        const target = args[args.length - 1];
+        await fs.mkdir(path.join(target, "ds-bot"), { recursive: true });
+        await fs.writeFile(path.join(target, "ds-bot", "package.json"), JSON.stringify({ name: "ds-bot", version: "0.1.0" }));
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "added 1 package", stderr: "" };
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+
+  const clone = calls.find((call) => call.command === "git");
+  assert.ok(clone, "应先克隆仓库，而不是把子目录地址丢给 npm");
+  assert.ok(clone.args.includes("https://github.com/FeiZhuLulu/DeepSeek-Bot.git"), `克隆地址：${clone.args}`);
+  assert.equal(clone.args[clone.args.indexOf("--branch") + 1], "main", "按地址里的分支克隆");
+
+  const install = calls.at(-1);
+  assert.notEqual(install.command, "git");
+  assert.ok(install.args.includes("--install-links"), "按本地包装：复制进 profile，而不是软链回源目录");
+  const target = install.args.at(-1);
+  assert.ok(target.endsWith(path.join("ds-bot")), `安装目标是子目录：${target}`);
+  assert.ok(target.startsWith(profile), `子目录源要留在 profile 内（npm 会把依赖记成 file: 路径）：${target}`);
+  assert.equal(result.packageName, "ds-bot", "包名取子目录里的 manifest，不能靠仓库名猜");
+});
+
+test("GitHub 子目录安装：子目录里没有 package.json 时直接报错，不调包管理器", async (t) => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  const profile = await tempDir(t);
+  const calls = [];
+  const result = await installPackageIntoProfile({
+    dir: profile,
+    input: "https://github.com/owner/repo/tree/main/packages/plugin",
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "git") { await fs.mkdir(args[args.length - 1], { recursive: true }); return { code: 0, stdout: "", stderr: "" }; }
+      return { code: 0, stdout: "added 1 package", stderr: "" };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /子目录/);
+  assert.equal(calls.filter((call) => call.command !== "git").length, 0, "包管理器不该被调用");
+});
+
+test("GitHub 子目录安装：子目录里的 .. 不能逃出克隆目录", async (t) => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  const profile = await tempDir(t);
+  const calls = [];
+  const result = await installPackageIntoProfile({
+    dir: profile,
+    input: "https://github.com/owner/repo/tree/main/../../etc",
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "git") { await fs.mkdir(args[args.length - 1], { recursive: true }); return { code: 0, stdout: "", stderr: "" }; }
+      return { code: 0, stdout: "added 1 package", stderr: "" };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /子目录/);
+  assert.equal(calls.filter((call) => call.command !== "git").length, 0, "包管理器不该被调用");
+});
+
+test("GitHub 子目录安装：commit SHA 走完整克隆再 checkout", async (t) => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  const profile = await tempDir(t);
+  const sha = "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0";
+  const calls = [];
+  const result = await installPackageIntoProfile({
+    dir: profile,
+    input: `https://github.com/owner/repo/tree/${sha}/packages/plugin`,
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "git" && args[0] === "clone") {
+        const target = args[args.length - 1];
+        await fs.mkdir(path.join(target, "packages/plugin"), { recursive: true });
+        await fs.writeFile(path.join(target, "packages/plugin/package.json"), JSON.stringify({ name: "plugin" }));
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git") return { code: 0, stdout: "", stderr: "" };
+      return { code: 0, stdout: "added 1 package", stderr: "" };
+    },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const clone = calls.find((call) => call.command === "git");
+  assert.ok(!clone.args.includes("--branch"), `SHA 不是分支，不能交给 --branch：${clone.args}`);
+  assert.ok(calls.some((call) => call.command === "git" && call.args[0] === "checkout" && call.args.includes(sha)),
+    "克隆后要 checkout 到该 commit");
+});
+
+test("GitHub 子目录安装：克隆全程失败时给出逐个源的明细", async (t) => {
+  const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
+  const profile = await tempDir(t);
+  const result = await installPackageIntoProfile({
+    dir: profile,
+    input: "https://github.com/owner/repo/tree/main/packages/plugin",
+    npmPath: "/fake/npm",
+    loginPath: "",
+    run: async (command) => {
+      if (command === "git") return { code: 128, stdout: "", stderr: "fatal: could not resolve host" };
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /克隆/);
+  assert.match(result.error, /github\.com/);
 });
 
 test("GitHub 安装：镜像源逐个回退，前面的失败不阻断后面的成功", async () => {
