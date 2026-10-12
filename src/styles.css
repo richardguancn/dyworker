@@ -5867,6 +5867,7 @@ body.resizing-panels .app-shell {
 /* 输入框下方工具栏的推理强度快捷切换：外观与模型选择按钮一致 */
 .composer-effort-select {
   height: 32px;
+  max-width: 230px;
   padding: 0 6px;
   border: none;
   border-radius: 9px;

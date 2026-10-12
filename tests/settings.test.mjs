@@ -334,3 +334,20 @@ test("到点续跑：替我审批保持 reviewer 继续由审核助手把关，�
   assert.equal(wakeApprovalMode("reviewer", "allow-writes"), "reviewer");
   assert.equal(wakeApprovalMode("reviewer", undefined), "reviewer");
 });
+
+test('自定义思考档位按地址和模型保存，重读后保留默认与禁用设置且不影响密钥加密', () => {
+  const overrides = [
+    { endpoint: ' https://one.example/v1/chat/completions ', model: ' same-model ', kind: 'standard', defaultEffort: 'ultra',
+      options: [{ value: 'low', label: '轻量' }, { value: 'ultra', label: '极深' }] },
+    { endpoint: 'https://two.example/v1/chat/completions', model: 'same-model', kind: 'qwen-local', defaultEffort: '', options: [] },
+  ];
+  const stored = serializeSettings({ endpoint: overrides[0].endpoint, model: overrides[0].model, apiKey: 'private-key', reasoningOverrides: overrides }, secretStorage);
+  assert.equal(JSON.stringify(stored).includes('private-key'), false);
+  const restored = deserializeSettings(JSON.parse(JSON.stringify(stored)), secretStorage);
+  assert.equal(restored.reasoningOverrides.length, 2);
+  assert.equal(restored.reasoningOverrides[0].endpoint, 'https://one.example/v1/chat/completions');
+  assert.equal(restored.reasoningOverrides[0].model, 'same-model');
+  assert.equal(restored.reasoningOverrides[0].defaultEffort, 'ultra');
+  assert.deepEqual(restored.reasoningOverrides[1].options, []);
+  assert.deepEqual(deserializeSettings({}, secretStorage).reasoningOverrides, []);
+});

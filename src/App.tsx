@@ -2,6 +2,7 @@ import { GoalBanner } from "./GoalBanner";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { ExtensionCreationDialog } from './ExtensionCreationDialog';
+import { getModelReasoningConfig, reasoningModelKey, updateReasoningOverride } from '../electron/model-reasoning.ts';
 import type { ExtensionCreationRequest } from './ExtensionCreationDialog';
 import { authoringSkill } from '../electron/authoring-skills';
 import type { AuthoringKind } from '../electron/authoring-skills';
@@ -119,6 +120,7 @@ import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
+import { ReasoningControl } from "./ReasoningControl";
 import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-runtime/model-settings.mts";
 import { recordTaskFailure } from './taskFailure.ts';
 import { assistantImageAttachments } from './assistantImages.ts';
@@ -348,19 +350,6 @@ const localTtsModelOptions = [
   { id: "qwen3-tts-1.7b-q4", label: "Qwen3-TTS-1.7B（Q4_K_M）", note: "约 1.5GB · 更小更快" },
   { id: "qwen3-tts-1.7b-q8", label: "Qwen3-TTS-1.7B（Q8_0）", note: "约 2.3GB · 音质更好" },
 ];
-
-// 推理强度档位的界面文案（取值与 providers.ts 各厂商 reasoningEfforts 对应，依据官方 API 文档）
-const reasoningEffortLabels: Record<string, string> = {
-  off: "关闭思考",
-  on: "开启思考",
-  auto: "自动（模型自行决定）",
-  low: "低",
-  medium: "中",
-  high: "高",
-  max: "最高",
-  xhigh: "超高",
-  adaptive: "自适应（模型自行决定）",
-};
 
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
@@ -6125,7 +6114,7 @@ function SettingsDialog({
         endpoint: next.endpoint,
         model: next.defaultModel,
         apiKey: "",
-        // 换厂商后原强度档位可能不再适用，回到厂商默认
+        // 换厂商后原强度档位可能不再适用，回到新模型的默认配置
         reasoningEffort: "",
       });
     }
@@ -6147,6 +6136,7 @@ function SettingsDialog({
       ...current,
       endpoint,
       apiKey: endpoint.trim() === current.endpoint.trim() ? current.apiKey : "",
+      reasoningEffort: endpoint.trim() === current.endpoint.trim() ? current.reasoningEffort : "",
     });
   };
 
@@ -6157,7 +6147,7 @@ function SettingsDialog({
       ...current,
       model,
       apiKey: saved?.apiKey ?? current.apiKey,
-      reasoningEffort: saved?.reasoningEffort ?? current.reasoningEffort,
+      reasoningEffort: saved?.reasoningEffort ?? (model.trim() === current.model.trim() ? current.reasoningEffort : ""),
       transcriptionEndpoint: saved?.transcriptionEndpoint ?? current.transcriptionEndpoint,
       transcriptionModel: saved?.transcriptionModel || current.transcriptionModel,
     }));
@@ -6370,23 +6360,6 @@ function SettingsDialog({
         <p className="dialog-note">
           可在模型名后加 [1M]、[256K] 或 [131072] 后缀指定上下文上限（如 k3[1M]），仅用于本地用量统计与裁剪；请求时自动剥离后缀。
         </p>
-        {preset.reasoningEfforts?.length ? (<>
-        <label>
-          推理强度
-          <select
-            value={draft.reasoningEffort || ""}
-            onChange={(event) => setDraft({ ...draft, reasoningEffort: event.target.value })}
-          >
-            <option value="">默认（厂商推荐）</option>
-            {preset.reasoningEfforts.map((effort) => (
-              <option key={effort} value={effort}>{reasoningEffortLabels[effort] || effort}</option>
-            ))}
-          </select>
-        </label>
-        <p className="dialog-note">
-          控制模型的思考深度：强度越高回答越严谨但更慢、消耗更多推理 token；关闭思考则直接作答。档位依据各厂商官方 API 文档，仅对支持的模型生效。
-        </p>
-        </>) : null}
         <label>
           子代理模型
           <select
@@ -11537,13 +11510,14 @@ export function App() {
       endpoint,
       model,
       apiKey: settings.apiKey.trim(),
-      reasoningEffort: settings.reasoningEffort || "",
+      reasoningEffort: "",
       transcriptionEndpoint: settings.transcriptionEndpoint,
       transcriptionModel: settings.transcriptionModel,
     };
     const next = {
       ...settings,
       model,
+      reasoningEffort: "",
       profiles: [
         ...(settings.profiles || []).filter((item) => !(item.endpoint === endpoint && item.model === model)),
         profile,
@@ -11594,11 +11568,6 @@ export function App() {
   };
 
   const hasModel = hasConfiguredModel(settings);
-  // 当前提供方预设支持的推理强度档位（本地部署也有开/关思考），输入框下方快捷切换用
-  const activeReasoningEfforts = useMemo(
-    () => providerPresets.find((item) => item.id === matchProvider(settings.endpoint))?.reasoningEfforts || [],
-    [settings.endpoint],
-  );
   const identitySetupOpen = ready && settings.identity === null;
   const activeApprovalMode = composerApprovalModes.find((option) => option.value === approvalMode) || composerApprovalModes[1];
   const ActiveApprovalIcon = activeApprovalMode.icon;
@@ -13626,6 +13595,7 @@ export function App() {
                     onClick={() => setApprovalMenuOpen((value) => !value)}
                     aria-haspopup="menu"
                     aria-expanded={approvalMenuOpen}
+                    aria-label={activeApprovalMode.label}
                     title={activeApprovalMode.description}
                   >
                     <ActiveApprovalIcon size={15} />
@@ -13664,6 +13634,7 @@ export function App() {
                 <div className="model-menu-wrap" data-menu-root>
                   <button
                     className={`composer-mode ${modelMenuOpen ? "active" : ""}`}
+                    title={hasModel ? settings.model : "配置模型"}
                     onClick={() => {
                       if (settings.profiles?.length || settings.endpoint) {
                         setModelMenuOpen((value) => {
@@ -13749,20 +13720,22 @@ export function App() {
                     </div>
                   )}
                 </div>
-                {activeReasoningEfforts.length > 0 && hasModel && (
-                  <select
-                    className="composer-effort-select"
-                    value={settings.reasoningEffort || ""}
-                    onChange={(event) => void saveProviderSettings({ ...settings, reasoningEffort: event.target.value }, "推理强度已更新")}
-                    aria-label="推理强度"
-                    title="推理强度：控制模型思考深度，切换立即生效"
-                  >
-                    <option value="">强度·默认</option>
-                    {activeReasoningEfforts.map((effort) => (
-                      <option key={effort} value={effort}>{reasoningEffortLabels[effort] || effort}</option>
-                    ))}
-                  </select>
-                )}
+                {hasModel && <ReasoningControl key={reasoningModelKey(settings.endpoint, settings.model)}
+                  endpoint={settings.endpoint} model={settings.model} effort={settings.reasoningEffort} overrides={settings.reasoningOverrides}
+                  onChange={reasoningEffort => void saveProviderSettings({
+                    ...settings, reasoningEffort,
+                    profiles: settings.profiles.map(profile => profile.endpoint === settings.endpoint && profile.model === settings.model
+                      ? { ...profile, reasoningEffort } : profile),
+                  }, "思考强度已更新")}
+                  onConfigure={async override => {
+                    const reasoningOverrides = updateReasoningOverride(settings.reasoningOverrides, settings.endpoint, settings.model, override);
+                    const config = getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: reasoningOverrides });
+                    const reasoningEffort = config.efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : "";
+                    return saveProviderSettings({ ...settings, reasoningOverrides, reasoningEffort,
+                      profiles: settings.profiles.map(profile => reasoningModelKey(profile.endpoint, profile.model) === reasoningModelKey(settings.endpoint, settings.model)
+                        ? { ...profile, reasoningEffort } : profile),
+                    }, override ? "思考档位已保存" : "已恢复自动识别思考档位");
+                  }} />}
 
                 {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
                 <button

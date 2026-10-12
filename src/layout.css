@@ -137,7 +137,7 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
 }
 .reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
 .reference-layout .composer-dock { padding: 0 0 16px; }
-.reference-layout .composer-card { width: var(--chat-width); min-height: 100px; padding: 12px 12px 9px; border-radius: 23px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
+.reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 100px; padding: 12px 12px 9px; border-radius: 23px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
 .reference-layout .composer-card:focus-within { box-shadow: var(--shadow-sm); }
 .reference-layout .composer-project-bar {
   width: min(712px, calc(100% - 76px));
@@ -164,9 +164,14 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
 .reference-layout .composer-pending { width: min(712px, calc(100% - 76px)); }
 .reference-layout .goal-banner { width: var(--chat-width); }
 .reference-layout .composer-toolbar { flex-wrap: nowrap; gap: 8px; min-height: 32px; }
-.reference-layout .composer-actions { flex-wrap: nowrap; }
-.reference-layout .composer-send-actions { margin-left: auto; }
-.reference-layout .composer-mode { color: var(--ink); max-width: 210px; }
+.reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
+.reference-layout .composer-send-actions { margin-left: auto; flex: 1 1 0; justify-content: flex-end; }
+.reference-layout .composer-send-actions > .model-menu-wrap { flex: 0 1 210px; min-width: 0; }
+.reference-layout .composer-mode { color: var(--ink); width: 100%; max-width: 210px; }
+.reference-layout .composer-effort-select { flex: 0 0 auto; max-width: 150px; }
+.reference-layout .composer-actions > .icon-button,
+.reference-layout .composer-actions > .send-button,
+.reference-layout .composer-actions > .context-ring { flex: 0 0 auto; }
 .reference-layout .composer-send-actions .model-menu { left: auto; right: 0; }
 .reference-layout .send-button { border-radius: 50%; width: 28px; height: 28px; }
 /* Native lights now belong to the separate titlebar, so plugin pages need no left inset. */
@@ -188,9 +193,8 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
   .reference-layout .composer-project-bar,
   .reference-layout .composer-pending { width: calc(100% - 44px); gap: 12px; }
   .reference-layout .composer-mode { max-width: 110px; }
-  .reference-layout .composer-effort-select { max-width: 70px; }
+  .reference-layout .composer-effort-select { max-width: 150px; }
   .reference-layout .context-ring-wrap { display: none; }
-  .reference-layout .composer-toolbar { flex-wrap: wrap; }
   .reference-layout .composer-project-button span { max-width: 130px; }
   .reference-layout .empty-conversation h1 { font-size: calc(24px * var(--font-ui-scale)); }
 }
@@ -249,7 +253,24 @@ html .reference-layout .titlebar-conversation .topbar {
 .reference-layout:not(.has-conversation-views) .main-panel { --conversation-tabs-height: 0px; }
 .reference-layout:not(.has-conversation-views) .conversation-tabs { display: none; }
 html.native-window-frame .reference-layout .main-panel { --topbar-height: 44px; }
-.reference-layout .composer-toolbar { flex-wrap: wrap; }
+/* 依据输入框实际宽度收紧控件；侧栏挤窄输入区时也保持同一行。 */
+@container composer (max-width: 520px) {
+  .reference-layout .composer-toolbar { gap: 4px; }
+  .reference-layout .composer-actions { gap: 2px; }
+  .reference-layout .composer-mode { padding-inline: 4px; }
+  .reference-layout .context-ring-tokens { display: none; }
+}
+@container composer (max-width: 420px) {
+  .reference-layout .composer-toolbar { position: relative; }
+  .reference-layout .composer-send-actions > .model-menu-wrap,
+  .reference-layout .approval-mode-wrap { position: static; }
+  .reference-layout .composer-send-actions .model-menu { max-width: 100%; }
+  .reference-layout .approval-mode-menu { width: min(390px, 100%); min-width: 0; }
+  .reference-layout .approval-mode-button span { display: none; }
+}
+@container composer (max-width: 340px) {
+  .reference-layout .composer-effort-select { max-width: 110px; }
+}
 .reference-layout.settings-page-open .sidebar,
 .reference-layout.settings-page-open .main-panel,
 .reference-layout.settings-page-open .tool-panel,

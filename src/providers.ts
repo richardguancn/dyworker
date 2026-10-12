@@ -1,3 +1,5 @@
+import { reasoningProvider } from '../electron/model-reasoning.ts';
+
 export interface ProviderPreset {
   id: string;
   name: string;
@@ -7,9 +9,6 @@ export interface ProviderPreset {
   keyHint: string;
   contextLimits: Record<string, number>;
   defaultContextLimit: number;
-  // 可配置的推理强度档位（依据各厂商官方 API 文档；空/缺省表示该厂商不支持强度参数）。
-  // "off" 统一表示关闭思考；实际请求参数由主进程按厂商映射（见 electron/agent.mjs reasoningRequestParams）。
-  reasoningEfforts?: string[];
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -22,9 +21,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "platform.deepseek.com 申请",
     contextLimits: { "deepseek-v4-flash": 1048576, "deepseek-v4-pro": 1048576, "deepseek-v4-flash-vision-exp": 1048576 },
     defaultContextLimit: 1048576,
-    // 官方 thinking_mode 文档：Chat Completions 顶层 reasoning_effort（low/high/max，medium→high、xhigh→max）；
-    // Responses API 为 reasoning.effort（none/low/high/max）
-    reasoningEfforts: ["off", "low", "high", "max"],
   },
   {
     id: "kimi",
@@ -38,8 +34,6 @@ export const providerPresets: ProviderPreset[] = [
       "kimi-k2-0905-preview": 262144,
     },
     defaultContextLimit: 1048576,
-    // K3 官方支持 low/high/max（默认 max，推理 token 消耗大）
-    reasoningEfforts: ["low", "high", "max"],
   },
   {
     id: "kimi-open",
@@ -54,7 +48,6 @@ export const providerPresets: ProviderPreset[] = [
       "kimi-k2.6": 262144,
     },
     defaultContextLimit: 1048576,
-    reasoningEfforts: ["low", "high", "max"],
   },
   {
     id: "glm",
@@ -73,10 +66,6 @@ export const providerPresets: ProviderPreset[] = [
       "glm-4-flash": 131072,
     },
     defaultContextLimit: 204800,
-    // 官方文档：GLM-5.2 及以上支持 reasoning_effort（GLM-5.3 仅 low/high/max，默认 max）；
-    // GLM-5.3 强制开启思考（thinking disabled 会报错），"off" 仅适用于 4.x 系列。
-    // glm-5.3-flash 是原生多模态模型（可直接识别图片），其余为纯文本模型
-    reasoningEfforts: ["off", "low", "high", "max"],
   },
   {
     id: "qwen",
@@ -95,8 +84,6 @@ export const providerPresets: ProviderPreset[] = [
       "qwen-turbo": 1000000,
     },
     defaultContextLimit: 131072,
-    // 百炼 OpenAI 兼容模式：enable_thinking 开关 + reasoning_effort 档位（各模型取值不同，如 qwen3.8-max 为 low/medium/xhigh）
-    reasoningEfforts: ["off", "low", "medium", "high"],
   },
   {
     id: "minimax",
@@ -116,8 +103,6 @@ export const providerPresets: ProviderPreset[] = [
       "MiniMax-M2": 204800,
     },
     defaultContextLimit: 204800,
-    // 官方 OpenAI 兼容文档：M3 用 thinking.type（disabled/adaptive）控制思考；M2.x 系列思考不可关闭
-    reasoningEfforts: ["off", "adaptive"],
   },
   {
     id: "openai",
@@ -128,8 +113,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "platform.openai.com 申请",
     contextLimits: { "gpt-5.6": 400000, "gpt-5.6-terra": 400000, "gpt-5.6-luna": 400000, "gpt-5.3-codex": 400000, "gpt-5.2": 400000 },
     defaultContextLimit: 400000,
-    // Chat Completions 顶层 reasoning_effort；Responses API 为 reasoning.effort。各模型支持档位不同（gpt-5.2 含 none/xhigh，5.3-codex 含 xhigh）
-    reasoningEfforts: ["low", "medium", "high", "xhigh"],
   },
   {
     id: "gemini",
@@ -140,8 +123,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "aistudio.google.com 申请",
     contextLimits: { "gemini-3.1-pro-preview": 1048576, "gemini-3-pro-preview": 1048576, "gemini-3-flash-preview": 1048576, "gemini-2.5-pro": 1048576, "gemini-2.5-flash": 1048576 },
     defaultContextLimit: 1048576,
-    // Gemini OpenAI 兼容层：reasoning_effort（low/medium/high）
-    reasoningEfforts: ["low", "medium", "high"],
   },
   {
     id: "xai",
@@ -152,8 +133,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "console.x.ai 申请",
     contextLimits: { "grok-4.6": 500000, "grok-4.5": 500000, "grok-4-1-fast-reasoning": 2097152, "grok-4-1-fast": 2097152 },
     defaultContextLimit: 500000,
-    // Grok 4.5/4.6 支持 reasoning_effort（low/medium/high，默认 high）
-    reasoningEfforts: ["low", "medium", "high"],
   },
   {
     id: "qwen-local",
@@ -167,9 +146,6 @@ export const providerPresets: ProviderPreset[] = [
     // 主进程会探测 /models 的 max_model_len 并按较小值钳制
     contextLimits: { "Qwen3.8-27B": 262144 },
     defaultContextLimit: 262144,
-    // vLLM 部署 Qwen3 通过 chat_template_kwargs.enable_thinking 控制思考开关，
-    // 本地部署没有云端那套档位（low/high 等是百炼服务端参数），只有开/关
-    reasoningEfforts: ["off", "on"],
   },
   {
     id: "doubao",
@@ -180,9 +156,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "火山方舟控制台；也可填推理接入点 ep-xxx",
     contextLimits: { "doubao-seed-evolving": 1048576, "doubao-seed-1-6-250615": 262144, "doubao-seed-1-6-flash-250715": 262144 },
     defaultContextLimit: 262144,
-    // 官方文档：seed-1.6 用 thinking.type（enabled/disabled/auto）；doubao-seed-evolving 支持
-    // reasoning_effort（none/minimal/low/medium/high/xhigh/max，默认 high）。auto 仅 seed-1.6 生效
-    reasoningEfforts: ["off", "auto", "low", "medium", "high"],
   },
   {
     id: "custom",
@@ -193,8 +166,6 @@ export const providerPresets: ProviderPreset[] = [
     keyHint: "自建或第三方 OpenAI 兼容服务",
     contextLimits: {},
     defaultContextLimit: 131072,
-    // 自建网关/中转大多透传 OpenAI 标准 reasoning_effort；不支持的服务会忽略该参数
-    reasoningEfforts: ["off", "low", "medium", "high"],
   },
 ];
 
@@ -202,7 +173,7 @@ export function matchProvider(endpoint: string): string {
   const value = String(endpoint || "").trim();
   if (!value) return "custom";
   const preset = providerPresets.find((item) => item.id !== "custom" && item.endpoint === value);
-  return preset?.id || "custom";
+  return preset?.id || reasoningProvider(value) || "custom";
 }
 
 // GLM 多模态模型（原生处理 image_url，无需视觉服务改写）：GLM-5.3-Flash、GLM-4.5V、

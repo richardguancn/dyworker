@@ -1,0 +1,45 @@
+.reasoning-manager {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 40px));
+  padding: 22px;
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid var(--line, #dedfd9);
+  border-radius: 16px;
+  background: var(--surface, #fafaf7);
+  color: var(--ink, #35382f);
+  box-shadow: 0 20px 80px #0004;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+.reasoning-manager::backdrop { background: #0005; }
+.reasoning-manager header, .reasoning-manager footer { display: flex; align-items: center; gap: 10px; }
+.reasoning-manager header { justify-content: space-between; }
+.reasoning-manager h2 { margin: 0; font-size: 18px; }
+.reasoning-model-name { margin: 16px 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+.reasoning-endpoint { margin: 0; color: var(--muted, #777); overflow-wrap: anywhere; font-size: 12px; }
+.reasoning-help { color: var(--muted, #777); line-height: 1.6; margin: 12px 0; }
+.reasoning-manager fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.reasoning-disabled { display: flex; align-items: center; gap: 8px; margin: 18px 0; }
+.reasoning-disabled input { width: 16px; height: 16px; }
+.reasoning-option-head, .reasoning-option-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; align-items: center; gap: 8px; }
+.reasoning-option-head { color: var(--muted, #777); margin: 0 0 8px; font-size: 12px; }
+.reasoning-options { display: grid; gap: 8px; }
+.reasoning-manager input:not([type=checkbox]), .reasoning-manager select {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line, #dedfd9);
+  border-radius: 7px; background: var(--panel, #fff); color: inherit; font: inherit;
+}
+.reasoning-manager button { padding: 8px 12px; border: 1px solid var(--line, #dedfd9); border-radius: 7px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.reasoning-manager button:disabled { opacity: .5; cursor: default; }
+.reasoning-manager .reasoning-icon-button { padding: 6px; border: 0; display: inline-flex; align-items: center; justify-content: center; }
+.reasoning-manager .reasoning-icon-button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.reasoning-manager .reasoning-add { display: inline-flex; align-items: center; gap: 5px; margin: 12px 0 16px; }
+.reasoning-default, .reasoning-advanced label { display: grid; gap: 7px; }
+.reasoning-advanced { margin: 16px 0 0; }
+.reasoning-advanced summary { cursor: pointer; color: var(--muted, #777); }
+.reasoning-advanced label { margin-top: 12px; }
+.reasoning-error { color: #c43e3e; line-height: 1.5; }
+.reasoning-manager footer { margin-top: 22px; }
+.reasoning-manager footer > span { flex: 1; }
+.reasoning-manager .reasoning-save { background: var(--ink, #35382f); color: var(--surface, #fafaf7); border-color: transparent; }
+.reasoning-manager .reasoning-reset { border: 0; padding-inline: 0; color: var(--muted, #777); }
+.reasoning-manager :focus-visible { outline: 2px solid #6b7fa8; outline-offset: 2px; }

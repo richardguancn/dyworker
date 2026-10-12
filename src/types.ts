@@ -1,3 +1,5 @@
+import type { ReasoningOverride } from '../electron/model-reasoning.ts';
+
 export type Role = "user" | "assistant" | "system";
 
 export type ActivityKind =
@@ -509,7 +511,7 @@ export interface ModelProfile {
   endpoint: string;
   model: string;
   apiKey: string;
-  // 推理强度档位（见 providers.ts reasoningEfforts；空串 = 厂商默认）
+  // 思考强度（见 electron/model-reasoning.ts；空串 = 当前模型的默认配置）
   reasoningEffort?: string;
   transcriptionEndpoint?: string;
   transcriptionModel?: string;
@@ -622,8 +624,10 @@ export interface ProviderSettings {
   identity: UserIdentity | null;
   endpoint: string;
   model: string;
-  // 推理强度档位（见 providers.ts reasoningEfforts；空串 = 厂商默认）
+  // 思考强度（见 electron/model-reasoning.ts；空串 = 当前模型的默认配置）
   reasoningEffort: string;
+  // 按接入地址和模型保存的手动能力覆盖；空档位列表表示不支持调整。
+  reasoningOverrides?: ReasoningOverride[];
   // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
   subAgentProfileId: string;
   apiKey: string;

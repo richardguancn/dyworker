@@ -217,38 +217,37 @@ test("Responses API 完成普通回复并上报真实用量", async () => {
 });
 
 test("reasoningRequestParams：各厂商推理强度档位映射为官方 API 参数", () => {
-  // 未选择档位：除 Kimi 开放平台固定 high 控费外均不传参数
-  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "" }), {});
+  // 未选择档位：使用与界面一致的明确默认值
+  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "" }), { reasoning_effort: "high" });
   assert.deepEqual(reasoningRequestParams({ provider: "kimi-open", effort: "" }), { reasoning_effort: "high" });
-  // DeepSeek：effort 走顶层 reasoning_effort；off 用 thinking.type 关闭思考
+  // DeepSeek：只提供三档；旧关闭设置回到默认 high
   assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "high" }), { reasoning_effort: "high" });
-  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "off" }), { thinking: { type: "disabled" } });
-  // Kimi：K3 思考不可关闭，off 视为不传参数
-  assert.deepEqual(reasoningRequestParams({ provider: "kimi", effort: "off" }), {});
+  assert.deepEqual(reasoningRequestParams({ provider: "deepseek", effort: "off" }), { reasoning_effort: "high" });
+  // Kimi：K3 不展示关闭；旧的非法设置回到默认 high
+  assert.deepEqual(reasoningRequestParams({ provider: "kimi", effort: "off" }), { reasoning_effort: "high" });
   assert.deepEqual(reasoningRequestParams({ provider: "kimi-open", effort: "max" }), { reasoning_effort: "max" });
   // GLM：off 用 thinking.type；档位走 reasoning_effort
-  assert.deepEqual(reasoningRequestParams({ provider: "glm", effort: "off" }), { thinking: { type: "disabled" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "glm", model: "glm-4.6", effort: "off" }), { thinking: { type: "disabled" } });
   assert.deepEqual(reasoningRequestParams({ provider: "glm", effort: "low" }), { reasoning_effort: "low" });
   // Qwen（百炼兼容模式）：enable_thinking 开关 + reasoning_effort
-  assert.deepEqual(reasoningRequestParams({ provider: "qwen", effort: "off" }), { enable_thinking: false });
-  assert.deepEqual(reasoningRequestParams({ provider: "qwen", effort: "medium" }), { enable_thinking: true, reasoning_effort: "medium" });
+  assert.deepEqual(reasoningRequestParams({ provider: "qwen", model: "qwen3.8-max", effort: "off" }), { enable_thinking: false });
+  assert.deepEqual(reasoningRequestParams({ provider: "qwen", model: "qwen3.8-max", effort: "medium" }), { enable_thinking: true, reasoning_effort: "medium" });
   // MiniMax M3：thinking.type（disabled/adaptive）
   assert.deepEqual(reasoningRequestParams({ provider: "minimax", effort: "off" }), { thinking: { type: "disabled" } });
   assert.deepEqual(reasoningRequestParams({ provider: "minimax", effort: "adaptive" }), { thinking: { type: "adaptive" } });
   // 豆包：thinking.type（off/auto）+ reasoning_effort 档位
-  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "off" }), { thinking: { type: "disabled" } });
-  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "auto" }), { thinking: { type: "auto" } });
-  assert.deepEqual(reasoningRequestParams({ provider: "doubao", effort: "high" }), { reasoning_effort: "high" });
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", model: "doubao-seed-evolving", effort: "off" }), { thinking: { type: "disabled" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", model: "doubao-seed-1-6-250615", effort: "auto" }), { thinking: { type: "auto" } });
+  assert.deepEqual(reasoningRequestParams({ provider: "doubao", model: "doubao-seed-evolving", effort: "high" }), { reasoning_effort: "high" });
   // OpenAI / Gemini / xAI：顶层 reasoning_effort
-  assert.deepEqual(reasoningRequestParams({ provider: "openai", effort: "xhigh" }), { reasoning_effort: "xhigh" });
-  assert.deepEqual(reasoningRequestParams({ provider: "gemini", effort: "low" }), { reasoning_effort: "low" });
-  assert.deepEqual(reasoningRequestParams({ provider: "xai", effort: "high" }), { reasoning_effort: "high" });
-  // 未知厂商 / 本地部署（vLLM/Ollama/LM Studio）：off/on 用 vLLM 官方的
-  // chat_template_kwargs.enable_thinking（Qwen3 思考开关）；档位透传 OpenAI 标准 reasoning_effort
+  assert.deepEqual(reasoningRequestParams({ provider: "openai", model: "gpt-5.6", effort: "xhigh" }), { reasoning_effort: "xhigh" });
+  assert.deepEqual(reasoningRequestParams({ provider: "gemini", model: "gemini-3.1-pro-preview", effort: "low" }), { reasoning_effort: "low" });
+  assert.deepEqual(reasoningRequestParams({ provider: "xai", model: "grok-4.6", effort: "high" }), { reasoning_effort: "high" });
+  // 未确认的接入不猜测档位；显式指定本地千问方式后才下发相应参数。
   assert.deepEqual(reasoningRequestParams({ provider: null, effort: "" }), {});
-  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "off" }), { chat_template_kwargs: { enable_thinking: false } });
-  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "on" }), { chat_template_kwargs: { enable_thinking: true } });
-  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "high" }), { reasoning_effort: "high" });
+  assert.deepEqual(reasoningRequestParams({ provider: null, model: "Qwen3.8-27B", effort: "off" }), {});
+  assert.deepEqual(reasoningRequestParams({ provider: 'qwen-local', model: "Qwen3.8-27B", effort: "on" }), { chat_template_kwargs: { enable_thinking: true }, reasoning_effort: "xhigh" });
+  assert.deepEqual(reasoningRequestParams({ provider: null, effort: "high" }), {});
 });
 
 test("resolveSubAgentSettings：按档案 id 解析子代理模型，未配置时跟随主模型", () => {
@@ -307,8 +306,8 @@ test("requestModel：推理强度随请求下发（Chat Completions 按厂商映
     messages: [{ role: "user", content: "你好" }],
     fetchImpl: mockFetch([{ role: "assistant", content: "好" }], offCalls),
   });
-  assert.deepEqual(offCalls[0].thinking, { type: "disabled" });
-  assert.equal(offCalls[0].reasoning_effort, undefined);
+  assert.equal(offCalls[0].thinking, undefined);
+  assert.equal(offCalls[0].reasoning_effort, "high");
 });
 
 test("DeepSeek 官方 base_url 自动归一化为 /responses", async () => {

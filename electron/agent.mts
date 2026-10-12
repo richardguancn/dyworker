@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mts";
+import { effectiveReasoningEffort, getModelReasoningConfig } from "./model-reasoning.ts";
 import { localReview } from "./local-reviewer.mts";
 import { selectWikiPages } from "./memory-wiki.mts";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mts";
@@ -3474,63 +3475,44 @@ function responsesPayload({ model, messages, tools, stream, reasoning }) {
   return payload;
 }
 
-// 推理强度档位 → Chat Completions 请求参数映射（档位合法性由设置界面按
-// src/providers.ts 的 providerPresets.reasoningEfforts 限定，这里只做参数名/结构转换）。
-// 各厂商取值依据官方 API 文档：
-// - DeepSeek：顶层 reasoning_effort（low/medium 兼容映射为 high，xhigh→max）；thinking.type 关闭思考
-// - Kimi（开放平台/编程套餐）：顶层 reasoning_effort（low/high/max），K3 思考不可关闭
-// - GLM（智谱）：reasoning_effort（low/high/max，GLM-5.2+）；thinking.type 关闭思考（4.x 系列）
-// - Qwen（百炼兼容模式）：enable_thinking 开关 + reasoning_effort 档位
-// - MiniMax：M3 用 thinking.type（disabled/adaptive）；M2.x 思考不可关闭
-// - 豆包（火山方舟）：thinking.type（enabled/disabled/auto）；新模型支持 reasoning_effort 档位
-// - OpenAI：顶层 reasoning_effort（gpt-5.2 支持 none）；Responses API 为 reasoning.effort
-// - Gemini OpenAI 兼容层 / xAI Grok：顶层 reasoning_effort（low/medium/high）
-// "off" 统一表示关闭思考；未选择（空串）用厂商默认行为，仅 Kimi 开放平台默认 high 控费提速。
-export function reasoningRequestParams({ provider, effort }) {
-  const value = String(effort || "").trim();
-  // Kimi K3 顶层 reasoning_effort 默认 max，推理 token 消耗大；开放平台未显式选择时固定 high
-  if (!value) return provider === "kimi-open" ? { reasoning_effort: "high" } : {};
-  switch (provider) {
+// 与设置页共用模型能力配置；旧档位先规范化，避免切换模型后发出非法参数。
+export function reasoningRequestParams({ provider = null, effort = "", model = "", endpoint = "", overrides = undefined }) {
+  const config = getModelReasoningConfig({ provider, model, endpoint, overrides });
+  const value = effectiveReasoningEffort(config, effort);
+  if (!value) return {};
+  switch (config.kind) {
     case "deepseek":
-      return value === "off" ? { thinking: { type: "disabled" } } : { reasoning_effort: value };
     case "glm":
-      return value === "off" ? { thinking: { type: "disabled" } } : { reasoning_effort: value };
-    case "qwen":
-      return value === "off"
-        ? { enable_thinking: false }
-        : { enable_thinking: true, reasoning_effort: value };
-    case "minimax":
-      return { thinking: { type: value === "off" ? "disabled" : value } };
-    // 豆包（火山方舟）：doubao-seed-1.6 用 thinking.type（enabled/disabled/auto）；
-    // doubao-seed-evolving 等新模型另支持 reasoning_effort（none/minimal/low/medium/high/xhigh/max）
-    case "doubao":
       if (value === "off") return { thinking: { type: "disabled" } };
-      if (value === "auto") return { thinking: { type: "auto" } };
+      if (value === "on") return { thinking: { type: "enabled" } };
       return { reasoning_effort: value };
-    case "openai":
-      return { reasoning_effort: value === "off" ? "none" : value };
-    case "gemini":
-    case "xai":
-      return value === "off" ? {} : { reasoning_effort: value };
-    case "kimi-open":
     case "kimi":
-      // K3 思考不可关闭，"off" 视为不传参数（走厂商默认）
-      return value === "off" ? {} : { reasoning_effort: value };
-    // 本地部署（vLLM/Ollama/LM Studio）与自建网关：detectProvider 不认识的端点返回 null。
-    // "off"/"on" 用 vLLM 官方文档的 chat_template_kwargs.enable_thinking（Qwen3 系列思考开关）；
-    // 档位（low/medium/high）透传 OpenAI 标准 reasoning_effort，不支持的服务会忽略
+      if (value === "off" || value === "on") return { thinking: { type: value === "off" ? "disabled" : "enabled" } };
+      return { reasoning_effort: value };
+    case "qwen":
+      if (value === "off" || value === "on") return { enable_thinking: value === "on" };
+      return { enable_thinking: true, reasoning_effort: value };
+    case "qwen-local":
+      return value === "off"
+        ? { chat_template_kwargs: { enable_thinking: false } }
+        : { chat_template_kwargs: { enable_thinking: true }, reasoning_effort: value };
+    case "minimax":
+      if (value === "off" || value === "adaptive") return { thinking: { type: value === "off" ? "disabled" : "adaptive" } };
+      return { reasoning_effort: value };
+    case "doubao":
+      if (["off", "on", "auto"].includes(value)) return { thinking: { type: value === "off" ? "disabled" : value === "on" ? "enabled" : "auto" } };
+      return { reasoning_effort: value };
     default:
-      if (value === "off") return { chat_template_kwargs: { enable_thinking: false } };
-      if (value === "on") return { chat_template_kwargs: { enable_thinking: true } };
-      return value ? { reasoning_effort: value } : {};
+      return { reasoning_effort: value === "off" ? "none" : value };
   }
 }
 
-// Responses API 的推理强度：OpenAI/DeepSeek 官方语义为顶层 reasoning.effort（off → none）
-function responsesReasoningParams({ effort }) {
-  const value = String(effort || "").trim();
-  if (!value) return null;
-  return { effort: value === "off" ? "none" : value };
+function responsesReasoningParams({ provider, effort, model, endpoint, overrides }) {
+  const config = getModelReasoningConfig({ provider, model, endpoint, overrides });
+  const value = effectiveReasoningEffort(config, effort);
+  if (!value || ["on", "auto", "adaptive"].includes(value)) return null;
+  // 方舟的 minimal 才表示关闭思考；none 仅作为其兼容值。
+  return { effort: value === "off" ? (config.kind === "doubao" ? "minimal" : "none") : value };
 }
 
 // 子代理模型：按 settings.subAgentProfileId 从模型档案解析专用配置；
@@ -3770,14 +3752,14 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
   const apiModel = bareModelName(settings.model);
   // 推理强度参数：按厂商官方 API 文档映射（档位由设置界面限定，见 reasoningRequestParams 注释）
   const providerId = detectProvider(settings.endpoint);
-  const reasoningParams = reasoningRequestParams({ provider: providerId, effort: settings.reasoningEffort });
+  const reasoningParams = reasoningRequestParams({ provider: providerId, effort: settings.reasoningEffort, model: settings.model, endpoint: settings.endpoint, overrides: settings.reasoningOverrides });
   const basePayload: any = responsesApi
     ? responsesPayload({
         model: apiModel,
         messages: modelMessages,
         tools: tools === false ? false : selectedTools,
         stream: false,
-        reasoning: responsesReasoningParams({ effort: settings.reasoningEffort }),
+        reasoning: responsesReasoningParams({ provider: providerId, effort: settings.reasoningEffort, model: settings.model, endpoint: settings.endpoint, overrides: settings.reasoningOverrides }),
       })
     : {
         model: apiModel,

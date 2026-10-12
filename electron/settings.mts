@@ -5,6 +5,7 @@ import { normalizeSkillLibraries } from "./skill-libraries.mts";
 import { normalizeAsrModelId } from "./local-asr.mts";
 import { normalizeTtsModelId } from "./local-tts.mts";
 import { parseQuietHours } from "./remote-messages.mts";
+import { normalizeReasoningOverrides } from "./model-reasoning.ts";
 
 // 运营服务地址：远程使用 HTTPS，本机调试允许回环 HTTP（政府/内网版本由用户配置
 // 对应内部部署地址，留空表示完全关闭）。允许带端口与路径前缀，去掉尾部斜杠。
@@ -270,7 +271,7 @@ function normalizeProfiles(profiles) {
       endpoint,
       model,
       apiKey: String(item?.apiKey || "").trim(),
-      // 推理强度档位（见 src/providers.ts reasoningEfforts；空串表示用厂商默认）
+      // 思考强度（见 model-reasoning.ts；空串表示当前模型的默认配置）
       reasoningEffort: String(item?.reasoningEffort || "").trim(),
       transcriptionEndpoint: String(item?.transcriptionEndpoint || "").trim(),
       transcriptionModel: String(item?.transcriptionModel || "").trim(),
@@ -306,8 +307,9 @@ export function deserializeSettings(stored, secretStorage) {
     identity: normalizeIdentity(source.identity),
     endpoint: String(source.endpoint || ""),
     model: String(source.model || ""),
-    // 推理强度档位（空串 = 厂商默认）；由主进程按厂商映射为请求参数（agent.mjs reasoningRequestParams）
+    // 思考强度（空串 = 当前模型的默认配置）；由主进程按模型规范化后下发
     reasoningEffort: String(source.reasoningEffort || "").trim(),
+    reasoningOverrides: normalizeReasoningOverrides(source.reasoningOverrides),
     // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
     subAgentProfileId: String(source.subAgentProfileId || "").trim(),
     apiKey: currentApiKey,
@@ -371,6 +373,7 @@ export function serializeSettings(settings, secretStorage) {
     endpoint: String(settings?.endpoint || "").trim(),
     model: String(settings?.model || "").trim(),
     reasoningEffort: String(settings?.reasoningEffort || "").trim(),
+    reasoningOverrides: normalizeReasoningOverrides(settings?.reasoningOverrides),
     subAgentProfileId: String(settings?.subAgentProfileId || "").trim(),
     apiKey: String(settings?.apiKey || "").trim(),
     visionEndpoint: String(settings?.visionEndpoint || "").trim(),
@@ -418,6 +421,7 @@ export function serializeSettings(settings, secretStorage) {
     endpoint: normalized.endpoint,
     model: normalized.model,
     reasoningEffort: normalized.reasoningEffort,
+    reasoningOverrides: normalized.reasoningOverrides,
     visionEndpoint: normalized.visionEndpoint,
     visionModel: normalized.visionModel,
     visionApiKey: visionSecret.value,
