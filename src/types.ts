@@ -254,6 +254,7 @@ export type AgentEvent =
   // 推理模型的思考流（reasoning_content 累积文本）：不进正文，仅用于界面实时展示思考过程
   | { type: "assistant-reasoning"; text: string }
   | { type: "approval-request"; action: ApprovalAction }
+  | { type: "approval-withdrawn"; actionId: string }
   | { type: "ask-user"; request: QuestionRequest }
   | { type: "debug-log"; entry: DebugLogEntry }
   | { type: "context-usage"; used: number; completion: number; total?: number; estimated: boolean }

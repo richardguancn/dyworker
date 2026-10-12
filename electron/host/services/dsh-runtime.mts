@@ -1,3 +1,4 @@
+import { workspaceFileGuidance } from '../../active-permissions.mts';
 import { Service } from '@deepseek-ai/cordis';
 import { OfficialDshSession } from '../dsh-runtime/full-session.mts';
 import { generateWithDyworker } from '../dsh-runtime/model-adapter.mts';
@@ -214,7 +215,7 @@ export class DshRuntimeService extends Service {
     const approval = createDshApproval({ ...options, hooks, nativeToolNames, nativeToolAliases: { read_attachment: 'read_file' },
       standingRules,
       beforeToolExecute: ({ name, args }: any) => this.ctx.waterfall('tools/pre-execute', name, args, null, () => null),
-      audit: (item: any) => options.resolvers.auditRecord({ ...item, sessionId, approvalMode: options.approvalMode }),
+      audit: (item: any) => options.resolvers.auditRecord({ ...item, sessionId, approvalMode: options.getApprovalMode?.() || options.approvalMode }),
       onUsage: (usage: any) => emit({ type: 'token-usage', model: usage.model || settings.model,
         prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated) }),
     });
@@ -366,7 +367,7 @@ export class DshRuntimeService extends Service {
       const sessionMemory = memoryPages.find((page: any) => page.relPath === 'pages/session.md');
       if (sessionMemory && !pages.includes(sessionMemory)) pages.unshift(sessionMemory);
       const context = [options.goal ? `当前长期目标：${options.goal}。继续推进尚未完成的工作并验证结果；只有整个目标已达成，才在 finish_task 中设置 goalAchieved=true。完成本轮的一部分工作不代表目标达成。用户当前要求优先。` : '当前没有进行中的长期目标。历史目标可能已暂停、删除或完成，不要自行恢复执行。', options.workingContext,
-        nativeSkills.context,
+        nativeSkills.context, workspaceFileGuidance,
         instructions ? `工作区 AGENTS.md 的约定；若与用户当前要求冲突，以当前要求为准：\n${instructions}` : '',
         pages.length ? `相关长期记忆仅作为背景；若与用户当前要求冲突，以当前要求为准：\n${pages.map((page: any) => `## ${page.title}\n${String(page.content || '').slice(0, 2600)}`).join('\n\n')}` : ''];
       await runtime.request('context', { text: context.filter(Boolean).join('\n\n') }, { signal });

@@ -8328,6 +8328,7 @@ export function App() {
           setRunningSessionIds(current => new Set(current).add(sessionId));
         } else if (runningRunIdsRef.current.get(sessionId) === runId) {
           if (event.type === 'approval-request') setPendingApprovals(current => ({...current,[sessionId]:event.action}));
+          if (event.type === 'approval-withdrawn') setPendingApprovals(current => { if (current[sessionId]?.id !== event.actionId) return current; const next={...current}; delete next[sessionId]; return next; });
           if (event.type === 'ask-user') setPendingQuestions(current => ({...current,[sessionId]:event.request}));
           if (event.type === 'agent-finished') {
             runningRunIdsRef.current.delete(sessionId);
@@ -11144,6 +11145,11 @@ export function App() {
             patchAssistant((current) => ({ ...current, plan: agentEvent.steps }));
           } else if (agentEvent.type === "approval-request") {
             setPendingApprovals((current) => ({ ...current, [taskSessionId]: agentEvent.action }));
+          } else if (agentEvent.type === "approval-withdrawn") {
+            setPendingApprovals(current => {
+              if (current[taskSessionId]?.id !== agentEvent.actionId) return current;
+              const next = { ...current }; delete next[taskSessionId]; return next;
+            });
           } else if (agentEvent.type === "ask-user") {
             setPendingQuestions((current) => ({ ...current, [taskSessionId]: agentEvent.request }));
           } else if (agentEvent.type === "loop-state") {

@@ -11,6 +11,7 @@ import {
   needsSecretMigration,
   preserveUndecryptableSecrets,
   serializeSettings,
+  normalizeApprovalMode,
 } from "../../settings.mts";
 import { DEFAULT_UPDATE_URL, normalizeUpdateUrl, parseGithubUpdateUrl } from "../../app-updater.mts";
 import fs from "node:fs/promises";
@@ -41,6 +42,12 @@ export class SettingsService extends Service {
   settingsFile;
   safeStorage;
   migrators;
+  approvalListeners = new Set<(mode: string) => void>();
+
+  onApprovalModeChange(listener: (mode: string) => void) {
+    this.approvalListeners.add(listener);
+    return () => { this.approvalListeners.delete(listener); };
+  }
 
   constructor(ctx, config = {} as any) {
     super(ctx, "settings");
@@ -74,6 +81,10 @@ export class SettingsService extends Service {
     // 保证正常清空配置的流程不被阻断，但事后可从这里取回）。
     if (losesModelConfig(stored, nextSettings)) await this.snapshotBeforeCredentialLoss(stored);
     await writeJson(this.settingsFile, preserveUndecryptableSecrets(serializeSettings(nextSettings, this.safeStorage), stored, this.safeStorage));
+    const mode = normalizeApprovalMode(nextSettings.approvalMode);
+    if (mode !== normalizeApprovalMode(stored?.approvalMode)) {
+      for (const listener of this.approvalListeners) listener(mode);
+    }
     return updateUrl;
   }
 

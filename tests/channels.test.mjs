@@ -31,14 +31,16 @@ test("chunkText:短文本不切,长文本优先在换行处断开", () => {
 // ---- parseApprovalReply ----
 
 test("parseApprovalReply:允许/拒绝/无效 三态", () => {
-  for (const text of ["允许", "同意", "1", "y", " yes ", "OK", "确认"]) {
+  // 书面词、数字与英文，以及微信/QQ 上常见的整句口语回复都算允许
+  for (const text of ["允许", "同意", "1", "y", " yes ", "OK", "确认", "好的", "好", "可以", "行", "收到", "没问题", "是"]) {
     assert.equal(parseApprovalReply(text), true, text);
   }
-  for (const text of ["拒绝", "不同意", "取消", "0", "n", "No"]) {
+  for (const text of ["拒绝", "不同意", "取消", "0", "n", "No", "不行", "不要", "否"]) {
     assert.equal(parseApprovalReply(text), false, text);
   }
   // "2" 表示停止,由 manager 在待决审批时拦截,解析层返回 null
-  for (const text of ["允许执行这个", "好吧", "", "12", "允许吧", "2"]) {
+  // 带保留（好吧）或带具体内容的整句不算决议回复，避免误批
+  for (const text of ["允许执行这个", "好吧", "", "12", "允许吧", "2", "可以帮我改一下吗", "好的那就这样"]) {
     assert.equal(parseApprovalReply(text), null, text);
   }
 });

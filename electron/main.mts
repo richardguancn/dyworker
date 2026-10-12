@@ -2337,9 +2337,19 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       loop,
       loopStateEvents: true,
       routerOptions: { signal: abortController.signal, renderer: sender, sessionId, runId },
-      requestApproval: (action) => new Promise<any>((resolve) => {
-        agentState.pending.set(action.id, resolve);
+      requestApproval: (action, approvalSignal?: AbortSignal) => new Promise<any>((resolve) => {
+        const abort = () => {
+          agentState.pending.delete(action.id);
+          emit({ type: "approval-withdrawn", actionId: action.id });
+          resolve(false);
+        };
+        agentState.pending.set(action.id, value => {
+          approvalSignal?.removeEventListener('abort', abort);
+          resolve(value);
+        });
         emit({ type: "approval-request", action });
+        approvalSignal?.addEventListener('abort', abort, { once: true });
+        if (approvalSignal?.aborted) abort();
       }),
       requestUserInput: (request, questionSignal?: AbortSignal) => new Promise<any>((resolve) => {
         agentState.pending.set(`q:${request.id}`, resolve);
@@ -2818,7 +2828,7 @@ async function resumeWake(wake, options: any = {}) {
       signal: wakeAbort.signal,
       isCancelled: () => wakeAbort.signal.aborted,
       // 续跑无人值守：审批与提问进收件箱挂起等待；等待期间暂时释放 ctx.scheduler.running 锁，避免系统调度死锁 2 小时
-      requestApproval: async (action) => {
+      requestApproval: async (action, approvalSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "approval",
           sessionId: wake.sessionId,
@@ -2827,7 +2837,7 @@ async function resumeWake(wake, options: any = {}) {
           title: `续跑任务申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        }, {signal:wakeAbort.signal});
+        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, wakeAbort.signal]) : wakeAbort.signal});
         ctx.scheduler.running = false;
         try {
           const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -3094,7 +3104,7 @@ async function runScheduledTask(record, meta) {
       prompt: record.prompt,
       conversation: [{ role: "user", content: record.prompt }],
       // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
-      requestApproval: async (action) => {
+      requestApproval: async (action, approvalSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "approval",
           sessionId: scheduleSessionId,
@@ -3103,7 +3113,7 @@ async function runScheduledTask(record, meta) {
           title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        }, {signal:scheduleAbort.signal});
+        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, scheduleAbort.signal]) : scheduleAbort.signal});
         ctx.scheduler.running = false;
         try {
           const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
@@ -3750,7 +3760,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       isCancelled: () => channelTaskAborts.has(myKey) || channelAbort.signal.aborted,
       // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
       // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
-      requestApproval: async (action) => {
+      requestApproval: async (action, approvalSignal?: AbortSignal) => {
         const pending = ctx.inbox.create({
           kind: "approval",
           sessionId,
@@ -3758,7 +3768,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           title: `${channelLabel}消息申请：${action.title || action.kind}`,
           details: action.details,
           impact: action.impact,
-        }, {signal:channelAbort.signal});
+        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, channelAbort.signal]) : channelAbort.signal});
         registerPending({ itemId: pending.itemId, kind: "approval" });
         // IM 是纯文本：影响要点以纯文本列表附带，与桌面端 Markdown 渲染同一份内容
         const impactText = action.impact ? `\n\n操作影响：\n${action.impact}` : "";
@@ -3769,6 +3779,10 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         clearPending();
         if (resolution?.timedOut) {
           await reply("审批等待超时，已自动取消这次操作。").catch(() => { });
+        } else if (resolution?.reason && String(resolution.reason).includes("权限已更新")) {
+          // 审批权限被调宽后这张卡已按新权限撤回并继续执行；不告知的话用户会继续去回
+          // 一张已经作废的审批卡，然后被「请先回复 1」拦住。
+          await reply("审批权限已更新，这次操作不用再确认了，任务继续。").catch(() => { });
         }
         return Boolean(resolution?.ok);
       },

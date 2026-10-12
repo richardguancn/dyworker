@@ -91,7 +91,7 @@ export class InboxService extends Service {
       this.notify(item);
     }).catch(() => { });
     if (signal) {
-      const abort = () => this.expireNow(item.id, '所属任务已停止，提问已取消');
+      const abort = () => this.expireNow(item.id, signal.reason?.message || '所属任务已停止，等待已取消');
       signal.addEventListener('abort', abort, { once: true });
       void pending.then(() => signal.removeEventListener('abort', abort));
       if (signal.aborted) abort();
@@ -201,7 +201,10 @@ export class InboxService extends Service {
   async resolve(id, { approved, answer, via = "desktop" } = {} as any) {
     const resolve = this.pending.get(id);
     if (!resolve) return { ok: false, error: "该事项已处理或已失效" };
-    const items = await this.read();
+    // 决议可能紧跟在创建之后到达（IM 用户秒回、卡片刚发出就答复）。创建时的落盘还在
+    // 排队中，直接读盘会看不到条目，于是把这次决议当成"已失效"丢掉，用户只会被要求
+    // 再答复一次。等排队中的落盘走完再读，内存登记表（this.pending）仍是"还在等待"的权威。
+    const items = await this.persistQueue.then(() => this.read(), () => this.read());
     const item = items.find((entry) => String(entry.id) === id);
     if (!item || item.status !== "pending") return { ok: false, error: "该事项已处理或已失效" };
     const suffix = via === "desktop" ? "" : `(来自 ${via})`;

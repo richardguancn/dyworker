@@ -95,6 +95,27 @@ test("重复决议 / 失效条目决议：返回固定错误且不重复落盘",
   }
 });
 
+test("秒回决议：条目落盘还没走完就收到决议，不能把决议当成已失效丢掉", async (t) => {
+  const dir = await makeTmpDir(t);
+  const ctx = await createHost({ userDataDir: dir, safeStorage: undefined });
+  try {
+    const pending = ctx.inbox.create({ kind: "approval", sessionId: "s1", title: "运行本地脚本" });
+    // IM 用户秒回：决议紧跟在创建之后，此时创建时的落盘还排在队列里（故意不 flush）
+    const result = await ctx.inbox.resolve(pending.itemId, { approved: true, via: "微信·用户" });
+    assert.equal(result.ok, true, "刚落盘中的条目也要能决议，否则用户答复一次没有下文、只会被要求再答一次");
+    assert.deepEqual(await pending, { ok: true, reason: "" });
+    await flushInbox(ctx);
+    const items = await ctx.inbox.read();
+    assert.equal(items.filter((item) => item.status === "pending").length, 0, "决议后不留钉子户");
+    assert.equal(items.find((item) => item.id === pending.itemId)?.status, "resolved");
+    assert.match(String(items.find((item) => item.id === pending.itemId)?.resolution), /已允许\(来自 微信·用户\)/);
+    // 已经决议过的条目重复决议仍然按原语义返回错误
+    assert.deepEqual(await ctx.inbox.resolve(pending.itemId, { approved: false }), { ok: false, error: "该事项已处理或已失效" });
+  } finally {
+    await disposeHost(ctx);
+  }
+});
+
 test("dismiss：待处理不可移除，已处理可移除", async (t) => {
   const dir = await makeTmpDir(t);
   const ctx = await createHost({ userDataDir: dir, safeStorage: undefined });

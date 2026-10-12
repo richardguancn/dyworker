@@ -25,10 +25,19 @@ export { chunkText };
 
 // IM 审批回复解析:true=允许,false=拒绝,null=不是审批回复
 // 数字方案:1=允许,0=拒绝(2=停止由 manager 在待决审批时拦截,不走到这里)
+//
+// 整句匹配，只认明确的答复。微信、QQ 上用户更习惯回「好的」「可以」「行」，此前只认
+// 允许/同意/确认/执行/批准 这类书面词，一句话没被识别就要求「请回复 1（允许）」，
+// 而待决议期间该会话的其它消息也都会被这条提示拦住——高频用户体感就是「动不动就要审批」。
+// 因此把常见的整句同意/否定说法一并收进白名单（仍然整句匹配，「好吧」「允许执行这个」
+// 这类带保留或带内容的长句照旧返回 null，交给用户重新明确回答）。
+const APPROVAL_ALLOW_REPLY = /^(允许|同意|确认|执行|批准|可以|好|好的|好嘞|行|嗯|嗯嗯|没问题|收到|是的|是|1|y|yes|ok|okay)$/;
+const APPROVAL_DENY_REPLY = /^(拒绝|不同意|不行|不要|不|否|驳回|不准|取消|0|n|no)$/;
+
 export function parseApprovalReply(text) {
   const normalized = String(text || "").trim().toLowerCase();
-  if (/^(允许|同意|确认|执行|批准|1|y|yes|ok)$/.test(normalized)) return true;
-  if (/^(拒绝|不同意|取消|驳回|不准|0|n|no)$/.test(normalized)) return false;
+  if (APPROVAL_ALLOW_REPLY.test(normalized)) return true;
+  if (APPROVAL_DENY_REPLY.test(normalized)) return false;
   return null;
 }
 

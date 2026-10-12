@@ -1,6 +1,7 @@
 // DYWorker 本地代理循环。
 // 本文件不依赖 electron，方便用 node --test 直接测试。
 import { spawn, spawnSync } from "node:child_process";
+import { workspaceFileGuidance } from './active-permissions.mts';
 import { createHash } from "node:crypto";
 import { promises as fs, readFileSync, realpathSync, existsSync } from "node:fs";
 import net from "node:net";
@@ -2673,6 +2674,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "- 引用政策法规必须给来源网址；核实不了的文号、条款必须明说核实不了，绝不编造。",
 
     "# 工具使用\n"
+    + workspaceFileGuidance + "\n"
     + "- 修改已有文本文件时优先用 edit_file 做局部替换；只有新建文件或需要整体重写时才用 write_file 完整覆盖；修改前必须先 read_file 核对原文。\n"
     + "- 读取图片中的文字、扫描版 PDF 提不出文字时用 ocr_file 识别（印刷体、手写体、表格均可）；文字型 PDF 仍优先用 read_file。\n"
     + "- run_command 只用于转换文档、运行脚本、验证结果等专用工具做不到的事；读文件、找文件、改文件都用专用工具。\n"
@@ -5064,10 +5066,11 @@ export async function runAgent({
   loop = { enabled: false, iteration: 1, maximum: 1 },
   memoryReviewDue = false,
   approvalMode = "interactive",
+  getApprovalMode = null,
   extraTools = [],
   onExtraTool = null,
   emit = (_event) => { },
-  requestApproval = async (_action) => false,
+  requestApproval = async (_action, _reevaluate?: () => string) => false,
   requestUserInput = null,
   fetchImpl = fetch,
   isCancelled = () => false,
@@ -5537,11 +5540,11 @@ export async function runAgent({
   let approvalChain = Promise.resolve();
   // action 可传工厂函数：审批卡出队时才生成，返回 null 表示排队期间情况已变（如先行授权
   // 覆盖了本操作），跳过弹卡直接视为放行——并行只读轮次里靠它避免同路径重复询问
-  const queuedApproval = (actionOrFactory) => {
+  const queuedApproval = (actionOrFactory, reevaluate = undefined) => {
     const run = approvalChain.then(async () => {
       const action = typeof actionOrFactory === "function" ? await actionOrFactory() : actionOrFactory;
       if (!action) return null;
-      return requestApproval(action);
+      return requestApproval(action, reevaluate);
     });
     approvalChain = run.then(() => { }, () => { });
     return run;
@@ -5987,8 +5990,9 @@ export async function runAgent({
           };
         }
 
+        const effectiveApprovalMode = () => getApprovalMode?.() || approvalMode;
         const decisionInput = {
-          approvalMode,
+          approvalMode: effectiveApprovalMode(),
           name: approvalToolName,
           args,
           hasExternalPaths: externalPaths.length > 0,
@@ -6002,7 +6006,7 @@ export async function runAgent({
           && isAutoApprovableCommand(args.command);
         const autoApproved = readOnlyAutoApproved || (decision === "allow" && name === "run_command"
           && (isDevAutoApprovableCommand(args.command)
-            || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))));
+            || (effectiveApprovalMode() === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))));
         const consequential = needsApproval(approvalToolName);
         if (decision === "allow" && consequential) {
           auditRecord({
@@ -6048,6 +6052,7 @@ export async function runAgent({
                 const currentExternalPaths = externalPathsForTool(workspace, name, args);
                 const freshDecision = evaluateApproval({
                   ...decisionInput,
+                  approvalMode: effectiveApprovalMode(),
                   hasExternalPaths: currentExternalPaths.length > 0,
                   standingRules: [...standingRules, ...sessionRules],
                 });
@@ -6076,9 +6081,11 @@ export async function runAgent({
                   ...(impact ? { impact } : {}),
                   suggestedRule,
                 };
-              });
+              }, () => evaluateApproval({ ...decisionInput, approvalMode: effectiveApprovalMode(),
+                hasExternalPaths: externalPathsForTool(workspace, name, args).length > 0,
+                standingRules: [...standingRules, ...sessionRules] }));
               // null 表示出队重评估时已无需审批（被先行授权覆盖），不算用户本人批准
-              if (userDecision === null) return true;
+              if (userDecision === null) { approvalSource = "mode"; return true; }
               approvedByUser = userDecision;
               // 用户批准后立即持久化外部路径授权：并行只读轮次中，后续审批卡出队重评估
               // 发生在本次执行之前，若等到执行前才登记，排队中的同路径审批仍会认为未授权
@@ -6116,7 +6123,7 @@ export async function runAgent({
               name: approvalToolName,
               args: displayArgs,
               hookRequiresApproval: decisionInput.hookRequiresApproval,
-              approvalMode,
+              approvalMode: effectiveApprovalMode(),
               forExternalPaths: externalPaths.length > 0,
             }) && !deleteOutsideWorkspace && !touchesReviewerLogic;
             if (reviewable && reviewerState.active) {
@@ -6138,7 +6145,9 @@ export async function runAgent({
                     },
                   }));
               reviewerState.total += 1;
-              if (review.decision === "allow") {
+              if (effectiveApprovalMode() !== decisionInput.approvalMode) {
+                approved = await askApproval();
+              } else if (review.decision === "allow") {
                 reviewerState.consecutiveDenials = 0;
                 approved = true;
                 approvalSource = "reviewer";
@@ -6197,7 +6206,7 @@ export async function runAgent({
           if (consequential) {
             auditRecord({
               tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
-              decision: approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
+              decision: approvalSource === "mode" ? "auto-allowed" : approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
               ...(approvalSource === "reviewer" ? { detail: reviewerReason, model: reviewerModelLabel, policyHash: reviewerPolicyHash } : {}),
             });
           }
@@ -6208,9 +6217,9 @@ export async function runAgent({
         let result;
         let ok = true;
         let supplementalMessages = [];
-        // 用户直接批准或完全访问模式下，授权延续到本次任务结束；
-        // 审核助手放行的外部路径仍按单次授权，之后每次重新评估。
-        const persistExternalAuthorization = approvedByUser || approvalMode === "full-access";
+        // 只有用户直接批准的路径授权延续到任务结束；自动放行均按单次授权，
+        // 防止从完全访问切回请示后，残留路径许可仍继续生效。
+        const persistExternalAuthorization = approvedByUser && effectiveApprovalMode() !== "full-access";
         const releaseExternalAuthorization = externalPaths.length && !externalAuthorizationPersisted
           ? workspace.authorizeExternalPaths(externalPaths, { persist: persistExternalAuthorization })
           : () => { };
@@ -6513,7 +6522,8 @@ export async function runAgent({
                 skillStore,
                 history,
                 loop: { enabled: false, iteration: 1, maximum: 1 },
-                approvalMode,
+                approvalMode: effectiveApprovalMode(),
+                getApprovalMode,
                 standingRules: [...standingRules, ...sessionRules],
                 trustTempDirs,
                 extraTools,

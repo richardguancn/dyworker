@@ -32,8 +32,14 @@ export function createChildEntry(deps: any) {
           workspacePath:session.workspacePath,approvalMode:normalizeApprovalMode(settings.approvalMode),
           childPrompt:payload.prompt,signal:abortController.signal,isCancelled:()=>state.cancelled,
           routerOptions:{renderer:sender,sessionId,runId,signal:abortController.signal},
-          requestApproval:(action: any) => new Promise(resolve => {
-            state.pending.set(action.id,resolve); emit({type:'approval-request',action});
+          // 权限更新（如中途切到完全访问）会撤回等待中的审批：必须收下撤回信号并清掉
+          // 渲染端的审批卡，否则这张卡既不会被执行也不会消失，任务会一直挂在等待里。
+          requestApproval:(action: any, approvalSignal?: AbortSignal) => new Promise(resolve => {
+            const abort = () => {state.pending.delete(action.id);emit({type:'approval-withdrawn',actionId:action.id});resolve(false);};
+            state.pending.set(action.id,(value: any)=>{approvalSignal?.removeEventListener('abort',abort);resolve(value);});
+            emit({type:'approval-request',action});
+            approvalSignal?.addEventListener('abort',abort,{once:true});
+            if(approvalSignal?.aborted) abort();
           }),
           requestUserInput:(request: any, signal?: AbortSignal) => new Promise(resolve => {
             const key = `q:${request.id}`;

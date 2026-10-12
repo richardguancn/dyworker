@@ -11,6 +11,7 @@ import { runAgent } from "../../agent.mts";
 import { randomUUID } from "node:crypto";
 import { shouldContinueGoal } from "../../goal.mts";
 import { assertDshModelSettings } from "../dsh-runtime/model-settings.mts";
+import { activePermissions } from '../../active-permissions.mts';
 import "../events.mts";
 
 declare module "@deepseek-ai/cordis" {
@@ -52,27 +53,30 @@ export class AgentService extends Service {
     const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : [])]);
     const cancellation = setInterval(() => { if (isCancelled()) controller.abort(new Error("任务已停止")); }, 50);
     cancellation.unref();
-    // MCP 工具由服务统一装配；入口通过 extraTools 追加渠道媒体等额外工具
-    const extraTools = [
-      ...this.resolvers.agentExtraTools(await this.resolvers.mcpExtraTools(settings)),
-      ...(options.extraTools || []),
-    ];
-    // 外部工具路由：入口可传入定制路由（渠道媒体接管/工作区切换重建），否则按
-    // routerOptions 自建；dispose 统一在收尾执行（含入口定制路由的 .dispose）
-    const onExtraTool = options.onExtraTool
-      ?? this.resolvers.createExtraToolRouter(settings, workspacePath, {
-        ...options.routerOptions, sessionId, runId: options.routerOptions?.runId || options.runId || randomUUID(), signal,
-      });
-    onExtraTool?.setExecutionContext?.({ sessionId, runId: options.runId || options.routerOptions?.runId || randomUUID(), signal });
-    const emit = (agentEvent) => {
-      if (agentEvent?.type === 'token-usage') this.ctx.mods.recordUsage(sessionId,agentEvent,runtime==='dsh'?options.contextLimit:options.contextLimit||128000);
-      if (agentEvent?.type === "skill-saved" && !agentEvent.persisted) void this.resolvers.appendSkill(agentEvent.item);
-      if (agentEvent?.type === "token-usage") void this.resolvers.appendUsageStat(agentEvent);
-      options.emit?.(agentEvent);
-    };
-    const loop = options.loop || { enabled: false, iteration: 1, maximum: 1 };
-    let iterationMessages = options.conversation;
+    const permissions = activePermissions(approvalMode,
+      listener => this.ctx.settings.onApprovalModeChange(listener), options.requestApproval, signal);
+    let onExtraTool;
     try {
+      // MCP 工具由服务统一装配；入口通过 extraTools 追加渠道媒体等额外工具
+      const extraTools = [
+        ...this.resolvers.agentExtraTools(await this.resolvers.mcpExtraTools(settings)),
+        ...(options.extraTools || []),
+      ];
+      // 外部工具路由：入口可传入定制路由（渠道媒体接管/工作区切换重建），否则按
+      // routerOptions 自建；dispose 统一在收尾执行（含入口定制路由的 .dispose）
+      onExtraTool = options.onExtraTool
+        ?? this.resolvers.createExtraToolRouter(settings, workspacePath, {
+          ...options.routerOptions, sessionId, runId: options.routerOptions?.runId || options.runId || randomUUID(), signal,
+        });
+      onExtraTool?.setExecutionContext?.({ sessionId, runId: options.runId || options.routerOptions?.runId || randomUUID(), signal });
+      const emit = (agentEvent) => {
+        if (agentEvent?.type === 'token-usage') this.ctx.mods.recordUsage(sessionId,agentEvent,runtime==='dsh'?options.contextLimit:options.contextLimit||128000);
+        if (agentEvent?.type === "skill-saved" && !agentEvent.persisted) void this.resolvers.appendSkill(agentEvent.item);
+        if (agentEvent?.type === "token-usage") void this.resolvers.appendUsageStat(agentEvent);
+        options.emit?.(agentEvent);
+      };
+      const loop = options.loop || { enabled: false, iteration: 1, maximum: 1 };
+      let iterationMessages = options.conversation;
       while (true) {
         await this.ctx.mods.dispatch(sessionId,'turn.start',{turnId:options.runId||sessionId},async()=>({}),signal);
         if (options.loopStateEvents) {
@@ -80,6 +84,7 @@ export class AgentService extends Service {
         }
         const result = runtime === 'dsh'
           ? await this.ctx.dshRuntime.run({ ...options, settings, workspacePath, sessionId, approvalMode,
+            getApprovalMode: permissions.getMode, requestApproval: permissions.request,
             prompt: loop.iteration > 1 ? LOOP_CONTINUE_PROMPT : prompt, signal, emit, resolvers: this.resolvers,
             conversation: iterationMessages, extraTools, onExtraTool })
           : await runAgent({
@@ -101,8 +106,9 @@ export class AgentService extends Service {
           history: this.resolvers.history(),
           loop,
           approvalMode,
+          getApprovalMode: permissions.getMode,
           standingRules: await this.resolvers.readStandingRules(),
-          audit: (entry) => this.resolvers.auditRecord({ ...entry, ...(options.auditExtras || {}), sessionId, approvalMode }),
+          audit: (entry) => this.resolvers.auditRecord({ ...(options.auditExtras || {}), sessionId, approvalMode: permissions.getMode(), ...entry }),
           extraTools,
           onExtraTool,
           // 插件策略接缝：tools/pre-execute waterfall 事件（见 host/events.mts）。
@@ -123,7 +129,7 @@ export class AgentService extends Service {
           sleepGuard: () => this.resolvers.hasPendingWakeForSession(sessionId),
           sessionId,
           startBackgroundTask: (p) => this.startBackgroundTask({ ...p, sessionId: p.sessionId || sessionId }),
-          requestApproval: options.requestApproval,
+          requestApproval: permissions.request,
           requestUserInput: options.requestUserInput,
         });
         await this.ctx.mods.dispatch(sessionId,'turn.complete',{turnId:options.runId||sessionId,answer:result.finalText||'',isAborted:isCancelled()},async()=>({}),signal.aborted?undefined:signal);
@@ -177,6 +183,7 @@ export class AgentService extends Service {
         ];
       }
     } finally {
+      permissions.dispose();
       clearInterval(cancellation);
       controller.abort(new Error("任务已结束"));
       try {

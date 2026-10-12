@@ -20,25 +20,31 @@ export function createDshApproval(options: any) {
       // 提问入口由运行环境固定，不能被插件的同名工具替换；沿用原有提问权限。
       const publicName = name === 'ask_user_question' ? 'ask_user' : options.nativeToolNames?.includes(name)
         ? (options.nativeToolAliases?.[name] || name) : `dsh__${name}`;
-      const decision = evaluateApproval({ name: publicName, args, approvalMode: options.approvalMode,
+      const currentMode = () => options.getApprovalMode?.() || options.approvalMode;
+      const evaluate = () => evaluateApproval({ name: publicName, args, approvalMode: currentMode(),
         standingRules: options.standingRules || [], hookRequiresApproval: hook?.action === 'require_approval' });
+      const decision = evaluate();
       if (decision === 'deny') { audit('denied', '当前任务不允许修改'); return false; }
       if (decision === 'allow') { audit('auto-allowed'); return true; }
       let reason = hook?.message || '';
       if (denials < 3 && !isReviewerProtectedPath(tool.workspacePath || options.workspacePath || '', args.path)
-        && isReviewerEligible({ name: publicName, args, approvalMode: options.approvalMode,
+        && isReviewerEligible({ name: publicName, args, approvalMode: currentMode(),
         hookRequiresApproval: hook?.action === 'require_approval' })) {
+        const reviewMode = currentMode();
         const review = await (options.review || reviewApproval)({ settings: options.settings, fetchImpl: options.fetchImpl,
           signal, action: { kind: name, title: `DSH：${name}`, details: JSON.stringify(args) }, context: options.prompt || '',
           onUsage: options.onUsage });
         signal.throwIfAborted();
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
-        if (review.decision === 'allow') { denials = 0; return true; }
-        if (review.decision === 'deny') { denials++; return false; }
+        if (currentMode() !== reviewMode) {
+          const updated = evaluate();
+          if (updated !== 'ask') { audit(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断'); return updated === 'allow'; }
+        } else if (review.decision === 'allow') { denials = 0; return true; }
+        else if (review.decision === 'deny') { denials++; return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,
-        title: `DSH 插件操作：${name}`, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') });
+        title: `DSH 插件操作：${name}`, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') }, evaluate);
       if (!pending) { audit('denied', '没有可用的审批入口'); return false; }
       // 用户关闭会话或停止时不能留下等待中的审批调用。
       let abort: () => void;
@@ -47,7 +53,7 @@ export function createDshApproval(options: any) {
           abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
           if (signal.aborted) abort();
         })]);
-        signal.throwIfAborted(); audit(allowed === true ? 'approved' : 'denied'); return allowed === true;
+        signal.throwIfAborted(); audit(allowed === null ? 'auto-allowed' : allowed === true ? 'approved' : 'denied'); return allowed === true || allowed === null;
       } finally { signal.removeEventListener('abort', abort); }
     });
     queue = operation.then(() => {}, () => {});

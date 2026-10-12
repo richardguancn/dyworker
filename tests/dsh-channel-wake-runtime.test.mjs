@@ -14,18 +14,19 @@ import {channelMediaToolDefinitions} from '../electron/channels/media-tools.mts'
 import {queuedGoalPayload,settledStoredGoal} from '../electron/goal.mts';
 const require=createRequire(import.meta.url);
 const response=text=>new Response(JSON.stringify({choices:[{message:{role:'assistant',content:text},finish_reason:'stop'}]}),{headers:{'content-type':'application/json'}});
-async function setup(t,fetchImpl,windowOpen=true) {
+async function setup(t,fetchImpl,windowOpen=true,permissionCase=null) {
   const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-channel-wake-'))), workspacePath=path.join(dir,'work');await fs.mkdir(workspacePath);
   const router=()=>Object.assign(async()=>{throw new Error('Unexpected external tool');},{dispose:async()=>{}});
-  const host=await createHost({userDataDir:dir,mountPlugins:true,agentResolvers:{isShuttingDown:()=>false,agentExtraTools:v=>v,mcpExtraTools:async()=>[],createExtraToolRouter:router,readHooks:async()=>[],readStandingRules:async()=>[],auditRecord:()=>{},memoriesFromAgentResult:()=>[],appendUsageStat:()=>{}}});
+  const host=await createHost({userDataDir:dir,mountPlugins:true,agentResolvers:{isShuttingDown:()=>false,agentExtraTools:v=>v,mcpExtraTools:async()=>[],createExtraToolRouter:router,readHooks:async()=>[],readMemoryPages:async()=>[],readSkills:async()=>[],history:()=>null,readStandingRules:async()=>[],auditRecord:()=>{},memoriesFromAgentResult:()=>[],appendUsageStat:()=>{}}});
   t.after(async()=>{await disposeHost(host);await fs.rm(dir,{recursive:true,force:true});});
   await fs.mkdir(path.join(host.plugins.dir,'node_modules'),{recursive:true});await fs.symlink(path.dirname(require.resolve('dsh-office-tools/package.json')),path.join(host.plugins.dir,'node_modules/dsh-office-tools'),'dir');
   assert.equal((await host.plugins.install({spec:'dsh-office-tools'})).ok,true);
   const envelopes=[],outbound=[],entryRuns=new Map(),wakeRuns=new Map(),channelTaskAborts=new Set();
   const ctx={sessions:host.sessions,scheduler:host.scheduler,inbox:host.inbox,agent:{run:options=>host.agent.run({...options,fetchImpl})}};
-  const settings={endpoint:'https://fixture.test/v1/chat/completions',model:'selected',apiKey:'test-only',approvalMode:'full-access',channels:{runtime:'dsh'}};
+  const settings={endpoint:'https://fixture.test/v1/chat/completions',model:'selected',apiKey:'test-only',approvalMode:permissionCase?.mode || 'full-access',channels:{runtime:permissionCase?.runtime || 'dsh'}};
+  await host.settings.write({approvalMode:settings.approvalMode});
   const deps={ctx,crypto,entryRuns,wakeRuns,channelTaskAborts,channelTaskKeys:new Set(),activeAgents:new Map(),mcpShuttingDown:false,CHANNEL_QUEUE_WAIT_TIMEOUT_MS:10000,
-    trackTaskStart:()=>{},trackTaskEnd:()=>{},channelDebug:()=>{},CHANNEL_LABELS:{qq:'QQ'},defaultChannelWorkspace:async()=>workspacePath,
+    trackTaskStart:()=>{},trackTaskEnd:()=>{},channelDebug:()=>{},CHANNEL_LABELS:{qq:'QQ',wechat:'微信'},defaultChannelWorkspace:async()=>workspacePath,
     mainWindow:windowOpen ? {isDestroyed:()=>false,webContents:{send:(type,payload)=>envelopes.push({type,payload})}} : null,
     createTranscriptCollector,mergeDshTranscript,queuedGoalPayload,settledStoredGoal,readSettings:async()=>settings,hasConfiguredModel,normalizeApprovalMode,wakeApprovalMode,
     UNATTENDED_PENDING_TIMEOUT_MS:10000,CHANNEL_STREAM_EVENT_TYPES:new Set(['queue-start','dsh-conversation','agent-finished']),
@@ -34,8 +35,8 @@ async function setup(t,fetchImpl,windowOpen=true) {
     workingContextForSession:async()=>'',providerMessageContent:async message=>message.content,createExtraToolRouter:router,channelMediaToolDefinitions,
     persistSessionAppend:(id,messages)=>host.sessions.appendMessages(id,messages),drainSessionQueue:id=>envelopes.push({type:'drain',id})};
   const channel=mainChannelEntry(deps),wake=mainWakeEntry(deps);
-  const runChannel=(text,isNewChat=true)=>channel({channel:'qq',chat:{chatId:'isolated',userName:'测试'},chatKey:'qq:isolated',text,media:[],chatRecord:{sessionId:'channel-root',workspacePath,title:'隔离渠道'},isNewChat,
-    reply:async text=>outbound.push(text),replyMedia:async()=>{throw new Error('Unexpected external media');},sendTyping:async()=>{},registerPending:()=>{},clearPending:()=>{}});
+  const runChannel=(text,isNewChat=true)=>channel({channel:permissionCase?.channel || 'qq',chat:{chatId:'isolated',userName:'测试'},chatKey:'qq:isolated',text,media:[],chatRecord:{sessionId:'channel-root',workspacePath,title:'隔离渠道'},isNewChat,
+    reply:async text=>{outbound.push(text);if(permissionCase && text.includes('⚠️ 需要审批')) await host.settings.write({approvalMode:'full-access'});},replyMedia:async()=>{throw new Error('Unexpected external media');},sendTyping:async()=>{},registerPending:()=>{},clearPending:()=>{}});
   return {host,workspacePath,envelopes,outbound,entryRuns,wakeRuns,runChannel,wake};
 }
 
@@ -104,4 +105,34 @@ test('目标自动唤醒沿用当前目标，达成后先保存完成状态再�
   assert.equal(saved.goalState.activeSince,undefined);
   assert.equal(envelopes.find(e=>e.type==='sessions:append').payload.goalState.status,'complete');
   assert.equal(queuedGoalPayload({goal:'核对两项文字'},saved).goal,'');
+});
+
+
+test('微信与 QQ 实际任务入口：运行中开启完全访问，撤回旧审批并执行新建 Python 脚本',async t=>{
+  for (const channel of ['qq','wechat']) await t.test(channel,async t=>{
+    let step=0;
+    const {host,workspacePath,outbound,runChannel}=await setup(t,async(_url,init)=>{
+      const body=JSON.parse(init.body);
+      if(body.messages?.[0]?.content.includes('审批说明撰写助手')) return response('在当前工作目录运行报告脚本。');
+      const calls=[
+        {name:'write_file',args:{path:'channel_report.py',content:"from pathlib import Path\nPath('channel_report.txt').write_text('channel verified', encoding='utf8')\nprint('channel verified')\n"}},
+        {name:'run_command',args:{command:'python3 channel_report.py'}},
+        {name:'run_command',args:{command:'python3 channel_report.py'}},
+      ];
+      const call=calls[step++];
+      if(!call)return response('报告已生成并检查。');
+      return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:`permission-${step}`,type:'function',function:{name:call.name,arguments:JSON.stringify(call.args)}}]},finish_reason:'tool_calls'}]}),{headers:{'content-type':'application/json'}});
+    },true,{channel,mode:'interactive',runtime:'dyworker'});
+    await runChannel('在当前目录创建并运行报告脚本');
+    assert.ok(await fs.stat(path.join(workspacePath,'channel_report.txt')).catch(()=>null),JSON.stringify(outbound));
+    assert.equal(await fs.readFile(path.join(workspacePath,'channel_report.txt'),'utf8'),'channel verified');
+    assert.equal(outbound.filter(text=>text.includes('⚠️ 需要审批')).length,1);
+    // 审批被新权限撤回时要当面告知 IM 用户，否则他会继续去回一张已作废的卡片
+    assert.ok(outbound.some(text=>text.includes('审批权限已更新')),JSON.stringify(outbound));
+    assert.ok(outbound.includes('报告已生成并检查。'));
+    await host.inbox.persistQueue;
+    assert.equal(host.inbox.pending.size,0);
+    assert.equal((await host.inbox.read()).filter(item=>item.status==='pending').length,0);
+    assert.equal(host.settings.approvalListeners.size,0);
+  });
 });
