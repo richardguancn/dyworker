@@ -3656,7 +3656,8 @@ const ProcessTimeline = memo(function ProcessTimeline({
   // 任务执行中直接平铺过程行（对标 Codex 执行中的排版：过程行与正文同一起始边，
   // 顶部不出现折叠条）；只有任务结束、或用户主动收起后才显示「用时 XX 〉」折叠条。
   const showTrigger = collapsed || !isStreaming;
-  if (!showTrigger && !activities.length && !hasReasoning) return null;
+  const liveText = isStreaming && !message.dshTurnId ? (message.content || "").trim() : "";
+  if (!showTrigger && !activities.length && !hasReasoning && !liveText) return null;
   const showContent = showTrigger ? !collapsed : true;
 
   return (
@@ -3715,6 +3716,12 @@ const ProcessTimeline = memo(function ProcessTimeline({
             }
             return <ProcessActionItem key={activity.id} activity={activity} />;
           })}
+          {/* 执行中模型正在说的话：接在当前这一轮思考行后面实时出现（对标 Codex 会话输出：
+             边说边出，位置就是它落定后的位置）。这一轮结束时同一段文字会成为该思考行的说明，
+             位置不变、也不会在正文区再出现一次；正文区只在任务收尾后显示最终答复。 */}
+          {liveText && !contentEchoesProcessCommentary(message, { streaming: true }) && (
+            <ProcessCommentaryItem text={liveText} />
+          )}
         </div>
       )}
     </div>
@@ -13071,6 +13078,10 @@ export function App() {
                 // （按块解析、已定稿的块 memo 冻结，见该组件 streaming 说明）。
                 // streamingAssistantIndex 在无运行任务时为 -1，下标不可能等于 -1，故天然安全
                 const isStreamingMessage = index === streamingAssistantIndex;
+                // 旧路径（非 DSH 回合）执行中：模型的话在过程流里实时出现，正文区只在收尾后
+                // 显示最终答复，避免同一段文字在过程流和正文区各出现一次。
+                // DSH 回合的正文本身就是逐条回复累积的会话输出，照旧显示。
+                const liveOutputInProcess = isStreamingMessage && !message.dshTurnId;
                 // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
                 const inlineTokenNames = message.role === "user"
                   ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
@@ -13243,7 +13254,7 @@ export function App() {
                         collapsedActivities={collapsedActivities}
                         onToggleCollapse={toggleActivityCollapse}
                       />
-                      {message.content && !contentEchoesProcessCommentary(message, { streaming: isStreamingMessage }) && (
+                      {message.content && !liveOutputInProcess && (
                         <InteractiveMessage
                           content={stripControlMarkersCached(message.content)}
                           streaming={isStreamingMessage}
