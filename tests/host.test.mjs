@@ -604,7 +604,7 @@ test("域 IPC 插件：inject 满足前不注册通道，满足后注册的通�
       label: "skills",
       plugin: skillsIpcPlugin,
       deps: { skills: {}, settings: {} },
-      channels: ["skills:list", "skills:set-enabled", "skills:delete", "skills:create", "skills:update", "skill-libraries:search", "skill-libraries:install"],
+      channels: ["skills:list", "skills:set-enabled", "skills:delete", "skills:create", "skills:update", "skill-libraries:search", "skill-libraries:install", "curated-plugins:list", "curated-plugins:set-enabled"],
     },
     {
       label: "telemetry",
@@ -673,7 +673,8 @@ test("SkillsService：内置模板合并、创建/更新/启停/删除，被删�
     assert.ok(initial.some((item) => item.builtIn), "内置模板应带 builtIn 标记");
     // 首次读取会把内置模板落盘到 skills.json
     const onDisk = JSON.parse(await fs.readFile(path.join(dir, "skills.json"), "utf8"));
-    assert.equal(onDisk.length, initial.length);
+    assert.equal(onDisk.length, initial.filter(item => !item.readOnly).length);
+    assert.ok(initial.some(item => item.pluginId && item.readOnly), '随应用提供的插件技能从原文件读取，不复制进用户模板');
 
     // 创建（会话「总结为工作模板」链路）
     const created = await ctx.skills.append({ name: "我的模板", description: "说明", instructions: "步骤" });
@@ -694,10 +695,10 @@ test("SkillsService：内置模板合并、创建/更新/启停/删除，被删�
     assert.ok(!(await ctx.skills.read("")).some((item) => item.id === created.id));
 
     // 删除内置模板：进入 dismissed 名单，不再被补回
-    const beforeBuiltins = (await ctx.skills.read("")).filter((item) => item.builtIn);
+    const beforeBuiltins = (await ctx.skills.read("")).filter((item) => item.builtIn && !item.readOnly);
     const victim = beforeBuiltins[0];
     assert.equal((await ctx.skills.remove(victim.id)).ok, true);
-    const afterBuiltins = (await ctx.skills.read("")).filter((item) => item.builtIn);
+    const afterBuiltins = (await ctx.skills.read("")).filter((item) => item.builtIn && !item.readOnly);
     assert.equal(afterBuiltins.length, beforeBuiltins.length - 1, "删掉的内置模板不应复活");
     assert.ok(!afterBuiltins.some((item) => item.id === victim.id));
 

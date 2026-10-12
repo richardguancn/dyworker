@@ -1,0 +1,8 @@
+{
+  "current_share_price": 20.0,
+  "existing_basic_shares": 100.0,
+  "gross_proceeds": 250.0,
+  "fee_pct": 3.5,
+  "discount_pct": 4.0,
+  "use_of_proceeds_debt_paydown": 100.0
+}

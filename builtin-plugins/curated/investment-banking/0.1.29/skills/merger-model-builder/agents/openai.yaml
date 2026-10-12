@@ -1,0 +1,7 @@
+interface:
+  display_name: "Merger Model Build"
+  short_description: "M&A ownership and accretion workbook"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $merger-model-builder to build a banker-readable merger model workbook with ownership, synergy evidence, accretion/dilution, and readiness checks."
+policy:
+  allow_implicit_invocation: false

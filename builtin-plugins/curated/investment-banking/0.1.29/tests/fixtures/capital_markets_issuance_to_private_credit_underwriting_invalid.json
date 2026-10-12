@@ -1,0 +1,140 @@
+{
+  "contract_name": "capital_markets_issuance_to_private_credit_underwriting",
+  "issuer_context": "issuer_context fixture value",
+  "borrower_or_issuer_name": "borrower_or_issuer_name fixture value",
+  "sponsor_or_owner": "sponsor_or_owner fixture value",
+  "transaction_objective": "transaction_objective fixture value",
+  "use_of_proceeds": "use_of_proceeds fixture value",
+  "recommended_instrument": "recommended_instrument fixture value",
+  "proposed_facility_or_security": "proposed_facility_or_security fixture value",
+  "target_raise_amount": 100,
+  "minimum_viable_size": 100,
+  "base_size": 100,
+  "stretch_size": 100,
+  "maximum_advisable_size": 100,
+  "indicative_pricing_terms": [
+    {
+      "label": "indicative_pricing_terms",
+      "description": "indicative_pricing_terms fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "fees_oid_call_protection": [
+    {
+      "label": "fees_oid_call_protection",
+      "description": "fees_oid_call_protection fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "maturity_tenor": "maturity_tenor fixture value",
+  "amortization_or_cash_pay_terms": "amortization_or_cash_pay_terms fixture value",
+  "collateral_guarantee_summary": "collateral_guarantee_summary fixture value",
+  "pro_forma_capitalization": [
+    {
+      "label": "pro_forma_capitalization",
+      "description": "pro_forma_capitalization fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "pro_forma_leverage": [
+    {
+      "label": "pro_forma_leverage",
+      "description": "pro_forma_leverage fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "pro_forma_coverage": [
+    {
+      "label": "pro_forma_coverage",
+      "description": "pro_forma_coverage fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "liquidity_impact": "liquidity_impact fixture value",
+  "market_window_status": "market_window_status fixture value",
+  "market_clearing_assumptions": [
+    {
+      "label": "market_clearing_assumptions",
+      "description": "market_clearing_assumptions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "investor_lender_targeting_summary": [
+    {
+      "label": "investor_lender_targeting_summary",
+      "description": "investor_lender_targeting_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "expected_lender_objections": [
+    {
+      "label": "expected_lender_objections",
+      "description": "expected_lender_objections fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "execution_risks": [
+    {
+      "label": "execution_risks",
+      "description": "execution_risks fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "fallback_alternatives": [
+    {
+      "label": "fallback_alternatives",
+      "description": "fallback_alternatives fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "decision_requested": "decision_requested fixture value",
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "evidence_register": [
+    {
+      "source_id": "SRC-001",
+      "source_type": "CIM",
+      "as_of_date": "2026-05-01",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "treatment": "use as reported",
+      "open_items": [
+        "none"
+      ]
+    }
+  ],
+  "covenant_or_rating_caveats": [
+    {
+      "label": "covenant_or_rating_caveats",
+      "description": "covenant_or_rating_caveats fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

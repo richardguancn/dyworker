@@ -1,0 +1,37 @@
+{
+  "contract_name": "company_tearsheet_to_memo_builder",
+  "memo_package": {
+    "entity_profile": "Acme Corp example company profile",
+    "one_line_business_description": "Source-backed example business used for memo handoff validation.",
+    "business_model": "Subscription software",
+    "sector": "Software",
+    "ownership_status": "private",
+    "key_metrics": [
+      {
+        "metric": "Revenue",
+        "period": "FY2025",
+        "value": 100,
+        "source_id": "S1"
+      }
+    ],
+    "recent_developments": [
+      "Management provided updated revenue detail."
+    ],
+    "source_as_of_dates": [
+      "2026-05-01"
+    ],
+    "fact_vs_assumption_labels": [
+      "Revenue is fact_source_reported from S1."
+    ],
+    "risks_and_gaps": [
+      "Customer concentration detail not provided."
+    ],
+    "open_questions": [
+      "Confirm latest ARR."
+    ],
+    "recommended_next_step": "Use as factual profile spine in memo-builder.",
+    "circulation_caveats": [
+      "Not a recommendation."
+    ]
+  }
+}

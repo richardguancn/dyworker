@@ -1,0 +1,7 @@
+interface:
+  display_name: "Covenant Package Analyzer"
+  short_description: "Credit agreement covenant review"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $covenant-package-analyzer to prepare a finance-side covenant review memo or supported headroom analysis."
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/style_guide_adapter_change_log.schema.json",
+  "title": "style_guide_adapter_change_log",
+  "description": "Canonical Investment Banking handoff contract from style-guide-adapter to ib-deck-qc.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "style_guide_adapter_change_log"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "change_log_id",
+        "style_profile_id",
+        "source_artifact",
+        "output_artifact",
+        "artifact_type",
+        "artifact_version",
+        "mode",
+        "style_sources_used",
+        "changes_made",
+        "preserved_elements",
+        "substantive_edits",
+        "data_formula_source_integrity_status",
+        "visual_review_status",
+        "visual_review_notes",
+        "open_items",
+        "non_client_ready_reasons",
+        "downstream_qc_required",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "change_log_id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_profile_id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_artifact": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "output_artifact": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "artifact_type": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "artifact_version": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "mode": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_sources_used": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "changes_made": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/style_change_record"
+          }
+        },
+        "preserved_elements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "substantive_edits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "data_formula_source_integrity_status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "visual_review_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "needs_review",
+            "not_started",
+            "blocked",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "visual_review_notes": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "open_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/open_item"
+          }
+        },
+        "non_client_ready_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "downstream_qc_required": {
+          "type": "boolean"
+        },
+        "circulation_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/circulation_caveat"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

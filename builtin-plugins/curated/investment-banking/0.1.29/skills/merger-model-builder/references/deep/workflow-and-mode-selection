@@ -1,0 +1,25 @@
+# Workflow And Mode Selection
+
+Select the model scope from the decision the source packet can support; do not complete a broader accounting model with invented inputs.
+
+Modes:
+- `adjusted_eps_screen`: public-source or early deal-team view with support for transaction terms, pro forma ownership, disclosed projections and/or disclosed synergies, but incomplete PPA, GAAP EPS, post-close denominator actualization or refinancing economics. Workbook hero; maximum posture `screen-grade`.
+- `gaap_accretion_model`: model with source-supported consideration, denominator, financing, PPA/amortization, integration-cost treatment and tax inputs sufficient to display GAAP and adjusted EPS. Workbook hero; apply readiness gates.
+- `html_companion`: explicitly requested standalone transaction summary sourced from workbook outputs; it does not replace the calculation workbook.
+
+For `adjusted_eps_screen`, state the metric boundary on the first-read tab and in the cover note: adjusted EPS is presented; GAAP accretion/dilution is not. Record missing GAAP/PPA/post-close actualization inputs as readiness gates, not as placeholder assumptions unless a placeholder is actually used in a displayed calculation.
+
+Synergy treatment must separate:
+- disclosed gross run-rate synergies;
+- disclosed pretax net synergies, when provided;
+- disclosed costs to achieve or integration charges, when provided;
+- clearly labeled `implied cost-to-achieve` only when calculated as a bridge between disclosed gross and disclosed net synergy figures;
+- model-derived pretax net benefit only when no disclosed net synergy figure supports the displayed case;
+- modeled tax effect and resulting after-tax EPS contribution.
+
+Sensitivity priorities:
+- synergy realization versus adjusted EPS accretion/dilution;
+- cost-to-achieve overrun or delayed capture versus adjusted EPS accretion/dilution;
+- EPS breakeven against the selected pretax net synergy basis.
+
+For fixed-ratio all-stock transactions, do not make share-price sensitivity a priority for ownership or EPS denominator mechanics unless the user asks for purchase price, fair value, or PPA analysis.

@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/pitch_deck_builder_to_ib_deck_qc.schema.json",
+  "title": "pitch_deck_builder_to_ib_deck_qc",
+  "description": "Canonical Investment Banking handoff contract from pitch-deck-builder to ib-deck-qc.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "pitch_deck_builder_to_ib_deck_qc"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "artifact_type",
+        "artifact_version",
+        "circulation_posture",
+        "audience",
+        "deck_metadata",
+        "md_storyline",
+        "page_plan",
+        "source_log",
+        "key_numbers_to_tie",
+        "claim_register",
+        "chart_and_visual_register",
+        "slide_blueprint",
+        "appendix",
+        "style_profile_package",
+        "style_change_log_package",
+        "qa_status",
+        "open_items"
+      ],
+      "properties": {
+        "artifact_type": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "artifact_version": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "circulation_posture": {
+          "type": "string",
+          "enum": [
+            "working_draft",
+            "senior_review_ready",
+            "client_ready",
+            "committee_ready",
+            "not_circulable",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "audience": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "deck_metadata": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "md_storyline": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "page_plan": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "source_log": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/source_log_record"
+          }
+        },
+        "key_numbers_to_tie": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/key_number_to_tie"
+          }
+        },
+        "claim_register": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/claim_record"
+          }
+        },
+        "chart_and_visual_register": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/chart_visual_record"
+          }
+        },
+        "slide_blueprint": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "appendix": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "style_profile_package": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "style_change_log_package": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "qa_status": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "open_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/open_item"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

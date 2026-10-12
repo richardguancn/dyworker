@@ -1,0 +1,7 @@
+interface:
+  display_name: "CIM Teardown"
+  short_description: "Claims-led CIM diligence review"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $cim-teardown to turn a CIM or teaser into claims, red flags, diligence asks, and underwriting implications."
+policy:
+  allow_implicit_invocation: false

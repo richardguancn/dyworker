@@ -1,0 +1,11 @@
+# Output Spec
+
+Required hero deliverable: `output/model.xlsx`. Required support artifacts: `output/model_citations.json`, `output/plan.json`, `output/run_log.json`, and `output/manifest.json` when available. Optional legacy support artifact: `report.md` only when explicitly requested.
+
+The workbook must open on a banker-readable `Cover`, `Executive Summary`, or `Dashboard` tab following `../../../../references/workbook-first-tab-standard.md`: purchase price, entry/exit, IRR/MOIC, debt quantum, leverage, deleveraging, sponsor equity, covenant/liquidity flags, sensitivity table, source/caveat status, key risks, next steps, and model map. Display `Calculation integrity` and `Decision readiness` separately; a balanced public-source screen is not underwriting-ready merely because formulas calculate.
+
+For a public-source take-private or acquisition-financing screen with assumed funded debt, spread, revolver, closing funds flow, or covenant terms, label the workbook `illustrative financing case` or `public-source screening case` and cap it at `screen-grade`. Its banker-readable financing sensitivity package is incomplete unless it includes: (1) an operating/exit-value returns table; (2) a financing uncertainty view that varies opening debt or leverage and interest pricing and reports returns plus liquidity impact; and (3) a revolver-capacity or incremental-equity-cure view when stress draws or exhausts modeled liquidity. An integrated downside case does not substitute for the second or third view.
+
+Chat should be a concise cover note unless the user explicitly requests a chat-only memo. Any explicitly requested standalone HTML underwriting summary should cite workbook-derived claims through `model_citations.json`. `run_log.json` carries status, mode, sources, warnings, hard failures, assumptions, checks, and `p0_handoff`. `model_citations.json` maps model output ids to workbook sheet/cell/range locations for evidence use.
+
+If the normal deterministic export fails QA and an alternate workbook build is used, identify the failed path, substituted path, and effect on reliance status in the first visible tab and cover note.

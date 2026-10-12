@@ -1,0 +1,245 @@
+{
+  "dashboard_title": "GameStop / eBay LBO Analysis",
+  "entity": "GameStop / eBay",
+  "skill": "lbo-model-build + dashboard-builder",
+  "decision_question": "Is the proposed half-cash / half-stock leveraged offer financeable and attractive?",
+  "posture": "screen-grade-with-source-caveats",
+  "issuer": {
+    "ticker": "GME",
+    "name": "GameStop / eBay",
+    "accent_color": "#2f6f68",
+    "identity_color": "#2f6f68"
+  },
+  "hero": {
+    "eyebrow": "Investment Banking Dashboard",
+    "headline": "GameStop / eBay LBO model and implications",
+    "dek": "Transaction read across offer value, financing feasibility, shareholder impact, model outputs, and diligence gaps.",
+    "callout_label": "Financing Read",
+    "callout": "Not financeable on clean sponsor terms without stronger committed financing, proven synergies, and acceptance of major eBay-holder pro forma ownership.",
+    "citation_ids": ["AP-2026-05-12"]
+  },
+  "snapshot": [
+    {
+      "label": "Offer Value",
+      "value": "$55.5B",
+      "detail": "$125/share headline.",
+      "status": "watch",
+      "citation_ids": ["Guardian-2026-05-04"]
+    },
+    {
+      "label": "Cash / Stock",
+      "value": "50% / 50%",
+      "detail": "Half cash, half GameStop shares.",
+      "status": "neutral",
+      "citation_ids": ["AP-2026-05-04"]
+    },
+    {
+      "label": "New Debt",
+      "value": "$20.0B",
+      "detail": "Illustrative debt financing in the model.",
+      "status": "negative",
+      "citation_ids": ["Guardian-2026-05-12"]
+    },
+    {
+      "label": "Base IRR",
+      "value": "9.2%",
+      "detail": "Model output at base case.",
+      "status": "watch",
+      "citation_ids": ["model-output"]
+    }
+  ],
+  "deliverable": {
+    "render_mode": "hybrid",
+    "primary_artifact": "/Users/jcurran/Documents/Codex/2026-05-16/gamestop-is-preparing-for-a-leveraged/outputs/gme_ebay_lbo/GME_eBay_LBO_Model.xlsx",
+    "primary_artifact_type": "XLSX workbook",
+    "output_filename": "GME_eBay_LBO_Analysis.html"
+  },
+  "report_body": [
+    {
+      "id": "executive-summary",
+      "title": "Executive Summary",
+      "body": [
+        {
+          "text": "This is a leveraged stock-for-stock strategic acquisition, not a clean sponsor LBO.",
+          "citation_ids": ["AP-2026-05-04"]
+        },
+        {
+          "text": "The model's base case yields 9.2% IRR and 1.55x MOIC on a $36.7B indicative equity check.",
+          "citation_ids": ["model-output"]
+        }
+      ],
+      "bullets": [
+        {
+          "text": "eBay board rejection is economically understandable: the bid is stock-heavy, highly levered, and operationally disruptive.",
+          "citation_ids": ["AP-2026-05-12"]
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "summary",
+      "label": "Summary",
+      "modules": [
+        {
+          "type": "metric_strip",
+          "title": "Deal Snapshot",
+          "metrics": [
+            {
+              "label": "Offer Value",
+              "value": "$55.5B",
+              "tone": "watch",
+              "note": "$125/share headline",
+              "citation_ids": ["Guardian-2026-05-04"]
+            },
+            {
+              "label": "Base IRR",
+              "value": "9.2%",
+              "tone": "watch",
+              "note": "1.55x MOIC",
+              "citation_ids": ["model-output"]
+            }
+          ]
+        },
+        {
+          "type": "verdict",
+          "title": "Verdict",
+          "posture": "screen-grade",
+          "tone": "watch",
+          "body": "Mechanically modelable, but not decision-ready.",
+          "citation_ids": ["model-output"],
+          "bullets": [
+            {
+              "tone": "negative",
+              "text": "eBay has rejected the bid and cited financing and leverage risk.",
+              "citation_ids": ["AP-2026-05-12"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "model-output",
+      "label": "Model Output",
+      "modules": [
+        {
+          "type": "wide_table",
+          "title": "Scenario Returns",
+          "columns": ["Case", "IRR", "MOIC", "Peak Net Leverage"],
+          "rows": [
+            {
+              "Case": "Downside",
+              "IRR": "-8.2%",
+              "MOIC": "0.65x",
+              "Peak Net Leverage": "4.5x",
+              "citation_ids": ["model-output"]
+            },
+            {
+              "Case": "Base",
+              "IRR": "9.2%",
+              "MOIC": "1.55x",
+              "Peak Net Leverage": "3.8x",
+              "citation_ids": ["model-output"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "risks",
+      "label": "Risks",
+      "modules": [
+        {
+          "type": "flags",
+          "title": "Key Risk Flags",
+          "flags": [
+            {
+              "severity": "negative",
+              "title": "Financing credibility",
+              "detail": "Public reports cite a potential financing letter, not a fully committed credit agreement.",
+              "citation_ids": ["Guardian-2026-05-12"]
+            }
+          ]
+        },
+        {
+          "type": "source_readiness",
+          "title": "Diligence Readiness",
+          "items": [
+            {
+              "item": "Deal terms",
+              "status": "Publicly reported",
+              "source": "AP / Guardian",
+              "gap": "Non-binding proposal",
+              "next_step": "Obtain proposal letter and exchange-ratio mechanics."
+            },
+            {
+              "item": "Debt financing",
+              "status": "Partial",
+              "source": "Guardian-2026-05-12",
+              "gap": "No binding commitment / pricing grid",
+              "next_step": "Request commitment papers, covenants, flex, and OID."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "blocked_output_context": {
+    "blocked": false,
+    "missing_inputs": [
+      "Latest eBay 10-K / 10-Q debt, cash, D&A, EBITDA bridge",
+      "Binding debt commitment terms"
+    ],
+    "how_to_unblock": ["Add filing-derived financials", "Add lender commitment details"]
+  },
+  "supporting_outputs": [
+    {
+      "name": "GME_eBay_LBO_Model.xlsx",
+      "type": "XLSX",
+      "role": "Model workbook",
+      "explanation": "Scenario model, financing math, ownership, debt schedule, returns, sensitivities, and checks."
+    }
+  ],
+  "sources": [
+    {
+      "id": "AP-2026-05-04",
+      "name": "AP - Shares of eBay take off on a $56 billion buyout bid from GameStop's Ryan Cohen",
+      "type": "news",
+      "date": "2026-05-04",
+      "quality": "public_report",
+      "url": "https://apnews.com/article/9b689c70c6624d550c3739d0578a9f3c"
+    },
+    {
+      "id": "AP-2026-05-12",
+      "name": "AP - Online seller eBay rejects GameStop's $56 billion takeover offer",
+      "type": "news",
+      "date": "2026-05-12",
+      "quality": "public_report",
+      "url": "https://apnews.com/article/5ddf1eb06b3b39c2df934b1f2bacfe2e"
+    },
+    {
+      "id": "Guardian-2026-05-04",
+      "name": "The Guardian - GameStop makes $55.5bn takeover offer for eBay",
+      "type": "news",
+      "date": "2026-05-04",
+      "quality": "public_report",
+      "url": "https://www.theguardian.com/technology/2026/may/04/gamestop-takeover-offer-ebay-bid"
+    },
+    {
+      "id": "Guardian-2026-05-12",
+      "name": "The Guardian - GameStop bid for eBay rejected as neither credible nor attractive",
+      "type": "news",
+      "date": "2026-05-12",
+      "quality": "public_report",
+      "url": "https://www.theguardian.com/business/2026/may/12/gamestop-bid-for-ebay-rejected-as-neither-credible-nor-attractive"
+    },
+    {
+      "id": "model-output",
+      "name": "GameStop / eBay LBO workbook output",
+      "type": "model",
+      "date": "2026-05-16",
+      "quality": "model_output",
+      "notes": "Model output generated from the LBO workbook fixture."
+    }
+  ]
+}

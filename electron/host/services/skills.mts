@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import { discoverFileSkills, mergeSkillRecords } from "../../skills.mts";
 import { readJson, writeJson } from "../io.mts";
 import { authoringSkills } from "../../authoring-skills.ts";
+import { readCuratedPlugins, bundledCuratedRoot } from '../../curated-plugins.mts';
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -97,11 +98,15 @@ const builtInSkills = [
 export class SkillsService extends Service {
   dir;
   homeDir;
+  curated;
+  private pluginMutations = Promise.resolve();
 
   constructor(ctx, config = {} as any) {
     super(ctx, "skills");
     this.dir = config.dir;
     this.homeDir = config.homeDir;
+    this.curated = readCuratedPlugins(config.curatedRoot || bundledCuratedRoot());
+    this.curated.catch(() => {});
   }
 
   file(name) {
@@ -139,12 +144,53 @@ export class SkillsService extends Service {
   }
 
   async read(workspacePath = "") {
-    const [storedSkills, fileSkills, overrides] = await Promise.all([
+    const [storedSkills, fileSkills, overrides, plugins, pluginOverrides] = await Promise.all([
       this.readStored(),
       discoverFileSkills({ homeDir: this.homeDir, workspacePath }),
       this.readOverrides(),
+      this.curated,
+      this.readPluginOverrides(),
     ]);
-    return mergeSkillRecords(storedSkills, fileSkills, overrides);
+    const bundled = plugins.flatMap(plugin => plugin.skills.map(skill => ({ ...skill,
+      enabled: plugin.local && pluginOverrides[plugin.id] !== false && overrides[skill.id] !== false,
+      availabilityReason: !plugin.local ? '需要的在线服务尚未接通' : pluginOverrides[plugin.id] === false ? '请先在插件页启用此插件' : '',
+    })));
+    // 插件总开关优先于单个技能开关；不能让旧的 true 覆盖总停用或尚未接通的服务。
+    return mergeSkillRecords(storedSkills, [...fileSkills, ...bundled], overrides).map(skill => {
+      if (skill.pluginId && !bundled.find(item => item.id === skill.id)?.enabled) return { ...skill, enabled: false };
+      return skill;
+    });
+  }
+
+  async readPluginOverrides() {
+    const stored = await readJson(this.file('curated-plugin-overrides.json'), {});
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  }
+
+  async listCurated(workspacePath = '') {
+    const [plugins, overrides, skills] = await Promise.all([this.curated, this.readPluginOverrides(), this.read(workspacePath)]);
+    return plugins.map(({ skills: originals, ...plugin }) => ({ ...plugin,
+      enabled: plugin.local && overrides[plugin.id] !== false,
+      skills: originals.map(original => {
+        const skill = skills.find(item => item.id === original.id);
+        return { id: original.id, name: original.name, description: original.description,
+          path: original.path, enabled: skill?.enabled === true };
+      }),
+    }));
+  }
+
+  setCuratedEnabled(id, enabled) {
+    const result = this.pluginMutations.then(async () => {
+      const plugin = (await this.curated).find(item => item.id === id);
+      if (!plugin) return { ok: false, error: '找不到这个内置插件' };
+      if (enabled && !plugin.local) return { ok: false, error: '此插件需要的在线服务尚未接通' };
+      const overrides = await this.readPluginOverrides();
+      overrides[id] = Boolean(enabled);
+      await writeJson(this.file('curated-plugin-overrides.json'), overrides);
+      return { ok: true };
+    });
+    this.pluginMutations = result.then(() => {}, () => {});
+    return result;
   }
 
   async writeStored(items) {
@@ -193,7 +239,9 @@ export class SkillsService extends Service {
       return { ok: true };
     }
     const allSkills = await this.read(String(payload?.workspacePath || ""));
-    if (!allSkills.some((item) => String(item.id) === id && item.readOnly)) return { ok: false };
+    const fileSkill = allSkills.find((item) => String(item.id) === id && item.readOnly);
+    if (!fileSkill) return { ok: false };
+    if (payload?.enabled && fileSkill.availabilityReason) return { ok: false, error: fileSkill.availabilityReason };
     const overrides = await this.readOverrides();
     overrides[id] = Boolean(payload?.enabled);
     await writeJson(this.file("skill-overrides.json"), overrides);

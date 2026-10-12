@@ -210,6 +210,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   updateMemory: (payload) => ipcRenderer.invoke("memories:update", payload),
   lintMemories: () => ipcRenderer.invoke("memories:lint"),
   listSkills: (workspacePath) => ipcRenderer.invoke("skills:list", workspacePath),
+  listCuratedPlugins: (workspacePath) => ipcRenderer.invoke('curated-plugins:list', workspacePath),
+  setCuratedPluginEnabled: (id, enabled) => ipcRenderer.invoke('curated-plugins:set-enabled', { id, enabled }),
   setSkillEnabled: (id, enabled, workspacePath) => ipcRenderer.invoke("skills:set-enabled", { id, enabled, workspacePath }),
   deleteSkill: (id) => ipcRenderer.invoke("skills:delete", id),
   createSkill: (payload) => ipcRenderer.invoke("skills:create", payload),

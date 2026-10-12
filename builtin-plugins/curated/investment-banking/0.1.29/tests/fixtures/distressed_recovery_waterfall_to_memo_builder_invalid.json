@@ -1,0 +1,201 @@
+{
+  "contract_name": "distressed_recovery_waterfall_to_memo_builder",
+  "mandate_context": "mandate_context fixture value",
+  "client_or_stakeholder_perspective": "client_or_stakeholder_perspective fixture value",
+  "jurisdiction_and_process_stage": "jurisdiction_and_process_stage fixture value",
+  "source_scope": "source_scope fixture value",
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "evidence_register": [
+    {
+      "source_id": "SRC-001",
+      "source_type": "CIM",
+      "as_of_date": "2026-05-01",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "treatment": "use as reported",
+      "open_items": [
+        "none"
+      ]
+    }
+  ],
+  "capital_structure_summary": [
+    {
+      "label": "capital_structure_summary",
+      "description": "capital_structure_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "claim_register": [
+    {
+      "claim_id": "C-0001",
+      "buyer_facing_claim": "Revenue grew year over year",
+      "claim_type": "financial",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "source_id": "SRC-001",
+      "caveat": "fixture",
+      "confidence": "high",
+      "status": "validated"
+    }
+  ],
+  "legal_entity_guarantor_collateral_map": [
+    {
+      "label": "legal_entity_guarantor_collateral_map",
+      "description": "legal_entity_guarantor_collateral_map fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "valuation_cases": [
+    {
+      "label": "valuation_cases",
+      "description": "valuation_cases fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "distributable_value_bridge": [
+    {
+      "label": "distributable_value_bridge",
+      "description": "distributable_value_bridge fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "recovery_waterfall_summary": [
+    {
+      "label": "recovery_waterfall_summary",
+      "description": "recovery_waterfall_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "recovery_ranges_by_class": [
+    {
+      "label": "recovery_ranges_by_class",
+      "description": "recovery_ranges_by_class fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "value_break_class": 100,
+  "fulcrum_security": "fulcrum_security fixture value",
+  "fulcrum_sensitivity": [
+    {
+      "label": "fulcrum_sensitivity",
+      "description": "fulcrum_sensitivity fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "stakeholder_leverage_map": [
+    {
+      "label": "stakeholder_leverage_map",
+      "description": "stakeholder_leverage_map fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "restructuring_alternatives": [
+    {
+      "label": "restructuring_alternatives",
+      "description": "restructuring_alternatives fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "recommended_path": "recommended_path fixture value",
+  "diligence_gaps": [
+    {
+      "label": "diligence_gaps",
+      "description": "diligence_gaps fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "counsel_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "specialist_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "key_numbers_to_tie": [
+    {
+      "metric": "Revenue",
+      "period": "FY2025",
+      "unit": "USD",
+      "scale": "mm",
+      "value": 100,
+      "value_basis": "reported",
+      "page_references": [
+        "p.1"
+      ],
+      "slide_references": [
+        "s.1"
+      ],
+      "source_id": "SRC-001",
+      "related_model_output": "Revenue FY2025",
+      "tie_out_status": "tied",
+      "variance_explanation": "none"
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ],
+  "strict_legal_entitlement_economics": [
+    {
+      "label": "Strict legal entitlement economics",
+      "description": "Strict legal entitlement economics fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "negotiated_plan_economics": [
+    {
+      "label": "Negotiated plan economics",
+      "description": "Negotiated plan economics fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "collateral_liquidation_waterfall": [
+    {
+      "label": "Collateral/liquidation waterfall",
+      "description": "Collateral/liquidation waterfall fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "enterprise_value_waterfall": [
+    {
+      "label": "Enterprise value waterfall",
+      "description": "Enterprise value waterfall fixture detail",
+      "status": "needs_review"
+    }
+  ]
+}

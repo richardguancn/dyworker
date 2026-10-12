@@ -9,6 +9,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mts";
 import { effectiveReasoningEffort, getModelReasoningConfig } from "./model-reasoning.ts";
+import { bundledCuratedRoot } from './curated-plugins.mts';
+import { formatSkillInstructions, skillContextSummary } from './skills.mts';
 import { localReview } from "./local-reviewer.mts";
 import { selectWikiPages } from "./memory-wiki.mts";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mts";
@@ -296,6 +298,7 @@ export async function loadProjectInstructions(workspacePath, limit = 32 * 1024) 
 export function collectSkillRoots() {
   const home = os.homedir();
   const candidates = [
+    bundledCuratedRoot(),
     path.join(home, ".agents"),
     path.join(home, ".codex"),
     path.join(home, ".agent"),
@@ -5150,9 +5153,7 @@ export async function runAgent({
   // 技能渐进披露（对齐 Pi skills）：只注入名称+简介+编号，模型命中后用 load_skill 拉完整执行要求，
   // 避免多份长模板占用每轮上下文；列表保持稳定顺序，利于前缀缓存
   if (enabledSkills.length) {
-    const lines = enabledSkills.slice(0, 20).map((skill) =>
-      `- 【${skill.name}】（编号 ${skill.id || "无"}）：${clipped(String(skill.description || ""), 120)}`
-    ).join("\n");
+    const lines = skillContextSummary(enabledSkills);
     messages.push({ role: "system", content: `以下工作模板可在需要时使用。任务与某个模板相关时，先用 load_skill 读取其完整执行要求再照做；若与用户当前要求冲突，以当前要求为准：\n${lines}` });
   }
   const lastUserIndex = conversation.reduce((index, message, currentIndex) => message?.role === "user" ? currentIndex : index, -1);
@@ -6424,7 +6425,7 @@ export async function runAgent({
               if (skillStore?.read) skills = await skillStore.read();
               const skill = skills.find((item) => item.enabled !== false && String(item.id) === String(args.skill_id || ""));
               if (!skill) throw new Error(`没有找到模板：${args.skill_id || ""}`);
-              result = `【${skill.name}】${skill.description}\n执行要求：\n${skill.instructions}`;
+              result = formatSkillInstructions(skill);
               break;
             }
             case "save_skill": {

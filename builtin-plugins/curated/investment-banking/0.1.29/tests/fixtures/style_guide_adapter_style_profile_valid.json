@@ -1,0 +1,55 @@
+{
+  "contract_name": "style_guide_adapter_style_profile",
+  "style_profile_id": "style_profile_id fixture value",
+  "target_style_scope": "target_style_scope fixture value",
+  "artifact_type": "artifact_type fixture value",
+  "style_source_records": [
+    {
+      "source_id": "SRC-001",
+      "source_name": "Style sample",
+      "source_type": "deck",
+      "source_priority": "primary",
+      "source_scope": "layout",
+      "source_date_or_period": "2026-05",
+      "freshness": "current",
+      "relevance": "high",
+      "confidence": "medium",
+      "limitations": "fixture"
+    }
+  ],
+  "source_basis_summary": "source_basis_summary fixture value",
+  "style_provenance_labels": [
+    "fixture"
+  ],
+  "visual_system": "visual_system fixture value",
+  "layout_grammar": "layout_grammar fixture value",
+  "exhibit_conventions": "exhibit_conventions fixture value",
+  "writing_voice": "writing_voice fixture value",
+  "citation_and_footnote_norms": "citation_and_footnote_norms fixture value",
+  "artifact_specific_rules": "artifact_specific_rules fixture value",
+  "do_not_change_rules": "do_not_change_rules fixture value",
+  "style_assumptions": [
+    "fixture"
+  ],
+  "style_conflicts": [
+    "fixture"
+  ],
+  "open_style_questions": [
+    {
+      "label": "open_style_questions",
+      "description": "open_style_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "style_confidence": "style_confidence fixture value",
+  "style_freshness_status": "style_freshness_status fixture value",
+  "visual_review_status": "complete",
+  "style_limitations": "style_limitations fixture value",
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

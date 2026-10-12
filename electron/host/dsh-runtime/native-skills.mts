@@ -1,4 +1,5 @@
 import { toolDefinitions } from '../../agent.mts';
+import { formatSkillInstructions, skillContextSummary } from '../../skills.mts';
 
 /** 保留原生模板编号与内容；列表逐步披露，正文只在批准读取后返回。 */
 export function dshNativeSkills(input: any[], options: any = {}) {
@@ -8,8 +9,7 @@ export function dshNativeSkills(input: any[], options: any = {}) {
   if (options.update) names.add('update_skill');
   return {
     tools: toolDefinitions().filter(tool => names.has(tool.function.name)),
-    context: skills.length ? `以下工作模板可在需要时使用。任务与模板相关时，先用 load_skill 读取完整要求；若与用户当前要求冲突，以当前要求为准：\n${skills.slice(0, 20).map(skill =>
-      `- 【${skill.name}】（编号 ${skill.id || '无'}）：${String(skill.description || '').slice(0, 120)}`).join('\n')}` : '',
+    context: skills.length ? `以下工作模板可在需要时使用。任务与模板相关时，先用 load_skill 读取完整要求；若与用户当前要求冲突，以当前要求为准：\n${skillContextSummary(skills)}` : '',
     async execute(name: string, args: any) {
       options.signal?.throwIfAborted();
       if (options.read) skills = (await options.read()).filter((skill: any) => skill && skill.enabled !== false);
@@ -39,7 +39,7 @@ export function dshNativeSkills(input: any[], options: any = {}) {
       if (name !== 'load_skill') throw new Error('未知的工作模板工具');
       const skill = skills.find(item => String(item.id) === String(args.skill_id || ''));
       if (!skill) throw new Error(`没有找到模板：${args.skill_id || ''}`);
-      return `【${skill.name}】${skill.description || ''}\n执行要求：\n${skill.instructions || ''}`;
+      return formatSkillInstructions(skill);
     },
     owns: (name: string) => names.has(name),
   };

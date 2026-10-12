@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai.local/investment-banking/banker_runtime_readiness.schema.json",
+  "title": "Investment Banking Banker Runtime Readiness Inventory",
+  "type": "object",
+  "required": [
+    "plugin",
+    "inventory_version",
+    "rows"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "plugin": {
+      "const": "investment-banking"
+    },
+    "inventory_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": [
+        "skill",
+        "gap_type",
+        "current_runtime",
+        "target_runtime",
+        "hero_artifact",
+        "companion_artifact",
+        "support_artifacts",
+        "validator_needed",
+        "eval_needed",
+        "priority",
+        "runtime_maturity",
+        "status"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "skill": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gap_type": {
+          "type": "string",
+          "enum": [
+            "runtime_missing",
+            "model_citation_missing",
+            "native_office_missing",
+            "stdout_machine_readable",
+            "pdf_ocr_missing",
+            "visual_review_missing",
+            "domain_depth_partial",
+            "manifest_nonstandard",
+            "source_gate_partial"
+          ]
+        },
+        "current_runtime": {
+          "type": "string"
+        },
+        "target_runtime": {
+          "type": "string"
+        },
+        "hero_artifact": {
+          "type": "string"
+        },
+        "companion_artifact": {
+          "type": "string"
+        },
+        "support_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "validator_needed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "eval_needed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ]
+        },
+        "runtime_maturity": {
+          "type": "string",
+          "enum": [
+            "instruction_only",
+            "support_script",
+            "deterministic_human_artifact",
+            "banker_operational",
+            "senior_ready",
+            "external_ready"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "in_progress",
+            "fixed",
+            "accepted_gap"
+          ]
+        },
+        "runtime_script": {
+          "type": "string"
+        },
+        "primary_test": {
+          "type": "string"
+        },
+        "eval_prompt_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

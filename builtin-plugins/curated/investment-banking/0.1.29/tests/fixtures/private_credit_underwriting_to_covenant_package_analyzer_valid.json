@@ -1,0 +1,161 @@
+{
+  "contract_name": "private_credit_underwriting_to_covenant_package_analyzer",
+  "borrower_context": "borrower_context fixture value",
+  "credit_recommendation": "credit_recommendation fixture value",
+  "risk_rating": "risk_rating fixture value",
+  "facility_structure": "facility_structure fixture value",
+  "proposed_exposure": "proposed_exposure fixture value",
+  "debt_sizing_case": "debt_sizing_case fixture value",
+  "selected_ebitda_basis": "selected_ebitda_basis fixture value",
+  "lender_after_haircut_ebitda": "lender_after_haircut_ebitda fixture value",
+  "covenant_ebitda_proxy": "covenant_ebitda_proxy fixture value",
+  "covenant_questions": [
+    {
+      "label": "covenant_questions",
+      "description": "covenant_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "ratio_definitions_needed": [
+    {
+      "label": "ratio_definitions_needed",
+      "description": "ratio_definitions_needed fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "financial_covenant_tests": [
+    {
+      "label": "financial_covenant_tests",
+      "description": "financial_covenant_tests fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "thresholds_requested": [
+    {
+      "label": "thresholds_requested",
+      "description": "thresholds_requested fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "headroom_or_proxy_headroom": [
+    {
+      "label": "headroom_or_proxy_headroom",
+      "description": "headroom_or_proxy_headroom fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "first_breach_or_breakpoint": "first_breach_or_breakpoint fixture value",
+  "liquidity_trough": "liquidity_trough fixture value",
+  "collateral_guarantee_concerns": [
+    {
+      "label": "collateral_guarantee_concerns",
+      "description": "collateral_guarantee_concerns fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "basket_leakage_concerns": [
+    {
+      "label": "basket_leakage_concerns",
+      "description": "basket_leakage_concerns fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "reporting_monitoring_needs": [
+    {
+      "label": "reporting_monitoring_needs",
+      "description": "reporting_monitoring_needs fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "amendment_waiver_or_control_needs": [
+    {
+      "label": "amendment_waiver_or_control_needs",
+      "description": "amendment_waiver_or_control_needs fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "recommended_lender_protections": [
+    {
+      "label": "recommended_lender_protections",
+      "description": "recommended_lender_protections fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "conditions_precedent": [
+    {
+      "label": "conditions_precedent",
+      "description": "conditions_precedent fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "source_log": [
+    {
+      "source_id": "SRC-001",
+      "source_name": "Fixture source",
+      "source_type": "CIM",
+      "source_date": "2026-05-01",
+      "document_date": "2026-05-01",
+      "accessed_date": "2026-05-18",
+      "as_of_date": "2026-05-01",
+      "source_pointer": "Fixture p.1",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "treatment": "use as reported",
+      "limitations": "fixture only"
+    }
+  ],
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "evidence_register": [
+    {
+      "source_id": "SRC-001",
+      "source_type": "CIM",
+      "as_of_date": "2026-05-01",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "treatment": "use as reported",
+      "open_items": [
+        "none"
+      ]
+    }
+  ],
+  "legal_counsel_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

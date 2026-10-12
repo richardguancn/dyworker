@@ -1,0 +1,9 @@
+interface:
+  display_name: "Deal Process Tracker"
+  short_description: "M&A process tracker manager"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $deal-process-tracker to update or audit an M&A process tracker, bid log, NDA status, or diligence timeline."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+policy:
+  allow_implicit_invocation: false

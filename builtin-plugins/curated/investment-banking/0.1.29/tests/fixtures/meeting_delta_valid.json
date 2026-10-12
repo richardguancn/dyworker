@@ -1,0 +1,40 @@
+{
+  "contract_name": "meeting_prep_to_deal_process_tracker",
+  "tracker_deltas": [
+    {
+      "meeting_id": "MTG-001",
+      "meeting_date": "2026-05-13",
+      "counterparty": "Acme Corp",
+      "attendees": [
+        "Acme CorpDev",
+        "Deal team"
+      ],
+      "process_stage": "NDA/CIM",
+      "decision_or_signal": "Requested CIM after NDA execution",
+      "status_change": "advance_to_nda_review",
+      "materials_requested": [
+        "CIM"
+      ],
+      "diligence_requests": [
+        "customer concentration detail"
+      ],
+      "commitments": [
+        "Buyer counsel to return NDA comments"
+      ],
+      "next_actions": [
+        "Send NDA redline to counsel"
+      ],
+      "owners": [
+        "VP1"
+      ],
+      "due_dates": [
+        "2026-05-16"
+      ],
+      "dependencies": [
+        "client approval"
+      ],
+      "source_note": "meeting notes dated 2026-05-13",
+      "confidence": "confirmed"
+    }
+  ]
+}

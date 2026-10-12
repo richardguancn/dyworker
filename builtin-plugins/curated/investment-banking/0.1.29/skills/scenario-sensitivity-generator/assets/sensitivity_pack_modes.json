@@ -1,0 +1,198 @@
+{
+  "valuation": {
+    "label": "Valuation Sensitivity",
+    "description": "Enterprise value, equity value, value per share, offer price, and selected range sensitivity.",
+    "drivers": ["EBITDA", "EV/EBITDA multiple", "WACC", "terminal growth", "premium", "net debt", "diluted shares"],
+    "output_metrics": ["enterprise_value", "equity_value", "value_per_share", "selected_range", "premium"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "EV / EBITDA valuation range",
+        "driver_1": "EBITDA",
+        "driver_1_value": "base / downside / upside",
+        "driver_2": "EV/EBITDA multiple",
+        "driver_2_value": "low / midpoint / high",
+        "output_metric": "enterprise_value",
+        "threshold_or_breakpoint": "valuation floor or ceiling where recommendation changes"
+      },
+      {
+        "sensitivity_name": "DCF valuation range",
+        "driver_1": "WACC",
+        "driver_1_value": "low / base / high",
+        "driver_2": "terminal growth",
+        "driver_2_value": "low / base / high",
+        "output_metric": "enterprise_value",
+        "threshold_or_breakpoint": "selected range support"
+      }
+    ],
+    "trigger": "minimum valuation support for client recommendation",
+    "deal_action": "revisit selected range, buyer universe, timing, or process recommendation"
+  },
+  "debt_capacity": {
+    "label": "Debt Capacity Sensitivity",
+    "description": "Debt quantum, leverage, coverage, liquidity, and financing capacity sensitivity.",
+    "drivers": ["lender EBITDA", "leverage cap", "base rate", "spread", "amortization", "minimum cash", "revolver availability"],
+    "output_metrics": ["debt_capacity", "opening_leverage", "interest_coverage", "minimum_liquidity", "cash_interest"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "Debt capacity by EBITDA and leverage",
+        "driver_1": "lender EBITDA",
+        "driver_1_value": "downside / base / upside",
+        "driver_2": "leverage cap",
+        "driver_2_value": "low / base / high",
+        "output_metric": "debt_capacity",
+        "threshold_or_breakpoint": "maximum supportable debt"
+      },
+      {
+        "sensitivity_name": "Interest burden by rates and spreads",
+        "driver_1": "base rate",
+        "driver_1_value": "current / +100 bps / +200 bps",
+        "driver_2": "spread",
+        "driver_2_value": "base / +100 bps / +200 bps",
+        "output_metric": "cash_interest",
+        "threshold_or_breakpoint": "coverage or liquidity pressure"
+      }
+    ],
+    "trigger": "debt quantum exceeds supportable capacity",
+    "deal_action": "reduce leverage, change tranche mix, increase equity, or adjust bid"
+  },
+  "covenant_headroom": {
+    "label": "Covenant Headroom Sensitivity",
+    "description": "Covenant cushion, first breach, liquidity, and cure/amendment trigger sensitivity.",
+    "drivers": ["covenant EBITDA", "net debt", "first-lien debt", "fixed charges", "cash interest", "minimum liquidity", "test threshold"],
+    "output_metrics": ["covenant_cushion", "first_breach_period", "minimum_liquidity", "required_cure", "coverage"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "Covenant cushion by EBITDA and debt",
+        "driver_1": "covenant EBITDA haircut",
+        "driver_1_value": "0% / -10% / -20%",
+        "driver_2": "debt quantum",
+        "driver_2_value": "base / +0.5x / +1.0x",
+        "output_metric": "covenant_cushion",
+        "threshold_or_breakpoint": "first breach"
+      },
+      {
+        "sensitivity_name": "Coverage by rate move and EBITDA miss",
+        "driver_1": "rate move",
+        "driver_1_value": "0 bps / +100 bps / +200 bps",
+        "driver_2": "EBITDA miss",
+        "driver_2_value": "0% / -10% / -20%",
+        "output_metric": "coverage",
+        "threshold_or_breakpoint": "coverage covenant breach"
+      }
+    ],
+    "trigger": "covenant cushion falls below acceptable threshold",
+    "deal_action": "seek covenant relief, equity cure, pricing change, debt reduction, or amendment strategy"
+  },
+  "financing_terms": {
+    "label": "Financing Terms Sensitivity",
+    "description": "Rate, spread, OID, fee, tenor, proceeds, dilution, and market-window sensitivity.",
+    "drivers": ["issuance size", "base rate", "spread", "coupon", "OID", "fees", "tenor", "share price", "diluted shares"],
+    "output_metrics": ["net_proceeds", "all_in_cost", "annual_cash_interest", "dilution", "refinancing_capacity"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "Net proceeds by OID and fees",
+        "driver_1": "OID",
+        "driver_1_value": "base / +100 bps / +200 bps",
+        "driver_2": "fees",
+        "driver_2_value": "base / +50 bps / +100 bps",
+        "output_metric": "net_proceeds",
+        "threshold_or_breakpoint": "proceeds shortfall"
+      },
+      {
+        "sensitivity_name": "Equity dilution by proceeds and share price",
+        "driver_1": "issuance size",
+        "driver_1_value": "low / base / high",
+        "driver_2": "share price",
+        "driver_2_value": "downside / current / upside",
+        "output_metric": "dilution",
+        "threshold_or_breakpoint": "maximum acceptable dilution"
+      }
+    ],
+    "trigger": "market terms make financing uneconomic or proceeds insufficient",
+    "deal_action": "resize issuance, change structure, delay launch, or alter use of proceeds"
+  },
+  "merger_model": {
+    "label": "Merger Model Sensitivity",
+    "description": "Premium, cash/stock mix, synergies, ownership, accretion/dilution, and pro forma leverage sensitivity.",
+    "drivers": ["offer premium", "cash mix", "stock mix", "exchange ratio", "synergies", "integration costs", "tax rate", "financing mix"],
+    "output_metrics": ["eps_accretion_dilution", "pro_forma_ownership", "pro_forma_leverage", "synergy_breakeven", "premium_paid"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "Accretion/dilution by premium and synergies",
+        "driver_1": "offer premium",
+        "driver_1_value": "low / base / high",
+        "driver_2": "synergy realization",
+        "driver_2_value": "0% / 50% / 100%",
+        "output_metric": "eps_accretion_dilution",
+        "threshold_or_breakpoint": "minimum synergies for accretion"
+      },
+      {
+        "sensitivity_name": "Ownership and leverage by financing mix",
+        "driver_1": "cash mix",
+        "driver_1_value": "low / base / high",
+        "driver_2": "stock mix",
+        "driver_2_value": "low / base / high",
+        "output_metric": "pro_forma_ownership",
+        "threshold_or_breakpoint": "ownership or leverage constraint"
+      }
+    ],
+    "trigger": "premium, synergies, or financing mix breaches accretion/leverage tolerance",
+    "deal_action": "revise offer price, financing mix, synergy case, or exchange ratio"
+  },
+  "downside": {
+    "label": "Downside and Breakage Sensitivity",
+    "description": "Combined downside case and first-break analysis across valuation, liquidity, covenant, financing, and returns.",
+    "drivers": ["revenue haircut", "margin compression", "working capital outflow", "capex step-up", "rate move", "exit multiple contraction", "synergy delay"],
+    "output_metrics": ["first_break", "minimum_liquidity", "covenant_cushion", "downside_value", "downside_IRR", "revolver_draw"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "Liquidity by revenue decline and margin compression",
+        "driver_1": "revenue decline",
+        "driver_1_value": "0% / -10% / -20%",
+        "driver_2": "margin compression",
+        "driver_2_value": "0 bps / -200 bps / -400 bps",
+        "output_metric": "minimum_liquidity",
+        "threshold_or_breakpoint": "liquidity breach"
+      },
+      {
+        "sensitivity_name": "Downside return by EBITDA and exit multiple",
+        "driver_1": "EBITDA downside",
+        "driver_1_value": "base / -10% / -20%",
+        "driver_2": "exit multiple",
+        "driver_2_value": "low / base / high",
+        "output_metric": "downside_IRR",
+        "threshold_or_breakpoint": "return floor"
+      }
+    ],
+    "trigger": "first breakage point appears in liquidity, covenant, financing, valuation, or returns",
+    "deal_action": "reset price, change financing, add protection, defer process, or increase diligence"
+  },
+  "returns": {
+    "label": "Sponsor Returns Sensitivity",
+    "description": "IRR, MOIC, entry/exit multiple, leverage, deleveraging, cash sweep, and maximum purchase price sensitivity.",
+    "drivers": ["purchase price", "entry multiple", "debt quantum", "exit multiple", "exit year", "EBITDA growth", "cash sweep", "management dilution", "fees"],
+    "output_metrics": ["IRR", "MOIC", "maximum_purchase_price", "exit_equity_value", "deleveraging", "value_creation_bridge"],
+    "sensitivity_rows": [
+      {
+        "sensitivity_name": "IRR/MOIC by entry and exit multiple",
+        "driver_1": "entry multiple",
+        "driver_1_value": "low / base / high",
+        "driver_2": "exit multiple",
+        "driver_2_value": "low / base / high",
+        "output_metric": "IRR_MOIC",
+        "threshold_or_breakpoint": "sponsor return hurdle"
+      },
+      {
+        "sensitivity_name": "Maximum purchase price at target return",
+        "driver_1": "target IRR",
+        "driver_1_value": "15% / 20% / 25%",
+        "driver_2": "exit multiple",
+        "driver_2_value": "low / base / high",
+        "output_metric": "maximum_purchase_price",
+        "threshold_or_breakpoint": "maximum supportable bid"
+      }
+    ],
+    "trigger": "sponsor return falls below target or maximum purchase price is exceeded",
+    "deal_action": "reset bid, reduce leverage risk, revise value-creation plan, or change exit assumptions"
+  }
+}

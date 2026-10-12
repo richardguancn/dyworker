@@ -1,0 +1,489 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/cim_teardown_to_model_builder.schema.json",
+  "title": "cim_teardown_to_model_builder",
+  "description": "Canonical Investment Banking handoff contract from cim-teardown to model-builders.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "cim_teardown_to_model_builder"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "handoff_id",
+        "target_skill",
+        "transaction_context",
+        "deal_name",
+        "asset_type",
+        "as_of_date",
+        "source_scope",
+        "claim_id",
+        "evidence_id",
+        "red_flag_id",
+        "question_id",
+        "task_id",
+        "workstream",
+        "model_area",
+        "model_subarea",
+        "metric_or_driver",
+        "metric_definition",
+        "definition_status",
+        "period",
+        "segment_or_scope",
+        "currency",
+        "unit",
+        "scale",
+        "reported_value",
+        "adjusted_value",
+        "normalized_value",
+        "value_basis",
+        "calculation_method",
+        "source_id",
+        "supporting_source_ids",
+        "source_name",
+        "source_type",
+        "source_pointer",
+        "source_as_of_date",
+        "native_evidence_label",
+        "canonical_evidence_category",
+        "source_quality",
+        "freshness_status",
+        "conflict_status",
+        "confidence",
+        "evidence_gap",
+        "required_source_to_resolve",
+        "recommended_model_treatment",
+        "case_mapping",
+        "sensitivity_to_run",
+        "first_breach_or_failure_mode",
+        "diligence_owner",
+        "notes_for_model_builder"
+      ],
+      "properties": {
+        "handoff_id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "target_skill": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "transaction_context": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "deal_name": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "asset_type": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "as_of_date": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_scope": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "claim_id": {
+          "type": "string",
+          "pattern": "^C-"
+        },
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^E-"
+        },
+        "red_flag_id": {
+          "type": "string",
+          "pattern": "^RF-"
+        },
+        "question_id": {
+          "type": "string",
+          "pattern": "^Q-"
+        },
+        "task_id": {
+          "type": "string",
+          "pattern": "^T-"
+        },
+        "workstream": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "model_area": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "model_subarea": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "metric_or_driver": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "metric_definition": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "definition_status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "period": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "segment_or_scope": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "currency": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "scale": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "reported_value": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "adjusted_value": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "normalized_value": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "value_basis": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "calculation_method": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "supporting_source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_name": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_type": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_pointer": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_as_of_date": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "native_evidence_label": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "canonical_evidence_category": {
+          "type": "string",
+          "enum": [
+            "verified_fact",
+            "reported_fact",
+            "seller_claim",
+            "management_statement",
+            "pro_forma_adjustment",
+            "assumption",
+            "inference",
+            "estimate",
+            "stale",
+            "contradicted",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "source_quality": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "secondary",
+            "management",
+            "seller",
+            "analyst",
+            "unverified",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "freshness_status": {
+          "type": "string",
+          "enum": [
+            "current",
+            "stale",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "conflict_status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "unresolved",
+            "resolved",
+            "conflicting",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "evidence_gap": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "required_source_to_resolve": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "recommended_model_treatment": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "case_mapping": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "sensitivity_to_run": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "first_breach_or_failure_mode": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "diligence_owner": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "notes_for_model_builder": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

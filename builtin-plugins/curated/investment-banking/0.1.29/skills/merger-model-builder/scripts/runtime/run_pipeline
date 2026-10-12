@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Run merger-model-builder deterministic export pipeline."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLUGIN_ROOT = SCRIPT_DIR.parents[3]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+loader = SourceFileLoader("_merger_skill_core_runtime", str(SCRIPT_DIR / "skill_core"))
+spec = spec_from_loader(loader.name, loader)
+if spec is None:
+    raise ImportError(SCRIPT_DIR / "skill_core")
+skill_core = module_from_spec(spec)
+loader.exec_module(skill_core)
+
+build_model = skill_core.build_model
+load_json = skill_core.load_json
+write_json = skill_core.write_json
+write_xlsx = skill_core.write_xlsx
+
+from shared.model_artifacts import write_model_manifest  # noqa: E402
+from shared.model_citations import write_model_citations_from_sheets  # noqa: E402
+
+
+def _file_record(path: Path, role: str, description: str):
+    return {
+        "path": str(path),
+        "role": role,
+        "description": description,
+        "exists": True if path.name == "manifest.json" else path.exists(),
+    }
+
+
+def write_output_manifest(
+    output_dir: Path,
+    model_status: str,
+    human_deliverables,
+    agent_artifacts,
+    hard_failures,
+    warnings,
+):
+    workbook_path = human_deliverables[0][0] if human_deliverables else None
+    return write_model_manifest(
+        output_dir,
+        "merger-model-builder",
+        "deterministic_export",
+        workbook_path,
+        model_status,
+        agent_artifacts,
+        hard_failures,
+        warnings,
+    )
+    manifest_path = output_dir / "manifest.json"
+    all_agent_artifacts = [*agent_artifacts, (manifest_path, "agent-facing output manifest")]
+    manifest = {
+        "manifest_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "skill": "merger-model-builder",
+        "artifact_mode": "deterministic_export",
+        "model_status": model_status,
+        "output_dir": str(output_dir),
+        "primary_human_deliverable": str(human_deliverables[0][0]) if human_deliverables else None,
+        "human_deliverables": [
+            _file_record(path, "human_deliverable", description)
+            for path, description in human_deliverables
+        ],
+        "agent_artifacts": [
+            _file_record(path, "agent_artifact", description)
+            for path, description in all_agent_artifacts
+        ],
+        "hard_failure_count": len(hard_failures),
+        "warning_count": len(warnings),
+        "discipline_note": "Use the human deliverable as the main output; manifest/run_log/plan files are agent-facing support artifacts.",
+    }
+    write_json(manifest_path, manifest)
+    return manifest
+
+
+def write_blocked_outputs(output_dir: Path, error: str) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_log = {
+        "model_status": "blocked",
+        "workbook_mode": "deterministic_export",
+        "hard_failures": [error],
+        "warnings": [],
+        "checks": {"plan_read": False},
+        "output_manifest": str(output_dir / "manifest.json"),
+    }
+    write_json(output_dir / "run_log.json", run_log)
+    write_output_manifest(
+        output_dir,
+        "blocked",
+        [],
+        [(output_dir / "run_log.json", "blocked run log with plan-read failure")],
+        run_log["hard_failures"],
+        [],
+    )
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description="Run deterministic merger model export pipeline")
+    parser.add_argument("plan", help="Path to plan.json")
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for model.xlsx plus support artifacts. Defaults to ./output.",
+    )
+    parser.add_argument(
+        "--print-report",
+        action="store_true",
+        help="Print the text report between clear markers without writing a Markdown file",
+    )
+    parser.add_argument(
+        "--write-report-md",
+        action="store_true",
+        help="Write legacy report.md in addition to the workbook. Off by default.",
+    )
+    parser.add_argument(
+        "--no-report-md",
+        action="store_true",
+        help="Deprecated compatibility flag; Markdown report files are already off by default.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv) -> int:
+    args = parse_args(argv)
+    write_report_md = bool(args.write_report_md and not args.no_report_md)
+    plan_path = Path(args.plan)
+    output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not plan_path.exists():
+        error = f"plan file does not exist: {plan_path}"
+        write_blocked_outputs(output_dir, error)
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+    try:
+        plan = load_json(plan_path)
+        bundle = build_model(plan, output_dir, include_report_md=write_report_md)
+        bundle["run_log"]["output_manifest"] = str(output_dir / "manifest.json")
+        bundle["run_log"]["output_paths"] = {
+            "model_xlsx": str(output_dir / "model.xlsx"),
+            "plan_json": str(output_dir / "plan.json"),
+            "run_log_json": str(output_dir / "run_log.json"),
+            "manifest_json": str(output_dir / "manifest.json"),
+            **({"report_md": str(output_dir / "report.md")} if write_report_md else {}),
+        }
+        write_json(output_dir / "plan.json", bundle["plan"])
+        write_xlsx(output_dir / "model.xlsx", bundle["sheets"])
+        model_citations = write_model_citations_from_sheets(
+            output_dir / "model_citations.json", output_dir / "model.xlsx", bundle["sheets"]
+        )
+        bundle["run_log"]["model_citations_path"] = str(output_dir / "model_citations.json")
+        bundle["run_log"]["model_citation_count"] = len(model_citations)
+        bundle["run_log"]["output_paths"]["model_citations_json"] = str(
+            output_dir / "model_citations.json"
+        )
+        write_json(output_dir / "run_log.json", bundle["run_log"])
+        if write_report_md:
+            (output_dir / "report.md").write_text(bundle["report"])
+        human_deliverables = [(output_dir / "model.xlsx", "deterministic merger model workbook")]
+        if write_report_md:
+            human_deliverables.append(
+                (output_dir / "report.md", "legacy Markdown merger model report")
+            )
+        write_output_manifest(
+            output_dir,
+            bundle["model_status"],
+            human_deliverables,
+            [
+                (output_dir / "plan.json", "normalized plan actually used"),
+                (
+                    output_dir / "model_citations.json",
+                    "workbook cell/range citation ledger for model outputs",
+                ),
+                (
+                    output_dir / "run_log.json",
+                    "machine-readable run log, checks, warnings, and downstream handoff",
+                ),
+            ],
+            bundle["hard_failures"],
+            bundle["warnings"],
+        )
+        if args.print_report:
+            print("\n=== MERGER MODEL REPORT START ===\n")
+            print(bundle["report"].rstrip())
+            print("\n=== MERGER MODEL REPORT END ===\n")
+        print(f"WROTE {output_dir / 'model.xlsx'}")
+        print(f"WROTE {output_dir / 'plan.json'}")
+        print(f"WROTE {output_dir / 'run_log.json'}")
+        print(f"WROTE {output_dir / 'manifest.json'}")
+        if write_report_md:
+            print(f"WROTE {output_dir / 'report.md'}")
+        return 0 if not bundle["hard_failures"] else 2
+    except Exception as exc:
+        write_blocked_outputs(output_dir, f"pipeline failed: {exc}")
+        print(f"ERROR: pipeline failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Comps Valuation"
+  short_description: "Trading comps reports and workbook models"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $comps-valuation to build a source-backed comparable-company valuation report or workbook."
+policy:
+  allow_implicit_invocation: false

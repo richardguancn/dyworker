@@ -1,0 +1,7 @@
+interface:
+  display_name: "IB Deck QC"
+  short_description: "Banker circulation deck review"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $ib-deck-qc to review an investment banking deck, CIM, teaser, or client material before circulation."
+policy:
+  allow_implicit_invocation: false

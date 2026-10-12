@@ -1,0 +1,327 @@
+# Output Specification
+
+## Table Of Contents
+1. Required generated files
+2. Workbook sheets
+3. Common row schema
+4. Partial-context posture
+5. Required line items
+6. Report template
+7. `run_log.json` schema
+8. Downstream handoff fields
+9. Banker formula workbook schema
+
+## Required generated files
+
+The pipeline must write:
+
+```text
+output/model.xlsx
+output/plan.json
+output/run_log.json
+output/manifest.json
+```
+
+Path literals in this file are skill-root-relative unless they use an explicit relative prefix.
+
+`model.xlsx` is the normal hero deterministic export when the available input set supports the full model schema. `plan.json`, `run_log.json`, `manifest.json`, model-citation ledgers, and any explicitly requested legacy `report.md` are support artifacts. When an `adjusted_eps_screen` intentionally omits unavailable PPA/GAAP fields, the hero deliverable may instead be a formula-driven banker-readable workbook limited to supported metrics; do not fill unavailable accounting fields merely to satisfy the full-schema export. For the separate formula-workbook artifact, use the skill-root-relative builder at `scripts/build_banker_formula_workbook.py`, which writes:
+
+```text
+output/banker_formula_workbook.xlsx
+output/banker_formula_workbook_run_log.json
+```
+
+See `banker-formula-workbook-contract.md` for the formula workbook contract, required sheets, cell map, and limitations.
+
+## Workbook sheets
+
+The deterministic `model.xlsx` workbook must contain these sheets:
+
+- `Executive Summary`
+- `ASSUMPTIONS`
+- `MISSING_INPUTS`
+- `STANDALONE`
+- `SOURCES_USES`
+- `PURCHASE_ACCOUNTING`
+- `FINANCING`
+- `SYNERGIES`
+- `PRO_FORMA`
+- `ACCRETION_DILUTION`
+- `OWNERSHIP`
+- `SENSITIVITY`
+- `CHECKS`
+
+## Common row schema
+
+Most sheets use a long-format table with these columns when applicable:
+
+- `scenario`
+- `period`
+- `section`
+- `line_item`
+- `value`
+- `units`
+- `evidence_label`
+- `source_id`
+- `notes`
+
+## Partial-context posture
+
+Use `adjusted_eps_screen` when transaction terms, ownership mechanics, disclosed projections or disclosed synergies support adjusted-EPS analysis, but PPA, GAAP EPS, post-close denominator actualization or refinancing economics remain incomplete. Before any metric table, state:
+
+```text
+SCREEN-GRADE: adjusted EPS analysis based on disclosed projections and modeled assumptions; GAAP accretion/dilution is not presented without complete PPA and post-close actualization support.
+```
+
+Do not describe filed projections, disclosed transaction terms or disclosed gross synergies as placeholders merely because GAAP/PPA inputs are unavailable. List missing GAAP/PPA, post-close denominator and financing items as readiness gates. If any input included in a displayed metric uses `estimate`, `assumption`, `placeholder`, or `unsupported`, identify it separately, say how it affects reliance, and keep the workbook `screen-grade` until replaced or supported.
+
+`Executive Summary` must place the posture warning and two separate status lines, `Calculation integrity` and `Decision readiness`, before EPS/accretion metrics. `MISSING_INPUTS` must include:
+
+- `item`
+- `source_categories`
+- `missing_fields`
+- `evidence_labels`
+- `why_needed`
+- `current_treatment`
+- `user_ask`
+- `fallback_method`
+
+## Required line items
+
+### STANDALONE
+
+- acquirer net income
+- acquirer EPS
+- acquirer diluted shares
+- acquirer cash
+- acquirer debt
+- target net income
+- target EBITDA
+- target cash
+- target debt
+- target diluted shares
+
+### SOURCES_USES
+
+- cash consideration
+- stock consideration
+- other consideration
+- target debt refinanced
+- transaction fees
+- financing fees
+- equity issuance fees
+- new debt
+- acquirer cash used
+- target cash used
+- sources and uses balance check
+- transaction enterprise value
+- premium
+
+### PURCHASE_ACCOUNTING
+
+For `gaap_accretion_model`, include:
+
+- target book equity
+- existing goodwill eliminated
+- identifiable intangible assets
+- PPE step-up
+- inventory step-up
+- deferred tax liability
+- identifiable net assets
+- goodwill
+- intangible amortization
+- incremental depreciation
+- inventory step-up expense
+
+For `adjusted_eps_screen`, display GAAP/PPA as unavailable or not modeled and identify the missing items in `MISSING_INPUTS`; do not create a numerical goodwill or amortization bridge from unsupported inputs.
+
+### FINANCING
+
+- new debt
+- interest rate
+- interest expense
+- lost cash interest
+- financing fee amortization
+- transaction fees
+
+### SYNERGIES
+
+- disclosed gross run-rate cost synergies
+- revenue synergies
+- revenue synergy contribution
+- dis-synergies
+- disclosed pretax net synergies, when provided
+- disclosed costs to achieve or integration charges, when provided
+- clearly labeled `implied cost-to-achieve` only when derived from disclosed gross and disclosed net synergy figures
+- model-derived pretax net benefit only when no disclosed net synergy figure supports the displayed case
+- modeled tax effect
+- modeled after-tax EPS contribution
+
+### PRO_FORMA
+
+For `adjusted_eps_screen`, show only supported adjusted EPS metrics and a clear GAAP/PPA limitation. For `gaap_accretion_model`, include:
+
+- acquirer net income
+- target net income
+- synergy contribution
+- financing drag
+- purchase accounting drag
+- integration cost drag
+- transaction fee drag
+- pro forma GAAP net income
+- pro forma adjusted net income
+- pro forma shares
+- pro forma GAAP EPS
+- pro forma adjusted EPS
+
+### ACCRETION_DILUTION
+
+- standalone acquirer EPS
+- pro forma adjusted EPS
+- adjusted accretion/dilution
+- synergy breakeven
+- pro forma GAAP EPS and GAAP accretion/dilution only in `gaap_accretion_model` with complete support
+
+### OWNERSHIP
+
+- acquirer existing shares
+- shares issued to target holders
+- pro forma diluted shares
+- acquirer ownership
+- target ownership
+
+### SENSITIVITY
+
+- synergy realization sensitivity
+- cost-to-achieve overrun or delayed-capture sensitivity
+- EPS breakeven against the selected pretax net synergy basis
+- financing or consideration-mix sensitivity when those variables affect the displayed EPS result
+- acquirer share-price sensitivity only where purchase price, fair value, PPA, collars or variable stock mechanics make it decision-relevant
+
+### CHECKS
+
+- sources equal uses
+- consideration mix sums to 100%
+- stock consideration has share support
+- PF EPS calculable
+- purchase accounting bridge reconciles
+- ownership sums to 100%
+- sensitivity directionality checks
+- modeled after-tax synergy benefit reconciles to the selected pretax net synergy basis times one minus the modeled tax rate
+- 100% synergy-realization sensitivity reconciles to the base synergy-case adjusted EPS output
+- EPS breakeven reconciles to the pretax net synergy required to eliminate no-synergy dilution
+- required source categories present
+
+## Report template
+
+Use this structure:
+
+```markdown
+# [deal name] — merger model summary
+
+> **SCREEN-GRADE: adjusted EPS analysis based on disclosed projections and modeled assumptions; GAAP accretion/dilution is not presented without complete PPA and post-close actualization support.**
+[for `adjusted_eps_screen`; include missing-input/readiness table before model metrics]
+
+## 1) executive summary
+[one paragraph on deal value, consideration, accretion, ownership, financing, and model status]
+[separate Calculation integrity and Decision readiness labels]
+
+## 2) transaction snapshot
+[table]
+
+## 3) sources and uses
+[table plus balance check]
+
+## 4) purchase accounting
+[goodwill bridge, DTL, amortization, provisional items only when supported; otherwise GAAP/PPA readiness gaps]
+
+## 5) financing and pro forma ownership
+[debt/cash funding, interest, shares issued, ownership]
+
+## 6) EPS accretion/dilution
+[adjusted EPS with and without synergies; add GAAP only when supported]
+
+## 7) synergies and breakeven
+[disclosed gross and net synergies, disclosed or clearly labeled implied cost-to-achieve, model-derived after-tax benefit, modeled tax effect, synergy breakeven]
+
+## 8) sensitivities and what breaks
+[synergy realization, cost-to-achieve/timing stress, breakeven and senior risk flags]
+
+## 9) QA, source posture, and limitations
+[hard failures, warnings, status, what would upgrade the model]
+```
+
+## `run_log.json` schema
+
+The deterministic export pipeline must write:
+
+```json
+{
+  "model_status": "screen-grade",
+  "workbook_mode": "deterministic_export",
+  "source_basis": [],
+  "hard_failures": [],
+  "warnings": [],
+  "missing_input_request": {
+    "posture_warning": "",
+    "items": []
+  },
+  "assumptions": {},
+  "checks": {},
+  "p0_handoff": {}
+}
+```
+
+Allowed `model_status` values:
+
+- `decision-grade`
+- `senior-review-ready`
+- `screen-grade`
+- `not-decision-ready`
+- `blocked`
+
+If `hard_failures` is non-empty, `model_status` must be `not-decision-ready`.
+
+## Downstream handoff fields
+
+`p0_handoff` must include:
+
+- `deal_name`
+- `transaction_value`
+- `premium`
+- `consideration_mix`
+- `pf_ownership`
+- `accretion_dilution`
+- `synergy_breakeven`
+- `financing_assumptions`
+- `top_risks_and_caveats`
+- `model_status`
+- `output_paths`
+
+## Banker formula workbook schema
+
+When the user explicitly asks for `banker_formula_workbook`, the builder must write a run log with:
+
+```json
+{
+  "model_status": "template-ready",
+  "workbook_mode": "banker_formula_workbook",
+  "artifact_level": "banker_formula_workbook",
+  "template_path": "assets/templates/banker_formula_workbook_template.xlsx",
+  "plan_path": "assets/plan_template.json",
+  "output_paths": {
+    "banker_formula_workbook": "output/banker_formula_workbook.xlsx",
+    "banker_formula_workbook_run_log": "output/banker_formula_workbook_run_log.json"
+  },
+  "assumptions_applied": {},
+  "missing_inputs": [],
+  "warnings": [],
+  "hard_failures": [],
+  "checks": {},
+  "workbook_inspection": {}
+}
+```
+
+The formula workbook must contain the 16 sheets listed in `banker-formula-workbook-contract.md`, at least 100 formulas, no external workbook links, and visible styles.
+
+The formula workbook run log must not overwrite the deterministic export's `output/run_log.json`.

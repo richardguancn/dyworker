@@ -1,0 +1,9 @@
+interface:
+  display_name: "Company Tearsheet"
+  short_description: "Cited company profile builder"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $company-tearsheet to create a full source-backed company, borrower, issuer, or fund profile."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+policy:
+  allow_implicit_invocation: false

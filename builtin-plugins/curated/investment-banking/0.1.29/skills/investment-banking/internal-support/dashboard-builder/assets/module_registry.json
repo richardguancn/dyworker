@@ -1,0 +1,138 @@
+{
+  "version": "1.0.0",
+  "modules": {
+    "metric_strip": {
+      "required": [
+        "metrics"
+      ],
+      "layout": "grid",
+      "purpose": "Top KPI cards."
+    },
+    "verdict": {
+      "required": [
+        "body"
+      ],
+      "layout": "standard",
+      "purpose": "Recommendation or readiness posture."
+    },
+    "md_question": {
+      "required": [
+        "question"
+      ],
+      "layout": "standard",
+      "purpose": "Decision question and answer."
+    },
+    "evidence_posture": {
+      "required": [
+        "items"
+      ],
+      "layout": "standard",
+      "purpose": "Source quality summary."
+    },
+    "table": {
+      "required": [
+        "columns",
+        "rows"
+      ],
+      "layout": "standard",
+      "purpose": "Compact tabular output."
+    },
+    "wide_table": {
+      "required": [
+        "columns",
+        "rows"
+      ],
+      "layout": "wide",
+      "purpose": "Dense full-width table."
+    },
+    "flags": {
+      "required": [
+        "flags"
+      ],
+      "layout": "standard",
+      "purpose": "Risks, blockers, and diligence flags."
+    },
+    "action_register": {
+      "required": [
+        "actions"
+      ],
+      "layout": "wide",
+      "purpose": "Owner/deadline action list."
+    },
+    "timeline": {
+      "required": [
+        "events"
+      ],
+      "layout": "standard",
+      "purpose": "Milestones or process plan."
+    },
+    "funnel": {
+      "required": [
+        "stages"
+      ],
+      "layout": "standard",
+      "purpose": "Buyer/investor/process funnel."
+    },
+    "heatmap": {
+      "required": [
+        "x",
+        "y",
+        "values"
+      ],
+      "layout": "wide",
+      "purpose": "Risk or diligence matrix."
+    },
+    "line_chart": {
+      "required": [
+        "series"
+      ],
+      "layout": "wide",
+      "purpose": "Trend chart."
+    },
+    "bar_chart": {
+      "required": [
+        "data"
+      ],
+      "layout": "standard",
+      "purpose": "Bar chart."
+    },
+    "waterfall": {
+      "required": [
+        "steps"
+      ],
+      "layout": "wide",
+      "purpose": "Bridge or value build."
+    },
+    "sensitivity_matrix": {
+      "required": [
+        "rows",
+        "columns",
+        "values"
+      ],
+      "layout": "wide",
+      "purpose": "Two-variable sensitivity output."
+    },
+    "covenant_grid": {
+      "required": [
+        "columns",
+        "rows"
+      ],
+      "layout": "wide",
+      "purpose": "Covenant/headroom table."
+    },
+    "valuation_bridge": {
+      "required": [
+        "steps"
+      ],
+      "layout": "wide",
+      "purpose": "EV/equity/returns bridge."
+    },
+    "source_readiness": {
+      "required": [
+        "items"
+      ],
+      "layout": "wide",
+      "purpose": "Data room or source-readiness checklist."
+    }
+  }
+}

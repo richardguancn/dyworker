@@ -1,0 +1,202 @@
+{
+  "meta": {
+    "company_name": "ExampleCo",
+    "industry": "business_services",
+    "stage": "mature",
+    "currency": "USD",
+    "units": "USD_mm",
+    "as_of": "2026-02-25"
+  },
+  "source_basis": [
+    {
+      "source_id": "template_entry_ebitda",
+      "source_name": "Illustrative plan template",
+      "source_type": "fallback_model_template",
+      "source_date": "2026-02-25",
+      "as_of_date": "2026-02-25",
+      "period_covered": "Illustrative LTM",
+      "evidence_label": "fallback_assumption",
+      "confidence": "medium",
+      "model_location": "transaction.entry.entry_ebitda",
+      "open_diligence_item": "Replace with reported, QoE-supported, normalized, or lender-after-haircut EBITDA."
+    },
+    {
+      "source_id": "template_debt_terms",
+      "source_name": "Illustrative plan template",
+      "source_type": "fallback_model_template",
+      "source_date": "2026-02-25",
+      "as_of_date": "2026-02-25",
+      "period_covered": "Illustrative financing case",
+      "evidence_label": "fallback_assumption",
+      "confidence": "medium",
+      "model_location": "debt.tranches",
+      "open_diligence_item": "Replace with commitment papers, lender case, or sponsor financing terms."
+    },
+    {
+      "source_id": "template_purchase_accounting",
+      "source_name": "Illustrative plan template",
+      "source_type": "fallback_model_template",
+      "source_date": "2026-02-25",
+      "as_of_date": "2026-02-25",
+      "period_covered": "Illustrative opening balance sheet",
+      "evidence_label": "fallback_assumption",
+      "confidence": "low",
+      "model_location": "transaction.purchase_accounting",
+      "open_diligence_item": "Replace with purchase agreement, opening balance sheet, tax diligence, and PPA support."
+    }
+  ],
+  "ebitda_basis": {
+    "selected": "fallback_proxy_ebitda",
+    "reported_ebitda": null,
+    "management_adjusted_ebitda": null,
+    "qoe_supported_adjusted_ebitda": null,
+    "normalized_ebitda": null,
+    "lender_after_haircut_ebitda": null,
+    "transaction_ebitda_used": 100.0,
+    "covenant_ebitda": null,
+    "source_id": "template_entry_ebitda",
+    "evidence_label": "fallback_assumption",
+    "confidence": "medium",
+    "open_diligence_item": "Replace with QoE-supported EBITDA before treating the model as decision-grade."
+  },
+  "timeline": {
+    "start_year": 2026,
+    "horizon_years": 5,
+    "periodicity": null,
+    "stub_months": 0
+  },
+  "transaction": {
+    "entry": {
+      "method": "multiple",
+      "entry_multiple": 10.0,
+      "entry_ebitda": 100.0,
+      "entry_ev": null
+    },
+    "uses": {
+      "transaction_fees": 15.0,
+      "financing_fees": 10.0,
+      "oid": 5.0,
+      "refi_existing_debt": 0.0,
+      "min_cash_funding": 0.0,
+      "management_option_cashout": 0.0,
+      "change_of_control_payments": 0.0,
+      "escrow_funding": 0.0,
+      "funded_separation_reserve": 0.0,
+      "other_uses": 0.0
+    },
+    "equity": {
+      "rollover_equity": 0.0,
+      "sponsor_equity": null
+    },
+    "min_cash": 25.0,
+    "assumed_cash": 0.0,
+    "assumed_debt": 0.0,
+    "debt_like_items": 0.0,
+    "working_capital_trueup": 0.0,
+    "purchase_accounting": {
+      "enabled": true,
+      "book_net_assets": 250.0,
+      "fair_value_step_up": 50.0,
+      "identifiable_intangibles": 150.0,
+      "deferred_tax_rate": 0.25,
+      "intangible_amortization_years": 10,
+      "goodwill": null
+    },
+    "management_incentive": {
+      "enabled": true,
+      "pool_pct_fully_diluted": 0.08,
+      "threshold_equity_value": 0.0
+    },
+    "public_to_private": {
+      "enabled": false,
+      "offer_price": null,
+      "fully_diluted_shares": null,
+      "unaffected_share_price": null
+    },
+    "carve_out": {
+      "enabled": false,
+      "standalone_costs": {},
+      "tsa_costs": {},
+      "stranded_costs": {},
+      "separation_capex": {},
+      "one_time_separation_costs": {},
+      "working_capital_peg": null
+    }
+  },
+  "operating": {
+    "revenue": {
+      "model": "growth",
+      "base_revenue": 500.0,
+      "growth_rates": {"2026": 0.08, "2027": 0.06, "2028": 0.05, "2029": 0.04, "2030": 0.04}
+    },
+    "ebitda_margin": {"2026": 0.22, "2027": 0.23, "2028": 0.235, "2029": 0.24, "2030": 0.24},
+    "tax_rate": 0.25,
+    "da": {"model": "pct_revenue", "pct": 0.02},
+    "capex": {"model": "split", "maintenance_pct_revenue": 0.02, "growth_pct_revenue": 0.005},
+    "working_capital": {"model": "days", "ar_days": 55, "ap_days": 35, "include_inventory": false},
+    "one_time_cash_costs": {},
+    "dividends": {"enabled": false, "amounts": {}}
+  },
+  "tax": {
+    "opening_nol": 0.0,
+    "interest_deductibility_limit_pct_ebitda": null
+  },
+  "balance_sheet": {
+    "opening_nwc": null,
+    "opening_ppe": 220.0,
+    "opening_other_assets": 0.0,
+    "opening_other_liabilities": 0.0,
+    "opening_retained_earnings": 0.0,
+    "lease_liabilities": 0.0
+  },
+  "add_on_acquisitions": {
+    "enabled": false,
+    "deals": []
+  },
+  "debt": {
+    "base_rate": {"name": "SOFR", "assumption": 0.04},
+    "tranches": [
+      {"id": "revolver", "type": "revolver", "commitment": 100.0, "spread": 0.035, "floor": 0.0, "commit_fee": 0.003, "sweep_rank": 1},
+      {"id": "tlb", "type": "term_loan", "face": 300.0, "spread": 0.04, "floor": 0.01, "amort_pct_per_year": 0.01, "maturity_year": 2030, "oid_pct": 0.02, "upfront_fee_pct": 0.01, "sweep_rank": 2},
+      {"id": "notes", "type": "notes", "face": 150.0, "fixed_rate": 0.075, "maturity_year": 2031, "sweep_rank": 3}
+    ],
+    "cash_sweep": {"enabled": true, "min_cash": null, "percentage": 1.0},
+    "dividend_recaps": []
+  },
+  "covenants": {
+    "test_frequency": "quarterly",
+    "definitions": {"cash_in_net_debt": true, "ebitda_source": "model"},
+    "tests": {
+      "max_total_leverage": {"2026": 6.0, "2027": 5.5, "2028": 5.0, "2029": 4.75, "2030": 4.5},
+      "max_net_leverage": {"2026": 5.75, "2027": 5.25, "2028": 4.75, "2029": 4.5, "2030": 4.25},
+      "min_interest_coverage": {"2026": 2.0, "2027": 2.25, "2028": 2.5, "2029": 2.75, "2030": 3.0},
+      "min_fixed_charge_coverage": {"2026": 1.25, "2027": 1.35, "2028": 1.5, "2029": 1.6, "2030": 1.75},
+      "min_debt_service_coverage": {"2026": 1.1, "2027": 1.2, "2028": 1.3, "2029": 1.4, "2030": 1.5},
+      "min_liquidity": {"2026": 25.0, "2027": 25.0, "2028": 25.0, "2029": 25.0, "2030": 25.0}
+    }
+  },
+  "exit": {
+    "exit_year": 2030,
+    "method": "multiple",
+    "exit_multiple": 9.5,
+    "exit_ev": null,
+    "net_debt_adjustments": 0.0
+  },
+  "sensitivities": {"target_irr": 0.2},
+  "scenarios": {
+    "base": {},
+    "downside": {
+      "debt": {"base_rate": {"assumption": 0.06}},
+      "operating": {
+        "revenue": {"growth_rates": {"2026": 0.02, "2027": 0.03, "2028": 0.03}},
+        "ebitda_margin": {"2026": 0.19, "2027": 0.20, "2028": 0.21}
+      }
+    },
+    "upside": {
+      "operating": {
+        "revenue": {"growth_rates": {"2026": 0.12, "2027": 0.09, "2028": 0.07}},
+        "ebitda_margin": {"2026": 0.24, "2027": 0.25, "2028": 0.255}
+      }
+    }
+  }
+}

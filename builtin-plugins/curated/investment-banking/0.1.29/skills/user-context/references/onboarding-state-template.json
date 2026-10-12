@@ -1,0 +1,18 @@
+{
+  "status": null,
+  "orientation": {},
+  "memory_preferences": {},
+  "source_setup": {},
+  "connector_confirmation": {},
+  "automations": {},
+  "hero_prompt_choice": {
+    "status": null,
+    "options": [
+      "meeting-prep",
+      "deal-process-tracker",
+      "comps-valuation"
+    ],
+    "selected_skill": null,
+    "selected_anchor": null
+  }
+}

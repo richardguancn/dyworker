@@ -1,0 +1,7 @@
+interface:
+  display_name: "Private Credit Underwriting"
+  short_description: "Borrower credit underwriting"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $private-credit-underwriting to build a borrower credit screen, debt sizing case, lender memo, or downside review."
+policy:
+  allow_implicit_invocation: false

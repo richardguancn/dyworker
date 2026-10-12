@@ -1,0 +1,12 @@
+# Workflow And Mode
+
+Sponsor lens: entry, value creation, leverage, FCF, exit, IRR/MOIC, falsifiers. Credit lens: liquidity trough, revolver dependence, covenant cushion, first breach, DSCR. Sale-process lens: valuation support and caveats.
+
+Use `deterministic_export` unless a linked workbook is built. Use periodic detail for seasonality, covenant/liquidity stress, TSA timing, or revolver dependence.
+
+Modes:
+- `screening_model`: public-source screen with missing final financing, funds flow, covenant definitions, or validated operating assumptions. Workbook hero; financing labeled illustrative; maximum posture `screen-grade`.
+- `underwriting_model`: source-supported model with operating, financing, liquidity, returns, downside and control evidence. Workbook hero; apply readiness gates.
+- `html_companion`: explicitly requested standalone underwriting summary sourced from workbook outputs; do not substitute it for the calculation workbook.
+
+When financing terms are assumed, do not make operating performance and exit multiple the only meaningful sensitivity axes. Include separate financing-pricing/leverage and liquidity-or-cure views; an integrated downside case alone is insufficient when assumed financing is material to the recommendation.

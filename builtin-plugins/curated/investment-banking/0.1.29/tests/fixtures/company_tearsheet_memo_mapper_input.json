@@ -1,0 +1,72 @@
+{
+  "entity": "Acme Corp",
+  "profile_type": "company",
+  "as_of_date": "2026-05-13",
+  "scope": "source-backed profile for memo context",
+  "source_caveat": "management source package only",
+  "business_model": "Subscription workflow software",
+  "sector": "Vertical software",
+  "ownership_status": "Sponsor-backed private company",
+  "sources": [
+    {
+      "source_id": "S1",
+      "source_name": "Management presentation",
+      "source_type": "user_provided",
+      "as_of_date": "2026-05-01",
+      "freshness_status": "current",
+      "source_location": "Management Presentation p. 4"
+    },
+    {
+      "source_id": "S2",
+      "source_name": "Banker diligence notes",
+      "source_type": "connected_app",
+      "as_of_date": "2026-05-10",
+      "freshness_status": "current",
+      "source_location": "Deal notes"
+    }
+  ],
+  "metrics": [
+    {
+      "metric": "Revenue",
+      "period": "FY2025",
+      "value": 100,
+      "units": "USD millions",
+      "source": "S1 p. 4",
+      "evidence": "fact_source_reported",
+      "confidence": "high"
+    },
+    {
+      "metric": "Net revenue retention",
+      "period": "FY2025",
+      "value": "112%",
+      "units": "%",
+      "source": "S1 p. 8",
+      "evidence": "management_claim",
+      "confidence": "medium"
+    }
+  ],
+  "sections": {
+    "one_line_view": "Acme Corp sells subscription workflow software to regulated mid-market customers.",
+    "recent_developments": [
+      {
+        "development": "Management reported continued enterprise customer expansion.",
+        "source": "S2",
+        "evidence": "management_claim",
+        "confidence": "medium"
+      }
+    ],
+    "risks_gaps_flags": [
+      "Customer concentration detail not provided."
+    ],
+    "open_questions": [
+      "Confirm latest ARR and churn bridge."
+    ],
+    "recommended_next_step": "Use as factual profile spine in memo-builder.",
+    "circulation_caveats": [
+      "Not a recommendation."
+    ]
+  },
+  "data_quality_flags": [
+    "NRR support is management-claimed and needs backup before final circulation."
+  ]
+}

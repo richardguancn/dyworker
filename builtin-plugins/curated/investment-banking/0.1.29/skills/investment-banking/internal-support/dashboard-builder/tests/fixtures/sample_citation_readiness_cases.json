@@ -1,0 +1,127 @@
+{
+  "draft_warns": {
+    "dashboard_title": "Draft Citation Gap Fixture",
+    "entity": "ExampleCo",
+    "skill": "dashboard-builder",
+    "posture": "draft",
+    "hero": {
+      "headline": "Draft Citation Gap Fixture",
+      "callout": "Revenue was $99.0M [NOPE]."
+    },
+    "deliverable": {
+      "render_mode": "report_only"
+    },
+    "report_body": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "body": "Uncited EBITDA was $12.0M in 2026."
+      }
+    ],
+    "sources": [
+      {
+        "id": "S1",
+        "title": "Known source"
+      }
+    ]
+  },
+  "committee_blocks_unknown_id": {
+    "dashboard_title": "Committee Citation Block Fixture",
+    "entity": "ExampleCo",
+    "skill": "dashboard-builder",
+    "posture": "committee-ready",
+    "hero": {
+      "headline": "Committee Citation Block Fixture",
+      "callout": "Revenue was $99.0M [NOPE]."
+    },
+    "deliverable": {
+      "render_mode": "report_only"
+    },
+    "report_body": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "body": "Revenue support should block committee readiness when the citation ID is unresolved."
+      }
+    ],
+    "sources": [
+      {
+        "id": "S1",
+        "title": "Known source"
+      }
+    ]
+  },
+  "client_blocks_numeric_gap": {
+    "dashboard_title": "Client Citation Block Fixture",
+    "entity": "ExampleCo",
+    "skill": "dashboard-builder",
+    "posture": "client-ready",
+    "hero": {
+      "headline": "Client Citation Block Fixture",
+      "callout": "Client-ready output cannot carry uncited material numbers."
+    },
+    "deliverable": {
+      "render_mode": "report_only"
+    },
+    "report_body": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "body": "Uncited EBITDA was $12.0M in 2026."
+      }
+    ],
+    "sources": [
+      {
+        "id": "S1",
+        "title": "Known source"
+      }
+    ]
+  },
+  "board_blocks_missing_source_register": {
+    "dashboard_title": "Board Citation Block Fixture",
+    "entity": "ExampleCo",
+    "skill": "dashboard-builder",
+    "posture": "board-ready",
+    "hero": {
+      "headline": "Board Citation Block Fixture",
+      "callout": "Board-ready output requires a source register."
+    },
+    "deliverable": {
+      "render_mode": "report_only"
+    },
+    "report_body": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "body": "Revenue was $99.0M in 2026."
+      }
+    ]
+  },
+  "strict_blocks_draft": {
+    "dashboard_title": "Strict Citation Block Fixture",
+    "entity": "ExampleCo",
+    "skill": "dashboard-builder",
+    "posture": "draft",
+    "citation_policy": "strict",
+    "hero": {
+      "headline": "Strict Citation Block Fixture",
+      "callout": "Revenue was $99.0M [NOPE]."
+    },
+    "deliverable": {
+      "render_mode": "report_only"
+    },
+    "report_body": [
+      {
+        "id": "summary",
+        "title": "Summary",
+        "body": "Strict mode blocks even when the visible posture is draft."
+      }
+    ],
+    "sources": [
+      {
+        "id": "S1",
+        "title": "Known source"
+      }
+    ]
+  }
+}

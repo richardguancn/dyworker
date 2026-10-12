@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/meeting_prep_to_memo_builder.schema.json",
+  "title": "meeting_prep_to_memo_builder",
+  "description": "Canonical meeting-prep or debrief package for memo-builder. Use pre-meeting plans for setup language and post-meeting debriefs for decisions, commitments, and recommendation changes.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/record"
+    },
+    {
+      "type": "object",
+      "required": [
+        "memo_package"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "meeting_prep_to_memo_builder"
+        },
+        "memo_package": {
+          "$ref": "#/$defs/record"
+        },
+        "open_items": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  ],
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "package_type",
+        "meeting_objective",
+        "meeting_type",
+        "audience",
+        "decision_needed",
+        "known_facts",
+        "assumptions",
+        "priority_questions",
+        "likely_pushbacks",
+        "answers_received",
+        "new_facts",
+        "changed_assumptions",
+        "diligence_implications",
+        "follow_ups",
+        "owners",
+        "due_dates",
+        "source_note",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "package_type": {
+          "enum": [
+            "pre_meeting_plan",
+            "live_notes",
+            "post_meeting_debrief"
+          ]
+        },
+        "meeting_objective": {},
+        "meeting_type": {},
+        "audience": {},
+        "decision_needed": {},
+        "known_facts": {},
+        "assumptions": {},
+        "priority_questions": {},
+        "likely_pushbacks": {},
+        "answers_received": {},
+        "new_facts": {},
+        "changed_assumptions": {},
+        "diligence_implications": {},
+        "follow_ups": {},
+        "owners": {},
+        "due_dates": {},
+        "source_note": {},
+        "circulation_caveats": {}
+      },
+      "additionalProperties": true
+    }
+  }
+}

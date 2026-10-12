@@ -1,0 +1,185 @@
+{
+  "contract_name": "private_credit_underwriting_to_distressed_recovery_waterfall",
+  "borrower_context": "borrower_context fixture value",
+  "credit_status": "credit_status fixture value",
+  "watchlist_or_distressed_trigger": "watchlist_or_distressed_trigger fixture value",
+  "client_or_lender_perspective": "client_or_lender_perspective fixture value",
+  "facility_structure": "facility_structure fixture value",
+  "debt_stack_summary": [
+    {
+      "label": "debt_stack_summary",
+      "description": "debt_stack_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "claim_amounts_by_tranche": [
+    {
+      "label": "claim_amounts_by_tranche",
+      "description": "claim_amounts_by_tranche fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "maturity_wall": [
+    {
+      "label": "maturity_wall",
+      "description": "maturity_wall fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "liquidity_trough": "liquidity_trough fixture value",
+  "first_breakpoint": "first_breakpoint fixture value",
+  "default_or_amendment_status": "default_or_amendment_status fixture value",
+  "covenant_breach_details": [
+    {
+      "label": "covenant_breach_details",
+      "description": "covenant_breach_details fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "lender_case": [
+    {
+      "label": "lender_case",
+      "description": "lender_case fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "downside_case": [
+    {
+      "label": "downside_case",
+      "description": "downside_case fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "severe_downside_case": [
+    {
+      "label": "severe_downside_case",
+      "description": "severe_downside_case fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "collateral_value_summary": [
+    {
+      "label": "collateral_value_summary",
+      "description": "collateral_value_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "lien_priority_summary": [
+    {
+      "label": "lien_priority_summary",
+      "description": "lien_priority_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "guarantor_summary": [
+    {
+      "label": "guarantor_summary",
+      "description": "guarantor_summary fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "borrowing_base_or_appraisal_basis": "borrowing_base_or_appraisal_basis fixture value",
+  "enterprise_value_cushion": 100,
+  "expected_recovery_range": [
+    {
+      "label": "expected_recovery_range",
+      "description": "expected_recovery_range fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "first_loss_driver": "first_loss_driver fixture value",
+  "sponsor_support_evidence": [
+    {
+      "label": "sponsor_support_evidence",
+      "description": "sponsor_support_evidence fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "new_money_or_rescue_need": "new_money_or_rescue_need fixture value",
+  "restructuring_alternatives_to_test": [
+    {
+      "label": "restructuring_alternatives_to_test",
+      "description": "restructuring_alternatives_to_test fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "source_log": [
+    {
+      "source_id": "SRC-001",
+      "source_name": "Fixture source",
+      "source_type": "CIM",
+      "source_date": "2026-05-01",
+      "document_date": "2026-05-01",
+      "accessed_date": "2026-05-18",
+      "as_of_date": "2026-05-01",
+      "source_pointer": "Fixture p.1",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "treatment": "use as reported",
+      "limitations": "fixture only"
+    }
+  ],
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "evidence_register": [
+    {
+      "source_id": "SRC-001",
+      "source_type": "CIM",
+      "as_of_date": "2026-05-01",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "treatment": "use as reported",
+      "open_items": [
+        "none"
+      ]
+    }
+  ],
+  "legal_counsel_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "valuation_specialist_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

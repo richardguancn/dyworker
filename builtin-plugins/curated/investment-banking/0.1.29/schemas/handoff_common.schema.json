@@ -1,0 +1,598 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/handoff_common.schema.json",
+  "title": "Investment Banking Handoff Common Definitions",
+  "type": "object",
+  "$defs": {
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "canonical_evidence_category": {
+      "type": "string",
+      "enum": [
+        "verified_fact",
+        "reported_fact",
+        "seller_claim",
+        "management_statement",
+        "pro_forma_adjustment",
+        "assumption",
+        "inference",
+        "estimate",
+        "stale",
+        "contradicted",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "freshness_status": {
+      "type": "string",
+      "enum": [
+        "current",
+        "stale",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "conflict_status": {
+      "type": "string",
+      "enum": [
+        "none",
+        "unresolved",
+        "resolved",
+        "conflicting",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "tie_out_status": {
+      "type": "string",
+      "enum": [
+        "tied",
+        "untied",
+        "needs_review",
+        "not_applicable",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "review_status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "needs_review",
+        "not_started",
+        "blocked",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "source_quality": {
+      "type": "string",
+      "enum": [
+        "primary",
+        "secondary",
+        "management",
+        "seller",
+        "analyst",
+        "unverified",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "circulation_posture": {
+      "type": "string",
+      "enum": [
+        "working_draft",
+        "senior_review_ready",
+        "client_ready",
+        "committee_ready",
+        "not_circulable",
+        "unknown",
+        "not_provided"
+      ]
+    },
+    "source_log_record": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_name",
+        "source_type",
+        "source_date",
+        "document_date",
+        "accessed_date",
+        "as_of_date",
+        "source_pointer",
+        "freshness_status",
+        "conflict_status",
+        "confidence",
+        "native_evidence_label",
+        "canonical_evidence_category",
+        "treatment",
+        "limitations"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "source_name": {
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "source_date": {
+          "type": "string"
+        },
+        "document_date": {
+          "type": "string"
+        },
+        "accessed_date": {
+          "type": "string"
+        },
+        "as_of_date": {
+          "type": "string"
+        },
+        "source_pointer": {
+          "type": "string"
+        },
+        "freshness_status": {
+          "$ref": "#/$defs/freshness_status"
+        },
+        "conflict_status": {
+          "$ref": "#/$defs/conflict_status"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "native_evidence_label": {
+          "type": "string"
+        },
+        "canonical_evidence_category": {
+          "$ref": "#/$defs/canonical_evidence_category"
+        },
+        "treatment": {
+          "type": "string"
+        },
+        "limitations": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_register_record": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_type",
+        "as_of_date",
+        "native_evidence_label",
+        "canonical_evidence_category",
+        "freshness_status",
+        "conflict_status",
+        "confidence",
+        "treatment",
+        "open_items"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "as_of_date": {
+          "type": "string"
+        },
+        "native_evidence_label": {
+          "type": "string"
+        },
+        "canonical_evidence_category": {
+          "$ref": "#/$defs/canonical_evidence_category"
+        },
+        "freshness_status": {
+          "$ref": "#/$defs/freshness_status"
+        },
+        "conflict_status": {
+          "$ref": "#/$defs/conflict_status"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "treatment": {
+          "type": "string"
+        },
+        "open_items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "key_number_to_tie": {
+      "type": "object",
+      "required": [
+        "metric",
+        "period",
+        "unit",
+        "scale",
+        "value",
+        "value_basis",
+        "page_references",
+        "slide_references",
+        "source_id",
+        "related_model_output",
+        "tie_out_status",
+        "variance_explanation"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "scale": {
+          "type": "string"
+        },
+        "value": {},
+        "value_basis": {
+          "type": "string"
+        },
+        "page_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "slide_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "related_model_output": {
+          "type": "string"
+        },
+        "tie_out_status": {
+          "$ref": "#/$defs/tie_out_status"
+        },
+        "variance_explanation": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "claim_record": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "buyer_facing_claim",
+        "claim_type",
+        "native_evidence_label",
+        "canonical_evidence_category",
+        "source_id",
+        "caveat",
+        "confidence",
+        "status"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "pattern": "^C-"
+        },
+        "buyer_facing_claim": {
+          "type": "string"
+        },
+        "claim_type": {
+          "type": "string"
+        },
+        "native_evidence_label": {
+          "type": "string"
+        },
+        "canonical_evidence_category": {
+          "$ref": "#/$defs/canonical_evidence_category"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "caveat": {
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "chart_visual_record": {
+      "type": "object",
+      "required": [
+        "location",
+        "chart_or_visual",
+        "metric_or_claim",
+        "source_id",
+        "unit",
+        "period",
+        "visual_review_status",
+        "tie_out_status",
+        "issue",
+        "suggested_remediation"
+      ],
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "chart_or_visual": {
+          "type": "string"
+        },
+        "metric_or_claim": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "visual_review_status": {
+          "$ref": "#/$defs/review_status"
+        },
+        "tie_out_status": {
+          "$ref": "#/$defs/tie_out_status"
+        },
+        "issue": {
+          "type": "string"
+        },
+        "suggested_remediation": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "open_item": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "description",
+        "why_it_matters",
+        "owner",
+        "status",
+        "due_date",
+        "blocks_circulation",
+        "suggested_remediation"
+      ],
+      "properties": {
+        "item_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "why_it_matters": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "due_date": {
+          "type": "string"
+        },
+        "blocks_circulation": {
+          "type": "boolean"
+        },
+        "suggested_remediation": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "financial_tie_out": {
+      "type": "object",
+      "required": [
+        "metric",
+        "source_value",
+        "model_value",
+        "variance",
+        "tie_out_status",
+        "owner"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "source_value": {},
+        "model_value": {},
+        "variance": {},
+        "tie_out_status": {
+          "$ref": "#/$defs/tie_out_status"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "circulation_caveat": {
+      "type": "object",
+      "required": [
+        "caveat",
+        "impact",
+        "owner"
+      ],
+      "properties": {
+        "caveat": {
+          "type": "string"
+        },
+        "impact": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "review_flag": {
+      "type": "object",
+      "required": [
+        "flag_type",
+        "description",
+        "owner",
+        "status",
+        "blocks_circulation"
+      ],
+      "properties": {
+        "flag_type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/review_status"
+        },
+        "blocks_circulation": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "generic_record": {
+      "type": "object",
+      "required": [
+        "label",
+        "description",
+        "status"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "style_source_record": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "source_name",
+        "source_type",
+        "source_priority",
+        "source_scope",
+        "source_date_or_period",
+        "freshness",
+        "relevance",
+        "confidence",
+        "limitations"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^(SRC|S)-"
+        },
+        "source_name": {
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string"
+        },
+        "source_priority": {
+          "type": "string"
+        },
+        "source_scope": {
+          "type": "string"
+        },
+        "source_date_or_period": {
+          "type": "string"
+        },
+        "freshness": {
+          "type": "string"
+        },
+        "relevance": {
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "limitations": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "style_change_record": {
+      "type": "object",
+      "required": [
+        "location",
+        "area",
+        "change",
+        "basis",
+        "provenance_label",
+        "confidence",
+        "content_impact"
+      ],
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "area": {
+          "type": "string"
+        },
+        "change": {
+          "type": "string"
+        },
+        "basis": {
+          "type": "string"
+        },
+        "provenance_label": {
+          "type": "string"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "content_impact": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

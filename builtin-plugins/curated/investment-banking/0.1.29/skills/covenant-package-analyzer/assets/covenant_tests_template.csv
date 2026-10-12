@@ -1,0 +1,4 @@
+covenant,period,test_type,actual,threshold,units,definition_basis,source,notes
+Max total leverage,Q4-2026,max_ratio,5.10,5.50,x,Total Debt / Covenant EBITDA,covenant certificate,positive headroom means threshold minus actual
+Min interest coverage,Q4-2026,min_ratio,2.25,2.00,x,Covenant EBITDA / Cash Interest,covenant certificate,positive headroom means actual minus threshold
+Minimum liquidity,Q4-2026,min_amount,35.0,25.0,USD_mm,unrestricted cash plus revolver availability,management model,confirm revolver availability

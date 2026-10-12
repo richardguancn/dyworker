@@ -1,0 +1,9 @@
+# Integrations
+
+Owns model outputs, not source governance, CIM diligence, QoE, full operating rebuilds, legal covenant reading, credit approval, IC memo, or deck QC.
+
+Upstream: `financial-source-of-truth`, `cim-teardown`, `financials-normalizer`, `comps-valuation`, `three-statement-model-builder`. Downstream: `private-credit-underwriting`, `memo-builder`, `model-audit-tieout`, `ib-deck-qc`. Handoff includes paths, status, EBITDA basis, leverage, liquidity, covenants, returns, stress, warnings, failures.
+
+When consuming CIM teardown output, use `cim_teardown_to_model_builder` from `../../../../references/handoff-contracts.md`. Map rows into sources and uses, operating forecast, EBITDA bridge, add-backs, NWC, capex, debt, covenants, exit, returns, lender case, downside case, and reverse-stress inputs.
+
+Preserve `ebitda_basis`, `adjustment_type`, `recurrence_status`, `cash_non_cash`, `run_rate_status`, `working_capital_treatment`, `debt_like_item_flag`, `covenant_definition_status`, `recommended_model_treatment`, `case_mapping`, and `model_blocker_flag`. Do not collapse management EBITDA, lender EBITDA, covenant EBITDA, and transaction EBITDA into one input.

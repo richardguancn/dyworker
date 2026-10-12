@@ -1,0 +1,24 @@
+{
+  "contract_name": "meeting_prep_to_deal_process_tracker",
+  "tracker_deltas": [
+    {
+      "contract_name": "meeting_prep_to_deal_process_tracker",
+      "meeting_id": "meeting_id fixture value",
+      "meeting_date": "meeting_date fixture value",
+      "counterparty": "counterparty fixture value",
+      "attendees": "attendees fixture value",
+      "process_stage": "process_stage fixture value",
+      "decision_or_signal": "decision_or_signal fixture value",
+      "status_change": "status_change fixture value",
+      "materials_requested": "materials_requested fixture value",
+      "diligence_requests": "diligence_requests fixture value",
+      "commitments": "commitments fixture value",
+      "next_actions": "next_actions fixture value",
+      "owners": "owners fixture value",
+      "due_dates": "due_dates fixture value",
+      "dependencies": "dependencies fixture value",
+      "source_note": "source_note fixture value",
+      "confidence": "high"
+    }
+  ]
+}

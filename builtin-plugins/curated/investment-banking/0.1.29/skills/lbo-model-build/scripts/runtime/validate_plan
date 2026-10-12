@@ -1,0 +1,388 @@
+"""Validate plan.json for LBO Model Build.
+
+Usage:
+  python scripts/validate_plan.py path/to/plan.json
+
+Exit codes:
+  0 = valid
+  1 = invalid (prints actionable errors)
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from typing import Any, Dict, List
+
+ALLOWED_INDUSTRIES = {
+    "saas",
+    "software",
+    "fintech",
+    "consumer",
+    "healthcare_services",
+    "industrials",
+    "industrial_technology",
+    "specialty_materials",
+    "distribution",
+    "building_products",
+    "infrastructure_services",
+    "business_services",
+    "media",
+    "retail_ecom",
+    "energy",
+}
+ALLOWED_STAGES = {"early_growth", "mature", "turnaround"}
+ALLOWED_PERIODICITIES = {"annual", "quarterly", None}
+ALLOWED_EVIDENCE_LABELS = {
+    "sourced_fact",
+    "management_assumption",
+    "seller_claim",
+    "sponsor_assumption",
+    "lender_case",
+    "analog_proxy",
+    "fallback_assumption",
+    "unsupported",
+}
+ALLOWED_EBITDA_BASIS = {
+    "qoe_lender_after_haircut_ebitda",
+    "qoe_normalized_ebitda",
+    "qoe_adjusted_ebitda",
+    "reported_ebitda",
+    "management_adjusted_ebitda",
+    "seller_adjusted_ebitda",
+    "fallback_proxy_ebitda",
+}
+REQUIRED_SOURCE_FIELDS = {
+    "source_id",
+    "source_name",
+    "source_type",
+    "source_date",
+    "as_of_date",
+    "period_covered",
+    "evidence_label",
+    "confidence",
+    "model_location",
+}
+
+
+def err(errors: List[str], msg: str) -> None:
+    errors.append(msg)
+
+
+def is_num(x: Any) -> bool:
+    return isinstance(x, (int, float)) and x == x
+
+
+def require(d: Dict[str, Any], key: str, errors: List[str], ctx: str) -> Any:
+    if key not in d:
+        err(errors, f"Missing required field: {ctx}.{key}")
+        return None
+    return d[key]
+
+
+def validate(path: str) -> List[str]:
+    errors: List[str] = []
+    try:
+        plan = json.loads(open(path, "r", encoding="utf-8").read())
+    except Exception as e:
+        return [f"Could not read/parse JSON: {e}"]
+
+    meta = plan.get("meta")
+    if not isinstance(meta, dict):
+        err(errors, "Missing or invalid meta object")
+        return errors
+
+    company = meta.get("company_name")
+    if not company:
+        err(errors, "meta.company_name is required")
+
+    industry = meta.get("industry")
+    if industry not in ALLOWED_INDUSTRIES:
+        err(errors, f"meta.industry must be one of {sorted(ALLOWED_INDUSTRIES)}")
+
+    stage = meta.get("stage")
+    if stage not in ALLOWED_STAGES:
+        err(errors, f"meta.stage must be one of {sorted(ALLOWED_STAGES)}")
+
+    source_basis = plan.get("source_basis")
+    if not isinstance(source_basis, list) or not source_basis:
+        err(errors, "source_basis must be a non-empty list with evidence labels for material assumptions")
+    else:
+        seen_sources = set()
+        for i, src in enumerate(source_basis):
+            if not isinstance(src, dict):
+                err(errors, f"source_basis[{i}] must be an object")
+                continue
+            missing = sorted(field for field in REQUIRED_SOURCE_FIELDS if not src.get(field))
+            if missing:
+                err(errors, f"source_basis[{i}] missing required fields: {', '.join(missing)}")
+            sid = src.get("source_id")
+            if sid in seen_sources:
+                err(errors, f"duplicate source_basis.source_id: {sid}")
+            if sid:
+                seen_sources.add(sid)
+            label = src.get("evidence_label")
+            if label not in ALLOWED_EVIDENCE_LABELS:
+                err(errors, f"source_basis[{i}].evidence_label must be one of {sorted(ALLOWED_EVIDENCE_LABELS)}")
+
+    ebitda_basis = plan.get("ebitda_basis")
+    if not isinstance(ebitda_basis, dict):
+        err(errors, "ebitda_basis object is required")
+    else:
+        selected = ebitda_basis.get("selected")
+        if selected not in ALLOWED_EBITDA_BASIS:
+            err(errors, f"ebitda_basis.selected must be one of {sorted(ALLOWED_EBITDA_BASIS)}")
+        if not is_num(ebitda_basis.get("transaction_ebitda_used")) or ebitda_basis.get("transaction_ebitda_used", 0) <= 0:
+            err(errors, "ebitda_basis.transaction_ebitda_used must be a positive number")
+        if not ebitda_basis.get("source_id"):
+            err(errors, "ebitda_basis.source_id is required")
+        label = ebitda_basis.get("evidence_label")
+        if label not in ALLOWED_EVIDENCE_LABELS:
+            err(errors, f"ebitda_basis.evidence_label must be one of {sorted(ALLOWED_EVIDENCE_LABELS)}")
+        if ebitda_basis.get("covenant_ebitda") is not None:
+            cov_defs = plan.get("covenants", {}).get("definitions", {})
+            if not cov_defs.get("ebitda_definition_source"):
+                err(errors, "ebitda_basis.covenant_ebitda requires covenants.definitions.ebitda_definition_source")
+
+    tl = plan.get("timeline")
+    if not isinstance(tl, dict):
+        err(errors, "timeline object is required")
+        return errors
+
+    start_year = tl.get("start_year")
+    if not isinstance(start_year, int) or start_year < 1900 or start_year > 2200:
+        err(errors, "timeline.start_year must be an integer year")
+
+    horizon = tl.get("horizon_years")
+    if not isinstance(horizon, int) or horizon <= 0 or horizon > 15:
+        err(errors, "timeline.horizon_years must be an integer between 1 and 15")
+
+    periodicity = tl.get("periodicity", None)
+    if periodicity not in ALLOWED_PERIODICITIES:
+        err(errors, "timeline.periodicity must be 'annual', 'quarterly', or null")
+
+    tx = plan.get("transaction")
+    if not isinstance(tx, dict):
+        err(errors, "transaction object is required")
+        return errors
+
+    entry = tx.get("entry")
+    if not isinstance(entry, dict):
+        err(errors, "transaction.entry object is required")
+    else:
+        method = entry.get("method")
+        if method not in {"multiple", "ev", "public_take_private"}:
+            err(errors, "transaction.entry.method must be 'multiple', 'ev', or 'public_take_private'")
+        if method == "multiple":
+            if not is_num(entry.get("entry_multiple")):
+                err(errors, "transaction.entry.entry_multiple is required for method='multiple'")
+            if not is_num(entry.get("entry_ebitda")):
+                err(errors, "transaction.entry.entry_ebitda is required for method='multiple'")
+            elif isinstance(ebitda_basis, dict) and is_num(ebitda_basis.get("transaction_ebitda_used")):
+                if abs(float(entry["entry_ebitda"]) - float(ebitda_basis["transaction_ebitda_used"])) > 1e-6:
+                    err(errors, "transaction.entry.entry_ebitda must match ebitda_basis.transaction_ebitda_used for method='multiple'")
+        if method == "ev":
+            if not is_num(entry.get("entry_ev")):
+                err(errors, "transaction.entry.entry_ev is required for method='ev'")
+        if method == "public_take_private":
+            p2p = tx.get("public_to_private", {})
+            offer_price = p2p.get("offer_price", entry.get("offer_price"))
+            shares = p2p.get("fully_diluted_shares", entry.get("fully_diluted_shares"))
+            if not is_num(offer_price) or offer_price <= 0:
+                err(errors, "public_take_private entry requires positive transaction.public_to_private.offer_price")
+            if not is_num(shares) or shares <= 0:
+                err(errors, "public_take_private entry requires positive transaction.public_to_private.fully_diluted_shares")
+
+    if not is_num(tx.get("min_cash", 0.0)) or tx.get("min_cash", 0.0) < 0:
+        err(errors, "transaction.min_cash must be a non-negative number")
+
+    pa = tx.get("purchase_accounting", {})
+    if pa and not isinstance(pa, dict):
+        err(errors, "transaction.purchase_accounting must be an object when provided")
+    elif isinstance(pa, dict) and pa.get("enabled"):
+        for field in ["book_net_assets", "fair_value_step_up", "identifiable_intangibles"]:
+            if pa.get(field) is not None and not is_num(pa.get(field)):
+                err(errors, f"transaction.purchase_accounting.{field} must be numeric when provided")
+        if pa.get("deferred_tax_rate") is not None and (not is_num(pa.get("deferred_tax_rate")) or pa.get("deferred_tax_rate") < 0 or pa.get("deferred_tax_rate") > 0.6):
+            err(errors, "transaction.purchase_accounting.deferred_tax_rate must be between 0 and 0.6")
+
+    mgmt = tx.get("management_incentive", {})
+    if mgmt and not isinstance(mgmt, dict):
+        err(errors, "transaction.management_incentive must be an object when provided")
+    elif isinstance(mgmt, dict) and mgmt.get("enabled"):
+        pct = mgmt.get("pool_pct_fully_diluted", 0.0)
+        if not is_num(pct) or pct < 0 or pct > 0.5:
+            err(errors, "transaction.management_incentive.pool_pct_fully_diluted must be between 0 and 0.5")
+
+    op = plan.get("operating")
+    if not isinstance(op, dict):
+        err(errors, "operating object is required")
+        return errors
+
+    rev = op.get("revenue")
+    if not isinstance(rev, dict) or "model" not in rev:
+        err(errors, "operating.revenue.model is required")
+    else:
+        model = rev.get("model")
+        if model not in {"growth", "volume_price", "arr"}:
+            err(errors, "operating.revenue.model must be one of: growth, volume_price, arr")
+        if model == "growth" and not is_num(rev.get("base_revenue")):
+            err(errors, "operating.revenue.base_revenue is required for growth model")
+        if model == "volume_price":
+            if not is_num(rev.get("base_units")):
+                err(errors, "operating.revenue.base_units is required for volume_price")
+            if not is_num(rev.get("base_price")):
+                err(errors, "operating.revenue.base_price is required for volume_price")
+        if model == "arr" and not is_num(rev.get("begin_arr")):
+            err(errors, "operating.revenue.begin_arr is required for arr")
+
+    em = op.get("ebitda_margin")
+    if not isinstance(em, dict) or len(em) == 0:
+        err(errors, "operating.ebitda_margin must be a non-empty {year: margin} map")
+    else:
+        for k, v in em.items():
+            if not str(k).isdigit() or not is_num(v) or v < -0.5 or v > 0.8:
+                err(errors, "operating.ebitda_margin must have numeric margins in a reasonable range")
+                break
+
+    tax = op.get("tax_rate")
+    if not is_num(tax) or tax < 0 or tax > 0.6:
+        err(errors, "operating.tax_rate must be between 0 and 0.6")
+
+    tax_module = plan.get("tax", {})
+    if tax_module and not isinstance(tax_module, dict):
+        err(errors, "tax must be an object when provided")
+    elif isinstance(tax_module, dict):
+        if tax_module.get("opening_nol") is not None and (not is_num(tax_module.get("opening_nol")) or tax_module.get("opening_nol") < 0):
+            err(errors, "tax.opening_nol must be non-negative when provided")
+        if tax_module.get("interest_deductibility_limit_pct_ebitda") is not None:
+            limit = tax_module.get("interest_deductibility_limit_pct_ebitda")
+            if not is_num(limit) or limit < 0 or limit > 1.0:
+                err(errors, "tax.interest_deductibility_limit_pct_ebitda must be between 0 and 1.0 when provided")
+
+    bs = plan.get("balance_sheet", {})
+    if bs and not isinstance(bs, dict):
+        err(errors, "balance_sheet must be an object when provided")
+    elif isinstance(bs, dict):
+        for field in ["opening_nwc", "opening_ppe", "opening_other_assets", "opening_other_liabilities", "opening_retained_earnings", "lease_liabilities"]:
+            if bs.get(field) is not None and not is_num(bs.get(field)):
+                err(errors, f"balance_sheet.{field} must be numeric when provided")
+
+    add_ons = plan.get("add_on_acquisitions", {})
+    if add_ons and not isinstance(add_ons, dict):
+        err(errors, "add_on_acquisitions must be an object when provided")
+    elif isinstance(add_ons, dict) and add_ons.get("enabled"):
+        deals = add_ons.get("deals", [])
+        if not isinstance(deals, list):
+            err(errors, "add_on_acquisitions.deals must be a list")
+        else:
+            for i, deal in enumerate(deals):
+                if not isinstance(deal, dict):
+                    err(errors, f"add_on_acquisitions.deals[{i}] must be an object")
+                    continue
+                if not isinstance(deal.get("close_year"), int):
+                    err(errors, f"add_on_acquisitions.deals[{i}].close_year must be an integer")
+                if deal.get("purchase_price") is None and deal.get("purchase_multiple") is None:
+                    err(errors, f"add_on_acquisitions.deals[{i}] requires purchase_price or purchase_multiple")
+                for field in ["purchase_price", "purchase_multiple", "revenue", "ebitda", "synergy_ebitda", "integration_cost", "transaction_fees", "debt_financing_pct"]:
+                    if deal.get(field) is not None and not is_num(deal.get(field)):
+                        err(errors, f"add_on_acquisitions.deals[{i}].{field} must be numeric when provided")
+
+    debt = plan.get("debt", {})
+    if not isinstance(debt, dict):
+        err(errors, "debt must be an object")
+    else:
+        tr = debt.get("tranches", [])
+        if not isinstance(tr, list):
+            err(errors, "debt.tranches must be a list")
+        else:
+            ids = set()
+            for i, t in enumerate(tr):
+                if not isinstance(t, dict):
+                    err(errors, f"debt.tranches[{i}] must be an object")
+                    continue
+                tid = t.get("id")
+                if not tid:
+                    err(errors, f"debt.tranches[{i}].id is required")
+                elif tid in ids:
+                    err(errors, f"duplicate tranche id: {tid}")
+                ids.add(tid)
+                ttype = t.get("type")
+                if ttype not in {"revolver", "term_loan", "notes", "mezz", "pik"}:
+                    err(errors, f"debt.tranches[{i}].type invalid")
+                if ttype == "revolver":
+                    if not is_num(t.get("commitment")) or t.get("commitment", 0) <= 0:
+                        err(errors, f"revolver tranche {tid} requires positive commitment")
+                else:
+                    if not is_num(t.get("face")) or t.get("face", 0) < 0:
+                        err(errors, f"tranche {tid} requires non-negative face")
+            for i, event in enumerate(debt.get("dividend_recaps", []) or []):
+                if not isinstance(event, dict):
+                    err(errors, f"debt.dividend_recaps[{i}] must be an object")
+                    continue
+                if not isinstance(event.get("year"), int):
+                    err(errors, f"debt.dividend_recaps[{i}].year must be an integer")
+                for field in ["debt_raise", "dividend", "fees"]:
+                    if event.get(field) is not None and (not is_num(event.get(field)) or event.get(field) < 0):
+                        err(errors, f"debt.dividend_recaps[{i}].{field} must be non-negative when provided")
+
+    ex = plan.get("exit")
+    if not isinstance(ex, dict):
+        err(errors, "exit object is required")
+    else:
+        if not isinstance(ex.get("exit_year"), int):
+            err(errors, "exit.exit_year must be an integer")
+        method = ex.get("method")
+        if method not in {"multiple", "ev"}:
+            err(errors, "exit.method must be 'multiple' or 'ev'")
+        if method == "multiple" and not is_num(ex.get("exit_multiple")):
+            err(errors, "exit.exit_multiple required for method='multiple'")
+        if method == "ev" and not is_num(ex.get("exit_ev")):
+            err(errors, "exit.exit_ev required for method='ev'")
+
+    cov = plan.get("covenants", {})
+    if isinstance(cov, dict):
+        tests = cov.get("tests", {})
+        if tests and not isinstance(tests, dict):
+            err(errors, "covenants.tests must be an object when provided")
+        if isinstance(tests, dict):
+            for test_name, schedule in tests.items():
+                if test_name not in {
+                    "max_total_leverage",
+                    "max_net_leverage",
+                    "min_interest_coverage",
+                    "min_fixed_charge_coverage",
+                    "min_debt_service_coverage",
+                    "min_liquidity",
+                }:
+                    err(errors, f"unsupported covenant test: {test_name}")
+                    continue
+                if not isinstance(schedule, dict) or not schedule:
+                    err(errors, f"covenants.tests.{test_name} must be a non-empty year map")
+                    continue
+                for k, v in schedule.items():
+                    if not str(k).isdigit() or not is_num(v):
+                        err(errors, f"covenants.tests.{test_name} must map years to numeric limits")
+                        break
+
+    return errors
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("Usage: python scripts/validate_plan.py path/to/plan.json", file=sys.stderr)
+        return 1
+
+    errs = validate(sys.argv[1])
+    if errs:
+        print("Plan validation FAILED:\n", file=sys.stderr)
+        for e in errs:
+            print(f"- {e}", file=sys.stderr)
+        return 1
+
+    print("Plan validation OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

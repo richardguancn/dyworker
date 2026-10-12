@@ -1,0 +1,5 @@
+# Plan Schema
+
+Top level: `meta`, `source_basis`, `ebitda_basis`, `timeline`, `transaction`, `operating`, `tax`, `balance_sheet`, `add_on_acquisitions`, `debt`, `covenants`, `exit`, `sensitivities`, `scenarios`.
+
+Minimum: source row, EBITDA basis, timeline, entry, min cash, revenue/margin/tax, debt, exit. Validate before running. Full example: `assets/plan_template_full`.

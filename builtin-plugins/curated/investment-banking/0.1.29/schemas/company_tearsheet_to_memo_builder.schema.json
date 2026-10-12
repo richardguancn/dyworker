@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/company_tearsheet_to_memo_builder.schema.json",
+  "title": "company_tearsheet_to_memo_builder",
+  "description": "Canonical source-backed company, borrower, issuer, or counterparty profile handoff for memo-builder. This is a factual spine, not an investment recommendation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/record"
+    },
+    {
+      "type": "object",
+      "required": [
+        "memo_package"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "company_tearsheet_to_memo_builder"
+        },
+        "memo_package": {
+          "$ref": "#/$defs/record"
+        },
+        "open_items": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  ],
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "entity_profile",
+        "one_line_business_description",
+        "business_model",
+        "sector",
+        "ownership_status",
+        "key_metrics",
+        "recent_developments",
+        "source_as_of_dates",
+        "fact_vs_assumption_labels",
+        "risks_and_gaps",
+        "open_questions",
+        "recommended_next_step",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "entity_profile": {},
+        "one_line_business_description": {},
+        "business_model": {},
+        "sector": {},
+        "ownership_status": {},
+        "key_metrics": {},
+        "recent_developments": {},
+        "source_as_of_dates": {},
+        "fact_vs_assumption_labels": {},
+        "risks_and_gaps": {},
+        "open_questions": {},
+        "recommended_next_step": {},
+        "circulation_caveats": {}
+      },
+      "additionalProperties": true
+    }
+  }
+}

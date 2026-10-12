@@ -1,0 +1,9 @@
+interface:
+  display_name: "Pitch Deck Builder"
+  short_description: "Investment banking deck builder"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $pitch-deck-builder to create or refresh an investment banking pitch deck, storyboard, or client presentation."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+policy:
+  allow_implicit_invocation: false

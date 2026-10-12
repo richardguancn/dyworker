@@ -1,0 +1,7 @@
+interface:
+  display_name: "Buyer Investor List"
+  short_description: "Buyer and investor universe builder"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $buyer-investor-list to build and prioritize a buyer or investor universe."
+policy:
+  allow_implicit_invocation: false

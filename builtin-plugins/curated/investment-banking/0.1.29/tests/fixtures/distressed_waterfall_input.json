@@ -1,0 +1,13 @@
+{
+  "company": "FixtureCo",
+  "currency": "$mm",
+  "scenarios": [
+    {"name": "Low Case", "distributable_value": 180},
+    {"name": "Base Case", "distributable_value": 260}
+  ],
+  "classes": [
+    {"name": "First Lien Debt", "claim": 150, "priority": 1, "notes": "secured"},
+    {"name": "Second Lien Debt", "claim": 125, "priority": 2, "notes": "junior secured"},
+    {"name": "Common Equity", "claim": 0, "priority": 3, "equity": true, "notes": "residual"}
+  ]
+}

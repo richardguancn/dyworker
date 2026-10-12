@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai.local/investment-banking/artifact_manifest.schema.json",
+  "title": "Investment Banking Artifact Manifest",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "skill",
+    "artifact_mode",
+    "output_dir",
+    "first_read",
+    "primary_human_deliverable",
+    "human_deliverables",
+    "companion_deliverables",
+    "support_artifacts",
+    "agent_artifacts",
+    "support_artifacts_user_visible_default",
+    "blocked_or_partial_status",
+    "final_response_guidance",
+    "discipline_note"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "manifest_version": {
+      "const": "1.0"
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_mode": {
+      "type": "string",
+      "enum": [
+        "workbook",
+        "html_report",
+        "html_dashboard",
+        "native_deck",
+        "native_document",
+        "support_only",
+        "generated_package",
+        "blocked",
+        "chat_only",
+        "deterministic_export",
+        "banker_formula_workbook",
+        "comps_template_workbook"
+      ]
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "first_read": {
+      "type": "object",
+      "required": ["path", "role", "why"],
+      "additionalProperties": true,
+      "properties": {
+        "path": {"type": "string"},
+        "role": {"type": "string"},
+        "why": {"type": "string"}
+      }
+    },
+    "primary_human_deliverable": {
+      "type": "string"
+    },
+    "human_deliverables": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact_item"}
+    },
+    "companion_deliverables": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact_item"}
+    },
+    "support_artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact_item"}
+    },
+    "agent_artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact_item"}
+    },
+    "support_artifacts_user_visible_default": {
+      "const": false
+    },
+    "blocked_or_partial_status": {
+      "type": "object",
+      "required": ["status", "reason", "missing_inputs"],
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["complete", "partial", "blocked", "support_only"]
+        },
+        "reason": {"type": "string"},
+        "missing_inputs": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "final_response_guidance": {
+      "type": "object",
+      "required": ["lead_with", "mention_support_artifacts"],
+      "additionalProperties": true,
+      "properties": {
+        "lead_with": {"const": "primary_human_deliverable"},
+        "mention_support_artifacts": {"const": "only_briefly_unless_requested"}
+      }
+    },
+    "discipline_note": {
+      "type": "string",
+      "minLength": 1
+    },
+    "transaction_workflow": {
+      "type": "string"
+    },
+    "process_status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "marketing_posture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lead_skill": {
+      "type": "string"
+    },
+    "supporting_skills": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "routing_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "manual_override", "unknown"]
+    },
+    "handoff_contracts_used": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "routing_reason": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "artifact_item": {
+      "type": "object",
+      "required": [
+        "path",
+        "role",
+        "artifact_type",
+        "description",
+        "user_visible_default",
+        "contains_new_analysis",
+        "support_reason"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "path": {"type": "string"},
+        "role": {
+          "type": "string",
+          "enum": ["human_deliverable", "companion_deliverable", "support_artifact", "agent_artifact"]
+        },
+        "artifact_type": {"type": "string"},
+        "description": {"type": "string"},
+        "user_visible_default": {"type": "boolean"},
+        "contains_new_analysis": {"type": "boolean"},
+        "support_reason": {"type": "string"},
+        "user_requested_machine_readable": {"type": "boolean"}
+      }
+    }
+  }
+}

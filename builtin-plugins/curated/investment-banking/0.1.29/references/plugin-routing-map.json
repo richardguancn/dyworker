@@ -1,0 +1,966 @@
+{
+  "version": "1.0",
+  "plugin": "investment-banking",
+  "routing_policy": {
+    "invocation_policy_reference": "references/invocation-policy.md",
+    "activation_gate": "Activate for explicit Investment Banking invocation or banker-owned transaction, capital markets, valuation, diligence, buyer/investor targeting, pitch, process, restructuring, coverage, sponsor, issuer, lender, or deal-advisory context. VDR, Datasite, data-room, CIM, teaser, buyer universe, outreach wave, NDA tracker, bid log, board transaction package, deal committee, ECM/DCM/LevFin, restructuring, and recovery language are high-signal when tied to banker workflow context.",
+    "playbook_reference": "references/plugin-routing-playbook.md",
+    "default_routing_principle": "Route broad prompts by banker transaction workflow before choosing an individual skill. Pick the lead skill that owns the first real judgment or artifact, then call support skills only when their lane owns a necessary workstream.",
+    "artifact_hierarchy": "Hero human deliverable first, companion artifacts second, support JSON/CSV/Markdown/log/handoff files last.",
+    "handoff_validation": "Validate every schema-backed cross-skill handoff before a downstream skill imports it, using scripts/validate_handoff_payload.py.",
+    "support_artifact_policy": "Handoff JSON, manifests, logs, CSV ledgers, Markdown notes, and raw extraction files are support or agent artifacts unless the user explicitly requests machine-readable output."
+  },
+  "workflows": [
+    {
+      "workflow_id": "sell_side_auction",
+      "workflow_name": "Sell-side auction",
+      "banker_intent": "Run or prepare a sale process with source-backed materials, buyer targeting, process tracking, diligence gating, and final circulation QC.",
+      "typical_user_prompts": [
+        "Prepare the sell-side process package for this target.",
+        "Build the buyer list, CIM story, first-wave diligence asks, and tracker for an auction.",
+        "Analyze this Datasite/VDR export and identify diligence gaps before launch.",
+        "We are launching a sale process; what should the team do first?"
+      ],
+      "lead_skill": "cim-teardown",
+      "supporting_skills": [
+        "financials-normalizer",
+        "buyer-investor-list",
+        "deal-process-tracker",
+        "cim-builder",
+        "pitch-deck-builder",
+        "memo-builder",
+        "ib-deck-qc",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "cim_teardown_to_memo_builder",
+          "producer_skill": "cim-teardown",
+          "consumer_skill": "memo-builder",
+          "required_when": "A process, diligence, IC, client, or MD memo will reuse CIM claims, red flags, seller asks, or source posture."
+        },
+        {
+          "contract_name": "cim_builder_to_ib_deck_qc",
+          "producer_skill": "cim-builder",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "A CIM, lender presentation, management presentation, or buyer-facing package is ready for circulation QC."
+        },
+        {
+          "contract_name": "buyer_investor_list_to_deal_process_tracker",
+          "producer_skill": "buyer-investor-list",
+          "consumer_skill": "deal-process-tracker",
+          "required_when": "A ranked buyer universe is converted into an outreach or process tracker."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "HTML auction readiness report or CIM teardown report; XLSX buyer/process tracker when the user asks for execution tracking.",
+      "companion_deliverables": [
+        "buyer_investor_universe.xlsx",
+        "deal_process_tracker.xlsx",
+        "CIM/deck page plan or native deck when tooling is available",
+        "ib_deck_qc_report.html before final circulation"
+      ],
+      "support_artifacts": [
+        "handoffs/*.json",
+        "support/source_index.csv",
+        "support/claims_ledger.csv",
+        "logs/manifest.json"
+      ],
+      "source_gates": [
+        "Identify the controlling source packet, version, date, and seller perimeter before using claims.",
+        "Classify VDR, Datasite, data-room, CIM, teaser, and management-presentation materials before routing claims into diligence, tracker, model, or buyer-facing work.",
+        "Normalize financials and KPI schedules before model, CIM, or buyer-facing use.",
+        "Keep seller claims distinct from verified facts, banker judgment, and assumptions.",
+        "Preserve stable C-, Q-, RF-, source, and task identifiers across teardown, CIM, tracker, and QC artifacts."
+      ],
+      "quality_gates": [
+        "No buyer-facing package may bypass ib-deck-qc when the posture is client-ready or final-circulation-candidate.",
+        "No raw buyer CSV, claims JSON, or Markdown teardown may be the hero deliverable by default.",
+        "Open evidence gaps, conflict posture, and owner/date next actions must be visible in the hero artifact."
+      ],
+      "routing_triggers": [
+        "sell-side",
+        "auction",
+        "buyer list",
+        "buyer universe",
+        "CIM launch",
+        "CIM teardown",
+        "teaser",
+        "VDR",
+        "Datasite",
+        "data room",
+        "first-round bids",
+        "NDA process",
+        "NDA tracker",
+        "outreach wave",
+        "bid log",
+        "process tracker",
+        "sale process"
+      ],
+      "do_not_route_when": [
+        "The request is only to clean a spreadsheet with no deal-process context.",
+        "The user asks for legal advice on confidentiality, exclusivity, or definitive agreements.",
+        "The user asks for a public-equity investment recommendation rather than transaction execution."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "NDA, exclusivity, definitive agreement, fairness opinion, disclosure, or regulatory legal advice is requested."},
+        {"to": "Private Markets", "when": "The request is sponsor diligence or IC work with no bank sell-side process artifact."},
+        {"to": "Corporate Finance", "when": "The task is internal FP&A, budget, or CFO operating reporting rather than transaction execution."}
+      ],
+      "clarifying_questions": [
+        "Is the team selling, buying, financing, or preparing committee materials?",
+        "Is the first artifact a diligence readout, buyer list, process tracker, CIM/deck, or QC report?",
+        "What circulation posture is expected: working draft, senior-review-ready, client-ready, or final-circulation-candidate?"
+      ],
+      "stop_or_escalate_when": [
+        "Conflicting company perimeter or document versions would change the buyer story.",
+        "Material facts lack source support for client-ready circulation.",
+        "Legal, tax, accounting, or securities-law conclusions are requested."
+      ]
+    },
+    {
+      "workflow_id": "sponsor_buy_side",
+      "workflow_name": "Sponsor buy-side",
+      "banker_intent": "Evaluate a target from seller materials, build model and valuation workstreams, pressure-test financing capacity, and synthesize a sponsor-style decision view.",
+      "typical_user_prompts": [
+        "We are evaluating this CIM for a sponsor buy-side process.",
+        "Review this data-room packet for a sponsor buy-side diligence readout.",
+        "Build the buy-side diligence, LBO, comps, DCF, scenarios, and IC view.",
+        "Should we pursue this asset and what breaks the thesis?"
+      ],
+      "lead_skill": "cim-teardown",
+      "supporting_skills": [
+        "financials-normalizer",
+        "lbo-model-build",
+        "comps-valuation",
+        "dcf-model-builder",
+        "scenario-sensitivity-generator",
+        "memo-builder",
+        "model-audit-tieout",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "cim_teardown_to_model_builder",
+          "producer_skill": "cim-teardown",
+          "consumer_skill": "model builders",
+          "required_when": "Seller claims, model inputs, KPIs, diligence flags, or source IDs are imported into LBO, DCF, three-statement, merger, or comps model work."
+        },
+        {
+          "contract_name": "cim_teardown_to_memo_builder",
+          "producer_skill": "cim-teardown",
+          "consumer_skill": "memo-builder",
+          "required_when": "Diligence findings are synthesized into an IC, pursuit, or committee memo."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "Sponsor diligence HTML report when judgment-first; banker-readable LBO/model workbook when model-first, with standalone HTML underwriting summary only when specifically requested.",
+      "companion_deliverables": [
+        "lbo_model.xlsx",
+        "valuation_sensitivity_pack.xlsx",
+        "investment_memo.html",
+        "model_audit_pack.xlsx"
+      ],
+      "support_artifacts": [
+        "handoffs/cim_teardown_to_model_builder.json",
+        "support/normalized_financials.csv",
+        "support/source_conflicts.csv",
+        "logs/model_citations.json"
+      ],
+      "source_gates": [
+        "Classify VDR, Datasite, data-room, CIM, teaser, and management-presentation materials before importing seller claims into model or memo work.",
+        "Never import seller metrics into a model without source, period, definition, and normalization notes.",
+        "Tie model assumptions to source records, explicit assumptions, or diligence open items.",
+        "Keep QoE, customer concentration, working-capital, debt-like items, and KPI definitions visible as gates."
+      ],
+      "quality_gates": [
+        "Audit model outputs before calling the package committee-ready.",
+        "Scenario and downside cases must explain what breaks first and what action follows.",
+        "Do not collapse diligence findings into a generic investment memo without preserving C-, Q-, RF-, and source IDs."
+      ],
+      "routing_triggers": [
+        "sponsor buy-side",
+        "IC memo",
+        "LBO",
+        "VDR diligence",
+        "Datasite diligence",
+        "data room diligence",
+        "CIM teardown",
+        "pursuit decision",
+        "management presentation diligence",
+        "quality of earnings concerns",
+        "debt capacity"
+      ],
+      "do_not_route_when": [
+        "The user asks to create seller-facing materials for a sale process.",
+        "The task is only issuer capital markets advice with no acquisition target.",
+        "The request is a public-markets stock recommendation."
+      ],
+      "escalation_paths": [
+        {"to": "Private Markets", "when": "The workflow is sponsor-owned IC diligence rather than bank-side transaction execution."},
+        {"to": "Legal", "when": "The user asks for legal due diligence, definitive agreement interpretation, or legal advice."},
+        {"to": "Corporate Finance", "when": "The request is post-close budgeting, integration tracking, or internal FP&A."}
+      ],
+      "clarifying_questions": [
+        "Is the immediate need a diligence teardown, model workbook, IC memo, or management-meeting prep?",
+        "Which model is controlling: LBO, DCF, three-statement, merger, or a quick screen?",
+        "What evidence posture is acceptable: screen-grade, senior-review-ready, or committee-ready?"
+      ],
+      "stop_or_escalate_when": [
+        "The target, transaction perimeter, or financing case is ambiguous enough to change the model architecture.",
+        "A committee-ready output lacks source-backed model citations.",
+        "Requested advice becomes legal, tax, accounting, or personalized investment advice."
+      ]
+    },
+    {
+      "workflow_id": "levfin_financing",
+      "workflow_name": "LevFin financing",
+      "banker_intent": "Advise on leveraged financing alternatives, lender appetite, debt sizing, covenant/document risks, and committee-ready financing posture.",
+      "typical_user_prompts": [
+        "Frame the LevFin package for this acquisition.",
+        "Compare loan, bond, private credit, and hybrid financing alternatives.",
+        "Build the lender case and covenant open-items view."
+      ],
+      "lead_skill": "capital-markets-issuance",
+      "supporting_skills": [
+        "private-credit-underwriting",
+        "covenant-package-analyzer",
+        "scenario-sensitivity-generator",
+        "memo-builder",
+        "model-audit-tieout",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "capital_markets_issuance_to_private_credit_underwriting",
+          "producer_skill": "capital-markets-issuance",
+          "consumer_skill": "private-credit-underwriting",
+          "required_when": "Issuer-side financing alternatives need borrower-level lender case, debt sizing, downside, collateral, or conditions precedent analysis."
+        },
+        {
+          "contract_name": "capital_markets_issuance_to_covenant_package_analyzer",
+          "producer_skill": "capital-markets-issuance",
+          "consumer_skill": "covenant-package-analyzer",
+          "required_when": "Terms, documents, baskets, EBITDA definitions, restricted payments, amendments, or leakage mechanics affect financing advice."
+        },
+        {
+          "contract_name": "private_credit_underwriting_to_covenant_package_analyzer",
+          "producer_skill": "private-credit-underwriting",
+          "consumer_skill": "covenant-package-analyzer",
+          "required_when": "The lender case depends on covenant headroom, definitions, leakage, baskets, or documentation conditions."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "Financing alternatives workbook or LevFin recommendation HTML report, depending on model-heavy vs memo-heavy ask.",
+      "companion_deliverables": [
+        "private_credit_underwriting.xlsx",
+        "covenant_analysis_report.html",
+        "scenario_sensitivity_pack.xlsx",
+        "financing_committee_memo.html"
+      ],
+      "support_artifacts": [
+        "handoffs/*.json",
+        "support/issuance_math.json",
+        "support/covenant_scan.csv",
+        "logs/source_register.json"
+      ],
+      "source_gates": [
+        "Separate market-clearing terms from lender approval and legal covenant capacity.",
+        "Source or mark assumptions for leverage, coverage, pricing, OID, call protection, covenants, and market-window claims.",
+        "Flag counsel review for definitions, baskets, amendments, documents, and incomplete credit agreements."
+      ],
+      "quality_gates": [
+        "Financing math must tie to model citations or explicitly labeled assumptions.",
+        "Committee/client-ready standalone HTML reports must surface material citation gaps before circulation; dashboard-rendered companion outputs must hard-fail those gaps in dashboard-builder.",
+        "No issuance math JSON or covenant CSV may be the primary artifact."
+      ],
+      "routing_triggers": [
+        "LevFin",
+        "debt financing",
+        "loan",
+        "high yield",
+        "private credit",
+        "debt capacity",
+        "lender case",
+        "covenants"
+      ],
+      "do_not_route_when": [
+        "The user asks only for borrower credit approval with no issuer financing advice.",
+        "The user asks for legal covenant interpretation as legal advice.",
+        "The prompt is an ECM-only equity issuance."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "The user needs definitive covenant interpretation, legal enforceability, amendment drafting, or securities-law advice."},
+        {"to": "Private Markets", "when": "The work is private-credit investment committee underwriting rather than issuer-side financing advice."},
+        {"to": "Public Markets", "when": "The request is public-credit trading or issuer bond-investment research."}
+      ],
+      "clarifying_questions": [
+        "Is the audience issuer/client, lender/credit committee, sponsor IC, or deal committee?",
+        "Which instruments are in scope: term loan, HY bond, revolver, private credit, convert, equity, or hybrid?",
+        "Do we have a model, debt schedule, term sheet, or credit agreement to control the math?"
+      ],
+      "stop_or_escalate_when": [
+        "Documents or covenants are incomplete but legal-document conclusions are requested.",
+        "Financing terms are being treated as committed lender feedback without evidence.",
+        "A final committee output lacks model tie-outs or source support."
+      ]
+    },
+    {
+      "workflow_id": "ecm",
+      "workflow_name": "ECM",
+      "banker_intent": "Advise an issuer, sponsor, or board on equity-linked or common-equity alternatives, market window, investor targeting, dilution, and execution readiness.",
+      "typical_user_prompts": [
+        "Frame an ECM transaction for this issuer.",
+        "Compare follow-on, block, ATM, PIPE, convert, and rights offering alternatives.",
+        "Build a board-ready equity issuance readout."
+      ],
+      "lead_skill": "capital-markets-issuance",
+      "supporting_skills": [
+        "company-tearsheet",
+        "comps-valuation",
+        "scenario-sensitivity-generator",
+        "memo-builder",
+        "pitch-deck-builder",
+        "ib-deck-qc",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "company_tearsheet_to_memo_builder",
+          "producer_skill": "company-tearsheet",
+          "consumer_skill": "memo-builder",
+          "required_when": "Issuer snapshot facts are reused in an ECM memo or board readout."
+        },
+        {
+          "contract_name": "pitch_deck_builder_to_ib_deck_qc",
+          "producer_skill": "pitch-deck-builder",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "The ECM pitch, board deck, or client deck is ready for circulation QC."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "ECM recommendation HTML report or financing alternatives workbook with dilution and proceeds analysis.",
+      "companion_deliverables": [
+        "company_tearsheet.html",
+        "equity_issuance_deck_outline.html",
+        "scenario_sensitivity_pack.xlsx",
+        "ib_deck_qc_report.html"
+      ],
+      "support_artifacts": [
+        "support/issuance_math.json",
+        "support/comps_support.csv",
+        "handoffs/pitch_deck_builder_to_ib_deck_qc.json"
+      ],
+      "source_gates": [
+        "Timestamp market data, share price, volume, ownership, short interest, comparables, and transaction comps.",
+        "Distinguish public information, issuer-provided assumptions, market-standard ranges, and banker judgment.",
+        "Flag MNPI, wall-crossing, disclosure, and counsel/compliance review items."
+      ],
+      "quality_gates": [
+        "Material price, dilution, proceeds, ownership, and market-window claims need inline citations.",
+        "Decks cannot be called final-circulation-ready until ib-deck-qc clears numbers, sources, page takeaways, and footnotes.",
+        "Support CSV/JSON stays secondary to the board/client report or workbook."
+      ],
+      "routing_triggers": [
+        "ECM",
+        "equity issuance",
+        "follow-on",
+        "block trade",
+        "ATM",
+        "PIPE",
+        "rights offering",
+        "convertible"
+      ],
+      "do_not_route_when": [
+        "The request is debt-only, covenant-first, or lender-credit underwriting.",
+        "The request is a public-equity buy/sell recommendation for an investor.",
+        "The user asks for legal disclosure advice rather than banker framing."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "Securities-law disclosure, prospectus, MNPI, wall-crossing, or regulatory advice is requested."},
+        {"to": "Public Markets", "when": "The prompt is public-equity investment research rather than issuer financing advice."},
+        {"to": "Corporate Finance", "when": "The task is treasury planning or internal capital allocation without transaction execution."}
+      ],
+      "clarifying_questions": [
+        "Is the instrument common equity, convert, preferred, PIPE, ATM, block, rights offering, or open-ended?",
+        "Is the audience management, board, sponsor, syndicate, or investors?",
+        "What market-data timestamp and source hierarchy should control the analysis?"
+      ],
+      "stop_or_escalate_when": [
+        "Current market data is material but unavailable.",
+        "The user asks for securities-law, disclosure, or investor-allocation legal advice.",
+        "The package is client-ready but citation gaps remain."
+      ]
+    },
+    {
+      "workflow_id": "dcm",
+      "workflow_name": "DCM",
+      "banker_intent": "Advise on bonds, loans, private placements, private credit, ratings/covenant constraints, market access, pricing, and execution risk.",
+      "typical_user_prompts": [
+        "Build a DCM financing alternatives view.",
+        "Assess whether this issuer should raise HY bonds, loans, or private debt.",
+        "Prepare a lender-ready DCM readout."
+      ],
+      "lead_skill": "capital-markets-issuance",
+      "supporting_skills": [
+        "private-credit-underwriting",
+        "covenant-package-analyzer",
+        "scenario-sensitivity-generator",
+        "memo-builder",
+        "model-audit-tieout",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "capital_markets_issuance_to_private_credit_underwriting",
+          "producer_skill": "capital-markets-issuance",
+          "consumer_skill": "private-credit-underwriting",
+          "required_when": "Borrower-level credit, downside, collateral, liquidity, or conditions precedent analysis is needed."
+        },
+        {
+          "contract_name": "capital_markets_issuance_to_covenant_package_analyzer",
+          "producer_skill": "capital-markets-issuance",
+          "consumer_skill": "covenant-package-analyzer",
+          "required_when": "Document definitions, baskets, restricted payments, debt/lien capacity, or amendment mechanics affect DCM advice."
+        },
+        {
+          "contract_name": "private_credit_underwriting_to_covenant_package_analyzer",
+          "producer_skill": "private-credit-underwriting",
+          "consumer_skill": "covenant-package-analyzer",
+          "required_when": "Underwriting recommendations depend on covenant or documentation mechanics."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "DCM financing alternatives workbook or lender/issuer HTML report.",
+      "companion_deliverables": [
+        "private_credit_underwriting.xlsx",
+        "covenant_headroom.xlsx",
+        "issuance_memo.html"
+      ],
+      "support_artifacts": [
+        "support/issuance_math.json",
+        "support/covenant_scan.json",
+        "handoffs/*.json"
+      ],
+      "source_gates": [
+        "Timestamp rates, spreads, comparable issuance, ratings, trading levels, and market-window data.",
+        "Separate issuer-side market advice from lender approval, ratings agency feedback, and legal covenant capacity.",
+        "Mark incomplete credit agreements and counsel-review items before using covenant numbers."
+      ],
+      "quality_gates": [
+        "Leverage, coverage, liquidity, maturity-wall, and pricing math must tie to model/source records.",
+        "Client-ready output must not carry unresolved citation IDs or uncited material numeric claims.",
+        "Raw issuance math JSON and covenant scan files are support only."
+      ],
+      "routing_triggers": [
+        "DCM",
+        "bond",
+        "loan",
+        "private placement",
+        "credit spread",
+        "ratings",
+        "maturity wall",
+        "refinancing"
+      ],
+      "do_not_route_when": [
+        "The user asks for an ECM or equity-only analysis.",
+        "The user asks for legal advice on debt documents.",
+        "The work is a distressed recovery waterfall rather than going-concern financing."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "Debt-document interpretation, covenant amendment drafting, or legal enforceability is requested."},
+        {"to": "Public Markets", "when": "The prompt is public-credit trade research rather than issuer financing."},
+        {"to": "Private Markets", "when": "The task is private-credit IC underwriting rather than bank DCM advice."}
+      ],
+      "clarifying_questions": [
+        "Is the decision about market access, pricing, documentation, lender approval, or ratings/covenant capacity?",
+        "Which instrument families are in scope?",
+        "Do we have a current cap table, debt schedule, model, and agreements?"
+      ],
+      "stop_or_escalate_when": [
+        "Current market or document facts are missing but are material to the recommendation.",
+        "The user requests legal or ratings-agency conclusions without source support.",
+        "The work shifts from financing to distressed restructuring."
+      ]
+    },
+    {
+      "workflow_id": "board_package",
+      "workflow_name": "Board package",
+      "banker_intent": "Package existing analysis into board-ready decision materials with clean recommendations, source posture, model tie-outs, and final circulation controls.",
+      "typical_user_prompts": [
+        "Prepare a board package for this transaction.",
+        "Turn these analyses into a board-ready memo and deck.",
+        "What can we send upward to the board?"
+      ],
+      "lead_skill": "memo-builder",
+      "supporting_skills": [
+        "pitch-deck-builder",
+        "model-audit-tieout",
+        "ib-deck-qc",
+        "style-guide-adapter",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "pitch_deck_builder_to_ib_deck_qc",
+          "producer_skill": "pitch-deck-builder",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "Board deck page plan or draft slides move to final circulation QC."
+        },
+        {
+          "contract_name": "style_guide_adapter_style_profile",
+          "producer_skill": "style-guide-adapter",
+          "consumer_skill": "memo-builder",
+          "required_when": "A client, firm, or precedent style profile controls board package format."
+        },
+        {
+          "contract_name": "style_guide_adapter_change_log",
+          "producer_skill": "style-guide-adapter",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "Style changes need to be preserved for final QC or circulation review."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "Board-ready HTML memo/report or native deck/document when tooling is available.",
+      "companion_deliverables": [
+        "board_deck_outline.html",
+        "model_audit_pack.xlsx",
+        "ib_deck_qc_report.html"
+      ],
+      "support_artifacts": [
+        "handoffs/*.json",
+        "support/model_citations.json",
+        "logs/readiness_audit.json"
+      ],
+      "source_gates": [
+        "Do not create new analysis in the packaging layer; import source-backed analysis from owning skills.",
+        "Every material number needs source, model, or assumption support with as-of dates.",
+        "Readiness posture must reflect open items and citation status."
+      ],
+      "quality_gates": [
+        "Board-ready or external standalone HTML memos must surface material citation gaps before circulation.",
+        "Final-circulation candidates require ib-deck-qc and model-audit-tieout for material model/deck outputs.",
+        "Support JSON/CSV/Markdown artifacts cannot be heroed."
+      ],
+      "routing_triggers": [
+        "board package",
+        "board memo",
+        "board deck",
+        "send upward",
+        "committee package",
+        "client-ready board materials"
+      ],
+      "do_not_route_when": [
+        "The request is to build the underlying source model from scratch.",
+        "The user asks for a fairness opinion, legal board advice, or formal fiduciary conclusion.",
+        "The output is only a rough working draft and not board-facing."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "Fiduciary, fairness opinion, disclosure, privilege, minutes, or formal board legal advice is requested."},
+        {"to": "Corporate Finance", "when": "The board package is internal operating or CFO reporting rather than transaction advice."},
+        {"to": "Presentations", "when": "The user specifically asks for native PPTX production or slide editing."}
+      ],
+      "clarifying_questions": [
+        "Is the board package a memo, deck, dashboard, workbook, or complete board book?",
+        "What is the posture: senior-review-ready, board-ready, or final-circulation-candidate?",
+        "Which model or source packet is controlling?"
+      ],
+      "stop_or_escalate_when": [
+        "The package would imply a fairness, legal, tax, or accounting opinion.",
+        "Material source gaps remain but the user asks for board-ready posture.",
+        "The controlling model has not been audited."
+      ]
+    },
+    {
+      "workflow_id": "fairness_committee_support",
+      "workflow_name": "Fairness committee support",
+      "banker_intent": "Support a fairness or special committee process without providing a legal fairness opinion: valuation, model tie-out, source posture, and committee-ready materials.",
+      "typical_user_prompts": [
+        "Prepare fairness committee support materials.",
+        "Build the valuation support and model tie-out for a special committee.",
+        "Help organize committee-ready fairness support without giving a fairness opinion."
+      ],
+      "lead_skill": "memo-builder",
+      "supporting_skills": [
+        "comps-valuation",
+        "dcf-model-builder",
+        "merger-model-builder",
+        "model-audit-tieout",
+        "pitch-deck-builder",
+        "ib-deck-qc",
+        "style-guide-adapter",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "pitch_deck_builder_to_ib_deck_qc",
+          "producer_skill": "pitch-deck-builder",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "Committee deck pages or valuation exhibits move to final circulation QC."
+        },
+        {
+          "contract_name": "style_guide_adapter_style_profile",
+          "producer_skill": "style-guide-adapter",
+          "consumer_skill": "memo-builder",
+          "required_when": "Committee materials must follow a specified firm, client, or precedent style."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "Committee support HTML report with valuation summary, source posture, model audit status, and open items.",
+      "companion_deliverables": [
+        "dcf_model.xlsx",
+        "merger_model.xlsx",
+        "comps_workbook.xlsx",
+        "model_audit_pack.xlsx",
+        "committee_deck_qc_report.html"
+      ],
+      "support_artifacts": [
+        "support/model_citations.json",
+        "support/source_register.csv",
+        "logs/audit_findings.json"
+      ],
+      "source_gates": [
+        "State clearly that the plugin supports banker analysis and does not issue a fairness opinion.",
+        "Tie valuation ranges to sources, model cells/ranges, assumptions, and scenario dates.",
+        "Preserve all source conflicts, model warnings, and open diligence items for committee review."
+      ],
+      "quality_gates": [
+        "Committee-ready posture requires model audit and citation validation.",
+        "Do not suppress unfavorable sensitivities, unresolved source conflicts, or open diligence issues.",
+        "Deck/report outputs must pass final QC before being called final-circulation-candidate."
+      ],
+      "routing_triggers": [
+        "fairness committee",
+        "special committee",
+        "valuation support",
+        "fairness support",
+        "committee-ready valuation",
+        "model tie-out"
+      ],
+      "do_not_route_when": [
+        "The user asks for a fairness opinion.",
+        "The task is purely legal or fiduciary advice.",
+        "The request is only a standard M&A model without committee posture."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "The prompt asks for fiduciary, fairness opinion, committee process, privilege, or legal advice."},
+        {"to": "Presentations", "when": "The user asks for native deck production or detailed slide editing."},
+        {"to": "Public Markets", "when": "The request is public-equity research rather than transaction committee support."}
+      ],
+      "clarifying_questions": [
+        "Is this valuation support, committee memo, deck, model audit, or a complete committee package?",
+        "What source/model should control the valuation range?",
+        "Is the intended posture committee-ready or only senior-review-ready?"
+      ],
+      "stop_or_escalate_when": [
+        "The user asks for a fairness opinion or legal conclusion.",
+        "Model/source support is missing for material valuation ranges.",
+        "The committee package needs final circulation but deck/model QC has not run."
+      ]
+    },
+    {
+      "workflow_id": "restructuring_pitch",
+      "workflow_name": "Restructuring pitch",
+      "banker_intent": "Analyze a stressed or distressed capital structure, value break, creditor dynamics, recovery range, restructuring alternatives, and pitch-ready storyline.",
+      "typical_user_prompts": [
+        "Build a restructuring pitch for this issuer.",
+        "Analyze the distressed cap stack, fulcrum, recoveries, and pitch angles.",
+        "Turn this waterfall into memo and pitch inputs."
+      ],
+      "lead_skill": "distressed-recovery-waterfall",
+      "supporting_skills": [
+        "covenant-package-analyzer",
+        "capital-markets-issuance",
+        "private-credit-underwriting",
+        "pitch-deck-builder",
+        "memo-builder",
+        "ib-deck-qc",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "private_credit_underwriting_to_distressed_recovery_waterfall",
+          "producer_skill": "private-credit-underwriting",
+          "consumer_skill": "distressed-recovery-waterfall",
+          "required_when": "Lender case, downside, collateral, lien, or borrower-credit analysis becomes waterfall input."
+        },
+        {
+          "contract_name": "distressed_recovery_waterfall_to_memo_builder",
+          "producer_skill": "distressed-recovery-waterfall",
+          "consumer_skill": "memo-builder",
+          "required_when": "Recovery outputs, legal entitlement economics, plan economics, collateral/liquidation outputs, or stakeholder map move to a memo."
+        },
+        {
+          "contract_name": "distressed_recovery_waterfall_to_pitch_deck_builder",
+          "producer_skill": "distressed-recovery-waterfall",
+          "consumer_skill": "pitch-deck-builder",
+          "required_when": "Waterfall outputs are converted into pitch pages, restructuring alternatives, or stakeholder storylines."
+        },
+        {
+          "contract_name": "distressed_recovery_waterfall_to_ib_deck_qc",
+          "producer_skill": "distressed-recovery-waterfall",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "Recovery or restructuring outputs appear in a final deck/report."
+        },
+        {
+          "contract_name": "capital_markets_issuance_to_covenant_package_analyzer",
+          "producer_skill": "capital-markets-issuance",
+          "consumer_skill": "covenant-package-analyzer",
+          "required_when": "Exchange, amendment, refinancing, or covenant capacity alternatives require document review."
+        }
+      ],
+      "default_artifact_mode": "hybrid",
+      "hero_deliverable": "Recovery waterfall workbook for model-heavy work or polished standalone HTML restructuring memo for narrative or board-advice work.",
+      "companion_deliverables": [
+        "recovery_waterfall.xlsx",
+        "restructuring_pitch_outline.html",
+        "covenant_analysis_report.html",
+        "ib_deck_qc_report.html"
+      ],
+      "support_artifacts": [
+        "handoffs/*.json",
+        "support/waterfall_engine.json",
+        "support/capital_structure.csv",
+        "logs/legal_review_flags.json"
+      ],
+      "source_gates": [
+        "Separate strict legal entitlement economics, negotiated plan economics, collateral/liquidation waterfall, and enterprise-value waterfall.",
+        "Flag counsel/specialist review for lien priority, guarantees, collateral, intercreditor issues, and plan/legal assumptions.",
+        "Preserve source IDs, claim amounts, maturity wall, lien priority, collateral, guarantor, and valuation case IDs."
+      ],
+      "quality_gates": [
+        "Do not collapse recovery outputs into a single unsupported percentage range.",
+        "Recovery and fulcrum claims require source/model citations and open legal caveats.",
+        "Pitch/deck outputs must route through ib-deck-qc before final circulation."
+      ],
+      "routing_triggers": [
+        "restructuring",
+        "distressed",
+        "recovery",
+        "fulcrum",
+        "liquidation",
+        "exchange offer",
+        "amend-and-extend",
+        "creditor"
+      ],
+      "do_not_route_when": [
+        "The issuer is healthy and the request is standard DCM/LevFin advice.",
+        "The user asks for legal advice on bankruptcy, claims, liens, or plan confirmation.",
+        "The prompt is public-credit trading research rather than banking pitch work."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "Bankruptcy, lien, collateral, intercreditor, plan, or legal entitlement advice is requested."},
+        {"to": "Public Markets", "when": "The request is distressed public-credit investment research."},
+        {"to": "Private Markets", "when": "The work is private-credit IC or lender portfolio monitoring rather than IB restructuring pitch support."}
+      ],
+      "clarifying_questions": [
+        "Is the immediate output a recovery model, restructuring memo, pitch deck, covenant readout, or QC package?",
+        "Which source controls the cap stack and lien/guarantee/collateral map?",
+        "Is the analysis going to an internal team, creditors, board, client, or court-facing process?"
+      ],
+      "stop_or_escalate_when": [
+        "Legal entitlement, lien priority, collateral, or plan assumptions are uncertain but dispositive.",
+        "The package is client-ready but unresolved source/model gaps remain.",
+        "The user asks for legal advice or a bankruptcy outcome prediction."
+      ]
+    },
+    {
+      "workflow_id": "model_update",
+      "workflow_name": "Model update",
+      "banker_intent": "Refresh an existing model or build a model-ready input package while preserving source fields, assumptions, formulas, checks, and audit trail.",
+      "typical_user_prompts": [
+        "Update the model with these new financials.",
+        "Use this data-room export to refresh the model-ready financials and source-to-cell map.",
+        "Clean and spread this data, then refresh the scenarios and audit the model.",
+        "Turn these source files into model-ready inputs."
+      ],
+      "lead_skill": "financials-normalizer",
+      "supporting_skills": [
+        "excel-data-cleaner",
+        "cim-teardown",
+        "three-statement-model-builder",
+        "lbo-model-build",
+        "dcf-model-builder",
+        "merger-model-builder",
+        "model-audit-tieout",
+        "scenario-sensitivity-generator",
+        "dashboard-builder",
+        "financial-source-of-truth"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "cim_teardown_to_model_builder",
+          "producer_skill": "cim-teardown",
+          "consumer_skill": "model builders",
+          "required_when": "CIM or seller-material claims provide model assumptions, KPIs, source IDs, diligence flags, or open items."
+        }
+      ],
+      "default_artifact_mode": "workbook",
+      "hero_deliverable": "Updated or model-ready XLSX workbook with first visible tab Cover, Executive Summary, or Dashboard.",
+      "companion_deliverables": [
+        "model_audit_pack.xlsx",
+        "scenario_sensitivity_pack.xlsx",
+        "dashboard.html"
+      ],
+      "support_artifacts": [
+        "support/normalized_financials.csv",
+        "support/transformation_log.json",
+        "support/source_index.csv",
+        "logs/model_citations.json"
+      ],
+      "source_gates": [
+        "Inventory workbook tabs and source files before editing or refreshing.",
+        "Classify VDR, Datasite, data-room, CIM, and management schedules before normalizing values for model import.",
+        "Preserve existing formulas, links, tabs, and user content unless explicitly asked to change them.",
+        "Normalize source rows before model import and keep source IDs/citations on material values."
+      ],
+      "quality_gates": [
+        "Every generated workbook opens on Cover, Executive Summary, or Dashboard.",
+        "Run model-audit-tieout after material updates and before committee/client-ready output.",
+        "Support CSV/JSON transform logs are backing audit layers, not primary deliverables."
+      ],
+      "routing_triggers": [
+        "model update",
+        "refresh model",
+        "spread financials",
+        "VDR financials",
+        "Datasite export",
+        "data-room export",
+        "clean data for model",
+        "update assumptions",
+        "scenario update",
+        "tie-out"
+      ],
+      "do_not_route_when": [
+        "The task is a pure narrative memo with no model or source-data refresh.",
+        "The user asks to delete, hide, or overwrite existing workbook content without clear permission.",
+        "The request is a broad transaction workflow where model update is only one support lane."
+      ],
+      "escalation_paths": [
+        {"to": "Spreadsheets", "when": "The user asks for direct spreadsheet editing beyond the bundled script workflow."},
+        {"to": "Corporate Finance", "when": "The model is internal FP&A, budget, or operating forecast rather than transaction finance."},
+        {"to": "Private Markets", "when": "The model is sponsor IC-only with no IB process artifacts."}
+      ],
+      "clarifying_questions": [
+        "Is this a new model, an existing workbook refresh, or a model-ready input pack?",
+        "Which model type should control: three-statement, LBO, DCF, merger, comps, or sensitivity-only?",
+        "Can the workflow create a new workbook copy, or must it preserve and edit the existing file?"
+      ],
+      "stop_or_escalate_when": [
+        "Workbook preservation constraints conflict with requested edits.",
+        "Source data conflicts would materially change the model.",
+        "The user asks for irreversible workbook changes without confirmation."
+      ]
+    },
+    {
+      "workflow_id": "deal_committee",
+      "workflow_name": "Deal committee",
+      "banker_intent": "Synthesize transaction analysis into an approval-ready committee view with clear recommendation, model evidence, source posture, risks, mitigants, and next actions.",
+      "typical_user_prompts": [
+        "Prepare the deal committee package.",
+        "Turn the VDR, model, diligence, and bid log into a committee-ready transaction readout.",
+        "Turn the model, diligence, financing, and open items into a committee-ready readout.",
+        "What should the committee approve, defer, or reject?"
+      ],
+      "lead_skill": "memo-builder",
+      "supporting_skills": [
+        "cim-teardown",
+        "company-tearsheet",
+        "meeting-prep",
+        "pitch-deck-builder",
+        "model-audit-tieout",
+        "scenario-sensitivity-generator",
+        "ib-deck-qc",
+        "financial-source-of-truth",
+        "lbo-model-build",
+        "three-statement-model-builder",
+        "capital-markets-issuance",
+        "covenant-package-analyzer",
+        "private-credit-underwriting"
+      ],
+      "handoff_contracts": [
+        {
+          "contract_name": "cim_teardown_to_memo_builder",
+          "producer_skill": "cim-teardown",
+          "consumer_skill": "memo-builder",
+          "required_when": "CIM claims, diligence red flags, seller asks, or source posture support the committee narrative."
+        },
+        {
+          "contract_name": "company_tearsheet_to_memo_builder",
+          "producer_skill": "company-tearsheet",
+          "consumer_skill": "memo-builder",
+          "required_when": "Company profile facts are reused in a committee memo."
+        },
+        {
+          "contract_name": "meeting_prep_to_memo_builder",
+          "producer_skill": "meeting-prep",
+          "consumer_skill": "memo-builder",
+          "required_when": "Management, buyer, lender, or diligence meeting readouts feed committee materials."
+        },
+        {
+          "contract_name": "pitch_deck_builder_to_ib_deck_qc",
+          "producer_skill": "pitch-deck-builder",
+          "consumer_skill": "ib-deck-qc",
+          "required_when": "Committee deck pages or exhibits are prepared for final circulation."
+        }
+      ],
+      "default_artifact_mode": "html_report",
+      "hero_deliverable": "Deal committee HTML report or memo that leads with recommendation, decision request, model tie-outs, source posture, key risks, mitigants, and open items.",
+      "companion_deliverables": [
+        "model_audit_pack.xlsx",
+        "scenario_sensitivity_pack.xlsx",
+        "deal_committee_deck_outline.html",
+        "ib_deck_qc_report.html"
+      ],
+      "support_artifacts": [
+        "handoffs/*.json",
+        "support/model_citations.json",
+        "support/source_register.csv",
+        "logs/readiness_manifest.json"
+      ],
+      "source_gates": [
+        "Import analysis from owning skills rather than inventing model, diligence, financing, or covenant facts in the memo layer.",
+        "State the controlling VDR/Datasite/data-room packet, bid log, and model version when they inform the committee recommendation.",
+        "Every approval-critical number, risk, and recommendation needs source/model/assumption support.",
+        "Open diligence, financing, covenant, legal, and source gaps must be visible in the first-read artifact."
+      ],
+      "quality_gates": [
+        "Committee-ready reports must hard-fail material citation gaps.",
+        "Model-audit and scenario-sensitivity checks must be complete or explicitly partial/blocked.",
+        "Final deck/report packages require ib-deck-qc before circulation."
+      ],
+      "routing_triggers": [
+        "deal committee",
+        "approval memo",
+        "board transaction package",
+        "VDR packet",
+        "bid log",
+        "committee-ready",
+        "decision request",
+        "approve defer reject",
+        "investment committee",
+        "credit committee"
+      ],
+      "do_not_route_when": [
+        "The user asks only for one upstream workstream, such as buyer list or model build.",
+        "The request is legal board/fairness advice rather than banking committee support.",
+        "The package is an early screen and should not claim committee-ready posture."
+      ],
+      "escalation_paths": [
+        {"to": "Legal", "when": "The committee question requires legal, fiduciary, regulatory, securities, tax, or accounting conclusions."},
+        {"to": "Private Markets", "when": "The output is sponsor IC work product rather than bank deal committee material."},
+        {"to": "Corporate Finance", "when": "The committee package is internal operating approval rather than transaction execution."}
+      ],
+      "clarifying_questions": [
+        "Which committee is the audience: deal, investment, credit, board, or management committee?",
+        "What decision is requested: approve, defer, reject, authorize diligence, authorize financing, or authorize launch?",
+        "Which source/model packet controls the facts and numbers?"
+      ],
+      "stop_or_escalate_when": [
+        "The user asks for legal, tax, accounting, fairness, or fiduciary conclusions.",
+        "The requested posture is committee-ready but source/model validation is incomplete.",
+        "The route would hide open items or unresolved risks from the decision maker."
+      ]
+    }
+  ]
+}

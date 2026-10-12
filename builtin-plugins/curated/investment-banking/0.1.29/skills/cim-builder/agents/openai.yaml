@@ -1,0 +1,7 @@
+interface:
+  display_name: "CIM Builder"
+  short_description: "Build sell-side CIM materials"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $cim-builder to draft a buyer-facing CIM storyboard for a proposed sale and identify management support needed before circulation."
+policy:
+  allow_implicit_invocation: false

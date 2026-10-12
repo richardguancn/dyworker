@@ -1,0 +1,4 @@
+source_id,document,type,date,status,source_tier,coverage_notes
+S001,Credit Agreement,executed agreement,YYYY-MM-DD,operative,user_file,covenants and definitions
+S002,First Amendment,amendment,YYYY-MM-DD,operative,user_file,amends leverage covenant and EBITDA definition
+S003,Covenant Certificate,covenant certificate,YYYY-MM-DD,current,connector,latest compliance math

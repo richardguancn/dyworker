@@ -1,0 +1,7 @@
+# Source Contract
+
+Use prompt/files/apps/upstream IB outputs before asking. Priority: user model/CIM/term sheet/data room; institutional data; filings/IR/earnings/transcripts; transaction/rating/lender/industry sources; web fallback.
+
+Each material input needs provenance, label, confidence, model location, and diligence gap. Keep EBITDA bases separate; public take-privates need matched-date price, shares, net debt, guidance/consensus, and EBITDA bridge.
+
+When public transaction materials do not disclose final debt or closing sources and uses, treat debt sizing, spread/base rate, fees, amortization, revolver capacity, minimum cash and covenant definitions as assumptions rather than transaction facts. Label the resulting case as an `illustrative financing case` or `public-source screening case`; it cannot exceed `screen-grade` until those inputs are replaced or validated.

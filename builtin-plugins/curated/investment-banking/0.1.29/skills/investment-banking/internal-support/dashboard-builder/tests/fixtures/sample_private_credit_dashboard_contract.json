@@ -1,0 +1,333 @@
+{
+  "dashboard_title": "Private Credit Underwriting Dashboard",
+  "entity": "ExampleCo Software",
+  "skill": "private-credit-underwriting",
+  "decision_question": "Should the lender proceed at the proposed debt quantum, resize the facility, or decline?",
+  "posture": "committee-ready-with-caveats",
+  "issuer": {
+    "ticker": "EXCO",
+    "name": "ExampleCo Software",
+    "accent_color": "#2f6f68",
+    "identity_color": "#2f6f68"
+  },
+  "hero": {
+    "eyebrow": "Investment Banking Dashboard",
+    "headline": "Private Credit Underwriting Dashboard",
+    "dek": "Credit committee view of leverage, liquidity, covenant cushion, flags, and conditions.",
+    "callout_label": "Credit Read",
+    "callout": "Proceed only at a resized hold with explicit covenant and liquidity protections."
+  },
+  "snapshot": [
+    {
+      "label": "Net Leverage",
+      "value": "4.8x",
+      "detail": "Base case at close.",
+      "status": "watch",
+      "citation_ids": ["src_model"]
+    },
+    {
+      "label": "Liquidity",
+      "value": "$42mm",
+      "detail": "Cash plus revolver availability.",
+      "status": "positive",
+      "citation_ids": ["src_model"]
+    },
+    {
+      "label": "Covenant Cushion",
+      "value": "0.4x",
+      "detail": "Downside net leverage cushion.",
+      "status": "negative",
+      "citation_ids": ["src_model"]
+    },
+    {
+      "label": "Next Action",
+      "value": "Resize hold",
+      "detail": "Negotiate revised debt sizing.",
+      "status": "watch",
+      "citation_ids": ["src_calls"]
+    }
+  ],
+  "model_citations": [
+    {
+      "id": "model-output:base:covenant:net-leverage:close",
+      "title": "Base net leverage at close",
+      "short_label": "Model: Model!J42",
+      "type": "model_cell",
+      "quality": "model_output",
+      "workbook_path": "ExampleCo_LBO_Model.xlsx",
+      "sheet": "Model",
+      "cell": "J42",
+      "range": "J42",
+      "value": "4.8x",
+      "scenario": "base",
+      "statement": "COVENANT",
+      "section": "Covenants",
+      "line_item": "net_leverage",
+      "aliases": ["net leverage", "base net leverage", "4.8x"],
+      "notes": "Generated model output cell supporting the dashboard metric."
+    }
+  ],
+  "prepared_for": "Credit Committee / Managing Director",
+  "generated_at": "2026-05-16T12:00:00Z",
+  "currency": "USD",
+  "period": "FY2026E-LTM",
+  "model_citations_path": "sample_model_citations.json",
+  "deliverable": {
+    "render_mode": "dashboard",
+    "primary_artifact": "dashboard.html",
+    "primary_artifact_type": "HTML dashboard",
+    "hero_callout": {
+      "headline": "Private Credit Underwriting Dashboard",
+      "summary": "Credit committee view of leverage, liquidity, covenant cushion, flags, and conditions.",
+      "answer": "Proceed only at a resized hold with explicit covenant and liquidity protections.",
+      "confidence": "Medium",
+      "next_action": "Refresh customer cohort support and negotiate revised debt sizing."
+    },
+    "supporting_artifact_explanations": {
+      "human_deliverable_role": "The HTML dashboard is the reader-facing credit committee package.",
+      "json_role": "Machine-readable logs are internal audit support only.",
+      "csv_role": "CSV files, when present, are backing ledgers rather than the primary answer."
+    }
+  },
+  "sections": [
+    {
+      "id": "overview",
+      "label": "Overview",
+      "title": "Executive Overview",
+      "intro": "Credit answer, sizing pressure, and diligence gates.",
+      "modules": [
+        {
+          "type": "metric_strip",
+          "id": "credit-kpis",
+          "title": "Decision KPIs",
+          "metrics": [
+            {
+              "label": "Net leverage",
+              "value": "4.8x",
+              "tone": "watch",
+              "note": "Base case at close",
+              "citation_ids": ["model-output:base:covenant:net-leverage:close"]
+            },
+            {
+              "label": "Liquidity",
+              "value": "$42mm",
+              "tone": "positive",
+              "note": "Cash plus revolver availability",
+              "citation_ids": ["src_model"]
+            },
+            {
+              "label": "Min DSCR",
+              "value": "1.4x",
+              "tone": "watch",
+              "note": "Downside trough",
+              "citation_ids": ["src_model"]
+            },
+            {
+              "label": "Covenant cushion",
+              "value": "0.4x",
+              "tone": "negative",
+              "note": "Downside net leverage",
+              "citation_ids": ["src_model"]
+            }
+          ]
+        },
+        {
+          "type": "verdict",
+          "id": "committee-verdict",
+          "title": "Committee Verdict",
+          "posture": "Proceed at resized hold",
+          "score": "Medium confidence",
+          "tone": "watch",
+          "body": "Proceed if first-lien debt is resized by 0.5x EBITDA and the sponsor accepts a tighter liquidity covenant.",
+          "citation_ids": ["src_model"],
+          "bullets": [
+            {
+              "tone": "positive",
+              "text": "Recurring revenue and retention support the base-case cash flow profile."
+            },
+            {
+              "tone": "negative",
+              "text": "Downside covenant cushion is too thin at the requested debt quantum."
+            }
+          ]
+        },
+        {
+          "type": "flags",
+          "id": "priority-flags",
+          "title": "Priority Flags",
+          "flags": [
+            {
+              "severity": "high",
+              "title": "Downside leverage headroom",
+              "detail": "Net leverage reaches 5.6x versus a 6.0x covenant in the downside case.",
+              "citation_ids": ["src_model"],
+              "owner": "LevFin",
+              "ask": "Resize or add equity cure."
+            },
+            {
+              "severity": "medium",
+              "title": "Customer concentration",
+              "detail": "Top customer contributes 18% of ARR and contract renewal is inside diligence window.",
+              "citation_ids": ["src_calls"],
+              "owner": "Sponsor coverage",
+              "ask": "Confirm renewal terms."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "covenants",
+      "label": "Covenants",
+      "title": "Covenant and Liquidity Headroom",
+      "modules": [
+        {
+          "type": "covenant_grid",
+          "id": "headroom-grid",
+          "title": "Covenant Headroom",
+          "columns": [
+            "Metric",
+            "Base",
+            "Downside",
+            "Covenant",
+            "Headroom",
+            "Read"
+          ],
+          "rows": [
+            [
+              "Net leverage",
+              "4.8x",
+              "5.6x",
+              "6.0x",
+              "0.4x",
+              "Thin"
+            ],
+            [
+              "Interest coverage",
+              "2.8x",
+              "2.1x",
+              "2.0x",
+              "0.1x",
+              "Very thin"
+            ],
+            [
+              "Minimum liquidity",
+              "$42mm",
+              "$27mm",
+              "$25mm",
+              "$2mm",
+              "Watch"
+            ]
+          ],
+          "sticky_first_column": true,
+          "source_ids": [
+            "src_model"
+          ]
+        },
+        {
+          "type": "bar_chart",
+          "id": "liquidity-bars",
+          "title": "Liquidity by Case",
+          "data": [
+            {
+              "label": "Base",
+              "value": 42,
+              "tone": "positive"
+            },
+            {
+              "label": "Downside",
+              "value": 27,
+              "tone": "watch"
+            },
+            {
+              "label": "Hard downside",
+              "value": 18,
+              "tone": "negative"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workplan",
+      "label": "Workplan",
+      "title": "Conditions and Diligence Workplan",
+      "modules": [
+        {
+          "type": "action_register",
+          "id": "conditions-register",
+          "title": "Conditions to Proceed",
+          "actions": [
+            {
+              "action": "Refresh customer cohort bridge",
+              "owner": "Diligence lead",
+              "deadline": "T+3",
+              "status": "Open",
+              "priority": "High",
+              "citation_ids": ["src_calls"]
+            },
+            {
+              "action": "Negotiate liquidity covenant",
+              "owner": "LevFin",
+              "deadline": "Term sheet",
+              "status": "Open",
+              "priority": "High"
+            }
+          ]
+        },
+        {
+          "type": "timeline",
+          "id": "committee-path",
+          "title": "Committee Path",
+          "events": [
+            {
+              "date": "T+1",
+              "event": "Sponsor diligence call",
+              "status": "open",
+              "detail": "Confirm renewal and churn bridge."
+            },
+            {
+              "date": "T+5",
+              "event": "Final credit committee",
+              "status": "target",
+              "detail": "Return with revised sizing."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "src_model",
+      "name": "Management lender model v12",
+      "type": "model",
+      "date": "2026-05-10",
+      "url": "https://example.com/lender-model",
+      "quality": "company_provided",
+      "notes": "Received from sponsor data room."
+    },
+    {
+      "id": "src_calls",
+      "name": "Sponsor diligence calls",
+      "type": "call notes",
+      "date": "2026-05-14",
+      "quality": "banker_estimate",
+      "notes": "Banker summarized."
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "a1",
+      "label": "Base-case ARR growth",
+      "value": "18%",
+      "source_id": "src_model"
+    },
+    {
+      "id": "a2",
+      "label": "Downside churn shock",
+      "value": "+300 bps",
+      "source_id": "src_calls"
+    }
+  ]
+}

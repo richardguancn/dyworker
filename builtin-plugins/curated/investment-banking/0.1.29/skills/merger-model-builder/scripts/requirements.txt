@@ -1,0 +1,2 @@
+# The banker_formula_workbook builder uses only the Python standard library.
+# Keep this file so plugin packaging can discover that no extra install is required.

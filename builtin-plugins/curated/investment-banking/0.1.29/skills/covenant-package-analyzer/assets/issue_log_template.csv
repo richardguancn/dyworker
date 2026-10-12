@@ -1,0 +1,3 @@
+issue_id,severity,provision,clause_or_section,issue,why_it_matters,proposed_ask,fallback,owner,status
+C001,High,Consolidated EBITDA,,Uncapped run-rate savings,Could inflate leverage capacity,Cap add-backs and require support,Subcap run-rate items,credit/counsel,open
+C002,High,Investments,,Large unrestricted subsidiary basket,Permits value leakage outside guarantor group,Cap and require collateral/guaranty conditions,Enhanced reporting,credit/counsel,open

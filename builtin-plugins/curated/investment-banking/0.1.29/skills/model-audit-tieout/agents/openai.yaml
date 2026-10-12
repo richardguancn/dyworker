@@ -1,0 +1,7 @@
+interface:
+  display_name: "Model Audit Tie-out"
+  short_description: "Financial model audit and tie-out"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $model-audit-tieout to review an existing financial model for formulas, source tie-outs, assumptions, and QA issues."
+policy:
+  allow_implicit_invocation: false

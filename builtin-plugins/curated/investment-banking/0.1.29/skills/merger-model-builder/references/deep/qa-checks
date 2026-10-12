@@ -1,0 +1,61 @@
+# QA Checks
+
+Checks should be machine-computed where possible and surfaced in both `run_log.json` and `model.xlsx`.
+
+## Hard failures
+
+Hard failures make the model `not-decision-ready`.
+
+- Sources and uses do not balance.
+- Consideration mix does not sum to 100% unless explicitly overridden.
+- Stock consideration is used but PF shares cannot be calculated.
+- PF EPS cannot be calculated.
+- Accretion/dilution sensitivity directionality fails.
+- Purchase accounting bridge cannot reconcile.
+- Required source categories are missing for material transaction terms.
+- Tax rates are outside a defensible 0-100% range.
+- Shares, debt, cash, fees, or fair values are impossible or negative where they must be non-negative.
+- Required scenarios `base`, `downside`, or `upside` are missing.
+
+## Warnings
+
+Warnings lower confidence but may still allow `screen-grade` or `senior-review-ready` status.
+
+- Placeholder, assumption, estimate, or unsupported evidence labels are used for material inputs.
+- Synergies are unsupported or treated as immediate run-rate capture.
+- Integration costs are zero or excluded from adjusted EPS without clear basis.
+- One-time transaction costs are excluded from adjusted EPS; show GAAP and adjusted views separately.
+- Tax, amortization, or DTL assumptions are missing or fully model-derived.
+- Share price and share-count source dates conflict materially.
+- Financing terms are placeholders or not tied to a commitment.
+- Purchase accounting is preliminary or within measurement-period status.
+- Revenue synergies drive most of the value.
+- Deal is accretive only after synergies.
+- Deal is accretive only on adjusted EPS, not GAAP EPS.
+- Large intangible amortization add-back drives adjusted EPS.
+- Target cash available for funding may be restricted or operationally required.
+
+## Presentation And Readiness Checks
+
+- The first visible tab separately labels `Calculation integrity` and `Decision readiness`; a later checks tab alone does not satisfy this requirement.
+- An `adjusted_eps_screen` states that adjusted EPS is presented while GAAP accretion/dilution is not, and lists PPA, post-close denominator and refinancing gaps needed to upgrade the analysis.
+- Do not call a model-derived synergy benefit `disclosed` or an implied cost-to-achieve amount `disclosed`. Distinguish disclosed gross run-rate synergies, disclosed pretax net synergies when provided, disclosed or clearly labeled implied cost-to-achieve, and modeled tax effects / after-tax contribution.
+- An adjusted-EPS screen shows sensitivity for synergy realization and cost-to-achieve overrun or delayed capture, plus EPS breakeven against the selected pretax net synergy basis.
+- Calculation-integrity checks reconcile modeled after-tax synergy benefit to pretax net synergy basis times one minus the modeled tax rate, reconcile the 100% synergy-realization sensitivity to the base synergy-case adjusted EPS output, and confirm EPS breakeven is the pretax net synergy required to eliminate no-synergy dilution.
+- Do not rely on an "EPS with synergies is no worse than without synergies" comparison as the principal synergy calculation-integrity check; it is directionally expected and does not prove the bridge is correct.
+- For fixed-ratio all-stock deals, share-price sensitivity is not required for ownership or EPS denominator mechanics unless the analysis includes purchase price, fair value, PPA, collar or variable-stock exposure.
+- GAAP accretion/dilution appears only when PPA/amortization, integration-cost treatment, financing effects and denominator support are complete enough for the stated posture.
+- Render and inspect the first visible tab, ownership, EPS bridge, synergies, sensitivities and checks/readiness sheets before delivery.
+
+## Senior red flags
+
+Surface these in the report when relevant:
+
+- The model shows EPS accretion but the source of accretion is mainly leverage, tax, amortization add-backs, or share issuance math.
+- Synergy breakeven is close to or above management's announced synergy case.
+- Downside case becomes dilutive or loses meaningful ownership/control credibility.
+- The purchase accounting bridge produces unusually high goodwill relative to consideration.
+- Financing fees, lost interest, or target debt refinancing are omitted.
+- Integration costs are excluded from all decision metrics.
+- NOLs, tax basis step-up, contingent consideration, CVRs, or replacement awards are ignored despite deal relevance.
+- Industry-specific metrics are missing: TBV earnback for banks, FFO/AFFO for REITs, ARR/churn/deferred revenue for SaaS, statutory capital for insurance, reserves/PV-10 for E&P, pipeline milestones for biotech.

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "model-output:base-returns-irr-fy2030",
+    "title": "Base IRR",
+    "short_label": "Model: Model!I332",
+    "type": "model_cell",
+    "quality": "model_output",
+    "workbook_path": "ExampleCo_LBO_Model.xlsx",
+    "sheet": "Model",
+    "cell": "I332",
+    "range": "I332",
+    "value": "20.2%",
+    "scenario": "base",
+    "statement": "RETURNS",
+    "section": "Returns",
+    "line_item": "irr",
+    "aliases": ["base irr", "irr", "20.2%"],
+    "notes": "Generated model output cell supporting the dashboard metric."
+  }
+]

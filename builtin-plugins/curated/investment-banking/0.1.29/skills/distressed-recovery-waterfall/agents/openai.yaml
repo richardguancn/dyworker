@@ -1,0 +1,7 @@
+interface:
+  display_name: "Distressed Recovery Waterfall"
+  short_description: "Distressed recovery waterfall models"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $distressed-recovery-waterfall to analyze debt recoveries, fulcrum value, claim stacks, or restructuring alternatives."
+policy:
+  allow_implicit_invocation: false

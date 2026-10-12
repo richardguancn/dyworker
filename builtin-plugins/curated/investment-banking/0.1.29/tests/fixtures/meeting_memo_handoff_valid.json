@@ -1,0 +1,47 @@
+{
+  "contract_name": "meeting_prep_to_memo_builder",
+  "memo_package": {
+    "package_type": "post_meeting_debrief",
+    "meeting_objective": "Assess buyer interest and diligence priorities.",
+    "meeting_type": "buyer meeting",
+    "audience": "deal team",
+    "decision_needed": "Whether to advance buyer to next process step.",
+    "known_facts": [
+      "Buyer requested CIM after NDA execution."
+    ],
+    "assumptions": [
+      "NDA can be finalized this week."
+    ],
+    "priority_questions": [
+      "What diligence would change valuation?"
+    ],
+    "likely_pushbacks": [
+      "Margin durability."
+    ],
+    "answers_received": [
+      "Buyer wants customer concentration support."
+    ],
+    "new_facts": [
+      "Buyer counsel is reviewing NDA."
+    ],
+    "changed_assumptions": [
+      "Timing depends on NDA comments."
+    ],
+    "diligence_implications": [
+      "Prepare customer concentration detail."
+    ],
+    "follow_ups": [
+      "Send NDA redline to counsel."
+    ],
+    "owners": [
+      "VP1"
+    ],
+    "due_dates": [
+      "2026-05-16"
+    ],
+    "source_note": "meeting notes dated 2026-05-13",
+    "circulation_caveats": [
+      "Internal debrief only."
+    ]
+  }
+}

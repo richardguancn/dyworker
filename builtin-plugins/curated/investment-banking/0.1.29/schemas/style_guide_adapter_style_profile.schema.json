@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/style_guide_adapter_style_profile.schema.json",
+  "title": "style_guide_adapter_style_profile",
+  "description": "Canonical Investment Banking handoff contract from style-guide-adapter to cim-builder,pitch-deck-builder,ib-deck-qc.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "style_guide_adapter_style_profile"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "style_profile_id",
+        "target_style_scope",
+        "artifact_type",
+        "style_source_records",
+        "source_basis_summary",
+        "style_provenance_labels",
+        "visual_system",
+        "layout_grammar",
+        "exhibit_conventions",
+        "writing_voice",
+        "citation_and_footnote_norms",
+        "artifact_specific_rules",
+        "do_not_change_rules",
+        "style_assumptions",
+        "style_conflicts",
+        "open_style_questions",
+        "style_confidence",
+        "style_freshness_status",
+        "visual_review_status",
+        "style_limitations",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "style_profile_id": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "target_style_scope": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "artifact_type": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_source_records": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/style_source_record"
+          }
+        },
+        "source_basis_summary": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_provenance_labels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "visual_system": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "layout_grammar": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "exhibit_conventions": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "writing_voice": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "citation_and_footnote_norms": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "artifact_specific_rules": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "do_not_change_rules": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_assumptions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "style_conflicts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_style_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "style_confidence": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "style_freshness_status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "visual_review_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "needs_review",
+            "not_started",
+            "blocked",
+            "unknown",
+            "not_provided"
+          ]
+        },
+        "style_limitations": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "circulation_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/circulation_caveat"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

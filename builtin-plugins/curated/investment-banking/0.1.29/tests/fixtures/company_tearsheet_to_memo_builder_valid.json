@@ -1,0 +1,43 @@
+{
+  "contract_name": "company_tearsheet_to_memo_builder",
+  "memo_package": {
+    "contract_name": "company_tearsheet_to_memo_builder",
+    "entity_profile": "entity_profile fixture value",
+    "one_line_business_description": "one_line_business_description fixture value",
+    "business_model": "business_model fixture value",
+    "sector": "sector fixture value",
+    "ownership_status": "ownership_status fixture value",
+    "key_metrics": "key_metrics fixture value",
+    "recent_developments": "recent_developments fixture value",
+    "source_as_of_dates": [
+      {
+        "label": "source_as_of_dates",
+        "description": "source_as_of_dates fixture detail",
+        "status": "needs_review"
+      }
+    ],
+    "fact_vs_assumption_labels": "fact_vs_assumption_labels fixture value",
+    "risks_and_gaps": [
+      {
+        "label": "risks_and_gaps",
+        "description": "risks_and_gaps fixture detail",
+        "status": "needs_review"
+      }
+    ],
+    "open_questions": [
+      {
+        "label": "open_questions",
+        "description": "open_questions fixture detail",
+        "status": "needs_review"
+      }
+    ],
+    "recommended_next_step": "recommended_next_step fixture value",
+    "circulation_caveats": [
+      {
+        "caveat": "Fixture only",
+        "impact": "Do not circulate externally",
+        "owner": "VP"
+      }
+    ]
+  }
+}

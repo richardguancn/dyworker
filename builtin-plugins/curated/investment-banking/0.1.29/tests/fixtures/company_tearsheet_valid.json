@@ -1,0 +1,31 @@
+{
+  "entity": "Acme Corp",
+  "profile_type": "company",
+  "as_of_date": "2026-05-13",
+  "sources": [
+    {
+      "source_id": "S1",
+      "source_name": "Management presentation",
+      "source_type": "user_provided",
+      "as_of_date": "2026-05-01"
+    }
+  ],
+  "metrics": [
+    {
+      "metric": "Revenue",
+      "period": "FY2025",
+      "value": 100,
+      "units": "USD millions",
+      "source": "S1",
+      "evidence": "fact_source_reported",
+      "confidence": "high"
+    }
+  ],
+  "sections": {
+    "one_line_view": "Acme Corp is a source-backed example company for validator coverage.",
+    "business_snapshot": [
+      "Example business snapshot."
+    ]
+  },
+  "data_quality_flags": []
+}

@@ -1,0 +1,132 @@
+{
+  "dashboard_title": "Citation UX Smoke Dashboard",
+  "entity": "ExampleCo",
+  "skill": "dashboard-builder",
+  "generated_at": "2026-05-17T00:00:00Z",
+  "citation_policy": "strict",
+  "issuer": {
+    "ticker": "EX",
+    "name": "ExampleCo",
+    "accent_color": "#245f5a",
+    "identity_color": "#245f5a"
+  },
+  "hero": {
+    "eyebrow": "Investment Banking Dashboard",
+    "headline": "Citation UX Smoke Dashboard",
+    "dek": "Renderer smoke test for inline source behavior.",
+    "callout_label": "Citation Read",
+    "callout": "Numbers should cite themselves while non-numeric claims stay quiet.",
+    "citation_ids": ["S1"]
+  },
+  "snapshot": [
+    {
+      "label": "Cited numeric metric",
+      "value": "$15.0B",
+      "detail": "Field-level source support.",
+      "status": "positive",
+      "citation_ids": ["S1"]
+    },
+    {
+      "label": "External date",
+      "value": "June 30, 2026",
+      "detail": "External-only fallback object should open in a new window.",
+      "status": "watch",
+      "source_url": "https://example.com/external-closing-calendar",
+      "source_title": "External closing calendar",
+      "as_of": "2026-05-17",
+      "excerpt": "Example external-only citation preview."
+    }
+  ],
+  "report_body": [
+    {
+      "id": "analysis",
+      "title": "Analysis",
+      "citation_ids": ["S2"],
+      "body": [
+        {
+          "text": "Management has committed to the diligence timeline.",
+          "citation_ids": ["S2"]
+        },
+        "The proposal references $15.0B of consideration [S1] and requires board-level confirmation."
+      ],
+      "bullets": [
+        {
+          "text": "Non-numeric claim uses a compact source chip.",
+          "citation_ids": ["S2"]
+        }
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "summary",
+      "label": "Summary",
+      "title": "Summary",
+      "modules": [
+        {
+          "type": "metric_strip",
+          "id": "citation-metrics",
+          "title": "Citation Metrics",
+          "metrics": [
+            {
+              "label": "Transaction value",
+              "value": "$15.0B",
+              "note": "Numeric value should be the citation link.",
+              "citation_ids": ["S1"]
+            },
+            {
+              "label": "External timing",
+              "value": "June 30, 2026",
+              "note": "External fallback link.",
+              "source_url": "https://example.com/external-closing-calendar",
+              "source_title": "External closing calendar",
+              "as_of": "2026-05-17",
+              "excerpt": "Example external-only citation preview."
+            }
+          ]
+        },
+        {
+          "type": "verdict",
+          "id": "section-sources-card",
+          "title": "Section Source Note",
+          "body": "The same sources support this whole card.",
+          "citation_ids": ["S1", "S2"]
+        },
+        {
+          "type": "table",
+          "id": "row-citation-table",
+          "title": "Row-Level Citation Table",
+          "columns": ["Metric", "Value", "Read"],
+          "rows": [
+            {
+              "Metric": "Transaction value",
+              "Value": "$15.0B",
+              "Read": "Board package estimate",
+              "citation_ids": ["S1"]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "S1",
+      "title": "ExampleCo board package",
+      "url": "https://example.com/board-package",
+      "date": "2026-05-16",
+      "type": "Board package",
+      "quality": "company_provided",
+      "excerpt": "Transaction value support."
+    },
+    {
+      "id": "S2",
+      "title": "Management diligence call notes",
+      "url": "https://example.com/call-notes",
+      "date": "2026-05-17",
+      "type": "Call notes",
+      "quality": "banker_estimate",
+      "excerpt": "Timeline and non-numeric claim support."
+    }
+  ]
+}

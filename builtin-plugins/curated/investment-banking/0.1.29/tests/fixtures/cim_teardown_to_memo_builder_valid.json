@@ -1,0 +1,78 @@
+{
+  "contract_name": "cim_teardown_to_memo_builder",
+  "transaction_context": "transaction_context fixture value",
+  "asset_type": "asset_type fixture value",
+  "source_scope": "source_scope fixture value",
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "ic_60_second_view": "ic_60_second_view fixture value",
+  "top_claims": [
+    {
+      "label": "top_claims",
+      "description": "top_claims fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "material_red_flags": [
+    {
+      "label": "material_red_flags",
+      "description": "material_red_flags fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "underwriting_implications": [
+    {
+      "label": "underwriting_implications",
+      "description": "underwriting_implications fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "diligence_questions": [
+    {
+      "label": "diligence_questions",
+      "description": "diligence_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "seller_data_requests": [
+    {
+      "label": "seller_data_requests",
+      "description": "seller_data_requests fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "open_evidence_gaps": [
+    {
+      "label": "open_evidence_gaps",
+      "description": "open_evidence_gaps fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "management_follow_ups": [
+    {
+      "label": "management_follow_ups",
+      "description": "management_follow_ups fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "risk_mitigants": [
+    {
+      "label": "risk_mitigants",
+      "description": "risk_mitigants fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "recommended_next_step": "recommended_next_step fixture value",
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

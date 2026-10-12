@@ -1,0 +1,323 @@
+{
+  "plugin": "investment-banking",
+  "inventory_version": "2026-05-18.remaining-runtime-gaps",
+  "rows": [
+    {
+      "skill": "dashboard-builder",
+      "gap_type": "stdout_machine_readable",
+      "current_runtime": "Renderer prints JSON run log to stdout by default.",
+      "target_runtime": "Human-readable stdout by default with explicit --json-run-log for machine output.",
+      "hero_artifact": "dashboard.html or report.html",
+      "companion_artifact": "optional support audit JSON when requested",
+      "support_artifacts": [
+        "render_contract.audit.json",
+        "artifact_audit.json",
+        "run_log.json"
+      ],
+      "validator_needed": [
+        "test_cli_stdout_defaults"
+      ],
+      "eval_needed": [
+        "json_stdout_explicit_only"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "banker_operational",
+      "status": "in_progress",
+      "runtime_script": "skills/investment-banking/internal-support/dashboard-builder/scripts/render_dashboard.py",
+      "primary_test": "tests/test_cli_stdout_defaults.py",
+      "eval_prompt_ids": [
+        "dashboard-json-stdout-explicit-only"
+      ]
+    },
+    {
+      "skill": "capital-markets-issuance",
+      "gap_type": "stdout_machine_readable",
+      "current_runtime": "Issuance math prints calculation JSON even when workbook/report are generated.",
+      "target_runtime": "Human summary by default; JSON only with --json-run-log.",
+      "hero_artifact": "financing_alternatives.xlsx",
+      "companion_artifact": "Standalone HTML financing recommendation when created by the owning skill.",
+      "support_artifacts": [
+        "support/issuance_math.json"
+      ],
+      "validator_needed": [
+        "test_cli_stdout_defaults"
+      ],
+      "eval_needed": [
+        "capital_markets_human_stdout"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "in_progress",
+      "runtime_script": "skills/capital-markets-issuance/scripts/issuance_math.py",
+      "primary_test": "tests/test_cli_stdout_defaults.py",
+      "eval_prompt_ids": [
+        "capital-markets-json-stdout-explicit-only"
+      ]
+    },
+    {
+      "skill": "scenario-sensitivity-generator",
+      "gap_type": "stdout_machine_readable",
+      "current_runtime": "Materializer prints JSON summary after creating the workbook-first sensitivity scaffold.",
+      "target_runtime": "Human summary by default; JSON only with --json-run-log.",
+      "hero_artifact": "sensitivity_pack.xlsx",
+      "companion_artifact": "Standalone HTML sensitivity summary only when explicitly requested by the owning skill.",
+      "support_artifacts": [
+        "support/*.csv",
+        "logs/pack_manifest.json"
+      ],
+      "validator_needed": [
+        "test_cli_stdout_defaults"
+      ],
+      "eval_needed": [
+        "scenario_pack_human_stdout"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "in_progress",
+      "runtime_script": "skills/scenario-sensitivity-generator/scripts/materialize_sensitivity_pack.py",
+      "primary_test": "tests/test_cli_stdout_defaults.py",
+      "eval_prompt_ids": [
+        "scenario-sensitivity-json-stdout-explicit-only"
+      ]
+    },
+    {
+      "skill": "dcf-model-builder",
+      "gap_type": "model_citation_missing",
+      "current_runtime": "Workbook and formula workbook exist; deterministic scripts do not emit model_citations.json.",
+      "target_runtime": "Emit workbook/sheet/cell/range citation ledger beside every model workbook.",
+      "hero_artifact": "model.xlsx or banker_formula_workbook.xlsx",
+      "companion_artifact": "standalone HTML valuation summary when explicitly requested",
+      "support_artifacts": [
+        "model_citations.json",
+        "run_log.json",
+        "plan.json"
+      ],
+      "validator_needed": [
+        "validate_model_citations.py"
+      ],
+      "eval_needed": [
+        "model_citation_ledger"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "planned",
+      "runtime_script": "skills/dcf-model-builder/scripts/run_pipeline.py",
+      "primary_test": "tests/test_model_builder_manifests.py",
+      "eval_prompt_ids": [
+        "dcf-model-citations"
+      ]
+    },
+    {
+      "skill": "three-statement-model-builder",
+      "gap_type": "model_citation_missing",
+      "current_runtime": "Workbook and formula workbook exist; deterministic scripts do not emit model_citations.json.",
+      "target_runtime": "Emit workbook/sheet/cell/range citation ledger beside every model workbook.",
+      "hero_artifact": "model.xlsx or banker_formula_workbook.xlsx",
+      "companion_artifact": "standalone HTML operating-model summary only where explicitly requested",
+      "support_artifacts": [
+        "model_citations.json",
+        "run_log.json",
+        "plan.json"
+      ],
+      "validator_needed": [
+        "validate_model_citations.py"
+      ],
+      "eval_needed": [
+        "model_citation_ledger"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "planned",
+      "runtime_script": "skills/three-statement-model-builder/scripts/run_pipeline.py",
+      "primary_test": "tests/test_model_builder_manifests.py",
+      "eval_prompt_ids": [
+        "three-statement-model-citations"
+      ]
+    },
+    {
+      "skill": "merger-model-builder",
+      "gap_type": "model_citation_missing",
+      "current_runtime": "Workbook and formula workbook exist; deterministic scripts do not emit model_citations.json.",
+      "target_runtime": "Emit workbook/sheet/cell/range citation ledger beside every model workbook.",
+      "hero_artifact": "model.xlsx or banker_formula_workbook.xlsx",
+      "companion_artifact": "dashboard-builder report where requested",
+      "support_artifacts": [
+        "model_citations.json",
+        "run_log.json",
+        "plan.json"
+      ],
+      "validator_needed": [
+        "validate_model_citations.py"
+      ],
+      "eval_needed": [
+        "model_citation_ledger"
+      ],
+      "priority": "P0",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "planned",
+      "runtime_script": "skills/merger-model-builder/scripts/run_pipeline.py",
+      "primary_test": "tests/test_model_builder_manifests.py",
+      "eval_prompt_ids": [
+        "merger-model-citations"
+      ]
+    },
+    {
+      "skill": "deal-process-tracker",
+      "gap_type": "runtime_missing",
+      "current_runtime": "Skill guidance only; no deterministic tracker builder.",
+      "target_runtime": "Create Dashboard-first XLSX tracker with buyer master, outreach, bid grid, diligence tracker, open items, aging, sources and MD summary; route narrative HTML requests to memo-builder.",
+      "hero_artifact": "deal_process_tracker.xlsx",
+      "companion_artifact": "none by default; narrative HTML belongs to memo-builder",
+      "support_artifacts": [
+        "support/intake.json",
+        "manifest.json"
+      ],
+      "validator_needed": [
+        "banker_runtime_readiness"
+      ],
+      "eval_needed": [
+        "deal_process_tracker_artifact"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "fixed",
+      "runtime_script": "skills/deal-process-tracker/scripts/build_process_tracker.py",
+      "primary_test": "tests/test_runtime_light_builders.py",
+      "eval_prompt_ids": [
+        "deal-process-tracker-runtime"
+      ]
+    },
+    {
+      "skill": "meeting-prep",
+      "gap_type": "runtime_missing",
+      "current_runtime": "Skill guidance only; can degrade to chat/Markdown.",
+      "target_runtime": "Create HTML/DOCX-style meeting prep packet with MD brief, attendee map, objections, do-not-say, and follow-up tracker.",
+      "hero_artifact": "meeting_prep_packet.html",
+      "companion_artifact": "follow_up_tracker.xlsx",
+      "support_artifacts": [
+        "support/intake.json",
+        "manifest.json"
+      ],
+      "validator_needed": [
+        "banker_runtime_readiness"
+      ],
+      "eval_needed": [
+        "meeting_prep_artifact"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "fixed",
+      "runtime_script": "skills/meeting-prep/scripts/build_meeting_prep_packet.py",
+      "primary_test": "tests/test_runtime_light_builders.py",
+      "eval_prompt_ids": [
+        "meeting-prep-runtime"
+      ]
+    },
+    {
+      "skill": "memo-builder",
+      "gap_type": "runtime_missing",
+      "current_runtime": "Strong synthesis guidance but no concrete render script/native document path.",
+      "target_runtime": "Create standalone HTML internal memo with optional DOCX companion and keep support/control artifacts out of the first read.",
+      "hero_artifact": "investment_memo.html",
+      "companion_artifact": "investment_memo.docx",
+      "support_artifacts": [
+        "support/memo_plan.json",
+        "manifest.json"
+      ],
+      "validator_needed": [
+        "banker_runtime_readiness",
+        "source_gate"
+      ],
+      "eval_needed": [
+        "memo_builder_artifact"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "fixed",
+      "runtime_script": "skills/memo-builder/scripts/build_memo_package.py",
+      "primary_test": "tests/test_runtime_light_builders.py",
+      "eval_prompt_ids": [
+        "memo-builder-runtime"
+      ]
+    },
+    {
+      "skill": "comps-valuation",
+      "gap_type": "runtime_missing",
+      "current_runtime": "No deterministic lightweight comps table/report adapter.",
+      "target_runtime": "Create comps summary HTML and workbook from supplied data.",
+      "hero_artifact": "comps_analysis_report.html",
+      "companion_artifact": "comps_workbook.xlsx",
+      "support_artifacts": [
+        "support/source_comps.csv",
+        "manifest.json"
+      ],
+      "validator_needed": [
+        "banker_runtime_readiness"
+      ],
+      "eval_needed": [
+        "comps_analysis_artifact"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "fixed",
+      "runtime_script": "skills/comps-valuation/scripts/build_comps_report.py",
+      "primary_test": "tests/test_runtime_light_builders.py",
+      "eval_prompt_ids": [
+        "comps-valuation-runtime"
+      ]
+    },
+    {
+      "skill": "covenant-package-analyzer",
+      "gap_type": "pdf_ocr_missing",
+      "current_runtime": "Text/DOCX scanning exists; PDF/OCR is blocked or manual.",
+      "target_runtime": "Shared document ingestion marks PDF text confidence and OCR-required status; senior-ready blocked on weak extraction.",
+      "hero_artifact": "covenant_analysis_report.html",
+      "companion_artifact": "covenant_headroom.xlsx",
+      "support_artifacts": [
+        "support/extracted_terms.csv",
+        "logs/extraction_quality.json"
+      ],
+      "validator_needed": [
+        "document_ingestion",
+        "source_gate"
+      ],
+      "eval_needed": [
+        "covenant_pdf_ocr_gate"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "planned",
+      "runtime_script": "shared/document_ingestion.py",
+      "primary_test": "tests/test_document_ingestion_and_source_gate.py",
+      "eval_prompt_ids": [
+        "covenant-pdf-ocr-gate"
+      ]
+    },
+    {
+      "skill": "ib-deck-qc",
+      "gap_type": "visual_review_missing",
+      "current_runtime": "Standalone HTML QC report and first-pass extraction are defined; deterministic rendered slide/page visual review is not yet first-class.",
+      "target_runtime": "Standalone HTML circulation report with visual-review status, image-only page flags, compact page evidence, and circulation downgrade when screenshots/PDF/page review are missing.",
+      "hero_artifact": "ib_deck_qc_report.html",
+      "companion_artifact": "annotated_deck_or_comments_package",
+      "support_artifacts": [
+        "support/page_inventory.csv",
+        "logs/visual_review.json"
+      ],
+      "validator_needed": [
+        "visual_review_gate"
+      ],
+      "eval_needed": [
+        "deck_qc_visual_gate"
+      ],
+      "priority": "P1",
+      "runtime_maturity": "deterministic_human_artifact",
+      "status": "planned",
+      "runtime_script": "skills/ib-deck-qc/scripts/inspect_deck_report.py",
+      "primary_test": "tests/test_document_ingestion_and_source_gate.py",
+      "eval_prompt_ids": [
+        "ib-deck-qc-visual-gate"
+      ]
+    }
+  ]
+}

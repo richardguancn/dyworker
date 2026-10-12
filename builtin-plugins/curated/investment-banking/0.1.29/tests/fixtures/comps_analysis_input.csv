@@ -1,0 +1,4 @@
+company,ticker,enterprise_value,revenue,ebitda,net_income,equity_value,as_of_date
+AlphaCo,ALP,1000,200,50,30,900,2026-05-18
+BetaCo,BET,800,180,-10,20,760,
+GammaCo,GAM,1200,240,60,40,1100,2026-05-18

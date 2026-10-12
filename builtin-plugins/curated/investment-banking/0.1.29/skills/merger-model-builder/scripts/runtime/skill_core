@@ -1,0 +1,1423 @@
+"""Deterministic merger model engine.
+
+Design goals:
+- standard-library only
+- no network calls
+- no hidden randomness
+- pure calculation functions where practical
+- deterministic XLSX and markdown artifacts
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import math
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from xml.sax.saxutils import escape
+
+ALLOWED_STATUS = {"decision-grade", "senior-review-ready", "screen-grade", "not-decision-ready", "blocked"}
+REQUIRED_SOURCE_CATEGORIES = {"financials", "share_count", "offer_terms", "financing", "synergies", "purchase_accounting"}
+LOW_CONFIDENCE_LABELS = {"estimate", "assumption", "placeholder", "unsupported"}
+HIGH_CONFIDENCE_LABELS = {"signed_agreement", "filed", "audited", "reviewed", "vdr", "financing_commitment", "accounting_memo", "tax_memo"}
+PARTIAL_CONTEXT_WARNING = "Screen-grade only; placeholder assumptions used."
+TOLERANCE = 1e-4
+
+MATERIAL_INPUT_REQUIREMENTS = [
+    {
+        "item": "Acquirer standalone financials and market data",
+        "categories": ["financials", "share_count"],
+        "paths": ["acquirer.share_price", "acquirer.diluted_shares", "acquirer.cash", "acquirer.debt", "acquirer.net_income", "acquirer.eps"],
+        "why_needed": "Needed to calculate standalone EPS, pro forma share issuance, lost cash interest, financing capacity, and ownership dilution.",
+        "fallback_method": "Use the latest user-provided or filing/consensus acquirer case; if unavailable, use a clearly labeled placeholder case from the facts provided.",
+    },
+    {
+        "item": "Target standalone financials",
+        "categories": ["financials", "share_count"],
+        "paths": ["target.offer_price", "target.diluted_shares", "target.cash", "target.debt", "target.book_equity", "target.net_income", "target.standalone_ebitda"],
+        "why_needed": "Needed for equity value, transaction enterprise value, target earnings contribution, leverage context, and purchase accounting bridge support.",
+        "fallback_method": "Use VDR, CIM, or user-provided target metrics; if unavailable, estimate from supplied offer terms and label the assumption as placeholder.",
+    },
+    {
+        "item": "Offer terms and consideration mix",
+        "categories": ["offer_terms"],
+        "paths": ["transaction.offer_price", "consideration.cash_percent", "consideration.stock_percent", "consideration.other_percent"],
+        "why_needed": "Needed to size cash/stock consideration, premium, shares issued, sources and uses, and pro forma ownership.",
+        "fallback_method": "Use the terms stated by the user; if a term is absent, infer only from the provided transaction description and label it as placeholder.",
+    },
+    {
+        "item": "Financing terms",
+        "categories": ["financing"],
+        "paths": ["financing.new_debt", "financing.cash_used", "financing.debt_interest_rate", "financing.lost_cash_interest_rate", "transaction.fees.financing_fees"],
+        "why_needed": "Needed to calculate new interest expense, lost interest income, fee amortization, cash funding, and EPS accretion/dilution.",
+        "fallback_method": "Use commitment papers or current financing guidance; if unavailable, use a best-estimate financing case based on the supplied mix and label it as placeholder.",
+    },
+    {
+        "item": "Purchase accounting and tax assumptions",
+        "categories": ["purchase_accounting"],
+        "paths": ["purchase_accounting.target_book_equity", "purchase_accounting.intangible_assets", "purchase_accounting.ppe_step_up", "purchase_accounting.deferred_tax_rate", "transaction.tax_rate"],
+        "why_needed": "Needed for goodwill, identifiable intangibles, DTL, amortization, depreciation, GAAP EPS, and adjusted EPS bridge.",
+        "fallback_method": "Use accounting/tax memo inputs where available; if unavailable, estimate PPA buckets from deal value and clearly flag preliminary/provisional treatment.",
+    },
+    {
+        "item": "Synergies, dis-synergies, and integration costs",
+        "categories": ["synergies"],
+        "paths": ["synergies.cost_synergies", "synergies.revenue_synergies", "synergies.dis_synergies", "synergies.integration_costs", "synergies.revenue_synergy_margin", "synergies.realization_basis"],
+        "why_needed": "Needed to distinguish true operating improvement from accounting/financing effects and to calculate synergy breakeven.",
+        "fallback_method": "Use management/integration workplan inputs; if unavailable, build a conservative placeholder ramp from user facts and test zero-synergy downside.",
+    },
+]
+
+
+def load_json(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text())
+
+
+def write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, sort_keys=False))
+
+
+def as_float(value: Any, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    return float(value)
+
+
+def as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+def clamp_rate(rate: float) -> float:
+    return max(0.0, min(1.0, rate))
+
+
+def pct(x: Optional[float]) -> str:
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/a"
+    return f"{x * 100:.1f}%"
+
+
+def money(x: Optional[float], units: str = "") -> str:
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/a"
+    return f"{x:,.1f}{' ' + units if units else ''}"
+
+
+def period_value(mapping: Dict[str, Any], period: str, default: float = 0.0) -> float:
+    if not isinstance(mapping, dict):
+        return default
+    if period in mapping and mapping[period] is not None:
+        return float(mapping[period])
+    # fallback to exact year extraction when keys are FY2026E vs 2026
+    digits = "".join(ch for ch in period if ch.isdigit())
+    for key in (digits, f"FY{digits}", f"FY{digits}E"):
+        if key in mapping and mapping[key] is not None:
+            return float(mapping[key])
+    return default
+
+
+def value_at_path(obj: Dict[str, Any], path: str) -> Any:
+    cur: Any = obj
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def has_material_value(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, dict):
+        return bool(value) and any(has_material_value(v) for v in value.values())
+    if isinstance(value, list):
+        return bool(value) and any(has_material_value(v) for v in value)
+    return True
+
+
+def path_is_satisfied(plan: Dict[str, Any], path: str) -> bool:
+    if has_material_value(value_at_path(plan, path)):
+        return True
+    if path in {"transaction.offer_price", "target.offer_price"}:
+        return has_material_value(value_at_path(plan, "transaction.equity_purchase_price"))
+    return False
+
+
+def get_periods(plan: Dict[str, Any]) -> List[str]:
+    periods = plan.get("periods") or []
+    if not isinstance(periods, list) or not periods:
+        raise ValueError("plan.periods must be a non-empty list")
+    return [str(p) for p in periods]
+
+
+def source_labels_for_category(plan: Dict[str, Any], category: str) -> List[str]:
+    labels: List[str] = []
+    for src in plan.get("source_basis", []) or []:
+        cats = src.get("categories", []) if isinstance(src, dict) else []
+        if category in cats:
+            labels.append(str(src.get("label", "")))
+    return labels
+
+
+def source_ids_for_category(plan: Dict[str, Any], category: str) -> List[str]:
+    ids: List[str] = []
+    for src in plan.get("source_basis", []) or []:
+        cats = src.get("categories", []) if isinstance(src, dict) else []
+        if category in cats:
+            ids.append(str(src.get("id", "")))
+    return ids
+
+
+def primary_source_label(plan: Dict[str, Any], category: str) -> str:
+    labels = source_labels_for_category(plan, category)
+    return labels[0] if labels else "missing"
+
+
+def primary_source_id(plan: Dict[str, Any], category: str) -> str:
+    ids = source_ids_for_category(plan, category)
+    return ids[0] if ids else "missing"
+
+
+def normalize_plan(plan: Dict[str, Any], skill_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Return a normalized deep copy. Do not invent conclusion-changing defaults."""
+    out = copy.deepcopy(plan)
+    out.setdefault("meta", {})
+    out["meta"].setdefault("currency", "USD")
+    out["meta"].setdefault("units", "USD_mm")
+    out["meta"].setdefault("accounting_basis", "unknown")
+    out.setdefault("source_basis", [])
+    out.setdefault("sensitivities", {})
+
+    # Ensure fee fields exist with zeros only inside an already provided fees block.
+    fees = out.setdefault("transaction", {}).setdefault("fees", {})
+    for key in ["transaction_fees", "financing_fees", "equity_issuance_fees", "debt_tender_premiums", "bridge_fees", "consent_fees", "break_fees", "transfer_taxes"]:
+        fees.setdefault(key, 0.0)
+
+    # Ensure optional fair-value fields have explicit numeric zeros; these do not change the conclusion unless supplied.
+    ppa = out.setdefault("purchase_accounting", {})
+    for key in ["existing_goodwill", "ppe_step_up", "inventory_step_up", "other_fair_value_adjustments", "deferred_revenue_adjustment", "nci_fair_value", "previously_held_interest_fair_value", "contingent_consideration_fair_value"]:
+        ppa.setdefault(key, 0.0)
+    ppa.setdefault("intangible_assets", [])
+
+    # Normalize optional boolean flags.
+    tx = out.setdefault("transaction", {})
+    tx.setdefault("allow_unbalanced_consideration_mix", False)
+    tx.setdefault("include_transaction_fees_in_gaap_eps", True)
+    tx.setdefault("transaction_expense_tax_deductible", True)
+
+    cons = out.setdefault("consideration", {})
+    cons.setdefault("other_consideration_value", 0.0)
+
+    syn = out.setdefault("synergies", {})
+    syn.setdefault("revenue_synergy_margin", 0.0)
+    syn.setdefault("integration_costs_excluded_from_adjusted_eps", True)
+
+    return out
+
+
+def build_timeline(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [{"index": i, "period": p} for i, p in enumerate(get_periods(plan))]
+
+
+def scenario_config(plan: Dict[str, Any], scenario_name: str) -> Dict[str, Any]:
+    cfg = copy.deepcopy((plan.get("scenarios") or {}).get(scenario_name, {}))
+    defaults = {
+        "description": scenario_name,
+        "acquirer_net_income_factor": 1.0,
+        "target_net_income_factor": 1.0,
+        "target_ebitda_factor": 1.0,
+        "synergy_factor": 1.0,
+        "dis_synergy_factor": 1.0,
+        "integration_cost_factor": 1.0,
+        "debt_rate_delta": 0.0,
+        "tax_rate_delta": 0.0,
+        "purchase_price_factor": 1.0,
+        "share_price_factor": 1.0,
+        "cash_percent_override": None,
+    }
+    defaults.update({k: v for k, v in cfg.items() if v is not None})
+    return defaults
+
+
+def validate_consideration_mix(plan: Dict[str, Any], scenario: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+    cons = plan.get("consideration", {})
+    other_pct = as_float(cons.get("other_percent"), 0.0)
+    if scenario and scenario.get("cash_percent_override") is not None:
+        cash_pct = as_float(scenario.get("cash_percent_override"), 0.0)
+        stock_pct = max(0.0, 1.0 - cash_pct - other_pct)
+    else:
+        cash_pct = as_float(cons.get("cash_percent"), 0.0)
+        stock_pct = as_float(cons.get("stock_percent"), 0.0)
+    return {"cash_percent": cash_pct, "stock_percent": stock_pct, "other_percent": other_pct, "mix_sum": cash_pct + stock_pct + other_pct}
+
+
+def target_equity_purchase_price(plan: Dict[str, Any], scenario: Dict[str, Any]) -> float:
+    tx = plan.get("transaction", {})
+    tgt = plan.get("target", {})
+    explicit = tx.get("equity_purchase_price")
+    if explicit is not None:
+        base = float(explicit)
+    else:
+        offer = float(tx.get("offer_price") if tx.get("offer_price") is not None else tgt.get("offer_price"))
+        base = offer * float(tgt.get("diluted_shares"))
+    return base * as_float(scenario.get("purchase_price_factor"), 1.0)
+
+
+def compute_sources_uses(plan: Dict[str, Any], scenario_name: str = "base") -> Dict[str, Any]:
+    scenario = scenario_config(plan, scenario_name)
+    tgt = plan.get("target", {})
+    tx = plan.get("transaction", {})
+    cons = plan.get("consideration", {})
+    fin = plan.get("financing", {})
+    fees = tx.get("fees", {})
+    mix = validate_consideration_mix(plan, scenario)
+
+    equity_value = target_equity_purchase_price(plan, scenario)
+    cash_consideration = equity_value * mix["cash_percent"]
+    stock_consideration = equity_value * mix["stock_percent"]
+    other_consideration = equity_value * mix["other_percent"] + as_float(cons.get("other_consideration_value"), 0.0)
+
+    target_debt = as_float(tgt.get("debt"), 0.0)
+    target_cash = as_float(tgt.get("cash"), 0.0)
+    required_min_cash = as_float(tx.get("required_min_cash"), 0.0)
+    target_cash_used = max(target_cash - required_min_cash, 0.0) if as_bool(fin.get("use_target_cash"), False) else 0.0
+    target_debt_refinanced = target_debt if as_bool(tx.get("refinance_target_debt"), True) else 0.0
+
+    fee_values = {k: as_float(v, 0.0) for k, v in fees.items()}
+    transaction_fees = fee_values.get("transaction_fees", 0.0)
+    financing_fees = fee_values.get("financing_fees", 0.0)
+    equity_issuance_fees = fee_values.get("equity_issuance_fees", 0.0)
+    bridge_fees = fee_values.get("bridge_fees", 0.0)
+    debt_tender_premiums = fee_values.get("debt_tender_premiums", 0.0)
+    consent_fees = fee_values.get("consent_fees", 0.0)
+    break_fees = fee_values.get("break_fees", 0.0)
+    transfer_taxes = fee_values.get("transfer_taxes", 0.0)
+
+    uses = {
+        "cash_consideration": cash_consideration,
+        "stock_consideration": stock_consideration,
+        "other_consideration": other_consideration,
+        "target_debt_refinanced": target_debt_refinanced,
+        "transaction_fees": transaction_fees,
+        "financing_fees": financing_fees,
+        "equity_issuance_fees": equity_issuance_fees,
+        "bridge_fees": bridge_fees,
+        "debt_tender_premiums": debt_tender_premiums,
+        "consent_fees": consent_fees,
+        "break_fees": break_fees,
+        "transfer_taxes": transfer_taxes,
+    }
+    sources = {
+        "new_debt": as_float(fin.get("new_debt"), 0.0),
+        "acquirer_cash_used": as_float(fin.get("cash_used"), 0.0),
+        "target_cash_used": target_cash_used,
+        "stock_consideration": stock_consideration,
+        "other_consideration": other_consideration,
+    }
+    total_uses = sum(uses.values())
+    total_sources = sum(sources.values())
+    other_debt_like = as_float(tx.get("other_debt_like_items"), 0.0)
+    transaction_ev = equity_value + target_debt + other_debt_like - target_cash
+
+    undisturbed_price = as_float(tgt.get("undisturbed_price"), 0.0)
+    offer_price = equity_value / max(as_float(tgt.get("diluted_shares"), 0.0), TOLERANCE)
+    premium = (offer_price / undisturbed_price - 1.0) if undisturbed_price > 0 else None
+
+    return {
+        "scenario": scenario_name,
+        "scenario_config": scenario,
+        "mix": mix,
+        "equity_purchase_price": equity_value,
+        "offer_price": offer_price,
+        "premium": premium,
+        "transaction_ev": transaction_ev,
+        "uses": uses,
+        "sources": sources,
+        "total_uses": total_uses,
+        "total_sources": total_sources,
+        "balance_delta": total_sources - total_uses,
+        "target_cash_used": target_cash_used,
+        "target_debt_refinanced": target_debt_refinanced,
+    }
+
+
+def compute_purchase_accounting(plan: Dict[str, Any], sources_uses: Dict[str, Any]) -> Dict[str, Any]:
+    ppa = plan.get("purchase_accounting", {})
+    tgt = plan.get("target", {})
+    target_book_equity = as_float(ppa.get("target_book_equity"), as_float(tgt.get("book_equity"), 0.0))
+    existing_goodwill = as_float(ppa.get("existing_goodwill"), 0.0)
+    intangible_assets = ppa.get("intangible_assets", []) or []
+    total_intangibles = sum(as_float(x.get("fair_value"), 0.0) for x in intangible_assets if isinstance(x, dict))
+    annual_intangible_amortization = 0.0
+    intangible_rows: List[Dict[str, Any]] = []
+    for asset in intangible_assets:
+        if not isinstance(asset, dict):
+            continue
+        fv = as_float(asset.get("fair_value"), 0.0)
+        life = as_float(asset.get("amortization_years"), 0.0)
+        amort = fv / life if life > 0 else 0.0
+        annual_intangible_amortization += amort
+        intangible_rows.append({"name": asset.get("name", "intangible"), "fair_value": fv, "life": life, "annual_amortization": amort})
+
+    ppe_step_up = as_float(ppa.get("ppe_step_up"), 0.0)
+    ppe_life = as_float(ppa.get("ppe_step_up_life"), 0.0)
+    ppe_incremental_depreciation = ppe_step_up / ppe_life if ppe_life > 0 else 0.0
+    inventory_step_up = as_float(ppa.get("inventory_step_up"), 0.0)
+    other_fv_adj = as_float(ppa.get("other_fair_value_adjustments"), 0.0)
+    deferred_revenue_adj = as_float(ppa.get("deferred_revenue_adjustment"), 0.0)
+    fair_value_stepups = total_intangibles + ppe_step_up + inventory_step_up + other_fv_adj + deferred_revenue_adj
+
+    provided_dtl = ppa.get("deferred_tax_liability")
+    dtl_rate = as_float(ppa.get("deferred_tax_rate"), 0.0)
+    deferred_tax_liability = as_float(provided_dtl) if provided_dtl is not None else max(fair_value_stepups, 0.0) * dtl_rate
+    identifiable_net_assets = target_book_equity - existing_goodwill + fair_value_stepups - deferred_tax_liability
+
+    consideration_transferred = sources_uses["equity_purchase_price"] + as_float(ppa.get("contingent_consideration_fair_value"), 0.0)
+    nci = as_float(ppa.get("nci_fair_value"), 0.0)
+    prev = as_float(ppa.get("previously_held_interest_fair_value"), 0.0)
+    goodwill = consideration_transferred + nci + prev - identifiable_net_assets
+    bridge_delta = goodwill - (consideration_transferred + nci + prev - identifiable_net_assets)
+
+    return {
+        "target_book_equity": target_book_equity,
+        "existing_goodwill": existing_goodwill,
+        "intangible_assets": intangible_rows,
+        "total_intangibles": total_intangibles,
+        "annual_intangible_amortization": annual_intangible_amortization,
+        "ppe_step_up": ppe_step_up,
+        "ppe_incremental_depreciation": ppe_incremental_depreciation,
+        "inventory_step_up": inventory_step_up,
+        "other_fair_value_adjustments": other_fv_adj,
+        "deferred_revenue_adjustment": deferred_revenue_adj,
+        "fair_value_stepups": fair_value_stepups,
+        "deferred_tax_liability": deferred_tax_liability,
+        "identifiable_net_assets": identifiable_net_assets,
+        "consideration_transferred": consideration_transferred,
+        "nci_fair_value": nci,
+        "previously_held_interest_fair_value": prev,
+        "goodwill": goodwill,
+        "bridge_delta": bridge_delta,
+        "bargain_purchase_gain": abs(goodwill) if goodwill < 0 else 0.0,
+        "measurement_period_status": ppa.get("measurement_period_status", "unknown"),
+    }
+
+
+def compute_financing_effects(plan: Dict[str, Any], sources_uses: Dict[str, Any], scenario_name: str, periods: List[str]) -> Dict[str, Any]:
+    cfg = scenario_config(plan, scenario_name)
+    fin = plan.get("financing", {})
+    tx = plan.get("transaction", {})
+    fees = tx.get("fees", {})
+    debt_rate = max(0.0, as_float(fin.get("debt_interest_rate"), 0.0) + as_float(cfg.get("debt_rate_delta"), 0.0))
+    lost_cash_rate = max(0.0, as_float(fin.get("lost_cash_interest_rate"), 0.0))
+    new_debt = sources_uses["sources"].get("new_debt", 0.0)
+    cash_used = sources_uses["sources"].get("acquirer_cash_used", 0.0) + sources_uses["sources"].get("target_cash_used", 0.0)
+    interest_expense = new_debt * debt_rate
+    lost_interest = cash_used * lost_cash_rate
+    fee_years = max(as_float(fin.get("fee_amortization_years"), 1.0), TOLERANCE)
+    financing_fee_amort = as_float(fees.get("financing_fees"), 0.0) / fee_years
+    transaction_fees = as_float(fees.get("transaction_fees"), 0.0)
+
+    per_period: Dict[str, Dict[str, float]] = {}
+    for i, period in enumerate(periods):
+        per_period[period] = {
+            "new_debt": new_debt,
+            "debt_interest_rate": debt_rate,
+            "interest_expense": interest_expense,
+            "lost_cash_interest": lost_interest,
+            "financing_fee_amortization": financing_fee_amort,
+            "transaction_fees": transaction_fees if i == 0 else 0.0,
+            "financing_drag_pretax": interest_expense + lost_interest + financing_fee_amort,
+        }
+    return {"debt_interest_rate": debt_rate, "lost_cash_interest_rate": lost_cash_rate, "fee_amortization_years": fee_years, "per_period": per_period}
+
+
+def compute_synergy_effects(plan: Dict[str, Any], scenario_name: str, periods: List[str]) -> Dict[str, Any]:
+    cfg = scenario_config(plan, scenario_name)
+    syn = plan.get("synergies", {})
+    synergy_factor = as_float(cfg.get("synergy_factor"), 1.0)
+    dis_factor = as_float(cfg.get("dis_synergy_factor"), 1.0)
+    integration_factor = as_float(cfg.get("integration_cost_factor"), 1.0)
+    tax_rate = clamp_rate(as_float(syn.get("tax_rate"), as_float(plan.get("transaction", {}).get("tax_rate"), 0.0)) + as_float(cfg.get("tax_rate_delta"), 0.0))
+    revenue_margin = as_float(syn.get("revenue_synergy_margin"), 0.0)
+    include_revenue = as_bool(syn.get("include_revenue_synergies_in_base"), True)
+
+    per_period: Dict[str, Dict[str, float]] = {}
+    for period in periods:
+        cost = period_value(syn.get("cost_synergies", {}), period, 0.0) * synergy_factor
+        revenue = period_value(syn.get("revenue_synergies", {}), period, 0.0) * synergy_factor if include_revenue else 0.0
+        revenue_contribution = revenue * revenue_margin
+        dis = period_value(syn.get("dis_synergies", {}), period, 0.0) * dis_factor
+        integration = period_value(syn.get("integration_costs", {}), period, 0.0) * integration_factor
+        net_pretax = cost + revenue_contribution - dis
+        per_period[period] = {
+            "cost_synergies": cost,
+            "revenue_synergies": revenue,
+            "revenue_synergy_contribution": revenue_contribution,
+            "dis_synergies": dis,
+            "net_pre_tax_synergies": net_pretax,
+            "integration_costs": integration,
+            "after_tax_synergy_contribution": net_pretax * (1 - tax_rate),
+            "after_tax_integration_costs": integration * (1 - tax_rate),
+            "tax_rate": tax_rate,
+        }
+    return {"tax_rate": tax_rate, "per_period": per_period}
+
+
+def compute_pro_forma_shares(plan: Dict[str, Any], sources_uses: Dict[str, Any], scenario_name: str) -> Dict[str, Any]:
+    cfg = scenario_config(plan, scenario_name)
+    acq = plan.get("acquirer", {})
+    tgt = plan.get("target", {})
+    cons = plan.get("consideration", {})
+    acq_shares = as_float(acq.get("diluted_shares"), 0.0)
+    acq_share_price = as_float(acq.get("share_price"), 0.0) * as_float(cfg.get("share_price_factor"), 1.0)
+    stock_consideration = sources_uses["uses"].get("stock_consideration", 0.0)
+    exchange_ratio = cons.get("exchange_ratio")
+    if stock_consideration <= TOLERANCE:
+        shares_issued = 0.0
+    elif exchange_ratio is not None:
+        shares_issued = as_float(tgt.get("diluted_shares"), 0.0) * as_float(exchange_ratio)
+    else:
+        shares_issued = stock_consideration / acq_share_price if acq_share_price > 0 else float("nan")
+    pf_shares = acq_shares + shares_issued if not math.isnan(shares_issued) else float("nan")
+    acq_ownership = acq_shares / pf_shares if pf_shares and not math.isnan(pf_shares) else float("nan")
+    target_ownership = shares_issued / pf_shares if pf_shares and not math.isnan(pf_shares) else float("nan")
+    return {
+        "acquirer_existing_shares": acq_shares,
+        "acquirer_share_price": acq_share_price,
+        "stock_consideration": stock_consideration,
+        "shares_issued_to_target": shares_issued,
+        "pf_diluted_shares": pf_shares,
+        "acquirer_ownership": acq_ownership,
+        "target_ownership": target_ownership,
+        "ownership_sum": acq_ownership + target_ownership if not math.isnan(acq_ownership) and not math.isnan(target_ownership) else float("nan"),
+    }
+
+
+def compute_pro_forma_net_income(plan: Dict[str, Any], scenario_name: str, ppa: Dict[str, Any], financing: Dict[str, Any], synergies: Dict[str, Any], shares: Dict[str, Any], periods: List[str]) -> Dict[str, Any]:
+    cfg = scenario_config(plan, scenario_name)
+    acq = plan.get("acquirer", {})
+    tgt = plan.get("target", {})
+    tx = plan.get("transaction", {})
+    ppa_plan = plan.get("purchase_accounting", {})
+    syn_plan = plan.get("synergies", {})
+    tax_rate = clamp_rate(as_float(tx.get("tax_rate"), synergies.get("tax_rate", 0.0)) + as_float(cfg.get("tax_rate_delta"), 0.0))
+    exclude_integration = as_bool(syn_plan.get("integration_costs_excluded_from_adjusted_eps"), True)
+    exclude_amort = as_bool(ppa_plan.get("adjusted_eps_excludes_intangible_amortization"), False)
+    include_tx_fees_gaap = as_bool(tx.get("include_transaction_fees_in_gaap_eps"), True)
+    tx_fee_deductible = as_bool(tx.get("transaction_expense_tax_deductible"), True)
+    transaction_fee_tax_effect = (1 - tax_rate) if tx_fee_deductible else 1.0
+
+    per_period: Dict[str, Dict[str, float]] = {}
+    for i, period in enumerate(periods):
+        acquirer_ni = period_value(acq.get("net_income", {}), period, 0.0) * as_float(cfg.get("acquirer_net_income_factor"), 1.0)
+        target_ni = period_value(tgt.get("net_income", {}), period, 0.0) * as_float(cfg.get("target_net_income_factor"), 1.0)
+        acquirer_eps = period_value(acq.get("eps", {}), period, 0.0)
+        if acquirer_eps == 0.0:
+            acquirer_eps = acquirer_ni / max(as_float(acq.get("diluted_shares"), 0.0), TOLERANCE)
+
+        fin_p = financing["per_period"][period]
+        syn_p = synergies["per_period"][period]
+        intangible_amort = ppa.get("annual_intangible_amortization", 0.0)
+        ppe_depr = ppa.get("ppe_incremental_depreciation", 0.0)
+        inventory_step = ppa.get("inventory_step_up", 0.0) if i == 0 else 0.0
+        purchase_accounting_pretax = intangible_amort + ppe_depr + inventory_step
+        after_tax_ppa = purchase_accounting_pretax * (1 - tax_rate)
+        after_tax_intangible_amort = intangible_amort * (1 - tax_rate)
+        after_tax_financing = fin_p["financing_drag_pretax"] * (1 - tax_rate)
+        tx_fees_after_tax = fin_p["transaction_fees"] * transaction_fee_tax_effect if include_tx_fees_gaap else 0.0
+        after_tax_synergy = syn_p["after_tax_synergy_contribution"]
+        after_tax_integration = syn_p["after_tax_integration_costs"]
+
+        pf_gaap_ni = acquirer_ni + target_ni + after_tax_synergy - after_tax_financing - after_tax_ppa - after_tax_integration - tx_fees_after_tax
+        adjusted_addbacks = 0.0
+        if exclude_integration:
+            adjusted_addbacks += after_tax_integration
+        # Transaction fees are always treated as one-time in adjusted EPS when included in GAAP.
+        adjusted_addbacks += tx_fees_after_tax
+        if exclude_amort:
+            adjusted_addbacks += after_tax_intangible_amort
+        # Inventory step-up is a one-time PPA cost; add back in adjusted view.
+        adjusted_addbacks += inventory_step * (1 - tax_rate)
+        pf_adjusted_ni = pf_gaap_ni + adjusted_addbacks
+
+        pf_shares = shares.get("pf_diluted_shares", float("nan"))
+        pf_gaap_eps = pf_gaap_ni / pf_shares if pf_shares and not math.isnan(pf_shares) else float("nan")
+        pf_adjusted_eps = pf_adjusted_ni / pf_shares if pf_shares and not math.isnan(pf_shares) else float("nan")
+        gaap_acc_dil = pf_gaap_eps / acquirer_eps - 1.0 if acquirer_eps else float("nan")
+        adjusted_acc_dil = pf_adjusted_eps / acquirer_eps - 1.0 if acquirer_eps else float("nan")
+
+        per_period[period] = {
+            "acquirer_net_income": acquirer_ni,
+            "target_net_income": target_ni,
+            "acquirer_standalone_eps": acquirer_eps,
+            "after_tax_synergy_contribution": after_tax_synergy,
+            "after_tax_financing_drag": after_tax_financing,
+            "after_tax_purchase_accounting_drag": after_tax_ppa,
+            "after_tax_integration_costs": after_tax_integration,
+            "after_tax_transaction_fees": tx_fees_after_tax,
+            "pf_gaap_net_income": pf_gaap_ni,
+            "adjusted_addbacks": adjusted_addbacks,
+            "pf_adjusted_net_income": pf_adjusted_ni,
+            "pf_diluted_shares": pf_shares,
+            "pf_gaap_eps": pf_gaap_eps,
+            "pf_adjusted_eps": pf_adjusted_eps,
+            "gaap_accretion_dilution": gaap_acc_dil,
+            "adjusted_accretion_dilution": adjusted_acc_dil,
+            "tax_rate": tax_rate,
+            "purchase_accounting_pretax_expense": purchase_accounting_pretax,
+            "intangible_amortization": intangible_amort,
+            "ppe_incremental_depreciation": ppe_depr,
+            "inventory_step_up_expense": inventory_step,
+        }
+    return {"tax_rate": tax_rate, "per_period": per_period}
+
+
+def run_single_scenario(plan: Dict[str, Any], scenario_name: str) -> Dict[str, Any]:
+    periods = get_periods(plan)
+    sources_uses = compute_sources_uses(plan, scenario_name)
+    ppa = compute_purchase_accounting(plan, sources_uses)
+    financing = compute_financing_effects(plan, sources_uses, scenario_name, periods)
+    synergies = compute_synergy_effects(plan, scenario_name, periods)
+    shares = compute_pro_forma_shares(plan, sources_uses, scenario_name)
+    pro_forma = compute_pro_forma_net_income(plan, scenario_name, ppa, financing, synergies, shares, periods)
+    return {
+        "scenario": scenario_name,
+        "sources_uses": sources_uses,
+        "purchase_accounting": ppa,
+        "financing": financing,
+        "synergies": synergies,
+        "shares": shares,
+        "pro_forma": pro_forma,
+    }
+
+
+def run_scenarios(plan: Dict[str, Any]) -> Dict[str, Any]:
+    names = ["base", "downside", "upside"]
+    return {name: run_single_scenario(plan, name) for name in names}
+
+
+def with_scenario_override(plan: Dict[str, Any], scenario_name: str, overrides: Dict[str, Any]) -> Dict[str, Any]:
+    out = copy.deepcopy(plan)
+    scen = out.setdefault("scenarios", {}).setdefault(scenario_name, {})
+    scen.update(overrides)
+    return out
+
+
+def run_sensitivities(plan: Dict[str, Any], primary_period: Optional[str] = None) -> List[Dict[str, Any]]:
+    periods = get_periods(plan)
+    period = primary_period or (periods[1] if len(periods) > 1 else periods[0])
+    sens = plan.get("sensitivities", {}) or {}
+    rows: List[Dict[str, Any]] = []
+
+    def add_case(case_group: str, variable: str, value: float, p: Dict[str, Any]) -> None:
+        res = run_single_scenario(p, "base")
+        pf = res["pro_forma"]["per_period"][period]
+        rows.append({
+            "case_group": case_group,
+            "variable": variable,
+            "value": value,
+            "period": period,
+            "pf_adjusted_eps": pf.get("pf_adjusted_eps"),
+            "adjusted_accretion_dilution": pf.get("adjusted_accretion_dilution"),
+            "pf_gaap_eps": pf.get("pf_gaap_eps"),
+            "gaap_accretion_dilution": pf.get("gaap_accretion_dilution"),
+        })
+
+    for v in sens.get("synergy_factors", []):
+        add_case("synergy", "synergy_factor", float(v), with_scenario_override(plan, "base", {"synergy_factor": float(v)}))
+    for v in sens.get("debt_rate_deltas", []):
+        add_case("debt_rate", "debt_rate_delta", float(v), with_scenario_override(plan, "base", {"debt_rate_delta": float(v)}))
+    for v in sens.get("cash_percentages", []):
+        add_case("consideration_mix", "cash_percent", float(v), with_scenario_override(plan, "base", {"cash_percent_override": float(v)}))
+    for v in sens.get("premium_factors", []):
+        add_case("premium", "purchase_price_factor", float(v), with_scenario_override(plan, "base", {"purchase_price_factor": float(v)}))
+    for v in sens.get("tax_rates", []):
+        base_tax = as_float(plan.get("transaction", {}).get("tax_rate"), 0.0)
+        add_case("tax_rate", "tax_rate", float(v), with_scenario_override(plan, "base", {"tax_rate_delta": float(v) - base_tax}))
+    for v in sens.get("share_price_factors", []):
+        add_case("share_price", "share_price_factor", float(v), with_scenario_override(plan, "base", {"share_price_factor": float(v)}))
+    return rows
+
+
+def compute_synergy_breakeven(plan: Dict[str, Any], primary_period: Optional[str] = None) -> Dict[str, Any]:
+    periods = get_periods(plan)
+    period = primary_period or (periods[1] if len(periods) > 1 else periods[0])
+    no_syn_plan = with_scenario_override(plan, "base", {"synergy_factor": 0.0})
+    res = run_single_scenario(no_syn_plan, "base")
+    pf = res["pro_forma"]["per_period"][period]
+    pf_shares = pf["pf_diluted_shares"]
+    standalone_eps = pf["acquirer_standalone_eps"]
+    required_ni = standalone_eps * pf_shares
+    deficit = required_ni - pf["pf_adjusted_net_income"]
+    tax_rate = pf.get("tax_rate", as_float(plan.get("transaction", {}).get("tax_rate"), 0.0))
+    required_pretax_synergy = max(0.0, deficit / max(1 - tax_rate, TOLERANCE))
+    return {
+        "period": period,
+        "required_pre_tax_synergy_for_adjusted_eps_neutrality": required_pretax_synergy,
+        "standalone_eps": standalone_eps,
+        "pf_adjusted_eps_without_synergies": pf["pf_adjusted_eps"],
+    }
+
+
+def source_coverage(plan: Dict[str, Any]) -> Dict[str, Any]:
+    present = set()
+    labels_by_category: Dict[str, List[str]] = {}
+    for src in plan.get("source_basis", []) or []:
+        if not isinstance(src, dict):
+            continue
+        label = str(src.get("label", ""))
+        for cat in src.get("categories", []) or []:
+            present.add(str(cat))
+            labels_by_category.setdefault(str(cat), []).append(label)
+    missing = sorted(REQUIRED_SOURCE_CATEGORIES - present)
+    low_conf = sorted({cat for cat, labels in labels_by_category.items() if any(label in LOW_CONFIDENCE_LABELS for label in labels)})
+    return {"present_categories": sorted(present), "missing_categories": missing, "labels_by_category": labels_by_category, "low_confidence_categories": low_conf}
+
+
+def identify_missing_inputs(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return missing or low-confidence inputs that should be requested from the user."""
+    coverage = source_coverage(plan)
+    missing_items: List[Dict[str, Any]] = []
+    for req in MATERIAL_INPUT_REQUIREMENTS:
+        categories = [str(c) for c in req["categories"]]
+        missing_categories = [cat for cat in categories if cat in coverage["missing_categories"]]
+        low_confidence_categories = [cat for cat in categories if cat in coverage["low_confidence_categories"]]
+        labels: List[str] = []
+        for cat in categories:
+            labels.extend(coverage["labels_by_category"].get(cat, []))
+        missing_fields = [path for path in req["paths"] if not path_is_satisfied(plan, path)]
+        if not missing_categories and not low_confidence_categories and not missing_fields:
+            continue
+        problems: List[str] = []
+        if missing_categories:
+            problems.append("missing source categories: " + ", ".join(missing_categories))
+        if low_confidence_categories:
+            problems.append("low-confidence source categories: " + ", ".join(low_confidence_categories))
+        if missing_fields:
+            problems.append("missing fields: " + ", ".join(missing_fields))
+        current_treatment = "; ".join(problems)
+        if labels:
+            current_treatment += f"; evidence labels: {', '.join(sorted(set(labels)))}"
+        missing_items.append({
+            "item": req["item"],
+            "source_categories": ", ".join(categories),
+            "missing_fields": ", ".join(missing_fields),
+            "evidence_labels": ", ".join(sorted(set(labels))) if labels else "missing",
+            "why_needed": req["why_needed"],
+            "current_treatment": current_treatment,
+            "user_ask": f"Do you have source support for {req['item'].lower()}?",
+            "fallback_method": req["fallback_method"],
+        })
+    return missing_items
+
+
+def partial_context_warning(missing_inputs: List[Dict[str, Any]]) -> str:
+    if missing_inputs:
+        return PARTIAL_CONTEXT_WARNING
+    return ""
+
+
+def missing_inputs_to_rows(missing_inputs: List[Dict[str, Any]]) -> List[List[Any]]:
+    rows = [["item", "source_categories", "missing_fields", "evidence_labels", "why_needed", "current_treatment", "user_ask", "fallback_method"]]
+    if not missing_inputs:
+        rows.append(["No missing or low-confidence material inputs detected", "", "", "", "", "", "", ""])
+        return rows
+    for item in missing_inputs:
+        rows.append([
+            item.get("item", ""),
+            item.get("source_categories", ""),
+            item.get("missing_fields", ""),
+            item.get("evidence_labels", ""),
+            item.get("why_needed", ""),
+            item.get("current_treatment", ""),
+            item.get("user_ask", ""),
+            item.get("fallback_method", ""),
+        ])
+    return rows
+
+
+def _date_to_tuple(s: str) -> Optional[Tuple[int, int, int]]:
+    try:
+        parts = s.split("-")
+        if len(parts) != 3:
+            return None
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except Exception:
+        return None
+
+
+def _date_ord(t: Tuple[int, int, int]) -> int:
+    # simple enough for stale-date diagnostics, not actual calendar math
+    y, m, d = t
+    return y * 372 + m * 31 + d
+
+
+def compute_checks(plan: Dict[str, Any], results: Dict[str, Any], sensitivities: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str], List[str]]:
+    hard_failures: List[str] = []
+    warnings: List[str] = []
+    base = results["base"]
+    su = base["sources_uses"]
+    mix = su["mix"]
+    shares = base["shares"]
+    ppa = base["purchase_accounting"]
+
+    checks: Dict[str, Any] = {}
+    checks["sources_equal_uses"] = {"ok": abs(su["balance_delta"]) <= 0.01, "delta": su["balance_delta"]}
+    if not checks["sources_equal_uses"]["ok"]:
+        hard_failures.append(f"sources and uses do not balance; delta is {su['balance_delta']:.4f}")
+
+    allow_mix_override = as_bool(plan.get("transaction", {}).get("allow_unbalanced_consideration_mix"), False)
+    checks["consideration_mix_sum"] = {"ok": allow_mix_override or abs(mix["mix_sum"] - 1.0) <= 0.0001, "sum": mix["mix_sum"]}
+    if not checks["consideration_mix_sum"]["ok"]:
+        hard_failures.append(f"consideration mix sums to {mix['mix_sum']:.4f}, not 1.0000")
+
+    stock_used = mix["stock_percent"] > 0.0001
+    checks["stock_consideration_share_support"] = {"ok": (not stock_used) or (shares.get("pf_diluted_shares") and not math.isnan(shares.get("pf_diluted_shares"))), "pf_shares": shares.get("pf_diluted_shares")}
+    if not checks["stock_consideration_share_support"]["ok"]:
+        hard_failures.append("stock consideration is used but pro forma shares cannot be calculated")
+
+    pf_eps_ok = True
+    for scenario_name, res in results.items():
+        for period, vals in res["pro_forma"]["per_period"].items():
+            if math.isnan(vals.get("pf_adjusted_eps", float("nan"))) or math.isnan(vals.get("pf_gaap_eps", float("nan"))):
+                pf_eps_ok = False
+    checks["pf_eps_calculable"] = {"ok": pf_eps_ok}
+    if not pf_eps_ok:
+        hard_failures.append("pro forma EPS cannot be calculated for all scenarios and periods")
+
+    checks["purchase_accounting_bridge_reconciles"] = {"ok": abs(ppa.get("bridge_delta", 0.0)) <= 0.01, "delta": ppa.get("bridge_delta", 0.0)}
+    if not checks["purchase_accounting_bridge_reconciles"]["ok"]:
+        hard_failures.append("purchase accounting bridge does not reconcile")
+
+    ownership_sum = shares.get("ownership_sum", float("nan"))
+    checks["ownership_sums_to_100pct"] = {"ok": not math.isnan(ownership_sum) and abs(ownership_sum - 1.0) <= 0.0001, "sum": ownership_sum}
+    if not checks["ownership_sums_to_100pct"]["ok"]:
+        hard_failures.append("pro forma ownership does not sum to 100%")
+
+    coverage = source_coverage(plan)
+    checks["required_source_categories_present"] = {"ok": not coverage["missing_categories"], **coverage}
+    if coverage["missing_categories"]:
+        hard_failures.append("missing required source categories: " + ", ".join(coverage["missing_categories"]))
+    if coverage["low_confidence_categories"]:
+        warnings.append("low-confidence evidence labels are used for: " + ", ".join(coverage["low_confidence_categories"]))
+
+    # Sensitivity directionality.
+    syn_rows = sorted([r for r in sensitivities if r["case_group"] == "synergy"], key=lambda r: r["value"])
+    if len(syn_rows) >= 2:
+        ok = syn_rows[-1]["pf_adjusted_eps"] + 1e-9 >= syn_rows[0]["pf_adjusted_eps"]
+        checks["synergy_directionality"] = {"ok": ok, "low_factor_eps": syn_rows[0]["pf_adjusted_eps"], "high_factor_eps": syn_rows[-1]["pf_adjusted_eps"]}
+        if not ok:
+            hard_failures.append("accretion/dilution directionality fails: higher synergies lower adjusted EPS")
+    else:
+        checks["synergy_directionality"] = {"ok": True, "note": "insufficient sensitivity rows"}
+
+    rate_rows = sorted([r for r in sensitivities if r["case_group"] == "debt_rate"], key=lambda r: r["value"])
+    if len(rate_rows) >= 2:
+        ok = rate_rows[-1]["pf_adjusted_eps"] <= rate_rows[0]["pf_adjusted_eps"] + 1e-9
+        checks["debt_rate_directionality"] = {"ok": ok, "low_rate_eps": rate_rows[0]["pf_adjusted_eps"], "high_rate_eps": rate_rows[-1]["pf_adjusted_eps"]}
+        if not ok:
+            hard_failures.append("accretion/dilution directionality fails: higher debt cost increases adjusted EPS")
+    else:
+        checks["debt_rate_directionality"] = {"ok": True, "note": "insufficient sensitivity rows"}
+
+    # Senior warnings.
+    syn = plan.get("synergies", {})
+    if syn.get("realization_basis") == "immediate":
+        warnings.append("synergies are treated as immediate; senior review should test phased realization")
+    if not any(period_value(syn.get("integration_costs", {}), p, 0.0) > 0 for p in get_periods(plan)):
+        warnings.append("integration costs are zero or missing; synergy economics may be overstated")
+    if as_bool(syn.get("integration_costs_excluded_from_adjusted_eps"), True):
+        warnings.append("integration costs are excluded from adjusted EPS; review cash cost and payback separately")
+    if as_float(plan.get("transaction", {}).get("fees", {}).get("transaction_fees"), 0.0) > 0:
+        warnings.append("one-time transaction fees are excluded from adjusted EPS but included in GAAP view")
+    if plan.get("purchase_accounting", {}).get("deferred_tax_liability") is None:
+        warnings.append("deferred tax liability is model-derived from fair-value step-ups and should be confirmed by tax/accounting advisors")
+    if plan.get("purchase_accounting", {}).get("measurement_period_status", "").lower() in {"preliminary", "unknown", "provisional"}:
+        warnings.append("purchase accounting is preliminary/provisional")
+    if primary_source_label(plan, "financing") in LOW_CONFIDENCE_LABELS:
+        warnings.append("financing terms are placeholders or low-confidence assumptions")
+
+    # Share price/share count source-date consistency.
+    relevant_dates: List[int] = []
+    for src in plan.get("source_basis", []) or []:
+        if not isinstance(src, dict):
+            continue
+        cats = src.get("categories", []) or []
+        if "share_count" in cats or "market_data" in cats:
+            dt = _date_to_tuple(str(src.get("date", "")))
+            if dt:
+                relevant_dates.append(_date_ord(dt))
+    if len(relevant_dates) >= 2 and max(relevant_dates) - min(relevant_dates) > 45:
+        warnings.append("share price/share count source dates may conflict; verify market data as-of dates")
+
+    # Accretive only with synergies warning.
+    periods = get_periods(plan)
+    primary_period = periods[1] if len(periods) > 1 else periods[0]
+    base_acc = base["pro_forma"]["per_period"][primary_period]["adjusted_accretion_dilution"]
+    no_syn = run_single_scenario(with_scenario_override(plan, "base", {"synergy_factor": 0.0}), "base")
+    no_syn_acc = no_syn["pro_forma"]["per_period"][primary_period]["adjusted_accretion_dilution"]
+    checks["accretive_without_synergies"] = {"ok": no_syn_acc >= 0, "adjusted_acc_dil_without_synergies": no_syn_acc, "base_adjusted_acc_dil": base_acc}
+    if base_acc >= 0 and no_syn_acc < 0:
+        warnings.append("deal is accretive only after synergies in the primary period")
+
+    if base["pro_forma"]["per_period"][primary_period]["gaap_accretion_dilution"] < 0 and base_acc > 0:
+        warnings.append("deal is accretive on adjusted EPS but dilutive on GAAP EPS in the primary period")
+
+    return checks, hard_failures, warnings
+
+
+def determine_model_status(plan: Dict[str, Any], hard_failures: List[str], warnings: List[str]) -> str:
+    if hard_failures:
+        return "not-decision-ready"
+    labels = [str(src.get("label", "")) for src in plan.get("source_basis", []) if isinstance(src, dict)]
+    if any(label in {"placeholder", "unsupported"} for label in labels):
+        return "screen-grade"
+    if any(label in {"estimate", "assumption"} for label in labels):
+        return "screen-grade"
+    if warnings:
+        return "screen-grade"
+    review_standard = str(plan.get("meta", {}).get("review_standard", "")).lower()
+    if review_standard == "decision-grade" and all(label in HIGH_CONFIDENCE_LABELS for label in labels):
+        return "decision-grade"
+    return "senior-review-ready"
+
+
+def build_p0_handoff(plan: Dict[str, Any], results: Dict[str, Any], breakeven: Dict[str, Any], model_status: str, output_dir: Path, warnings: List[str], hard_failures: List[str], missing_inputs: Optional[List[Dict[str, Any]]] = None, include_report_md: bool = True) -> Dict[str, Any]:
+    periods = get_periods(plan)
+    primary_period = periods[1] if len(periods) > 1 else periods[0]
+    base = results["base"]
+    acc: Dict[str, Any] = {}
+    for scen, res in results.items():
+        pf = res["pro_forma"]["per_period"][primary_period]
+        acc[scen] = {
+            "period": primary_period,
+            "gaap_accretion_dilution": pf["gaap_accretion_dilution"],
+            "adjusted_accretion_dilution": pf["adjusted_accretion_dilution"],
+            "pf_gaap_eps": pf["pf_gaap_eps"],
+            "pf_adjusted_eps": pf["pf_adjusted_eps"],
+        }
+    su = base["sources_uses"]
+    shares = base["shares"]
+    top_risks = hard_failures[:3] + warnings[:5]
+    output_paths = {
+        "model_xlsx": str(output_dir / "model.xlsx"),
+        "plan_json": str(output_dir / "plan.json"),
+        "run_log_json": str(output_dir / "run_log.json"),
+    }
+    if include_report_md:
+        output_paths["report_md"] = str(output_dir / "report.md")
+    return {
+        "deal_name": plan.get("meta", {}).get("deal_name"),
+        "transaction_value": {"equity_purchase_price": su["equity_purchase_price"], "enterprise_value": su["transaction_ev"]},
+        "premium": su.get("premium"),
+        "consideration_mix": su.get("mix"),
+        "pf_ownership": {"acquirer_ownership": shares.get("acquirer_ownership"), "target_ownership": shares.get("target_ownership")},
+        "accretion_dilution": acc,
+        "synergy_breakeven": breakeven,
+        "financing_assumptions": {
+            "new_debt": su["sources"].get("new_debt"),
+            "acquirer_cash_used": su["sources"].get("acquirer_cash_used"),
+            "target_cash_used": su["sources"].get("target_cash_used"),
+            "debt_interest_rate": base["financing"].get("debt_interest_rate"),
+        },
+        "top_risks_and_caveats": top_risks,
+        "missing_input_request": {
+            "posture_warning": partial_context_warning(missing_inputs or []),
+            "items": missing_inputs or [],
+        },
+        "model_status": model_status,
+        "output_paths": output_paths,
+    }
+
+
+def assumption_rows(plan: Dict[str, Any]) -> List[List[Any]]:
+    rows = [["category", "source_id", "evidence_label", "date", "priority", "description", "categories"]]
+    for src in plan.get("source_basis", []) or []:
+        rows.append([
+            "source_basis",
+            src.get("id", ""),
+            src.get("label", ""),
+            src.get("date", ""),
+            src.get("priority", ""),
+            src.get("description", ""),
+            ", ".join(src.get("categories", []) or []),
+        ])
+    rows.append(["meta", "deal_name", "user_provided", "", "", plan.get("meta", {}).get("deal_name", ""), ""])
+    rows.append(["meta", "accounting_basis", "user_provided", "", "", plan.get("meta", {}).get("accounting_basis", ""), ""])
+    return rows
+
+
+def to_model_rows(plan: Dict[str, Any], results: Dict[str, Any], sensitivities: List[Dict[str, Any]], checks: Dict[str, Any], hard_failures: List[str], warnings: List[str], breakeven: Dict[str, Any], model_status: str, missing_inputs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, List[List[Any]]]:
+    units = plan.get("meta", {}).get("units", "")
+    periods = get_periods(plan)
+    primary_period = periods[1] if len(periods) > 1 else periods[0]
+    sheets: Dict[str, List[List[Any]]] = {}
+
+    missing_inputs = missing_inputs or []
+    posture_warning = partial_context_warning(missing_inputs)
+
+    # Output summary.
+    summary = [["metric", "base", "downside", "upside", "units", "notes"]]
+    if posture_warning:
+        summary.extend([
+            ["Posture warning", posture_warning, "", "", "", "before relying on any metric table"],
+            ["Missing / low-confidence input count", len(missing_inputs), "", "", "count", "see MISSING_INPUTS"],
+            ["Ask user for", "; ".join(item.get("item", "") for item in missing_inputs[:8]), "", "", "", "request these source items before upgrading posture"],
+            ["Fallback policy", "If unavailable, update assumptions using the best estimate supported by the provided facts and label the source as estimate or placeholder.", "", "", "", ""],
+            ["", "", "", "", "", ""],
+        ])
+    for metric_key, label in [
+        ("pf_adjusted_eps", "PF adjusted EPS"),
+        ("adjusted_accretion_dilution", "Adjusted accretion/dilution"),
+        ("pf_gaap_eps", "PF GAAP EPS"),
+        ("gaap_accretion_dilution", "GAAP accretion/dilution"),
+    ]:
+        row = [label]
+        for scen in ["base", "downside", "upside"]:
+            row.append(results[scen]["pro_forma"]["per_period"][primary_period][metric_key])
+        row += ["x" if "EPS" in label else "%", primary_period]
+        summary.append(row)
+    su = results["base"]["sources_uses"]
+    shares = results["base"]["shares"]
+    summary.extend([
+        ["Model status", model_status, "", "", "", ""],
+        ["Equity purchase price", su["equity_purchase_price"], "", "", units, "base case"],
+        ["Transaction enterprise value", su["transaction_ev"], "", "", units, "base case"],
+        ["Premium", su.get("premium"), "", "", "%", "base case"],
+        ["Acquirer ownership", shares.get("acquirer_ownership"), "", "", "%", "base case"],
+        ["Target ownership", shares.get("target_ownership"), "", "", "%", "base case"],
+        ["Synergy breakeven", breakeven.get("required_pre_tax_synergy_for_adjusted_eps_neutrality"), "", "", units, breakeven.get("period")],
+        ["Hard failures", len(hard_failures), "", "", "count", "; ".join(hard_failures[:3])],
+        ["Warnings", len(warnings), "", "", "count", "; ".join(warnings[:3])],
+    ])
+    sheets["Executive Summary"] = summary
+    sheets["ASSUMPTIONS"] = assumption_rows(plan)
+    sheets["MISSING_INPUTS"] = missing_inputs_to_rows(missing_inputs)
+
+    # Standalone.
+    standalone = [["scenario", "period", "company", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for period in periods:
+        standalone.extend([
+            ["base", period, "acquirer", "net_income", period_value(plan.get("acquirer", {}).get("net_income", {}), period), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), "standalone"],
+            ["base", period, "acquirer", "eps", period_value(plan.get("acquirer", {}).get("eps", {}), period), "x", primary_source_label(plan, "share_count"), primary_source_id(plan, "share_count"), "standalone"],
+            ["base", period, "target", "net_income", period_value(plan.get("target", {}).get("net_income", {}), period), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), "standalone"],
+            ["base", period, "target", "ebitda", period_value(plan.get("target", {}).get("standalone_ebitda", {}), period), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), "standalone"],
+        ])
+    standalone.extend([
+        ["base", "close", "acquirer", "diluted_shares", as_float(plan.get("acquirer", {}).get("diluted_shares")), "mm", primary_source_label(plan, "share_count"), primary_source_id(plan, "share_count"), ""],
+        ["base", "close", "acquirer", "cash", as_float(plan.get("acquirer", {}).get("cash")), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), ""],
+        ["base", "close", "acquirer", "debt", as_float(plan.get("acquirer", {}).get("debt")), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), ""],
+        ["base", "close", "target", "diluted_shares", as_float(plan.get("target", {}).get("diluted_shares")), "mm", primary_source_label(plan, "share_count"), primary_source_id(plan, "share_count"), ""],
+        ["base", "close", "target", "cash", as_float(plan.get("target", {}).get("cash")), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), ""],
+        ["base", "close", "target", "debt", as_float(plan.get("target", {}).get("debt")), units, primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), ""],
+    ])
+    sheets["STANDALONE"] = standalone
+
+    # Sources and uses.
+    su_rows = [["scenario", "side", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        scenario_su = res["sources_uses"]
+        for k, v in scenario_su["uses"].items():
+            su_rows.append([scen, "uses", k, v, units, primary_source_label(plan, "offer_terms"), primary_source_id(plan, "offer_terms"), ""])
+        for k, v in scenario_su["sources"].items():
+            cat = "financing" if k in {"new_debt", "acquirer_cash_used", "target_cash_used"} else "offer_terms"
+            su_rows.append([scen, "sources", k, v, units, primary_source_label(plan, cat), primary_source_id(plan, cat), ""])
+        su_rows.extend([
+            [scen, "check", "total_uses", scenario_su["total_uses"], units, "model", "", ""],
+            [scen, "check", "total_sources", scenario_su["total_sources"], units, "model", "", ""],
+            [scen, "check", "balance_delta", scenario_su["balance_delta"], units, "model", "", "sources minus uses"],
+            [scen, "valuation", "equity_purchase_price", scenario_su["equity_purchase_price"], units, primary_source_label(plan, "offer_terms"), primary_source_id(plan, "offer_terms"), ""],
+            [scen, "valuation", "transaction_enterprise_value", scenario_su["transaction_ev"], units, primary_source_label(plan, "offer_terms"), primary_source_id(plan, "offer_terms"), ""],
+            [scen, "valuation", "premium", scenario_su.get("premium"), "%", primary_source_label(plan, "offer_terms"), primary_source_id(plan, "offer_terms"), ""],
+        ])
+    sheets["SOURCES_USES"] = su_rows
+
+    # Purchase accounting.
+    ppa_rows = [["scenario", "period", "section", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        p = res["purchase_accounting"]
+        for k in ["target_book_equity", "existing_goodwill", "total_intangibles", "ppe_step_up", "inventory_step_up", "other_fair_value_adjustments", "deferred_revenue_adjustment", "deferred_tax_liability", "identifiable_net_assets", "consideration_transferred", "nci_fair_value", "previously_held_interest_fair_value", "goodwill", "bargain_purchase_gain"]:
+            ppa_rows.append([scen, "close", "purchase_accounting", k, p.get(k), units, primary_source_label(plan, "purchase_accounting"), primary_source_id(plan, "purchase_accounting"), ""])
+        for asset in p.get("intangible_assets", []):
+            ppa_rows.append([scen, "close", "intangible_asset", asset.get("name"), asset.get("fair_value"), units, primary_source_label(plan, "purchase_accounting"), primary_source_id(plan, "purchase_accounting"), f"life={asset.get('life')} yrs; amort={asset.get('annual_amortization'):.4f}"])
+        for period in periods:
+            inv = p.get("inventory_step_up", 0.0) if period == periods[0] else 0.0
+            ppa_rows.extend([
+                [scen, period, "purchase_accounting", "intangible_amortization", p.get("annual_intangible_amortization"), units, primary_source_label(plan, "purchase_accounting"), primary_source_id(plan, "purchase_accounting"), "annual"],
+                [scen, period, "purchase_accounting", "incremental_ppe_depreciation", p.get("ppe_incremental_depreciation"), units, primary_source_label(plan, "purchase_accounting"), primary_source_id(plan, "purchase_accounting"), "annual"],
+                [scen, period, "purchase_accounting", "inventory_step_up_expense", inv, units, primary_source_label(plan, "purchase_accounting"), primary_source_id(plan, "purchase_accounting"), "first period only"],
+            ])
+    sheets["PURCHASE_ACCOUNTING"] = ppa_rows
+
+    # Financing.
+    fin_rows = [["scenario", "period", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        for period, vals in res["financing"]["per_period"].items():
+            for k, v in vals.items():
+                fin_rows.append([scen, period, k, v, units if "rate" not in k else "%", primary_source_label(plan, "financing"), primary_source_id(plan, "financing"), ""])
+    sheets["FINANCING"] = fin_rows
+
+    # Synergies.
+    syn_rows = [["scenario", "period", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        for period, vals in res["synergies"]["per_period"].items():
+            for k, v in vals.items():
+                syn_rows.append([scen, period, k, v, units if "rate" not in k else "%", primary_source_label(plan, "synergies"), primary_source_id(plan, "synergies"), ""])
+    sheets["SYNERGIES"] = syn_rows
+
+    # Pro forma and accretion.
+    pf_rows = [["scenario", "period", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    acc_rows = [["scenario", "period", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        for period, vals in res["pro_forma"]["per_period"].items():
+            for k, v in vals.items():
+                pf_rows.append([scen, period, k, v, units if "eps" not in k and "rate" not in k and "dilution" not in k else ("x" if "eps" in k else "%"), "model", "", ""])
+            acc_rows.extend([
+                [scen, period, "standalone_acquirer_eps", vals.get("acquirer_standalone_eps"), "x", primary_source_label(plan, "financials"), primary_source_id(plan, "financials"), ""],
+                [scen, period, "pf_gaap_eps", vals.get("pf_gaap_eps"), "x", "model", "", ""],
+                [scen, period, "pf_adjusted_eps", vals.get("pf_adjusted_eps"), "x", "model", "", ""],
+                [scen, period, "gaap_accretion_dilution", vals.get("gaap_accretion_dilution"), "%", "model", "", ""],
+                [scen, period, "adjusted_accretion_dilution", vals.get("adjusted_accretion_dilution"), "%", "model", "", ""],
+            ])
+    acc_rows.append(["base", breakeven.get("period"), "synergy_breakeven", breakeven.get("required_pre_tax_synergy_for_adjusted_eps_neutrality"), units, "model", "", "pre-tax synergy required for adjusted EPS neutrality"])
+    sheets["PRO_FORMA"] = pf_rows
+    sheets["ACCRETION_DILUTION"] = acc_rows
+
+    # Ownership.
+    own_rows = [["scenario", "line_item", "value", "units", "evidence_label", "source_id", "notes"]]
+    for scen, res in results.items():
+        for k, v in res["shares"].items():
+            own_rows.append([scen, k, v, "%" if "ownership" in k else "mm", primary_source_label(plan, "share_count"), primary_source_id(plan, "share_count"), ""])
+    sheets["OWNERSHIP"] = own_rows
+
+    # Sensitivities.
+    sens_rows = [["case_group", "variable", "value", "period", "pf_adjusted_eps", "adjusted_accretion_dilution", "pf_gaap_eps", "gaap_accretion_dilution"]]
+    for row in sensitivities:
+        sens_rows.append([row.get("case_group"), row.get("variable"), row.get("value"), row.get("period"), row.get("pf_adjusted_eps"), row.get("adjusted_accretion_dilution"), row.get("pf_gaap_eps"), row.get("gaap_accretion_dilution")])
+    sheets["SENSITIVITY"] = sens_rows
+
+    # Checks.
+    check_rows = [["check", "ok", "value", "notes"]]
+    for k, v in checks.items():
+        if isinstance(v, dict):
+            ok = v.get("ok", "")
+            value = json.dumps({kk: vv for kk, vv in v.items() if kk != "ok"}, sort_keys=True)
+        else:
+            ok = ""
+            value = v
+        check_rows.append([k, ok, value, ""])
+    for f in hard_failures:
+        check_rows.append(["hard_failure", False, f, "breaks decision readiness"])
+    for w in warnings:
+        check_rows.append(["warning", True, w, "review before senior use"])
+    sheets["CHECKS"] = check_rows
+
+    return sheets
+
+
+def render_report(plan: Dict[str, Any], results: Dict[str, Any], checks: Dict[str, Any], hard_failures: List[str], warnings: List[str], breakeven: Dict[str, Any], model_status: str, output_dir: Path, missing_inputs: Optional[List[Dict[str, Any]]] = None, include_report_md: bool = True) -> str:
+    meta = plan.get("meta", {})
+    units = meta.get("units", "")
+    periods = get_periods(plan)
+    primary_period = periods[1] if len(periods) > 1 else periods[0]
+    base = results["base"]
+    su = base["sources_uses"]
+    shares = base["shares"]
+    ppa = base["purchase_accounting"]
+    missing_inputs = missing_inputs or []
+    posture_warning = partial_context_warning(missing_inputs)
+
+    lines: List[str] = []
+    lines.append(f"# {meta.get('deal_name', 'merger model')} — merger model summary")
+    lines.append("")
+    if posture_warning:
+        lines.append(f"> **{posture_warning}**")
+        lines.append("")
+        lines.append("Before relying on the metric tables below, ask the user whether they have the missing or low-confidence support listed here. If they do not, proceed only by updating the model assumptions from the best available facts provided and keeping those assumptions labeled as `estimate` or `placeholder`.")
+        lines.append("")
+        lines.append("| information still needed | current treatment | fallback if unavailable |")
+        lines.append("|---|---|---|")
+        for item in missing_inputs:
+            lines.append(f"| {item.get('item', '')} | {item.get('current_treatment', '')} | {item.get('fallback_method', '')} |")
+        lines.append("")
+    lines.append("## 1) executive summary")
+    base_pf = base["pro_forma"]["per_period"][primary_period]
+    lines.append(
+        f"{meta.get('acquirer', 'acquirer')} buying {meta.get('target', 'target')} implies equity purchase price of "
+        f"{money(su['equity_purchase_price'], units)} and transaction EV of {money(su['transaction_ev'], units)}. "
+        f"Base-case adjusted accretion/dilution in {primary_period} is {pct(base_pf['adjusted_accretion_dilution'])}; "
+        f"GAAP accretion/dilution is {pct(base_pf['gaap_accretion_dilution'])}. "
+        f"PF ownership is {pct(shares['acquirer_ownership'])} existing acquirer holders / {pct(shares['target_ownership'])} target holders. "
+        f"Model status: **{model_status}**."
+    )
+    lines.append("")
+    lines.append("## 2) transaction snapshot")
+    lines.append("| metric | value |")
+    lines.append("|---|---:|")
+    lines.append(f"| equity purchase price | {money(su['equity_purchase_price'], units)} |")
+    lines.append(f"| transaction EV | {money(su['transaction_ev'], units)} |")
+    lines.append(f"| premium | {pct(su.get('premium'))} |")
+    lines.append(f"| cash / stock / other mix | {pct(su['mix']['cash_percent'])} / {pct(su['mix']['stock_percent'])} / {pct(su['mix']['other_percent'])} |")
+    lines.append(f"| shares issued to target | {shares['shares_issued_to_target']:,.1f} mm |")
+    lines.append(f"| PF diluted shares | {shares['pf_diluted_shares']:,.1f} mm |")
+    lines.append("")
+    lines.append("## 3) sources and uses")
+    lines.append("| item | uses | sources |")
+    lines.append("|---|---:|---:|")
+    all_keys = sorted(set(su["uses"].keys()) | set(su["sources"].keys()))
+    for k in all_keys:
+        u = su["uses"].get(k, "")
+        s = su["sources"].get(k, "")
+        lines.append(f"| {k} | {money(u, units) if u != '' else ''} | {money(s, units) if s != '' else ''} |")
+    lines.append(f"| **total** | **{money(su['total_uses'], units)}** | **{money(su['total_sources'], units)}** |")
+    lines.append(f"| balance check: sources minus uses | {money(su['balance_delta'], units)} |  |")
+    lines.append("")
+    lines.append("## 4) purchase accounting")
+    lines.append("| bridge item | value |")
+    lines.append("|---|---:|")
+    for k in ["target_book_equity", "existing_goodwill", "total_intangibles", "ppe_step_up", "inventory_step_up", "deferred_tax_liability", "identifiable_net_assets", "consideration_transferred", "goodwill"]:
+        lines.append(f"| {k} | {money(ppa.get(k), units)} |")
+    lines.append(f"| annual intangible amortization | {money(ppa.get('annual_intangible_amortization'), units)} |")
+    lines.append(f"| incremental PPE depreciation | {money(ppa.get('ppe_incremental_depreciation'), units)} |")
+    if ppa.get("measurement_period_status"):
+        lines.append(f"\nPurchase accounting status: **{ppa.get('measurement_period_status')}**.")
+    lines.append("")
+    lines.append("## 5) financing and pro forma ownership")
+    fin = base["financing"]["per_period"][primary_period]
+    lines.append("| metric | value |")
+    lines.append("|---|---:|")
+    lines.append(f"| new debt | {money(su['sources'].get('new_debt'), units)} |")
+    lines.append(f"| debt interest rate | {pct(base['financing'].get('debt_interest_rate'))} |")
+    lines.append(f"| annual interest expense | {money(fin.get('interest_expense'), units)} |")
+    lines.append(f"| lost cash interest | {money(fin.get('lost_cash_interest'), units)} |")
+    lines.append(f"| acquirer ownership | {pct(shares.get('acquirer_ownership'))} |")
+    lines.append(f"| target ownership | {pct(shares.get('target_ownership'))} |")
+    lines.append("")
+    lines.append("## 6) EPS accretion/dilution")
+    lines.append("| scenario | period | standalone EPS | PF GAAP EPS | GAAP acc./dil. | PF adjusted EPS | adjusted acc./dil. |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|")
+    for scen in ["base", "downside", "upside"]:
+        pf = results[scen]["pro_forma"]["per_period"][primary_period]
+        lines.append(f"| {scen} | {primary_period} | {pf['acquirer_standalone_eps']:.2f} | {pf['pf_gaap_eps']:.2f} | {pct(pf['gaap_accretion_dilution'])} | {pf['pf_adjusted_eps']:.2f} | {pct(pf['adjusted_accretion_dilution'])} |")
+    lines.append("")
+    lines.append("## 7) synergies and breakeven")
+    syn = base["synergies"]["per_period"][primary_period]
+    lines.append("| item | value |")
+    lines.append("|---|---:|")
+    for k in ["cost_synergies", "revenue_synergies", "revenue_synergy_contribution", "dis_synergies", "net_pre_tax_synergies", "integration_costs", "after_tax_synergy_contribution"]:
+        lines.append(f"| {k} | {money(syn.get(k), units)} |")
+    lines.append(f"| required pre-tax synergy for adjusted EPS neutrality | {money(breakeven.get('required_pre_tax_synergy_for_adjusted_eps_neutrality'), units)} |")
+    lines.append("")
+    lines.append("## 8) sensitivities and what breaks")
+    if hard_failures:
+        lines.append("Hard failures:")
+        for f in hard_failures:
+            lines.append(f"- {f}")
+    else:
+        lines.append("No hard failures were detected by the machine checks.")
+    if warnings:
+        lines.append("\nSenior review warnings:")
+        for w in warnings[:12]:
+            lines.append(f"- {w}")
+    else:
+        lines.append("\nNo warnings were detected.")
+    lines.append("")
+    lines.append("## 9) QA, source posture, and limitations")
+    coverage = checks.get("required_source_categories_present", {})
+    lines.append(f"Required source categories present: {', '.join(coverage.get('present_categories', []))}.")
+    if coverage.get("missing_categories"):
+        lines.append(f"Missing source categories: {', '.join(coverage.get('missing_categories', []))}.")
+    generated_files = [output_dir / "model.xlsx", output_dir / "plan.json", output_dir / "run_log.json"]
+    if include_report_md:
+        generated_files.append(output_dir / "report.md")
+    lines.append("Generated files: " + ", ".join(f"`{path}`" for path in generated_files) + ".")
+    lines.append("")
+    lines.append("This deterministic `model.xlsx` export is suitable for screening and senior review. Use `scripts/build_banker_formula_workbook.py` only when a live formula workbook template is requested.")
+    return "\n".join(lines) + "\n"
+
+
+# XLSX writer utilities.
+
+def _xlsx_col_letter(n: int) -> str:
+    out = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(ord("A") + rem) + out
+    return out
+
+
+def _xlsx_cell_ref(row_1idx: int, col_1idx: int) -> str:
+    return f"{_xlsx_col_letter(col_1idx)}{row_1idx}"
+
+
+def _shared_string(s: str, shared_map: Dict[str, int], shared_list: List[str]) -> int:
+    if s in shared_map:
+        return shared_map[s]
+    idx = len(shared_list)
+    shared_map[s] = idx
+    shared_list.append(s)
+    return idx
+
+
+def _clean_sheet_name(name: str) -> str:
+    invalid = set('[]:*?/\\')
+    clean = ''.join('_' if ch in invalid else ch for ch in name)[:31]
+    return clean or "Sheet"
+
+
+def _sheet_xml(rows: List[List[Any]], shared_map: Dict[str, int], shared_list: List[str]) -> str:
+    nrows = max(1, len(rows))
+    ncols = max(1, max((len(r) for r in rows), default=1))
+    sheet_rows: List[str] = []
+    for row_idx, row in enumerate(rows, start=1):
+        cells: List[str] = []
+        for col_idx, v in enumerate(row, start=1):
+            if v is None or v == "":
+                continue
+            ref = _xlsx_cell_ref(row_idx, col_idx)
+            if isinstance(v, bool):
+                cells.append(f'<c r="{ref}" t="b"><v>{1 if v else 0}</v></c>')
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    idx = _shared_string("n/a", shared_map, shared_list)
+                    cells.append(f'<c r="{ref}" t="s"><v>{idx}</v></c>')
+                else:
+                    cells.append(f'<c r="{ref}"><v>{v}</v></c>')
+            else:
+                idx = _shared_string(str(v), shared_map, shared_list)
+                cells.append(f'<c r="{ref}" t="s"><v>{idx}</v></c>')
+        sheet_rows.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
+    dim = f"A1:{_xlsx_cell_ref(nrows, ncols)}"
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<dimension ref="{dim}"/>'
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+        '<sheetData>' + ''.join(sheet_rows) + '</sheetData>'
+        '</worksheet>'
+    )
+
+
+def write_xlsx(path: Path, sheets: Dict[str, List[List[Any]]], sheet_name: str = "Model") -> None:
+    """Write a deterministic multi-sheet .xlsx workbook with values only."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not sheets:
+        raise ValueError("No sheets to write")
+    shared_map: Dict[str, int] = {}
+    shared_list: List[str] = []
+    sheet_xmls: List[Tuple[str, str]] = []
+    used_names: set = set()
+    for raw_name, rows in sheets.items():
+        name = _clean_sheet_name(raw_name)
+        base = name
+        i = 1
+        while name in used_names:
+            suffix = f"_{i}"
+            name = (base[:31 - len(suffix)] + suffix)
+            i += 1
+        used_names.add(name)
+        sheet_xmls.append((name, _sheet_xml(rows, shared_map, shared_list)))
+
+    def si(text: str) -> str:
+        preserve = ' xml:space="preserve"' if text[:1].isspace() or text[-1:].isspace() else ""
+        return f"<si><t{preserve}>{escape(text)}</t></si>"
+
+    sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        f'count="{len(shared_list)}" uniqueCount="{len(shared_list)}">' + ''.join(si(s) for s in shared_list) + '</sst>'
+    )
+
+    sheets_xml = ''.join(f'<sheet name="{escape(name)}" sheetId="{idx}" r:id="rId{idx}"/>' for idx, (name, _) in enumerate(sheet_xmls, start=1))
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets>' + sheets_xml + '</sheets></workbook>'
+    )
+
+    rels = []
+    for idx, _ in enumerate(sheet_xmls, start=1):
+        rels.append(f'<Relationship Id="rId{idx}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{idx}.xml"/>')
+    style_id = len(sheet_xmls) + 1
+    shared_id = len(sheet_xmls) + 2
+    rels.append(f'<Relationship Id="rId{style_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>')
+    rels.append(f'<Relationship Id="rId{shared_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>')
+    workbook_rels_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + ''.join(rels) + '</Relationships>'
+
+    root_rels_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+
+    overrides = [
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
+        '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>',
+    ]
+    for idx, _ in enumerate(sheet_xmls, start=1):
+        overrides.append(f'<Override PartName="/xl/worksheets/sheet{idx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
+    content_types_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>' + ''.join(overrides) + '</Types>'
+
+    styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>
+  <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>
+"""
+
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types_xml)
+        z.writestr("_rels/.rels", root_rels_xml)
+        z.writestr("xl/workbook.xml", workbook_xml)
+        z.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        for idx, (_, xml) in enumerate(sheet_xmls, start=1):
+            z.writestr(f"xl/worksheets/sheet{idx}.xml", xml)
+        z.writestr("xl/sharedStrings.xml", sst_xml)
+        z.writestr("xl/styles.xml", styles_xml)
+
+
+def build_model(plan: Dict[str, Any], output_dir: Path, include_report_md: bool = True) -> Dict[str, Any]:
+    normalized = normalize_plan(plan)
+    results = run_scenarios(normalized)
+    periods = get_periods(normalized)
+    primary_period = periods[1] if len(periods) > 1 else periods[0]
+    sensitivities = run_sensitivities(normalized, primary_period)
+    breakeven = compute_synergy_breakeven(normalized, primary_period)
+    checks, hard_failures, warnings = compute_checks(normalized, results, sensitivities)
+    model_status = determine_model_status(normalized, hard_failures, warnings)
+    missing_inputs = identify_missing_inputs(normalized)
+    p0_handoff = build_p0_handoff(normalized, results, breakeven, model_status, output_dir, warnings, hard_failures, missing_inputs, include_report_md=include_report_md)
+    sheets = to_model_rows(normalized, results, sensitivities, checks, hard_failures, warnings, breakeven, model_status, missing_inputs)
+    report = render_report(normalized, results, checks, hard_failures, warnings, breakeven, model_status, output_dir, missing_inputs, include_report_md=include_report_md)
+    run_log = {
+        "model_status": model_status,
+        "workbook_mode": "deterministic_export",
+        "source_basis": normalized.get("source_basis", []),
+        "hard_failures": hard_failures,
+        "warnings": warnings,
+        "missing_input_request": {
+            "posture_warning": partial_context_warning(missing_inputs),
+            "items": missing_inputs,
+        },
+        "assumptions": {
+            "primary_period": primary_period,
+            "accounting_basis": normalized.get("meta", {}).get("accounting_basis"),
+            "purchase_accounting_measurement_period_status": normalized.get("purchase_accounting", {}).get("measurement_period_status"),
+            "workbook_mode": "deterministic_export",
+        },
+        "checks": checks,
+        "p0_handoff": p0_handoff,
+    }
+    return {"plan": normalized, "results": results, "sensitivities": sensitivities, "breakeven": breakeven, "checks": checks, "hard_failures": hard_failures, "warnings": warnings, "missing_inputs": missing_inputs, "model_status": model_status, "p0_handoff": p0_handoff, "sheets": sheets, "report": report, "run_log": run_log}

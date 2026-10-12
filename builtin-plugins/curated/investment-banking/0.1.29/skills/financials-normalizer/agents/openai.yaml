@@ -1,0 +1,9 @@
+interface:
+  display_name: "Financials Normalizer"
+  short_description: "Normalize model-ready financials"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $financials-normalizer to spread, reconcile, and normalize company financials into model-ready schedules."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Transaction Sensitivity Generator"
+  short_description: "Deal scenario sensitivity packs"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $scenario-sensitivity-generator to build sensitivities from an existing valuation, financing, covenant, merger, or returns model."
+policy:
+  allow_implicit_invocation: false

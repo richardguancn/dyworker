@@ -1,0 +1,5 @@
+# Industry And Stage
+
+Merge order: runtime defaults, industry profile, stage profile, user plan, scenario overrides. Full assets: `assets/deep`.
+
+SaaS/software: ARR, NRR/churn, deferred revenue. Services: volume, utilization, DSO, labor. Consumer/distribution: units, inventory, AP, revolver, seasonality. Industrials/materials: backlog, raw materials, capex. Early growth stresses runway; mature FCF/leverage; turnaround liquidity/covenants.

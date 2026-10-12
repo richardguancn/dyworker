@@ -1,0 +1,194 @@
+# Model Math
+
+## Table Of Contents
+1. Equity purchase price
+2. Transaction enterprise value
+3. Sources and uses
+4. Consideration mix
+5. Shares issued and ownership
+6. Purchase accounting
+7. Financing effects
+8. Synergy effects
+9. Pro forma net income
+10. EPS and accretion/dilution
+11. Synergy breakeven
+
+## Equity purchase price
+
+If not explicitly provided:
+
+```text
+equity_purchase_price = offer_price * target_diluted_shares
+```
+
+Scenario `purchase_price_factor` scales the equity purchase price.
+
+## Transaction enterprise value
+
+```text
+transaction_ev = equity_purchase_price + target_debt + other_debt_like_items - target_cash
+```
+
+Fees are shown in sources and uses but are not included in headline transaction EV unless specifically instructed.
+
+## Sources and uses
+
+Uses:
+
+```text
+cash_consideration
++ stock_consideration
++ other_consideration
++ target_debt_refinanced
++ transaction_fees
++ financing_fees
++ equity_issuance_fees
++ bridge_fees
++ debt_tender_premiums
+```
+
+Sources:
+
+```text
+new_debt
++ acquirer_cash_used
++ target_excess_cash_used
++ stock_consideration
++ other_consideration
+```
+
+Target excess cash used:
+
+```text
+max(target_cash - required_min_cash, 0)
+```
+
+only when `financing.use_target_cash` is true.
+
+Hard failure: sources and uses must balance within tolerance.
+
+## Consideration mix
+
+```text
+cash_consideration = equity_purchase_price * cash_percent
+stock_consideration = equity_purchase_price * stock_percent
+other_consideration = equity_purchase_price * other_percent + other_consideration_value
+```
+
+The mix must sum to 100% unless explicitly overridden.
+
+## Shares issued and ownership
+
+If an exchange ratio is provided:
+
+```text
+shares_issued = target_diluted_shares * exchange_ratio
+```
+
+If the deal is fixed-value stock consideration:
+
+```text
+shares_issued = stock_consideration / acquirer_share_price
+```
+
+Pro forma shares:
+
+```text
+pf_shares = acquirer_diluted_shares + shares_issued
+```
+
+Ownership:
+
+```text
+acquirer_ownership = acquirer_diluted_shares / pf_shares
+target_ownership = shares_issued / pf_shares
+```
+
+## Purchase accounting
+
+```text
+fair_value_stepups = intangibles + ppe_step_up + inventory_step_up + other_fair_value_adjustments + deferred_revenue_adjustment
+```
+
+If DTL is not provided:
+
+```text
+deferred_tax_liability = max(fair_value_stepups, 0) * deferred_tax_rate
+```
+
+Identifiable net assets:
+
+```text
+identifiable_net_assets = target_book_equity - existing_goodwill + fair_value_stepups - deferred_tax_liability
+```
+
+Goodwill:
+
+```text
+goodwill = consideration_transferred + nci_fair_value + previously_held_interest_fair_value - identifiable_net_assets
+```
+
+If goodwill is negative, flag a bargain purchase review.
+
+## Financing effects
+
+```text
+interest_expense = new_debt * debt_interest_rate
+lost_cash_interest = (acquirer_cash_used + target_cash_used) * lost_cash_interest_rate
+fee_amortization = financing_fees / fee_amortization_years
+```
+
+## Synergy effects
+
+```text
+revenue_synergy_contribution = revenue_synergies * revenue_synergy_margin
+net_pre_tax_synergies = cost_synergies + revenue_synergy_contribution - dis_synergies
+```
+
+Scenario factors modify cost/revenue synergies, dis-synergies, and integration costs.
+
+After-tax synergy contribution:
+
+```text
+after_tax_synergies = net_pre_tax_synergies * (1 - synergy_tax_rate)
+```
+
+## Pro forma net income
+
+```text
+pf_gaap_net_income =
+  acquirer_net_income
++ target_net_income
++ after_tax_synergies
+- after_tax_financing_drag
+- after_tax_purchase_accounting_drag
+- after_tax_integration_costs
+- after_tax_transaction_fees
+```
+
+Adjusted net income adds back selected one-time or non-cash items only when explicitly specified:
+
+- integration costs when `integration_costs_excluded_from_adjusted_eps` is true
+- transaction fees when one-time transaction fees are excluded from adjusted EPS
+- intangible amortization when `adjusted_eps_excludes_intangible_amortization` is true
+
+## EPS and accretion/dilution
+
+```text
+pf_eps = pf_net_income / pf_diluted_shares
+accretion_dilution = pf_eps / standalone_acquirer_eps - 1
+```
+
+Show GAAP and adjusted EPS separately.
+
+## Synergy breakeven
+
+For the primary period, run a no-synergy case and solve the pre-tax synergy required for adjusted EPS neutrality:
+
+```text
+required_pf_net_income = standalone_acquirer_eps * pf_shares
+required_after_tax_synergy = required_pf_net_income - pf_adjusted_net_income_without_synergies
+required_pre_tax_synergy = required_after_tax_synergy / (1 - tax_rate)
+```
+
+If required pre-tax synergy is negative, report zero.

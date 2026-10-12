@@ -1,0 +1,36 @@
+{
+  "contract_name": "meeting_prep_to_memo_builder",
+  "memo_package": {
+    "contract_name": "meeting_prep_to_memo_builder",
+    "package_type": "pre_meeting_plan",
+    "meeting_objective": "meeting_objective fixture value",
+    "meeting_type": "meeting_type fixture value",
+    "audience": "audience fixture value",
+    "decision_needed": "decision_needed fixture value",
+    "known_facts": "known_facts fixture value",
+    "assumptions": "assumptions fixture value",
+    "priority_questions": [
+      {
+        "label": "priority_questions",
+        "description": "priority_questions fixture detail",
+        "status": "needs_review"
+      }
+    ],
+    "likely_pushbacks": "likely_pushbacks fixture value",
+    "answers_received": "answers_received fixture value",
+    "new_facts": "new_facts fixture value",
+    "changed_assumptions": "changed_assumptions fixture value",
+    "diligence_implications": "diligence_implications fixture value",
+    "follow_ups": "follow_ups fixture value",
+    "owners": "owners fixture value",
+    "due_dates": "due_dates fixture value",
+    "source_note": "source_note fixture value",
+    "circulation_caveats": [
+      {
+        "caveat": "Fixture only",
+        "impact": "Do not circulate externally",
+        "owner": "VP"
+      }
+    ]
+  }
+}

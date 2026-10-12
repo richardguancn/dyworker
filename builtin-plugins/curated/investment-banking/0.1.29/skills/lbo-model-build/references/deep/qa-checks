@@ -1,0 +1,13 @@
+# QA Checks
+
+Check S&U balance, debt roll-forward, amortization, non-negative debt, revolver commitment, min cash, solver convergence, covenant completeness, sweep order, exit bridge, IRR/MOIC directionality, BS balance, cash-flow length, sensitivity monotonicity.
+
+Credit checks: peak leverage/net leverage, min cash, max revolver draw, first breach, base-case breach, coverage, DSCR. Validator errors or failed core checks are hard failures.
+
+Presentation and readiness checks:
+- The first-read tab itself distinguishes `Calculation integrity` from `Decision readiness` and states `screen-grade` when material financing or operating inputs are unvalidated; a later checks sheet does not satisfy this requirement by itself.
+- Public-source screening cases label assumed financing and include separate operating/exit-value, financing-pricing/leverage and liquidity-or-equity-cure sensitivity views. An integrated downside case alone does not satisfy financing sensitivity QA.
+- Hold period displays in years, not with a multiples number format; treat rendered output such as `5.0x` for a five-year hold as a defect to repair before delivery. IRR, MOIC, leverage and currency rows use their proper financial formats.
+- Quarterly models annualize or use trailing-four-quarter EBITDA for leverage and exit-multiple calculations, with the basis recorded in the run log or workbook.
+- Returns place exit proceeds at the end of the stated hold period; a five-year no-interim-distribution MOIC must annualize across five years rather than four years or nineteen quarters.
+- If a deterministic or formula-build path fails QA and a substitute workbook is delivered, the limitation appears in the first-read tab and the chat cover note.

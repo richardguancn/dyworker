@@ -1,0 +1,99 @@
+{
+  "dashboard_title": "ExampleCo Investment Committee Memo",
+  "entity": "ExampleCo",
+  "skill": "memo-builder",
+  "posture": "draft-ready-with-caveats",
+  "hero": {
+    "eyebrow": "Investment Banking Memo",
+    "headline": "ExampleCo IC Memo",
+    "dek": "Decision read, valuation support, diligence gaps, and next action.",
+    "callout_label": "IC Question",
+    "callout": "Proceed to diligence, but keep valuation and customer concentration open."
+  },
+  "deliverable": {
+    "render_mode": "report_only",
+    "primary_artifact": "report.html",
+    "primary_artifact_type": "HTML report",
+    "hero_callout": {
+      "headline": "ExampleCo IC Memo",
+      "summary": "A copy-friendly HTML memo replaces the prior Markdown report output.",
+      "answer": "Proceed to diligence, but keep valuation and customer concentration open.",
+      "confidence": "Medium",
+      "next_action": "Refresh customer cohort support and valuation bridge."
+    },
+    "supporting_artifact_explanations": {
+      "csv_role": "CSV files are backing tables only.",
+      "json_role": "JSON logs are internal audit artifacts only.",
+      "human_deliverable_role": "The HTML memo is the reader-facing report."
+    }
+  },
+  "report_body": [
+    {
+      "id": "executive-summary",
+      "title": "Executive Summary",
+      "body": [
+        {
+          "text": "ExampleCo is diligence-worthy based on recurring revenue, margin profile, and sponsor relevance.",
+          "citation_ids": ["src1"]
+        },
+        "The two open questions are valuation support and customer concentration."
+      ],
+      "bullets": [
+        "Confirm top customer renewal.",
+        "Update downside case before IC."
+      ]
+    },
+    {
+      "id": "valuation-read",
+      "title": "Valuation Read",
+      "citation_ids": ["src1"],
+      "body": "| Case | EV / EBITDA | Read |\n|---|---:|---|\n| Base | 11.5x | Supportable |\n| Downside | 9.0x | Watch |"
+    }
+  ],
+  "blocked_output_context": {
+    "blocked": true,
+    "blocking_reasons": [
+      "Customer cohort file was not provided."
+    ],
+    "missing_inputs": [
+      "Top customer renewal schedule",
+      "ARR cohort bridge"
+    ],
+    "output_contract_expected": "Final IC memo with source-backed customer concentration and valuation bridge.",
+    "what_was_generated_anyway": "HTML memo with current evidence and explicit blockers.",
+    "how_to_unblock": [
+      "Upload the ARR cohort bridge and customer renewal schedule."
+    ],
+    "source_requests": [
+      "Customer-level ARR export by quarter"
+    ]
+  },
+  "supporting_outputs": [
+    {
+      "name": "cohort_bridge.csv",
+      "type": "CSV",
+      "role": "Backing ledger",
+      "visibility": "supporting",
+      "explanation": "Used to audit customer movement behind the memo.",
+      "contains_new_analysis": "No; it supports the HTML memo."
+    }
+  ],
+  "sources": [
+    {
+      "id": "src1",
+      "name": "Management presentation",
+      "url": "https://example.com/management-presentation",
+      "date": "2026-05-16",
+      "type": "company_provided",
+      "quality": "company_provided"
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "a1",
+      "label": "Valuation range",
+      "value": "Illustrative pending updated model",
+      "source_id": "src1"
+    }
+  ]
+}

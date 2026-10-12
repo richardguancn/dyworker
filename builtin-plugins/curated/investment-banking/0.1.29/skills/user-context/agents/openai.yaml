@@ -1,0 +1,6 @@
+interface:
+  display_name: "Investment Banking User Context"
+  short_description: "Manage local Investment Banking context storage"
+  default_prompt: "Use $user-context to initialize, inspect, or explicitly reset local Investment Banking context storage."
+policy:
+  allow_implicit_invocation: false

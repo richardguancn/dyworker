@@ -1,0 +1,71 @@
+{
+  "contract_name": "buyer_investor_list_to_deal_process_tracker",
+  "records": [
+    {
+      "contract_name": "buyer_investor_list_to_deal_process_tracker",
+      "process_context": "process_context fixture value",
+      "party_id": "party_id fixture value",
+      "party_name": "party_name fixture value",
+      "parent_or_platform": "parent_or_platform fixture value",
+      "party_type": "party_type fixture value",
+      "sector_fit": "sector_fit fixture value",
+      "geography": "geography fixture value",
+      "relevant_assets_or_holdings": "relevant_assets_or_holdings fixture value",
+      "tier": "tier fixture value",
+      "priority_score": 100,
+      "recommended_wave": "recommended_wave fixture value",
+      "rationale": "rationale fixture value",
+      "ability_to_transact": "ability_to_transact fixture value",
+      "likely_objections": "likely_objections fixture value",
+      "key_risks": "key_risks fixture value",
+      "relationship_owner": "relationship_owner fixture value",
+      "known_contacts": "known_contacts fixture value",
+      "contact_path": "contact_path fixture value",
+      "confidentiality_flags": [
+        {
+          "label": "confidentiality_flags",
+          "description": "confidentiality_flags fixture detail",
+          "status": "needs_review"
+        }
+      ],
+      "conflict_flags": [
+        {
+          "label": "conflict_flags",
+          "description": "conflict_flags fixture detail",
+          "status": "needs_review"
+        }
+      ],
+      "do_not_contact_flag": true,
+      "recommended_next_action": "recommended_next_action fixture value",
+      "next_action_owner": "next_action_owner fixture value",
+      "target_date": "target_date fixture value",
+      "outreach_status": "outreach_status fixture value",
+      "required_materials": "required_materials fixture value",
+      "source_ids": "source_ids fixture value",
+      "source_as_of_dates": [
+        {
+          "label": "source_as_of_dates",
+          "description": "source_as_of_dates fixture detail",
+          "status": "needs_review"
+        }
+      ],
+      "confidence": "high",
+      "open_questions": [
+        {
+          "label": "open_questions",
+          "description": "open_questions fixture detail",
+          "status": "needs_review"
+        }
+      ],
+      "notes_for_process_tracker": "notes_for_process_tracker fixture value"
+    }
+  ],
+  "holds_and_exclusions": [
+    {
+      "party_name": "HoldCo",
+      "reason": "conflict",
+      "approval_needed": "MD approval",
+      "reconsideration_trigger": "conflict cleared"
+    }
+  ]
+}

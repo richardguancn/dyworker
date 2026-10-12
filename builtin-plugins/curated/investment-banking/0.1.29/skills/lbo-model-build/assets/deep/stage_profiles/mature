@@ -1,0 +1,9 @@
+{
+  "covenants": {
+    "test_frequency": "quarterly",
+    "definitions": {"cash_in_net_debt": true, "ebitda_source": "model"}
+  },
+  "operating": {
+    "dividends": {"enabled": false, "amounts": {}}
+  }
+}

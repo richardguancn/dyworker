@@ -1,0 +1,5 @@
+# Model Math
+
+Runtime owns formulas. Review sequence: timeline, revenue, EBITDA, D&A, capex, NWC, taxes, FCF, S&U, debt/cash sweep/revolver/interest, PA, BS, covenants, exit equity, IRR/MOIC, dilution, sensitivities, reverse stress, checks, handoffs.
+
+Revolver protects min cash; sweep repays ranked non-revolver debt; PIK grows principal; covenants cover leverage, coverage, DSCR, and liquidity.

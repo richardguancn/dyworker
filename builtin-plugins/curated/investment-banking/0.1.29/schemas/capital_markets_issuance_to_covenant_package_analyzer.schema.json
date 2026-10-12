@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/capital_markets_issuance_to_covenant_package_analyzer.schema.json",
+  "title": "capital_markets_issuance_to_covenant_package_analyzer",
+  "description": "Canonical Investment Banking handoff contract from capital-markets-issuance to covenant-package-analyzer.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "capital_markets_issuance_to_covenant_package_analyzer"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "issuer_context",
+        "transaction_objective",
+        "instrument_or_facility",
+        "proposed_size",
+        "use_of_proceeds",
+        "existing_capital_structure",
+        "pro_forma_capitalization",
+        "debt_incurrence_need",
+        "restricted_payment_or_leakage_need",
+        "liens_and_guarantees_needed",
+        "collateral_summary",
+        "ratings_objective",
+        "covenant_capacity_assumption",
+        "debt_document_universe",
+        "known_document_gaps",
+        "target_covenants_or_baskets",
+        "covenant_capacity_questions",
+        "restricted_payments_questions",
+        "investment_basket_questions",
+        "debt_lien_capacity_questions",
+        "ebitda_definition_questions",
+        "amendment_waiver_or_consent_questions",
+        "execution_timeline",
+        "source_log",
+        "source_as_of_dates",
+        "evidence_register",
+        "legal_counsel_review_flags",
+        "open_items",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "issuer_context": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "transaction_objective": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "instrument_or_facility": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "proposed_size": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "use_of_proceeds": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "existing_capital_structure": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "pro_forma_capitalization": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "debt_incurrence_need": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "restricted_payment_or_leakage_need": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "liens_and_guarantees_needed": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "collateral_summary": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "ratings_objective": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "covenant_capacity_assumption": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "debt_document_universe": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "known_document_gaps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "target_covenants_or_baskets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "covenant_capacity_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "restricted_payments_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "investment_basket_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "debt_lien_capacity_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "ebitda_definition_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "amendment_waiver_or_consent_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "execution_timeline": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_log": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/source_log_record"
+          }
+        },
+        "source_as_of_dates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "evidence_register": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/evidence_register_record"
+          }
+        },
+        "legal_counsel_review_flags": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/review_flag"
+          }
+        },
+        "open_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/open_item"
+          }
+        },
+        "circulation_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/circulation_caveat"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

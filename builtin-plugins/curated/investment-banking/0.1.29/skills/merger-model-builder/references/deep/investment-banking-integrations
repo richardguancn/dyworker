@@ -1,0 +1,44 @@
+# Investment Banking Integrations
+
+Use this skill as the M&A model engine inside a broader finance workflow.
+
+## Upstream inputs
+
+- `financial-source-of-truth`: establish source hierarchy, stale-data checks, citations, and evidence labels before populating `plan.json`.
+- `financials-normalizer`: normalize acquirer and target financial statements, KPIs, share counts, and segment data from filings, PDFs, Excel, CSV, VDR exports, or statements.
+- `excel-data-cleaner`: clean messy input spreadsheets before extracting assumptions.
+- `cim-teardown`: convert seller materials into claims, red flags, evidence gaps, and model assumptions before modeling.
+- `comps-valuation` and `dcf-model-builder`: provide unaffected price, precedent transaction context, trading comps, DCF, SOTP, and fairness range inputs.
+- `capital-markets-issuance`, `private-credit-underwriting`, and `covenant-package-analyzer`: replace placeholder financing with market, committed debt, covenant, and credit assumptions where relevant.
+- `lbo-model-build`: provide sponsor-return or financial-buyer bid-capacity context when the merger model is part of a broader transaction case.
+
+## Downstream outputs
+
+- `scenario-sensitivity-generator`: expand the bundled sensitivities into deal-specific stress cases, breakpoints, and downside trees.
+- `model-audit-tieout`: audit any generated or converted formula workbook, source links, signs, hardcodes, and checks.
+- `memo-builder`: convert `report.md` and `run_log.json` into IC, board, client, investment, or committee memo.
+- `ib-deck-qc`: review any Investment Banking output deck or report for consistency, footnotes, chart sourcing, and MD-level polish.
+- `style-guide-adapter`: apply firm/client voice and formatting from precedent materials.
+
+## Handoff contract
+
+### From `cim-teardown`
+
+When a CIM teardown exists, consume `model_input_handoff` fields before using seller claims: `claim_id`, `red_flag_id`, `question_id`, `model_area`, `metric_or_driver`, `period`, `reported_value`, `adjusted_value`, `normalized_value`, `unit`, `definition_status`, `source_id`, `source_quality`, `confidence`, `evidence_gap`, `recommended_model_treatment`, `case_mapping`, `sensitivity_to_run`, and `notes_for_model_builder`.
+
+Use the handoff to separate source-backed model inputs from management-case or seller-claim assumptions.
+
+Always pass downstream:
+
+- `output/plan.json`
+- `output/model.xlsx`
+- `output/run_log.json`
+- model status
+- hard failures and warnings
+- transaction value and premium
+- consideration mix
+- PF ownership
+- base/downside/upside accretion/dilution
+- synergy breakeven
+- financing assumptions
+- top senior caveats

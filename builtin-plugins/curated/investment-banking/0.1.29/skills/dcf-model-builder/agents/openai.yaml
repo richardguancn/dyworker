@@ -1,0 +1,7 @@
+interface:
+  display_name: "DCF Model Builder"
+  short_description: "Code-backed DCF valuation exports"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $dcf-model-builder to build or update a DCF valuation export, sensitivity case, or formula workbook template."
+policy:
+  allow_implicit_invocation: false

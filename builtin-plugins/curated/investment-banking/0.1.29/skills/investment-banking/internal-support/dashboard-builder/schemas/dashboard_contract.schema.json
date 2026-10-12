@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openai.local/investment-banking/dashboard_contract.schema.json",
+  "title": "Investment Banking Dashboard Builder Render Contract",
+  "type": "object",
+  "required": [
+    "dashboard_title",
+    "entity",
+    "skill"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "dashboard_title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision_question": {
+      "type": "string"
+    },
+    "posture": {
+      "type": "string"
+    },
+    "citation_policy": {
+      "type": "string",
+      "enum": ["warn", "strict"]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "citation_policy": {
+          "type": "string",
+          "enum": ["warn", "strict"]
+        }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "ticker": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "accent_color": {
+          "type": "string"
+        },
+        "identity_color": {
+          "type": "string"
+        }
+      }
+    },
+    "hero": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "eyebrow": {
+          "type": "string"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "dek": {
+          "type": "string"
+        },
+        "callout_label": {
+          "type": "string"
+        },
+        "callout": {
+          "type": "string"
+        },
+        "citation_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dek_citation_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "snapshot": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "citation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "render_mode": {
+      "type": "string",
+      "enum": [
+        "dashboard",
+        "report_only",
+        "hybrid"
+      ]
+    },
+    "model_citations_path": {
+      "type": "string"
+    },
+    "workbook_citations_path": {
+      "type": "string"
+    },
+    "model_citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {"type": "string"},
+          "workbook_path": {"type": "string"},
+          "sheet": {"type": "string"},
+          "cell": {"type": "string"},
+          "range": {"type": "string"},
+          "value": {},
+          "formula": {"type": "string"},
+          "aliases": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "workbook_citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "deliverable": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "render_mode": {
+          "type": "string",
+          "enum": [
+            "dashboard",
+            "report_only",
+            "hybrid"
+          ]
+        },
+        "primary_artifact": {
+          "type": "string"
+        },
+        "primary_artifact_type": {
+          "type": "string"
+        },
+        "hero_callout": {
+          "type": "object"
+        },
+        "reader_summary": {
+          "type": "string"
+        },
+        "supporting_outputs": {
+          "type": "array",
+          "items": {
+            "type": [
+              "object",
+              "string"
+            ]
+          }
+        },
+        "supporting_artifact_explanations": {
+          "type": "object"
+        },
+        "blocked_output_context": {
+          "type": "object"
+        }
+      }
+    },
+    "report_body": {
+      "type": "array",
+      "items": {
+        "type": [
+          "object",
+          "string"
+        ]
+      }
+    },
+    "blocked_output_context": {
+      "type": "object"
+    },
+    "supporting_outputs": {
+      "type": "array",
+      "items": {
+        "type": [
+          "object",
+          "string"
+        ]
+      }
+    },
+    "supporting_artifact_explanations": {
+      "type": "object"
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "citations": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      ]
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}

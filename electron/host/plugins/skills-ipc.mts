@@ -9,6 +9,8 @@ export function skillsIpcPlugin(deps) {
       const { trustedHandle, searchSkillLibraries, installSkillFromLibrary } = deps;
 
       trustedHandle("skills:list", (_event, workspacePath) => ctx.skills.read(String(workspacePath || "")));
+      trustedHandle('curated-plugins:list', (_event, workspacePath) => ctx.skills.listCurated(String(workspacePath || '')));
+      trustedHandle('curated-plugins:set-enabled', (_event, payload) => ctx.skills.setCuratedEnabled(String(payload?.id || ''), payload?.enabled === true));
 
       trustedHandle("skills:set-enabled", (_event, payload) => ctx.skills.setEnabled(payload));
 

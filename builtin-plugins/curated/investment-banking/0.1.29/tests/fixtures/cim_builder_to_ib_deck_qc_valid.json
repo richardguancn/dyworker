@@ -1,0 +1,127 @@
+{
+  "contract_name": "cim_builder_to_ib_deck_qc",
+  "artifact_type": "artifact_type fixture value",
+  "artifact_version": "artifact_version fixture value",
+  "circulation_posture": "working_draft",
+  "audience": "audience fixture value",
+  "transaction_context": "transaction_context fixture value",
+  "last_updated": "last_updated fixture value",
+  "page_plan": [
+    {
+      "label": "Page plan",
+      "description": "Page plan fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "source_log": [
+    {
+      "source_id": "SRC-001",
+      "source_name": "Fixture source",
+      "source_type": "CIM",
+      "source_date": "2026-05-01",
+      "document_date": "2026-05-01",
+      "accessed_date": "2026-05-18",
+      "as_of_date": "2026-05-01",
+      "source_pointer": "Fixture p.1",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "treatment": "use as reported",
+      "limitations": "fixture only"
+    }
+  ],
+  "key_numbers_to_tie": [
+    {
+      "metric": "Revenue",
+      "period": "FY2025",
+      "unit": "USD",
+      "scale": "mm",
+      "value": 100,
+      "value_basis": "reported",
+      "page_references": [
+        "p.1"
+      ],
+      "slide_references": [
+        "s.1"
+      ],
+      "source_id": "SRC-001",
+      "related_model_output": "Revenue FY2025",
+      "tie_out_status": "tied",
+      "variance_explanation": "none"
+    }
+  ],
+  "claim_register": [
+    {
+      "claim_id": "C-0001",
+      "buyer_facing_claim": "Revenue grew year over year",
+      "claim_type": "financial",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "source_id": "SRC-001",
+      "caveat": "fixture",
+      "confidence": "high",
+      "status": "validated"
+    }
+  ],
+  "chart_and_visual_register": [
+    {
+      "location": "Slide 1",
+      "chart_or_visual": "Revenue bridge",
+      "metric_or_claim": "Revenue",
+      "source_id": "SRC-001",
+      "unit": "USD mm",
+      "period": "FY2025",
+      "visual_review_status": "needs_review",
+      "tie_out_status": "tied",
+      "issue": "none",
+      "suggested_remediation": "review visual"
+    }
+  ],
+  "financial_tie_outs": [
+    {
+      "metric": "Revenue",
+      "source_value": 100,
+      "model_value": 100,
+      "variance": 0,
+      "tie_out_status": "tied",
+      "owner": "Associate"
+    }
+  ],
+  "style_profile_package": [
+    {
+      "label": "style_profile_package",
+      "description": "style_profile_package fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "style_change_log_package": [
+    {
+      "label": "style_change_log_package",
+      "description": "style_change_log_package fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "confidentiality_and_disclosure_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ]
+}

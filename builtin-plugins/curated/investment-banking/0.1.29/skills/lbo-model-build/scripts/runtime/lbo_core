@@ -1,0 +1,1592 @@
+"""Core LBO modeling utilities.
+
+Design goals:
+- Deterministic (no external data, no network)
+- Standard-library only
+- Produces a "long" table representing statements + schedules across scenarios
+
+This is a reusable engine; keep UI/output rendering in run_pipeline.py.
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import math
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from xml.sax.saxutils import escape
+
+ALLOWED_PERIODICITIES = {"annual", "quarterly"}
+
+
+def deep_merge(base: Any, override: Any) -> Any:
+    """Recursively merge `override` into `base`.
+
+    - dict: merge keys recursively
+    - list: override replaces base (lists are treated as atomic)
+    - other: override wins unless it is None
+    """
+    if override is None:
+        return base
+    if isinstance(base, dict) and isinstance(override, dict):
+        out = dict(base)
+        for k, v in override.items():
+            out[k] = deep_merge(out.get(k), v)
+        return out
+    if isinstance(override, list):
+        return override
+    return override
+
+
+def safe_get_year_map(d: Dict[str, Any], year: int, default: float) -> float:
+    """Get a value for `year` from a {"YYYY": value} map, with fallback to last known."""
+    if not d:
+        return default
+    # Exact
+    key = str(year)
+    if key in d and d[key] is not None:
+        return float(d[key])
+    # Fallback to the most recent prior year
+    keys = sorted([int(k) for k in d.keys() if str(k).isdigit()])
+    prior = [k for k in keys if k <= year]
+    if prior:
+        return float(d[str(prior[-1])])
+    return float(d[str(keys[0])])
+
+
+def sum_amounts(value: Any) -> float:
+    """Return a numeric total from either a scalar or a list/dict of amount items."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        if "amount" in value:
+            return float(value.get("amount") or 0.0)
+        return sum(sum_amounts(v) for v in value.values())
+    if isinstance(value, list):
+        total = 0.0
+        for item in value:
+            if isinstance(item, dict):
+                total += float(item.get("amount", 0.0) or 0.0)
+            elif isinstance(item, (int, float)):
+                total += float(item)
+        return total
+    return 0.0
+
+
+@dataclass
+class Period:
+    index: int
+    label: str
+    year: int
+    frequency: str
+    time_factor: float  # fraction of year
+
+
+def build_timeline(start_year: int, horizon_years: int, periodicity: str) -> List[Period]:
+    if periodicity not in ALLOWED_PERIODICITIES:
+        raise ValueError(f"Unsupported periodicity: {periodicity}")
+
+    periods: List[Period] = []
+    if periodicity == "annual":
+        for i in range(horizon_years):
+            y = start_year + i
+            periods.append(Period(i, f"FY{y}", y, periodicity, 1.0))
+    else:
+        # quarterly
+        total = horizon_years * 4
+        for i in range(total):
+            y = start_year + (i // 4)
+            q = (i % 4) + 1
+            periods.append(Period(i, f"Q{q}-{y}", y, periodicity, 0.25))
+    return periods
+
+
+def load_profile(skill_root: Path, kind: str, name: str) -> Dict[str, Any]:
+    """Load assets/<kind>_profiles/<name>.json if it exists."""
+    candidates = [
+        skill_root / "assets" / f"{kind}_profiles" / f"{name}.json",
+        skill_root / "assets" / "deep" / f"{kind}_profiles" / name,
+    ]
+    for p in candidates:
+        if p.exists():
+            return json.loads(p.read_text())
+    return {}
+
+
+def normalize_plan(plan: Dict[str, Any], skill_root: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Apply defaults and enforce periodicity rule. Returns (normalized_plan, run_log)."""
+    run_log: Dict[str, Any] = {
+        "model_status": "screen-grade",
+        "workbook_mode": "deterministic_export",
+        "source_basis": [],
+        "hard_failures": [],
+        "warnings": [],
+        "info": [],
+        "assumptions": {},
+        "checks": {},
+        "p0_handoff": {},
+    }
+
+    meta = plan.get("meta", {})
+    industry = meta.get("industry", "")
+    stage = meta.get("stage", "")
+
+    # Base template defaults (very small; rely on profiles and plan for most)
+    base_defaults: Dict[str, Any] = {
+        "meta": {"currency": "USD", "units": "USD_mm"},
+        "transaction": {
+            "purchase_accounting": {
+                "enabled": False,
+                "book_net_assets": None,
+                "fair_value_step_up": 0.0,
+                "identifiable_intangibles": 0.0,
+                "deferred_tax_rate": 0.25,
+                "intangible_amortization_years": 10,
+                "goodwill": None,
+            },
+            "management_incentive": {
+                "enabled": False,
+                "pool_pct_fully_diluted": 0.0,
+                "threshold_equity_value": 0.0,
+            },
+            "public_to_private": {
+                "enabled": False,
+                "offer_price": None,
+                "fully_diluted_shares": None,
+                "unaffected_share_price": None,
+            },
+            "carve_out": {
+                "enabled": False,
+                "standalone_costs": {},
+                "tsa_costs": {},
+                "stranded_costs": {},
+                "separation_capex": {},
+                "one_time_separation_costs": {},
+                "working_capital_peg": None,
+            },
+        },
+        "operating": {
+            "tax_rate": 0.25,
+            "da": {"model": "pct_revenue", "pct": 0.03},
+            "capex": {"model": "pct_revenue", "pct": 0.04},
+            "working_capital": {"model": "days", "ar_days": 45, "ap_days": 30, "include_inventory": False},
+            "dividends": {"enabled": False, "amounts": {}},
+            "one_time_cash_costs": {},
+        },
+        "balance_sheet": {
+            "opening_nwc": None,
+            "opening_ppe": None,
+            "opening_other_assets": 0.0,
+            "opening_other_liabilities": 0.0,
+            "opening_retained_earnings": 0.0,
+            "lease_liabilities": 0.0,
+        },
+        "debt": {"base_rate": {"name": "SOFR", "assumption": 0.04}, "tranches": [], "cash_sweep": {"enabled": True, "min_cash": None, "percentage": 1.0}},
+        "covenants": {"test_frequency": "quarterly", "definitions": {"cash_in_net_debt": True, "ebitda_source": "model"}, "tests": {}},
+        "sensitivities": {"target_irr": 0.20},
+    }
+
+    ind_profile = load_profile(skill_root, "industry", industry) if industry else {}
+    stg_profile = load_profile(skill_root, "stage", stage) if stage else {}
+
+    merged = deep_merge(base_defaults, ind_profile)
+    merged = deep_merge(merged, stg_profile)
+    merged = deep_merge(merged, plan)
+    run_log["source_basis"] = list(merged.get("source_basis", []) or [])
+
+    # Periodicity rule
+    tl = merged.get("timeline", {})
+    horizon_years = int(tl.get("horizon_years", 5))
+    periodicity = tl.get("periodicity")
+    periodicity_defaulted = False
+
+    if periodicity is None:
+        periodicity_defaulted = True
+        periodicity = "annual" if horizon_years > 3 else "quarterly"
+        run_log["assumptions"]["periodicity"] = {
+            "value": periodicity,
+            "reason": "Defaulted because periodicity was not provided; rule: annual if horizon_years>3 else quarterly.",
+        }
+    elif periodicity not in ALLOWED_PERIODICITIES:
+        periodicity_defaulted = True
+        run_log["warnings"].append({"code": "INVALID_PERIODICITY", "message": f"Unsupported periodicity '{periodicity}'. Defaulting by horizon."})
+        periodicity = "annual" if horizon_years > 3 else "quarterly"
+
+    merged.setdefault("timeline", {})["periodicity"] = periodicity
+    if periodicity == "quarterly":
+        run_log["info"].append(
+            {
+                "code": "QUARTERLY_ANNUALIZATION_BASIS",
+                "message": "Quarterly leverage, coverage and exit-multiple calculations use annualized run-rate values until four modeled quarters exist, then trailing-four-quarter values.",
+            }
+        )
+    merged["timeline"]["horizon_years"] = horizon_years
+
+    # Ensure min_cash present
+    tx = merged.setdefault("transaction", {})
+    if tx.get("min_cash") is None:
+        tx["min_cash"] = float(tx.get("uses", {}).get("min_cash_funding", 0.0) or 0.0)
+    if tx.get("min_cash") is None:
+        tx["min_cash"] = 0.0
+
+    if periodicity_defaulted:
+        run_log["info"].append({"code": "PERIODICITY_DEFAULTED", "message": f"Using periodicity='{periodicity}'."})
+
+    return merged, run_log
+
+
+def compute_entry_values(plan: Dict[str, Any]) -> Dict[str, float]:
+    tx = plan["transaction"]
+    entry = tx.get("entry", {})
+    method = entry.get("method")
+    if method == "multiple":
+        entry_ev = float(entry["entry_multiple"]) * float(entry["entry_ebitda"])
+        equity_purchase = None
+    elif method == "ev":
+        entry_ev = float(entry["entry_ev"])
+        equity_purchase = None
+    elif method == "public_take_private":
+        p2p = tx.get("public_to_private", {})
+        offer_price = float(p2p.get("offer_price") or entry.get("offer_price"))
+        diluted_shares = float(p2p.get("fully_diluted_shares") or entry.get("fully_diluted_shares"))
+        equity_purchase = offer_price * diluted_shares
+        assumed_cash = float(tx.get("assumed_cash", 0.0))
+        assumed_debt = float(tx.get("assumed_debt", 0.0))
+        debt_like = sum_amounts(tx.get("debt_like_items", 0.0))
+        wc_trueup = float(tx.get("working_capital_trueup", 0.0))
+        entry_ev = equity_purchase + assumed_debt + debt_like - assumed_cash - wc_trueup
+    else:
+        raise ValueError("transaction.entry.method must be 'multiple', 'ev', or 'public_take_private'")
+
+    assumed_cash = float(tx.get("assumed_cash", 0.0))
+    assumed_debt = float(tx.get("assumed_debt", 0.0))
+    debt_like = sum_amounts(tx.get("debt_like_items", 0.0))
+    wc_trueup = float(tx.get("working_capital_trueup", 0.0))
+
+    if equity_purchase is None:
+        equity_purchase = entry_ev - (assumed_debt - assumed_cash) - debt_like + wc_trueup
+
+    uses = tx.get("uses", {})
+    transaction_fees = sum_amounts(uses.get("transaction_fees", 0.0))
+    financing_fees = sum_amounts(uses.get("financing_fees", 0.0))
+    oid = sum_amounts(uses.get("oid", 0.0))
+    refi = sum_amounts(uses.get("refi_existing_debt", 0.0))
+    management_cashout = sum_amounts(uses.get("management_option_cashout", 0.0))
+    change_of_control = sum_amounts(uses.get("change_of_control_payments", 0.0))
+    escrow = sum_amounts(uses.get("escrow_funding", 0.0))
+    funded_separation = sum_amounts(uses.get("funded_separation_reserve", 0.0))
+    other_uses = sum_amounts(uses.get("other_uses", 0.0))
+
+    min_cash = float(tx.get("min_cash", 0.0))
+
+    total_uses = (
+        equity_purchase
+        + transaction_fees
+        + financing_fees
+        + oid
+        + refi
+        + min_cash
+        + management_cashout
+        + change_of_control
+        + escrow
+        + funded_separation
+        + other_uses
+    )
+
+    rollover = float(tx.get("equity", {}).get("rollover_equity", 0.0) or 0.0)
+
+    # New debt sources (face amounts, excluding revolver day-1 draw)
+    debt_sources = 0.0
+    for tr in plan.get("debt", {}).get("tranches", []):
+        ttype = tr.get("type")
+        if ttype == "revolver":
+            continue
+        debt_sources += float(tr.get("face", 0.0) or 0.0)
+
+    sponsor_equity = tx.get("equity", {}).get("sponsor_equity")
+    if sponsor_equity is None:
+        sponsor_equity = total_uses - debt_sources - rollover
+    sponsor_equity = float(sponsor_equity)
+
+    total_sources = debt_sources + rollover + sponsor_equity
+
+    return {
+        "entry_ev": entry_ev,
+        "equity_purchase": equity_purchase,
+        "total_uses": total_uses,
+        "transaction_fees": transaction_fees,
+        "financing_fees": financing_fees,
+        "oid": oid,
+        "refi_existing_debt": refi,
+        "management_option_cashout": management_cashout,
+        "change_of_control_payments": change_of_control,
+        "escrow_funding": escrow,
+        "funded_separation_reserve": funded_separation,
+        "other_uses": other_uses,
+        "assumed_cash": assumed_cash,
+        "assumed_debt": assumed_debt,
+        "debt_like_items": debt_like,
+        "working_capital_trueup": wc_trueup,
+        "debt_sources": debt_sources,
+        "rollover_equity": rollover,
+        "sponsor_equity": sponsor_equity,
+        "sources_minus_uses": total_sources - total_uses,
+        "opening_cash": min_cash,
+    }
+
+
+def revenue_by_year(plan: Dict[str, Any], start_year: int, horizon_years: int) -> Dict[int, float]:
+    rev = plan["operating"]["revenue"]
+    model = rev.get("model")
+    out: Dict[int, float] = {}
+
+    if model == "growth":
+        base_revenue = float(rev["base_revenue"])
+        growth_rates = rev.get("growth_rates", {})
+        out[start_year] = base_revenue
+        for i in range(1, horizon_years):
+            y = start_year + i
+            g = safe_get_year_map(growth_rates, y, 0.0)
+            out[y] = out[y - 1] * (1.0 + g)
+        return out
+
+    if model == "volume_price":
+        units0 = float(rev["base_units"])
+        price0 = float(rev["base_price"])
+        gu = rev.get("unit_growth_rates", {})
+        gp = rev.get("price_growth_rates", {})
+        units = {start_year: units0}
+        price = {start_year: price0}
+        out[start_year] = units0 * price0
+        for i in range(1, horizon_years):
+            y = start_year + i
+            units[y] = units[y - 1] * (1.0 + safe_get_year_map(gu, y, 0.0))
+            price[y] = price[y - 1] * (1.0 + safe_get_year_map(gp, y, 0.0))
+            out[y] = units[y] * price[y]
+        return out
+
+    if model == "arr":
+        begin_arr = float(rev["begin_arr"])
+        new_arr = rev.get("new_arr", {})
+        nrr = rev.get("net_retention", {})
+        churn = rev.get("churn_rate", {})
+        recognition = rev.get("revenue_recognition", "avg_arr")
+
+        arr_beg = {start_year: begin_arr}
+        arr_end: Dict[int, float] = {}
+        for i in range(horizon_years):
+            y = start_year + i
+            if i > 0:
+                arr_beg[y] = arr_end[y - 1]
+            nrr_y = safe_get_year_map(nrr, y, 1.0)
+            churn_y = safe_get_year_map(churn, y, 0.0)
+            new_y = safe_get_year_map(new_arr, y, 0.0)
+            arr_end[y] = arr_beg[y] * nrr_y * (1.0 - churn_y) + new_y
+            if recognition == "avg_arr":
+                out[y] = 0.5 * (arr_beg[y] + arr_end[y])
+            else:
+                out[y] = arr_end[y]
+        return out
+
+    raise ValueError(f"Unsupported revenue model: {model}")
+
+
+def expand_year_to_periods(periods: List[Period], by_year: Dict[int, float]) -> List[float]:
+    out: List[float] = []
+    for p in periods:
+        yval = by_year.get(p.year)
+        if yval is None:
+            # fallback to nearest year
+            years = sorted(by_year.keys())
+            prior = [y for y in years if y <= p.year]
+            yval = by_year[prior[-1]] if prior else by_year[years[0]]
+        if p.frequency == "annual":
+            out.append(float(yval))
+        else:
+            out.append(float(yval) / 4.0)
+    return out
+
+
+def annualized_or_ltm_series(periods: List[Period], values: List[float]) -> List[float]:
+    """Return annual-equivalent values for ratio and exit calculations.
+
+    Quarterly cash flows remain quarterly in operating and debt schedules. Ratios
+    use an annualized run rate before four forecast quarters exist and LTM values
+    thereafter so debt/EBITDA and exit multiples are not computed on one quarter.
+    """
+    if not periods:
+        return []
+    if periods[0].frequency == "annual":
+        return list(values)
+    result: List[float] = []
+    for i, value in enumerate(values):
+        if i >= 3:
+            result.append(sum(values[i - 3 : i + 1]))
+        else:
+            result.append(float(value) / periods[i].time_factor)
+    return result
+
+
+def compute_operating_series(plan: Dict[str, Any], periods: List[Period]) -> Dict[str, List[float]]:
+    tl = plan["timeline"]
+    start_year = int(tl["start_year"])
+    horizon_years = int(tl["horizon_years"])
+
+    rev_year = revenue_by_year(plan, start_year, horizon_years)
+    revenue = expand_year_to_periods(periods, rev_year)
+
+    op = plan["operating"]
+    ebitda_margin_map = op.get("ebitda_margin", {})
+    tax_rate = float(op.get("tax_rate", 0.25))
+
+    da_cfg = op.get("da", {"model": "pct_revenue", "pct": 0.03})
+    capex_cfg = op.get("capex", {"model": "pct_revenue", "pct": 0.04})
+
+    ebitda: List[float] = []
+    gross_profit: List[float] = []
+    opex: List[float] = []
+    da: List[float] = []
+    ebit: List[float] = []
+    capex: List[float] = []
+    maintenance_capex: List[float] = []
+    growth_capex: List[float] = []
+    separation_capex: List[float] = []
+    standalone_costs: List[float] = []
+    tsa_costs: List[float] = []
+    stranded_costs: List[float] = []
+    one_time_cash_costs: List[float] = []
+
+    carve = plan.get("transaction", {}).get("carve_out", {}) or {}
+    carve_enabled = bool(carve.get("enabled", False))
+    one_time_cfg = op.get("one_time_cash_costs", {}) if isinstance(op.get("one_time_cash_costs", {}), dict) else {}
+    add_on_cfg = plan.get("add_on_acquisitions", {}) or {}
+    add_on_revenue = [0.0] * len(periods)
+    add_on_ebitda = [0.0] * len(periods)
+    add_on_integration_costs = [0.0] * len(periods)
+    if bool(add_on_cfg.get("enabled", False)):
+        for deal in add_on_cfg.get("deals", []) or []:
+            close_year = int(deal.get("close_year", start_year))
+            annual_revenue = float(deal.get("revenue", 0.0) or 0.0)
+            annual_ebitda = float(deal.get("ebitda", 0.0) or 0.0)
+            annual_synergy = float(deal.get("synergy_ebitda", 0.0) or 0.0)
+            integration_cost = float(deal.get("integration_cost", 0.0) or 0.0)
+            for i, p in enumerate(periods):
+                if p.year >= close_year:
+                    add_on_revenue[i] += annual_revenue * p.time_factor
+                    add_on_ebitda[i] += (annual_ebitda + annual_synergy) * p.time_factor
+                if p.year == close_year:
+                    add_on_integration_costs[i] += integration_cost * p.time_factor
+
+    for i, (p, rev) in enumerate(zip(periods, revenue)):
+        if add_on_revenue[i]:
+            rev += add_on_revenue[i]
+            revenue[i] = rev
+        m = safe_get_year_map(ebitda_margin_map, p.year, float(list(ebitda_margin_map.values())[0]) if ebitda_margin_map else 0.2)
+        gross_margin_cfg = op.get("gross_margin", {})
+        if isinstance(gross_margin_cfg, dict) and gross_margin_cfg:
+            gm = safe_get_year_map(gross_margin_cfg, p.year, 0.5)
+            gp = rev * gm
+        else:
+            gp = float("nan")
+
+        standalone = safe_get_year_map(carve.get("standalone_costs", {}), p.year, 0.0) * p.time_factor if carve_enabled else 0.0
+        tsa = safe_get_year_map(carve.get("tsa_costs", {}), p.year, 0.0) * p.time_factor if carve_enabled else 0.0
+        stranded = safe_get_year_map(carve.get("stranded_costs", {}), p.year, 0.0) * p.time_factor if carve_enabled else 0.0
+        one_time = safe_get_year_map(one_time_cfg, p.year, 0.0) * p.time_factor + add_on_integration_costs[i]
+        if carve_enabled:
+            one_time += safe_get_year_map(carve.get("one_time_separation_costs", {}), p.year, 0.0) * p.time_factor
+
+        e = rev * m + add_on_ebitda[i] - standalone - tsa - stranded
+        ebitda.append(e)
+        gross_profit.append(gp)
+        opex.append((gp - e) if gp == gp else float("nan"))
+        standalone_costs.append(standalone)
+        tsa_costs.append(tsa)
+        stranded_costs.append(stranded)
+        one_time_cash_costs.append(one_time)
+        if da_cfg.get("model") == "pct_revenue":
+            da_t = rev * float(da_cfg.get("pct", 0.03))
+        else:
+            da_t = float(da_cfg.get("amount", 0.0)) * p.time_factor
+        da.append(da_t)
+        ebit.append(e - da_t)
+        sep_capex = safe_get_year_map(carve.get("separation_capex", {}), p.year, 0.0) * p.time_factor if carve_enabled else 0.0
+        if capex_cfg.get("model") == "split":
+            maint = rev * float(capex_cfg.get("maintenance_pct_revenue", capex_cfg.get("maintenance_pct", 0.0)))
+            growth = rev * float(capex_cfg.get("growth_pct_revenue", capex_cfg.get("growth_pct", 0.0)))
+            capex_t = maint + growth + sep_capex
+        elif capex_cfg.get("model") == "pct_revenue":
+            capex_t = rev * float(capex_cfg.get("pct", 0.04))
+            maint = capex_t
+            growth = 0.0
+        else:
+            capex_t = float(capex_cfg.get("amount", 0.0)) * p.time_factor
+            maint = capex_t
+            growth = 0.0
+        capex_t += sep_capex if capex_cfg.get("model") != "split" else 0.0
+        capex.append(capex_t)
+        maintenance_capex.append(maint)
+        growth_capex.append(growth)
+        separation_capex.append(sep_capex)
+
+    # Working capital
+    wc_cfg = op.get("working_capital", {})
+    wc_model = wc_cfg.get("model", "days")
+    ar_days = float(wc_cfg.get("ar_days", 45))
+    ap_days = float(wc_cfg.get("ap_days", 30))
+    inv_days = float(wc_cfg.get("inv_days", 0))
+    include_inv = bool(wc_cfg.get("include_inventory", False))
+
+    ar: List[float] = []
+    ap: List[float] = []
+    inv: List[float] = []
+    nwc: List[float] = []
+    delta_nwc: List[float] = []
+
+    if wc_model == "pct_revenue":
+        pct = float(wc_cfg.get("pct", 0.05))
+        for i, (p, rev) in enumerate(zip(periods, revenue)):
+            nwc_t = rev * pct
+            nwc.append(nwc_t)
+            delta_nwc.append(nwc_t - (nwc[i - 1] if i > 0 else nwc_t))
+        # placeholders
+        ar = [0.0] * len(periods)
+        ap = [0.0] * len(periods)
+        inv = [0.0] * len(periods)
+    else:
+        # Simplified days-based: approximate payables and inventory off revenue.
+        # This is intentionally conservative and avoids needing a full COGS stack.
+        ap_factor = float(wc_cfg.get("ap_revenue_factor", 0.7))
+        inv_factor = float(wc_cfg.get("inv_revenue_factor", 0.5))
+        for i, (p, rev) in enumerate(zip(periods, revenue)):
+            ar_t = rev / 365.0 * ar_days
+            ap_t = rev / 365.0 * ap_days * ap_factor
+            inv_t = (rev / 365.0 * inv_days * inv_factor) if include_inv else 0.0
+            nwc_t = ar_t + inv_t - ap_t
+            ar.append(ar_t)
+            ap.append(ap_t)
+            inv.append(inv_t)
+            nwc.append(nwc_t)
+            delta_nwc.append(nwc_t - (nwc[i - 1] if i > 0 else nwc_t))
+
+    return {
+        "revenue": revenue,
+        "gross_profit": gross_profit,
+        "opex": opex,
+        "ebitda": ebitda,
+        "da": da,
+        "ebit": ebit,
+        "capex": capex,
+        "maintenance_capex": maintenance_capex,
+        "growth_capex": growth_capex,
+        "separation_capex": separation_capex,
+        "standalone_costs": standalone_costs,
+        "tsa_costs": tsa_costs,
+        "stranded_costs": stranded_costs,
+        "one_time_cash_costs": one_time_cash_costs,
+        "add_on_revenue": add_on_revenue,
+        "add_on_ebitda": add_on_ebitda,
+        "add_on_integration_costs": add_on_integration_costs,
+        "tax_rate": [tax_rate] * len(periods),
+        "ar": ar,
+        "ap": ap,
+        "inv": inv,
+        "nwc": nwc,
+        "delta_nwc": delta_nwc,
+    }
+
+
+def tranche_rate(tr: Dict[str, Any], base_rate: float) -> float:
+    ttype = tr.get("type")
+    if ttype in {"notes", "mezz"}:
+        return float(tr.get("fixed_rate", tr.get("cash_rate", 0.0)))
+    if ttype == "pik":
+        return float(tr.get("cash_rate", 0.0))
+    # floating
+    floor = float(tr.get("floor", 0.0))
+    spread = float(tr.get("spread", 0.0))
+    return max(base_rate, floor) + spread
+
+
+def irr(cashflows: List[float]) -> Optional[float]:
+    """Compute IRR (annualized) using Newton method with fallback bisection."""
+    # Require at least one negative and one positive
+    if not (any(cf < 0 for cf in cashflows) and any(cf > 0 for cf in cashflows)):
+        return None
+
+    def npv(rate: float) -> float:
+        return sum(cf / ((1 + rate) ** t) for t, cf in enumerate(cashflows))
+
+    def d_npv(rate: float) -> float:
+        return sum(-t * cf / ((1 + rate) ** (t + 1)) for t, cf in enumerate(cashflows) if t > 0)
+
+    r = 0.2
+    for _ in range(50):
+        f = npv(r)
+        df = d_npv(r)
+        if abs(df) < 1e-9:
+            break
+        new_r = r - f / df
+        if new_r <= -0.95 or new_r > 10:
+            break
+        if abs(new_r - r) < 1e-8:
+            return new_r
+        r = new_r
+
+    # Bisection fallback
+    lo, hi = -0.9, 5.0
+    f_lo, f_hi = npv(lo), npv(hi)
+    if f_lo * f_hi > 0:
+        return None
+    for _ in range(100):
+        mid = 0.5 * (lo + hi)
+        f_mid = npv(mid)
+        if abs(f_mid) < 1e-8:
+            return mid
+        if f_lo * f_mid <= 0:
+            hi = mid
+            f_hi = f_mid
+        else:
+            lo = mid
+            f_lo = f_mid
+    return 0.5 * (lo + hi)
+
+
+def run_debt_and_cash(plan: Dict[str, Any], periods: List[Period], op: Dict[str, List[float]], entry: Dict[str, float], run_log: Dict[str, Any]) -> Dict[str, Any]:
+    debt_cfg = plan.get("debt", {})
+    base_rate = float(debt_cfg.get("base_rate", {}).get("assumption", 0.04))
+    tranches = list(debt_cfg.get("tranches", []))
+
+    # Initialize balances
+    balances: Dict[str, float] = {}
+    commitments: Dict[str, float] = {}
+    tranche_map: Dict[str, Dict[str, Any]] = {}
+    for tr in tranches:
+        tid = tr["id"]
+        tranche_map[tid] = tr
+        if tr.get("type") == "revolver":
+            balances[tid] = 0.0
+            commitments[tid] = float(tr.get("commitment", 0.0))
+        else:
+            balances[tid] = float(tr.get("face", 0.0) or 0.0)
+
+    min_cash = float(plan.get("transaction", {}).get("min_cash", 0.0))
+    sweep_cfg = debt_cfg.get("cash_sweep", {})
+    if sweep_cfg.get("min_cash") is not None:
+        min_cash = float(sweep_cfg["min_cash"])
+    sweep_enabled = bool(sweep_cfg.get("enabled", True))
+    sweep_pct = float(sweep_cfg.get("percentage", 1.0))
+
+    # Debt schedule outputs
+    sched: Dict[str, Dict[str, List[float]]] = {}
+    for tid in tranche_map:
+        sched[tid] = {k: [0.0] * len(periods) for k in ["beg", "draw", "repay", "amort", "interest", "end", "pik"]}
+
+    cash = [0.0] * len(periods)
+    cash[0] = float(entry.get("opening_cash", min_cash))
+
+    cash_interest = [0.0] * len(periods)
+    cash_taxes = [0.0] * len(periods)
+    fcf_after_debt_service = [0.0] * len(periods)
+    dividends = [0.0] * len(periods)
+    ebt = [0.0] * len(periods)
+    net_income = [0.0] * len(periods)
+    nol_used = [0.0] * len(periods)
+    ending_nol = [0.0] * len(periods)
+
+    # Dividend schedule (optional)
+    div_cfg = plan.get("operating", {}).get("dividends", {})
+    div_enabled = bool(div_cfg.get("enabled", False))
+    div_amounts = div_cfg.get("amounts", {}) if isinstance(div_cfg.get("amounts", {}), dict) else {}
+    tax_cfg = plan.get("tax", {}) or {}
+    nol_balance = float(tax_cfg.get("opening_nol", 0.0) or 0.0)
+    interest_limit_pct = tax_cfg.get("interest_deductibility_limit_pct_ebitda")
+
+    financing_events: Dict[int, List[Dict[str, float | str]]] = {}
+    for event in debt_cfg.get("dividend_recaps", []) or []:
+        year = int(event.get("year"))
+        financing_events.setdefault(year, []).append(
+            {
+                "kind": "dividend_recap",
+                "target_tranche": event.get("target_tranche", ""),
+                "debt_raise": float(event.get("debt_raise", 0.0) or 0.0),
+                "cash_use": float(event.get("dividend", 0.0) or 0.0) + float(event.get("fees", 0.0) or 0.0),
+            }
+        )
+    add_on_cfg = plan.get("add_on_acquisitions", {}) or {}
+    if bool(add_on_cfg.get("enabled", False)):
+        for deal in add_on_cfg.get("deals", []) or []:
+            close_year = int(deal.get("close_year", periods[0].year))
+            purchase_price = float(deal.get("purchase_price", 0.0) or 0.0)
+            if purchase_price == 0.0 and deal.get("purchase_multiple") is not None:
+                purchase_price = float(deal.get("purchase_multiple")) * float(deal.get("ebitda", 0.0) or 0.0)
+            fees = float(deal.get("transaction_fees", 0.0) or 0.0)
+            debt_pct = float(deal.get("debt_financing_pct", 0.0) or 0.0)
+            financing_events.setdefault(close_year, []).append(
+                {
+                    "kind": "add_on_acquisition",
+                    "target_tranche": deal.get("target_tranche", ""),
+                    "debt_raise": purchase_price * debt_pct,
+                    "cash_use": purchase_price + fees,
+                }
+            )
+
+    # Sweep order
+    order = sorted(tranches, key=lambda x: int(x.get("sweep_rank", 999)))
+
+    # Iterate period-by-period
+    for t, p in enumerate(periods):
+        cash_beg = cash[t - 1] if t > 0 else cash[0]
+
+        # Scheduled amort
+        scheduled_amort: Dict[str, float] = {}
+        for tr in tranches:
+            tid = tr["id"]
+            if tr.get("type") == "term_loan":
+                face = float(tr.get("face", 0.0))
+                amort_pct = float(tr.get("amort_pct_per_year", 0.0))
+                amort = face * amort_pct * p.time_factor
+                scheduled_amort[tid] = min(amort, balances[tid])
+            else:
+                scheduled_amort[tid] = 0.0
+
+        # Per-period fixed-point iteration to handle interest/taxes/sweep/revolver
+        end_bal = balances.copy()
+        end_cash = cash_beg
+        max_iter = 50
+        tol = 1e-6
+        converged = False
+
+        for it in range(max_iter):
+            # Interest on avg balances (use current guess for end balances)
+            interests: Dict[str, float] = {}
+            total_interest = 0.0
+            for tr in tranches:
+                tid = tr["id"]
+                beg = balances[tid]
+                end_guess = end_bal[tid]
+                avg = 0.5 * (beg + end_guess)
+                rate = tranche_rate(tr, base_rate)
+                interest = avg * rate * p.time_factor
+                interests[tid] = interest
+                # Commitment fee on undrawn revolver
+                if tr.get("type") == "revolver":
+                    commit_fee = float(tr.get("commit_fee", 0.0))
+                    undrawn = max(0.0, commitments[tid] - avg)
+                    interest += undrawn * commit_fee * p.time_factor
+                    interests[tid] = interest
+                total_interest += interest
+
+            taxable_ebt = op["ebit"][t] - total_interest
+            if interest_limit_pct is not None:
+                deductible_interest = min(total_interest, max(0.0, op["ebitda"][t] * float(interest_limit_pct)))
+                taxable_ebt = op["ebit"][t] - deductible_interest
+            taxable_income = max(0.0, taxable_ebt)
+            taxable_after_nol = max(0.0, taxable_income - nol_balance)
+            taxes = taxable_after_nol * float(op["tax_rate"][t])
+
+            # Operating cash after taxes/interest, before financing actions
+            op_cash = op["ebitda"][t] - op["capex"][t] - op["delta_nwc"][t] - op.get("one_time_cash_costs", [0.0] * len(periods))[t] - taxes - total_interest
+
+            # Apply scheduled amort (financing outflow)
+            cash_pre = cash_beg + op_cash
+            for tr in tranches:
+                tid = tr["id"]
+                if scheduled_amort[tid] > 0:
+                    cash_pre -= scheduled_amort[tid]
+
+            # Optional dividends (after ops, before sweeps by default)
+            div = 0.0
+            if div_enabled:
+                div = safe_get_year_map(div_amounts, p.year, 0.0) * p.time_factor
+                cash_pre -= div
+
+            for event in financing_events.get(p.year, []):
+                cash_pre -= float(event.get("cash_use", 0.0))
+
+            # Sweep / revolver
+            new_end_bal = balances.copy()
+            # Start from balances and apply scheduled amort to end balances
+            for tr in tranches:
+                tid = tr["id"]
+                new_end_bal[tid] = max(0.0, balances[tid] - scheduled_amort[tid])
+
+            end_cash_candidate = cash_pre
+
+            # Revolver draw if shortfall
+            rev_id = None
+            for tr in tranches:
+                if tr.get("type") == "revolver":
+                    rev_id = tr["id"]
+                    break
+            if rev_id is not None:
+                shortfall = max(0.0, min_cash - end_cash_candidate)
+                if shortfall > 0:
+                    avail = max(0.0, commitments[rev_id] - new_end_bal[rev_id])
+                    draw = min(avail, shortfall)
+                    new_end_bal[rev_id] += draw
+                    end_cash_candidate += draw
+
+            for event in financing_events.get(p.year, []):
+                debt_raise = float(event.get("debt_raise", 0.0))
+                target = str(event.get("target_tranche") or "")
+                if debt_raise <= 0:
+                    continue
+                if target and target in new_end_bal:
+                    new_end_bal[target] += debt_raise
+                    end_cash_candidate += debt_raise
+                else:
+                    target_ids = [tr["id"] for tr in tranches if tr.get("type") != "revolver"]
+                    if target_ids:
+                        new_end_bal[target_ids[0]] += debt_raise
+                        end_cash_candidate += debt_raise
+
+            # Sweep excess cash
+            if sweep_enabled and sweep_pct > 0:
+                excess = max(0.0, end_cash_candidate - min_cash)
+                sweep_cash = excess * sweep_pct
+
+                # Repay in rank order
+                remaining = sweep_cash
+                for tr in order:
+                    tid = tr["id"]
+                    if remaining <= 0:
+                        break
+                    if tr.get("type") == "revolver":
+                        repay = min(new_end_bal[tid], remaining)
+                        new_end_bal[tid] -= repay
+                        remaining -= repay
+                    else:
+                        repay = min(new_end_bal[tid], remaining)
+                        new_end_bal[tid] -= repay
+                        remaining -= repay
+                end_cash_candidate -= (sweep_cash - remaining)
+
+            # PIK interest capitalization
+            for tr in tranches:
+                if tr.get("type") == "pik":
+                    tid = tr["id"]
+                    pik_rate = float(tr.get("pik_rate", 0.0))
+                    beg = balances[tid]
+                    end_guess = new_end_bal[tid]
+                    avg = 0.5 * (beg + end_guess)
+                    pik_amt = avg * pik_rate * p.time_factor
+                    new_end_bal[tid] += pik_amt
+
+            # Check convergence
+            diff = max(abs(new_end_bal[k] - end_bal[k]) for k in end_bal)
+            diff = max(diff, abs(end_cash_candidate - end_cash))
+            end_bal = new_end_bal
+            end_cash = end_cash_candidate
+            if diff < tol:
+                converged = True
+                break
+
+        if not converged:
+            run_log["warnings"].append({
+                "code": "SOLVER_NO_CONVERGE",
+                "message": f"Debt/interest solver did not converge in period {p.label}; using last iterate.",
+                "period": p.label,
+            })
+
+        # With final end_bal, compute final interest and taxes for reporting
+        interests_final: Dict[str, float] = {}
+        total_interest_final = 0.0
+        for tr in tranches:
+            tid = tr["id"]
+            beg = balances[tid]
+            avg = 0.5 * (beg + end_bal[tid])
+            rate = tranche_rate(tr, base_rate)
+            interest = avg * rate * p.time_factor
+            if tr.get("type") == "revolver":
+                commit_fee = float(tr.get("commit_fee", 0.0))
+                undrawn = max(0.0, commitments[tid] - avg)
+                interest += undrawn * commit_fee * p.time_factor
+            interests_final[tid] = interest
+            total_interest_final += interest
+
+        ebt_final = op["ebit"][t] - total_interest_final
+        taxable_ebt_final = ebt_final
+        if interest_limit_pct is not None:
+            deductible_interest = min(total_interest_final, max(0.0, op["ebitda"][t] * float(interest_limit_pct)))
+            taxable_ebt_final = op["ebit"][t] - deductible_interest
+        taxable_income_final = max(0.0, taxable_ebt_final)
+        nol_used_t = min(nol_balance, taxable_income_final)
+        taxes_final = max(0.0, taxable_income_final - nol_used_t) * float(op["tax_rate"][t])
+        nol_balance = max(0.0, nol_balance - nol_used_t)
+
+        # Update schedules
+        for tr in tranches:
+            tid = tr["id"]
+            pik_amt_final = 0.0
+            if tr.get("type") == "pik":
+                pik_rate = float(tr.get("pik_rate", 0.0))
+                avg_for_pik = 0.5 * (balances[tid] + end_bal[tid])
+                pik_amt_final = avg_for_pik * pik_rate * p.time_factor
+            sched[tid]["beg"][t] = balances[tid]
+            sched[tid]["amort"][t] = scheduled_amort.get(tid, 0.0)
+            sched[tid]["interest"][t] = interests_final.get(tid, 0.0)
+            sched[tid]["end"][t] = end_bal[tid]
+            sched[tid]["pik"][t] = pik_amt_final
+            # Draw/repay inferred
+            delta = end_bal[tid] - (balances[tid] - scheduled_amort.get(tid, 0.0) + pik_amt_final)
+            if delta > 0:
+                sched[tid]["draw"][t] = delta
+            elif delta < 0:
+                sched[tid]["repay"][t] = -delta
+
+        balances = end_bal
+
+        cash[t] = end_cash
+        cash_interest[t] = total_interest_final
+        cash_taxes[t] = taxes_final
+        ebt[t] = ebt_final
+        net_income[t] = ebt_final - taxes_final
+        nol_used[t] = nol_used_t
+        ending_nol[t] = nol_balance
+
+        # Dividends for reporting
+        if div_enabled:
+            dividends[t] = safe_get_year_map(div_amounts, p.year, 0.0) * p.time_factor
+        for event in financing_events.get(p.year, []):
+            if event.get("kind") == "dividend_recap":
+                dividends[t] += float(event.get("cash_use", 0.0))
+
+        # FCF after debt service: cash change excluding financing? Provide a simple measure: op cash minus interest/taxes/capex/dNWC
+        fcf_after_debt_service[t] = op["ebitda"][t] - op["capex"][t] - op["delta_nwc"][t] - op.get("one_time_cash_costs", [0.0] * len(periods))[t] - cash_taxes[t] - cash_interest[t]
+
+    return {
+        "cash": cash,
+        "cash_interest": cash_interest,
+        "cash_taxes": cash_taxes,
+        "ebt": ebt,
+        "net_income": net_income,
+        "nol_used": nol_used,
+        "ending_nol": ending_nol,
+        "fcf_after_debt_service": fcf_after_debt_service,
+        "dividends": dividends,
+        "sched": sched,
+        "final_balances": balances,
+    }
+
+
+def compute_covenants(plan: Dict[str, Any], periods: List[Period], op: Dict[str, List[float]], debt_result: Dict[str, Any]) -> Dict[str, List[float]]:
+    cash = debt_result["cash"]
+    sched = debt_result["sched"]
+
+    total_debt = []
+    for t, _p in enumerate(periods):
+        td = 0.0
+        for tid in sched:
+            td += sched[tid]["end"][t]
+        total_debt.append(td)
+
+    ebitda = annualized_or_ltm_series(periods, op["ebitda"])
+    raw_cash_interest = debt_result["cash_interest"]
+    cash_interest = annualized_or_ltm_series(periods, raw_cash_interest)
+    cash_taxes = annualized_or_ltm_series(
+        periods, debt_result.get("cash_taxes", [0.0] * len(periods))
+    )
+    capex = annualized_or_ltm_series(periods, op.get("capex", [0.0] * len(periods)))
+    delta_nwc = annualized_or_ltm_series(
+        periods, op.get("delta_nwc", [0.0] * len(periods))
+    )
+
+    total_lev = [ (total_debt[t] / ebitda[t]) if ebitda[t] != 0 else float("inf") for t in range(len(periods))]
+    cash_in_net = bool(plan.get("covenants", {}).get("definitions", {}).get("cash_in_net_debt", True))
+    net_debt = [total_debt[t] - (cash[t] if cash_in_net else 0.0) for t in range(len(periods))]
+    net_lev = [(net_debt[t] / ebitda[t]) if ebitda[t] != 0 else float("inf") for t in range(len(periods))]
+    icr = [(ebitda[t] / cash_interest[t]) if cash_interest[t] != 0 else float("inf") for t in range(len(periods))]
+    mandatory_amort = []
+    total_debt_service = []
+    for t in range(len(periods)):
+        amort_t = sum(s["amort"][t] for s in sched.values())
+        mandatory_amort.append(amort_t)
+        total_debt_service.append(raw_cash_interest[t] + amort_t)
+    covenant_amort = annualized_or_ltm_series(periods, mandatory_amort)
+    coverage_debt_service = [
+        cash_interest[t] + covenant_amort[t] for t in range(len(periods))
+    ]
+    fixed_charge_coverage = [
+        ((ebitda[t] - cash_taxes[t] - capex[t]) / coverage_debt_service[t]) if coverage_debt_service[t] != 0 else float("inf")
+        for t in range(len(periods))
+    ]
+    debt_service_coverage = [
+        ((ebitda[t] - cash_taxes[t] - delta_nwc[t] - capex[t]) / coverage_debt_service[t]) if coverage_debt_service[t] != 0 else float("inf")
+        for t in range(len(periods))
+    ]
+
+    return {
+        "total_debt": total_debt,
+        "net_debt": net_debt,
+        "annualized_ebitda": ebitda,
+        "total_leverage": total_lev,
+        "net_leverage": net_lev,
+        "interest_coverage": icr,
+        "fixed_charge_coverage": fixed_charge_coverage,
+        "debt_service_coverage": debt_service_coverage,
+        "mandatory_amortization": mandatory_amort,
+        "total_debt_service": total_debt_service,
+        "coverage_debt_service": coverage_debt_service,
+        "liquidity": cash,
+    }
+
+
+def compute_purchase_accounting(plan: Dict[str, Any], entry: Dict[str, float]) -> Dict[str, float]:
+    """Compute a simplified opening purchase-accounting bridge.
+
+    This is intentionally deterministic and transparent. It is not a substitute
+    for a full valuation/PPA workpaper, but it prevents the model from hiding the
+    goodwill/intangible/deferred-tax implications of the entry price.
+    """
+    pa = plan.get("transaction", {}).get("purchase_accounting", {}) or {}
+    enabled = bool(pa.get("enabled", False))
+    book_net_assets = pa.get("book_net_assets")
+    if book_net_assets is None:
+        book_net_assets = entry.get("equity_purchase", 0.0)
+    book_net_assets = float(book_net_assets or 0.0)
+    fair_value_step_up = float(pa.get("fair_value_step_up", 0.0) or 0.0)
+    identifiable_intangibles = float(pa.get("identifiable_intangibles", 0.0) or 0.0)
+    deferred_tax_rate = float(pa.get("deferred_tax_rate", plan.get("operating", {}).get("tax_rate", 0.25)) or 0.0)
+    deferred_tax_liability = (fair_value_step_up + identifiable_intangibles) * deferred_tax_rate if enabled else 0.0
+    identifiable_net_assets = book_net_assets + fair_value_step_up + identifiable_intangibles - deferred_tax_liability
+    goodwill = pa.get("goodwill")
+    if goodwill is None:
+        goodwill = max(0.0, float(entry.get("equity_purchase", 0.0)) - identifiable_net_assets)
+    return {
+        "enabled": 1.0 if enabled else 0.0,
+        "book_net_assets": book_net_assets,
+        "fair_value_step_up": fair_value_step_up,
+        "identifiable_intangibles": identifiable_intangibles,
+        "deferred_tax_liability": deferred_tax_liability,
+        "identifiable_net_assets": identifiable_net_assets,
+        "goodwill": float(goodwill or 0.0),
+        "intangible_amortization_years": float(pa.get("intangible_amortization_years", 10) or 10),
+    }
+
+
+def compute_balance_sheet(
+    plan: Dict[str, Any],
+    periods: List[Period],
+    entry: Dict[str, float],
+    op: Dict[str, List[float]],
+    debt_result: Dict[str, Any],
+    cov: Dict[str, List[float]],
+) -> Dict[str, Any]:
+    pa = compute_purchase_accounting(plan, entry)
+    bs_cfg = plan.get("balance_sheet", {}) or {}
+
+    opening_nwc = bs_cfg.get("opening_nwc")
+    if opening_nwc is None:
+        opening_nwc = op["nwc"][0] if op.get("nwc") else 0.0
+    opening_ppe = bs_cfg.get("opening_ppe")
+    if opening_ppe is None:
+        opening_ppe = max(0.0, float(pa["book_net_assets"]) - float(opening_nwc))
+    opening_other_assets = float(bs_cfg.get("opening_other_assets", 0.0) or 0.0)
+    opening_other_liabilities = float(bs_cfg.get("opening_other_liabilities", 0.0) or 0.0)
+    lease_liabilities = float(bs_cfg.get("lease_liabilities", 0.0) or 0.0)
+    opening_re = float(bs_cfg.get("opening_retained_earnings", 0.0) or 0.0)
+
+    ppe: List[float] = []
+    intangibles: List[float] = []
+    goodwill: List[float] = []
+    deferred_tax_liability: List[float] = []
+    other_assets: List[float] = []
+    other_liabilities: List[float] = []
+    retained_earnings: List[float] = []
+    sponsor_equity_book: List[float] = []
+    total_assets: List[float] = []
+    total_liabilities: List[float] = []
+    total_equity: List[float] = []
+    balance_check: List[float] = []
+
+    ppe_prev = float(opening_ppe)
+    intang_prev = float(pa["identifiable_intangibles"])
+    goodwill_val = float(pa["goodwill"])
+    dtl_val = float(pa["deferred_tax_liability"])
+    re_prev = opening_re
+    amort_years = max(1.0, float(pa["intangible_amortization_years"]))
+
+    for t, p in enumerate(periods):
+        ppe_end = max(0.0, ppe_prev + op["capex"][t] - op["da"][t])
+        intangible_amort = (float(pa["identifiable_intangibles"]) / amort_years) * p.time_factor if pa["identifiable_intangibles"] else 0.0
+        intang_end = max(0.0, intang_prev - intangible_amort)
+        re_end = re_prev + debt_result.get("net_income", [0.0] * len(periods))[t] - debt_result.get("dividends", [0.0] * len(periods))[t]
+        assets = debt_result["cash"][t] + op["nwc"][t] + ppe_end + intang_end + goodwill_val + opening_other_assets
+        liabilities = cov["total_debt"][t] + dtl_val + opening_other_liabilities + lease_liabilities
+        # Equity is a book-equity plug in deterministic_export mode; the retained
+        # earnings line still exposes whether net income/dividends are doing work.
+        equity = assets - liabilities
+        apic = equity - re_end
+
+        ppe.append(ppe_end)
+        intangibles.append(intang_end)
+        goodwill.append(goodwill_val)
+        deferred_tax_liability.append(dtl_val)
+        other_assets.append(opening_other_assets)
+        other_liabilities.append(opening_other_liabilities + lease_liabilities)
+        retained_earnings.append(re_end)
+        sponsor_equity_book.append(apic)
+        total_assets.append(assets)
+        total_liabilities.append(liabilities)
+        total_equity.append(equity)
+        balance_check.append(assets - liabilities - equity)
+
+        ppe_prev = ppe_end
+        intang_prev = intang_end
+        re_prev = re_end
+
+    return {
+        "purchase_accounting": pa,
+        "cash": debt_result["cash"],
+        "accounts_receivable": op.get("ar", [0.0] * len(periods)),
+        "inventory": op.get("inv", [0.0] * len(periods)),
+        "accounts_payable": op.get("ap", [0.0] * len(periods)),
+        "net_working_capital": op.get("nwc", [0.0] * len(periods)),
+        "ppe": ppe,
+        "intangibles": intangibles,
+        "goodwill": goodwill,
+        "deferred_tax_liability": deferred_tax_liability,
+        "other_assets": other_assets,
+        "other_liabilities": other_liabilities,
+        "total_debt": cov["total_debt"],
+        "retained_earnings": retained_earnings,
+        "sponsor_equity_book": sponsor_equity_book,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_equity": total_equity,
+        "balance_check": balance_check,
+    }
+
+
+def compute_exit_and_returns(plan: Dict[str, Any], periods: List[Period], op: Dict[str, List[float]], debt_result: Dict[str, Any], entry: Dict[str, float]) -> Dict[str, float]:
+    ex = plan.get("exit", {})
+    exit_year = int(ex.get("exit_year"))
+
+    # Find last period in exit year
+    exit_idx = max(i for i, p in enumerate(periods) if p.year == exit_year)
+    exit_ebitda = annualized_or_ltm_series(periods, op["ebitda"])[exit_idx]
+
+    exit_method = ex.get("method")
+    if exit_method == "multiple":
+        exit_multiple = float(ex.get("exit_multiple"))
+        exit_ev = exit_multiple * exit_ebitda
+    elif exit_method == "ev":
+        exit_ev = float(ex.get("exit_ev"))
+    else:
+        raise ValueError("exit.method must be 'multiple' or 'ev'")
+
+    # Net debt at exit
+    sched = debt_result["sched"]
+    debt_exit = sum(sched[tid]["end"][exit_idx] for tid in sched)
+    cash_exit = debt_result["cash"][exit_idx]
+
+    net_debt_adj = float(ex.get("net_debt_adjustments", 0.0))
+    exit_equity = exit_ev - (debt_exit - cash_exit) - net_debt_adj
+
+    mgmt = plan.get("transaction", {}).get("management_incentive", {}) or {}
+    mgmt_enabled = bool(mgmt.get("enabled", False))
+    mgmt_pool_pct = float(mgmt.get("pool_pct_fully_diluted", 0.0) or 0.0) if mgmt_enabled else 0.0
+    mgmt_threshold = float(mgmt.get("threshold_equity_value", 0.0) or 0.0) if mgmt_enabled else 0.0
+    management_proceeds = max(0.0, exit_equity - mgmt_threshold) * mgmt_pool_pct
+    sponsor_exit_proceeds = exit_equity - management_proceeds
+
+    # Equity cash flows: initial at t=0, then one cash flow for each operating period.
+    equity_check = float(entry["sponsor_equity"])
+    cashflows = [-equity_check]
+
+    # Add dividends for modeled periods through exit, then place exit proceeds at
+    # the end of the exit period. This preserves the stated hold duration.
+    cashflows.extend(debt_result["dividends"][: exit_idx + 1])
+    cashflows[exit_idx + 1] += sponsor_exit_proceeds
+
+    # Convert per-period IRR to annualized
+    per_period_irr = irr(cashflows[: exit_idx + 2])
+    if per_period_irr is None:
+        ann_irr = None
+    else:
+        if periods[0].frequency == "annual":
+            ann_irr = per_period_irr
+        else:
+            ann_irr = (1.0 + per_period_irr) ** 4 - 1.0
+
+    moic = (sum(cf for cf in cashflows[: exit_idx + 2] if cf > 0) / equity_check) if equity_check != 0 else float("inf")
+
+    entry_ebitda = float(plan.get("transaction", {}).get("entry", {}).get("entry_ebitda") or plan.get("ebitda_basis", {}).get("transaction_ebitda_used") or 0.0)
+    entry_multiple = (float(entry.get("entry_ev", 0.0)) / entry_ebitda) if entry_ebitda else float("nan")
+    exit_multiple = (exit_ev / exit_ebitda) if exit_ebitda else float("nan")
+    entry_net_debt = float(entry.get("debt_sources", 0.0)) - float(entry.get("opening_cash", 0.0))
+    exit_net_debt = debt_exit - cash_exit
+    dividends_total = sum(debt_result.get("dividends", [])[: exit_idx + 1])
+    ebitda_growth_value = (exit_ebitda - entry_ebitda) * entry_multiple if entry_multiple == entry_multiple else float("nan")
+    multiple_change_value = exit_ev - (exit_ebitda * entry_multiple) if entry_multiple == entry_multiple else float("nan")
+    net_debt_reduction_value = entry_net_debt - exit_net_debt
+
+    return {
+        "exit_year": exit_year,
+        "exit_period_index": exit_idx,
+        "exit_ev": exit_ev,
+        "exit_equity": exit_equity,
+        "sponsor_exit_proceeds": sponsor_exit_proceeds,
+        "management_proceeds": management_proceeds,
+        "management_pool_pct": mgmt_pool_pct,
+        "equity_check": equity_check,
+        "irr": ann_irr if ann_irr is not None else float("nan"),
+        "moic": moic,
+        "exit_ebitda": exit_ebitda,
+        "entry_multiple": entry_multiple,
+        "exit_multiple": exit_multiple,
+        "value_creation_ebitda_growth": ebitda_growth_value,
+        "value_creation_multiple_change": multiple_change_value,
+        "value_creation_deleveraging": net_debt_reduction_value,
+        "value_creation_dividends": dividends_total,
+        "value_creation_management_dilution": -management_proceeds,
+    }
+
+
+def to_csv_rows(
+    plan: Dict[str, Any],
+    periods: List[Period],
+    scenario: str,
+    entry: Dict[str, float],
+    op: Dict[str, List[float]],
+    debt_result: Dict[str, Any],
+    cov: Dict[str, List[float]],
+    bs: Dict[str, Any],
+    ret: Dict[str, float],
+) -> List[Dict[str, Any]]:
+    units = plan.get("meta", {}).get("units", "USD_mm")
+    rows: List[Dict[str, Any]] = []
+
+    def emit(statement: str, section: str, line_item: str, values: List[float]):
+        for p, v in zip(periods, values):
+            value = "" if isinstance(v, float) and math.isnan(v) else float(v)
+            rows.append(
+                {
+                    "scenario": scenario,
+                    "period_index": p.index,
+                    "period_label": p.label,
+                    "period_year": p.year,
+                    "frequency": p.frequency,
+                    "statement": statement,
+                    "section": section,
+                    "line_item": line_item,
+                    "value": value,
+                    "units": units,
+                }
+            )
+
+    # Income statement
+    emit("IS", "Income Statement", "revenue", op["revenue"])
+    emit("IS", "Income Statement", "gross_profit", op["gross_profit"])
+    emit("IS", "Income Statement", "opex", op["opex"])
+    emit("IS", "Income Statement", "ebitda", op["ebitda"])
+    emit("IS", "Income Statement", "standalone_costs", [-x for x in op["standalone_costs"]])
+    emit("IS", "Income Statement", "tsa_costs", [-x for x in op["tsa_costs"]])
+    emit("IS", "Income Statement", "stranded_costs", [-x for x in op["stranded_costs"]])
+    emit("IS", "Income Statement", "da", op["da"])
+    emit("IS", "Income Statement", "ebit", op["ebit"])
+
+    # Interest & taxes
+    emit("IS", "Income Statement", "cash_interest", debt_result["cash_interest"])
+    emit("IS", "Income Statement", "ebt", debt_result["ebt"])
+    emit("IS", "Income Statement", "cash_taxes", debt_result["cash_taxes"])
+    emit("IS", "Income Statement", "net_income", debt_result["net_income"])
+
+    # Cash flow
+    emit("CF", "Cash Flow", "capex", [-x for x in op["capex"]])
+    emit("CF", "Cash Flow", "maintenance_capex", [-x for x in op["maintenance_capex"]])
+    emit("CF", "Cash Flow", "growth_capex", [-x for x in op["growth_capex"]])
+    emit("CF", "Cash Flow", "separation_capex", [-x for x in op["separation_capex"]])
+    emit("CF", "Cash Flow", "delta_nwc", [-x for x in op["delta_nwc"]])
+    emit("CF", "Cash Flow", "one_time_cash_costs", [-x for x in op["one_time_cash_costs"]])
+    emit("CF", "Cash Flow", "cash_interest", [-x for x in debt_result["cash_interest"]])
+    emit("CF", "Cash Flow", "cash_taxes", [-x for x in debt_result["cash_taxes"]])
+    emit("CF", "Cash Flow", "nol_used", debt_result["nol_used"])
+    emit("CF", "Cash Flow", "ending_nol", debt_result["ending_nol"])
+    emit("CF", "Cash Flow", "fcf_after_debt_service", debt_result["fcf_after_debt_service"])
+    emit("CF", "Cash Flow", "dividends", [-x for x in debt_result["dividends"]])
+
+    # Balance sheet
+    for key in [
+        "cash",
+        "accounts_receivable",
+        "inventory",
+        "accounts_payable",
+        "net_working_capital",
+        "ppe",
+        "intangibles",
+        "goodwill",
+        "deferred_tax_liability",
+        "other_assets",
+        "other_liabilities",
+        "total_debt",
+        "retained_earnings",
+        "sponsor_equity_book",
+        "total_assets",
+        "total_liabilities",
+        "total_equity",
+        "balance_check",
+    ]:
+        emit("BS", "Balance Sheet", key, bs[key])
+
+    # Opening purchase-accounting bridge, repeated at period 0 only for audit.
+    for key, value in bs.get("purchase_accounting", {}).items():
+        if not isinstance(value, (int, float)):
+            continue
+        p0 = periods[0]
+        rows.append(
+            {
+                "scenario": scenario,
+                "period_index": p0.index,
+                "period_label": p0.label,
+                "period_year": p0.year,
+                "frequency": p0.frequency,
+                "statement": "PA",
+                "section": "Purchase Accounting",
+                "line_item": key,
+                "value": float(value),
+                "units": units,
+            }
+        )
+
+    # Debt schedules
+    sched = debt_result["sched"]
+    for tid, s in sched.items():
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_beg", s["beg"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_draw", s["draw"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_repay", s["repay"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_amort", s["amort"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_interest", s["interest"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_pik", s["pik"])
+        emit("DEBT", f"Debt Schedule:{tid}", f"debt_{tid}_end", s["end"])
+
+    # Covenants
+    emit("COVENANT", "Covenants", "total_leverage", cov["total_leverage"])
+    emit("COVENANT", "Covenants", "net_leverage", cov["net_leverage"])
+    emit("COVENANT", "Covenants", "interest_coverage", cov["interest_coverage"])
+    emit("COVENANT", "Covenants", "fixed_charge_coverage", cov["fixed_charge_coverage"])
+    emit("COVENANT", "Covenants", "debt_service_coverage", cov["debt_service_coverage"])
+    emit("COVENANT", "Covenants", "liquidity", cov["liquidity"])
+
+    # Returns (scalar values repeated at exit period only, else blank)
+    exit_idx = int(ret["exit_period_index"])
+    for key in [
+        "entry_ev",
+        "equity_purchase",
+        "sponsor_equity",
+        "exit_ev",
+        "exit_equity",
+        "sponsor_exit_proceeds",
+        "management_proceeds",
+        "irr",
+        "moic",
+        "value_creation_ebitda_growth",
+        "value_creation_multiple_change",
+        "value_creation_deleveraging",
+        "value_creation_dividends",
+        "value_creation_management_dilution",
+    ]:
+        vals = [float("nan")] * len(periods)
+        if key in entry:
+            vals[0] = float(entry[key])
+        if key in ret:
+            vals[exit_idx] = float(ret[key])
+        rows.extend(
+            {
+                "scenario": scenario,
+                "period_index": periods[i].index,
+                "period_label": periods[i].label,
+                "period_year": periods[i].year,
+                "frequency": periods[i].frequency,
+                "statement": "RETURNS",
+                "section": "Returns",
+                "line_item": key,
+                "value": float(vals[i]) if not math.isnan(vals[i]) else "",
+                "units": units,
+            }
+            for i in range(len(periods))
+            if vals[i] == vals[i]  # not nan
+        )
+
+    return rows
+
+
+def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        raise ValueError("No rows to write")
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+
+def _xlsx_col_letter(n: int) -> str:
+    """1-indexed column number -> Excel column letters."""
+    out = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(ord("A") + rem) + out
+    return out
+
+
+def _xlsx_cell_ref(row_1idx: int, col_1idx: int) -> str:
+    return f"{_xlsx_col_letter(col_1idx)}{row_1idx}"
+
+
+def _xlsx_shared_string(s: str, shared_map: Dict[str, int], shared_list: List[str]) -> int:
+    if s in shared_map:
+        return shared_map[s]
+    idx = len(shared_list)
+    shared_map[s] = idx
+    shared_list.append(s)
+    return idx
+
+
+def write_xlsx(path: Path, rows: List[Dict[str, Any]], sheet_name: str = "Model") -> None:
+    """Write a minimal .xlsx workbook with a single sheet.
+
+    The sheet contains a header row and then the row dicts in tabular form.
+    This is standard-library only (no openpyxl).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        raise ValueError("No rows to write")
+
+    headers = list(rows[0].keys())
+    ncols = len(headers)
+    nrows = 1 + len(rows)  # header + data
+
+    shared_map: Dict[str, int] = {}
+    shared_list: List[str] = []
+
+    # Build sheet XML
+    sheet_rows: List[str] = []
+
+    def emit_row(row_1idx: int, values: List[Any]) -> None:
+        cells: List[str] = []
+        for col_1idx, v in enumerate(values, start=1):
+            if v is None or v == "":
+                continue
+            r = _xlsx_cell_ref(row_1idx, col_1idx)
+            # numbers (store as raw numeric); everything else as shared string
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                cells.append(f'<c r="{r}"><v>{v}</v></c>')
+            else:
+                s = str(v)
+                idx = _xlsx_shared_string(s, shared_map, shared_list)
+                cells.append(f'<c r="{r}" t="s"><v>{idx}</v></c>')
+        sheet_rows.append(f'<row r="{row_1idx}">{"".join(cells)}</row>')
+
+    # Header row
+    emit_row(1, headers)
+    # Data rows
+    for i, r in enumerate(rows, start=2):
+        emit_row(i, [r.get(h, "") for h in headers])
+
+    dim = f"A1:{_xlsx_cell_ref(nrows, ncols)}"
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<dimension ref="{dim}"/>'
+        "<sheetData>"
+        + "".join(sheet_rows)
+        + "</sheetData>"
+        "</worksheet>"
+    )
+
+    # Shared strings
+    def si(text: str) -> str:
+        # Preserve whitespace only when needed
+        needs_preserve = text[:1].isspace() or text[-1:].isspace()
+        t_attr = ' xml:space="preserve"' if needs_preserve else ""
+        return f"<si><t{t_attr}>{escape(text)}</t></si>"
+
+    sst_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        f'count="{len(shared_list)}" uniqueCount="{len(shared_list)}">'
+        + "".join(si(s) for s in shared_list)
+        + "</sst>"
+    )
+
+    styles_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1">
+    <font>
+      <sz val="11"/>
+      <color theme="1"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+    </font>
+  </fonts>
+  <fills count="2">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+  </fills>
+  <borders count="1">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+  </cellXfs>
+  <cellStyles count="1">
+    <cellStyle name="Normal" xfId="0" builtinId="0"/>
+  </cellStyles>
+</styleSheet>
+"""
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        "<sheets>"
+        f'<sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/>'
+        "</sheets>"
+        "</workbook>"
+    )
+
+    workbook_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+</Relationships>
+"""
+
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>
+"""
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+</Types>
+"""
+
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types_xml)
+        z.writestr("_rels/.rels", root_rels_xml)
+        z.writestr("xl/workbook.xml", workbook_xml)
+        z.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        z.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        z.writestr("xl/sharedStrings.xml", sst_xml)
+        z.writestr("xl/styles.xml", styles_xml)

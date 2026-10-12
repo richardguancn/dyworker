@@ -16494,6 +16494,13 @@ html[data-theme="dark"] {
   -webkit-app-region: no-drag;
 }
 .plugins-page-heading h1 { margin: 0; font-size: calc(21px * var(--font-ui-scale, 1)); font-weight: 700; }
+.curated-plugins { display: flex; flex-direction: column; gap: 20px; }
+.curated-plugins .plugin-switch { align-self: flex-start; margin-top: 4px; flex-shrink: 0; }
+.curated-plugins details { margin-top: 10px; font-size: 13px; line-height: 1.65; }
+.curated-plugins summary { cursor: pointer; }
+.curated-plugins details ul { padding-left: 20px; max-height: 340px; overflow-y: auto; }
+.curated-plugins details li { margin: 12px 0; overflow-wrap: anywhere; }
+.curated-plugins details li p { margin: 3px 0; color: var(--muted); }
 .plugins-page-heading p { margin: 4px 0 0; color: var(--muted); font-size: calc(12.5px * var(--font-ui-scale, 1)); }
 .plugins-page-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .skill-management-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -16620,16 +16627,41 @@ html[data-theme="dark"] {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
-  color: var(--text-muted);
+  color: var(--muted);
 }
-.plugins-market-search input {
+/* 搜索框由外壳提供唯一边框，内层不继承设置页文字输入框的外观。 */
+html .settings-page .settings-content label.plugins-market-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-weight: 400;
+}
+.plugins-market-search input,
+html .settings-page .settings-dialog .settings-content .plugins-market-search input {
   flex: 1;
+  min-width: 0;
+  width: 0;
+  height: 24px;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
-  color: var(--text);
-  font-size: 13px;
+  color: var(--ink);
+  box-shadow: none;
+  font-size: calc(13px * var(--font-ui-scale, 1));
   outline: none;
 }
+html .settings-page .settings-dialog .settings-content .plugins-market-search input:focus {
+  border: 0;
+  box-shadow: none;
+}
+.plugins-market-search:focus-within {
+  border-color: var(--accent);
+}
+.plugins-market-search > svg { flex: none; }
 .plugins-market-categories {
   display: flex;
   gap: 6px;

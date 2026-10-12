@@ -1,0 +1,20 @@
+# Generated assessment and local runtime artifacts
+reports/
+**/reports/
+output/
+**/output/
+
+# Python test/runtime caches
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+*.pyc
+
+# Deterministic builder outputs. Keep authored templates under assets/templates/.
+**/run_log.json
+**/*_run_log.json
+**/plan.json
+**/report.md
+**/model.xlsx
+**/banker_formula_workbook.xlsx

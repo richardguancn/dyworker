@@ -1,0 +1,6 @@
+entity,source_id,source_name,source_type,line_item_original,line_item_standard,line_item_id,statement,value,period_label,period_end,currency,units,source_location,evidence_label,confidence
+Acme Co,SRC-001,Management model,uploaded_file,Revenue,Revenue,revenue,income_statement,$1.2m,FY2025,2025-12-31,USD,,Model!B12,fact_source_reported,high
+Acme Co,SRC-001,Management model,uploaded_file,NRR,Net revenue retention,nrr,kpi_schedule,110%,FY2025,2025-12-31,,%,Model!B20,derived_calculation,medium
+Acme Co,SRC-001,Management model,uploaded_file,Interest spread,Interest spread,interest_spread,debt_schedule,500 bps,FY2025,2025-12-31,,bps,Debt!C8,analyst_adjusted,medium
+Acme Co,SRC-001,Management model,uploaded_file,EBITDA,EBITDA,ebitda,income_statement,1200,FY2025,2025-12-31,USD,$000,Adj!D5,management_adjusted,medium
+Acme Co,SRC-002,User case,user_prompt,Capital expenditures,Capital expenditures,capex,cash_flow,25,FY2026,2026-12-31,USD,$mm,,assumption_user_provided,high

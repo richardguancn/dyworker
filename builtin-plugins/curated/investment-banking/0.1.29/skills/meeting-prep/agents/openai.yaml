@@ -1,0 +1,9 @@
+interface:
+  display_name: "Meeting Prep"
+  short_description: "Finance meeting prep briefs"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $meeting-prep to prepare for a finance meeting, diligence call, buyer meeting, lender call, or debrief."
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+policy:
+  allow_implicit_invocation: false

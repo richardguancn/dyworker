@@ -1,0 +1,64 @@
+{
+  "contract_name": "buyer_investor_list_to_deal_process_tracker",
+  "records": [
+    {
+      "process_context": "sell-side",
+      "party_id": "BUYER-001",
+      "party_name": "Acme Corp",
+      "parent_or_platform": "Acme Holdings",
+      "party_type": "strategic",
+      "sector_fit": "adjacent platform",
+      "geography": "North America",
+      "relevant_assets_or_holdings": "Relevant software business",
+      "tier": "tier 1 / must contact",
+      "priority_score": 87,
+      "recommended_wave": "wave 1",
+      "rationale": "Strategic fit, capacity, and prior acquisition appetite.",
+      "ability_to_transact": "high",
+      "likely_objections": [
+        "margin durability"
+      ],
+      "key_risks": [
+        "competitor confidentiality"
+      ],
+      "relationship_owner": "MD1",
+      "known_contacts": [
+        "Corp Dev lead"
+      ],
+      "contact_path": "warm intro through coverage",
+      "confidentiality_flags": [
+        "competitor"
+      ],
+      "conflict_flags": [
+        "none identified"
+      ],
+      "do_not_contact_flag": false,
+      "recommended_next_action": "client approval before outreach",
+      "next_action_owner": "VP1",
+      "target_date": "2026-05-20",
+      "outreach_status": "not contacted",
+      "required_materials": [
+        "approved teaser"
+      ],
+      "source_ids": [
+        "S1"
+      ],
+      "source_as_of_dates": [
+        "2026-05-01"
+      ],
+      "confidence": "medium",
+      "open_questions": [
+        "Confirm conflict status"
+      ],
+      "notes_for_process_tracker": "Do not move to active outreach until client approves competitor approach."
+    }
+  ],
+  "holds_and_exclusions": [
+    {
+      "party_name": "Legacy Buyer",
+      "reason": "client restriction",
+      "approval_needed": "client approval",
+      "reconsideration_trigger": "restriction lifted"
+    }
+  ]
+}

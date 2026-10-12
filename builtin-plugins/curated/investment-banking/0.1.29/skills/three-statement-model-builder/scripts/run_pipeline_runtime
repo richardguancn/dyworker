@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""Run the deterministic 3-statement model pipeline.
+
+Usage:
+  python3 scripts/run_pipeline.py path/to/plan.json [--output-dir output] [--print-report] [--write-report-md]
+
+Creates in the selected output directory:
+  model.xlsx
+  plan.json
+  run_log.json
+  report.md only when --write-report-md is explicitly used
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLUGIN_ROOT = SCRIPT_DIR.parents[2]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from skill_core import (
+    assumption_rows,
+    check_rows,
+    evaluate_hard_failures_and_warnings,
+    model_status,
+    normalize_plan,
+    p0_handoff,
+    run_scenarios,
+    run_sensitivities,
+    source_rows,
+    summarize_result,
+    summary_rows,
+    to_model_rows,
+    write_xlsx,
+)
+
+from shared.model_artifacts import write_model_manifest  # noqa: E402
+from shared.model_citations import write_model_citations_from_sheets  # noqa: E402
+
+
+def format_money(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, str):
+        return value
+    try:
+        val = float(value)
+    except Exception:
+        return str(value)
+    if math.isinf(val) or math.isnan(val):
+        return "n/m"
+    return f"{val:,.1f}"
+
+
+def format_pct(value: Any) -> str:
+    try:
+        val = float(value)
+    except Exception:
+        return "n/a"
+    if math.isinf(val) or math.isnan(val):
+        return "n/m"
+    return f"{val * 100.0:,.1f}%"
+
+
+def _file_record(path: Path, role: str, description: str) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "role": role,
+        "description": description,
+        "exists": True if path.name == "manifest.json" else path.exists(),
+    }
+
+
+def write_output_manifest(
+    output_dir: Path,
+    model_status_value: str,
+    human_deliverables: list[tuple[Path, str]],
+    agent_artifacts: list[tuple[Path, str]],
+    hard_failures: list[Any],
+    warnings: list[Any],
+) -> dict[str, Any]:
+    workbook_path = human_deliverables[0][0] if human_deliverables else None
+    return write_model_manifest(
+        output_dir,
+        "three-statement-model-builder",
+        "deterministic_export",
+        workbook_path,
+        model_status_value,
+        agent_artifacts,
+        hard_failures,
+        warnings,
+    )
+    manifest_path = output_dir / "manifest.json"
+    all_agent_artifacts = [*agent_artifacts, (manifest_path, "agent-facing output manifest")]
+    manifest = {
+        "manifest_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "skill": "three-statement-model-builder",
+        "artifact_mode": "deterministic_export",
+        "model_status": model_status_value,
+        "output_dir": str(output_dir),
+        "primary_human_deliverable": str(human_deliverables[0][0]) if human_deliverables else None,
+        "human_deliverables": [
+            _file_record(path, "human_deliverable", description)
+            for path, description in human_deliverables
+        ],
+        "agent_artifacts": [
+            _file_record(path, "agent_artifact", description)
+            for path, description in all_agent_artifacts
+        ],
+        "hard_failure_count": len(hard_failures),
+        "warning_count": len(warnings),
+        "discipline_note": "Use the human deliverable as the main output; manifest/run_log/plan files are agent-facing support artifacts.",
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def write_blocked_outputs(output_dir: Path, error: str) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_log = {
+        "model_status": "blocked",
+        "workbook_mode": "deterministic_export",
+        "artifact_level": "deterministic_export",
+        "hard_failures": [{"code": "PLAN_NOT_FOUND", "message": error}],
+        "warnings": [],
+        "checks": {"plan_read": False},
+        "output_manifest": str(output_dir / "manifest.json"),
+    }
+    (output_dir / "run_log.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
+    write_output_manifest(
+        output_dir,
+        "blocked",
+        [],
+        [(output_dir / "run_log.json", "blocked run log with plan-read failure")],
+        run_log["hard_failures"],
+        [],
+    )
+
+
+def render_report(
+    plan: dict[str, Any],
+    scenario_outputs: dict[str, dict[str, Any]],
+    sensitivity_rows: list[dict[str, Any]],
+    run_log: dict[str, Any],
+    output_dir: Path,
+    include_report_md: bool,
+) -> str:
+    meta = plan.get("meta", {})
+    units = meta.get("units", "")
+    lines: list[str] = []
+    lines.append(f"# Three-Statement Operating Model - {meta.get('company_name', 'Company')}")
+    lines.append("")
+    lines.append(f"**Model status:** `{run_log['model_status']}`  ")
+    lines.append(f"**Workbook mode:** `{run_log['workbook_mode']}`  ")
+    lines.append("**Artifact level:** `deterministic_export`  ")
+    lines.append(f"**As of:** {meta.get('as_of_date', 'n/a')}  ")
+    lines.append(
+        f"**Basis:** {meta.get('accounting_basis', 'unspecified')} | {meta.get('currency', '')} | {units}"
+    )
+    lines.append("")
+    lines.append(
+        "> This export is a deterministic values workbook, not a fully linked banker formula workbook. Use the run log and QA checks before relying on it for a decision."
+    )
+    lines.append("")
+    lines.append("## Scenario summary")
+    lines.append("")
+    lines.append(
+        "| Scenario | Final Period | Revenue | EBITDA | EBITDA Margin | FCF | Ending Cash | Ending Debt | Liquidity Trough | Peak Net Leverage |"
+    )
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for scenario in ["base", "downside", "upside"]:
+        result = scenario_outputs.get(scenario)
+        if not result:
+            continue
+        s = summarize_result(result)
+        lines.append(
+            f"| {scenario.title()} | {s['final_period']} | {format_money(s['final_revenue'])} | {format_money(s['final_ebitda'])} | {format_pct(s['final_ebitda_margin'])} | {format_money(s['final_fcf'])} | {format_money(s['ending_cash'])} | {format_money(s['ending_debt'])} | {format_money(s['liquidity_trough'])} | {format_money(s['peak_net_leverage'])}x |"
+        )
+    lines.append("")
+
+    base = scenario_outputs.get("base")
+    if base:
+        periods = base["periods"]
+        is_ = base["income_statement"]
+        cf = base["cash_flow_statement"]
+        wc = base["working_capital"]
+        debt = base["debt"]
+        lines.append("## Base case operating read-through")
+        lines.append("")
+        lines.append("| Metric | First Forecast Period | Final Forecast Period | Senior read |")
+        lines.append("|---|---:|---:|---|")
+        first = 0
+        last = len(periods) - 1
+        first_margin = (
+            is_["ebitda"][first] / is_["revenue"][first] if is_["revenue"][first] else 0.0
+        )
+        final_margin = is_["ebitda"][last] / is_["revenue"][last] if is_["revenue"][last] else 0.0
+        fcf_first = cf["cash_flow_from_operations"][first] - cf["capex"][first]
+        fcf_last = cf["cash_flow_from_operations"][last] - cf["capex"][last]
+        lines.append(
+            f"| Revenue | {format_money(is_['revenue'][first])} | {format_money(is_['revenue'][last])} | Check whether growth is supported by market, capacity, pipeline, and pricing evidence. |"
+        )
+        lines.append(
+            f"| EBITDA margin | {format_pct(first_margin)} | {format_pct(final_margin)} | Margin expansion must be tied to mix, utilization, pricing, and cost discipline, not just spreadsheet leverage. |"
+        )
+        lines.append(
+            f"| Free cash flow | {format_money(fcf_first)} | {format_money(fcf_last)} | FCF equals CFO less capex; watch working capital and reinvestment drag. |"
+        )
+        lines.append(
+            f"| Net working capital | {format_money(wc['nwc'][first])} | {format_money(wc['nwc'][last])} | DSO/DIO/DPO assumptions drive cash conversion. |"
+        )
+        lines.append(
+            f"| Debt | {format_money(debt['ending_debt'][first])} | {format_money(debt['ending_debt'][last])} | Cash sweep and required amortization determine deleveraging pace. |"
+        )
+        lines.append("")
+
+    lines.append("## QA and decision posture")
+    lines.append("")
+    hard = run_log.get("hard_failures", [])
+    warns = run_log.get("warnings", [])
+    if hard:
+        lines.append("### Hard failures")
+        for item in hard:
+            lines.append(f"- **{item.get('code')}**: {item.get('message')}")
+    else:
+        lines.append("- No hard failures were generated by the machine checks.")
+    if warns:
+        lines.append("")
+        lines.append("### Warnings")
+        for item in warns:
+            lines.append(f"- **{item.get('code')}**: {item.get('message')}")
+    else:
+        lines.append("- No warnings were generated by the senior-review heuristics.")
+    lines.append("")
+
+    if sensitivity_rows:
+        lines.append("## Sensitivity outputs")
+        lines.append("")
+        lines.append(
+            "| Case | Final Revenue | Final EBITDA | Final FCF | Ending Cash | Liquidity Trough |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|")
+        for row in sensitivity_rows[:10]:
+            lines.append(
+                f"| {row['case']} | {format_money(row['final_revenue'])} | {format_money(row['final_ebitda'])} | {format_money(row['final_fcf'])} | {format_money(row['ending_cash'])} | {format_money(row['liquidity_trough'])} |"
+            )
+        lines.append("")
+
+    lines.append("## Source posture")
+    lines.append("")
+    sources = plan.get("source_basis", [])
+    if sources:
+        lines.append("| Source | Evidence Label | As Of | Confidence | Covers |")
+        lines.append("|---|---|---:|---|---|")
+        for src in sources:
+            covers = ", ".join(src.get("covers", []))
+            lines.append(
+                f"| {src.get('label', src.get('id', 'source'))} | {src.get('evidence_label', '')} | {src.get('as_of_date', '')} | {src.get('confidence', '')} | {covers} |"
+            )
+    else:
+        lines.append("No source basis was supplied.")
+    lines.append("")
+
+    lines.append("## Files produced")
+    lines.append("")
+    lines.append(
+        f"- `{output_dir / 'model.xlsx'}` - long-format deterministic model export with scenario rows, statements, schedules, checks, assumptions, sources, and sensitivities."
+    )
+    lines.append(f"- `{output_dir / 'plan.json'}` - normalized plan actually used.")
+    lines.append(
+        f"- `{output_dir / 'run_log.json'}` - model status, warnings, hard failures, checks, and downstream handoff."
+    )
+    if include_report_md:
+        lines.append(f"- `{output_dir / 'report.md'}` - markdown report when enabled.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def run_pipeline(
+    plan_path: Path, print_report: bool, write_report_md: bool, output_dir: Path
+) -> dict[str, Any]:
+    skill_root = Path(__file__).resolve().parents[1]
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    normalized = normalize_plan(plan, skill_root)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    scenario_outputs = run_scenarios(normalized)
+    sensitivity_rows = run_sensitivities(normalized)
+    hard_failures, warnings, checks = evaluate_hard_failures_and_warnings(
+        normalized, scenario_outputs
+    )
+    status = model_status(hard_failures, warnings, normalized)
+
+    model_rows: list[dict[str, Any]] = []
+    for scenario in ["base", "downside", "upside"]:
+        model_rows.extend(to_model_rows(normalized, scenario_outputs[scenario]))
+
+    run_log: dict[str, Any] = {
+        "model_status": status,
+        "workbook_mode": "deterministic_export",
+        "artifact_level": "deterministic_export",
+        "source_basis": normalized.get("source_basis", []),
+        "hard_failures": hard_failures,
+        "warnings": warnings,
+        "formula_error_scan": {
+            "status": "not_applicable",
+            "match_count": 0,
+            "result": "Deterministic export contains computed values rather than workbook formulas; mechanical checks were executed in the pipeline.",
+        },
+        "assumptions": {
+            "timeline": normalized.get("timeline", {}),
+            "accounting_basis": normalized.get("meta", {}).get("accounting_basis"),
+            "units": normalized.get("meta", {}).get("units"),
+            "cash_sweep": normalized.get("debt", {}).get("cash_sweep", {}),
+        },
+        "checks": checks,
+        "p0_handoff": p0_handoff(
+            normalized,
+            scenario_outputs,
+            hard_failures,
+            warnings,
+            status,
+            output_dir,
+            include_report_md=write_report_md,
+        ),
+        "output_manifest": str(output_dir / "manifest.json"),
+        "output_paths": {
+            "model_xlsx": str(output_dir / "model.xlsx"),
+            "plan_json": str(output_dir / "plan.json"),
+            "run_log_json": str(output_dir / "run_log.json"),
+            "manifest_json": str(output_dir / "manifest.json"),
+            **({} if not write_report_md else {"report_md": str(output_dir / "report.md")}),
+        },
+    }
+
+    report = render_report(
+        normalized, scenario_outputs, sensitivity_rows, run_log, output_dir, write_report_md
+    )
+
+    summary_status_rows = [
+        {
+            "scenario": "status",
+            "metric": "Calculation integrity",
+            "value": "Mechanical checks executed; see Checks tab and run log.",
+            "unit": "",
+            "notes": "This deterministic export contains computed values rather than workbook formulas.",
+        },
+        {
+            "scenario": "status",
+            "metric": "Decision readiness",
+            "value": status,
+            "unit": "",
+            "notes": "Source, liquidity and covenant evidence governs circulation posture.",
+        },
+    ]
+    calculation_integrity = "OK" if not hard_failures else "FAIL"
+    status_check_rows = [
+        {
+            "scenario": "status",
+            "check": "Calculation integrity",
+            "value": calculation_integrity,
+            "pass": not hard_failures,
+            "tolerance": "Mechanical checks only",
+        },
+        {
+            "scenario": "status",
+            "check": "Decision readiness",
+            "value": status,
+            "pass": status in {"senior-review-ready", "decision-grade"},
+            "tolerance": "Source and reliance posture",
+        },
+    ]
+    sheets = {
+        "Executive Summary": [*summary_status_rows, *summary_rows(normalized, scenario_outputs)],
+        "Model": model_rows,
+        "Sensitivities": sensitivity_rows,
+        "Checks": [*check_rows(scenario_outputs), *status_check_rows],
+        "Assumptions": assumption_rows(normalized),
+        "Sources": source_rows(normalized),
+        "Run_Log": [
+            {"field": "model_status", "value": status},
+            {"field": "workbook_mode", "value": "deterministic_export"},
+            {
+                "field": "calculation_integrity",
+                "value": "Mechanical checks executed; see Checks tab.",
+            },
+            {"field": "decision_readiness", "value": status},
+            {"field": "formula_error_scan", "value": "not_applicable; deterministic values export"},
+            {"field": "hard_failure_count", "value": len(hard_failures)},
+            {"field": "warning_count", "value": len(warnings)},
+        ],
+    }
+    write_xlsx(output_dir / "model.xlsx", sheets)
+    model_citations = write_model_citations_from_sheets(
+        output_dir / "model_citations.json", output_dir / "model.xlsx", sheets
+    )
+    run_log["model_citations_path"] = str(output_dir / "model_citations.json")
+    run_log["model_citation_count"] = len(model_citations)
+    run_log["output_paths"]["model_citations_json"] = str(output_dir / "model_citations.json")
+    (output_dir / "plan.json").write_text(json.dumps(normalized, indent=2), encoding="utf-8")
+    (output_dir / "run_log.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
+    if write_report_md:
+        (output_dir / "report.md").write_text(report, encoding="utf-8")
+
+    human_deliverables: list[tuple[Path, str]] = [
+        (output_dir / "model.xlsx", "deterministic three-statement workbook")
+    ]
+    if write_report_md:
+        human_deliverables.append(
+            (output_dir / "report.md", "legacy Markdown three-statement report")
+        )
+    write_output_manifest(
+        output_dir,
+        status,
+        human_deliverables,
+        [
+            (output_dir / "plan.json", "normalized plan actually used"),
+            (
+                output_dir / "model_citations.json",
+                "workbook cell/range citation ledger for model outputs",
+            ),
+            (
+                output_dir / "run_log.json",
+                "machine-readable run log, checks, warnings, and downstream handoff",
+            ),
+        ],
+        hard_failures,
+        warnings,
+    )
+
+    if print_report:
+        print("---BEGIN THREE STATEMENT MODEL REPORT---")
+        print(report)
+        print("---END THREE STATEMENT MODEL REPORT---")
+    return run_log
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run deterministic 3-statement model pipeline")
+    parser.add_argument("plan_json", help="Path to plan.json")
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for model.xlsx plus support artifacts. Defaults to ./output.",
+    )
+    parser.add_argument(
+        "--print-report",
+        action="store_true",
+        help="Print the text report to stdout without writing a Markdown file",
+    )
+    parser.add_argument(
+        "--write-report-md",
+        action="store_true",
+        help="Write legacy report.md in addition to the workbook. Off by default.",
+    )
+    parser.add_argument(
+        "--no-report-md",
+        action="store_true",
+        help="Deprecated compatibility flag; Markdown report files are already off by default.",
+    )
+    args = parser.parse_args()
+    write_report_md = bool(args.write_report_md and not args.no_report_md)
+
+    plan_path = Path(args.plan_json)
+    output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / "output"
+    if not plan_path.exists():
+        write_blocked_outputs(output_dir, f"Plan not found: {plan_path}")
+        print(f"Plan not found: {plan_path}", file=sys.stderr)
+        return 1
+    try:
+        run_log = run_pipeline(plan_path, args.print_report, write_report_md, output_dir)
+    except Exception as exc:
+        print(f"Pipeline failed: {exc}", file=sys.stderr)
+        return 1
+    if run_log.get("hard_failures"):
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

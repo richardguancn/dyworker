@@ -1,0 +1,1240 @@
+"""Run the full pipeline: normalize plan, build model for scenarios, and emit report + XLSX.
+
+Usage:
+  python3 scripts/run_pipeline.py path/to/plan.json [--output-dir output] [--print-report] [--write-report-md]
+
+Creates in the selected output directory:
+  plan.json
+  model.xlsx
+  run_log.json
+Optionally:
+  report.md only when --write-report-md is explicitly used
+
+This script is intentionally deterministic and uses only the Python standard library.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import math
+import sys
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+from xml.sax.saxutils import escape
+
+# Some managed Python environments set PYTHONSAFEPATH, which prevents Python from
+# adding the script directory to sys.path. Add it explicitly so sibling imports
+# work whether the pipeline is run from the skill root or another cwd.
+SCRIPT_DIR = Path(__file__).resolve().parent
+PLUGIN_ROOT = SCRIPT_DIR.parents[3]
+sys.path.insert(0, str(SCRIPT_DIR))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from shared.model_artifacts import write_model_manifest  # noqa: E402
+from lbo_core import (
+    build_timeline,
+    compute_balance_sheet,
+    compute_covenants,
+    compute_entry_values,
+    compute_exit_and_returns,
+    compute_operating_series,
+    deep_merge,
+    normalize_plan,
+    to_csv_rows,
+    run_debt_and_cash,
+    write_csv,
+    write_xlsx,
+)
+
+
+def _file_record(path: Path, role: str, description: str) -> Dict[str, Any]:
+    return {
+        "path": str(path),
+        "role": role,
+        "description": description,
+        "exists": True if path.name == "manifest.json" else path.exists(),
+    }
+
+
+def write_output_manifest(
+    output_dir: Path,
+    model_status: str,
+    human_deliverables: List[Tuple[Path, str]],
+    agent_artifacts: List[Tuple[Path, str]],
+    hard_failures: List[Any],
+    warnings: List[Any],
+) -> Dict[str, Any]:
+    workbook_path = human_deliverables[0][0] if human_deliverables else None
+    return write_model_manifest(
+        output_dir,
+        "lbo-model-build",
+        "deterministic_export",
+        workbook_path,
+        model_status,
+        agent_artifacts,
+        hard_failures,
+        warnings,
+    )
+    manifest_path = output_dir / "manifest.json"
+    all_agent_artifacts = [*agent_artifacts, (manifest_path, "agent-facing output manifest")]
+    manifest = {
+        "manifest_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "skill": "lbo-model-build",
+        "artifact_mode": "deterministic_export",
+        "model_status": model_status,
+        "output_dir": str(output_dir),
+        "primary_human_deliverable": str(human_deliverables[0][0]) if human_deliverables else None,
+        "human_deliverables": [_file_record(path, "human_deliverable", description) for path, description in human_deliverables],
+        "agent_artifacts": [_file_record(path, "agent_artifact", description) for path, description in all_agent_artifacts],
+        "hard_failure_count": len(hard_failures),
+        "warning_count": len(warnings),
+        "discipline_note": "Use the human deliverable as the main output; manifest/run_log/plan files are agent-facing support artifacts.",
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
+def _source_slug(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    out: List[str] = []
+    for ch in raw:
+        if ch.isalnum():
+            out.append(ch)
+        elif ch in {" ", "-", "_", "/", ":", "."}:
+            out.append("-")
+    slug = "".join(out).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "item"
+
+
+def _xlsx_col_letter_local(n: int) -> str:
+    out = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        out = chr(ord("A") + rem) + out
+    return out
+
+
+def _xlsx_cell_ref_local(row_1idx: int, col_1idx: int) -> str:
+    return f"{_xlsx_col_letter_local(col_1idx)}{row_1idx}"
+
+
+def build_model_citation_ledger(rows: List[Dict[str, Any]], workbook_path: Path, sheet_name: str = "Model") -> List[Dict[str, Any]]:
+    if not rows:
+        return []
+    headers = list(rows[0].keys())
+    value_col_idx = headers.index("value") + 1 if "value" in headers else len(headers)
+    ledger: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for row_index, row in enumerate(rows, start=2):
+        line_item = row.get("line_item")
+        scenario = row.get("scenario")
+        statement = row.get("statement")
+        period_label = row.get("period_label")
+        source_id = "model-output:" + _source_slug(f"{scenario}:{statement}:{line_item}:{period_label}")
+        if source_id in seen_ids:
+            continue
+        seen_ids.add(source_id)
+        cell = _xlsx_cell_ref_local(row_index, value_col_idx)
+        title_bits = [str(scenario or "").title(), str(line_item or "").replace("_", " ")]
+        if period_label not in (None, ""):
+            title_bits.append(str(period_label))
+        title = " - ".join(bit for bit in title_bits if bit)
+        ledger.append(
+            {
+                "citation_id": source_id,
+                "id": source_id,
+                "source_id": source_id,
+                "parent_source_id": "model-output",
+                "title": title or source_id,
+                "short_label": f"Model: {sheet_name}!{cell}",
+                "type": "model_cell",
+                "quality": "model_output",
+                "workbook_path": str(workbook_path),
+                "sheet": sheet_name,
+                "cell": cell,
+                "range": cell,
+                "cell_or_range": cell,
+                "metric_name": str(line_item or source_id).replace("_", " "),
+                "value": str(row.get("value", "")),
+                "formula": str(row.get("formula", "")),
+                "source_ids": ["model-output"],
+                "assumption_flag": str(statement or "").upper() == "ASSUMPTIONS" or "assumption" in str(line_item or "").lower(),
+                "tie_out_status": "model_generated",
+                "scenario": scenario,
+                "statement": statement,
+                "section": row.get("section"),
+                "line_item": line_item,
+                "period_label": period_label,
+                "period_year": row.get("period_year"),
+                "units": row.get("units"),
+                "aliases": [
+                    str(line_item or "").replace("_", " "),
+                    f"{scenario} {str(line_item or '').replace('_', ' ')}",
+                    f"{scenario} {statement} {str(line_item or '').replace('_', ' ')}",
+                ],
+                "notes": "Deterministic model output cell in the generated LBO workbook.",
+            }
+        )
+    return ledger
+
+
+def write_blocked_outputs(output_dir: Path, error: str) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    hard_failures = [{"code": "PLAN_READ_FAILED", "message": error}]
+    run_log = {
+        "model_status": "blocked",
+        "workbook_mode": "deterministic_export",
+        "hard_failures": hard_failures,
+        "warnings": [],
+        "checks": {"plan_read": False},
+        "output_manifest": str(output_dir / "manifest.json"),
+    }
+    (output_dir / "run_log.json").write_text(json.dumps(run_log, indent=2), encoding="utf-8")
+    write_output_manifest(
+        output_dir,
+        "blocked",
+        [],
+        [(output_dir / "run_log.json", "blocked run log with plan-read failure")],
+        hard_failures,
+        [],
+    )
+
+
+def aggregate_by_year(periods, series: List[float]) -> Dict[int, float]:
+    out: Dict[int, float] = {}
+    for p, v in zip(periods, series):
+        out.setdefault(p.year, 0.0)
+        out[p.year] += float(v)
+    return out
+
+
+def format_money(x: float) -> str:
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/a"
+    return f"{x:,.1f}"
+
+
+def format_pct(x: float) -> str:
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/a"
+    return f"{100.0*x:.1f}%"
+
+
+def format_multiple(x: float) -> str:
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/a"
+    return f"{x:.2f}x"
+
+
+def covenant_headroom(plan: Dict[str, Any], periods, cov: Dict[str, List[float]]) -> Dict[str, Any]:
+    tests = plan.get("covenants", {}).get("tests", {})
+    max_lev = tests.get("max_total_leverage", {})
+    max_net_lev = tests.get("max_net_leverage", {})
+    min_icr = tests.get("min_interest_coverage", {})
+    min_fccr = tests.get("min_fixed_charge_coverage", {})
+    min_dscr = tests.get("min_debt_service_coverage", {})
+    min_liquidity = tests.get("min_liquidity", {})
+
+    head_total_lev: List[float] = []
+    head_net_lev: List[float] = []
+    head_icr: List[float] = []
+    head_fccr: List[float] = []
+    head_dscr: List[float] = []
+    head_liquidity: List[float] = []
+    breach_total: List[bool] = []
+    breach_net: List[bool] = []
+    breach_icr: List[bool] = []
+    breach_fccr: List[bool] = []
+    breach_dscr: List[bool] = []
+    breach_liquidity: List[bool] = []
+
+    for i, (p, lev, net_lev, icr, fccr, dscr, liquidity) in enumerate(
+        zip(
+            periods,
+            cov["total_leverage"],
+            cov["net_leverage"],
+            cov["interest_coverage"],
+            cov["fixed_charge_coverage"],
+            cov["debt_service_coverage"],
+            cov["liquidity"],
+        )
+    ):
+        lim_lev = float(max_lev.get(str(p.year), max_lev.get(p.year, float("inf"))) if max_lev else float("inf"))
+        lim_net_lev = float(max_net_lev.get(str(p.year), max_net_lev.get(p.year, float("inf"))) if max_net_lev else float("inf"))
+        lim_icr = float(min_icr.get(str(p.year), min_icr.get(p.year, 0.0)) if min_icr else 0.0)
+        lim_fccr = float(min_fccr.get(str(p.year), min_fccr.get(p.year, 0.0)) if min_fccr else 0.0)
+        lim_dscr = float(min_dscr.get(str(p.year), min_dscr.get(p.year, 0.0)) if min_dscr else 0.0)
+        lim_liquidity = float(min_liquidity.get(str(p.year), min_liquidity.get(p.year, 0.0)) if min_liquidity else 0.0)
+
+        h_lev = lim_lev - lev
+        h_net_lev = lim_net_lev - net_lev
+        h_icr = icr - lim_icr
+        h_fccr = fccr - lim_fccr
+        h_dscr = dscr - lim_dscr
+        h_liquidity = liquidity - lim_liquidity
+
+        head_total_lev.append(h_lev)
+        head_net_lev.append(h_net_lev)
+        head_icr.append(h_icr)
+        head_fccr.append(h_fccr)
+        head_dscr.append(h_dscr)
+        head_liquidity.append(h_liquidity)
+        breach_total.append(h_lev < 0)
+        breach_net.append(h_net_lev < 0)
+        breach_icr.append(h_icr < 0)
+        breach_fccr.append(h_fccr < 0)
+        breach_dscr.append(h_dscr < 0)
+        breach_liquidity.append(h_liquidity < 0)
+
+    def worst(head: List[float]) -> Tuple[float, int]:
+        m = min(head)
+        i = head.index(m)
+        return m, i
+
+    worst_lev, idx_lev = worst(head_total_lev) if head_total_lev else (float("nan"), 0)
+    worst_net_lev, idx_net_lev = worst(head_net_lev) if head_net_lev else (float("nan"), 0)
+    worst_icr, idx_icr = worst(head_icr) if head_icr else (float("nan"), 0)
+    worst_fccr, idx_fccr = worst(head_fccr) if head_fccr else (float("nan"), 0)
+    worst_dscr, idx_dscr = worst(head_dscr) if head_dscr else (float("nan"), 0)
+    worst_liq, idx_liq = worst(head_liquidity) if head_liquidity else (float("nan"), 0)
+
+    first_breach = None
+    first_breach_metric = None
+    for i, p in enumerate(periods):
+        breach_metrics = []
+        if breach_total[i]:
+            breach_metrics.append("max_total_leverage")
+        if breach_net[i]:
+            breach_metrics.append("max_net_leverage")
+        if breach_icr[i]:
+            breach_metrics.append("min_interest_coverage")
+        if breach_fccr[i]:
+            breach_metrics.append("min_fixed_charge_coverage")
+        if breach_dscr[i]:
+            breach_metrics.append("min_debt_service_coverage")
+        if breach_liquidity[i]:
+            breach_metrics.append("min_liquidity")
+        if breach_metrics:
+            first_breach = p.label
+            first_breach_metric = ", ".join(breach_metrics)
+            break
+
+    return {
+        "headroom_total_leverage": head_total_lev,
+        "headroom_net_leverage": head_net_lev,
+        "headroom_interest_coverage": head_icr,
+        "headroom_fixed_charge_coverage": head_fccr,
+        "headroom_debt_service_coverage": head_dscr,
+        "headroom_liquidity": head_liquidity,
+        "worst_total_leverage": worst_lev,
+        "worst_total_leverage_period": periods[idx_lev].label if periods else None,
+        "worst_net_leverage": worst_net_lev,
+        "worst_net_leverage_period": periods[idx_net_lev].label if periods else None,
+        "worst_interest_coverage": worst_icr,
+        "worst_interest_coverage_period": periods[idx_icr].label if periods else None,
+        "worst_fixed_charge_coverage": worst_fccr,
+        "worst_fixed_charge_coverage_period": periods[idx_fccr].label if periods else None,
+        "worst_debt_service_coverage": worst_dscr,
+        "worst_debt_service_coverage_period": periods[idx_dscr].label if periods else None,
+        "worst_liquidity": worst_liq,
+        "worst_liquidity_period": periods[idx_liq].label if periods else None,
+        "any_breach": any(breach_total) or any(breach_net) or any(breach_icr) or any(breach_fccr) or any(breach_dscr) or any(breach_liquidity),
+        "first_breach_period": first_breach,
+        "first_breach_metric": first_breach_metric,
+    }
+
+
+def compute_checks(
+    plan: Dict[str, Any],
+    periods,
+    entry: Dict[str, float],
+    debt_result: Dict[str, Any],
+    cov: Dict[str, List[float]],
+    bs: Dict[str, Any],
+    cov_headroom: Dict[str, Any],
+    returns: Dict[str, float],
+    run_log: Dict[str, Any],
+) -> Dict[str, Any]:
+    checks: Dict[str, Any] = {}
+    tol = 1e-6
+    checks["sources_uses_delta"] = float(entry.get("sources_minus_uses", 0.0))
+    checks["su_balance_ok"] = abs(checks["sources_uses_delta"]) <= tol
+
+    # Min cash respected
+    min_cash = float(plan.get("transaction", {}).get("min_cash", 0.0))
+    checks["min_cash"] = min_cash
+    min_cash_obs = min(debt_result["cash"]) if debt_result["cash"] else 0.0
+    checks["min_cash_observed"] = min_cash_obs
+    checks["min_cash_ok"] = min_cash_obs + tol >= min_cash
+
+    # Revolver commitment respected
+    rev_ok = True
+    rev_msg = ""
+    for tid, s in debt_result["sched"].items():
+        # commitment stored in plan tranche
+        tr = next((t for t in plan.get("debt", {}).get("tranches", []) if t.get("id") == tid), None)
+        if tr and tr.get("type") == "revolver":
+            commit = float(tr.get("commitment", 0.0))
+            if max(s["end"]) - commit > tol:
+                rev_ok = False
+                rev_msg = f"revolver {tid} exceeds commitment"
+    checks["revolver_commit_ok"] = rev_ok
+    checks["revolver_msg"] = rev_msg
+
+    # Debt non-negative
+    debt_nonneg = True
+    for tid, s in debt_result["sched"].items():
+        if min(s["end"]) < -tol:
+            debt_nonneg = False
+    checks["debt_nonnegative_ok"] = debt_nonneg
+
+    # Debt roll-forward by tranche and period.
+    debt_rollforward_ok = True
+    mandatory_amortization_ok = True
+    cash_sweep_order_ok = True
+    tranche_ranks: Dict[str, int] = {}
+    for tr in plan.get("debt", {}).get("tranches", []):
+        tranche_ranks[tr.get("id")] = int(tr.get("sweep_rank", 999))
+
+    for tid, s in debt_result["sched"].items():
+        for i in range(len(periods)):
+            beg = float(s["beg"][i])
+            draw = float(s["draw"][i])
+            repay = float(s["repay"][i])
+            amort = float(s["amort"][i])
+            pik = float(s.get("pik", [0.0] * len(periods))[i])
+            end = float(s["end"][i])
+            if abs((beg + draw - repay - amort + pik) - end) > 1e-5:
+                debt_rollforward_ok = False
+            if amort < -tol or amort - beg > 1e-5:
+                mandatory_amortization_ok = False
+
+    tranches = list(debt_result["sched"].keys())
+    for i in range(len(periods)):
+        for high_tid in tranches:
+            high_rank = tranche_ranks.get(high_tid, 999)
+            high_optional_repay = float(debt_result["sched"][high_tid]["repay"][i])
+            if high_optional_repay <= tol:
+                continue
+            for low_tid in tranches:
+                if tranche_ranks.get(low_tid, 999) < high_rank and float(debt_result["sched"][low_tid]["end"][i]) > tol:
+                    cash_sweep_order_ok = False
+                    break
+            if not cash_sweep_order_ok:
+                break
+        if not cash_sweep_order_ok:
+            break
+
+    checks["debt_rollforward_ok"] = debt_rollforward_ok
+    checks["mandatory_amortization_ok"] = mandatory_amortization_ok
+    checks["cash_sweep_order_ok"] = cash_sweep_order_ok
+    checks["solver_convergence_ok"] = not any(w.get("code") == "SOLVER_NO_CONVERGE" for w in run_log.get("warnings", []))
+
+    required_cov = ["total_leverage", "net_leverage", "interest_coverage", "fixed_charge_coverage", "debt_service_coverage", "liquidity"]
+    checks["covenant_completeness_ok"] = all(len(cov.get(k, [])) == len(periods) for k in required_cov)
+    checks["balance_sheet_balance_ok"] = max(abs(float(x)) for x in bs.get("balance_check", [0.0])) <= 1e-5
+    checks["cash_flow_cash_reconcile_ok"] = len(debt_result.get("cash", [])) == len(periods)
+
+    exit_idx = int(returns.get("exit_period_index", len(periods) - 1))
+    exit_debt = sum(float(s["end"][exit_idx]) for s in debt_result["sched"].values()) if debt_result["sched"] else 0.0
+    exit_cash = float(debt_result["cash"][exit_idx]) if debt_result["cash"] else 0.0
+    net_debt_adj = float(plan.get("exit", {}).get("net_debt_adjustments", 0.0))
+    expected_exit_equity = float(returns["exit_ev"]) - (exit_debt - exit_cash) - net_debt_adj
+    checks["exit_bridge_delta"] = float(returns["exit_equity"]) - expected_exit_equity
+    checks["exit_bridge_ok"] = abs(checks["exit_bridge_delta"]) <= 1e-5
+    checks["irr_moic_directionality_ok"] = float(returns.get("moic", 0.0)) >= 0 and not math.isnan(float(returns.get("irr", float("nan"))))
+    checks["base_case_breach_flag"] = bool(cov_headroom.get("any_breach"))
+
+    total_leverage = cov.get("total_leverage", [])
+    net_leverage = cov.get("net_leverage", [])
+    cash = debt_result.get("cash", [])
+    checks["peak_leverage"] = max(total_leverage) if total_leverage else float("nan")
+    checks["peak_leverage_period"] = periods[total_leverage.index(max(total_leverage))].label if total_leverage else None
+    checks["peak_net_leverage"] = max(net_leverage) if net_leverage else float("nan")
+    checks["liquidity_trough"] = min(cash) if cash else float("nan")
+    checks["liquidity_trough_period"] = periods[cash.index(min(cash))].label if cash else None
+    checks["first_breach_period"] = cov_headroom.get("first_breach_period")
+    checks["first_breach_metric"] = cov_headroom.get("first_breach_metric")
+    return checks
+
+
+def add_check_rows(rows: List[Dict[str, Any]], plan: Dict[str, Any], periods, scenario: str, checks: Dict[str, Any]) -> None:
+    units = plan.get("meta", {}).get("units", "USD_mm")
+    for k in [
+        "su_balance_ok",
+        "min_cash_ok",
+        "revolver_commit_ok",
+        "debt_nonnegative_ok",
+        "debt_rollforward_ok",
+        "mandatory_amortization_ok",
+        "cash_sweep_order_ok",
+        "solver_convergence_ok",
+        "covenant_completeness_ok",
+        "exit_bridge_ok",
+        "irr_moic_directionality_ok",
+        "balance_sheet_balance_ok",
+        "cash_flow_cash_reconcile_ok",
+    ]:
+        val = 1 if checks.get(k) else 0
+        # store at period 0
+        p = periods[0]
+        rows.append(
+            {
+                "scenario": scenario,
+                "period_index": p.index,
+                "period_label": p.label,
+                "period_year": p.year,
+                "frequency": p.frequency,
+                "statement": "CHECKS",
+                "section": "Checks",
+                "line_item": k,
+                "value": val,
+                "units": units,
+            }
+        )
+
+
+def scenario_plan(base_plan: Dict[str, Any], scenario_name: str) -> Dict[str, Any]:
+    override = base_plan.get("scenarios", {}).get(scenario_name, {}) or {}
+    if isinstance(override, dict) and "overrides" in override and len(override) == 1:
+        override = override.get("overrides", {}) or {}
+    # The override is applied on top of the fully normalized base plan.
+    return deep_merge(base_plan, override)
+
+
+def run_one(plan: Dict[str, Any], skill_root: Path, scenario: str, run_log: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    tl = plan["timeline"]
+    periods = build_timeline(int(tl["start_year"]), int(tl["horizon_years"]), tl["periodicity"])
+
+    entry = compute_entry_values(plan)
+    op = compute_operating_series(plan, periods)
+    debt_result = run_debt_and_cash(plan, periods, op, entry, run_log)
+    cov = compute_covenants(plan, periods, op, debt_result)
+    bs = compute_balance_sheet(plan, periods, entry, op, debt_result, cov)
+    ret = compute_exit_and_returns(plan, periods, op, debt_result, entry)
+
+    rows = to_csv_rows(plan, periods, scenario, entry, op, debt_result, cov, bs, ret)
+
+    cov_h = covenant_headroom(plan, periods, cov)
+    checks = compute_checks(plan, periods, entry, debt_result, cov, bs, cov_h, ret, run_log)
+    add_check_rows(rows, plan, periods, scenario, checks)
+
+    out = {
+        "periods": periods,
+        "entry": entry,
+        "op": op,
+        "debt": debt_result,
+        "cov": cov,
+        "bs": bs,
+        "cov_headroom": cov_h,
+        "returns": ret,
+        "checks": checks,
+    }
+    return rows, out
+
+
+def run_sensitivities(normalized_plan: Dict[str, Any], skill_root: Path, base_out: Dict[str, Any]) -> Dict[str, Any]:
+    """Model-derived sensitivities and reverse stress tests."""
+    out: Dict[str, Any] = {}
+    target_irr = float(normalized_plan.get("sensitivities", {}).get("target_irr", 0.20) or 0.20)
+    base_irr = float(base_out["returns"].get("irr", float("nan")))
+
+    # Entry multiple +/- 1.0x (only if multiple-driven)
+    tx = normalized_plan.get("transaction", {})
+    entry = tx.get("entry", {})
+    if entry.get("method") == "multiple":
+        for delta in (-1.0, 1.0):
+            p = copy.deepcopy(normalized_plan)
+            p["transaction"]["entry"]["entry_multiple"] = float(entry["entry_multiple"]) + delta
+            rows, r = run_one(p, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+            out[f"entry_multiple_{delta:+.1f}x_irr"] = r["returns"]["irr"]
+
+        # Maximum supportable entry multiple for target IRR, holding financing terms constant.
+        low = max(0.1, float(entry["entry_multiple"]) - 5.0)
+        high = float(entry["entry_multiple"]) + 8.0
+        best = None
+        for _ in range(40):
+            mid = (low + high) / 2.0
+            p = copy.deepcopy(normalized_plan)
+            p["transaction"]["entry"]["entry_multiple"] = mid
+            _rows, r = run_one(p, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+            irr_mid = float(r["returns"].get("irr", float("nan")))
+            if math.isnan(irr_mid):
+                high = mid
+                continue
+            if irr_mid >= target_irr:
+                best = mid
+                low = mid
+            else:
+                high = mid
+        if best is not None:
+            out[f"max_entry_multiple_at_{int(target_irr * 100)}pct_irr"] = best
+            out[f"max_entry_ev_at_{int(target_irr * 100)}pct_irr"] = best * float(entry["entry_ebitda"])
+
+    # Exit multiple +/- 1.0x
+    ex = normalized_plan.get("exit", {})
+    if ex.get("method") == "multiple":
+        for delta in (-1.0, 1.0):
+            p = copy.deepcopy(normalized_plan)
+            p["exit"]["exit_multiple"] = float(ex["exit_multiple"]) + delta
+            rows, r = run_one(p, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+            out[f"exit_multiple_{delta:+.1f}x_irr"] = r["returns"]["irr"]
+        exit_idx = int(base_out["returns"].get("exit_period_index", len(base_out["periods"]) - 1))
+        # Match the reverse-stress denominator to the exit-value calculation,
+        # which uses annualized/LTM EBITDA for quarterly models.
+        exit_ebitda = float(base_out["returns"]["exit_ebitda"])
+        exit_debt = sum(float(s["end"][exit_idx]) for s in base_out["debt"]["sched"].values()) if base_out["debt"]["sched"] else 0.0
+        exit_cash = float(base_out["debt"]["cash"][exit_idx])
+        equity_check = float(base_out["entry"].get("sponsor_equity", 0.0))
+        if exit_ebitda:
+            out["min_exit_multiple_to_return_capital"] = max(0.0, (equity_check + exit_debt - exit_cash) / exit_ebitda)
+
+    # EBITDA -10% shock (reduce margins proportionally)
+    p = copy.deepcopy(normalized_plan)
+    em = p.get("operating", {}).get("ebitda_margin", {})
+    if isinstance(em, dict) and em:
+        for k in list(em.keys()):
+            em[k] = float(em[k]) * 0.9
+        p["operating"]["ebitda_margin"] = em
+        rows, r = run_one(p, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+        out["ebitda_minus10_irr"] = r["returns"]["irr"]
+        out["ebitda_minus10_min_cash"] = min(r["debt"]["cash"])
+        out["ebitda_minus10_any_breach"] = r["cov_headroom"]["any_breach"]
+
+        # Reverse stress: largest EBITDA haircut before covenant/liquidity breach.
+        low, high = 0.0, 1.0
+        last_ok = 1.0
+        for _ in range(30):
+            mid = (low + high) / 2.0
+            p2 = copy.deepcopy(normalized_plan)
+            em2 = p2.get("operating", {}).get("ebitda_margin", {})
+            for k in list(em2.keys()):
+                em2[k] = float(em2[k]) * mid
+            p2["operating"]["ebitda_margin"] = em2
+            _rows, r2 = run_one(p2, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+            ok = not r2["cov_headroom"]["any_breach"] and bool(r2["checks"].get("min_cash_ok"))
+            if ok:
+                last_ok = mid
+                high = mid
+            else:
+                low = mid
+        out["max_ebitda_haircut_before_breach_or_min_cash_failure"] = max(0.0, 1.0 - last_ok)
+
+    # Rate shock: how much base-rate increase can the structure absorb before liquidity/covenant failure.
+    if normalized_plan.get("debt", {}).get("base_rate", {}).get("assumption") is not None:
+        low, high = 0.0, 0.10
+        last_ok = 0.0
+        for _ in range(30):
+            mid = (low + high) / 2.0
+            p = copy.deepcopy(normalized_plan)
+            p["debt"]["base_rate"]["assumption"] = float(normalized_plan["debt"]["base_rate"]["assumption"]) + mid
+            _rows, r = run_one(p, skill_root, "base", {"warnings": [], "info": [], "assumptions": {}})
+            ok = not r["cov_headroom"]["any_breach"] and bool(r["checks"].get("min_cash_ok"))
+            if ok:
+                last_ok = mid
+                low = mid
+            else:
+                high = mid
+        out["max_base_rate_increase_before_breach_or_min_cash_failure_bps"] = last_ok * 10000.0
+
+    return out
+
+
+def sensitivity_monotonicity_ok(sens: Dict[str, Any]) -> bool:
+    ok = True
+    if "entry_multiple_-1.0x_irr" in sens and "entry_multiple_+1.0x_irr" in sens:
+        ok = ok and float(sens["entry_multiple_-1.0x_irr"]) >= float(sens["entry_multiple_+1.0x_irr"])
+    if "exit_multiple_-1.0x_irr" in sens and "exit_multiple_+1.0x_irr" in sens:
+        ok = ok and float(sens["exit_multiple_+1.0x_irr"]) >= float(sens["exit_multiple_-1.0x_irr"])
+    if "ebitda_minus10_irr" in sens:
+        try:
+            ok = ok and float(sens["ebitda_minus10_irr"]) <= 10.0
+        except (TypeError, ValueError):
+            ok = False
+    return ok
+
+
+def max_revolver_draw(plan: Dict[str, Any], debt_result: Dict[str, Any], periods=None) -> Tuple[float, str | None]:
+    rev_ids = [tr.get("id") for tr in plan.get("debt", {}).get("tranches", []) if tr.get("type") == "revolver"]
+    best_draw = 0.0
+    best_period = None
+    for rev_id in rev_ids:
+        sched = debt_result.get("sched", {}).get(rev_id)
+        if not sched:
+            continue
+        draw = max(float(x) for x in sched["end"]) if sched["end"] else 0.0
+        if draw >= best_draw:
+            best_draw = draw
+            if periods and sched["end"]:
+                best_period = periods[sched["end"].index(draw)].label
+    return best_draw, best_period
+
+
+def build_hard_failures(checks: Dict[str, Any]) -> List[Dict[str, str]]:
+    hard_failure_fields = {
+        "su_balance_ok": "Sources and uses do not balance.",
+        "debt_rollforward_ok": "Debt roll-forward does not reconcile.",
+        "debt_nonnegative_ok": "Debt schedule has unexplained negative balances.",
+        "revolver_commit_ok": "Revolver exceeds commitment.",
+        "min_cash_ok": "Minimum cash is violated after available financing actions.",
+        "solver_convergence_ok": "Debt/interest solver did not converge for one or more periods.",
+        "covenant_completeness_ok": "Requested covenant ratios or headroom are incomplete.",
+        "exit_bridge_ok": "Exit equity bridge does not reconcile.",
+        "balance_sheet_balance_ok": "Balance sheet does not balance in the deterministic export.",
+        "cash_flow_cash_reconcile_ok": "Cash-flow schedule does not reconcile to the model period count.",
+        "sensitivity_monotonicity_ok": "Sensitivity outputs do not move in the expected direction.",
+    }
+    failures = []
+    for field, message in hard_failure_fields.items():
+        if checks.get(field) is False:
+            failures.append({"code": field.upper(), "message": message})
+    return failures
+
+
+def append_scalar_check_row(rows: List[Dict[str, Any]], plan: Dict[str, Any], periods, scenario: str, key: str, value: bool) -> None:
+    units = plan.get("meta", {}).get("units", "USD_mm")
+    p = periods[0]
+    rows.append(
+        {
+            "scenario": scenario,
+            "period_index": p.index,
+            "period_label": p.label,
+            "period_year": p.year,
+            "frequency": p.frequency,
+            "statement": "CHECKS",
+            "section": "Checks",
+            "line_item": key,
+            "value": 1 if value else 0,
+            "units": units,
+        }
+    )
+
+
+def build_workbook_summary_rows(headers: List[str], plan: Dict[str, Any], scenario_outputs: Dict[str, Any], run_log: Dict[str, Any], sens: Dict[str, Any]) -> List[Dict[str, Any]]:
+    units = plan.get("meta", {}).get("units", "USD_mm")
+    base = scenario_outputs.get("base", {})
+    down = scenario_outputs.get("downside", {})
+    up = scenario_outputs.get("upside", {})
+    entry = base.get("entry", {})
+    base_returns = base.get("returns", {})
+    down_returns = down.get("returns", {})
+    up_returns = up.get("returns", {})
+    checks = base.get("checks", {})
+    cov_headroom = base.get("cov_headroom", {})
+    meta = plan.get("meta", {})
+    h = run_log.get("p0_handoff", {})
+    sensitivity_rows = sens.get("irr_by_entry_ev_exit_multiple", [])
+    first_sensitivity = sensitivity_rows[0] if sensitivity_rows else {}
+
+    metrics = [
+        ("Transaction / company", meta.get("company")),
+        ("As-of / valuation date", meta.get("valuation_date") or meta.get("as_of_date")),
+        ("Decision question", "Can the sponsor underwrite the acquisition at the modeled purchase price and capital structure?"),
+        ("Recommendation / readiness", run_log.get("model_status")),
+        ("Purchase price / entry EV", entry.get("entry_ev")),
+        ("Sponsor equity", entry.get("sponsor_equity")),
+        ("Opening leverage", h.get("private_credit_underwriting", {}).get("opening_leverage")),
+        ("Base IRR", base_returns.get("irr")),
+        ("Base MOIC", base_returns.get("moic")),
+        ("Downside / upside IRR", f"{down_returns.get('irr')} / {up_returns.get('irr')}"),
+        ("Minimum liquidity", checks.get("liquidity_trough")),
+        ("Covenant / liquidity flag", cov_headroom.get("first_breach_metric") or "No modeled base-case breach"),
+        ("Top sensitivity", first_sensitivity.get("irr")),
+        ("Source / caveat status", f"{len(run_log.get('warnings', []))} warnings; {len(run_log.get('hard_failures', []))} hard failures"),
+        ("Next step", "Refresh source-backed EBITDA, net debt, lender terms, and sensitivity assumptions before decision use."),
+        ("Model map", "Model rows follow below; use model_citations.json for exact workbook cell/range references."),
+    ]
+
+    out: List[Dict[str, Any]] = []
+    for label, value in metrics:
+        row = {key: "" for key in headers}
+        row.update(
+            {
+                "scenario": "summary",
+                "period_index": 0,
+                "period_label": "first_read",
+                "period_year": "",
+                "frequency": meta.get("periodicity", ""),
+                "statement": "EXECUTIVE_SUMMARY",
+                "section": "Executive Summary",
+                "line_item": label,
+                "value": value,
+                "units": units if isinstance(value, (int, float)) else "",
+            }
+        )
+        out.append(row)
+    return out
+
+
+def add_source_warnings(run_log: Dict[str, Any]) -> None:
+    for src in run_log.get("source_basis", []):
+        if not isinstance(src, dict):
+            continue
+        label = src.get("evidence_label")
+        if label in {"fallback_assumption", "unsupported", "seller_claim"}:
+            run_log["warnings"].append(
+                {
+                    "code": "SOURCE_EVIDENCE_LIMITATION",
+                    "message": f"{src.get('model_location', 'model input')} uses {label}; review before decision-grade use.",
+                    "source_id": src.get("source_id"),
+                }
+            )
+
+
+def determine_model_status(run_log: Dict[str, Any]) -> str:
+    if run_log.get("hard_failures"):
+        return "not-decision-ready"
+    labels = {src.get("evidence_label") for src in run_log.get("source_basis", []) if isinstance(src, dict)}
+    if not labels or "unsupported" in labels or "fallback_assumption" in labels:
+        return "screen-grade"
+    if run_log.get("warnings") or labels.intersection({"management_assumption", "seller_claim", "sponsor_assumption", "analog_proxy"}):
+        return "senior-review-ready"
+    return "decision-grade"
+
+
+def build_p0_handoff(plan: Dict[str, Any], scenario_outputs: Dict[str, Any], run_log: Dict[str, Any], output_dir: Path, include_report_md: bool) -> Dict[str, Any]:
+    base = scenario_outputs["base"]
+    down = scenario_outputs["downside"]
+    up = scenario_outputs["upside"]
+    ebitda_basis = plan.get("ebitda_basis", {})
+    max_rev_draw, max_rev_period = max_revolver_draw(plan, base["debt"], base["periods"])
+
+    debt_structure = []
+    for tr in plan.get("debt", {}).get("tranches", []):
+        debt_structure.append({
+            "id": tr.get("id"),
+            "type": tr.get("type"),
+            "face_or_commitment": tr.get("face", tr.get("commitment", 0.0)),
+        })
+
+    output_paths = {
+        "output_workbook_path": str(output_dir / "model.xlsx"),
+        "plan_path": str(output_dir / "plan.json"),
+        "run_log_path": str(output_dir / "run_log.json"),
+    }
+    if include_report_md:
+        output_paths["report_path"] = str(output_dir / "report.md")
+
+    return {
+        "investment_memo": {
+            "recommendation": "Use model outputs with stated posture and diligence caveats.",
+            "entry_valuation": base["entry"].get("entry_ev"),
+            "base_irr": base["returns"].get("irr"),
+            "base_moic": base["returns"].get("moic"),
+            "downside_irr": down["returns"].get("irr"),
+            "downside_moic": down["returns"].get("moic"),
+            "upside_irr": up["returns"].get("irr"),
+            "upside_moic": up["returns"].get("moic"),
+            "value_creation_bridge": {
+                "ebitda_growth": base["returns"].get("value_creation_ebitda_growth"),
+                "multiple_change": base["returns"].get("value_creation_multiple_change"),
+                "deleveraging": base["returns"].get("value_creation_deleveraging"),
+                "dividends": base["returns"].get("value_creation_dividends"),
+                "management_dilution": base["returns"].get("value_creation_management_dilution"),
+            },
+            "what_breaks_first": (
+                f"{base['cov_headroom'].get('first_breach_metric')} at {base['cov_headroom'].get('first_breach_period')}"
+                if base["cov_headroom"].get("first_breach_period")
+                else "No base-case covenant breach in modeled periods."
+            ),
+            "open_diligence_items": [src.get("open_diligence_item") for src in run_log.get("source_basis", []) if src.get("open_diligence_item")],
+        },
+        "private_credit_underwriting": {
+            "debt_structure": debt_structure,
+            "opening_leverage": base["cov"]["total_leverage"][0] if base["cov"]["total_leverage"] else None,
+            "peak_leverage": base["checks"].get("peak_leverage"),
+            "peak_leverage_period": base["checks"].get("peak_leverage_period"),
+            "minimum_liquidity": base["checks"].get("liquidity_trough"),
+            "liquidity_trough_period": base["checks"].get("liquidity_trough_period"),
+            "maximum_revolver_draw": max_rev_draw,
+            "maximum_revolver_draw_period": max_rev_period,
+            "worst_total_leverage_headroom": base["cov_headroom"].get("worst_total_leverage"),
+            "worst_net_leverage_headroom": base["cov_headroom"].get("worst_net_leverage"),
+            "worst_interest_coverage_headroom": base["cov_headroom"].get("worst_interest_coverage"),
+            "worst_fixed_charge_coverage_headroom": base["cov_headroom"].get("worst_fixed_charge_coverage"),
+            "worst_debt_service_coverage_headroom": base["cov_headroom"].get("worst_debt_service_coverage"),
+            "worst_liquidity_headroom": base["cov_headroom"].get("worst_liquidity"),
+            "first_breach_period": base["cov_headroom"].get("first_breach_period"),
+            "first_breach_metric": base["cov_headroom"].get("first_breach_metric"),
+            "lender_ebitda_basis": ebitda_basis.get("selected"),
+            "debt_service_coverage": base["cov"]["debt_service_coverage"],
+            "required_lender_protections": "Route to private-credit-underwriting for terms, protections, and final approval recommendation.",
+        },
+        "ib_deck_qc": {
+            "headline_metrics": {
+                "entry_ev": base["entry"].get("entry_ev"),
+                "base_irr": base["returns"].get("irr"),
+                "base_moic": base["returns"].get("moic"),
+                "peak_leverage": base["checks"].get("peak_leverage"),
+                "minimum_liquidity": base["checks"].get("liquidity_trough"),
+            },
+            "selected_scenario": "base",
+            "model_as_of_date": plan.get("meta", {}).get("as_of"),
+            "check_status": "hard_failures" if run_log.get("hard_failures") else "checks_passed_in_tested_scope",
+            "caveats": run_log.get("warnings", []),
+        },
+        "model_audit_tieout": {
+            **output_paths,
+            "known_warnings": run_log.get("warnings", []),
+            "hard_failures": run_log.get("hard_failures", []),
+            "formula_workbook_status": run_log.get("workbook_mode", "deterministic_export"),
+        },
+    }
+
+
+def render_report(plan: Dict[str, Any], base_out: Dict[str, Any], down_out: Dict[str, Any], up_out: Dict[str, Any], run_log: Dict[str, Any], sens: Dict[str, Any]) -> str:
+    meta = plan.get("meta", {})
+    company = meta.get("company_name", "(Unknown)")
+    model_status = run_log.get("model_status", "screen-grade")
+    workbook_mode = run_log.get("workbook_mode", "deterministic_export")
+    ebitda_basis = plan.get("ebitda_basis", {})
+
+    periodicity = plan.get("timeline", {}).get("periodicity")
+    horizon = plan.get("timeline", {}).get("horizon_years")
+
+    entry = base_out["entry"]
+    ret_b = base_out["returns"]
+    ret_d = down_out["returns"]
+    ret_u = up_out["returns"]
+
+    cov_b = base_out["cov_headroom"]
+
+    # Aggregate by year for a clean operating summary
+    periods = base_out["periods"]
+    rev_y = aggregate_by_year(periods, base_out["op"]["revenue"])
+    ebitda_y = aggregate_by_year(periods, base_out["op"]["ebitda"])
+
+    # Peak leverage and liquidity trough
+    peak_net_lev = max(base_out["cov"]["net_leverage"]) if base_out["cov"]["net_leverage"] else float("nan")
+    trough_cash = min(base_out["debt"]["cash"]) if base_out["debt"]["cash"] else float("nan")
+
+    lines: List[str] = []
+    lines.append(f"# {company} — LBO Model Build Summary (Generated)\n")
+
+    lines.append("## 1) Executive summary")
+    lines.append(f"- Output posture: `{model_status}`")
+    lines.append(f"- Workbook mode: `{workbook_mode}`")
+    lines.append(f"- Deal overview: industry={meta.get('industry')}, stage={meta.get('stage')}, horizon={horizon}y, periodicity={periodicity}")
+    lines.append(f"- Entry: EV={format_money(entry['entry_ev'])} ; Sponsor equity check={format_money(entry['sponsor_equity'])} ; Sources-Uses delta={format_money(entry['sources_minus_uses'])}")
+    lines.append(f"- Base returns: IRR={format_pct(ret_b['irr'])} ; MOIC={ret_b['moic']:.2f}x")
+    lines.append(f"- Credit lens: peak net leverage≈{peak_net_lev:.2f}x ; min cash≈{format_money(trough_cash)} ; any covenant breach={cov_b['any_breach']}")
+    lines.append(f"- Value creation: EBITDA growth={format_money(ret_b.get('value_creation_ebitda_growth'))}; deleveraging={format_money(ret_b.get('value_creation_deleveraging'))}; multiple change={format_money(ret_b.get('value_creation_multiple_change'))}; management dilution={format_money(ret_b.get('value_creation_management_dilution'))}")
+    if cov_b["any_breach"]:
+        lines.append(f"- Breaks first: {cov_b.get('first_breach_metric')} breach at {cov_b['first_breach_period']}")
+    lines.append("")
+
+    lines.append("## 2) Key inputs (Base / Downside / Upside)")
+    lines.append(f"- Base rate assumption (Base): {plan.get('debt', {}).get('base_rate', {}).get('name','rate')}={format_pct(plan.get('debt', {}).get('base_rate', {}).get('assumption', 0.0))}")
+    lines.append(f"- Exit: year={plan.get('exit', {}).get('exit_year')} ; method={plan.get('exit', {}).get('method')} ; exit multiple/EV={plan.get('exit', {}).get('exit_multiple', plan.get('exit', {}).get('exit_ev'))}")
+    transaction_ebitda_used = ebitda_basis.get("transaction_ebitda_used")
+    lines.append(f"- EBITDA basis: selected={ebitda_basis.get('selected', 'n/a')} ; transaction EBITDA={format_money(transaction_ebitda_used)} ; evidence={ebitda_basis.get('evidence_label', 'n/a')}")
+    if ebitda_basis.get("covenant_ebitda") is None:
+        lines.append("- Covenant EBITDA: not presented; no covenant definition source was provided in the plan.")
+    source_basis = run_log.get("source_basis", [])
+    if source_basis:
+        lines.append("")
+        lines.append("| Source ID | Label | Confidence | Model location | Open diligence item |")
+        lines.append("|---|---|---|---|---|")
+        for src in source_basis:
+            lines.append(
+                f"| {src.get('source_id','')} | {src.get('evidence_label','')} | {src.get('confidence','')} | {src.get('model_location','')} | {src.get('open_diligence_item','')} |"
+            )
+    lines.append("")
+
+    lines.append("## 3) Operating forecast, cash conversion, and opening balance sheet (Base)")
+    years = sorted(rev_y.keys())
+    lines.append("| Year | Revenue | EBITDA | EBITDA Margin |")
+    lines.append("|---:|---:|---:|---:|")
+    for y in years:
+        rev = rev_y[y]
+        ebd = ebitda_y[y]
+        margin = (ebd / rev) if rev else float('nan')
+        lines.append(f"| {y} | {format_money(rev)} | {format_money(ebd)} | {format_pct(margin)} |")
+    pa = base_out["bs"].get("purchase_accounting", {})
+    lines.append("")
+    lines.append(f"- Purchase accounting bridge: book net assets={format_money(pa.get('book_net_assets'))}; FV step-up={format_money(pa.get('fair_value_step_up'))}; identifiable intangibles={format_money(pa.get('identifiable_intangibles'))}; DTL={format_money(pa.get('deferred_tax_liability'))}; goodwill={format_money(pa.get('goodwill'))}")
+    lines.append(f"- Balance sheet check: max modeled imbalance={format_money(max(abs(x) for x in base_out['bs'].get('balance_check', [0.0])))}")
+    lines.append("")
+
+    lines.append("## 4) Debt & cash flow summary (Base)")
+    lines.append(f"- Opening cash (min cash): {format_money(plan.get('transaction', {}).get('min_cash', 0.0))}")
+    lines.append(f"- Minimum cash observed: {format_money(base_out['checks']['min_cash_observed'])} (min cash OK={base_out['checks']['min_cash_ok']})")
+    lines.append(f"- Revolver commitment OK: {base_out['checks']['revolver_commit_ok']} {base_out['checks'].get('revolver_msg','')}")
+    lines.append("")
+
+    lines.append("## 5) Covenants & headroom (Base)")
+    lines.append(f"- Worst total leverage headroom: {cov_b['worst_total_leverage']:.2f}x at {cov_b['worst_total_leverage_period']}")
+    lines.append(f"- Worst net leverage headroom: {cov_b['worst_net_leverage']:.2f}x at {cov_b['worst_net_leverage_period']}")
+    lines.append(f"- Worst interest coverage headroom: {cov_b['worst_interest_coverage']:.2f}x at {cov_b['worst_interest_coverage_period']}")
+    lines.append(f"- Worst FCCR headroom: {cov_b['worst_fixed_charge_coverage']:.2f}x at {cov_b['worst_fixed_charge_coverage_period']}")
+    lines.append(f"- Worst DSCR headroom: {cov_b['worst_debt_service_coverage']:.2f}x at {cov_b['worst_debt_service_coverage_period']}")
+    lines.append(f"- Worst liquidity headroom: {format_money(cov_b['worst_liquidity'])} at {cov_b['worst_liquidity_period']}")
+    if cov_b["any_breach"]:
+        lines.append(f"- **Breach**: first breach at {cov_b['first_breach_period']} ({cov_b.get('first_breach_metric')}); review drivers and consider de-leveraging / pricing / cost actions")
+    lines.append("")
+
+    lines.append("## 6) Returns")
+    lines.append(f"- Base: IRR={format_pct(ret_b['irr'])} ; MOIC={ret_b['moic']:.2f}x")
+    lines.append(f"- Downside: IRR={format_pct(ret_d['irr'])} ; MOIC={ret_d['moic']:.2f}x")
+    lines.append(f"- Upside: IRR={format_pct(ret_u['irr'])} ; MOIC={ret_u['moic']:.2f}x")
+    lines.append("")
+    lines.append("| Value creation item | Base contribution |")
+    lines.append("|---|---:|")
+    for label, key in [
+        ("EBITDA growth", "value_creation_ebitda_growth"),
+        ("Deleveraging / cash build", "value_creation_deleveraging"),
+        ("Multiple change", "value_creation_multiple_change"),
+        ("Dividends", "value_creation_dividends"),
+        ("Management dilution", "value_creation_management_dilution"),
+    ]:
+        lines.append(f"| {label} | {format_money(ret_b.get(key))} |")
+    lines.append("")
+
+    lines.append("## 7) Sensitivities and reverse stress tests")
+    for k in sorted(sens.keys()):
+        lines.append(f"- {k}: {sens[k]}")
+    lines.append("")
+
+    lines.append("## 8) QA & audit checks")
+    lines.append("| Check | Result |")
+    lines.append("|---|---:|")
+    for key in [
+        "su_balance_ok",
+        "debt_rollforward_ok",
+        "mandatory_amortization_ok",
+        "cash_sweep_order_ok",
+        "min_cash_ok",
+        "revolver_commit_ok",
+        "debt_nonnegative_ok",
+        "solver_convergence_ok",
+        "covenant_completeness_ok",
+        "exit_bridge_ok",
+        "irr_moic_directionality_ok",
+        "balance_sheet_balance_ok",
+        "cash_flow_cash_reconcile_ok",
+        "sensitivity_monotonicity_ok",
+    ]:
+        lines.append(f"| {key} | {base_out['checks'].get(key)} |")
+    lines.append(f"- S&U delta: {format_money(base_out['checks']['sources_uses_delta'])}")
+    if run_log.get("hard_failures"):
+        lines.append("- Hard failures:")
+        for hf in run_log["hard_failures"]:
+            lines.append(f"  - {hf.get('code')}: {hf.get('message')}")
+    else:
+        lines.append("- Hard failures: none")
+    if run_log.get("warnings"):
+        lines.append("- Warnings:")
+        for w in run_log["warnings"]:
+            lines.append(f"  - {w.get('code')}: {w.get('message')}")
+    else:
+        lines.append("- Warnings: none")
+    lines.append("")
+
+    lines.append("## 9) Downstream handoff")
+    handoff = run_log.get("p0_handoff", {})
+    investment_handoff = handoff.get("investment_memo", {})
+    credit_handoff = handoff.get("private_credit_underwriting", {})
+    deck_handoff = handoff.get("ib_deck_qc", {})
+    audit_handoff = handoff.get("model_audit_tieout", {})
+    lines.append(f"- `memo-builder`: entry EV={format_money(investment_handoff.get('entry_valuation'))}; base IRR={format_pct(investment_handoff.get('base_irr'))}; base MOIC={format_multiple(investment_handoff.get('base_moic'))}; what breaks first={investment_handoff.get('what_breaks_first')}")
+    lines.append(f"- `private-credit-underwriting`: opening leverage={format_multiple(credit_handoff.get('opening_leverage'))}; peak leverage={format_multiple(credit_handoff.get('peak_leverage'))}; min liquidity={format_money(credit_handoff.get('minimum_liquidity'))}; first breach={credit_handoff.get('first_breach_period')}")
+    lines.append(f"- `ib-deck-qc`: selected scenario={deck_handoff.get('selected_scenario')}; check status={deck_handoff.get('check_status')}; model as-of={deck_handoff.get('model_as_of_date')}")
+    lines.append(f"- `model-audit-tieout`: workbook={audit_handoff.get('output_workbook_path')}; plan={audit_handoff.get('plan_path')}; run log={audit_handoff.get('run_log_path')}; workbook mode={audit_handoff.get('formula_workbook_status')}")
+    lines.append("")
+
+    lines.append("## 10) Assumptions & limitations")
+    if run_log.get("assumptions", {}).get("periodicity"):
+        lines.append(f"- Periodicity defaulted: {run_log['assumptions']['periodicity']['value']} — {run_log['assumptions']['periodicity']['reason']}")
+    lines.append(f"- Output posture: `{model_status}`.")
+    lines.append(f"- Workbook mode: `{workbook_mode}`; the bundled workbook is an auditable long-format export, not a banker-formatted multi-tab formula workbook.")
+    lines.append("- This template uses a simplified working-capital days engine (AR/AP/Inventory approximated off revenue unless a custom module is added).")
+    lines.append("- Taxes support simple NOL usage and an optional EBITDA-based interest deductibility cap; complex jurisdictional, Section 382, SALT, withholding, and tax-structuring analysis remains a diligence item unless separately modeled.")
+    lines.append("- Purchase accounting is a deterministic bridge for goodwill/intangibles/DTL, not a third-party valuation report.")
+    lines.append("- Management incentive modeling uses a simplified fully diluted pool and threshold; bespoke profits-interest, ratchet, vesting, and waterfall terms require custom extension.")
+
+    return "\n".join(lines) + "\n"
+
+
+def write_minimal_docx(path: Path, markdown_text: str) -> None:
+    """Write a minimal .docx preserving the report text as paragraphs.
+
+    This avoids external dependencies. Formatting is intentionally minimal.
+    """
+
+    def para(text: str) -> str:
+        if text == "":
+            return "<w:p/>"
+        return (
+            "<w:p><w:r><w:t xml:space=\"preserve\">"
+            + escape(text)
+            + "</w:t></w:r></w:p>"
+        )
+
+    body_xml = "\n".join(para(line) for line in markdown_text.splitlines()) + "\n<w:sectPr/>"
+
+    document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    {body_xml}
+  </w:body>
+</w:document>
+"""
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>
+"""
+
+    rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>
+"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types_xml)
+        z.writestr("_rels/.rels", rels_xml)
+        z.writestr("word/document.xml", document_xml)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run LBO pipeline and emit outputs.")
+    parser.add_argument("plan_json", help="Path to input plan.json")
+    parser.add_argument(
+        "--print-report",
+        action="store_true",
+        help="Print the full text report to stdout without writing a Markdown file.",
+    )
+    parser.add_argument(
+        "--write-report-md",
+        action="store_true",
+        help="Write legacy report.md in addition to the workbook. Off by default.",
+    )
+    parser.add_argument(
+        "--no-report-md",
+        action="store_true",
+        help="Deprecated compatibility flag; Markdown report files are already off by default.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for model.xlsx plus support artifacts. Defaults to ./output.",
+    )
+    args = parser.parse_args()
+    write_report_md = bool(args.write_report_md and not args.no_report_md)
+
+    plan_path = Path(args.plan_json)
+    out_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / "output"
+    try:
+        raw_plan = json.loads(plan_path.read_text())
+    except Exception as exc:
+        write_blocked_outputs(out_dir, f"could not read plan: {exc}")
+        print(f"ERROR: could not read plan: {exc}", file=sys.stderr)
+        return 1
+
+    skill_root = Path(__file__).resolve().parents[2]
+    normalized, run_log = normalize_plan(raw_plan, skill_root)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "plan.json").write_text(json.dumps(normalized, indent=2))
+
+    # Run scenarios
+    all_rows: List[Dict[str, Any]] = []
+    scenario_outputs: Dict[str, Any] = {}
+    for scen in ("base", "downside", "upside"):
+        p = scenario_plan(normalized, scen)
+        rows, out = run_one(p, skill_root, scen, run_log)
+        all_rows.extend(rows)
+        scenario_outputs[scen] = out
+
+    # Sensitivities from base
+    sens = run_sensitivities(normalized, skill_root, scenario_outputs["base"])
+    sens_ok = sensitivity_monotonicity_ok(sens)
+
+    # Finalize checks, warnings, failures, posture, and downstream handoff before rendering.
+    add_source_warnings(run_log)
+    global_solver_ok = not any(w.get("code") == "SOLVER_NO_CONVERGE" for w in run_log.get("warnings", []))
+    run_log["checks"] = {}
+    all_failures: List[Dict[str, str]] = []
+    for scen, out in scenario_outputs.items():
+        out["checks"]["solver_convergence_ok"] = global_solver_ok
+        out["checks"]["sensitivity_monotonicity_ok"] = sens_ok
+        append_scalar_check_row(all_rows, normalized, out["periods"], scen, "sensitivity_monotonicity_ok", sens_ok)
+        run_log["checks"][scen] = out["checks"]
+        for failure in build_hard_failures(out["checks"]):
+            failure = dict(failure)
+            failure["scenario"] = scen
+            all_failures.append(failure)
+    run_log["hard_failures"] = all_failures
+    run_log["p0_handoff"] = build_p0_handoff(normalized, scenario_outputs, run_log, out_dir, write_report_md)
+    run_log["model_status"] = determine_model_status(run_log)
+    run_log["output_manifest"] = str(out_dir / "manifest.json")
+    run_log["output_paths"] = {
+        "model_xlsx": str(out_dir / "model.xlsx"),
+        "model_citations_json": str(out_dir / "model_citations.json"),
+        "plan_json": str(out_dir / "plan.json"),
+        "run_log_json": str(out_dir / "run_log.json"),
+        "manifest_json": str(out_dir / "manifest.json"),
+        **({"report_md": str(out_dir / "report.md")} if write_report_md else {}),
+    }
+    workbook_rows = build_workbook_summary_rows(list(all_rows[0].keys()), normalized, scenario_outputs, run_log, sens) + all_rows if all_rows else all_rows
+    model_citations = build_model_citation_ledger(workbook_rows, out_dir / "model.xlsx", sheet_name="Executive Summary")
+    run_log["model_citations_path"] = str(out_dir / "model_citations.json")
+    run_log["model_citation_count"] = len(model_citations)
+
+    # Report
+    report = render_report(normalized, scenario_outputs["base"], scenario_outputs["downside"], scenario_outputs["upside"], run_log, sens)
+    wrote_md = False
+    if write_report_md:
+        (out_dir / "report.md").write_text(report)
+        wrote_md = True
+
+    # Log
+    (out_dir / "run_log.json").write_text(json.dumps(run_log, indent=2))
+    (out_dir / "model_citations.json").write_text(json.dumps(model_citations, indent=2))
+
+    # XLSX (single workbook)
+    write_xlsx(out_dir / "model.xlsx", workbook_rows, sheet_name="Executive Summary")
+
+    human_deliverables: List[Tuple[Path, str]] = [(out_dir / "model.xlsx", "deterministic LBO workbook")]
+    if wrote_md:
+        human_deliverables.append((out_dir / "report.md", "legacy Markdown LBO report"))
+    write_output_manifest(
+        out_dir,
+        run_log["model_status"],
+        human_deliverables,
+        [
+            (out_dir / "plan.json", "normalized plan actually used"),
+            (out_dir / "model_citations.json", "cell-level provenance map for material workbook outputs"),
+            (out_dir / "run_log.json", "machine-readable run log, checks, warnings, and downstream handoff"),
+        ],
+        run_log.get("hard_failures", []),
+        run_log.get("warnings", []),
+    )
+
+    if args.print_report:
+        print("-----BEGIN REPORT_MD-----")
+        print(report, end="" if report.endswith("\n") else "\n")
+        print("-----END REPORT_MD-----")
+
+    wrote = [str(out_dir / "model.xlsx"), str(out_dir / "model_citations.json"), str(out_dir / "plan.json"), str(out_dir / "run_log.json"), str(out_dir / "manifest.json")]
+    if wrote_md:
+        wrote.insert(0, str(out_dir / "report.md"))
+    print(f"[OK] Wrote {', '.join(wrote)}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

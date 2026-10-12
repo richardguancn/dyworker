@@ -1,0 +1,305 @@
+# Plan Schema
+
+This file defines the `plan.json` contract for `merger-model-builder`.
+
+Path literals in this file are skill-root-relative unless they use an explicit relative prefix.
+
+## Table Of Contents
+1. Top-level structure
+2. Evidence labels
+3. `meta`
+4. `periods`
+5. `acquirer`
+6. `target`
+7. `transaction`
+8. `consideration`
+9. `financing`
+10. `purchase_accounting`
+11. `synergies`
+12. `scenarios`
+13. `sensitivities`
+14. Screen-grade vs decision-grade
+
+## Top-level structure
+
+Required top-level keys:
+
+- `meta`
+- `source_basis`
+- `periods`
+- `acquirer`
+- `target`
+- `transaction`
+- `consideration`
+- `financing`
+- `purchase_accounting`
+- `synergies`
+- `scenarios`
+- `sensitivities`
+
+The bundled template at the skill-root-relative path `assets/plan_template.json` is both an example and a runnable smoke-test input.
+
+## Evidence labels
+
+Allowed source labels:
+
+- `signed_agreement` — signed merger agreement, purchase agreement, tender document, or binding deal documentation.
+- `filed` — public filing such as 10-K, 10-Q, 20-F, S-4, proxy, 8-K, annual report, or equivalent.
+- `audited` — audited financial statements or audited schedules.
+- `reviewed` — reviewed interim financial statements.
+- `vdr` — virtual data room materials.
+- `management_case` — management forecast, synergy workplan, or internal case.
+- `consensus` — sell-side consensus or market estimate source.
+- `financing_commitment` — debt commitment, bridge letter, bank term sheet, or committed financing package.
+- `accounting_memo` — PPA, accounting treatment, or controller memo.
+- `tax_memo` — tax structuring, NOL, Section 338/382, deductibility, or local tax memo.
+- `user_provided` — explicit user-provided assumption or file.
+- `estimate` — informed estimate based on available context.
+- `assumption` — explicit modeling assumption that needs confirmation.
+- `placeholder` — placeholder used only to keep a screen-grade model runnable.
+- `unsupported` — unsupported input that should normally make the model not decision-ready unless immaterial.
+
+These are native merger schema labels. Preserve them in `source_basis[].label`, generated workbooks, and run logs. For downstream handoffs, include both the native label and the canonical category from `../../../references/evidence-label-taxonomy.md`.
+
+Each `source_basis` entry requires:
+
+```json
+{
+  "id": "src_offer_terms",
+  "label": "signed_agreement",
+  "description": "source description",
+  "date": "2026-02-10",
+  "priority": 1,
+  "categories": ["offer_terms"]
+}
+```
+
+Required source categories:
+
+- `financials`
+- `share_count`
+- `offer_terms`
+- `financing`
+- `synergies`
+- `purchase_accounting`
+
+For `adjusted_eps_screen`, unavailable purchase-accounting or financing inputs may be recorded as explicit readiness gaps rather than fabricated inputs, provided the workbook does not display GAAP accretion/dilution or financing effects dependent on those missing fields. For `gaap_accretion_model`, financing and purchase-accounting support remain required for displayed GAAP conclusions.
+
+Optional source categories:
+
+- `tax`
+- `market_data`
+- `valuation`
+- `legal`
+- `regulatory`
+- `industry`
+
+## `meta`
+
+Required fields:
+
+- `deal_name`
+- `acquirer`
+- `target`
+- `currency`
+- `units`
+- `valuation_date` or `announcement_date`
+- `accounting_basis`
+
+Recommended fields:
+
+- `industry`
+- `model_purpose`
+- `review_standard`
+- `fiscal_year_end`
+- `close_date`
+- `model_mode`: `adjusted_eps_screen` or `gaap_accretion_model`
+
+Allowed `accounting_basis`: `us_gaap`, `ifrs`, `local_gaap`, `unknown`, or a clearly labeled adjusted-EPS-only basis when `model_mode` is `adjusted_eps_screen`.
+
+## `periods`
+
+A non-empty list of period labels such as:
+
+```json
+["FY2026E", "FY2027E", "FY2028E"]
+```
+
+Every period used in `periods` must be present in acquirer net income, target net income, target EBITDA, synergy maps, and integration cost maps.
+
+## `acquirer`
+
+Required fields:
+
+- `share_price` greater than 0
+- `diluted_shares` greater than 0
+- `cash` greater than or equal to 0
+- `debt` greater than or equal to 0
+- `tax_rate` between 0 and 1
+- `net_income` map for all periods
+
+Recommended fields:
+
+- `eps` map for all periods
+- `standalone_ebitda` map for all periods
+
+## `target`
+
+Required fields:
+
+- `diluted_shares` greater than 0
+- either `offer_price` or `transaction.equity_purchase_price`
+- `cash` greater than or equal to 0
+- `debt` greater than or equal to 0
+- `book_equity`
+- `net_income` map for all periods
+- `standalone_ebitda` map for all periods
+
+Recommended fields:
+
+- `undisturbed_price`
+- `tax_rate`
+
+## `transaction`
+
+Required fields:
+
+- `offer_price` unless `equity_purchase_price` is provided
+- `refinance_target_debt`
+- `required_min_cash`
+- `fees`
+- `tax_rate`
+
+Required fee fields:
+
+- `transaction_fees`
+- `financing_fees`
+- `equity_issuance_fees`
+
+Optional fee fields:
+
+- `debt_tender_premiums`
+- `bridge_fees`
+- `consent_fees`
+- `break_fees`
+- `transfer_taxes`
+
+## `consideration`
+
+Required fields:
+
+- `cash_percent`
+- `stock_percent`
+- `other_percent`
+- `fixed_value_stock`
+
+The consideration mix must sum to 100% unless `transaction.allow_unbalanced_consideration_mix` is true. If stock consideration is used, the plan must include either an acquirer share price or an exchange ratio.
+
+Optional fields:
+
+- `exchange_ratio`
+- `other_consideration_value`
+- `collar_low`
+- `collar_high`
+- `rollover_equity`
+- `contingent_value_rights`
+
+## `financing`
+
+Required fields:
+
+- `new_debt`
+- `cash_used`
+- `debt_interest_rate`
+- `lost_cash_interest_rate`
+- `fee_amortization_years`
+- `use_target_cash`
+
+Do not silently default financing terms that change accretion. If terms are not known, enter explicit placeholder assumptions and label financing source basis as `placeholder` or `assumption`.
+
+## `purchase_accounting`
+
+Required fields:
+
+- `target_book_equity`
+- `existing_goodwill`
+- `intangible_assets`
+- `ppe_step_up`
+- `ppe_step_up_life`
+- `inventory_step_up`
+- `deferred_tax_rate`
+- `nci_fair_value`
+- `previously_held_interest_fair_value`
+- `contingent_consideration_fair_value`
+
+Each intangible asset requires:
+
+- `name`
+- `fair_value`
+- `amortization_years`
+
+If `deferred_tax_liability` is null, the pipeline calculates DTL from step-ups and `deferred_tax_rate`.
+
+## `synergies`
+
+Required period maps:
+
+- `cost_synergies`
+- `revenue_synergies`
+- `dis_synergies`
+- `integration_costs`
+
+Required scalar fields:
+
+- `revenue_synergy_margin`
+- `tax_rate`
+- `realization_basis`
+- `integration_costs_excluded_from_adjusted_eps`
+
+Allowed `realization_basis`: `immediate`, `phased`, `run_rate`, `probability_weighted`, `unknown`.
+
+## `scenarios`
+
+Required scenario names:
+
+- `base`
+- `downside`
+- `upside`
+
+Each scenario should include:
+
+- `description`
+- `acquirer_net_income_factor`
+- `target_net_income_factor`
+- `target_ebitda_factor`
+- `synergy_factor`
+- `dis_synergy_factor`
+- `integration_cost_factor`
+- `debt_rate_delta`
+- `tax_rate_delta`
+- `purchase_price_factor`
+- `share_price_factor`
+- `cash_percent_override`
+
+Factors must be non-negative. Interest-rate deltas cannot drive the debt interest rate below zero.
+
+## `sensitivities`
+
+Required arrays:
+
+- `synergy_factors`
+- `debt_rate_deltas`
+- `cash_percentages`
+- `premium_factors`
+- `tax_rates`
+- `share_price_factors`
+
+## Screen-grade vs decision-grade
+
+A model is usually only `screen-grade` when any material item uses `estimate`, `assumption`, `placeholder`, or `unsupported` labels.
+
+An `adjusted_eps_screen` is also `screen-grade` when it intentionally omits unsupported GAAP/PPA, post-close denominator actualization or refinancing effects while presenting only sourced and explicitly modeled adjusted-EPS outputs. Missing GAAP inputs are readiness gates, not placeholder inputs unless used in a displayed calculation.
+
+A model can be `senior-review-ready` when the required categories are sourced, checks pass, financing/purchase accounting are grounded, and warnings are explainable.
+
+A model should not be called `decision-grade` unless primary deal terms, financing, financials, tax, purchase accounting, share count, and synergies are source-backed and reviewed.

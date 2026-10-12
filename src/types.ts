@@ -846,11 +846,31 @@ export interface SkillRecord {
   instructions: string;
   enabled: boolean;
   builtIn?: boolean;
+  pluginId?: string;
+  pluginEntry?: boolean;
+  availabilityReason?: string;
   source?: "builtin" | "saved" | "global" | "workspace";
   sourceLabel?: string;
   path?: string;
   readOnly?: boolean;
   createdAt: string;
+}
+
+export interface CuratedPluginRecord {
+  id: string;
+  name: string;
+  originalName: string;
+  summary: string;
+  version: string;
+  license: string;
+  author: string;
+  directory: string;
+  homepage: string;
+  local: boolean;
+  enabled: boolean;
+  scope: string;
+  connections: string[];
+  skills: Pick<SkillRecord, 'id' | 'name' | 'description' | 'path' | 'enabled'>[];
 }
 
 export interface SkillLibraryConfig {
@@ -1117,6 +1137,8 @@ export interface DyworkerBridge {
   updateMemory(payload: { id: string; content: string; category?: string; name?: string; kind?: string }): Promise<{ ok: boolean; error?: string }>;
   lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;
+  listCuratedPlugins(workspacePath?: string): Promise<CuratedPluginRecord[]>;
+  setCuratedPluginEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>;
   setSkillEnabled(id: string, enabled: boolean, workspacePath?: string): Promise<{ ok: boolean }>;
   deleteSkill(id: string): Promise<{ ok: boolean; error?: string }>;
   createSkill(payload: { name: string; description: string; instructions: string }): Promise<{ ok: boolean; item?: SkillRecord; error?: string }>;

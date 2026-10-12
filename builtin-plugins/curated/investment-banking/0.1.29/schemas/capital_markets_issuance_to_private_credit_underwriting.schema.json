@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/capital_markets_issuance_to_private_credit_underwriting.schema.json",
+  "title": "capital_markets_issuance_to_private_credit_underwriting",
+  "description": "Canonical Investment Banking handoff contract from capital-markets-issuance to private-credit-underwriting.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "capital_markets_issuance_to_private_credit_underwriting"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "issuer_context",
+        "borrower_or_issuer_name",
+        "sponsor_or_owner",
+        "transaction_objective",
+        "use_of_proceeds",
+        "recommended_instrument",
+        "proposed_facility_or_security",
+        "target_raise_amount",
+        "minimum_viable_size",
+        "base_size",
+        "stretch_size",
+        "maximum_advisable_size",
+        "indicative_pricing_terms",
+        "fees_oid_call_protection",
+        "maturity_tenor",
+        "amortization_or_cash_pay_terms",
+        "collateral_guarantee_summary",
+        "pro_forma_capitalization",
+        "pro_forma_leverage",
+        "pro_forma_coverage",
+        "liquidity_impact",
+        "market_window_status",
+        "market_clearing_assumptions",
+        "investor_lender_targeting_summary",
+        "expected_lender_objections",
+        "execution_risks",
+        "fallback_alternatives",
+        "decision_requested",
+        "source_log",
+        "source_as_of_dates",
+        "evidence_register",
+        "covenant_or_rating_caveats",
+        "open_items",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "issuer_context": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "borrower_or_issuer_name": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "sponsor_or_owner": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "transaction_objective": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "use_of_proceeds": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "recommended_instrument": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "proposed_facility_or_security": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "target_raise_amount": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "minimum_viable_size": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "base_size": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "stretch_size": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "maximum_advisable_size": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "indicative_pricing_terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "fees_oid_call_protection": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "maturity_tenor": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "amortization_or_cash_pay_terms": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "collateral_guarantee_summary": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "pro_forma_capitalization": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "pro_forma_leverage": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "pro_forma_coverage": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "liquidity_impact": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "market_window_status": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "market_clearing_assumptions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "investor_lender_targeting_summary": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "expected_lender_objections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "execution_risks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "fallback_alternatives": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "decision_requested": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "source_log": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/source_log_record"
+          }
+        },
+        "source_as_of_dates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "evidence_register": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/evidence_register_record"
+          }
+        },
+        "covenant_or_rating_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "open_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/open_item"
+          }
+        },
+        "circulation_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/circulation_caveat"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

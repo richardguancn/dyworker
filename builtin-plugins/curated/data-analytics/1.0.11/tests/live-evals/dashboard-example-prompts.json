@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "inventory-table-from-scratch",
+      "prompt": "Build an interactive inventory-reconciliation dashboard with one searchable, sortable table. Use only this explicitly fictional sample: item,recorded,counted\nPart A,9,7\nPart B,5,5\nPart C,0,3\nPart D,12,10. Add a signed discrepancy column calculated as counted minus recorded. No charts or KPI cards. Keep it private and do not publish.",
+      "expectations": [
+        "Choose no workflow example",
+        "One table, not a forced overview or mixed gallery",
+        "Discrepancies -2, 0, 3, -2",
+        "No invented data or sources",
+        "Source inspection and editing work",
+        "Actual delivered artifact opens",
+        "With Desktop IAB available, a browser-target tool call opens the first useful build before further authoring or final delivery, without a user click",
+        "Rebuilds refresh the same IAB tab; opening alone does not establish rendered verification"
+      ]
+    },
+    {
+      "id": "weekly-actuals-no-plan",
+      "prompt": "Build a weekly business dashboard for these fictional completed-week revenue figures in USD, with a business-unit filter: week,businessUnit,revenueUsd\n2026-07-27,Core,100000\n2026-07-27,Automation,80000\n2026-08-03,Core,110000\n2026-08-03,Automation,75000\n2026-08-10,Core,120000\n2026-08-10,Automation,90000. Weeks start Monday at 00:00 UTC. The data is complete as of August 17, 2026. We have no plan, forecast, or account metrics. Keep it private and do not publish.",
+      "expectations": [
+        "Use an approved Business Performance reference only if available, otherwise compose from scratch",
+        "No plan, forecast, activation, or account metrics",
+        "Latest total 210000 USD",
+        "Exact prior-week comparison uses 185000 USD",
+        "Business-unit filter updates all relevant content",
+        "No unrelated gallery sections",
+        "Omit reference retention, margin and utilization sections without supporting roster, cost and user evidence"
+      ]
+    },
+    {
+      "id": "weekly-plan-adaptation",
+      "preconditions": [
+        "business-performance has actual golden approval recorded"
+      ],
+      "prompt": "Build a weekly business review dashboard using only this fictional complete revenue and plan data in USD: week,businessUnit,revenueUsd,planUsd\n2026-07-27,Core,100000,105000\n2026-07-27,Automation,80000,75000\n2026-08-03,Core,110000,110000\n2026-08-03,Automation,75000,85000\n2026-08-10,Core,120000,115000\n2026-08-10,Automation,90000,100000. Contributions are mutually exclusive. Weeks start Monday at 00:00 UTC, and the data is complete as of August 17, 2026. I want to see whether we are on plan and which business unit explains the gap. No other data is available. Keep it private and do not publish.",
+      "expectations": [
+        "Reference Business Performance by decision and compatible evidence",
+        "Latest actual 210000, plan 215000, variance -5000 USD",
+        "Automation contributes -10000 and Core +5000 USD",
+        "No invented regional filter or account metrics",
+        "No sample fixture values or provenance",
+        "Chart edits, copy, and sources retain equivalent data grain",
+        "Omit reference retention, margin and utilization sections without supporting roster, cost and user evidence"
+      ]
+    },
+    {
+      "id": "missing-calendar-week",
+      "prompt": "Build a compact weekly revenue dashboard with this fictional data: week,revenueUsd\n2026-07-20,90000\n2026-07-27,100000\n2026-08-10,120000. Weeks start Monday at 00:00 UTC. August 3 is missing, not zero. Show the latest completed week and history, and only show a week-over-week change when the immediately preceding calendar week is available. Keep it private and do not publish.",
+      "expectations": [
+        "Latest value 120000 USD",
+        "No 20 percent WoW claim for August 10",
+        "Missing week never becomes an observed zero",
+        "No required plan or business-unit slots",
+        "No more content than the narrow question requires"
+      ]
+    },
+    {
+      "id": "performance-overview-to-account",
+      "preconditions": [
+        "business-performance has actual golden approval recorded"
+      ],
+      "prompt": "Build a private business-performance dashboard from only this fictional complete account-day panel. Default to July 3-4, 2026 compared with July 1-2. Let me inspect revenue and active accounts over time, compare regions, filter to EMEA, then inspect account A without losing the period. Each account has one stable exclusive region and business unit. An active account has at least one positive-session day in the chosen period. Do not publish. Data:\ndate,accountId,account,region,businessUnit,revenueUsd,sessions\n2026-07-01,A,Sample A,EMEA,Core,100,10\n2026-07-01,B,Sample B,Americas,Core,80,8\n2026-07-02,A,Sample A,EMEA,Core,100,0\n2026-07-02,B,Sample B,Americas,Core,80,8\n2026-07-03,A,Sample A,EMEA,Core,50,5\n2026-07-03,B,Sample B,Americas,Core,90,9\n2026-07-04,A,Sample A,EMEA,Core,50,0\n2026-07-04,B,Sample B,Americas,Core,90,9",
+      "expectations": [
+        "Select the performance reference by exploration needs and available grain",
+        "Current revenue 280, previous 360, delta -80 USD",
+        "Two active accounts in the full selected period, never the sum of daily counts",
+        "EMEA current 100, previous 200; account A history stays in the selected period",
+        "No invented segment, plan, forecast, cohort or SLA data",
+        "Tab and local controls have clear scopes and scoped reset; do not force tabs for this small panel",
+        "Source/copy retain current and previous periods",
+        "Delivered artifact opens and exploration works",
+        "Omit reference retention, margin and utilization sections without supporting roster, cost and user evidence",
+        "Account detail starts populated; account selection opens detail without reselecting dates; Back preserves the source view"
+      ]
+    },
+    {
+      "id": "warehouse-capacity-cross-domain",
+      "prompt": "Build a private warehouse space dashboard for the attached fictional daily observations. Help an operations manager compare occupied versus usable pallet slots across regions and inspect each warehouse. Occupied and usable slots are additive; compute rates from summed slots, not averages of rates. We have no demand forecast, queue, incident or service-level evidence. Use only the CSV; do not publish.\n\nData:\ndate,warehouse,region,usableSlots,occupiedSlots\n2026-08-20,North One,North,100,80\n2026-08-20,North Two,North,300,120\n2026-08-20,South One,South,200,150\n2026-08-21,North One,North,100,90\n2026-08-21,North Two,North,300,180\n2026-08-21,South One,South,200,160",
+      "expectations": [
+        "Choose by capacity question and daily warehouse grain, not infrastructure vocabulary; scratch or a suitable pattern are both valid",
+        "Latest occupied 430, usable 600, weighted occupancy 71.6667 percent; North 270/400",
+        "Never sum point-in-time capacity across dates or average subgroup rates",
+        "No queue, incident, forecast, target or SLA data invented",
+        "Warehouse inspection retains date and region; source/export evidence stays scoped"
+      ]
+    },
+    {
+      "id": "invoice-ledger-misleading-name",
+      "prompt": "Our fictional company is called PluginWorks. Build a private dashboard to help the billing team find unpaid invoices and inspect amounts by customer. Use only the attached invoice ledger, which is complete as of August 24, 2026. Amounts are USD; status is authoritative. We have no product installation, activation or retention data. Preserve invoice-level evidence. Do not publish.\n\nData:\ninvoiceId,customer,dueDate,status,amountUsd\nINV-1,Aster,2026-08-15,Unpaid,1000\nINV-2,Birch,2026-08-28,Unpaid,2000\nINV-3,Aster,2026-08-20,Paid,1500\nINV-4,Cedar,2026-08-10,Unpaid,500",
+      "expectations": [
+        "Do not select Acme merely from the company name; scratch or a relevant invoice pattern are both valid",
+        "Unpaid total 3500 USD; overdue unpaid 1500 USD if shown",
+        "Status is authoritative; preserve all four reviewed invoice rows",
+        "No installation, activation or retention content",
+        "Customer inspection and source/copy preserve the selected ledger scope"
+      ]
+    },
+    {
+      "id": "monthly-totals-incomplete-evidence",
+      "prompt": "Build a private plugin activation and retention dashboard from only the attached fictional extract. It contains monthly platform totals, not an installation cohort or customer panel; active users can include people installed before the month and users may appear on multiple platforms. No additional data is available. Show what this evidence can support and make any limits clear without inventing the missing evidence. Do not publish.\n\nData:\nmonth,platform,installs,activeUsers\n2026-07,Web,100,140\n2026-07,Desktop,80,90\n2026-08,Web,120,150\n2026-08,Desktop,70,95",
+      "expectations": [
+        "Show supplied monthly platform counts without inventing activation or retention",
+        "Active users divided by installs is not activation; no cross-platform unique-user total",
+        "Keep platforms separate and prevent invalid stacked editing transformations",
+        "No fabricated entity-level drill-down, cohorts or observation maturity",
+        "Retain all four reviewed rows and disclose the missing evidence"
+      ]
+    },
+    {
+      "id": "existing-custom-layout-small-edit",
+      "prompt": "Revise the existing private dashboard in the project directory. Change the \"Revenue\" metric label to \"Collected revenue\" and format its value as USD with no decimal places. Keep the custom two-panel layout, section order, all existing controls, component IDs, reviewed data and source behavior unchanged. Do not add tabs or other sections; do not publish.",
+      "expectations": [
+        "Revise existing project in place; no reference-driven redesign",
+        "Preserve custom CSS, section order, component IDs, filters and snapshot",
+        "Change only the requested metric label and USD zero-decimal formatting",
+        "Do not add tabs, charts, sections or another project",
+        "Run integrity and build before and after; exclude an invalid seed from paired preservation scoring",
+        "With Desktop IAB available, open or focus the verified preview before editing and refresh the same tab after rebuilding, without a user click or duplicate tab"
+      ],
+      "preconditions": [
+        "Provide identical existing valid two-panel dashboard projects to baseline and candidate; record the seed revision and preserve its snapshot and component IDs",
+        "Verify the seed integrity and build before authoring; use a region control, a Revenue metric, and a customer ledger without nested main landmarks"
+      ]
+    }
+  ]
+}

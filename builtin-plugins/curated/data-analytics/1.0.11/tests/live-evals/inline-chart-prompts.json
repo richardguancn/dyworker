@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "data-inline-chart-live",
+  "owner": "data-analytics",
+  "execution": {
+    "kind": "manual-live-service",
+    "surface": "codex-desktop",
+    "project": null,
+    "settings": "unchanged defaults",
+    "conversation": "fresh task for each case",
+    "approvals": "Use existing authorization. Never answer an approval or clarification for the user.",
+    "results": "Record exact task IDs, output references, reviewed evidence, and observed results outside this manifest."
+  },
+  "commonAssertions": {
+    "source": "Use verified, authorized evidence with a consistent metric definition, product or population, filters, grain, time window, timezone, and units. When a usable authoritative measure matches the exact requested definition, product or population, and period, use it unless the user explicitly asks for a broader source-defined headline. Prominence, dashboard titles, and overall, all, or total labels do not prove scope and cannot override an exact match. Verify the governing definition and actual measure/filter. If the exact measure is unavailable, state the limitation rather than silently broadening the request. Any permitted substitute must name its actual scope in both the visible chart title and adjacent answer, not only in the final Sources view. Record source freshness and execution metadata separately; preserve material caveats. Never substitute invented values or silently weaken a named-source restriction.",
+    "privacy": "Keep embedded rows bounded and chart-scoped. Omit credentials, tokens, personal contact or payment identifiers, hidden reasoning, unnecessary fields, and source URLs unless the user explicitly requests them. Review the exact executed SQL, including literals and comments, then preserve safe statements in source.sql with --include-sql; omit unavailable SQL honestly and honor explicit SQL omission requests. Do not commit live source rows or query links to this suite.",
+    "inlineDelivery": "For a completed inline answer on Codex Desktop or Work Mode web, emit a real native Visualize content reference for each requested chart in the same final response. A source preview, promised handoff, code fence, download link, or locally built but undelivered file does not count.",
+    "sharedRuntime": "Use the installed Data CLI and its actual shared React/Recharts ChartRenderer, ChartEditor, chart-spec contract, styles, and theme. Verify and reuse the shipped, data-free prebuilt runtime without an npm install, network access, or customer dependency cache; keep reviewed rows, SQL, source URLs, and generated fragments out of the installed plugin and any shared cache.",
+    "sandboxVisual": "Inspect the actual delivered host sandbox, not only a file preview. Confirm real chart marks, readable and distinct labels for distinct displayed axis ticks, correct units and tooltip values, no misleading missing-data marks, and no clipping or horizontal overflow in light/dark appearance and wide/narrow layouts.",
+    "inlineEditor": "Every inline chart has a discoverable Edit chart entry point, including ordinary requests that do not mention editing. Use the shared editor to change supported presentation settings without a conversational rebuild. Conventional charts may offer compatible line, area, bar, horizontal-bar, or sparkline views and already-approved fields; do not invent fields, aggregation, stacking semantics, or new data. Specialized charts keep any incompatible type or data mapping fixed while exposing supported cosmetic controls. Hide or explain unsupported operations instead of offering a broken action.",
+    "editTransaction": "Apply commits a valid draft to that live chart. Cancel, close, and Escape discard unapplied changes. Reset to original restores the embedded original into the draft; it does not change the applied chart until Apply. Rejected or failed edits leave the last valid chart intact. Applied changes survive reopening the editor and ordinary rerenders within the same sandbox session, but reloading the frame or reopening the artifact starts from the embedded original. Do not promise saved edits, write the artifact, or use backend operations or persistent browser storage.",
+    "editIntegrity": "Compare the original and edited chart against the same reviewed evidence. Presentation changes must preserve source rows, metric definitions, units, nulls, source/evidence metadata, privacy filtering, and accurate hover and legend behavior. Editing must not run a query, broaden source access, reveal excluded fields or SQL/source URLs, or silently rewrite analytical values. Multiple charts must retain independent applied specs, drafts, selections, source data, and IDs in separate real sandbox frames.",
+    "editorAccessibility": "Open and operate the editor by keyboard. Check accessible labels, visible focus, contained focus while open, Escape/close behavior, and focus return to Edit chart. Check light/dark appearance, a narrow frame, scrolling, and the absence of controls that cannot work in the inline host.",
+    "sourceView": "Confirm each inline chart has no source button or sidebar. On Desktop outside Work Mode, inspect one initially collapsed Sources receipt immediately below each chart, before following prose or charts. Each receipt must contain only that chart's findings and supporting evidence, with distinct output files and exactly one native reference per receipt. Shared queries may appear in multiple receipts when needed for their findings. Text-only answers retain one final receipt; mixed answers add a final receipt only for additional uncharted findings, without repeating chart findings. Check available Overview, Data preview, SQL query, and Evidence flow tabs, reviewed rows and provenance, exact recorded SQL, and honest omissions. Each receipt remains usable after local chart presentation edits; no unsupported copy controls appear in the chart. Work Mode retains its existing source delivery contract.",
+    "honesty": "Record unavailable sources, permission prompts, missing prerequisites, query failures, renderer errors, and incomplete delivery as observed. Do not fabricate approvals, evidence, successful rendering, or a passing result."
+  },
+  "cases": [
+    {
+      "id": "chatgpt-wau-default",
+      "prompt": "@Data show me a chart of chatgpt wau",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "assertions": [
+          "Select the usable authoritative measure for the requested ChatGPT WAU definition, product or population, and period, and retrieve useful available history without requiring the user to name a provider. A prominent broader headline cannot replace that exact measure unless the user explicitly requests the broader source-defined headline.",
+          "Deliver a source-backed WAU trend and concise interpretation; identify incomplete or stale periods when they change the conclusion. If the exact measure is unavailable, say so. Any permitted substitute must name its actual product/population and period scope in the visible chart title and adjacent answer, not only in Sources.",
+          "Find Edit chart without having requested editing. Apply a title or compatible chart-type change in the delivered frame, then verify the WAU definition, reviewed values, caveats, and Sources content are unchanged."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-wau-dau-two-inline",
+      "prompt": "@Data show me two separate inline charts of ChatGPT WAU and DAU for the last 12 weeks.",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 2,
+        "assertions": [
+          "Preserve the distinct WAU and DAU definitions, time grains, and labels over the requested window.",
+          "Verify each chart's requested product/population against the governing definition and actual measure/filter, not the dashboard title or an overall, all, or total label. Prefer an available exact scope-specific measure; label any broader substitute accurately and place its material mismatch beside the chart, not only in the final Sources view.",
+          "Emit two separately rendered native references with distinct chart IDs and output filenames in one final response.",
+          "On Desktop outside Work Mode, deliver two initially collapsed Sources receipts, one directly below each WAU or DAU chart, with distinct receipt files and one native reference per receipt. Keep each receipt limited to that chart's findings and supporting evidence; do not add a duplicate answer-wide receipt.",
+          "Verify and reuse the shipped data-free prebuilt runtime instead of installing dependencies, creating a dependency cache, or rebuilding it once per chart.",
+          "Edit WAU and DAU independently in their two actual sandbox frames. Applying, canceling, or resetting one chart must not change the other chart's title, type, draft, legend selection, source rows, or provenance."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-three-chart-default-mode",
+      "prompt": "@Data show me ChatGPT WAU, DAU, and MAU trends for the last 12 weeks, with a chart for each.",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "report",
+        "reportChartCount": 3,
+        "assertions": [
+          "Select report mode for the unqualified request that needs more than two charts.",
+          "Keep Data in control of the requested response mode when obtaining source evidence from helpers.",
+          "Deliver the selected report with three reviewed, correctly defined trends; do not silently substitute an inline-only answer or claim an unfinished report was delivered."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-three-inline-override",
+      "prompt": "@Data show me three separate inline charts of ChatGPT WAU, DAU, and MAU for the last 12 weeks.",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 3,
+        "assertions": [
+          "Honor the explicit inline output request instead of applying the default three-chart report rule.",
+          "Emit three separately rendered native references with distinct chart IDs and output filenames in one final response.",
+          "On Desktop outside Work Mode, deliver three initially collapsed Sources receipts, one directly below each WAU, DAU, or MAU chart, with distinct receipt files and one native reference per receipt. Keep each receipt limited to that chart's findings and supporting evidence; do not add a duplicate answer-wide receipt.",
+          "Reuse the same shipped data-free prebuilt runtime without a customer dependency cache; do not concatenate complete fragments or rebuild the runtime for each chart."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-wau-country-top-five",
+      "prompt": "@Data show me ChatGPT WAU by country for the latest complete week, with the top five countries and everything else grouped as Other.",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "assertions": [
+          "Use the authoritative country-attribution and active-user definitions for one complete period, with a deterministic ranking and an honest category chart.",
+          "Preserve the supplied, reviewed, privacy-approved attribution definition for the displayed country dimension in the final Sources payload; do not drop it during input projection or rendering. Disclose any material attribution or population-overlap limitation beside the chart, not only in Sources.",
+          "Show five named countries plus Other when enough countries exist. Compute Other from the reviewed remaining population, not from invented rows or subtraction of overlapping distinct counts.",
+          "Reconcile category totals at the same grain when the source is additive; otherwise disclose the relevant overlap or attribution limitation."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-wau-incomplete-current-week",
+      "prompt": "@Data chart ChatGPT WAU over the last 12 weeks, including the current week, and compare the latest week with the previous one.",
+      "data": "live-governed",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "assertions": [
+          "Identify the source's week boundary, timezone, available-through date, and whether the current week is incomplete.",
+          "Clearly label a partial current period. Use a supported like-for-like comparison or explain why a partial-versus-complete comparison would mislead.",
+          "Do not relabel materialization or refresh time as query execution time, and do not invent missing current-week observations."
+        ]
+      }
+    },
+    {
+      "id": "supplied-two-inline-and-uncharted-finding",
+      "prompt": "@Data show two separate inline charts from these fictional samples: weekly signups and median request latency. Give a short readout and a plain-text note about the planned maintenance. Use only the supplied evidence; no external sources are needed.\n\nSignup export: signups count newly created customer accounts, excluding employee accounts.\nweek,signups\n2026-08-03,100\n2026-08-10,120\n2026-08-17,150\n\nLatency export: median request latency in milliseconds covers successful production API requests.\nweek,medianLatencyMs\n2026-08-03,220\n2026-08-10,200\n2026-08-17,180\n\nMaintenance note: scheduled maintenance is September 6, 2026, from 02:00 to 03:00 UTC. No downtime is expected.",
+      "data": "user-supplied-sample",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 2,
+        "assertions": [
+          "Use only the supplied fictional exports and maintenance note; label the data synthetic, preserve signup counts [100, 120, 150] and latency values [220, 200, 180] with their dates and units, and do not query external sources or invent SQL.",
+          "On Desktop outside Work Mode, emit two chart references, each immediately followed by its own initially collapsed Sources receipt reference before any subsequent prose or chart. Use two distinct chart files and three distinct receipt files, each referenced exactly once.",
+          "The signup receipt contains only the signup finding, customer-account definition, employee exclusion, and signup rows. The latency receipt contains only the latency finding, successful-production-request definition, millisecond units, and latency rows. Neither chart receipt includes the other export or the maintenance note.",
+          "Keep the maintenance finding in native prose and place one final receipt after the answer containing only the supplied maintenance note. Do not repeat either chart finding or its export in this final receipt.",
+          "Open all three delivered receipts and inspect their payloads as well as visible Overview and Data preview content; confirm their source identities and evidence remain isolated. The maintenance receipt needs no invented rows, SQL, or execution metadata."
+        ]
+      }
+    },
+    {
+      "id": "supplied-sample-missing-middle",
+      "prompt": "@Data show me a line chart of these sample weekly values: [120,missing,145].",
+      "data": "user-supplied-sample",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "reviewedValues": [120, null, 145],
+        "assertions": [
+          "Use only the supplied sample, label it as sample data, and do not query a warehouse or invent calendar dates.",
+          "Preserve the missing middle observation as null in the real measure. Do not zero-fill, interpolate, or invent helper series to force a line.",
+          "Make the two observed values visible without implying an observed connecting trend; inspect axis ticks and tooltips for distinct, correct values."
+        ]
+      }
+    },
+    {
+      "id": "supplied-sample-editing-gap",
+      "prompt": "@Data make an inline line chart of these sample weekly counts: signups [120,missing,145] and visits [240,260,290]. I'd like to rename it, switch between a line chart and bars, and choose which series to show.",
+      "data": "user-supplied-sample",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "reviewedSeries": {
+          "signups": [120, null, 145],
+          "visits": [240, 260, 290]
+        },
+        "assertions": [
+          "Use only the supplied sample, label it as sample data, and do not query a warehouse or invent calendar dates.",
+          "Use the delivered editor to change the title, choose a compatible line/bar view, and select only the approved signups and visits series. Preserve their distinct labels, exact values, and the null signup observation through each edit.",
+          "Exercise Apply, Cancel, close/Escape, Reset to original followed by Cancel, and Reset to original followed by Apply. Confirm that only valid applied drafts change the chart and that reset restores the embedded original, not an earlier edited state.",
+          "After applying a change, reopen the editor and Sources, resize the frame, and check the chart remains edited. Reload the actual frame and confirm the embedded original returns; do not claim the edit was saved to the task or artifact.",
+          "Check the isolated signup observations, distinct axis labels, tooltips, legend interactions, and unchanged source preview after editing. Do not connect across the missing value, zero-fill it, or invent a helper series."
+        ]
+      }
+    },
+    {
+      "id": "supplied-latency-histogram-editing",
+      "prompt": "@Data show me an inline histogram of these sample latencyMs values: [82,95,102,110,111,135,180,260]. I'd like to change its title and labels.",
+      "data": "user-supplied-sample",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "reviewedValues": [82, 95, 102, 110, 111, 135, 180, 260],
+        "assertions": [
+          "Use only the supplied latency observations, label them as sample data in milliseconds, and deliver native chart.type=histogram with all eight raw latencyMs observations preserved in the reviewed and rendered payloads. Do not query a warehouse or substitute a pre-binned bar chart to obtain editing controls.",
+          "Use the shared editor to change the chart title, measurement-axis title, and count-axis title, and verify that all three changes appear after Apply.",
+          "Keep the histogram type, approved latencyMs mapping, binning and interval boundaries, and frequency-axis zero baseline fixed. Do not offer a conversion that would invent categories, aggregation, or line/bar semantics for the observations.",
+          "Verify that frequency-axis ticks and tooltips show the correct integer sample counts, not latency units or invented fractional observations. The displayed bin counts must account for all eight supplied values exactly once.",
+          "Apply and Reset to original followed by Apply must preserve the exact raw observations, binning, count baseline, units, and source preview; reset restores the embedded original presentation.",
+          "Explain or hide unavailable type and mapping operations; do not show a control that requires a dashboard/report backend or silently ignore an attempted change."
+        ]
+      }
+    },
+    {
+      "id": "chatgpt-wau-kepler-control",
+      "prompt": "@Data use Kepler to show me a chart of ChatGPT WAU for the last 12 complete weeks.",
+      "data": "named-live-governed",
+      "optional": true,
+      "internalOnly": true,
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 1,
+        "assertions": [
+          "Treat this as an internal source-specific diagnostic control, not a replacement for the default source-discovery case.",
+          "Use Kepler only through its available, supported, authorized read-only workflow; record unavailable mandatory tools or access as a blocker.",
+          "Keep Data's response-mode and final-answer ownership, and do not cross an explicit source or engine no-fallback boundary."
+        ]
+      }
+    },
+    {
+      "id": "supplied-capacity-feedback-diagnostic",
+      "prompt": "Diagnose why Station A completed fewer jobs than Station B in the current shift, and what operations should investigate first. Answer in plain text; do not create charts, files, or publish anything. Use only the following explicitly fictional, complete extract and supplied operating code. No external sources are available or authorized.\n\nBoth shifts cover 08:00-16:00 UTC. Requests count incoming attempts before admission checks; accepted counts admitted jobs; completed counts completions during the shift, not a cohort conversion rate. Mean open jobs is a time-weighted backlog measure. The stations have the same job types, staffing, and configured open-job limit; no configuration changes are recorded. Current cycle-time measurements are unavailable.\n\nperiod,station,requests,accepted,completed,openAtStart,openAtEnd,meanOpen\nbaseline,A,1200,960,960,20,20,20\nbaseline,B,1000,800,800,20,20,20\ncurrent,A,1200,576,576,38,38,38\ncurrent,B,1000,800,800,20,20,20\n\nThe current admission service uses this code at both stations:\n\n```python\nOPEN_LIMIT = 40\n\ndef try_accept(request, station):\n    with station.lock:\n        if station.open_jobs >= OPEN_LIMIT:\n            return \"defer\"\n        station.open_jobs += 1\n        enqueue(request, station)\n        return \"accepted\"\n\ndef on_completed(job, station):\n    with station.lock:\n        station.open_jobs -= 1\n```",
+      "data": "user-supplied-sample",
+      "expected": {
+        "responseMode": "inline",
+        "nativeChartCount": 0,
+        "assertions": [
+          "Use only the supplied fictional rows and current code; answer in text without artifacts, publication or external reads.",
+          "Quantify current A versus B as 576 versus 800 completions (224 fewer, 28 percent lower); A fell 40 percent from its own 960 baseline while B stayed at 800.",
+          "Separate incoming attempts from accepted work: A requests stayed at 1200 and exceed B's 1000, so lower offered demand is not supported.",
+          "Explain from the controller that slower completion can leave the open-job cap occupied and suppress acceptance; lower accepted volume is not independently established as the upstream cause.",
+          "Use the increased A backlog and stable B as supporting context, not proof of a specific processing fault or an exogenous reduction in the cap.",
+          "Do not treat completed divided by accepted as a cohort conversion rate or proof of unchanged processing speed.",
+          "Keep slower processing/capacity feedback a hypothesis pending cycle-time, gate-hit/defer, and onset evidence; name an operational check that would distinguish it from burstier arrivals or other alternatives."
+        ]
+      }
+    }
+  ]
+}

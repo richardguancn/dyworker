@@ -1,0 +1,7 @@
+interface:
+  display_name: "Capital Markets Issuance"
+  short_description: "Issuer-side capital markets advice"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $capital-markets-issuance to evaluate financing options, market windows, sizing, pricing, and execution plans."
+policy:
+  allow_implicit_invocation: false

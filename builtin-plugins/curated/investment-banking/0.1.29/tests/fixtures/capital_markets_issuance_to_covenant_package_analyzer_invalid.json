@@ -1,0 +1,143 @@
+{
+  "contract_name": "capital_markets_issuance_to_covenant_package_analyzer",
+  "issuer_context": "issuer_context fixture value",
+  "transaction_objective": "transaction_objective fixture value",
+  "instrument_or_facility": "instrument_or_facility fixture value",
+  "proposed_size": 100,
+  "use_of_proceeds": "use_of_proceeds fixture value",
+  "existing_capital_structure": [
+    {
+      "label": "existing_capital_structure",
+      "description": "existing_capital_structure fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "pro_forma_capitalization": [
+    {
+      "label": "pro_forma_capitalization",
+      "description": "pro_forma_capitalization fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "debt_incurrence_need": "debt_incurrence_need fixture value",
+  "restricted_payment_or_leakage_need": "restricted_payment_or_leakage_need fixture value",
+  "liens_and_guarantees_needed": "liens_and_guarantees_needed fixture value",
+  "collateral_summary": "collateral_summary fixture value",
+  "ratings_objective": "ratings_objective fixture value",
+  "covenant_capacity_assumption": "covenant_capacity_assumption fixture value",
+  "debt_document_universe": [
+    {
+      "label": "debt_document_universe",
+      "description": "debt_document_universe fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "known_document_gaps": [
+    {
+      "label": "known_document_gaps",
+      "description": "known_document_gaps fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "target_covenants_or_baskets": [
+    {
+      "label": "target_covenants_or_baskets",
+      "description": "target_covenants_or_baskets fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "covenant_capacity_questions": [
+    {
+      "label": "covenant_capacity_questions",
+      "description": "covenant_capacity_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "restricted_payments_questions": [
+    {
+      "label": "restricted_payments_questions",
+      "description": "restricted_payments_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "investment_basket_questions": [
+    {
+      "label": "investment_basket_questions",
+      "description": "investment_basket_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "debt_lien_capacity_questions": [
+    {
+      "label": "debt_lien_capacity_questions",
+      "description": "debt_lien_capacity_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "ebitda_definition_questions": [
+    {
+      "label": "ebitda_definition_questions",
+      "description": "ebitda_definition_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "amendment_waiver_or_consent_questions": [
+    {
+      "label": "amendment_waiver_or_consent_questions",
+      "description": "amendment_waiver_or_consent_questions fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "execution_timeline": "execution_timeline fixture value",
+  "source_as_of_dates": [
+    {
+      "label": "source_as_of_dates",
+      "description": "source_as_of_dates fixture detail",
+      "status": "needs_review"
+    }
+  ],
+  "evidence_register": [
+    {
+      "source_id": "SRC-001",
+      "source_type": "CIM",
+      "as_of_date": "2026-05-01",
+      "native_evidence_label": "fact_source_reported",
+      "canonical_evidence_category": "verified_fact",
+      "freshness_status": "current",
+      "conflict_status": "none",
+      "confidence": "high",
+      "treatment": "use as reported",
+      "open_items": [
+        "none"
+      ]
+    }
+  ],
+  "legal_counsel_review_flags": [
+    {
+      "flag_type": "legal",
+      "description": "Counsel review required",
+      "owner": "Counsel",
+      "status": "needs_review",
+      "blocks_circulation": true
+    }
+  ],
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

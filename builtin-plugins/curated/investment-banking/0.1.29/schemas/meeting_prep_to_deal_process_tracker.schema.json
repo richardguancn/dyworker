@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/meeting_prep_to_deal_process_tracker.schema.json",
+  "title": "meeting_prep_to_deal_process_tracker",
+  "description": "Canonical meeting-debrief delta handoff for updating an Investment Banking deal-process tracker. Use only for concrete process events; qualitative impressions must be labeled.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/record"
+    },
+    {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "tracker_deltas"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "meeting_prep_to_deal_process_tracker"
+        },
+        "tracker_deltas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "open_items": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  ],
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "meeting_id",
+        "meeting_date",
+        "counterparty",
+        "attendees",
+        "process_stage",
+        "decision_or_signal",
+        "status_change",
+        "materials_requested",
+        "diligence_requests",
+        "commitments",
+        "next_actions",
+        "owners",
+        "due_dates",
+        "dependencies",
+        "source_note",
+        "confidence"
+      ],
+      "properties": {
+        "meeting_id": {},
+        "meeting_date": {},
+        "counterparty": {},
+        "attendees": {},
+        "process_stage": {},
+        "decision_or_signal": {},
+        "status_change": {},
+        "materials_requested": {},
+        "diligence_requests": {},
+        "commitments": {},
+        "next_actions": {},
+        "owners": {},
+        "due_dates": {},
+        "dependencies": {},
+        "source_note": {},
+        "confidence": {},
+        "qualitative_signal": {}
+      },
+      "additionalProperties": true
+    }
+  }
+}

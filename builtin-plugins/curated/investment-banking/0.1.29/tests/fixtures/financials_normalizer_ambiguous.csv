@@ -1,0 +1,2 @@
+entity,source_id,source_name,source_type,line_item_original,value,period_label,period_end,currency,units,source_location,evidence_label,confidence
+Acme Co,SRC-003,OCR extract,uploaded_file,Revenue,Revenue 2025: 100,FY2025,2025-12-31,USD,,PDF p.4,fact_source_reported,high

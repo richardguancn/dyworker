@@ -1,0 +1,66 @@
+{
+  "name": "investment-banking",
+  "version": "0.1.29",
+  "description": "Investment banking workflows for M&A, coverage, sponsors, capital markets, LevFin, restructuring, valuation, diligence, pitch materials, and deal execution.",
+  "author": {
+    "name": "OpenAI"
+  },
+  "homepage": "https://github.com/openai/oai-maintained-plugins/tree/main/plugins/investment-banking",
+  "repository": "https://github.com/openai/oai-maintained-plugins/tree/main/plugins/investment-banking",
+  "license": "Proprietary",
+  "keywords": [
+    "investment-banking",
+    "factset",
+    "lseg",
+    "s&p global",
+    "pitchbook",
+    "moody's",
+    "third bridge",
+    "daloopa",
+    "quartr",
+    "m&a",
+    "valuation",
+    "pitch-deck",
+    "capital-markets",
+    "levfin",
+    "lbo",
+    "cim",
+    "teaser",
+    "vdr",
+    "datasite",
+    "data-room",
+    "buyer-universe",
+    "nda-tracker",
+    "process-tracker",
+    "debt-capacity",
+    "dashboard",
+    "html-dashboard",
+    "diligence-dashboard"
+  ],
+  "skills": "./skills/",
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "Investment Banking",
+    "shortDescription": "M&A, capital markets, LevFin, valuation, diligence, and pitch workflows",
+    "longDescription": "Investment banking workflows for M&A, coverage, sponsors, ECM/DCM, LevFin, restructuring, capital advisory, valuation, buyer and investor targeting, diligence, pitch materials, and process execution.",
+    "developerName": "OpenAI",
+    "category": "Finance",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://openai.com/",
+    "privacyPolicyURL": "https://openai.com/policies/row-privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
+    "defaultPrompt": [
+      "Prepare an Intel strategic alternatives memo: asset sales, foundry partnerships, capital needs, buyers, and diligence gaps.",
+      "Build Boeing financing alternatives: liquidity needs, debt capacity, rating risk, equity or hybrid options, and banker advice.",
+      "Analyze Warner Bros. Discovery as a breakup candidate: buyers, asset separation, leverage, valuation, process risks, and gaps."
+    ],
+    "brandColor": "#04B84C",
+    "composerIcon": "./assets/composerIcon.svg",
+    "logo": "./assets/logo.png",
+    "screenshots": []
+  }
+}

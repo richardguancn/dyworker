@@ -1,0 +1,6 @@
+interface:
+  display_name: "Investment Banking"
+  short_description: "Routes banker transaction, valuation, diligence, pitch, and capital markets workflows"
+  default_prompt: "Use $investment-banking for banker-owned transaction, valuation, diligence, pitch, process, capital markets, and restructuring workflows."
+policy:
+  allow_implicit_invocation: true

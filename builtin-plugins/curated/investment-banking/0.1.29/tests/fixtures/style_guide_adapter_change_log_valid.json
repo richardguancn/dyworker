@@ -1,0 +1,56 @@
+{
+  "contract_name": "style_guide_adapter_change_log",
+  "change_log_id": "change_log_id fixture value",
+  "style_profile_id": "style_profile_id fixture value",
+  "source_artifact": "source_artifact fixture value",
+  "output_artifact": "output_artifact fixture value",
+  "artifact_type": "artifact_type fixture value",
+  "artifact_version": "artifact_version fixture value",
+  "mode": "mode fixture value",
+  "style_sources_used": [
+    "fixture"
+  ],
+  "changes_made": [
+    {
+      "location": "Slide 1",
+      "area": "layout",
+      "change": "aligned title",
+      "basis": "style source",
+      "provenance_label": "style",
+      "confidence": "medium",
+      "content_impact": "none"
+    }
+  ],
+  "preserved_elements": [
+    "fixture"
+  ],
+  "substantive_edits": [
+    "fixture"
+  ],
+  "data_formula_source_integrity_status": "data_formula_source_integrity_status fixture value",
+  "visual_review_status": "complete",
+  "visual_review_notes": "visual_review_notes fixture value",
+  "open_items": [
+    {
+      "item_id": "OI-0001",
+      "description": "Confirm source package",
+      "why_it_matters": "blocks circulation",
+      "owner": "Associate",
+      "status": "open",
+      "due_date": "2026-05-19",
+      "blocks_circulation": true,
+      "suggested_remediation": "obtain source"
+    }
+  ],
+  "non_client_ready_reasons": [
+    "fixture"
+  ],
+  "downstream_qc_required": true,
+  "circulation_caveats": [
+    {
+      "caveat": "Fixture only",
+      "impact": "Do not circulate externally",
+      "owner": "VP"
+    }
+  ]
+}

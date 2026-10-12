@@ -1,0 +1,3 @@
+Workstream,Task ID,Task Description,Related Claim ID(s),Evidence ID(s),Question ID(s),Owner (Your team),Seller Owner,Dependencies,Start Date,Due Date,Status,CIM Citation,Output Artifact,Notes
+Finance / QoE,T-0001,Reconcile FY2025 revenue and YoY growth to GL and monthly exports,C-0001,E-0002,Q-0002,Finance/QoE,CFO,E-0002,2026-02-21,2026-03-03,NOT_STARTED,CIM example.pdf | p.12 | 2.3 Highlights | Ex.4 KPIs | bullet 1 | line 1,claims_ledger.csv + summary.html,Example only
+Customer / RevOps,T-0002,Recompute NRR/GRR and churn by segment using customer ARR bridge,C-0003,E-0001,Q-0001,DD Lead,RevOps,E-0001,2026-02-21,2026-03-03,NOT_STARTED,CIM example.pdf | p.12 | 2.3 Highlights | Ex.4 KPIs | bullet 3 | line 3,diligence_questions.csv + red_flag_register.csv,Example only

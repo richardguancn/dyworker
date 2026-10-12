@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""Run the deterministic DCF pipeline."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_ROOT = SCRIPT_DIR.parent
+PLUGIN_ROOT = SCRIPT_DIR.parents[2]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from skill_core import (  # noqa: E402
+    build_p0_handoff,
+    build_workbook_sheets,
+    compute_checks,
+    determine_model_status,
+    load_json,
+    normalize_plan,
+    render_report,
+    run_scenario,
+    run_sensitivities,
+    validate_plan_structure,
+    write_json,
+    write_xlsx,
+)
+
+from shared.model_artifacts import write_model_manifest  # noqa: E402
+from shared.model_citations import write_model_citations_from_sheets  # noqa: E402
+
+
+def _blocked_run_log(
+    errors: list[str], output_dir: Path, include_report_md: bool = True
+) -> dict[str, Any]:
+    paths = {
+        "workbook": str(output_dir / "model.xlsx"),
+        "plan": str(output_dir / "plan.json"),
+        "run_log": str(output_dir / "run_log.json"),
+        "manifest": str(output_dir / "manifest.json"),
+    }
+    if include_report_md:
+        paths["report"] = str(output_dir / "report.md")
+    return {
+        "model_status": "not-decision-ready",
+        "workbook_mode": "deterministic_export",
+        "source_basis": [],
+        "hard_failures": errors,
+        "warnings": [],
+        "assumptions": {},
+        "checks": {"validation_errors": errors},
+        "p0_handoff": {
+            "selected_valuation_range": {},
+            "scenarios": {},
+            "wacc_and_terminal_assumptions": {},
+            "key_value_drivers": [],
+            "major_caveats": errors,
+            "model_status": "not-decision-ready",
+            "paths": paths,
+        },
+    }
+
+
+def _file_record(path: Path, role: str, description: str) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "role": role,
+        "description": description,
+        "exists": True if path.name == "manifest.json" else path.exists(),
+    }
+
+
+def write_output_manifest(
+    output_dir: Path,
+    model_status: str,
+    human_deliverables: list[tuple[Path, str]],
+    agent_artifacts: list[tuple[Path, str]],
+    hard_failures: list[Any],
+    warnings: list[Any],
+) -> dict[str, Any]:
+    workbook_path = human_deliverables[0][0] if human_deliverables else None
+    return write_model_manifest(
+        output_dir,
+        "dcf-model-builder",
+        "deterministic_export",
+        workbook_path,
+        model_status,
+        agent_artifacts,
+        hard_failures,
+        warnings,
+    )
+    manifest_path = output_dir / "manifest.json"
+    all_agent_artifacts = [*agent_artifacts, (manifest_path, "agent-facing output manifest")]
+    manifest = {
+        "manifest_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "skill": "dcf-model-builder",
+        "artifact_mode": "deterministic_export",
+        "model_status": model_status,
+        "output_dir": str(output_dir),
+        "primary_human_deliverable": str(human_deliverables[0][0]) if human_deliverables else None,
+        "human_deliverables": [
+            _file_record(path, "human_deliverable", description)
+            for path, description in human_deliverables
+        ],
+        "agent_artifacts": [
+            _file_record(path, "agent_artifact", description)
+            for path, description in all_agent_artifacts
+        ],
+        "hard_failure_count": len(hard_failures),
+        "warning_count": len(warnings),
+        "discipline_note": "Use the human deliverable as the main output; manifest/run_log/plan files are agent-facing support artifacts.",
+    }
+    write_json(manifest_path, manifest)
+    return manifest
+
+
+def write_blocked_outputs(
+    errors: list[str], output_dir: Path, include_report_md: bool
+) -> dict[str, Any]:
+    run_log = _blocked_run_log(errors, output_dir, include_report_md=include_report_md)
+    run_log["output_manifest"] = str(output_dir / "manifest.json")
+    write_json(output_dir / "run_log.json", run_log)
+    write_output_manifest(
+        output_dir,
+        "not-decision-ready",
+        [],
+        [(output_dir / "run_log.json", "blocked run log with validation/read errors")],
+        errors,
+        [],
+    )
+    return run_log
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run DCF deterministic export pipeline")
+    parser.add_argument("plan_path", help="Path to plan.json")
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Output directory for model.xlsx plus support artifacts. Defaults to ./output.",
+    )
+    parser.add_argument(
+        "--print-report",
+        action="store_true",
+        help="Print the text report between clear markers without writing a Markdown file",
+    )
+    parser.add_argument(
+        "--write-report-md",
+        action="store_true",
+        help="Write legacy report.md in addition to the workbook. Off by default.",
+    )
+    parser.add_argument(
+        "--no-report-md",
+        action="store_true",
+        help="Deprecated compatibility flag; Markdown report files are already off by default.",
+    )
+    args = parser.parse_args()
+    write_report_md = bool(args.write_report_md and not args.no_report_md)
+
+    output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        raw_plan = load_json(args.plan_path)
+    except FileNotFoundError:
+        errors = [f"plan file not found: {args.plan_path}"]
+        write_blocked_outputs(errors, output_dir, include_report_md=write_report_md)
+        print("BLOCKED DCF PIPELINE")
+        for e in errors:
+            print(f"- {e}")
+        return 1
+    except json.JSONDecodeError as exc:
+        errors = [f"invalid JSON: line {exc.lineno}, column {exc.colno}: {exc.msg}"]
+        write_blocked_outputs(errors, output_dir, include_report_md=write_report_md)
+        print("BLOCKED DCF PIPELINE")
+        for e in errors:
+            print(f"- {e}")
+        return 1
+    except Exception as exc:
+        errors = [f"could not read plan: {exc}"]
+        write_blocked_outputs(errors, output_dir, include_report_md=write_report_md)
+        print("BLOCKED DCF PIPELINE")
+        for e in errors:
+            print(f"- {e}")
+        return 1
+
+    validation_errors = validate_plan_structure(raw_plan)
+    if validation_errors:
+        write_blocked_outputs(validation_errors, output_dir, include_report_md=write_report_md)
+        print("BLOCKED DCF PIPELINE")
+        for e in validation_errors:
+            print(f"- {e}")
+        return 1
+
+    plan = normalize_plan(raw_plan, SKILL_ROOT)
+    write_json(output_dir / "plan.json", plan)
+
+    scenario_results: dict[str, dict[str, Any]] = {}
+    execution_errors: list[str] = []
+    for scenario_name in ["base", "downside", "upside"]:
+        try:
+            scenario_results[scenario_name] = run_scenario(plan, scenario_name)
+        except Exception as exc:
+            execution_errors.append(f"scenario {scenario_name} failed: {exc}")
+
+    try:
+        sensitivity_result = run_sensitivities(plan)
+    except Exception as exc:
+        sensitivity_result = {
+            "rows": [],
+            "directionality": {
+                "passed": False,
+                "details": [{"check": "sensitivity run", "passed": False, "detail": str(exc)}],
+            },
+        }
+        execution_errors.append(f"sensitivities failed: {exc}")
+
+    checks = compute_checks(plan, scenario_results, sensitivity_result)
+    if execution_errors:
+        checks.setdefault("hard_failures", [])
+        checks["hard_failures"].extend(execution_errors)
+        # Deduplicate while preserving order.
+        checks["hard_failures"] = list(dict.fromkeys(checks["hard_failures"]))
+
+    hard_failures = checks.get("hard_failures", [])
+    warnings = checks.get("warnings", [])
+    model_status = determine_model_status(plan, hard_failures, warnings)
+
+    assumptions = {
+        "company": plan.get("meta", {}).get("company"),
+        "model_type": plan.get("meta", {}).get("model_type"),
+        "valuation_date": plan.get("meta", {}).get("valuation_date"),
+        "horizon_years": plan.get("timeline", {}).get("horizon_years"),
+        "terminal_method": plan.get("terminal_value", {}).get("method"),
+        "cash_flow_basis": plan.get("forecast", {}).get("cash_flow_basis"),
+    }
+
+    p0_handoff = build_p0_handoff(
+        plan,
+        scenario_results,
+        sensitivity_result,
+        model_status,
+        warnings,
+        output_dir,
+        include_report_md=write_report_md,
+    )
+    run_log = {
+        "model_status": model_status,
+        "workbook_mode": "deterministic_export",
+        "source_basis": plan.get("source_basis", []),
+        "hard_failures": hard_failures,
+        "warnings": warnings,
+        "assumptions": assumptions,
+        "checks": checks,
+        "p0_handoff": p0_handoff,
+        "output_manifest": str(output_dir / "manifest.json"),
+        "output_paths": {
+            "model_xlsx": str(output_dir / "model.xlsx"),
+            "plan_json": str(output_dir / "plan.json"),
+            "run_log_json": str(output_dir / "run_log.json"),
+            "manifest_json": str(output_dir / "manifest.json"),
+            **({"report_md": str(output_dir / "report.md")} if write_report_md else {}),
+        },
+    }
+
+    workbook_sheets = build_workbook_sheets(
+        plan, scenario_results, sensitivity_result, checks, run_log
+    )
+    write_xlsx(output_dir / "model.xlsx", workbook_sheets)
+    model_citations = write_model_citations_from_sheets(
+        output_dir / "model_citations.json", output_dir / "model.xlsx", workbook_sheets
+    )
+    run_log["model_citations_path"] = str(output_dir / "model_citations.json")
+    run_log["model_citation_count"] = len(model_citations)
+    run_log["output_paths"]["model_citations_json"] = str(output_dir / "model_citations.json")
+    write_json(output_dir / "run_log.json", run_log)
+
+    report = render_report(plan, scenario_results, checks, run_log)
+    if write_report_md:
+        (output_dir / "report.md").write_text(report, encoding="utf-8")
+
+    human_deliverables = [(output_dir / "model.xlsx", "deterministic DCF workbook")]
+    if write_report_md:
+        human_deliverables.append((output_dir / "report.md", "legacy Markdown DCF report"))
+    write_output_manifest(
+        output_dir,
+        model_status,
+        human_deliverables,
+        [
+            (output_dir / "plan.json", "normalized plan actually used"),
+            (
+                output_dir / "model_citations.json",
+                "workbook cell/range citation ledger for model outputs",
+            ),
+            (
+                output_dir / "run_log.json",
+                "machine-readable run log, checks, warnings, and downstream handoff",
+            ),
+        ],
+        hard_failures,
+        warnings,
+    )
+
+    if args.print_report:
+        print("---DCF_MODEL_REPORT_START---")
+        print(report.rstrip())
+        print("---DCF_MODEL_REPORT_END---")
+    else:
+        print(f"DCF pipeline complete. model_status={model_status}. Output: {output_dir}")
+
+    return 0 if not hard_failures else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

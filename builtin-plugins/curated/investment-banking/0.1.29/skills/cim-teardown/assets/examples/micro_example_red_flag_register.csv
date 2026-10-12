@@ -1,0 +1,4 @@
+Red-Flag ID,Severity (1-5),Related Claim ID(s),Related Question ID(s),Red Flag Description,Detection Method / Rule,Evidence Needed,What resolves it,Potential Impact,Status,Owner,CIM Citation,Notes
+RF-0001,4,C-0002,Q-0003,"Gross margin is ""adjusted""; adjustment may be recurring or misclassified COGS.",Adjustment disclosed in claim text; no schedule provided.,Addback schedule + COGS policy + cloud export,Could reduce normalized GM and EBITDA,OPEN,Finance/QoE,CITATION_TBD,Example only
+RF-0002,4,C-0003,Q-0001,NRR definition not shown; possible cohort exclusions or reactivation treatment.,NRR stated with no definition in excerpt.,NRR/GRR definition doc + ARR bridge,Retention overstated; impacts valuation and leverage,OPEN,DD Lead,CITATION_TBD,Example only
+RF-0003,3,C-0001,Q-0002,Revenue growth claim not yet tied to GL.,No GL tie-out provided in excerpt.,GL detail + revenue by month,Top-line may be overstated or non-recurring,OPEN,Finance/QoE,CITATION_TBD,Example only

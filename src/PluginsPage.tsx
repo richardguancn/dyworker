@@ -10,6 +10,7 @@ import { clientHost } from "./pluginRuntime/clientHostSingleton.ts";
 import { requestPluginPanels, PluginSlotView } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
 import { ModsPluginsPage } from './ModsPluginsPage';
+import { CuratedPluginsPage } from './CuratedPluginsPage';
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
 //
@@ -28,13 +29,14 @@ function tileColor(seed: string) {
   return TILE_COLORS[hash % TILE_COLORS.length];
 }
 
-export function PluginsPage({onCreate,sessionId,mcpPanel}:{onCreate:()=>void;sessionId?:string;mcpPanel:ReactNode}) {
+export function PluginsPage({onCreate,sessionId,mcpPanel,onSkillsChanged}:{onCreate:()=>void;sessionId?:string;mcpPanel:ReactNode;onSkillsChanged?:()=>void}) {
   const [format,setFormat]=useState('dsh');
   return <div className="plugins-page plugins-formats"><div className="plugins-navigation" role="tablist" aria-label="插件类型">
+    <button role="tab" aria-selected={format==='curated'} onClick={()=>setFormat('curated')}>内置精选</button>
     <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>DSH 插件</button>
     <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>Claude Mods</button>
     <button role="tab" aria-selected={format==='mcp'} onClick={()=>setFormat('mcp')}>MCP</button>
-  </div>{format==='mcp'?mcpPanel:format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
+  </div>{format==='curated'?<CuratedPluginsPage onSkillsChanged={onSkillsChanged}/>:format==='mcp'?mcpPanel:format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
 }
 function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const [data, setData] = useState<PluginListResult | null>(null);

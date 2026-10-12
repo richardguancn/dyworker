@@ -1,0 +1,59 @@
+{
+  "schema_version": "investment_banking_source_category_config.v1",
+  "description": "Author-owned Investment Banking source category catalog. This file reserves static category ids, labels, and preference hints for the explicit source setup flow. It does not inspect connectors, claim readiness, select routes, or create category-state.json. User-specific source preferences and source-of-truth pointers live in $CODEX_HOME/state/plugins/{marketplace_id}/{plugin_id}/user-context.md.",
+  "categories": {
+    "deal_materials": {
+      "label": "deal materials, VDR exports, and diligence documents",
+      "preferred_apps": [
+        "Google Drive",
+        "Gmail"
+      ]
+    },
+    "process_updates": {
+      "label": "process trackers, meeting notes, and internal updates",
+      "preferred_plugins": [
+        "Spreadsheets",
+        "Microsoft Excel"
+      ],
+      "preferred_apps": [
+        "Google Drive",
+        "Gmail",
+        "Slack"
+      ]
+    },
+    "relationship_counterparty_context": {
+      "label": "relationship, buyer, lender, and counterparty context",
+      "preferred_apps": [
+        "PitchBook",
+        "FactSet",
+        "LSEG",
+        "S&P",
+        "Gmail",
+        "Slack"
+      ]
+    },
+    "market_data_public_sources": {
+      "label": "market data, public filings, ratings, and transaction benchmarks",
+      "preferred_apps": [
+        "FactSet",
+        "LSEG",
+        "S&P",
+        "PitchBook",
+        "Moody's",
+        "Quartr",
+        "Daloopa"
+      ]
+    },
+    "models_workbooks_templates": {
+      "label": "models, workbooks, and templates",
+      "preferred_plugins": [
+        "Spreadsheets",
+        "Microsoft Excel"
+      ],
+      "preferred_apps": [
+        "Google Drive",
+        "Daloopa"
+      ]
+    }
+  }
+}

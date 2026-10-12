@@ -4327,8 +4327,8 @@ function SkillsPanel({
                   </div>
                   {skill.description && <p className="skill-desc" title={skill.description}>{skill.description}</p>}
                 </div>
-                <label className="skill-switch" title={skill.enabled ? "点击停用" : "点击启用"}>
-                  <input type="checkbox" checked={skill.enabled} onChange={(event) => onToggle(skill.id, event.target.checked)} />
+                <label className="skill-switch" title={skill.availabilityReason || (skill.enabled ? "点击停用" : "点击启用")}>
+                  <input type="checkbox" checked={skill.enabled} disabled={Boolean(skill.availabilityReason)} onChange={(event) => onToggle(skill.id, event.target.checked)} />
                 </label>
               </div>
               {(skill.path || !skill.readOnly) && (
@@ -6242,7 +6242,7 @@ function SettingsDialog({
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
         ) : tab === "plugins" ? (
-          <PluginsPage onCreate={onCreatePlugin} sessionId={sessionId} mcpPanel={<McpSettingsPanel value={value} onSave={onSave} />} />
+          <PluginsPage onCreate={onCreatePlugin} sessionId={sessionId} onSkillsChanged={onRefreshSkills} mcpPanel={<McpSettingsPanel value={value} onSave={onSave} />} />
         ) : ["model", "voice", "search", "power", "updates", "telemetry"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (<>
@@ -8462,7 +8462,11 @@ export function App() {
     const items = await window.dyworker.listSkills(workspacePath);
     setSkills(items);
     setMentionSkills(items);
-    if (announce) setNotice(`已刷新技能，共发现 ${skills.length} 个`);
+    setActiveSkills(current => current.flatMap(skill => {
+      const updated = items.find(item => item.id === skill.id && item.enabled);
+      return updated ? [updated] : [];
+    }));
+    if (announce) setNotice(`已刷新技能，共发现 ${items.length} 个`);
   };
 
   const syncAtBottom = () => {

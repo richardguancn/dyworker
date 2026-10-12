@@ -1,0 +1,23 @@
+{
+  "deal_name": "TargetCo - Project Example",
+  "persona": "mixed",
+  "deal_stage": "screening",
+  "as_of": "2026-02-20",
+  "inputs": {
+    "cim": [{"path": "inputs/cim.pdf", "type": "pdf"}],
+    "financials": [{"path": "inputs/financials.xlsx", "type": "xlsx"}],
+    "customer_metrics": [{"path": "inputs/customer_metrics.xlsx", "type": "xlsx"}],
+    "pipeline": [{"path": "inputs/pipeline.csv", "type": "csv"}],
+    "market_materials": [{"path": "inputs/market_materials.pdf", "type": "pdf"}],
+    "data_room_index": [{"path": "inputs/data_room_index.csv", "type": "csv"}]
+  },
+  "output": {
+    "format": "csv",
+    "output_dir": "outputs",
+    "citation_style": "CIM <file> | p.<page> | <section_path> | <exhibit_id> | <object> | <span> OR WEB | <source_name> | <url> | <title> | <date_accessed> | <span/lines>"
+  },
+  "scoring": {
+    "formula": "priority = impact * uncertainty * downside_risk * time_urgency",
+    "defaults": {"impact": 3, "uncertainty": 3, "downside_risk": 3, "time_urgency": 3}
+  }
+}

@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/private_credit_underwriting_to_covenant_package_analyzer.schema.json",
+  "title": "private_credit_underwriting_to_covenant_package_analyzer",
+  "description": "Canonical Investment Banking handoff contract from private-credit-underwriting to covenant-package-analyzer.",
+  "type": "object",
+  "required": [
+    "contract_name"
+  ],
+  "properties": {
+    "contract_name": {
+      "const": "private_credit_underwriting_to_covenant_package_analyzer"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "borrower_context",
+        "credit_recommendation",
+        "risk_rating",
+        "facility_structure",
+        "proposed_exposure",
+        "debt_sizing_case",
+        "selected_ebitda_basis",
+        "lender_after_haircut_ebitda",
+        "covenant_ebitda_proxy",
+        "covenant_questions",
+        "ratio_definitions_needed",
+        "financial_covenant_tests",
+        "thresholds_requested",
+        "headroom_or_proxy_headroom",
+        "first_breach_or_breakpoint",
+        "liquidity_trough",
+        "collateral_guarantee_concerns",
+        "basket_leakage_concerns",
+        "reporting_monitoring_needs",
+        "amendment_waiver_or_control_needs",
+        "recommended_lender_protections",
+        "conditions_precedent",
+        "source_log",
+        "source_as_of_dates",
+        "evidence_register",
+        "legal_counsel_review_flags",
+        "open_items",
+        "circulation_caveats"
+      ],
+      "properties": {
+        "borrower_context": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "credit_recommendation": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "risk_rating": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "facility_structure": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "proposed_exposure": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "debt_sizing_case": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "selected_ebitda_basis": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "lender_after_haircut_ebitda": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "covenant_ebitda_proxy": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "covenant_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "ratio_definitions_needed": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "financial_covenant_tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "thresholds_requested": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "headroom_or_proxy_headroom": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "first_breach_or_breakpoint": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "liquidity_trough": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "collateral_guarantee_concerns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "basket_leakage_concerns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "reporting_monitoring_needs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "amendment_waiver_or_control_needs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "recommended_lender_protections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "conditions_precedent": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "source_log": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/source_log_record"
+          }
+        },
+        "source_as_of_dates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/generic_record"
+          }
+        },
+        "evidence_register": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/evidence_register_record"
+          }
+        },
+        "legal_counsel_review_flags": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/review_flag"
+          }
+        },
+        "open_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/open_item"
+          }
+        },
+        "circulation_caveats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "handoff_common.schema.json#/$defs/circulation_caveat"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

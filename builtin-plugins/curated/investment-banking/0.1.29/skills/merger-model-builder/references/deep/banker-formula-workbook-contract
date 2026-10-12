@@ -1,0 +1,175 @@
+# Banker Formula Workbook Contract
+
+Use this reference when the user explicitly asks for a live Excel merger model, banker formula workbook, accretion/dilution workbook, pro forma ownership model, or purchase-accounting workbook.
+
+## Table Of Contents
+1. Supported artifact
+2. Builder
+3. Required sheets
+4. Control Panel cell map
+5. Formula expectations
+6. Required checks
+7. Run log
+8. Limitations
+
+## Supported artifact
+
+`banker_formula_workbook` means the skill can emit:
+
+```text
+output/banker_formula_workbook.xlsx
+output/banker_formula_workbook_run_log.json
+```
+
+This is separate from the default deterministic export:
+
+```text
+output/model.xlsx
+output/plan.json
+output/run_log.json
+output/report.md
+```
+
+The formula workbook is a live multi-tab `.xlsx` template with formulas, cross-sheet links, formatting, sensitivities, and checks. It is not the long-format deterministic `model.xlsx` export and not a full formula-generation engine.
+
+## Builder
+
+Run from the skill root:
+
+```bash
+python3 scripts/build_banker_formula_workbook.py assets/plan_template.json
+```
+
+Optional arguments:
+
+```bash
+python3 scripts/build_banker_formula_workbook.py path/to/plan.json --output-dir output
+python3 scripts/build_banker_formula_workbook.py assets/plan_template.json --no-plan-population
+```
+
+The builder uses the bundled template at:
+
+```text
+assets/templates/banker_formula_workbook_template.xlsx
+```
+
+Path literals in this section are skill-root-relative unless they use an explicit relative prefix.
+
+It uses only the Python standard library. The current builder patches exposed `Control Panel` cells from `plan.json`, preserves formulas and formatting, validates workbook structure, and writes a formula-specific run log that does not overwrite the deterministic export log.
+
+## Required sheets
+
+The workbook must contain:
+
+- `Cover`
+- `Executive Summary`
+- `Control Panel`
+- `Buyer Standalone`
+- `Target Standalone`
+- `Transaction Assumptions`
+- `Sources & Uses`
+- `Purchase Accounting`
+- `Financing Assumptions`
+- `Synergies`
+- `Pro Forma Income Statement`
+- `Accretion Dilution`
+- `Ownership EPS`
+- `Sensitivities`
+- `Checks`
+- `Source Notes`
+
+## Control Panel cell map
+
+The current builder populates these cells when matching plan fields are available:
+
+| Cell | Field |
+|---|---|
+| `B6` | acquirer name |
+| `B7` | target name |
+| `B8` | announcement year |
+| `B9` | close year placeholder from announcement / valuation year |
+| `B10` | forecast year count |
+| `B11` | acquirer share price |
+| `B12` | acquirer basic shares, using diluted shares if no separate basic share field exists |
+| `B13` | acquirer diluted shares |
+| `B14` | acquirer standalone EPS for the first forecast period |
+| `B15` | target offer price |
+| `B16` | target undisturbed price |
+| `B17` | target diluted shares |
+| `B18` | target net debt |
+| `B20:B22` | cash / stock / other consideration mix |
+| `B23` | new debt amount |
+| `B24` | new debt interest rate |
+| `B25` | lost cash interest rate |
+| `B26` | tax rate |
+| `B27:B29` | cost synergy ramp |
+| `B31:B32` | intangible fair value and weighted-average amortization life |
+| `B33:B34` | PPE step-up and useful life |
+| `B36` | financing fee percent of new debt |
+| `B37` | transaction fee percent of enterprise value |
+| `B38` | scenario selection |
+| `B51:B55` | cost synergies, revenue synergies, revenue synergy margin, dis-synergies, and realization |
+| `B57:B61` | target book equity, inventory step-up, cash to balance sheet, other adjustments, and other financing |
+
+Cells not mapped from the plan remain at template defaults and are listed in `banker_formula_workbook_run_log.json`.
+
+## Formula expectations
+
+The workbook must contain formulas across:
+
+- `Executive Summary`
+- `Transaction Assumptions`
+- `Sources & Uses`
+- `Purchase Accounting`
+- `Financing Assumptions`
+- `Synergies`
+- `Pro Forma Income Statement`
+- `Accretion Dilution`
+- `Ownership EPS`
+- `Sensitivities`
+- `Checks`
+
+The builder must not claim success if the generated workbook has fewer than `100` formula cells, lacks styles, lacks required sheets, or contains external workbook links.
+
+## Required checks
+
+The generated workbook and run log must verify:
+
+- Required sheets exist.
+- Formula count exceeds the minimum threshold.
+- Styles exist.
+- External workbook links are absent.
+- The output file and run log were written.
+
+The workbook `Checks` tab should include visible OK / FAIL checks for sources and uses, consideration mix, purchase accounting, ownership, EPS, and model integrity.
+
+## Run log
+
+`output/banker_formula_workbook_run_log.json` must include:
+
+- `workbook_mode: banker_formula_workbook`
+- `artifact_level: banker_formula_workbook`
+- `model_status`
+- `generated_at`
+- `template_path`
+- `plan_path`
+- `output_paths`
+- `assumptions_applied`
+- `missing_inputs`
+- `warnings`
+- `hard_failures`
+- `checks`
+- `workbook_inspection`
+
+## Limitations
+
+This builder is intentionally a formula-workbook template materializer, not the same engine as the skill-root-relative path `scripts/run_pipeline.py`.
+
+- It preserves and lightly populates a prebuilt formula workbook.
+- It writes `output/banker_formula_workbook_run_log.json` so deterministic `output/run_log.json` is not overwritten.
+- It does not rebuild every formula from `plan.json`.
+- It does not evaluate Excel formulas in Python.
+- It does not edit user workbooks in place.
+- It does not replace `model-audit-tieout` for formula integrity review.
+
+Use `deterministic_export` when the user needs a fully computed machine export from `plan.json`. Use `banker_formula_workbook` when the user needs a live banker-style Excel model template with formulas, formatting, and checks.

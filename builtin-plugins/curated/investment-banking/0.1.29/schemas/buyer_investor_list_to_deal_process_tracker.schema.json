@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "investment-banking/schemas/buyer_investor_list_to_deal_process_tracker.schema.json",
+  "title": "buyer_investor_list_to_deal_process_tracker",
+  "description": "Canonical buyer/investor/lender universe handoff for seeding an Investment Banking deal-process tracker. Extra fields are allowed so banker judgment, notes, and local tracker fields can travel without being renamed.",
+  "oneOf": [
+    {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "records"
+      ],
+      "properties": {
+        "contract_name": {
+          "const": "buyer_investor_list_to_deal_process_tracker"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        },
+        "holds_and_exclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/holds_and_exclusions_record"
+          }
+        },
+        "open_items": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  ],
+  "$defs": {
+    "record": {
+      "type": "object",
+      "required": [
+        "process_context",
+        "party_id",
+        "party_name",
+        "parent_or_platform",
+        "party_type",
+        "sector_fit",
+        "geography",
+        "relevant_assets_or_holdings",
+        "tier",
+        "priority_score",
+        "recommended_wave",
+        "rationale",
+        "ability_to_transact",
+        "likely_objections",
+        "key_risks",
+        "relationship_owner",
+        "known_contacts",
+        "contact_path",
+        "confidentiality_flags",
+        "conflict_flags",
+        "do_not_contact_flag",
+        "recommended_next_action",
+        "next_action_owner",
+        "target_date",
+        "outreach_status",
+        "required_materials",
+        "source_ids",
+        "source_as_of_dates",
+        "confidence",
+        "open_questions",
+        "notes_for_process_tracker"
+      ],
+      "properties": {
+        "process_context": {},
+        "party_id": {},
+        "party_name": {},
+        "parent_or_platform": {},
+        "party_type": {},
+        "sector_fit": {},
+        "geography": {},
+        "relevant_assets_or_holdings": {},
+        "tier": {},
+        "priority_score": {},
+        "recommended_wave": {},
+        "rationale": {},
+        "ability_to_transact": {},
+        "likely_objections": {},
+        "key_risks": {},
+        "relationship_owner": {},
+        "known_contacts": {},
+        "contact_path": {},
+        "confidentiality_flags": {},
+        "conflict_flags": {},
+        "do_not_contact_flag": {},
+        "recommended_next_action": {},
+        "next_action_owner": {},
+        "target_date": {},
+        "outreach_status": {},
+        "required_materials": {},
+        "source_ids": {},
+        "source_as_of_dates": {},
+        "confidence": {},
+        "open_questions": {},
+        "notes_for_process_tracker": {}
+      },
+      "additionalProperties": true
+    },
+    "holds_and_exclusions_record": {
+      "type": "object",
+      "required": [
+        "party_name",
+        "reason",
+        "approval_needed",
+        "reconsideration_trigger"
+      ],
+      "properties": {
+        "party_name": {},
+        "reason": {},
+        "approval_needed": {},
+        "reconsideration_trigger": {}
+      },
+      "additionalProperties": true
+    }
+  }
+}

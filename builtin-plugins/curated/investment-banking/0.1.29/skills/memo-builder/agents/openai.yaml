@@ -1,0 +1,7 @@
+interface:
+  display_name: "IB Memo Builder"
+  short_description: "Banker-ready memo drafting"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $memo-builder to draft or revise an IB client memo, committee note, financing memo, or transaction update."
+policy:
+  allow_implicit_invocation: false

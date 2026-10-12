@@ -1,0 +1,7 @@
+interface:
+  display_name: "Three Statement Model Builder"
+  short_description: "Three-statement model exports"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $three-statement-model-builder to build an integrated income statement, balance sheet, cash flow, and scenario model export."
+policy:
+  allow_implicit_invocation: false

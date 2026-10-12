@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pitch Deck Builder icon">
+  <rect width="128" height="128" rx="28" fill="#0B1F3A"/>
+  <rect x="25" y="30" width="78" height="56" rx="6" fill="#FFFFFF" opacity="0.96"/>
+  <rect x="34" y="41" width="36" height="6" rx="3" fill="#0B1F3A"/>
+  <rect x="34" y="55" width="58" height="5" rx="2.5" fill="#53657A"/>
+  <rect x="34" y="67" width="48" height="5" rx="2.5" fill="#53657A"/>
+  <path d="M29 96h70" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+  <path d="M64 86v13" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+  <path d="M85 40l8 8-8 8" fill="none" stroke="#2F80ED" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""Build the merger-model-builder banker_formula_workbook artifact.
+
+This script intentionally uses only the Python standard library. It treats the
+bundled XLSX template as the source of truth for formulas and formatting, then
+optionally patches the Control Panel with values from a merger-model plan.json.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import re
+import sys
+import tempfile
+import zipfile
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+from pathlib import Path
+from typing import Any
+from xml.etree import ElementTree as ET
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_ROOT = SCRIPT_DIR.parents[1]
+PLUGIN_ROOT = SCRIPT_DIR.parents[3]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+loader = SourceFileLoader("_merger_skill_core_runtime", str(SCRIPT_DIR / "skill_core"))
+spec = spec_from_loader(loader.name, loader)
+if spec is None:
+    raise ImportError(SCRIPT_DIR / "skill_core")
+skill_core = module_from_spec(spec)
+loader.exec_module(skill_core)
+
+identify_missing_inputs = skill_core.identify_missing_inputs
+partial_context_warning = skill_core.partial_context_warning
+
+from shared.model_artifacts import write_model_manifest  # noqa: E402
+from shared.model_citations import write_model_citations_for_workbook  # noqa: E402
+DEFAULT_TEMPLATE = SKILL_ROOT / "assets" / "templates" / "banker_formula_workbook_template.xlsx"
+DEFAULT_PLAN = SKILL_ROOT / "assets" / "plan_template.json"
+FORMULA_RUN_LOG_NAME = "banker_formula_workbook_run_log.json"
+MANIFEST_NAME = "manifest.json"
+
+MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+NS = {"m": MAIN_NS, "r": OFFICE_REL_NS, "rel": REL_NS}
+
+REQUIRED_SHEETS = [
+    "Cover",
+    "Executive Summary",
+    "Control Panel",
+    "Buyer Standalone",
+    "Target Standalone",
+    "Transaction Assumptions",
+    "Sources & Uses",
+    "Purchase Accounting",
+    "Financing Assumptions",
+    "Synergies",
+    "Pro Forma Income Statement",
+    "Accretion Dilution",
+    "Ownership EPS",
+    "Sensitivities",
+    "Checks",
+    "Source Notes",
+]
+
+MIN_FORMULA_COUNT = 100
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _file_record(path: Path, role: str, description: str) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "role": role,
+        "description": description,
+        "exists": True if path.name == MANIFEST_NAME else path.exists(),
+    }
+
+
+def write_output_manifest(output_dir: Path, run_log: dict[str, Any]) -> dict[str, Any]:
+    workbook_path = output_dir / "banker_formula_workbook.xlsx"
+    support_paths = [(output_dir / FORMULA_RUN_LOG_NAME, "formula workbook run log")]
+    if (output_dir / "model_citations.json").exists():
+        support_paths.append((output_dir / "model_citations.json", "workbook cell/range citation ledger for model outputs"))
+    return write_model_manifest(
+        output_dir,
+        "merger-model-builder",
+        "banker_formula_workbook",
+        workbook_path,
+        str(run_log.get("model_status", "template-ready")),
+        support_paths,
+        run_log.get("hard_failures", []),
+        run_log.get("warnings", []),
+    )
+    manifest_path = output_dir / MANIFEST_NAME
+    workbook_path = output_dir / "banker_formula_workbook.xlsx"
+    run_log_path = output_dir / FORMULA_RUN_LOG_NAME
+    manifest = {
+        "manifest_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "skill": "merger-model-builder",
+        "artifact_mode": "banker_formula_workbook",
+        "model_status": run_log.get("model_status"),
+        "output_dir": str(output_dir),
+        "primary_human_deliverable": str(workbook_path),
+        "human_deliverables": [_file_record(workbook_path, "human_deliverable", "banker formula workbook")],
+        "agent_artifacts": [
+            _file_record(run_log_path, "agent_artifact", "formula workbook run log"),
+            _file_record(manifest_path, "agent_artifact", "agent-facing output manifest"),
+        ],
+        "hard_failure_count": len(run_log.get("hard_failures", [])),
+        "warning_count": len(run_log.get("warnings", [])),
+        "discipline_note": "Use the workbook as the main deliverable; manifest/run_log files are agent-facing support artifacts.",
+    }
+    write_json(manifest_path, manifest)
+    return manifest
+
+
+def clean_sheet_name(name: str) -> str:
+    return name.replace("&amp;", "&")
+
+
+def workbook_sheet_names(template_path: Path) -> list[str]:
+    with zipfile.ZipFile(template_path) as zf:
+        workbook = zf.read("xl/workbook.xml").decode("utf-8")
+    return [clean_sheet_name(name) for name in re.findall(r'<sheet name="([^"]+)"', workbook)]
+
+
+def inspect_workbook(path: Path) -> dict[str, Any]:
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        workbook_xml = zf.read("xl/workbook.xml").decode("utf-8")
+        sheet_names = [clean_sheet_name(name) for name in re.findall(r'<sheet name="([^"]+)"', workbook_xml)]
+        worksheet_names = [name for name in names if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")]
+        formula_count = 0
+        formula_sheets = 0
+        for worksheet_name in worksheet_names:
+            text = zf.read(worksheet_name).decode("utf-8", errors="ignore")
+            count = len(re.findall(r"<f(?:\s|>)", text))
+            if count:
+                formula_sheets += 1
+                formula_count += count
+        external_links = [name for name in names if name.startswith("xl/externalLinks/")]
+        styles_present = "xl/styles.xml" in names
+    missing_sheets = [name for name in REQUIRED_SHEETS if name not in sheet_names]
+    return {
+        "sheet_count": len(sheet_names),
+        "sheet_names": sheet_names,
+        "formula_count": formula_count,
+        "formula_sheets": formula_sheets,
+        "styles_present": styles_present,
+        "external_links": external_links,
+        "required_sheets_present": not missing_sheets,
+        "missing_required_sheets": missing_sheets,
+    }
+
+
+def first_period(plan: dict[str, Any]) -> str | None:
+    periods = plan.get("periods")
+    if isinstance(periods, list) and periods:
+        return str(periods[0])
+    return None
+
+
+def announcement_year(plan: dict[str, Any]) -> int | None:
+    value = plan.get("meta", {}).get("announcement_date") or plan.get("meta", {}).get("valuation_date")
+    if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+        return int(value[:4])
+    return None
+
+
+def value_at(mapping: Any, period: str | None, default: Any = None) -> Any:
+    if period and isinstance(mapping, dict):
+        return mapping.get(period, default)
+    return default
+
+
+def safe_div(num: float | int | None, den: float | int | None) -> float | None:
+    if num is None or den in (None, 0):
+        return None
+    return float(num) / float(den)
+
+
+def sum_intangibles(plan: dict[str, Any]) -> tuple[float | None, float | None]:
+    intangibles = plan.get("purchase_accounting", {}).get("intangible_assets", [])
+    if not isinstance(intangibles, list) or not intangibles:
+        return None, None
+    fair_value = 0.0
+    weighted_life = 0.0
+    for item in intangibles:
+        if not isinstance(item, dict):
+            continue
+        value = float(item.get("fair_value") or 0.0)
+        life = float(item.get("amortization_years") or 0.0)
+        fair_value += value
+        weighted_life += value * life
+    if fair_value <= 0:
+        return None, None
+    return fair_value, weighted_life / fair_value if weighted_life else None
+
+
+def equity_purchase_price(plan: dict[str, Any]) -> float | None:
+    transaction = plan.get("transaction", {})
+    if transaction.get("equity_purchase_price") is not None:
+        return transaction["equity_purchase_price"]
+    target = plan.get("target", {})
+    offer_price = transaction.get("offer_price") or target.get("offer_price")
+    shares = target.get("diluted_shares")
+    if offer_price is None or shares is None:
+        return None
+    return float(offer_price) * float(shares)
+
+
+def transaction_enterprise_value(plan: dict[str, Any]) -> float | None:
+    transaction = plan.get("transaction", {})
+    if transaction.get("enterprise_value") is not None:
+        return transaction["enterprise_value"]
+    equity_value = equity_purchase_price(plan)
+    target = plan.get("target", {})
+    if equity_value is None:
+        return None
+    return equity_value + float(target.get("debt") or 0.0) - float(target.get("cash") or 0.0)
+
+
+def control_panel_updates(plan: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    missing: list[str] = []
+    meta = plan.get("meta", {})
+    acquirer = plan.get("acquirer", {})
+    target = plan.get("target", {})
+    transaction = plan.get("transaction", {})
+    consideration = plan.get("consideration", {})
+    financing = plan.get("financing", {})
+    purchase_accounting = plan.get("purchase_accounting", {})
+    synergies = plan.get("synergies", {})
+    period = first_period(plan)
+    intangible_value, intangible_life = sum_intangibles(plan)
+    target_net_debt = None
+    if target.get("debt") is not None or target.get("cash") is not None:
+        target_net_debt = float(target.get("debt") or 0.0) - float(target.get("cash") or 0.0)
+    cost_synergies = synergies.get("cost_synergies", {})
+    revenue_synergies = synergies.get("revenue_synergies", {})
+    dis_synergies = synergies.get("dis_synergies", {})
+    run_rate_cost_synergies = max([float(v or 0.0) for v in cost_synergies.values()], default=None) if isinstance(cost_synergies, dict) else None
+    run_rate_revenue_synergies = max([float(v or 0.0) for v in revenue_synergies.values()], default=None) if isinstance(revenue_synergies, dict) else None
+    run_rate_dis_synergies = max([float(v or 0.0) for v in dis_synergies.values()], default=None) if isinstance(dis_synergies, dict) else None
+    periods = plan.get("periods") if isinstance(plan.get("periods"), list) else []
+    updates: dict[str, Any] = {
+        "B6": meta.get("acquirer"),
+        "B7": meta.get("target"),
+        "B8": announcement_year(plan),
+        "B9": announcement_year(plan),
+        "B10": len(periods) or None,
+        "B11": acquirer.get("share_price"),
+        "B12": acquirer.get("diluted_shares"),
+        "B13": acquirer.get("diluted_shares"),
+        "B14": value_at(acquirer.get("eps"), period),
+        "B15": transaction.get("offer_price") or target.get("offer_price"),
+        "B16": target.get("undisturbed_price"),
+        "B17": target.get("diluted_shares"),
+        "B18": target_net_debt,
+        "B20": consideration.get("cash_percent"),
+        "B21": consideration.get("stock_percent"),
+        "B22": consideration.get("other_percent"),
+        "B23": financing.get("new_debt"),
+        "B24": financing.get("debt_interest_rate"),
+        "B25": financing.get("lost_cash_interest_rate"),
+        "B26": transaction.get("tax_rate") or target.get("tax_rate") or acquirer.get("tax_rate"),
+        "B27": safe_div(value_at(cost_synergies, periods[0] if len(periods) > 0 else None), run_rate_cost_synergies),
+        "B28": safe_div(value_at(cost_synergies, periods[1] if len(periods) > 1 else None), run_rate_cost_synergies),
+        "B29": safe_div(value_at(cost_synergies, periods[2] if len(periods) > 2 else None), run_rate_cost_synergies) or 1.0,
+        "B31": intangible_value,
+        "B32": intangible_life,
+        "B33": purchase_accounting.get("ppe_step_up"),
+        "B34": purchase_accounting.get("ppe_step_up_life"),
+        "B36": safe_div(transaction.get("fees", {}).get("financing_fees"), financing.get("new_debt")),
+        "B37": safe_div(transaction.get("fees", {}).get("transaction_fees"), transaction_enterprise_value(plan)),
+        "B38": "Base",
+        "B51": run_rate_cost_synergies,
+        "B52": run_rate_revenue_synergies,
+        "B53": synergies.get("revenue_synergy_margin"),
+        "B54": run_rate_dis_synergies,
+        "B55": 1.0,
+        "B57": purchase_accounting.get("target_book_equity") or target.get("book_equity"),
+        "B58": purchase_accounting.get("inventory_step_up"),
+        "B59": transaction.get("required_min_cash"),
+        "B60": transaction.get("other_debt_like_items"),
+        "B61": financing.get("other_financing") or 0.0,
+    }
+    clean_updates = {cell: value for cell, value in updates.items() if value is not None}
+    for cell, value in updates.items():
+        if value is None:
+            missing.append(cell)
+    return clean_updates, missing
+
+
+def worksheet_target_for_sheet(template_path: Path, sheet_name: str) -> str:
+    with zipfile.ZipFile(template_path) as zf:
+        workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+        rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    rel_targets = {
+        rel.attrib["Id"]: rel.attrib["Target"]
+        for rel in rels.findall("rel:Relationship", NS)
+        if rel.attrib.get("Type", "").endswith("/worksheet")
+    }
+    for sheet in workbook.findall("m:sheets/m:sheet", NS):
+        if clean_sheet_name(sheet.attrib.get("name", "")) == sheet_name:
+            rel_id = sheet.attrib.get(f"{{{OFFICE_REL_NS}}}id")
+            target = rel_targets.get(rel_id or "")
+            if not target:
+                break
+            return "xl/" + target.lstrip("/")
+    raise ValueError(f"could not find worksheet target for sheet: {sheet_name}")
+
+
+def patch_cell(cell: ET.Element, value: Any) -> None:
+    # Preserve cell style and reference while replacing the current value node.
+    for child in list(cell):
+        cell.remove(child)
+    if isinstance(value, str):
+        cell.set("t", "inlineStr")
+        inline = ET.SubElement(cell, f"{{{MAIN_NS}}}is")
+        text = ET.SubElement(inline, f"{{{MAIN_NS}}}t")
+        text.text = value
+        return
+    cell.attrib.pop("t", None)
+    v = ET.SubElement(cell, f"{{{MAIN_NS}}}v")
+    if isinstance(value, bool):
+        v.text = "1" if value else "0"
+    elif isinstance(value, int):
+        v.text = str(value)
+    elif isinstance(value, float):
+        v.text = f"{value:.12g}"
+    else:
+        v.text = str(value)
+
+
+def update_sheet_xml(xml_bytes: bytes, updates: dict[str, Any]) -> bytes:
+    ET.register_namespace("", MAIN_NS)
+    root = ET.fromstring(xml_bytes)
+    cells_by_ref = {
+        cell.attrib.get("r"): cell
+        for cell in root.findall(".//m:c", NS)
+        if cell.attrib.get("r")
+    }
+    for cell_ref, value in updates.items():
+        cell = cells_by_ref.get(cell_ref)
+        if cell is None:
+            continue
+        patch_cell(cell, value)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def write_workbook(template_path: Path, output_path: Path, updates: dict[str, Any], sheet_updates: dict[str, dict[str, Any]] | None = None) -> None:
+    control_panel_target = worksheet_target_for_sheet(template_path, "Control Panel")
+    worksheet_updates: dict[str, dict[str, Any]] = {control_panel_target: updates} if updates else {}
+    for sheet_name, cell_updates in (sheet_updates or {}).items():
+        if cell_updates:
+            worksheet_updates[worksheet_target_for_sheet(template_path, sheet_name)] = cell_updates
+    with zipfile.ZipFile(template_path, "r") as source:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as dest:
+                for item in source.infolist():
+                    payload = source.read(item.filename)
+                    if item.filename in worksheet_updates:
+                        payload = update_sheet_xml(payload, worksheet_updates[item.filename])
+                    dest.writestr(copy.copy(item), payload)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path.replace(output_path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Materialize the bundled banker formula workbook template from a merger model plan.")
+    parser.add_argument("plan", nargs="?", default=str(DEFAULT_PLAN), help="Optional plan.json used to populate Control Panel defaults.")
+    parser.add_argument("--template", default=str(DEFAULT_TEMPLATE), help="Path to banker_formula_workbook_template.xlsx.")
+    parser.add_argument("--output-dir", default=None, help=f"Directory for banker_formula_workbook.xlsx, {FORMULA_RUN_LOG_NAME}, and {MANIFEST_NAME}. Defaults to ./output.")
+    parser.add_argument("--no-plan-population", action="store_true", help="Copy the template without patching Control Panel cells from plan.json.")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    template_path = Path(args.template)
+    plan_path = Path(args.plan)
+    output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / "output"
+    output_path = output_dir / "banker_formula_workbook.xlsx"
+    run_log_path = output_dir / FORMULA_RUN_LOG_NAME
+    warnings: list[str] = []
+    hard_failures: list[str] = []
+    assumptions_applied: dict[str, Any] = {}
+    missing_inputs: list[str] = []
+    missing_input_items: list[dict[str, Any]] = []
+    posture_warning = ""
+
+    if not template_path.exists():
+        print(f"ERROR: template does not exist: {template_path}", file=sys.stderr)
+        return 1
+    plan: dict[str, Any] = {}
+    if plan_path.exists() and not args.no_plan_population:
+        plan = load_json(plan_path)
+        assumptions_applied, missing_inputs = control_panel_updates(plan)
+        missing_input_items = identify_missing_inputs(plan)
+        posture_warning = partial_context_warning(missing_input_items)
+    elif not args.no_plan_population:
+        warnings.append(f"plan file not found; emitted unpopulated template: {plan_path}")
+
+    source_note_updates: dict[str, Any] = {}
+    if posture_warning:
+        source_note_updates = {
+            "A15": "; ".join(item.get("item", "") for item in missing_input_items[:8]),
+            "A19": posture_warning,
+        }
+
+    write_workbook(template_path, output_path, assumptions_applied, {"Source Notes": source_note_updates})
+    inspection = inspect_workbook(output_path)
+    if not inspection["required_sheets_present"]:
+        hard_failures.append(f"missing required sheets: {inspection['missing_required_sheets']}")
+    if inspection["formula_count"] < MIN_FORMULA_COUNT:
+        hard_failures.append(f"formula count below threshold: {inspection['formula_count']} < {MIN_FORMULA_COUNT}")
+    if inspection["external_links"]:
+        hard_failures.append(f"external workbook links present: {inspection['external_links']}")
+    if not inspection["styles_present"]:
+        hard_failures.append("xl/styles.xml missing")
+    if missing_inputs:
+        warnings.append("some Control Panel cells were left at template defaults because matching plan fields were unavailable")
+    if posture_warning:
+        warnings.append(posture_warning)
+
+    run_log = {
+        "model_status": "template-ready" if not hard_failures else "not-decision-ready",
+        "workbook_mode": "banker_formula_workbook",
+        "artifact_level": "banker_formula_workbook",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "template_path": str(template_path),
+        "plan_path": str(plan_path) if plan_path.exists() else None,
+        "output_paths": {
+            "banker_formula_workbook": str(output_path),
+            "model_citations_json": str(output_dir / "model_citations.json"),
+            "banker_formula_workbook_run_log": str(run_log_path),
+            "manifest": str(output_dir / MANIFEST_NAME),
+        },
+        "assumptions_applied": assumptions_applied,
+        "missing_inputs": missing_inputs,
+        "missing_input_request": {
+            "posture_warning": posture_warning,
+            "items": missing_input_items,
+        },
+        "warnings": warnings,
+        "hard_failures": hard_failures,
+        "checks": {
+            "required_sheets_present": inspection["required_sheets_present"],
+            "styles_present": inspection["styles_present"],
+            "external_links_absent": not inspection["external_links"],
+            "formula_count_minimum_met": inspection["formula_count"] >= MIN_FORMULA_COUNT,
+        },
+        "workbook_inspection": inspection,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_citations = write_model_citations_for_workbook(output_dir / "model_citations.json", output_path)
+    run_log["model_citations_path"] = str(output_dir / "model_citations.json")
+    run_log["model_citation_count"] = len(model_citations)
+    write_json(run_log_path, run_log)
+    write_output_manifest(output_dir, run_log)
+
+    print(f"WROTE {output_path}")
+    print(f"WROTE {run_log_path}")
+    print(f"WROTE {output_dir / MANIFEST_NAME}")
+    print(f"SHEETS {inspection['sheet_count']}")
+    print(f"FORMULAS {inspection['formula_count']}")
+    return 0 if not hard_failures else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

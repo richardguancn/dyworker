@@ -185,7 +185,8 @@
       "dist/electron/host/**/*",
       "dist/electron/scripts/linux_computer_use.py",
       "dist/electron/scripts/macos_computer_use.js",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "builtin-plugins/curated/**/*"
     ],
     "directories": {
       "output": "output/electron",

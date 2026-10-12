@@ -1,0 +1,42 @@
+{
+  "company": "ExampleCo",
+  "as_of_date": "2026-05-18",
+  "buyers": [
+    {
+      "buyer": "Sponsor A",
+      "type": "Sponsor",
+      "status": "Contacted",
+      "priority": "A",
+      "owner": "Associate"
+    }
+  ],
+  "attendees": [
+    {
+      "name": "Jane MD",
+      "role": "Client CFO",
+      "likely_focus": "Valuation and process"
+    }
+  ],
+  "thesis_points": [
+    {
+      "point": "Durable category growth",
+      "evidence_status": "needs source"
+    }
+  ],
+  "page_plan": [
+    {
+      "page": 1,
+      "section": "Executive Summary",
+      "purpose": "Lead with thesis",
+      "source_status": "needs review"
+    }
+  ],
+  "slides": [
+    {
+      "slide": 1,
+      "title": "Executive Summary",
+      "purpose": "Lead with decision",
+      "source_status": "needs review"
+    }
+  ]
+}

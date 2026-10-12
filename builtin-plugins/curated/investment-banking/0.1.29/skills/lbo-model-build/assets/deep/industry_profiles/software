@@ -1,0 +1,16 @@
+{
+  "operating": {
+    "revenue": {
+      "model": "arr",
+      "revenue_recognition": "avg_arr"
+    },
+    "working_capital": {
+      "model": "days",
+      "ar_days": 50,
+      "ap_days": 30,
+      "include_inventory": false
+    },
+    "da": {"model": "pct_revenue", "pct": 0.025},
+    "capex": {"model": "pct_revenue", "pct": 0.025}
+  }
+}

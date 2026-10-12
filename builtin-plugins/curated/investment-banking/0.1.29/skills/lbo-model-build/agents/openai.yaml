@@ -1,0 +1,7 @@
+interface:
+  display_name: "LBO Model Build"
+  short_description: "Sponsor LBO model exports"
+  brand_color: "#1E3A8A"
+  default_prompt: "Use $lbo-model-build to build a sponsor-style LBO, acquisition financing case, or returns model export."
+policy:
+  allow_implicit_invocation: false

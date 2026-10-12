@@ -1,0 +1,5 @@
+.print-fixture { display: grid; gap: 24px; padding-block: 24px; }
+.print-fixture .fixture-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.print-fixture h1 { font-size: 26px; }
+.print-fixture .fixture-context { color: var(--secondary); }
+@media(max-width: 700px) { .print-fixture .fixture-pair { grid-template-columns: 1fr; } }

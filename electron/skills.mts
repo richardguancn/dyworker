@@ -177,3 +177,20 @@ export function mergeSkillRecords(storedSkills = [], fileSkills = [], overrides 
   }
   return merged;
 }
+
+export function formatSkillInstructions(skill) {
+  const location = skill.path ? `\n技能目录：${path.dirname(skill.path)}\n入口文件：${skill.path}` : '';
+  return `【${skill.name}】${skill.description || ''}${location}\n执行要求：\n${skill.instructions || ''}`;
+}
+
+// 每个插件至少披露一个入口，同名金融工作方法用插件名前缀区分。
+export function skillContextSummary(skills) {
+  const enabled = skills.filter(skill => skill && skill.enabled !== false);
+  const plugins = new Map();
+  for (const skill of enabled) {
+    if (skill.pluginId && (!plugins.has(skill.pluginId) || skill.pluginEntry)) plugins.set(skill.pluginId, skill);
+  }
+  const selected = [...enabled.filter(skill => !skill.pluginId).slice(0, 20), ...plugins.values()];
+  const lines = selected.map(skill => `- 【${skill.name}】（编号 ${skill.id || '无'}）：${String(skill.description || '').slice(0, 120)}`).join('\n');
+  return lines + (enabled.length > selected.length ? '\n还有其他工作方法可用；用 list_skills 查看完整列表，选择与当前任务相关的方法。' : '');
+}

@@ -1,0 +1,153 @@
+{
+  "dashboard_title": "Investment Banking HTML Report",
+  "entity": "ExampleCo",
+  "skill": "source-skill-slug",
+  "decision_question": "What should the senior banker focus on?",
+  "posture": "draft-ready-with-caveats",
+  "citation_policy": "block_for_senior",
+  "metadata": {
+    "readiness_posture": "draft-ready-with-caveats",
+    "citation_policy": "block_for_senior",
+    "accept_draft_citation_gaps": false,
+    "citation_gap_acceptance_reason": ""
+  },
+  "issuer": {
+    "ticker": "EXCO",
+    "name": "ExampleCo",
+    "accent_color": "#2f6f68",
+    "identity_color": "#2f6f68"
+  },
+  "hero": {
+    "eyebrow": "Investment Banking Dashboard",
+    "headline": "ExampleCo Decision Report",
+    "dek": "Decision-oriented view of the transaction read, evidence, open diligence, and next action.",
+    "callout_label": "Core Question",
+    "callout": "Replace with the source skill's conclusion.",
+    "citation_ids": ["src1"]
+  },
+  "snapshot": [
+    {
+      "label": "Decision Read",
+      "value": "Proceed to diligence",
+      "detail": "Keep valuation and customer concentration open.",
+      "status": "watch",
+      "citation_ids": ["src1"]
+    },
+    {
+      "label": "Cited Numeric",
+      "value": "$15.0B",
+      "detail": "Numeric values should become quiet citation links.",
+      "status": "positive",
+      "citations": ["src1"]
+    },
+    {
+      "label": "External Source",
+      "value": "June 30, 2026",
+      "detail": "External-only fallback opens in a new window.",
+      "status": "watch",
+      "source_url": "https://example.com/source",
+      "source_title": "External source title",
+      "as_of": "2026-05-16",
+      "excerpt": "Short source preview shown on hover."
+    }
+  ],
+  "model_citations": [
+    {
+      "id": "model-output:base-returns-irr-fy2030",
+      "title": "Base IRR",
+      "short_label": "Model: Model!I332",
+      "type": "model_cell",
+      "quality": "model_output",
+      "workbook_path": "model.xlsx",
+      "sheet": "Model",
+      "range": "I332",
+      "value": "20.2%",
+      "aliases": ["base irr", "irr", "20.2%"],
+      "notes": "Generated model output cell supporting a dashboard metric."
+    }
+  ],
+  "deliverable": {
+    "render_mode": "report_only",
+    "primary_artifact": "report.html",
+    "primary_artifact_type": "HTML report",
+    "executive_summary": [
+      "Replace with the MD-ready summary that should copy cleanly into email, memo, or deck notes.",
+      "Keep this field concise and source-backed; it remains part of the rendered report body."
+    ],
+    "utility_controls": {
+      "copy_full_report": true,
+      "print_pdf": true,
+      "open_primary_artifact": true
+    },
+    "hero_actions": [
+      {
+        "label": "Open Workbook",
+        "path": "model.xlsx",
+        "artifact_type": "XLSX workbook"
+      }
+    ],
+    "readiness_posture": "draft-ready-with-caveats",
+    "citation_policy": "block_for_senior",
+    "hero_callout": {
+      "headline": "ExampleCo Decision Report",
+      "summary": "Decision-oriented view of the transaction read, evidence, open diligence, and next action.",
+      "answer": "Replace with the source skill's conclusion.",
+      "confidence": "Medium",
+      "next_action": "Review missing inputs and update source support."
+    }
+  },
+  "report_body": [
+    {
+      "id": "summary",
+      "title": "Executive Summary",
+      "body": [
+        {
+          "text": "Replace with polished report text and cite non-numeric claims.",
+          "citation_ids": ["src1"]
+        },
+        {
+          "text": "Base IRR is 20.2% [model-output:base-returns-irr-fy2030]."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Decision Table",
+          "table_id": "decision-table",
+          "download_filename": "decision_table.csv",
+          "exportable": true,
+          "columns": ["Item", "Read", "Next Action"],
+          "rows": [
+            {
+              "Item": "Primary diligence item",
+              "Read": "Open",
+              "Next Action": "Assign owner and source request."
+            }
+          ]
+        }
+      ],
+      "citation_ids": ["src1"]
+    }
+  ],
+  "blocked_output_context": {
+    "blocked": false,
+    "blocking_reasons": [],
+    "missing_inputs": [],
+    "output_contract_expected": "Describe the requested final artifact when relevant.",
+    "what_was_generated_anyway": "HTML report shell with available context.",
+    "how_to_unblock": [],
+    "source_requests": []
+  },
+  "supporting_outputs": [],
+  "sources": [
+    {
+      "id": "src1",
+      "name": "Primary source",
+      "url": "https://example.com",
+      "date": "2026-05-16",
+      "type": "company",
+      "quality": "public_filing",
+      "notes": "Replace with the relevant filing, transcript, model, or banker diligence source."
+    }
+  ],
+  "assumptions": []
+}
