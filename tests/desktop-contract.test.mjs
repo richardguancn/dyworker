@@ -1248,6 +1248,20 @@ test("消息行虚拟化：mac 与 linux 都关闭 content-visibility", () => {
   );
 });
 
+test("顶栏会话工具默认不着色，只在菜单展开时显示选中底色", () => {
+  const layout = readSource(new URL("../src/layout.css", import.meta.url));
+  assert.match(layout, /\.reference-layout \.topbar \.conversation-tools-toggle \{[^}]*\}/);
+  // 基础规则里不能写 background，否则默认就是选中态
+  assert.doesNotMatch(layout, /\.conversation-tools-toggle \{[^}]*background/);
+  assert.match(layout, /\.conversation-tools-toggle\.active \{[^}]*background: var\(--sidebar-active\)/);
+  // 三个菜单任一展开时才挂 active
+  assert.match(app, /conversationToolsOpen \|\| branchMenuOpen \|\| commitPanelOpen \? "active"/);
+  // 右栏收起时顶栏按钮直接展开右栏，不再是下拉菜单
+  assert.match(app, /className="titlebar-panel-actions"/);
+  assert.match(app, /aria-label="展开右侧工具栏"[\s\S]{0,700}setRightPanelOpen\(true\)/);
+  assert.doesNotMatch(app, /className="titlebar-panel-actions"[\s\S]{0,700}\{toolPanelAddMenu\}/);
+});
+
 test("linux 保留窗口诊断与空白重载", () => {
   // 启动时记录窗口几何、显示器信息，便于真机定位“进程在但界面不显示”
   assert.match(main, /logWindowGeometry/);
@@ -1759,8 +1773,8 @@ test("main-process modules pass node --check syntax validation", async () => {
 });
 
 test("分支管理与提交推送端到端接线（Codex 风格）", () => {
-  // 顶栏分支按钮与下拉：搜索、当前分支打勾、创建并检出
-  assert.match(app, /className=\{`branch-button/);
+  // Git 入口移到会话工具菜单，保留分支管理功能。
+  assert.match(app, /aria-label="Git 信息"/);
   assert.match(app, /创建并检出新分支/);
   assert.match(app, /未提交：\{gitInfo\.uncommitted\} 个文件/);
   assert.match(app, /switchBranch/);
@@ -1785,8 +1799,8 @@ test("分支管理与提交推送端到端接线（Codex 风格）", () => {
 test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   // 初始没有任何标签页：浏览器只是菜单里的一个选项，用户选择之前什么都不打开（对照 Codex）
   assert.match(app, /useState<ToolPanelTab\[\]>\(\[\]\)/);
-  // 展开右侧面板且还没有标签页时展示菜单页
-  assert.match(app, /setToolPanelMenuOpen\(toolPanelTabs\.length === 0\)/);
+  // 收起时的加号直接展示全部可用面板，选择后再展开。
+  assert.match(app, /rightPanelOpen \? addMenuItems : toolPanelMenuItems\.filter/);
   // 菜单作为面板页面内容展示(对照 Codex),不是下拉浮层
   assert.match(app, /tool-panel-menu-page/);
   assert.doesNotMatch(app, /tool-panel-menu-host/);

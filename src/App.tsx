@@ -6193,9 +6193,8 @@ function SettingsDialog({
     <section className="settings-page" aria-label="设置" style={{ "--settings-sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <div className="settings-dialog settings-v2">
         <aside className="settings-nav" aria-label="设置导航">
-          <div className="settings-nav-heading"><h1>设置</h1>
-            <button className="icon-button subtle" type="button" onClick={onClose} aria-label="关闭设置"><X size={18} /></button>
-          </div>
+          {/* 不再放关闭按钮：Esc 与左侧图标栏都能退出设置。 */}
+          <div className="settings-nav-heading"><h1>设置</h1></div>
           <div className="settings-nav-search">
             <Search size={13} />
             <input aria-label="搜索设置" value={navQuery} placeholder="搜索设置…" onChange={(event) => setNavQuery(event.target.value)} />
@@ -6857,6 +6856,17 @@ function PanelLeftIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+function ConversationToolsIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.7} strokeLinecap="round" aria-hidden="true">
+      <circle cx="5.5" cy="6.5" r="3" />
+      <circle cx="5.5" cy="17.5" r="3" />
+      <path d="M13 6.5h8M13 17.5h8" />
+    </svg>
+  );
+}
+
 function PanelRightIcon({ size = 18 }: { size?: number }) {
   return (
     <svg
@@ -7126,6 +7136,7 @@ export function App() {
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
+  const [conversationToolsOpen, setConversationToolsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalMounted, setTerminalMounted] = useState(false);
@@ -7669,7 +7680,7 @@ export function App() {
   }, []);
 
   // 下拉菜单（会话项/顶栏/输入区“+”）：点击菜单容器之外或按 Esc 时关闭
-  const anyMenuOpen = railMenuOpen || sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen || queueMenuRunId !== null;
+  const anyMenuOpen = railMenuOpen || sessionMenuId !== null || workspaceMenuPath !== null || topMenuOpen || conversationToolsOpen || addMenuOpen || modelMenuOpen || approvalMenuOpen || toolPanelMenuOpen || toolPanelAddMenuOpen || browserMoreOpen || branchMenuOpen || commitPanelOpen || queueMenuRunId !== null;
   useEffect(() => {
     if (!anyMenuOpen) return;
     const closeAll = () => {
@@ -8540,6 +8551,7 @@ export function App() {
   useEffect(() => {
     setBranchMenuOpen(false);
     setCommitPanelOpen(false);
+    setConversationToolsOpen(false);
     void refreshGitInfo();
   }, [ready, composerWorkspacePath]);
 
@@ -12174,7 +12186,7 @@ export function App() {
   });
   const toolPanelAddMenu = toolPanelAddMenuOpen && (
     <div className="session-menu tool-panel-add-menu" role="menu" data-menu-root>
-      {addMenuItems.map((item) => (
+      {(rightPanelOpen ? addMenuItems : toolPanelMenuItems.filter(item => item.visible)).map((item) => (
         <button
           role="menuitem"
           className={item.active ? "active" : ""}
@@ -12287,7 +12299,7 @@ export function App() {
         className="icon-button subtle"
         aria-label="任务操作"
         title="任务操作"
-        onClick={() => setTopMenuOpen((value) => !value)}
+        onClick={() => { setTopMenuOpen((value) => !value); setConversationToolsOpen(false); setBranchMenuOpen(false); setCommitPanelOpen(false); setToolPanelAddMenuOpen(false); }}
       >
         <MoreHorizontal size={17} />
       </button>
@@ -12315,35 +12327,50 @@ export function App() {
     </div>
   );
 
-  const conversationHeader = (
-        <header className="topbar">
-          <div className="topbar-left">
-            <button
-              className="icon-button subtle sidebar-toggle"
-              aria-label="展开侧栏"
-              title="展开侧栏"
-              onClick={() => setSidebarOpen(true)}
-            >
-              {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
-              <PanelLeftIcon size={18} />
+  const conversationTools = (
+    <div className="conversation-tools-wrap" data-menu-root>
+      <button
+        className={`icon-button subtle conversation-tools-toggle ${conversationToolsOpen || branchMenuOpen || commitPanelOpen ? "active" : ""}`}
+        aria-label="会话工具"
+        title="会话工具"
+        aria-haspopup="menu"
+        aria-expanded={conversationToolsOpen || branchMenuOpen || commitPanelOpen}
+        onClick={() => {
+          setConversationToolsOpen(value => !value);
+          setBranchMenuOpen(false);
+          setCommitPanelOpen(false);
+          setTopMenuOpen(false);
+          setToolPanelAddMenuOpen(false);
+          void refreshGitInfo();
+        }}
+      >
+        <ConversationToolsIcon size={19} />
+      </button>
+      {conversationToolsOpen && (
+        <div className="session-menu conversation-tools-menu" role="menu" aria-label="会话工具">
+          {gitInfo && (
+            <button role="menuitem" className="conversation-tools-git" aria-label="Git 信息" onClick={() => {
+              setConversationToolsOpen(false);
+              toggleBranchMenu();
+            }}>
+              <GitBranch size={16} />
+              <span>Git 信息</span>
+              <small title={gitInfo.current}>{gitInfo.current}</small>
+              <ChevronRight size={14} />
             </button>
-            <Folder size={18} />
-            <strong>{activeSession?.title || "新任务"}</strong>
-          </div>
-          <div className="topbar-right no-drag">
-            {taskMenu}
-            {gitInfo && (
-              <div className="branch-menu-wrap" data-menu-root>
-                <button
-                  className={`branch-button ${branchMenuOpen || commitPanelOpen ? "active" : ""}`}
-                  aria-label="分支管理"
-                  title="分支管理与提交推送"
-                  onClick={toggleBranchMenu}
-                >
-                  <GitBranch size={15} />
-                  <span>{gitInfo.current}</span>
-                  <ChevronDown size={13} />
-                </button>
+          )}
+          <button role="menuitem" onClick={() => {
+            setConversationToolsOpen(false);
+            setConversationSearchOpen(true);
+            requestAnimationFrame(() => conversationSearchInputRef.current?.select());
+          }}>
+            <Search size={16} />
+            <span>搜索会话内容</span>
+            <kbd>{platform === "darwin" ? "⌘F" : "Ctrl+F"}</kbd>
+          </button>
+        </div>
+      )}
+      {gitInfo && (<>
                 {branchMenuOpen && (
                   <div className="branch-menu" role="menu" aria-label="分支管理">
                     <button className="branch-menu-action" role="menuitem" onClick={openCommitPanel}>
@@ -12463,21 +12490,29 @@ export function App() {
                     </div>
                   </div>
                 )}
-              </div>
-            )}
-            <button
-              className={`icon-button subtle ${conversationSearchOpen ? "active" : ""}`}
-              aria-label="搜索会话内容"
-              title="搜索会话内容：在当前会话的对话内容中查找（⌘F / Ctrl+F）"
-              onClick={() => {
-                setConversationSearchOpen(true);
-                requestAnimationFrame(() => conversationSearchInputRef.current?.select());
-              }}
-            >
-              <Search size={17} />
-            </button>
+      </>)}
+    </div>
+  );
 
+  const conversationHeader = (
+        <header className="topbar">
+          <div className="topbar-left">
+            <button
+              className="icon-button subtle sidebar-toggle"
+              aria-label="展开侧栏"
+              title="展开侧栏"
+              onClick={() => setSidebarOpen(true)}
+            >
+              {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
+              <PanelLeftIcon size={18} />
+            </button>
+            {Boolean(activeSession?.messages.length) && <Folder size={18} />}
+            <strong>{activeSession?.title || "新任务"}</strong>
           </div>
+          {Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
+            {taskMenu}
+            {conversationTools}
+          </div>}
         </header>
   );
 
@@ -12497,23 +12532,25 @@ export function App() {
             title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
         </div>
-        {!settingsOpen && !pluginsPageOpen && Boolean(activeSession?.messages.length) && platform !== "linux" && (
+        {!settingsOpen && !pluginsPageOpen && platform !== "linux" && (
           <div className="titlebar-conversation">{conversationHeader}</div>
         )}
         <div className="titlebar-right">
-            {!rightPanelOpen && (
-              <button
-                className="icon-button subtle tool-panel-toggle"
-                aria-label="展开右侧工具栏"
-                title="展开右侧工具栏"
-                onClick={() => {
-                  setRightPanelOpen(true);
-                  // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
-                  setToolPanelMenuOpen(toolPanelTabs.length === 0);
-                }}
-              >
-                <PanelRightIcon size={18} />
-              </button>
+            {!rightPanelOpen && !settingsOpen && !pluginsPageOpen && (
+              <div className="titlebar-panel-actions">
+                <button
+                  className="icon-button subtle tool-panel-toggle"
+                  aria-label="展开右侧工具栏"
+                  title="展开右侧工具栏"
+                  onClick={() => {
+                    setRightPanelOpen(true);
+                    // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
+                    setToolPanelMenuOpen(toolPanelTabs.length === 0);
+                  }}
+                >
+                  <PanelRightIcon size={18} />
+                </button>
+              </div>
             )}
           <div className="window-controls" aria-label="窗口控制">
             <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
@@ -13921,7 +13958,7 @@ export function App() {
             </div>
           ))}
           </div>
-          {!pristineMenuPage && toolPanelAddMenu}
+          {rightPanelOpen && !pristineMenuPage && toolPanelAddMenu}
           <div className="tool-panel-header-actions tool-panel-tabs-actions" data-menu-root>
             {!pristineMenuPage && (
               <button
@@ -13929,7 +13966,7 @@ export function App() {
                 aria-label="打开侧边操作"
                 title="打开侧边操作"
                 aria-expanded={toolPanelAddMenuOpen}
-                onClick={() => setToolPanelAddMenuOpen((value) => !value)}
+                onClick={() => { setToolPanelAddMenuOpen((value) => !value); setConversationToolsOpen(false); setBranchMenuOpen(false); setCommitPanelOpen(false); }}
               >
                 <Plus size={18} />
               </button>
@@ -13938,7 +13975,7 @@ export function App() {
               className="icon-button subtle"
               aria-label="收起右侧工具栏"
               title="收起右侧工具栏"
-              onClick={() => setRightPanelOpen(false)}
+              onClick={() => { setRightPanelOpen(false); setToolPanelAddMenuOpen(false); }}
             >
               <PanelRightIcon size={18} />
             </button>
