@@ -77,7 +77,6 @@ import {
   Scissors,
   ShieldAlert,
   SquarePlus,
-  Puzzle,
   SquarePen,
   SquareTerminal,
   Sparkles,
@@ -95,6 +94,7 @@ import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, Key
 import { createPortal } from "react-dom";
 import { applyReasoningStream } from "./reasoningStream";
 import { PluginsPage } from "./PluginsPage";
+import { PluginIcon } from "./PluginIcon";
 import { ModsPanelView } from './ModsPluginsPage';
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import type { PluginPanelRequest } from "./PluginSlotView";
@@ -5352,8 +5352,11 @@ function AppUpdateDialog({
 
 type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
 
+// 图标既可能是 lucide 的，也可能是应用内自绘的（如插件图标），只要求接受 size
+type SettingsNavIcon = (props: { size?: number; className?: string }) => ReactNode;
+
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
-const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: typeof Settings; keywords?: string[] }[] }[] = [
+const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: SettingsNavIcon; keywords?: string[] }[] }[] = [
   { group: "服务", items: [
     { id: "model", label: "模型服务", icon: Settings },
     { id: "voice", label: "语音转写", icon: Mic },
@@ -5367,7 +5370,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
     { id: "updates", label: "应用更新", icon: RefreshCw },
   ] },
   { group: "资源", items: [
-    { id: "plugins", label: "插件", icon: Puzzle, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
+    { id: "plugins", label: "插件", icon: PluginIcon, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
     { id: "memories", label: "记忆", icon: History },
     { id: "skills", label: "技能", icon: FileCode2 },
     { id: "skill-libraries", label: "技能库", icon: Globe },
@@ -12624,7 +12627,7 @@ export function App() {
         <button className={`rail-button sidebar-plugins-button ${settingsOpen && settingsTab === "plugins" ? "active" : ""}`}
           onClick={() => { setPluginsPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
           aria-label="插件" title="插件" aria-current={settingsOpen && settingsTab === "plugins" ? "page" : undefined}>
-          <Sparkles size={20} />
+          <PluginIcon size={20} />
         </button>
         <div className="rail-more-wrap" data-menu-root>
           <button className={`rail-button ${railMenuOpen ? "active" : ""}`} aria-label="更多菜单" title="更多"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Puzzle, RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
+import { PluginIcon } from './PluginIcon';
 import type { CuratedPluginRecord } from './types';
 
 export function CuratedPluginsPage({ onSkillsChanged }: { onSkillsChanged?: () => void }) {
@@ -48,7 +49,7 @@ export function CuratedPluginsPage({ onSkillsChanged }: { onSkillsChanged?: () =
     {error && <p className="plugin-row-error" role="alert">{error}</p>}
     <p className="plugins-catalog-notice">内置工作方法可直接启用。“制作插件”和“管理插件”适用于 DYWorker 本地插件，无需连接账号服务。</p>
     {shown.map(plugin => <article className="plugin-card" key={plugin.id} data-curated-plugin={plugin.id}>
-      <div className="plugin-card-icon"><Puzzle size={20} /></div><div className="plugin-card-body">
+      <div className="plugin-card-icon"><PluginIcon size={20} /></div><div className="plugin-card-body">
         <div className="plugin-card-title"><strong>{plugin.name}</strong><span className="plugin-tag">内置</span>
           <span className="plugin-tag">{plugin.local ? plugin.enabled ? '已启用' : '已停用' : '需要连接服务'}</span></div>
         <p className="plugin-card-desc">{plugin.summary}</p>

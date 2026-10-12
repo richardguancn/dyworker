@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, Loader2, Plus, Puzzle, RefreshCw, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { PluginIcon } from "./PluginIcon";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { filterCatalog, isInstalled, isVisibleInstalledPlugin } from "./pluginCatalog";
 import type {CatalogPlugin} from "./pluginCatalog";
@@ -289,7 +290,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
           const existing=entries.find(entry=>isInstalled(plugin,[entry]));
           const installed=existing&&bundleOf.get(existing.name)?.version===plugin.support.version;
           return <div className="plugin-card market" key={plugin.id}>
-            <div className="plugin-card-icon" style={{'--plugin-tile':tileColor(plugin.packageName)} as React.CSSProperties}><Puzzle size={20}/></div>
+            <div className="plugin-card-icon" style={{'--plugin-tile':tileColor(plugin.packageName)} as React.CSSProperties}><PluginIcon size={20}/></div>
             <div className="plugin-card-body">
               <div className="plugin-card-title"><button className="plugin-name-button" onClick={()=>{setError('');setNotice('');setDetailSelection({catalogId:plugin.id});}}>{plugin.displayName}</button><span className="plugin-tag ok"><Check size={11}/>已验证</span></div>
               <p className="plugin-card-desc">{plugin.summary}</p>
@@ -318,7 +319,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
           return (
             <div className="plugin-card" key={entry.id}>
               <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(entry.name) } as React.CSSProperties}>
-                <Puzzle size={18} />
+                <PluginIcon size={18} />
               </div>
               <div className="plugin-card-body">
                 <div className="plugin-card-title">

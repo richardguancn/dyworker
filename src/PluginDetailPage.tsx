@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, AlertTriangle, ExternalLink, Loader2, Puzzle } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ExternalLink, Loader2 } from 'lucide-react';
+import { PluginIcon } from './PluginIcon';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { CatalogPlugin } from './pluginCatalog';
@@ -71,7 +72,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
   return <section className="plugins-page plugin-detail-page" aria-label="插件详情">
     <button className="plugins-text-button plugin-detail-back" onClick={onBack}><ArrowLeft size={15} /> 返回插件列表</button>
     <header className="plugin-detail-header">
-      <div className="plugin-detail-icon"><Puzzle size={27} /></div>
+      <div className="plugin-detail-icon"><PluginIcon size={27} /></div>
       <div className="plugin-detail-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1>
         <div className="plugin-detail-tags">{version && <span className="plugin-tag">v{version}</span>}
           <span className="plugin-tag">{entry ? pluginStateLabel(entry) : '尚未安装'}</span>
