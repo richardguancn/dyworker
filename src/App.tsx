@@ -3650,24 +3650,31 @@ const ProcessTimeline = memo(function ProcessTimeline({
     : isStreaming
       ? "正在处理任务"
       : "用时已记录";
+  // 任务执行中直接平铺过程行（对标 Codex 执行中的排版：过程行与正文同一起始边，
+  // 顶部不出现折叠条）；只有任务结束、或用户主动收起后才显示「用时 XX 〉」折叠条。
+  const showTrigger = collapsed || !isStreaming;
+  if (!showTrigger && !activities.length && !hasReasoning) return null;
+  const showContent = showTrigger ? !collapsed : true;
 
   return (
-    <div className="process-collapse-container">
-      <button
-        type="button"
-        className="process-collapse-trigger"
-        onClick={() => onToggleCollapse(messageKey, !collapsed)}
-        aria-expanded={!collapsed}
-        title={collapsed ? "点击展开执行过程" : "点击收起执行过程"}
-      >
-        <span className="process-trigger-label">{triggerLabel}</span>
-        {collapsed ? (
-          <ChevronRight size={14} className="process-trigger-icon" />
-        ) : (
-          <ChevronDown size={14} className="process-trigger-icon" />
-        )}
-      </button>
-      {!collapsed && (
+    <div className={`process-collapse-container${showTrigger ? "" : " expanded-inline"}`}>
+      {showTrigger && (
+        <button
+          type="button"
+          className="process-collapse-trigger"
+          onClick={() => onToggleCollapse(messageKey, !collapsed)}
+          aria-expanded={!collapsed}
+          title={collapsed ? "点击展开执行过程" : "点击收起执行过程"}
+        >
+          <span className="process-trigger-label">{triggerLabel}</span>
+          {collapsed ? (
+            <ChevronRight size={14} className="process-trigger-icon" />
+          ) : (
+            <ChevronDown size={14} className="process-trigger-icon" />
+          )}
+        </button>
+      )}
+      {showContent && (
         <div className="process-timeline-content">
           {/* 旧消息兼容：如果 activities 中没有 thinking 项，但 message.reasoning 存在，在此渲染思考 */}
           {Boolean(hasReasoning && !activities.some((a) => a.kind === "thinking")) && (
@@ -13167,6 +13174,17 @@ export function App() {
                         collapsedActivities={collapsedActivities}
                         onToggleCollapse={toggleActivityCollapse}
                       />
+                      {message.content && (
+                        <InteractiveMessage
+                          content={stripControlMarkersCached(message.content)}
+                          streaming={isStreamingMessage}
+                        />
+                      )}
+                      {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
+                        {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
+                          attachment={attachment} onPreview={payload => openImagePreview(payload, assistantImages)} />)}
+                      </div>}
+                      {/* 改动文件卡片固定放在最后（对标 Codex：过程折叠条 → 结论 → 修改的文件） */}
                       {Boolean(message.changes?.length) && (
                         <ChangesSummary
                           changes={message.changes!}
@@ -13179,16 +13197,6 @@ export function App() {
                           }}
                         />
                       )}
-                      {message.content && (
-                        <InteractiveMessage
-                          content={stripControlMarkersCached(message.content)}
-                          streaming={isStreamingMessage}
-                        />
-                      )}
-                      {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
-                        {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
-                          attachment={attachment} onPreview={payload => openImagePreview(payload, assistantImages)} />)}
-                      </div>}
                       {!hideAssistantActions && (
                         <div className="message-actions assistant" aria-label="助手消息操作">
                           {Boolean(messageVisibleText(message).trim()) && (
