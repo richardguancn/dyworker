@@ -5735,6 +5735,7 @@ function SettingsDialog({
   value,
   onClose,
   onSave,
+  saveErrorRef,
   memories,
   onDeleteMemory,
   onEditMemory,
@@ -5773,6 +5774,7 @@ function SettingsDialog({
   value: ProviderSettings;
   onClose: () => void;
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
+  saveErrorRef: React.MutableRefObject<string>;
   memories: WikiMemoryPage[];
   onDeleteMemory: (id: string) => void;
   onEditMemory: (row: WikiMemoryRow) => void;
@@ -5806,6 +5808,8 @@ function SettingsDialog({
   const [draft, setDraft] = useState(value);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
   const [saving, setSaving] = useState(false);
+  // 保存结果就地提示：设置已是整页界面，保存后不关闭，因此需要有页面内的反馈
+  const [saveStatus, setSaveStatus] = useState<{ text: string; failed: boolean } | null>(null);
   const [navQuery, setNavQuery] = useState("");
   const [profileId, setProfileId] = useState(() => (
     (value.profiles || []).find((item) => item.endpoint === value.endpoint && item.model === value.model)?.id || ""
@@ -5842,6 +5846,17 @@ function SettingsDialog({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  // 保存成功提示：自动消失，避免停留在设置页时一直亮着
+  const saveStatusTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (saveStatusTimer.current !== null) window.clearTimeout(saveStatusTimer.current);
+  }, []);
+  const flashSaveStatus = (text: string, failed = false) => {
+    setSaveStatus({ text, failed });
+    if (saveStatusTimer.current !== null) window.clearTimeout(saveStatusTimer.current);
+    saveStatusTimer.current = window.setTimeout(() => setSaveStatus(null), failed ? 6000 : 2600);
+  };
 
   const runCredentialProbe = async () => {
     if (!draft.endpoint.trim() || !draft.model.trim()) {
@@ -6180,13 +6195,26 @@ function SettingsDialog({
     event.preventDefault();
     if (tab === "model" && !modelComplete) return;
     setSaving(true);
+    setSaveStatus(null);
     const nextDraft = tab === "model" ? saveCurrentModel(draft) : draft;
     const saved = await onSave(
       nextDraft,
       tab === "model" ? "模型服务已保存并启用" : "设置已保存",
     );
     setSaving(false);
-    if (saved) onClose();
+    if (!saved) {
+      flashSaveStatus(`保存失败：${saveErrorRef.current || "请重试"}`, true);
+      return;
+    }
+    // 设置是整页界面：保存后留在原页，只就地提示结果
+    if (tab === "model") {
+      setDraft(nextDraft);
+      const active = (nextDraft.profiles || []).find(
+        (item) => item.endpoint === nextDraft.endpoint && item.model === nextDraft.model,
+      );
+      setProfileId(active?.id || "");
+    }
+    flashSaveStatus(tab === "model" ? "模型服务已保存并启用" : "设置已保存");
   };
 
   return (
@@ -6784,6 +6812,7 @@ function SettingsDialog({
         <p className="dialog-note">切换服务商后只需核对模型名称并填入密钥。文本、图片附件和语音转写使用兼容 OpenAI 格式的服务。</p>
         </>)}
         <div className="dialog-actions">
+          <span className={`settings-save-status${saveStatus?.failed ? " error" : ""}`} role="status">{saveStatus?.text || ""}</span>
           <button type="button" className="button-secondary" onClick={onClose}>取消</button>
           <button type="submit" className="button-primary" disabled={saving || (tab === "model" && !modelComplete)}>
             {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
@@ -11494,31 +11523,37 @@ export function App() {
     }
   };
 
+  // 最近一次保存失败的原因：设置页整页展示时用于就地提示（聊天区提示条此时不可见）
+  const settingsSaveErrorRef = useRef("");
+
   const saveProviderSettings = async (nextSettings: ProviderSettings, successMessage = "设置已保存") => {
-    if (bootstrapFailedRef.current) {
-      setError("启动时未能读到本地配置，已阻止保存以免覆盖磁盘上的数据；请重启应用后重试。");
+    const failSave = (message: string) => {
+      // 设置是整页界面，聊天区的错误条在设置页打开时不可见，把原因一并留给设置页就地提示
+      settingsSaveErrorRef.current = message;
+      setError(message);
       return false;
+    };
+    if (bootstrapFailedRef.current) {
+      return failSave("启动时未能读到本地配置，已阻止保存以免覆盖磁盘上的数据；请重启应用后重试。");
     }
     // 桥接缺失必须报错而不是"保存成功"：window.dyworker?.saveSettings 是可选链，
     // 没有 preload 时会静默返回 undefined，被当成保存成功——用户看到「设置已保存」，
     // 磁盘上一个字都没写（设置里改不动的现场）。浏览器里单独跑界面预览时没有桥接
     // 属于正常情况，那种场景不报错。
     if (!window.dyworker?.saveSettings && /Electron\//.test(navigator.userAgent)) {
-      setError("桌面桥接没有加载（preload 缺失），设置无法写入磁盘。请重新构建并重启 DYWorker；若重启后依旧如此，说明安装包不完整。");
-      return false;
+      return failSave("桌面桥接没有加载（preload 缺失），设置无法写入磁盘。请重新构建并重启 DYWorker；若重启后依旧如此，说明安装包不完整。");
     }
     try {
+      settingsSaveErrorRef.current = "";
       const result = await window.dyworker?.saveSettings(nextSettings);
       if (result && !result.ok) {
-        setError(result.error || "模型设置保存失败");
-        return false;
+        return failSave(result.error || "模型设置保存失败");
       }
       setSettings({ ...nextSettings, updateUrl: result?.updateUrl || nextSettings.updateUrl });
       setNotice(successMessage);
       return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : String(saveError));
-      return false;
+      return failSave(saveError instanceof Error ? saveError.message : String(saveError));
     }
   };
 
@@ -14496,6 +14531,7 @@ export function App() {
           value={settings}
           onClose={() => setSettingsOpen(false)}
           onSave={saveProviderSettings}
+          saveErrorRef={settingsSaveErrorRef}
           memories={memories}
           onDeleteMemory={(id) => {
             setMemories((current) => current.map((page) => ({ ...page, rows: page.rows.filter((row) => row.id !== id) })));

@@ -7,7 +7,7 @@ export class HttpMcpClient extends McpClient {
   async connect() {
     const url = new URL(this.config.url);
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('MCP URL 需要以 http:// 或 https:// 开头');
-    this.client = new Client({name: 'dyworker', version: '0.2.2'}, {capabilities: {}});
+    this.client = new Client({name: 'dyworker', version: '0.3.0'}, {capabilities: {}});
     this.transport = new StreamableHTTPClientTransport(url, {requestInit: {headers: this.config.headers || {}}, reconnectionOptions: {maxRetries: 0, maxReconnectionDelay: 1000, initialReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1}});
     try {
       await this.client.connect(this.transport, {timeout: this.requestTimeoutMs});

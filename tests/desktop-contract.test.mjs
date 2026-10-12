@@ -1957,5 +1957,7 @@ test("渲染端：引导失败后禁止任何写回", () => {
   // 会话的两处保存（常规防抖 + 流式兜底）都必须带闸门
   const saveGuards = app.match(/if \(!ready \|\| !window\.dyworker \|\| bootstrapFailedRef\.current/g) || [];
   assert.ok(saveGuards.length >= 3, `会话与置顶的保存路径都应带闸门，实际 ${saveGuards.length} 处`);
-  assert.match(app, /if \(bootstrapFailedRef\.current\) \{\n\s+setError\("启动时未能读到本地配置/, "手动保存设置也要被拦住");
+  // 保存失败的原因既要进错误条，也要留给设置页就地提示（设置改成整页后错误条被遮住）
+  assert.match(app, /if \(bootstrapFailedRef\.current\) \{\n\s+return failSave\(/, "手动保存设置也要被拦住");
+  assert.match(app, /settingsSaveErrorRef\.current = message/, "保存失败原因要交给设置页");
 });

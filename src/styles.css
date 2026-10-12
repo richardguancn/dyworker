@@ -11909,6 +11909,23 @@ html.native-window-frame .titlebar {
   background: var(--sidebar-hover);
 }
 
+/* 设置页保存结果提示：整页界面保存后不关闭，结果就地显示在按钮左侧 */
+.settings-save-status {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  color: var(--muted);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.settings-save-status.error {
+  color: #91463e;
+}
+
+html[data-theme="dark"] .settings-save-status.error {
+  color: #f0a098;
+}
+
 /* ---- Codex 风格右侧面板重构：+ 下拉菜单 / Git 审阅分栏 / 文件分栏 / 浏览器更多菜单 / 导入对话框 ---- */
 
 /* + 按钮的下拉菜单（对照 Codex 新标签页菜单）；+ 按钮本身在右侧 actions 里，
