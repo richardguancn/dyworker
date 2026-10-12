@@ -6030,19 +6030,20 @@ body.resizing-panels .app-shell {
 .context-ring-tooltip {
   position: absolute;
   z-index: 36;
-  right: -18px;
+  right: -6px;
   bottom: calc(100% + 10px);
   display: grid;
   width: max-content;
-  max-width: 280px;
-  gap: 3px;
-  padding: 10px 12px;
+  /* 宽度随内容走，上限 320px；实际弹出时由组件按输入框余量再收一次 */
+  max-width: 320px;
+  gap: 4px;
+  padding: 9px 12px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  border-radius: 12px;
   background: #30312f;
-  box-shadow: 0 8px 24px rgba(30, 31, 28, 0.22);
-  color: #f5f5f2;
-  font-size: calc(12px * var(--font-ui-scale, 1));
+  box-shadow: 0 10px 26px rgba(30, 31, 28, 0.24);
+  color: #d9dbd4;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
   line-height: 1.45;
   opacity: 0;
   pointer-events: none;
@@ -6050,15 +6051,47 @@ body.resizing-panels .app-shell {
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
-.context-ring-tooltip strong {
-  font-size: calc(14px * var(--font-ui-scale, 1));
+/* 标题行：左边窗口名、右边百分比，读起来是"一行说清用了多少" */
+.context-tip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 1px;
+}
+
+.context-tip-title {
+  color: #b4b7af;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  letter-spacing: 0.02em;
+}
+
+.context-tip-percent {
+  color: #f7f8f5;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
   font-weight: 620;
 }
 
-.context-ring-tooltip small {
-  max-width: 250px;
-  color: #bdbfba;
+.context-tip-percent.warn {
+  color: #e9bd6a;
+}
+
+.context-tip-percent.danger {
+  color: #f0a49c;
+}
+
+.context-tip-line {
+  color: #cfd1ca;
+}
+
+/* 估算说明与上面的读数用一条分隔线分组，避免和实测值混读 */
+.context-tip-note {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: #a8aba3;
   font-size: calc(10.5px * var(--font-ui-scale, 1));
+  line-height: 1.4;
 }
 
 .context-ring:hover .context-ring-tooltip,

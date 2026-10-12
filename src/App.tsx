@@ -4763,10 +4763,36 @@ function ContextRing({ used, limit, exact, stats }: {
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
   const level = ratio >= 0.95 ? "danger" : ratio >= 0.8 ? "warn" : "ok";
+  const ringRef = useRef<HTMLSpanElement | null>(null);
+  // 圆环在输入框左侧工具组的最右边，气泡默认向左展开会超出输入框、被侧栏盖住。
+  // 弹出前量一次可用空间：朝余量大的一侧展开，并把最大宽度收到输入框内边距之间，
+  // 内容长时换成多行，而不是溢出到别的面板后面。
+  const [placement, setPlacement] = useState<{ side: "left" | "right"; maxWidth: number } | null>(null);
+  const placeTooltip = useCallback(() => {
+    const ring = ringRef.current;
+    const card = ring?.closest(".composer-card") as HTMLElement | null;
+    if (!ring || !card) return;
+    const ringBox = ring.getBoundingClientRect();
+    const cardBox = card.getBoundingClientRect();
+    const cardStyle = getComputedStyle(card);
+    const inset = (value: string) => Number.parseFloat(value) || 0;
+    const contentLeft = cardBox.left + inset(cardStyle.borderLeftWidth) + inset(cardStyle.paddingLeft);
+    const contentRight = cardBox.right - inset(cardStyle.borderRightWidth) - inset(cardStyle.paddingRight);
+    const roomLeft = Math.max(0, ringBox.left - contentLeft);
+    const roomRight = Math.max(0, contentRight - ringBox.right);
+    const side: "left" | "right" = roomRight >= roomLeft ? "right" : "left";
+    // 朝该侧展开时可用宽度 = 该侧余量 + 圆环自身宽度 + 气泡越过圆环边缘的 6px；
+    // 空间实在不够时保底 180px，宁可轻微越界也不把整段文字挤成一列
+    const room = (side === "right" ? roomRight : roomLeft) + ringBox.width + 6;
+    setPlacement({ side, maxWidth: Math.max(180, Math.min(320, Math.round(room))) });
+  }, []);
   return (
     <span
       className={`context-ring ${level}`}
+      ref={ringRef}
       tabIndex={0}
+      onMouseEnter={placeTooltip}
+      onFocus={placeTooltip}
       aria-label={`上下文窗口：${summary.percentLabel} 已用，已用 ${summary.usedLabel} 标记，共 ${summary.limitLabel}`}
     >
       <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
@@ -4785,18 +4811,33 @@ function ContextRing({ used, limit, exact, stats }: {
       </svg>
       <span className="context-ring-text">{percent === 0 && used > 0 ? "<1%" : `${percent}%`}</span>
       {stats && stats.requests > 0 && (
-        <span className="context-ring-tokens" title={`本会话累计 ${stats.requests} 次请求：输入 ${formatTokenCount(stats.prompt)} + 输出 ${formatTokenCount(stats.completion)} tokens`}>
+        <span className="context-ring-tokens">
           {formatTokenCount(stats.prompt + stats.completion)}
         </span>
       )}
-      <span className="context-ring-tooltip" role="tooltip">
-        <span>上下文窗口：</span>
-        <strong>{summary.percentLabel} 已用</strong>
-        <span>已用 {summary.usedLabel} 标记，共 {summary.limitLabel}</span>
+      <span
+        className="context-ring-tooltip"
+        role="tooltip"
+        style={placement
+          ? {
+            maxWidth: `${placement.maxWidth}px`,
+            left: placement.side === "right" ? "-6px" : "auto",
+            right: placement.side === "right" ? "auto" : "-6px",
+          }
+          : undefined}
+      >
+        <span className="context-tip-head">
+          <span className="context-tip-title">上下文窗口</span>
+          <strong className={`context-tip-percent ${level}`}>{summary.percentLabel} 已用</strong>
+        </span>
+        <span className="context-tip-line">已用 {summary.usedLabel} 标记，共 {summary.limitLabel}</span>
         {stats && stats.requests > 0 && (
-          <span>本会话累计：输入 {formatTokenCount(stats.prompt)} + 输出 {formatTokenCount(stats.completion)} tokens（{stats.requests} 次请求）</span>
+          <>
+            <span className="context-tip-line">本会话累计 {stats.requests} 次请求</span>
+            <span className="context-tip-line">输入 {formatTokenCount(stats.prompt)} · 输出 {formatTokenCount(stats.completion)} tokens</span>
+          </>
         )}
-        {!exact && <small>当前为估算值，发送任务后按服务返回值更新</small>}
+        {!exact && <small className="context-tip-note">当前为估算值，发送任务后按服务返回值更新</small>}
       </span>
     </span>
   );
