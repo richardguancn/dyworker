@@ -42,7 +42,9 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
-  overflow: hidden;
+  /* hidden 仍允许 focus/scrollIntoView 改变滚动位置，导致整页左移。
+     窗口外框不负责滚动；消息、设置和标签栏保留各自的滚动区域。 */
+  overflow: clip;
 }
 
 body {

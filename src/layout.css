@@ -207,6 +207,11 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
 .reference-layout.sidebar-collapsed .sidebar,
 .reference-layout.right-panel-collapsed .tool-panel { visibility: hidden; }
 
+/* 收起后网格宽度为零，子内容不能继续撑出窗口的可滚动范围。
+   只裁剪收起的面板，展开时仍允许菜单跨越面板边界。 */
+.reference-layout.sidebar-collapsed .sidebar,
+.reference-layout.right-panel-collapsed .tool-panel { overflow: clip; }
+
 .reference-layout .composer-project-bar > .composer-context-item { color: var(--ink); }
 /* Keep the existing custom background and glass settings visible through the frame. */
 html[data-translucent="true"] .reference-layout { background: transparent; }
@@ -389,7 +394,7 @@ html .settings-page .mcp-server-row .skill-switch { display: flex; margin: 0; fl
 .reference-layout:not(.right-panel-collapsed) .titlebar-conversation { right: calc(var(--tool-panel-width) + var(--frame-gap)); }
 /* 右侧容器跨到标题栏；透明底色必须覆盖浏览器模式及深色主题的旧背景规则。
    内容底色只由下方 .tool-panel-scroll 承载，整条窗口标题栏共用外层材质。 */
-html .reference-layout .tool-panel { grid-row: 1 / 3; border-left: 0; background: transparent; }
+html .app-shell.reference-layout .tool-panel { grid-row: 1 / 3; border-left: 0; background: transparent; }
 .reference-layout .tool-panel::before { content: ""; position: absolute; z-index: 4; top: 12px; left: 0; height: 20px; border-left: 1px solid var(--layout-divider); pointer-events: none; }
 .reference-layout .tool-panel-scroll { background: var(--surface); border-left: 1px solid var(--layout-divider); border-radius: 0 12px 12px 0; }
 .reference-layout .titlebar-right { position: relative; z-index: 6; }
