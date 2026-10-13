@@ -108,8 +108,8 @@ export function AppearanceSettingsPanel() {
 // ---- 主题 ----
 
 const DOCK_ICONS = [
-  { id: "dark", label: "深色 Dock 图标", src: new URL("../../build/dyworker.svg", import.meta.url).href },
-  { id: "light", label: "浅色 Dock 图标", src: new URL("../../build/dyworker-light.svg", import.meta.url).href },
+  { id: "dark", label: "深色 Dock 图标", src: new URL("../../build/dock-dark.png", import.meta.url).href },
+  { id: "light", label: "浅色 Dock 图标", src: new URL("../../build/dock-light.png", import.meta.url).href },
 ] as const;
 
 function DockIconSection({ draft }: { draft: AppearanceSettings }) {

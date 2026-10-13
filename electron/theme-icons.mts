@@ -13,7 +13,7 @@ export function createDockIconController({ platform, directory, nativeImage, get
         const dock = getDock?.();
         if (!dock) return false;
         if (!images.has(name)) {
-          const file = name === "dark" ? "dock-dark.png" : "icon-light.png";
+          const file = `dock-${name}.png`;
           const image = nativeImage.createFromPath(path.join(directory, file));
           if (image.isEmpty()) { warn(`[dyworker] 无法读取 ${name} Dock 图标`); return false; }
           images.set(name, image);

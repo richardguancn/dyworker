@@ -27,10 +27,9 @@ for (const asset of staticAssets) {
 }
 cpSync(path.join(root, "electron", "scripts"), path.join(outDir, "scripts"), { recursive: true });
 mkdirSync(path.join(outDir, "assets"), { recursive: true });
-for (const name of ["icon-light.png", "icon-dark.png"]) {
+for (const name of ["icon-light.png", "icon-dark.png", "dock-light.png", "dock-dark.png"]) {
   cpSync(path.join(root, "build", name), path.join(outDir, "assets", name));
 }
-cpSync(path.join(root, "build", "icon.png"), path.join(outDir, "assets", "dock-dark.png"));
 mkdirSync(path.join(outDir, 'host/dsh-runtime/vendor'), {recursive:true});
 cpSync(path.join(root, 'electron/host/dsh-runtime/vendor/session-history.mjs'),
   path.join(outDir, 'host/dsh-runtime/vendor/session-history.mjs'));
@@ -44,7 +43,7 @@ if (tsc.status !== 0) {
 }
 
 // 产物自检：桥接文件或入口缺失时明确失败，不要产出一个「界面能开、保存全哑」的包。
-const required = [...staticAssets, "main.mjs", "assets/icon-light.png", "assets/icon-dark.png", "assets/dock-dark.png", 'host/dsh-runtime/vendor/session-history.mjs'];
+const required = [...staticAssets, "main.mjs", "assets/icon-light.png", "assets/icon-dark.png", "assets/dock-light.png", "assets/dock-dark.png", 'host/dsh-runtime/vendor/session-history.mjs'];
 const missing = required.filter((asset) => !existsSync(path.join(outDir, asset)));
 if (missing.length) {
   console.error(`[build-electron] 产物缺少：${missing.join("、")}；渲染端会失去 window.dyworker 桥接，拒绝交付。`);

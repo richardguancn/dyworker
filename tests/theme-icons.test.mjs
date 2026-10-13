@@ -107,7 +107,7 @@ test("Mac Dock 图标可独立切换和恢复，深色使用原图，重复选�
     getDock: () => ({ setIcon: image => calls.push(image.file) }),
   });
   for (const choice of ["dark", "light", "light", "dark"]) assert.equal(icons.apply(choice), true);
-  assert.deepEqual(calls, ["dock-dark.png", "icon-light.png", "dock-dark.png"].map(file => path.join("/icons", file)));
+  assert.deepEqual(calls, ["dock-dark.png", "dock-light.png", "dock-dark.png"].map(file => path.join("/icons", file)));
   assert.equal(reads.length, 2);
 });
 
