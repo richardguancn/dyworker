@@ -93,17 +93,19 @@ test('实际父子任务的运行与完成提示跟随官方控制流，切换�
     }}));
   const rows=[...workers.keys()].map(id=>({id,runtime:'dsh',title:id,workspacePath:dir,messages:[{}]}));const host=new ClientPluginHost({sessionProvider:id=>rows.find(row=>row.id===id)});
   host.setCollections(()=>({items:rows,current:rows[0]}),()=>({items:[],current:null}));
-  const actualEvents=[];globalThis.dyworker={dshOperation:async input=>{try{return {ok:true,value:await workers.get(input.sessionId).request(input.action,input.payload)};}catch(error){return {ok:false,error};}}};
+  const actualEvents=[],addedRows=[];globalThis.dyworker={dshOperation:async input=>{try{return {ok:true,value:await workers.get(input.sessionId).request(input.action,input.payload)};}catch(error){return {ok:false,error};}}};
   t.after(async()=>{finish();await host.dispose();for(const worker of workers.values())await worker.close();globalThis.dyworker=previous;await fs.rm(dir,{recursive:true,force:true});});
   for(const worker of workers.values())await worker.start();
-  await host.load({name:'status-observer',inject:['remote'],apply(ctx){ctx.remote.$on('api-session/status',(id,running)=>actualEvents.push([id,running]));}},'status-observer');
+  // 子任务开跑的"运行中"有两种合法到达路径：发现早于开跑时是 api-session/status 事件；
+  // 发现晚于开跑时（慢机器上常见）按契约折叠进 api-session/added 的实时摘要，不再补放事件。
+  await host.load({name:'status-observer',inject:['remote'],apply(ctx){ctx.remote.$on('api-session/status',(id,running)=>actualEvents.push([id,running]));ctx.remote.$on('api-session/added',row=>addedRows.push(row));}},'status-observer');
   await host.selectMainSession('running-a');await host.openSessionHistory('running-a');await host.selectMainSession('running-b');await host.openSessionHistory('running-b');
   const pending=workers.get('running-a').request('prompt',{text:'启动真实父子任务'}),status=id=>host.ctx.uiSession.sessionStatus.getSnapshot().get(id);
   await until(()=>childId&&status(childId)?.running===true&&status('running-a')?.running===true);
   assert.equal(host.ctx.uiSession.adapter.current.getSnapshot().key,'running-b');assert.equal(calls,2);assert.equal(status('running-a').completionUnread,false);
   finish();await pending;await until(()=>status('running-a')?.running===false&&status(childId)?.running===false);
   assert.equal(calls,3);assert.equal(status('running-a').completionUnread,true);assert.equal(status(childId).completionUnread,true);assert.equal(status('running-b').completionUnread,false);
-  assert.ok(actualEvents.some(([id,running])=>id===childId&&running));assert.ok(actualEvents.some(([id,running])=>id===childId&&!running));
+  assert.ok(actualEvents.some(([id,running])=>id===childId&&running)||addedRows.some(row=>row.sessionId===childId&&row.running===true),'子任务开跑要么有状态事件、要么由发现摘要携带运行态');assert.ok(actualEvents.some(([id,running])=>id===childId&&!running));
   await host.selectMainSession('running-a');assert.equal(status('running-a').completionUnread,false);assert.equal(status(childId).completionUnread,true);
   const childReference=host.ctx.sessions.retain(host.ctx.sessions.subagentAddress(childId),{source:'detail'});await childReference.ready;t.after(()=>childReference.release());
   const childSource=host.ctx.uiSession.bindingSource(childReference);assert.equal(childSource.getSnapshot().props.sessionId,childId);assert.notEqual(childSource.getSnapshot().ctx,host.ctx.uiSession.adapter.current.getSnapshot().ctx);
