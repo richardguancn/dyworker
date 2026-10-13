@@ -12799,7 +12799,7 @@ export function App() {
         <div className="native-controls-space" />
         <div className={linuxLayout ? "sidebar-primary-row" : "sidebar-brand-row"}>
           {linuxLayout ? newTaskButton : <span className="brand-button" aria-label="DYWorker">
-            <AppLogo />
+            {platform !== "darwin" && <AppLogo />}
             <span>DYWorker</span>
           </span>}
           <div className="sidebar-brand-actions">
