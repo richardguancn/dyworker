@@ -5220,6 +5220,26 @@ test("compactConversation 摘要请求失败时熔断回退为直接省略，任
   assert.equal(messages[1].content, "原始任务");
 });
 
+test('少量超大消息也按容量压缩，保留全部系统约定、原始任务和最新要求', async () => {
+  const messages = [
+    { role: 'system', content: '系统提示' },
+    { role: 'system', content: '项目约定' },
+    { role: 'user', content: '原始任务' },
+    { role: 'assistant', content: '早前材料。'.repeat(10000) },
+    { role: 'user', content: '之前的补充要求。'.repeat(4000) },
+    { role: 'assistant', content: '之前的结论。'.repeat(4000) },
+    { role: 'user', content: '最新要求：继续核对，禁止发布' },
+  ];
+  const before = estimateMessagesTokens(messages);
+  const compacted = await compactConversation({ messages, settings, contextLimit: 16000,
+    fetchImpl: mockFetch([{ role: 'assistant', content: '早前材料和结论的简短摘要' }]) });
+  assert.equal(compacted, true);
+  assert.deepEqual(messages.slice(0, 3).map(m => m.content), ['系统提示', '项目约定', '原始任务']);
+  assert.equal(messages.at(-1).content, '最新要求：继续核对，禁止发布');
+  assert.match(messages[3].content, /简短摘要/);
+  assert.ok(estimateMessagesTokens(messages) < before / 10);
+});
+
 test("runAgent 上下文逼近模型上限时，首次模型请求前自动压缩早前会话", async () => {
   const root = await makeWorkspace();
   const calls = [];
@@ -5251,6 +5271,21 @@ test("runAgent 上下文逼近模型上限时，首次模型请求前自动压�
   const modelCall = calls[calls.length - 1];
   assert.match(JSON.stringify(modelCall.messages), /上下文压缩/, "正式请求应使用压缩后的摘要继续");
   assert.ok(!modelCall.messages.some((message) => String(message.content || "").includes("第1条用户消息")), "早前原始消息不再逐条发送（原始任务除外）");
+});
+
+test('百万窗口达到约八成时提前压缩，不等到接近百分之百', async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  const conversation = [{ role: 'user', content: '原始任务：核对资料' },
+    ...Array.from({ length: 9 }, () => ({ role: 'assistant', content: '材'.repeat(100000) })),
+    { role: 'user', content: '继续核对最新要求' }];
+  const result = await runAgent({ settings, workspacePath: root, conversation, contextLimit: 1048576,
+    fetchImpl: mockFetch([{ role: 'assistant', content: '已核对资料，接着处理最新要求。' },
+      { role: 'assistant', content: '已完成核对。' }], calls) });
+  assert.equal(result.status, 'done');
+  assert.match(JSON.stringify(calls[0].messages), /上下文压缩器/);
+  assert.match(JSON.stringify(calls.at(-1).messages), /上下文压缩/);
+  assert.ok(estimateMessagesTokens(calls.at(-1).messages) < 262144, '压缩后只保留摘要和约两成窗口的近期消息');
 });
 
 test("老式 .doc 二进制文件经本机转换器读取（textutil/antiword/LibreOffice 探测链）", async (t) => {

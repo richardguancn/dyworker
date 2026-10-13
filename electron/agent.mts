@@ -4319,14 +4319,21 @@ async function requestAuxiliaryModel(options) {
 
 // 用一次独立的无工具模型请求把早前对话压缩为结构化摘要。
 // 保留系统提示、原始任务和最近 keepRecent 条消息；失败时省略早前记录，不中断任务。
-export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null, keepRecent = 12, networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
-  if (messages.length < keepRecent + 8) return false;
+export async function compactConversation({ messages, settings, fetchImpl, signal, onSummary = null, onUsage = null, keepRecent = 12, contextLimit = null, networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS }) {
+  const firstUser = messages.findIndex(message => message?.role === 'user');
+  const prefix = Math.max(2, firstUser + 1);
+  if (contextLimit && estimateMessagesTokens(messages) > contextLimit * 0.7) {
+    // 大消息不能只按条数保留：十二条记录本身可能已超过整个窗口。
+    keepRecent = Math.min(keepRecent, Math.max(1, messages.length - prefix - 1));
+    while (keepRecent > 1 && estimateMessagesTokens(messages.slice(-keepRecent)) > contextLimit * 0.2) keepRecent--;
+  } else if (messages.length < keepRecent + 8) return false;
   let cut = messages.length - keepRecent;
+  const latestUser = messages.findLastIndex(message => message?.role === 'user');
+  if (latestUser >= prefix) cut = Math.min(cut, latestUser);
   // 保留区不能以 tool 消息开头，也不能把 assistant(tool_calls) 与它的工具结果对切开
-  while (cut > 2 && (messages[cut]?.role === "tool" || (messages[cut - 1]?.role === "assistant" && messages[cut - 1]?.tool_calls?.length))) cut -= 1;
-  if (cut <= 2) return false;
-  const old = messages.slice(2, cut);
-  if (old.length < 4) return false;
+  while (cut > prefix && (messages[cut]?.role === "tool" || (messages[cut - 1]?.role === "assistant" && messages[cut - 1]?.tool_calls?.length))) cut -= 1;
+  if (cut <= prefix) return false;
+  const old = messages.slice(prefix, cut);
   const serialized = clipped(old.map((message) => {
     const body = contentForContext(message?.content);
     const calls = (message?.tool_calls || [])
@@ -4349,7 +4356,7 @@ export async function compactConversation({ messages, settings, fetchImpl, signa
   } catch {
     summary = `（早前 ${old.length} 条工作记录因上下文空间不足已省略；如需旧的文件内容请重新读取相应文件）`;
   }
-  messages.splice(2, cut - 2, { role: "user", content: `[上下文压缩] 以下是本次任务早前工作的摘要，请在此基础上继续：\n\n${summary}` });
+  messages.splice(prefix, cut - prefix, { role: "user", content: `[上下文压缩] 以下是本次任务早前工作的摘要，请在此基础上继续：\n\n${summary}` });
   onSummary?.(summary);
   return true;
 }
@@ -5674,10 +5681,11 @@ export async function runAgent({
         }
       }
       // 自动 compact 摘要：裁剪后仍逼近上限时，用独立模型请求把早前对话压缩为结构化摘要。
-      // 大上下文保持「上限 -15k」；小上下文服务器按比例（70%）提前触发，确保在服务端实际上限前压缩
-      if (estimateMessagesTokens(messages) > Math.max(Math.floor(contextLimit * 0.7), contextLimit - 15000)) {
+      // 留出 20% 余量，避免百万窗口一直等到接近 100% 才开始压缩。
+      if (estimateMessagesTokens(messages) > Math.floor(contextLimit * 0.8)) {
         const compacted = await withModelTimeout((signal) => compactConversation({
           messages,
+          contextLimit,
           settings,
           fetchImpl,
           signal,
@@ -5800,6 +5808,7 @@ export async function runAgent({
               }
               const compacted = await withModelTimeout((signal) => compactConversation({
                 messages,
+                contextLimit,
                 settings,
                 fetchImpl,
                 signal,
