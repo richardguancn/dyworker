@@ -1,32 +1,40 @@
 {
-  "repository": "https://github.com/FeiZhuLulu/DeepSeek-Bot",
-  "commit": "351ae74b1c1bef0c21bf914a2687046a526190ee",
-  "version": "0.1.0",
+  "repository": "https://github.com/Fei2411/DeepSeek-Bot",
+  "commit": "5c2726279d3bcabaad6aea403c46c88fcf9ba8d8",
+  "version": "0.1.4",
   "license": "Apache-2.0",
   "files": {
     "upstream/README.md": {
       "source": "ds-bot/README.md",
-      "sha256": "efe61fe2cc660f02aa6df2b16feeaff2aca22284d628d39dcad74d175b7a4e32"
+      "sha256": "73ecbfc82513873545c8bd69fa498c240e059ee196cf24876a8b1870d5f35e65"
     },
     "upstream/index.js": {
       "source": "ds-bot/index.js",
-      "sha256": "87cbab51117b71752358a51cb6cd1606bf830bd2139fba91988a374d26684314"
+      "sha256": "5a8cd26026bde533e2b540322352a0c27fe2ed20da61a579e8c157d5be006d29"
     },
     "upstream/package.json": {
       "source": "ds-bot/package.json",
-      "sha256": "a9e545193f17a5198fc8f9b05199bcaad1d984d42ad489f5e350dc9fa0c11fa7"
+      "sha256": "95a867b1b05e81e58e516536c92ec8e4e9bb9497a47f4062f7d0800e0aa166b0"
     },
     "upstream/src/host/agents.js": {
       "source": "ds-bot/src/host/agents.js",
       "sha256": "162860ce1d9d2950203b036f9e5df37c49af5acd5043b2a6e5bd2dff8a9dcbff"
     },
+    "upstream/src/host/approvals.js": {
+      "source": "ds-bot/src/host/approvals.js",
+      "sha256": "1067d1161bf9a61c8cf922942a5374f61c6104a8b79c393ef438758f97d5e838"
+    },
     "upstream/src/host/browser.js": {
       "source": "ds-bot/src/host/browser.js",
       "sha256": "a918f3869b8472fc7394de1255e370a762083e58f3cade58217adee9a8193134"
     },
+    "upstream/src/host/capabilities.js": {
+      "source": "ds-bot/src/host/capabilities.js",
+      "sha256": "609e148afabe0fefc376e1e54f5a8d477542806dcfb7ab6569938e1326a6d111"
+    },
     "upstream/src/host/channel.js": {
       "source": "ds-bot/src/host/channel.js",
-      "sha256": "14204f64b5875fcb9f7df80fa55154f639d69c462c11a72f7b954ae575140225"
+      "sha256": "0f128dabb0ec40c703809c2486918818658b496c0498350563cc26ed286369ba"
     },
     "upstream/src/host/chat-index.js": {
       "source": "ds-bot/src/host/chat-index.js",
@@ -38,47 +46,59 @@
     },
     "upstream/src/host/constants.js": {
       "source": "ds-bot/src/host/constants.js",
-      "sha256": "f8d63af3bc2890b44fbc159c2c7450d2eea432cd7ab50d839bea1b0e26cf7927"
+      "sha256": "8e5db3394ae487eadfd1fee66203dd31cd11e978b7c02fefbe61e6ddb6ebbbdf"
     },
     "upstream/src/host/delivery.js": {
       "source": "ds-bot/src/host/delivery.js",
-      "sha256": "b8b5cdeb7764a352de21267be4a017cce4af1367878c784933a5d12cc2c2747d"
+      "sha256": "4fac45b346fe52509e68055de52652aff5d3d2947f3ba96c4d2a8179a4f367e9"
     },
     "upstream/src/host/diagnostics.js": {
       "source": "ds-bot/src/host/diagnostics.js",
-      "sha256": "243bd2795424fddff71431c8b62d35850723bcf1155bf6cf0eb511532285d7e3"
+      "sha256": "406c6261fee2f98ce3b755631111017e32fe81b62c8205faee9d1eeb0b40fee8"
+    },
+    "upstream/src/host/dsh-update.js": {
+      "source": "ds-bot/src/host/dsh-update.js",
+      "sha256": "e3a993290242546f15b3a352bb95f878a83ad4a642bf802445f5f7db4888065d"
     },
     "upstream/src/host/groups.js": {
       "source": "ds-bot/src/host/groups.js",
-      "sha256": "60ef99595ea4102e91e6e5bebd5a7a24894cfd9026752fb60c17d2bbfd20835c"
+      "sha256": "d5978e64a8de83492c7d5dc8419417e1ccc791c37e4c8c5931721231896cd792"
     },
     "upstream/src/host/home-lock.js": {
       "source": "ds-bot/src/host/home-lock.js",
-      "sha256": "2b20ffd884be5c19460ec27e79b5cef20a90cebc5460bf059ed2c784b79f30f3"
+      "sha256": "cd85126464e8e81cbdf8f902d445003c84624920cb5a19303c0ab5092ec19ca8"
     },
     "upstream/src/host/images.js": {
       "source": "ds-bot/src/host/images.js",
-      "sha256": "ab7b377c87a62f0d7d5a00c5503bdf651bbf01334960046a8722aeedf1863866"
+      "sha256": "7673081dde0575a649f2c6a0aaac6dd41b4b31b1f65371f2145953205e19d26d"
     },
     "upstream/src/host/memory.js": {
       "source": "ds-bot/src/host/memory.js",
-      "sha256": "50940d59c44e8142b1d0642784504eb407baa40852a616f5889334c4e4711e2d"
+      "sha256": "1d10e6b7e7560282c8a0e355b806e69b80cf8f094530d9805ec7bec6a7333926"
     },
     "upstream/src/host/models.js": {
       "source": "ds-bot/src/host/models.js",
-      "sha256": "75bba612a2611c30ae57a87e4e89e9e7b2acb37e87f5e7cd7013bb1de4d524e1"
+      "sha256": "1dbbd6b3b2d7116f93b4e76d05a8c7ac182a14f2c1ef09e56e34f56a9dfc525d"
     },
     "upstream/src/host/parts.js": {
       "source": "ds-bot/src/host/parts.js",
-      "sha256": "ea59cec972aae95b506ad273d234f6948d23d0999f3df388728dc3efc35e637b"
+      "sha256": "d46c1e5d32c164267f359bd2c8039bf30e85cd3f3082c1872a3186e79695bade"
+    },
+    "upstream/src/host/permissions.js": {
+      "source": "ds-bot/src/host/permissions.js",
+      "sha256": "829f2d2d639ec8652759824cf7a05f70ed62453009a86be9f31ecd1075f0ce8e"
     },
     "upstream/src/host/prompt.js": {
       "source": "ds-bot/src/host/prompt.js",
-      "sha256": "1150479d00c9dc3ba930da451fbcfff6e189bd97ee08af6dc54ece7419270cb2"
+      "sha256": "0bf39cad16c9017663eb6dcc12a6628d5c8e14ff287f5dfc4b8ca1729040a204"
+    },
+    "upstream/src/host/resume.js": {
+      "source": "ds-bot/src/host/resume.js",
+      "sha256": "8ea747813c102df1d7d6b2544241a3b2e9b5d552d6f826108d7da5d023477149"
     },
     "upstream/src/host/roster.js": {
       "source": "ds-bot/src/host/roster.js",
-      "sha256": "7e4a02fb3f52624194f631b2bfa740ff0843ab1141db5051ff054de6f36e7ebc"
+      "sha256": "42875e3d29f0e79792f5f2c6c2757aca71a3e10f06d03924ee7400e4d65a15b4"
     },
     "upstream/src/host/schedules.js": {
       "source": "ds-bot/src/host/schedules.js",
@@ -86,7 +106,7 @@
     },
     "upstream/src/host/secrets.js": {
       "source": "ds-bot/src/host/secrets.js",
-      "sha256": "53e04ad7596687b75a408abbb24cf61d321417d63c17025d423b17f7c3f2b6c6"
+      "sha256": "0e3a387f1fc533521e8087a4a42730632732c9c78ba7035d361fb12f4fe481a9"
     },
     "upstream/src/host/steward.js": {
       "source": "ds-bot/src/host/steward.js",
@@ -94,27 +114,35 @@
     },
     "upstream/src/host/store.js": {
       "source": "ds-bot/src/host/store.js",
-      "sha256": "cbc080b720a69051089b65cd76ce33d2ac6d80bb8ed41c6adbe1168c8a45f6c9"
+      "sha256": "e7f9a6d967ce4a34c122aae91e741c769431aa73e5f908d9297278940df4d6f0"
     },
     "upstream/src/host/text.js": {
       "source": "ds-bot/src/host/text.js",
       "sha256": "dea9361865bc027c1c1fb97e9740ea928bed77872fe8224f0ae802709411f713"
     },
+    "upstream/src/host/time-context.js": {
+      "source": "ds-bot/src/host/time-context.js",
+      "sha256": "117d3edacdebd494384445c80da4837df4583f5271cfe56f5a165ae5612cc1cd"
+    },
     "upstream/src/host/tools.js": {
       "source": "ds-bot/src/host/tools.js",
-      "sha256": "4dc7828dcfbb385de5043271557f0bdc6e7e4fa0538958448ef9d50499b73901"
+      "sha256": "f60b15ba0f20d5038f4764ea5b8d064e9a2f2d780d9279eaee8a6fe5d776eb1e"
     },
     "upstream/src/host/turns.js": {
       "source": "ds-bot/src/host/turns.js",
-      "sha256": "2070dc01a4166385ef01d5255542ed2a584413ea638c5a403f38a16406754220"
+      "sha256": "66a73814a758bdf1ab3a82947bf3a90dc53f73c30666fe615d2584b085477446"
     },
     "upstream/src/host/update.js": {
       "source": "ds-bot/src/host/update.js",
-      "sha256": "c8ed903bf4d370d0893ea2af56c6c473aa344075bdd30af4c49f8b8a9da9da88"
+      "sha256": "63f0c453808e2cd51033e8ca872daa7c074bf7411b81f66732a98a9eb9b6eb0e"
     },
     "upstream/src/host/usage.js": {
       "source": "ds-bot/src/host/usage.js",
       "sha256": "3c18c81cb2d1395ad242987f615849e6fdddaedb3004f8a1e31b8599816b4936"
+    },
+    "upstream/src/shared/mentions.js": {
+      "source": "ds-bot/src/shared/mentions.js",
+      "sha256": "974d5ecd0eac86444b5c18fa7902c121b1052d628f0c2b4765f305c2bc03a9e1"
     }
   }
 }
