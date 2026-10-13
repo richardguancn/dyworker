@@ -108,8 +108,10 @@ try {
       const beforeTests = verificationInputs();
       const outputsBeforeTests = output(verificationOutputs);
       // 保留串行测试：现有运行期验收包含时间约束，不增加并发负载。
+      // --test-force-exit：测试全部完成后强制退出，防止个别文件残留的句柄
+      // （Windows 上 MCP/HTTP 类测试后进程不退）把整个流水线卡死。
       const tests = readdirSync(path.join(root, 'tests')).filter(file => file.endsWith('.test.mjs')).sort();
-      await run('全部测试', process.execPath, ['--test', '--test-concurrency=1', ...tests.map(file => `tests/${file}`)]);
+      await run('全部测试', process.execPath, ['--test', '--test-concurrency=1', '--test-force-exit', ...tests.map(file => `tests/${file}`)]);
       if (beforeTests !== verificationInputs() || outputsBeforeTests !== output(verificationOutputs)
         || dependencies !== fingerprint(root, ['node_modules'], { metadataOnly: true })) {
         throw new Error('检查期间文件、依赖或产物发生变化，请重新运行');
