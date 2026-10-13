@@ -4,7 +4,7 @@ import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
 import { FileTextEditor } from "./FileTextEditor";
 import { ExtensionCreationDialog } from './ExtensionCreationDialog';
-import { getModelReasoningConfig, reasoningModelKey, updateReasoningOverride } from '../electron/model-reasoning.ts';
+import { getModelReasoningConfig, reasoningModelKey, selectedReasoningEffort, updateReasoningOverride } from '../electron/model-reasoning.ts';
 import type { ExtensionCreationRequest } from './ExtensionCreationDialog';
 import { authoringSkill } from '../electron/authoring-skills';
 import type { AuthoringKind } from '../electron/authoring-skills';
@@ -11817,6 +11817,16 @@ export function App() {
   };
 
   const hasModel = hasConfiguredModel(settings);
+  // 输入框的合并胶囊：模型名 · 当前思考档位（模型没有可调档位时只显示模型名）
+  const composerReasoningConfig = hasModel
+    ? getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: settings.reasoningOverrides })
+    : null;
+  const composerEffortValue = composerReasoningConfig?.efforts.length
+    ? selectedReasoningEffort(composerReasoningConfig, settings.reasoningEffort)
+    : "";
+  const composerEffortLabel = composerEffortValue
+    ? composerReasoningConfig?.labels[composerEffortValue] || composerEffortValue
+    : "";
   const identitySetupOpen = ready && settings.identity === null;
   const activeApprovalMode = composerApprovalModes.find((option) => option.value === approvalMode) || composerApprovalModes[1];
   const ActiveApprovalIcon = activeApprovalMode.icon;
@@ -13951,7 +13961,8 @@ export function App() {
                     }}
                     aria-expanded={modelMenuOpen}
                   >
-                    <span>{hasModel ? settings.model : "配置模型"}</span>
+                    <span>{hasModel ? `${settings.model}${composerEffortLabel ? ` · ${composerEffortLabel}` : ""}` : "配置模型"}</span>
+                    {hasModel && <ChevronDown size={13} />}
                   </button>
                   {modelMenuOpen && (
                     <div className="model-menu" role="menu">
@@ -14006,6 +14017,25 @@ export function App() {
                             );
                           })}
                       </>) : null}
+                      {hasModel && <>
+                        <ReasoningControl key={reasoningModelKey(settings.endpoint, settings.model)}
+                          endpoint={settings.endpoint} model={settings.model} effort={settings.reasoningEffort} overrides={settings.reasoningOverrides}
+                          onChange={reasoningEffort => void saveProviderSettings({
+                            ...settings, reasoningEffort,
+                            profiles: settings.profiles.map(profile => profile.endpoint === settings.endpoint && profile.model === settings.model
+                              ? { ...profile, reasoningEffort } : profile),
+                          }, "思考强度已更新")}
+                          onConfigure={async override => {
+                            const reasoningOverrides = updateReasoningOverride(settings.reasoningOverrides, settings.endpoint, settings.model, override);
+                            const config = getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: reasoningOverrides });
+                            const reasoningEffort = config.efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : "";
+                            return saveProviderSettings({ ...settings, reasoningOverrides, reasoningEffort,
+                              profiles: settings.profiles.map(profile => reasoningModelKey(profile.endpoint, profile.model) === reasoningModelKey(settings.endpoint, settings.model)
+                                ? { ...profile, reasoningEffort } : profile),
+                            }, override ? "思考档位已保存" : "已恢复自动识别思考档位");
+                          }} />
+                        <p className="model-menu-hint">切换模型或思考强度会使已有的提示词缓存失效；介意额外的 token 消耗时，建议新建会话。</p>
+                      </>}
                       <button
                         type="button"
                         role="menuitem"
@@ -14022,22 +14052,6 @@ export function App() {
                     </div>
                   )}
                 </div>
-                {hasModel && <ReasoningControl key={reasoningModelKey(settings.endpoint, settings.model)}
-                  endpoint={settings.endpoint} model={settings.model} effort={settings.reasoningEffort} overrides={settings.reasoningOverrides}
-                  onChange={reasoningEffort => void saveProviderSettings({
-                    ...settings, reasoningEffort,
-                    profiles: settings.profiles.map(profile => profile.endpoint === settings.endpoint && profile.model === settings.model
-                      ? { ...profile, reasoningEffort } : profile),
-                  }, "思考强度已更新")}
-                  onConfigure={async override => {
-                    const reasoningOverrides = updateReasoningOverride(settings.reasoningOverrides, settings.endpoint, settings.model, override);
-                    const config = getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: reasoningOverrides });
-                    const reasoningEffort = config.efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : "";
-                    return saveProviderSettings({ ...settings, reasoningOverrides, reasoningEffort,
-                      profiles: settings.profiles.map(profile => reasoningModelKey(profile.endpoint, profile.model) === reasoningModelKey(settings.endpoint, settings.model)
-                        ? { ...profile, reasoningEffort } : profile),
-                    }, override ? "思考档位已保存" : "已恢复自动识别思考档位");
-                  }} />}
 
                 {/* 语音输入开关：点击开始录音，再次点击结束并转写进输入框 */}
                 <button

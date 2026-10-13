@@ -5865,33 +5865,14 @@ body.resizing-panels .app-shell {
   background: #f0f0eb;
 }
 
-/* 输入框下方工具栏的推理强度快捷切换：外观与模型选择按钮一致 */
-.composer-effort-select {
-  height: 32px;
-  max-width: 230px;
-  padding: 0 6px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: #7b7e77;
-  font-size: calc(12px * var(--font-ui-scale, 1));
-  cursor: pointer;
-  white-space: nowrap;
-  color-scheme: light;
+/* 合并胶囊里的下拉箭头：打开时翻转朝上 */
+.composer-mode > svg {
+  flex: none;
+  color: #a2a59b;
 }
 
-.composer-effort-select:hover {
-  background: #f0f0eb;
-}
-
-.composer-effort-select:focus-visible {
-  outline: 2px solid #6b7fa8;
-  outline-offset: -2px;
-}
-
-.composer-effort-select option {
-  background: #fafaf7;
-  color: #35382f;
+.composer-mode.active > svg {
+  transform: rotate(180deg);
 }
 
 .model-menu {
@@ -5899,8 +5880,8 @@ body.resizing-panels .app-shell {
   z-index: 30;
   bottom: 40px;
   left: 0;
-  width: 276px;
-  max-height: 320px;
+  width: 300px;
+  max-height: min(520px, 72vh);
   overflow-y: auto;
   padding: 6px;
   border: 1px solid #dedfd9;
@@ -5917,7 +5898,8 @@ body.resizing-panels .app-shell {
   letter-spacing: 0.04em;
 }
 
-.model-menu button {
+/* 只限定直接子按钮：菜单里还嵌着思考强度的分段按钮，不能被列表项样式命中 */
+.model-menu > button {
   width: 100%;
   min-height: 44px;
   display: flex;
@@ -5933,12 +5915,12 @@ body.resizing-panels .app-shell {
   text-align: left;
 }
 
-.model-menu button:hover,
-.model-menu button.active {
+.model-menu > button:hover,
+.model-menu > button.active {
   background: #ededE8;
 }
 
-.model-menu button > span {
+.model-menu > button > span {
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -5962,7 +5944,7 @@ body.resizing-panels .app-shell {
   font-size: calc(10.5px * var(--font-ui-scale, 1));
 }
 
-.model-menu button.manage-models {
+.model-menu > button.manage-models {
   min-height: 38px;
   justify-content: flex-start;
   margin-top: 5px;
@@ -5970,6 +5952,84 @@ body.resizing-panels .app-shell {
   border-radius: 0 0 9px 9px;
   color: #676b64;
   font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+/* 模型菜单里的思考强度区：分段控件 + 管理入口，颜色全部走主题变量 */
+.model-menu-effort {
+  margin-top: 5px;
+  padding: 8px 8px 2px;
+  border-top: 1px solid #e6e7e1;
+}
+
+.model-menu-effort-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  color: #979a93;
+  font-size: calc(10.5px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.effort-manage {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(10.5px * var(--font-ui-scale, 1));
+  font-weight: 400;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.effort-manage:hover {
+  color: var(--ink);
+}
+
+.effort-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--bubble);
+}
+
+.effort-segmented button {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.effort-segmented button:hover {
+  color: var(--ink);
+}
+
+.effort-segmented button.active {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+
+.model-menu-hint {
+  margin: 8px 8px 4px;
+  color: #979a93;
+  font-size: calc(10.5px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+}
+
+.effort-empty {
+  margin-top: 0;
 }
 
 .context-ring {
@@ -9038,13 +9098,12 @@ html:not([data-theme]) .empty-conversation p,
 html:not([data-theme]) .attachment-chip,
 html:not([data-theme]) .attachment-chip button,
 html:not([data-theme]) .composer-mode,
-html:not([data-theme]) .composer-effort-select,
 html:not([data-theme]) .add-menu button,
 html:not([data-theme]) .add-menu small,
 html:not([data-theme]) .model-menu-title,
-html:not([data-theme]) .model-menu button,
+html:not([data-theme]) .model-menu > button,
 html:not([data-theme]) .model-menu small,
-html:not([data-theme]) .model-menu button.manage-models,
+html:not([data-theme]) .model-menu > button.manage-models,
 html:not([data-theme]) .context-ring-text,
 html:not([data-theme]) .status-toast,
 html:not([data-theme]) .jump-bottom,
@@ -9276,7 +9335,8 @@ html:not([data-theme]) .diff-view,
 html:not([data-theme]) .tool-summary-header.clickable,
 html:not([data-theme]) .plan-card-header,
 html:not([data-theme]) .activity-divider,
-html:not([data-theme]) .model-menu button.manage-models,
+html:not([data-theme]) .model-menu > button.manage-models,
+html:not([data-theme]) .model-menu-effort,
 html:not([data-theme]) .dialog-section-title {
     border-color: rgba(255, 255, 255, 0.075);
   }
@@ -9547,10 +9607,9 @@ html:not([data-theme]) .composer-context-item {
   html:not([data-theme]) .attachment-chip button:hover,
 html:not([data-theme]) .icon-button.active,
 html:not([data-theme]) .composer-mode:hover,
-html:not([data-theme]) .composer-effort-select:hover,
 html:not([data-theme]) .add-menu button:hover,
-html:not([data-theme]) .model-menu button:hover,
-html:not([data-theme]) .model-menu button.active {
+html:not([data-theme]) .model-menu > button:hover,
+html:not([data-theme]) .model-menu > button.active {
     color: #daddd4;
     background: #30312d;
   }
@@ -9564,24 +9623,6 @@ html:not([data-theme]) .commit-panel {
     border-color: var(--border);
     background: #252622;
     box-shadow: var(--shadow-lg);
-  }
-
-
-  html:not([data-theme]) .composer-effort-select {
-    color-scheme: dark;
-    background: transparent;
-  }
-
-
-  html:not([data-theme]) .composer-effort-select:focus-visible {
-    outline: 1.5px solid rgba(120, 160, 255, 0.45);
-    outline-offset: -1px;
-  }
-
-
-  html:not([data-theme]) .composer-effort-select option {
-    background: #252622;
-    color: #d8dad3;
   }
 
 
@@ -10546,13 +10587,12 @@ html[data-theme="dark"] .empty-conversation p,
 html[data-theme="dark"] .attachment-chip,
 html[data-theme="dark"] .attachment-chip button,
 html[data-theme="dark"] .composer-mode,
-html[data-theme="dark"] .composer-effort-select,
 html[data-theme="dark"] .add-menu button,
 html[data-theme="dark"] .add-menu small,
 html[data-theme="dark"] .model-menu-title,
-html[data-theme="dark"] .model-menu button,
+html[data-theme="dark"] .model-menu > button,
 html[data-theme="dark"] .model-menu small,
-html[data-theme="dark"] .model-menu button.manage-models,
+html[data-theme="dark"] .model-menu > button.manage-models,
 html[data-theme="dark"] .context-ring-text,
 html[data-theme="dark"] .status-toast,
 html[data-theme="dark"] .jump-bottom,
@@ -10784,7 +10824,8 @@ html[data-theme="dark"] .diff-view,
 html[data-theme="dark"] .tool-summary-header.clickable,
 html[data-theme="dark"] .plan-card-header,
 html[data-theme="dark"] .activity-divider,
-html[data-theme="dark"] .model-menu button.manage-models,
+html[data-theme="dark"] .model-menu > button.manage-models,
+html[data-theme="dark"] .model-menu-effort,
 html[data-theme="dark"] .dialog-section-title {
     border-color: rgba(255, 255, 255, 0.075);
   }
@@ -11053,10 +11094,9 @@ html[data-theme="dark"] .composer-context-item {
   html[data-theme="dark"] .attachment-chip button:hover,
 html[data-theme="dark"] .icon-button.active,
 html[data-theme="dark"] .composer-mode:hover,
-html[data-theme="dark"] .composer-effort-select:hover,
 html[data-theme="dark"] .add-menu button:hover,
-html[data-theme="dark"] .model-menu button:hover,
-html[data-theme="dark"] .model-menu button.active {
+html[data-theme="dark"] .model-menu > button:hover,
+html[data-theme="dark"] .model-menu > button.active {
     color: #daddd4;
     background: #30312d;
   }
@@ -11070,24 +11110,6 @@ html[data-theme="dark"] .commit-panel {
     border-color: var(--border);
     background: #252622;
     box-shadow: var(--shadow-lg);
-  }
-
-
-  html[data-theme="dark"] .composer-effort-select {
-    color-scheme: dark;
-    background: transparent;
-  }
-
-
-  html[data-theme="dark"] .composer-effort-select:focus-visible {
-    outline: 1.5px solid rgba(120, 160, 255, 0.45);
-    outline-offset: -1px;
-  }
-
-
-  html[data-theme="dark"] .composer-effort-select option {
-    background: #252622;
-    color: #d8dad3;
   }
 
 

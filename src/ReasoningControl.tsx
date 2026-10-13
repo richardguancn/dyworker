@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Trash2, X } from 'lucide-react';
 import {
-  findReasoningOverride, getModelReasoningConfig, reasoningOptionLabel, selectedReasoningEffort,
+  findReasoningOverride, getModelReasoningConfig, selectedReasoningEffort,
 } from '../electron/model-reasoning.ts';
 import type { ReasoningKind, ReasoningOverride } from '../electron/model-reasoning.ts';
 import './reasoningControl.css';
 
-const manageValue = ':manage:';
 const kindNames: Record<ReasoningKind, string> = {
   standard: '通用兼容方式', deepseek: 'DeepSeek 方式', kimi: 'Kimi 方式', glm: '智谱 GLM 方式',
   qwen: '千问百炼方式', 'qwen-local': '千问本地部署方式', minimax: 'MiniMax 方式', doubao: '豆包方式',
@@ -20,25 +19,30 @@ export function ReasoningControl({ endpoint, model, effort, overrides, onChange,
 }) {
   const [managing, setManaging] = useState(false);
   const config = getModelReasoningConfig({ endpoint, model, overrides });
+  const selected = selectedReasoningEffort(config, effort);
+  // 没有配置默认档位时补一个「默认」选项，表示交回模型自己决定
+  const options = [
+    ...(!config.defaultEffort ? [{ value: '', label: '默认' }] : []),
+    ...config.efforts.map(value => ({ value, label: config.labels[value] || value })),
+  ];
   return <>
-    <select
-      className="composer-effort-select"
-      value={selectedReasoningEffort(config, effort)}
-      onChange={event => {
-        if (event.target.value === manageValue) setManaging(true);
-        else onChange(event.target.value);
-        // 打开管理时仍显示原来的档位，不能把菜单动作当成一次选择。
-        event.target.value = selectedReasoningEffort(config, effort);
-      }}
-      aria-label="思考强度"
-      title={config.description}
-    >
-      {!config.defaultEffort && <option value="">{config.source === 'custom' && !config.efforts.length
-        ? '不支持调整' : '默认（由模型决定）'}</option>}
-      {config.efforts.map(value => <option key={value} value={value}>{reasoningOptionLabel(config, value)}</option>)}
-      <option disabled>────────</option>
-      <option value={manageValue}>管理档位…</option>
-    </select>
+    <div className="model-menu-effort">
+      <div className="model-menu-effort-head">
+        <span>思考</span>
+        <button type="button" className="effort-manage" onClick={() => setManaging(true)}>管理档位…</button>
+      </div>
+      {config.efforts.length ? (
+        <div className="effort-segmented" role="radiogroup" aria-label="思考强度" title={config.description}>
+          {options.map(option => {
+            const active = option.value === selected;
+            return <button key={option.value || ':default:'} type="button" role="radio" aria-checked={active}
+              className={active ? 'active' : ''} onClick={() => onChange(option.value)}>{option.label}</button>;
+          })}
+        </div>
+      ) : (
+        <p className="model-menu-hint effort-empty">{config.description}</p>
+      )}
+    </div>
     {managing && <ReasoningManager key={`${endpoint}\n${model}`} endpoint={endpoint} model={model}
       overrides={overrides} onClose={() => setManaging(false)} onSave={onConfigure} />}
   </>;
