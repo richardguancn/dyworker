@@ -54,17 +54,20 @@ export function appearanceIpcPlugin(deps) {
         const mainWindow = getMainWindow();
         if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
         const settings: any = bridge.resolveNormalizedSettings(raw);
+        bridge.setWindowIconPreview?.(settings);
         const previewTheme = settings?.theme || "system";
         nativeTheme.themeSource = (previewTheme === "system" ? "system" : previewTheme) as "system" | "dark" | "light";
         const effective = applyWindowBackdrop(mainWindow, settings as any, bridge.capabilities);
         bridge.setEffective(effective);
         const isBackdropActive = effective.applied === "vibrancy" || effective.applied === "background-material";
         mainWindow.setBackgroundColor(windowBackgroundFor(settings, bridge.resolvedTheme(settings), isBackdropActive));
+        bridge.applyWindowIcon?.(settings);
         mainWindow.webContents?.invalidate?.();
         return { ok: true, effective };
       });
 
       trustedHandle("appearance:cancel-preview", async (_event, payload) => {
+        bridge.setWindowIconPreview?.(null);
         bridge.syncThemeSource();
         bridge.applyWindow();
         // 取消时回收草稿引用过但未保存的暂存图片；已保存配置引用的绝不在此删除

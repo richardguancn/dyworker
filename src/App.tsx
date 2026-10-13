@@ -1,4 +1,5 @@
 import { GoalBanner } from "./GoalBanner";
+import { AppLogo } from "./AppLogo";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
@@ -47,6 +48,7 @@ import {
   Hand,
   History,
   House,
+  Info,
   KeyRound,
   Landmark,
   ListTodo,
@@ -5367,7 +5369,7 @@ function AppUpdateDialog({
   );
 }
 
-type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks";
+type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
 
 // 图标既可能是 lucide 的，也可能是应用内自绘的（如插件图标），只要求接受 size
 type SettingsNavIcon = (props: { size?: number; className?: string }) => ReactNode;
@@ -5385,6 +5387,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
     { id: "appearance", label: "外观", icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "theme", "font"] },
     { id: "power", label: "电源", icon: Moon },
     { id: "updates", label: "应用更新", icon: RefreshCw },
+    { id: "about", label: "关于", icon: Info, keywords: ["开发者", "管灯余", "GitHub", "邮箱"] },
   ] },
   { group: "资源", items: [
     { id: "plugins", label: "插件", icon: PluginIcon, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
@@ -6287,6 +6290,18 @@ function SettingsDialog({
               return saved;
             }}
           />
+        ) : tab === "about" ? (
+          <dl className="settings-about">
+            <div><dt>开发者</dt><dd>管灯余</dd></div>
+            <div><dt>GitHub</dt><dd><a href="http://github.com/richardguancn/" target="_blank" rel="noreferrer"
+              onClick={(event) => {
+                if (window.dyworker?.openBrowserExternal) {
+                  event.preventDefault();
+                  void window.dyworker.openBrowserExternal("http://github.com/richardguancn/");
+                }
+              }}>github.com/richardguancn</a></dd></div>
+            <div><dt>邮箱</dt><dd>guandengyu@gmail.com</dd></div>
+          </dl>
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
         ) : tab === "plugins" ? (
@@ -12680,6 +12695,14 @@ export function App() {
         </header>
   );
 
+  const linuxLayout = (platform || "linux") === "linux";
+  const newTaskButton = (
+    <button className="new-task-button" onClick={() => createTask()}>
+      <SquarePen size={18} />
+      新建任务
+    </button>
+  );
+
   return (
     <>
     {/* 外观背景装饰层：背景色 → 背景图 → 遮罩，pointer-events/aria-hidden 保证不占交互 */}
@@ -12691,7 +12714,9 @@ export function App() {
       style={panelStyle}
     >
       <header className="titlebar" aria-label="标题栏">
+        {linuxLayout && <span className="titlebar-app-logo"><AppLogo /></span>}
         <div className="titlebar-left">
+          {linuxLayout && <span className="titlebar-brand"><span>DYWorker</span></span>}
           <button className="icon-button subtle" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
             title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
@@ -12750,6 +12775,7 @@ export function App() {
           {railMenuOpen && <div className="session-menu rail-menu" role="menu">
             <button role="menuitem" onClick={() => { setRailMenuOpen(false); createTask(); }}><SquarePen size={16} />新建任务</button>
             <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}><Settings size={16} />设置</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsTab("about"); setSettingsOpen(true); }}><Info size={16} />关于</button>
             <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSidebarOpen(true); setShowArchived(value => !value); }}><History size={16} />{showArchived ? "隐藏归档任务" : "显示归档任务"}</button>
           </div>}
         </div>
@@ -12763,10 +12789,11 @@ export function App() {
       </nav>
       <aside className="sidebar" aria-label="任务侧栏">
         <div className="native-controls-space" />
-        <div className="sidebar-brand-row">
-          <span className="brand-button" aria-label="DYWorker">
+        <div className={linuxLayout ? "sidebar-primary-row" : "sidebar-brand-row"}>
+          {linuxLayout ? newTaskButton : <span className="brand-button" aria-label="DYWorker">
+            <AppLogo />
             <span>DYWorker</span>
-          </span>
+          </span>}
           <div className="sidebar-brand-actions">
             <button
               className={`icon-button subtle inbox-button ${inboxOpen ? "active" : ""}`}
@@ -12793,10 +12820,7 @@ export function App() {
           </div>
         </div>
 
-        <button className="new-task-button" onClick={() => createTask()}>
-          <SquarePen size={18} />
-          新建任务
-        </button>
+        {!linuxLayout && newTaskButton}
 
         {query !== "" && (
           <div className="sidebar-search-wrap">

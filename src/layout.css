@@ -36,6 +36,84 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
 .reference-layout.platform-darwin .window-controls { display: none; }
 .reference-layout .titlebar-right { align-items: center; gap: 8px; }
 .reference-layout .titlebar .icon-button { width: 28px; height: 28px; color: var(--muted); }
+/* Linux 的品牌与侧栏同列；收起侧栏后，标题仍从导航栏旁开始。 */
+html .reference-layout.platform-linux {
+  outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  outline-offset: -1px;
+}
+.reference-layout.platform-linux .titlebar-left {
+  position: absolute;
+  left: calc(var(--rail-width) + 16px);
+  width: calc(var(--sidebar-width) - 32px);
+  height: var(--titlebar-height);
+  justify-content: space-between;
+  z-index: 7;
+}
+.reference-layout.platform-linux .titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: calc(15px * var(--font-ui-scale));
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reference-layout .app-logo { flex: none; width: 24px; height: 24px; object-fit: contain; border-radius: 6px; }
+.reference-layout.platform-linux .titlebar-app-logo {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: var(--rail-width);
+  height: var(--titlebar-height);
+}
+.reference-layout .titlebar-brand > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.reference-layout .sidebar-brand-row .brand-button { align-items: center; gap: 8px; min-width: 0; }
+.reference-layout.platform-linux .titlebar-left > button { flex: none; }
+.reference-layout.platform-linux .titlebar-right { margin-left: auto; }
+.reference-layout.platform-linux.sidebar-collapsed .titlebar-left {
+  left: calc(var(--rail-width) + 8px);
+  width: 28px;
+}
+html .reference-layout.platform-linux.sidebar-collapsed { --titlebar-content-left: calc(var(--rail-width) + 40px); }
+.reference-layout.platform-linux.sidebar-collapsed .titlebar-brand { display: none; }
+.reference-layout .sidebar-primary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  min-height: 48px;
+  padding: 6px 12px 6px 10px;
+  gap: 4px;
+}
+.reference-layout .sidebar-primary-row .new-task-button {
+  min-width: 0;
+  margin: 0;
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+.reference-layout .sidebar-primary-row .sidebar-brand-actions { display: flex; }
+.reference-layout .sidebar-primary-row .icon-button { flex: none; }
+.reference-layout.platform-linux .sidebar { border-radius: 6px 0 0 6px; }
+.reference-layout.platform-linux .main-panel { border-radius: 0; }
+.reference-layout.platform-linux.right-panel-collapsed .main-panel { border-radius: 0 6px 6px 0; }
+.reference-layout.platform-linux.sidebar-collapsed .main-panel { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.reference-layout.platform-linux .tool-panel { border-radius: 0 6px 6px 0; }
+.settings-about { margin: 0; }
+.settings-about > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 16px;
+  padding-block: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-about dt { color: var(--muted); }
+.settings-about dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
+.settings-about a { color: var(--ink); text-underline-offset: 3px; }
 .reference-layout .navigation-rail {
   grid-row: 2;
   grid-column: 1;
@@ -341,6 +419,9 @@ html .settings-page .appearance-row-label { min-width: 0; max-width: 100%; white
 html .settings-page .appearance-row-label small { white-space: normal; }
 @media (max-width: 820px) {
   html .reference-layout { --titlebar-content-left: var(--rail-width); }
+  .reference-layout.platform-linux .titlebar-left { left: calc(var(--rail-width) + 8px); width: 28px; }
+  html .reference-layout.platform-linux { --titlebar-content-left: calc(var(--rail-width) + 40px); }
+  .reference-layout.platform-linux .titlebar-brand { display: none; }
   html .reference-layout.platform-darwin { --titlebar-content-left: 142px; }
   .reference-layout .titlebar-conversation .topbar-left > svg { display: none; }
   .reference-layout .titlebar-conversation .branch-menu-wrap { display: none; }

@@ -34,6 +34,7 @@ import { settingsIpcPlugin } from "./host/plugins/settings-ipc.mts";
 import { sessionsIpcPlugin } from "./host/plugins/sessions-ipc.mts";
 import { appIpcPlugin } from "./host/plugins/app-ipc.mts";
 import { appearanceIpcPlugin } from "./host/plugins/appearance-ipc.mts";
+import { createWindowIconController } from "./theme-icons.mts";
 import { browserIpcPlugin } from "./host/plugins/browser-ipc.mts";
 import { browserControlIpcPlugin } from "./host/plugins/browser-control-ipc.mts";
 import { browserImportIpcPlugin } from "./host/plugins/browser-import-ipc.mts";
@@ -109,6 +110,7 @@ if (
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const windowIcons = createWindowIconController({ platform: process.platform, directory: path.join(here, "assets"), nativeImage });
 
 // 崩溃兜底：任务执行期间任何未捕获异常不能再让整个进程无声退出。
 // 先记到终端标准输出，再持久化到 userData/crash.log（桌面图标启动时
@@ -252,6 +254,8 @@ const appearanceCapabilities = getAppearanceCapabilities({
   hwAcceleration: process.platform !== "linux",
 });
 let appearanceState = { settings: defaultAppearance(), revision: 0 };
+// nativeTheme 的更新事件可能晚于预览请求；图标以当前预览为准，取消或保存后清空。
+let windowIconPreviewSettings = null;
 let appearanceEffective: any = { applied: "none", reason: null };
 
 function resolvedAppearanceTheme(settings = appearanceState.settings) {
@@ -270,6 +274,7 @@ function applyWindowAppearance() {
   appearanceEffective = applyWindowBackdrop(mainWindow, appearanceState.settings, appearanceCapabilities);
   const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
   mainWindow.setBackgroundColor(windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
+  windowIcons.apply(mainWindow, resolvedAppearanceTheme(windowIconPreviewSettings ?? appearanceState.settings));
   mainWindow.webContents?.invalidate?.();
 }
 
@@ -784,6 +789,7 @@ function createWindow() {
     backgroundColor: windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
     show: process.platform === "linux",
     title: "DYWorker",
+    ...(process.platform === "linux" ? { icon: windowIcons.iconFor(resolvedAppearanceTheme()) } : {}),
     // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
     // 保持不透明，不恢复旧的透明阴影留白或整窗鼠标穿透。
     frame: false,
@@ -1541,6 +1547,7 @@ function processAppearanceImageBuffer(buffer, { format }) {
 }
 
 async function applySavedAppearanceResult(result, previousImageId) {
+  windowIconPreviewSettings = null;
   appearanceState = { settings: result.settings, revision: result.revision };
   syncNativeThemeSource();
   applyWindowAppearance();
@@ -2602,6 +2609,8 @@ const appearanceBridge = {
   snapshot: () => appearanceSnapshot(),
   syncThemeSource: () => syncNativeThemeSource(),
   applyWindow: () => applyWindowAppearance(),
+  applyWindowIcon: (settings) => windowIcons.apply(mainWindow, resolvedAppearanceTheme(settings)),
+  setWindowIconPreview: (settings) => { windowIconPreviewSettings = settings; },
   resolvedTheme: (settings) => resolvedAppearanceTheme(settings),
   applySavedResult: (result, previousImageId) => applySavedAppearanceResult(result, previousImageId),
   processImageBuffer: (buffer, options) => processAppearanceImageBuffer(buffer, options),
