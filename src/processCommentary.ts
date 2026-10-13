@@ -1,4 +1,34 @@
 import type { ActivityRecord, ChatMessage } from "./types";
+import { resolveAssistantDelivery } from "../electron/assistant-delivery.ts";
+
+const deliveryMessageCache = new WeakMap<ChatMessage, ChatMessage>();
+
+/** 兼容旧聊天：恢复被收尾记录挤进过程的答复，不改写原始存档。 */
+export function messageWithDeliveryContent(message: ChatMessage): ChatMessage {
+  if (message.role !== "assistant" || message.dshTurnId || !message.executedMessages?.length
+    || !["done", "unverified"].includes(message.taskStatus || "")) return message;
+  const cached = deliveryMessageCache.get(message);
+  if (cached) return cached;
+  const delivery = resolveAssistantDelivery(message.executedMessages, message.content || "");
+  if (!delivery.promotedReplyIndexes.length) {
+    deliveryMessageCache.set(message, message);
+    return message;
+  }
+  const thoughts = (message.activities || []).filter(activity => activity.kind === "thinking" && !activity.branch);
+  const replies = message.executedMessages.filter(entry => entry.role === "assistant");
+  // 缺失或重试轮次不能猜测哪条过程记录应被清空；仍可恢复正文。
+  const clearIds = thoughts.length === replies.length && thoughts.every(activity => activity.status === "success")
+    ? new Set(delivery.promotedReplyIndexes.map(index => thoughts[index].id)) : new Set<string>();
+  const restored = {
+    ...message,
+    content: delivery.text,
+    activities: (message.activities || []).map(activity => clearIds.has(activity.id)
+      ? { ...activity, commentary: "" } : activity),
+  };
+  deliveryMessageCache.set(message, restored);
+  deliveryMessageCache.set(restored, restored);
+  return restored;
+}
 
 /** 旧存档漏存了 commentary，但仍保留每轮模型回复；只有轮次完整对应时才恢复。 */
 export function processActivitiesWithCommentary(

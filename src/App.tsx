@@ -131,7 +131,7 @@ import { assistantImageAttachments } from './assistantImages.ts';
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
-import { contentEchoesProcessCommentary, processActivitiesWithCommentary } from "./processCommentary.ts";
+import { contentEchoesProcessCommentary, messageWithDeliveryContent, processActivitiesWithCommentary } from "./processCommentary.ts";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 
 const now = new Date().toISOString();
@@ -13133,6 +13133,7 @@ export function App() {
               </div>
             ) : (
               activeSession.messages.map((message, index) => {
+                message = messageWithDeliveryContent(message);
                 const turnIndex = message.role === "user"
                   ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
                   : -1;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contentEchoesProcessCommentary, processActivitiesWithCommentary } from "../src/processCommentary.ts";
+import { contentEchoesProcessCommentary, messageWithDeliveryContent, processActivitiesWithCommentary } from "../src/processCommentary.ts";
 
 const 说明 = "已生成 10/13 素材（199 条）。四个选题里「中加建交」「法国进入第四共和国」在素材清单内，现在并行核实史实。";
 
@@ -153,4 +153,50 @@ test("重复的进度说明仍保留各自轮次，子代理思考不占主任�
   assert.equal(activities[0].commentary, "先检查成片。");
   assert.equal(activities[3].commentary, "先检查成片。");
   assert.equal(activities[1].commentary, undefined);
+});
+
+const completedMessage = () => ({
+  role: "assistant", taskStatus: "done", content: "候选清单已给出，回复编号即可。",
+  activities: [
+    { id: "before", kind: "thinking", status: "success", commentary: "正在核实日期。" },
+    { id: "answer", kind: "thinking", status: "success", commentary: "## 候选清单\n\n1. 广州解放\n2. 惠州战役" },
+    { id: "final", kind: "thinking", status: "success" },
+  ],
+  executedMessages: [
+    { role: "assistant", content: "正在核实日期。", tool_calls: [call("read_file")] },
+    { role: "tool", content: "资料原文" },
+    { role: "assistant", content: "## 候选清单\n\n1. 广州解放\n2. 惠州战役", tool_calls: [
+      { function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "核实并列出候选", status: "completed" }] }) } },
+      call("save_memory"),
+    ] },
+    { role: "assistant", content: "候选清单已给出，回复编号即可。" },
+  ],
+});
+
+test("旧聊天完整候选答复恢复到正文，过程仅保留实际进度，反复打开不重复", () => {
+  const original = completedMessage();
+  const restored = messageWithDeliveryContent(original);
+  assert.match(restored.content, /## 候选清单/);
+  assert.match(restored.content, /回复编号即可/);
+  assert.equal(restored.activities[0].commentary, "正在核实日期。");
+  assert.equal(processActivitiesWithCommentary(restored)[1].commentary, "");
+  assert.equal(original.activities[1].commentary, original.executedMessages[2].content);
+  assert.equal(messageWithDeliveryContent(restored).content, restored.content);
+});
+
+test("运行、停止、失败、挂起与独立会话投影不恢复交付正文", () => {
+  for (const status of [undefined, "cancelled", "error", "paused", "sleeping"]) {
+    const message = { ...completedMessage(), taskStatus: status };
+    assert.equal(messageWithDeliveryContent(message), message);
+  }
+  const message = { ...completedMessage(), dshTurnId: "turn" };
+  assert.equal(messageWithDeliveryContent(message), message);
+});
+
+test("旧聊天轮次不匹配仍恢复答案，但不误删过程记录", () => {
+  const message = completedMessage();
+  message.activities.pop();
+  const restored = messageWithDeliveryContent(message);
+  assert.match(restored.content, /## 候选清单/);
+  assert.equal(restored.activities[1].commentary, message.activities[1].commentary);
 });
