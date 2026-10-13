@@ -93,6 +93,11 @@ test('原插件真实运行：模型选择、机器人对话、提问回答、�
   const group = await call(team, 'dyworker-history', { sessionId: room.id });
   assert.ok(group.groupLog.some(line => line.who === 'User' && line.text === '两位请给意见'));
   assert.ok(group.groupLog.some(line => line.botId === chief.id)); assert.ok(group.groupLog.some(line => line.botId === bot.id));
+  const lastSeq = group.groupLog.at(-1)?.seq || 0;
+  await call(team, 'send', { sessionId: room.id, text: `@${bot.name} 请独立检查` }); await settle(team);
+  const targeted = (await call(team, 'dyworker-history', { sessionId: room.id })).groupLog.filter(line => line.seq > lastSeq && !line.kind && line.who !== 'User');
+  assert.equal(targeted.length, 1, '指定成员时只让该成员回复');
+  assert.equal(targeted[0].botId, bot.id);
   const memory = await call(team, 'memory-ask', { botId: chief.id, text: '请记住用简体中文回答' });
   assert.ok(memory.view.entries.some(entry => entry.text === '回答用简体中文'));
   const usage = await call(team, 'usage'); assert.ok(usage.rows.some(row => row[4] >= 100));

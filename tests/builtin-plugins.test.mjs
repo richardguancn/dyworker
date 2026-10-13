@@ -128,14 +128,20 @@ test("内置插件：客户端 bundle 在插槽表里留下轨迹 / 上下文的
   const views = host.contributionsFor("conversation.view").map((item) => String(item.meta.key ?? item.meta.id));
   assert.deepEqual(views.sort(), ["context", "trajectory"], "会话区应有「轨迹」「上下文」两个插件视图");
   const panels = host.contributionsFor("sidebar.right.pane.tab").map((item) => String(item.meta.key ?? item.meta.id));
-  // 右侧登记上下文仪表盘和独立的机器人团队。
-  assert.deepEqual(panels, ["context-dashboard", "bot-team"], "右侧面板登记上下文仪表盘和机器人团队");
+  // 右侧只登记上下文仪表盘，机器人团队单独在主区域打开。
+  assert.deepEqual(panels, ["context-dashboard"], "机器人团队不再登记右侧标签");
+  assert.equal(host.contributionsFor("workspace.page")[0]?.meta.key, "bot-team");
   assert.equal(host.contributionsFor("workspace.terminal")[0]?.meta.key, "terminal");
   // 标签文案来自插件自己（壳层直接渲染 meta.label()）
   const trajectory = host.contributionsFor("conversation.view").find((item) => item.meta.key === "trajectory");
   assert.equal(trajectory.meta.label(), "轨迹");
   const context = host.contributionsFor("conversation.view").find((item) => item.meta.key === "context");
   assert.equal(context.meta.label(), "上下文");
+  assert.equal(await host.unload("ds-bot"), true);
+  assert.deepEqual(host.contributionsFor("workspace.page"), [], "停用机器人插件收回主区域入口");
+  const reloaded = await host.load((await loadRealBundle("ds-bot")).exports, "ds-bot");
+  assert.equal(reloaded.ok, true, reloaded.error);
+  assert.equal(host.contributionsFor("workspace.page")[0]?.meta.key, "bot-team");
 });
 
 test("轨迹插件主机半边：按 offset 分页读本会话 trace，非法 id 与缺文件都如实回答", async () => {

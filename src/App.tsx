@@ -7065,6 +7065,8 @@ export function App() {
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
+  const [botTeamPageOpen, setBotTeamPageOpen] = useState(false);
+  const [botTeamAvailable, setBotTeamAvailable] = useState(false);
   const [railMenuOpen, setRailMenuOpen] = useState(false);
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   const [conversationView, setConversationView] = useState("chat");
@@ -7074,6 +7076,7 @@ export function App() {
   useEffect(() => {
     if (!activeId) return;
     setPluginsPageOpen(false);
+    setBotTeamPageOpen(false);
   }, [activeId]);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [toolPanelWidth, setToolPanelWidth] = useState(() => {
@@ -8880,6 +8883,7 @@ export function App() {
 
   const createTask = (targetWorkspacePath = workspacePath) => {
     setPluginsPageOpen(false);
+    setBotTeamPageOpen(false);
     setConversationView("chat");
     const nextWorkspacePath = String(targetWorkspacePath || "");
     if (newTaskDraft) {
@@ -10249,6 +10253,17 @@ export function App() {
     sync();
     return host.subscribe(sync);
   }, [ready, activeId, activeSession?.runtime, pluginPanelPreferences]);
+
+  useEffect(() => {
+    const host = clientHost();
+    const sync = () => {
+      const available = host.contributionsFor("workspace.page").some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
+      setBotTeamAvailable(available);
+      if (!available) setBotTeamPageOpen(false);
+    };
+    sync();
+    return host.subscribe(sync);
+  }, []);
 
   // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
   useEffect(() => {
@@ -11853,6 +11868,7 @@ export function App() {
     // 先关插件页：点"当前已选中"的会话时 activeId 不变，
     // 只靠 activeId 变化的 effect 是关不掉的（这就是之前点了没反应的原因）。
     setPluginsPageOpen(false);
+    setBotTeamPageOpen(false);
     setSessionMenuId(null);
     setActiveId(session.id);
     setEditingMessage(null);
@@ -12144,7 +12160,7 @@ export function App() {
   const renderSessionItem = (session: SessionRecord) => {
     // 插件页打开时主内容区不是会话，会话列表就**不该再显示"当前选中"高亮**——
     // 否则用户会以为这个会话仍可点击选中（实际点了没反应：activeId 没变）。
-    const selected = session.id === activeId && !pluginsPageOpen;
+    const selected = session.id === activeId && !pluginsPageOpen && !botTeamPageOpen;
     return (
     <div className={`session-item-wrap ${selected ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
       {renamingId === session.id ? (
@@ -12649,10 +12665,10 @@ export function App() {
               {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
               <PanelLeftIcon size={18} />
             </button>
-            {Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{activeSession?.title || "新任务"}</strong>
+            {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
+            <strong>{botTeamPageOpen ? "机器人团队" : activeSession?.title || "新任务"}</strong>
           </div>
-          {Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
+          {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}
             {conversationTools}
           </div>}
@@ -12709,9 +12725,9 @@ export function App() {
         </div>
       </header>
       <nav className="navigation-rail" aria-label="主导航">
-        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen ? "active" : ""}`}
-          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen ? "page" : undefined}
-          onClick={() => { setPluginsPageOpen(false); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
+        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "active" : ""}`}
+          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "page" : undefined}
+          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
           <House size={21} />
         </button>
         <button className={`rail-button ${settingsOpen && settingsTab === "plans" ? "active" : ""}`}
@@ -12719,7 +12735,7 @@ export function App() {
           <AlarmClock size={20} />
         </button>
         <button className={`rail-button sidebar-plugins-button ${settingsOpen && settingsTab === "plugins" ? "active" : ""}`}
-          onClick={() => { setPluginsPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
+          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
           aria-label="插件" title="插件" aria-current={settingsOpen && settingsTab === "plugins" ? "page" : undefined}>
           <PluginIcon size={20} />
         </button>
@@ -12875,6 +12891,14 @@ export function App() {
               </div>}
             </section>
 
+          {botTeamAvailable && <section className="sidebar-section bot-team-section">
+            <button className={`recent-section-toggle bot-team-entry ${botTeamPageOpen ? "active" : ""}`}
+              aria-label="机器人团队" aria-current={botTeamPageOpen ? "page" : undefined}
+              onClick={() => { setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
+              <Bot size={16} /><span>机器人团队</span><ChevronRight size={13} />
+            </button>
+          </section>}
+
           <section className="sidebar-section recent-section">
             <button
               className="recent-section-toggle"
@@ -12908,7 +12932,10 @@ export function App() {
         />
       )}
 
-      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
+      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
+        {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
+          <PluginSlotView slot="workspace.page" pluginId="ds-bot" pluginKey="bot-team" visible={!settingsOpen} />
+        </section> : <>
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
         <div className="conversation-tabs" role="tablist" aria-label="会话视图">
@@ -14062,6 +14089,7 @@ export function App() {
             </button>
           )}
         </div>
+        </>}
       </main>
 
       {rightPanelOpen && (

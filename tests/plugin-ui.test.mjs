@@ -115,7 +115,7 @@ test("样式覆盖：插件页用到的类名都在 styles.css 里定义（类�
 
 test("插件页打开时：会话列表不显示选中高亮，点会话（含当前选中）都能切回", () => {
   // 高亮要把插件页状态算进去：主内容区不是会话时，列表不该显示"当前选中"
-  assert.match(app, /const selected = session\.id === activeId && !pluginsPageOpen;/,
+  assert.match(app, /const selected = session\.id === activeId && !pluginsPageOpen && !botTeamPageOpen;/,
     "会话高亮必须在插件页打开时失效");
   assert.match(app, /\$\{selected \? "active" : ""\}/, "高亮要改用 selected");
   // 点会话必须先关插件页：点"当前已选中"的会话时 activeId 不变，只靠 effect 关不掉
