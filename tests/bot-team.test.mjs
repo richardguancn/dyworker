@@ -122,6 +122,86 @@ test('模型标识不随当前模型和档案名称变化；聊天隐藏内部�
   ] }).map(message => message.text), ['你好']);
 });
 
+test('长对话切换到后续部分：读取当前回复、显示运行状态并停止当前部分', { timeout: 15000 }, async t => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-part-'));
+  let markStarted, signal, tools;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const options = { dataDir, entryUrl, readSettings: async () => settings,
+    async *generate(_profile, request) {
+      if (request.system?.includes('You keep the long-term memory of one Bot')) { yield* text('{"changes":[]}'); return; }
+      tools = request.tools;
+      const said = request.messages?.at(-1)?.content?.filter(part => part.type === 'text').map(part => part.text).join('') || '';
+      if (said === '当前部分长回复') {
+        signal = request.signal; markStarted();
+        await new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+        return;
+      }
+      yield* text('当前部分的回复');
+    } };
+  let team = await createBotTeam(options);
+  t.after(async () => { await team.dispose(); await fs.rm(dataDir, { recursive: true, force: true }); });
+  const state = await call(team, 'state'), chief = state.bots[0];
+  await call(team, 'update-bot', { id: chief.id, model: state.models[0].ref }); await settle(team);
+  const fresh = await team.ctx.sessionController.create({ workspaceId: 'ds-bot-team' });
+  const profile = botModelProfiles(settings)[0];
+  await team.ctx.sessionController.selectModel({ sessionId: fresh.sessionId, provider: profile.provider, model: profile.model });
+  const file = path.join(dataDir, 'bot/state.json');
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  saved.bots[chief.id].segments = [{ sessionId: chief.id, endedAt: Date.now() }];
+  saved.bots[chief.id].sessionId = fresh.sessionId;
+  saved.revision += 1;
+  await fs.writeFile(file, JSON.stringify(saved));
+  await team.dispose();
+  team = await createBotTeam(options);
+  await call(team, 'send', { sessionId: chief.id, text: '当前部分普通回复' }); await settle(team);
+  const history = await call(team, 'dyworker-history', { sessionId: chief.id });
+  assert.ok(history.events.some(event => event.sessionId === fresh.sessionId && JSON.stringify(event.data).includes('当前部分的回复')));
+  assert.ok(tools.some(tool => tool.name === 'read_file'), '继续提供 DYWorker 的文件工具');
+  assert.ok(!tools.some(tool => ['save_capability', 'attach_capability', 'request_secret'].includes(tool.name)), '不向模型提供没有对应服务或操作页面的工具');
+  await call(team, 'send', { sessionId: chief.id, text: '当前部分长回复' }); await started;
+  assert.equal((await call(team, 'dyworker-history', { sessionId: chief.id })).running, true);
+  await call(team, 'dyworker-stop', { sessionId: chief.id }); await settle(team);
+  assert.equal(signal.aborted, true);
+  assert.equal((await call(team, 'dyworker-history', { sessionId: chief.id })).running, false);
+});
+
+test('更新后的机器人在重启后继续被中断的工作', { timeout: 15000 }, async t => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-resume-'));
+  let markStarted, resumed = 0;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  const options = { dataDir, entryUrl, readSettings: async () => settings,
+    async *generate(_profile, request) {
+      if (request.system?.includes('You keep the long-term memory of one Bot')) { yield* text('{"changes":[]}'); return; }
+      const said = request.messages?.at(-1)?.content?.filter(part => part.type === 'text').map(part => part.text).join('') || '';
+      if (said.includes('DeepSeek Harness restarted while you were working')) {
+        resumed += 1;
+        assert.ok(JSON.stringify(request.messages).includes('重启前未完成的工作'));
+        yield* text('重启后已经继续完成'); return;
+      }
+      if (said === '重启前未完成的工作') {
+        markStarted();
+        await new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
+        return;
+      }
+      yield* text('准备好了');
+    } };
+  let team = await createBotTeam(options);
+  t.after(async () => { await team.dispose(); await fs.rm(dataDir, { recursive: true, force: true }); });
+  const state = await call(team, 'state'), chief = state.bots[0];
+  await call(team, 'update-bot', { id: chief.id, model: state.models[0].ref }); await settle(team);
+  await call(team, 'send', { sessionId: chief.id, text: '重启前未完成的工作' }); await started;
+  for (let i = 0; i < 50; i++) {
+    const notes = JSON.parse(await fs.readFile(path.join(dataDir, 'bot/inflight.json'), 'utf8'));
+    if (notes.turns[chief.id]) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  await team.dispose(); team = await createBotTeam(options);
+  for (let i = 0; i < 100 && resumed === 0; i++) await new Promise(resolve => setTimeout(resolve, 50));
+  await settle(team);
+  assert.equal(resumed, 1, '只恢复一次尚未完成的工作');
+  assert.match(JSON.stringify(await call(team, 'dyworker-history', { sessionId: chief.id })), /重启后已经继续完成/);
+});
+
 test('模型失败可见、重新发送恢复；停止群聊会同时取消成员请求', { timeout: 20000 }, async t => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-stop-'));
   let mode = 'ok', started, markStarted, activeSignal;

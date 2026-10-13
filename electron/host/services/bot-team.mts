@@ -15,6 +15,9 @@ import { createBotApproval, createBotHarnessTools } from '../dsh-runtime/bot-har
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 /** 机器人从桌面任务继承的工具里，界面相关的那部分不接：由会话检索、插件工具、MCP 工具补足。 */
 const BOT_DELEGATED_TOOL_NAMES = new Set(['list_sessions', 'search_sessions', 'read_session']);
+// 上游能力库依赖独立的技能服务、MCP 加载器及审批页面；本适配继续使用应用自己的工具入口。
+const BOT_UNAVAILABLE_TOOL_NAMES = new Set(['request_secret', 'list_secrets', 'list_capabilities',
+  'save_capability', 'delete_capability', 'attach_capability', 'detach_capability']);
 
 // The application and the official runtime have separate Cordis tools/storage
 // contracts. Resolve runtime exports without merging their declaration worlds.
@@ -133,8 +136,9 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
         // This panel has no secure credential card. Do not advertise a tool
         // that would claim it displayed a card the user cannot answer.
         stream: (request: any) => generate(settings, { ...request,
-          tools: request.tools?.filter((tool: any) => !['request_secret', 'list_secrets'].includes(tool.name)),
+          tools: request.tools?.filter((tool: any) => !BOT_UNAVAILABLE_TOOL_NAMES.has(tool.name)),
           system: `${request.system || ''}\n\nDYWorker 团队面板当前不提供凭据卡片、独立浏览器面板或 GitHub 连接。不得声称已经显示这些界面或请求用户把密码和密钥贴进聊天。`
+            + '上游独立能力库管理尚未接入；工作模板、插件与 MCP 工具使用 DYWorker 已配置的入口，不要声称创建了上游能力库或显示其设置页面。'
             + '你可以使用工作文件夹里的文件、命令与联网工具；需要用户确认的操作会在面板弹出确认卡，被拒绝时不要绕过，也不要重复尝试同一操作。',
           signal: AbortSignal.any([request.signal, lifetime.signal]) }, { attachments: ctx.attachments }) };
     }
@@ -298,7 +302,8 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
         const state = await readBotState();
         const room = state.rooms?.[id];
         const bot: any = Object.values(state.bots || {}).find((entry: any) => entry.id === id || entry.sessionId === id);
-        const ids = [...new Set<string>([...(bot?.segments || []).map((part: any) => part.sessionId), id])];
+        const currentId = String(bot?.sessionId || id);
+        const ids = [...new Set<string>([...(bot?.segments || []).map((part: any) => part.sessionId), currentId])];
         const events = [];
         for (const partId of ids) {
           await authorize(partId);
@@ -308,15 +313,17 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
           finally { observation?.[Symbol.dispose](); }
         }
         const members = Object.values(room?.sessions || {}) as string[];
-        const failure = [id, ...members].map(key => errors.get(key)).filter(Boolean).join('；');
+        const failure = [currentId, ...members].map(key => errors.get(key)).filter(Boolean).join('；');
         return Response.json({ ok: true, value: { events, groupLog: room?.log,
-          running: [id, ...members].some(key => ctx.agents.get(key)?.status === 'running'), error: failure } });
+          running: [currentId, ...members].some(key => ctx.agents.get(key)?.status === 'running'), error: failure } });
       }
       if (body.endpoint === 'dyworker-stop') {
         const id = String(body.payload?.sessionId || ''); await authorize(id);
         const state = JSON.parse(await fs.readFile(path.join(dataDir, 'bot/state.json'), 'utf8'));
+        const bot: any = Object.values(state.bots || {}).find((entry: any) => entry.id === id || entry.sessionId === id);
+        const currentId = String(bot?.sessionId || id);
         const members = Object.values(state.rooms?.[id]?.sessions || {}) as string[];
-        for (const key of [id, ...members]) { await authorize(key); ctx.agents.get(key)?.cancel({ kind: 'user' }); }
+        for (const key of [currentId, ...members]) { await authorize(key); ctx.agents.get(key)?.cancel({ kind: 'user' }); }
         return Response.json({ ok: true, value: true });
       }
       return ctx.connection.registry.entries.get('POST /api/bot').route.fetch(request);
