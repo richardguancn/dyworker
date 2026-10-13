@@ -48,6 +48,8 @@ for (const platform of ["linux", "darwin", "win32"]) {
       windowBackgroundFor: () => "#f7f7f4",
       appearanceState: { settings: { theme: "system" } },
       resolvedAppearanceTheme: () => "light",
+      // Linux 图标来自窗口图标控制器，此处桩为固定值
+      windowIcons: { iconFor: () => null },
       path: { join: (...parts) => parts.join("/") },
       here: "/app/electron",
       // preload 路径在 createWindow 里先算出来（缺失时要弹窗报错），此处桩为同一路径
