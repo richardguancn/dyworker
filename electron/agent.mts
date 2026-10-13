@@ -13,6 +13,7 @@ import { effectiveReasoningEffort, getModelReasoningConfig } from "./model-reaso
 import { bundledCuratedRoot } from './curated-plugins.mts';
 import { formatSkillInstructions, skillContextSummary } from './skills.mts';
 import { localReview } from "./local-reviewer.mts";
+import { resolveAssistantDelivery } from "./assistant-delivery.ts";
 import { selectWikiPages } from "./memory-wiki.mts";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mts";
 import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isKimiFormulaToolName, isGlmNativeVisionModel, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "./providers.mts";
@@ -5599,6 +5600,8 @@ export async function runAgent({
   };
   let planSteps = null;
   const executedTools = [];
+  const completedThinkingIds: string[] = [];
+  const completedDeliveryReplies: any[] = [];
   const withChanges = (result) => {
     const nextWorkingContext = mergeWorkingContext(priorWorkingContext, messages);
     let finalStatus = result.status;
@@ -5607,10 +5610,16 @@ export async function runAgent({
     let text = result.finalText;
 
     if (finalStatus === "done") {
+      const delivery = resolveAssistantDelivery(completedDeliveryReplies, text || "");
+      text = delivery.text;
+      for (const index of delivery.promotedReplyIndexes) {
+        const id = completedThinkingIds[index];
+        if (id) traceEmit({ type: "activity-update", id, status: "success", commentary: "" });
+      }
       verification = verifyTaskEvidence({
         // 核验口径用 claimsText（交付轮正文 + summary 的合集）而不是展示出来的那一份：
         // 交付正文被替换时，被换掉的正文里如果有虚报，只核验展示文本就会放过它。
-        finalText: result.verificationText || text || "",
+        finalText: [text, result.verificationText].filter(Boolean).join("\n\n"),
         executedTools,
         fileChanges,
         planSteps,
@@ -5866,6 +5875,7 @@ export async function runAgent({
       const isFinishTask = toolCalls.some((c) => c?.function?.name === "finish_task");
       const commentary = toolCalls.length > 0 && !isFinishTask ? text : "";
       finishActivity(thinkingId, "success", roundReasoning, { durationMs: thinkingDuration, commentary });
+      completedThinkingIds.push(thinkingId);
       debugLog("model-response", `模型响应（${transport === "sse" ? "SSE 流式" : "普通 JSON"}）`, modelMessage);
 
       if (text) {
@@ -5882,6 +5892,7 @@ export async function runAgent({
         assistantEntry.reasoning_content = modelMessage.reasoning_content;
       }
       messages.push(assistantEntry);
+      completedDeliveryReplies.push(assistantEntry);
 
       if (!toolCalls.length) {
         if (modelMessage.truncated) {

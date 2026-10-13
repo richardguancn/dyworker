@@ -82,3 +82,52 @@ test("会话分轮保存时，晚到的说明和耗时仍更新所属轮次，�
   assert.equal(saved[3].activities[0].id, "second-thought");
   assert.equal(saved[3].activities[0].commentary, undefined);
 });
+
+test("完整清单与计划收尾同轮时，执行结束和存档重读后都在最终正文中显示一次", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-delivery-"));
+  const answer = '## 候选清单\n\n```dyworker-ui\n{"type":"choice","title":"选题","options":[{"label":"广州解放","value":"1"}]}\n```';
+  try {
+    for (const explicit of [false, true]) {
+      const collector = createTranscriptCollector({ runId: `delivery-${explicit}` });
+      const events = [];
+      let round = 0;
+      const call = (id, name, args) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
+      const result = await runAgent({
+        settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "test" },
+        workspacePath: root,
+        conversation: [{ role: "user", content: "给我候选清单" }],
+        emit(event) { events.push(event); collector.handle(event); },
+        fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: round++ === 0
+          ? { role: "assistant", content: answer, tool_calls: [call("plan", "update_plan", { steps: [{ title: "整理清单", status: "completed" }] })] }
+          : { role: "assistant", content: "回复编号即可。", ...(explicit ? { tool_calls: [call("finish", "finish_task", { summary: "回复编号即可。", evidence: "已核对清单" })] } : {}) },
+        }] }) }),
+      });
+      assert.equal(result.status, "done");
+      assert.equal(result.finalText, `${answer}\n\n回复编号即可。`);
+      assert.ok(events.some(event => event.type === "activity-update" && event.commentary === ""));
+      const saved = JSON.parse(JSON.stringify(collector.buildMessages("给我候选清单", result))).at(-1);
+      assert.equal(saved.content, result.finalText);
+      assert.equal(saved.activities[0].commentary, "");
+      assert.equal(saved.activities.filter(activity => activity.commentary?.includes("广州解放")).length, 0);
+      assert.equal(saved.executedMessages[0].content, answer, "原始回复仍完整保留");
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("提升到最终正文的完成声明仍接受真实执行核验", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-delivery-evidence-"));
+  try {
+    let round = 0;
+    const result = await runAgent({
+      settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "test" },
+      workspacePath: root,
+      conversation: [{ role: "user", content: "上传文章" }],
+      fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: round++ === 0
+        ? { role: "assistant", content: "文章已全部上传到公众号草稿箱。", tool_calls: [{ id: "plan", type: "function", function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "上传", status: "completed" }] }) } }] }
+        : { role: "assistant", content: "请查看结果。" },
+      }] }) }),
+    });
+    assert.equal(result.status, "unverified");
+    assert.match(result.finalText, /系统核验提示/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
