@@ -27,8 +27,9 @@ export function fingerprint(root, entries, { metadataOnly = false } = {}) {
       if (parents.has(target)) throw new Error(`构建输入含循环目录：${relative}`);
       const next = new Set(parents).add(target);
       for (const name of readdirSync(absolute).sort()) {
-        // 工具自己的临时缓存不是构建输入。
-        if (metadataOnly && name === '.cache') continue;
+        // 工具自己的临时缓存不是构建输入（.cache；Vite 的 .vite / .vite-temp 同理，
+        // 全新 npm ci 后首次构建会创建它们，不能把依赖指纹冲掉）。
+        if (metadataOnly && (name === '.cache' || name === '.vite' || name === '.vite-temp')) continue;
         visit(path.join(relative, name), next, path.join(absolute, name));
       }
     } else if (stat.isFile()) {
