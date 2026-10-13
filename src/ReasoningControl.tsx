@@ -93,7 +93,9 @@ function ReasoningManager({ endpoint, model, overrides, onClose, onSave }: {
       defaultEffort: !disabled && trimmed.some(option => option.value === defaultEffort.trim()) ? defaultEffort.trim() : '' });
   };
 
-  return createPortal(<dialog ref={dialogRef} className="reasoning-manager" aria-labelledby="reasoning-manager-title"
+  // data-menu-root：对话框经 portal 挂在 body 下，不在模型菜单的 DOM 里；没有它，
+  // App 的全局“点菜单外就关”会把模型菜单连同本对话框一起关掉，导致无法编辑
+  return createPortal(<dialog ref={dialogRef} className="reasoning-manager" aria-labelledby="reasoning-manager-title" data-menu-root
     onCancel={event => { event.preventDefault(); if (!saving) onClose(); }}
     onClick={event => { if (event.target === event.currentTarget && !saving) {
       const rect = event.currentTarget.getBoundingClientRect();

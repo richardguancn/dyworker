@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DYWorker 标题栏布局对比 · 3 种结构方案</title>
+<style>
+  :root {
+    --paper: #f7f7f4;
+    --paper-deep: #efeee9;
+    --ink: #252822;
+    --ink-soft: rgba(37, 40, 34, 0.62);
+    --ink-faint: rgba(37, 40, 34, 0.38);
+    --hairline: rgba(69, 71, 66, 0.12);
+    --card: #ffffff;
+    --accent: #c96b2c;
+    --font: -apple-system, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font);
+    background: #e8e6df;
+    color: var(--ink);
+    padding: 40px 24px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1160px; margin: 0 auto; }
+
+  /* ===== 页头 ===== */
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 12px; flex-wrap: wrap; }
+  .page-head h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+  .page-head p { color: var(--ink-soft); font-size: 14px; margin-top: 6px; line-height: 1.7; }
+
+  .platform-switch {
+    display: flex; gap: 4px; background: #dcdcD5; border-radius: 10px; padding: 3px;
+  }
+  .platform-switch button {
+    border: 0; background: transparent; font-family: var(--font); font-size: 13px;
+    padding: 7px 14px; border-radius: 8px; color: var(--ink-soft); cursor: pointer;
+  }
+  .platform-switch button.active { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+  /* ===== 方案区块 ===== */
+  .option { margin-top: 56px; }
+  .option-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .option-no {
+    font-size: 12px; font-weight: 700; color: #fff; background: var(--ink);
+    border-radius: 6px; padding: 3px 8px; letter-spacing: 0.04em;
+  }
+  .option-head h2 { font-size: 19px; font-weight: 700; }
+  .option-tag { font-size: 12px; color: var(--ink-faint); }
+  .option-desc { font-size: 14px; color: var(--ink-soft); line-height: 1.7; max-width: 760px; margin-bottom: 20px; }
+
+  /* ===== 窗口壳 ===== */
+  .window {
+    border-radius: 14px; overflow: hidden; background: var(--paper);
+    border: 1px solid rgba(0,0,0,0.10);
+    box-shadow: 0 24px 64px -16px rgba(30, 28, 22, 0.28), 0 4px 16px rgba(30,28,22,0.10);
+  }
+  .win-body { display: flex; min-height: 480px; }
+
+  /* ===== 通用图标 ===== */
+  .ic { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; border-radius: 8px; color: var(--ink-soft); flex: none;
+  }
+  .icon-btn:hover { background: rgba(62, 65, 59, 0.08); color: var(--ink); }
+
+  /* ===== 窗口按钮（Linux/Windows 右侧，通高贴边） ===== */
+  .win-controls { display: flex; align-self: stretch; }
+  .win-controls .wc {
+    width: 46px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-soft);
+  }
+  .win-controls .wc:hover { background: rgba(62,65,59,0.08); color: var(--ink); }
+  .win-controls .wc.close:hover { background: #c42b1c; color: #fff; }
+
+  /* ===== macOS 红绿灯（默认隐藏，platform=mac 时显示） ===== */
+  .traffic { display: none; align-items: center; gap: 8px; padding: 0 14px; align-self: stretch; }
+  .traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .traffic i:nth-child(1) { background: #ff5f57; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.15); }
+  .traffic i:nth-child(2) { background: #febc2e; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.15); }
+  .traffic i:nth-child(3) { background: #28c840; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.15); }
+
+  body.platform-mac .win-controls { display: none; }
+  body.platform-mac .traffic { display: flex; }
+  body.platform-linux .traffic { display: none; }
+
+  /* ===== 通用窗口内部：导航栏 + 侧栏 + 内容 ===== */
+  .rail {
+    width: 52px; flex: none; background: var(--paper-deep);
+    display: flex; flex-direction: column; align-items: center; padding-top: 14px; gap: 10px;
+    border-right: 1px solid var(--hairline);
+  }
+  .rail .dot { width: 30px; height: 30px; border-radius: 9px; background: rgba(62,65,59,0.07); display:flex; align-items:center; justify-content:center; color: var(--ink-soft); }
+  .rail .dot.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.10); }
+  .sidebar {
+    width: 232px; flex: none; background: var(--paper); border-right: 1px solid var(--hairline);
+    padding: 16px 12px;
+  }
+  .brand { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+  .brand small { display: block; font-size: 11px; font-weight: 400; color: var(--ink-faint); margin-top: 2px; }
+  .side-item { font-size: 13px; color: var(--ink-soft); padding: 7px 10px; border-radius: 7px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side-item.on { background: rgba(62,65,59,0.07); color: var(--ink); font-weight: 600; }
+  .side-sec { font-size: 11px; color: var(--ink-faint); margin: 16px 10px 2px; }
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--ink); }
+  .stage .big { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; }
+  .stage .spark { color: var(--ink-faint); }
+  .composer {
+    margin: 0 auto 28px; width: min(520px, 78%); background: #fff; border: 1px solid var(--hairline);
+    border-radius: 22px; padding: 12px 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    color: var(--ink-faint); font-size: 13.5px;
+  }
+
+  /* ================================================================
+     方案 A：极简拖带 —— 标题栏退出信息层，只做 36px 窄拖带
+     ================================================================ */
+  .tb-a {
+    height: 36px; display: flex; align-items: center;
+    background: var(--paper); border-bottom: 1px solid var(--hairline);
+  }
+  .tb-a .a-left { display: flex; align-items: center; padding-left: 8px; }
+  .tb-a .a-left .icon-btn { width: 30px; height: 30px; }
+  .tb-a .a-spacer { flex: 1; }
+  .tb-a .win-controls .wc { width: 42px; }
+  /* macOS：左侧让位红绿灯 */
+  body.platform-mac .tb-a .a-left { padding-left: 0; }
+
+  /* 内容区自己的页眉（标题回归到内容层） */
+  .content-topbar {
+    height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 18px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .content-topbar .t { font-size: 15px; font-weight: 650; }
+  .content-topbar .t-ic { color: var(--ink-faint); }
+  .content-topbar .spacer { flex: 1; }
+
+  /* ================================================================
+     方案 B：居中命令胶囊 —— 标题升级为可点击的会话切换入口
+     ================================================================ */
+  .tb-b {
+    height: 48px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    background: var(--paper); border-bottom: 1px solid var(--hairline);
+  }
+  .tb-b .b-left { display: flex; align-items: center; gap: 2px; padding-left: 10px; justify-self: start; }
+  .tb-b .b-right { display: flex; align-items: center; justify-self: end; align-self: stretch; }
+  .tb-b .b-right .app-actions { display: flex; align-items: center; gap: 2px; padding-right: 10px; }
+  .cmd-pill {
+    display: flex; align-items: center; gap: 8px; justify-self: center;
+    background: #fff; border: 1px solid var(--hairline); border-radius: 999px;
+    padding: 6px 14px 6px 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    max-width: 340px;
+  }
+  .cmd-pill .p-ic { color: var(--accent); }
+  .cmd-pill .p-title { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmd-pill kbd {
+    font-family: var(--font); font-size: 11px; color: var(--ink-faint);
+    background: rgba(62,65,59,0.06); border-radius: 5px; padding: 2px 6px;
+  }
+  .v-divider { width: 1px; height: 20px; background: var(--hairline); margin-right: 10px; flex: none; }
+
+  /* ================================================================
+     方案 C：标签页 —— 标题栏即会话标签条
+     ================================================================ */
+  .tb-c {
+    height: 46px; display: flex; align-items: stretch;
+    background: var(--paper-deep); border-bottom: 1px solid var(--hairline);
+  }
+  .tb-c .c-left { display: flex; align-items: center; padding: 0 4px 0 8px; }
+  .tb-c .c-tabs { display: flex; align-items: stretch; gap: 2px; padding-top: 8px; min-width: 0; }
+  .tab {
+    display: flex; align-items: center; gap: 8px; padding: 0 12px 0 14px;
+    font-size: 13px; border-radius: 9px 9px 0 0; color: var(--ink-soft);
+    max-width: 220px; white-space: nowrap;
+  }
+  .tab .tab-t { overflow: hidden; text-overflow: ellipsis; }
+  .tab.on { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 -1px 3px rgba(0,0,0,0.05); position: relative; }
+  .tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--paper); }
+  .tab .tab-x { display: inline-flex; border-radius: 4px; padding: 2px; color: var(--ink-faint); }
+  .tab .tab-x:hover { background: rgba(62,65,59,0.10); color: var(--ink); }
+  .tab-ghost { display: flex; align-items: center; padding: 0 10px; color: var(--ink-faint); border-radius: 8px; align-self: center; height: 30px; }
+  .tab-ghost:hover { background: rgba(62,65,59,0.07); color: var(--ink); }
+  .tb-c .c-spacer { flex: 1; }
+  .tb-c .win-controls .wc { width: 44px; }
+  /* macOS：红绿灯占住左侧，标签整体右移 */
+  body.platform-mac .tb-c .c-left { padding-left: 0; }
+
+  /* 方案 C 的内容区页眉不再有标题，只放工具 */
+  .content-topbar.tools-only { justify-content: flex-end; }
+
+  /* ================================================================
+     方案 D：现有结构 + 功能入口图标（审批箱 / 机器人）
+     ================================================================ */
+  .variant-label { font-size: 13px; font-weight: 700; color: var(--ink); margin: 22px 0 12px; }
+  .tb-d {
+    height: 48px; display: flex; align-items: center;
+    background: var(--paper); border-bottom: 1px solid var(--hairline);
+  }
+  .tb-d .d-left { display: flex; align-items: center; gap: 2px; padding-left: 10px; }
+  body.platform-mac .tb-d .d-left { padding-left: 0; }
+  .tb-d .d-sep { width: 1px; height: 18px; background: var(--hairline); margin: 0 6px; flex: none; }
+  .tb-d .d-title { flex: 1; min-width: 0; text-align: center; padding: 0 16px; }
+  .tb-d .d-title strong { font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .tb-d .d-right { display: flex; align-items: center; align-self: stretch; gap: 2px; }
+  .tb-d .d-gap { width: 10px; flex: none; }
+  .icon-btn.has-badge { position: relative; }
+  .icon-btn .badge {
+    position: absolute; top: 3px; right: 2px;
+    min-width: 14px; height: 14px; border-radius: 7px; padding: 0 4px;
+    background: var(--accent); color: #fff;
+    font-size: 9.5px; font-style: normal; font-weight: 700; line-height: 14px; text-align: center;
+    box-shadow: 0 0 0 1.5px var(--paper);
+  }
+  /* 方案 D 的窗口体矮一些，一页里放得下两个变体 */
+  .win-body.slim { min-height: 300px; }
+  .win-body.slim .stage { padding: 24px 0; }
+
+  /* ===== 注解 ===== */
+  .notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 20px; }
+  .note { background: #f2f1ec; border: 1px solid var(--hairline); border-radius: 12px; padding: 14px 16px; }
+  .note h3 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .note ul { list-style: none; }
+  .note li { font-size: 13px; color: var(--ink-soft); line-height: 1.7; padding-left: 14px; position: relative; }
+  .note li::before { content: ""; position: absolute; left: 0; top: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-faint); }
+  .note.good li::before { background: #4c9a52; }
+  .note.bad li::before { background: #c26a4a; }
+
+  .footer-hint { margin-top: 64px; font-size: 13px; color: var(--ink-faint); line-height: 1.8; }
+</style>
+</head>
+<body class="platform-linux">
+<div class="page">
+
+  <div class="page-head">
+    <div>
+      <h1>DYWorker 标题栏 · 布局方案对比</h1>
+      <p>针对窗口按钮在右侧的平台（Linux / Windows）。右上角可切换到 macOS（红绿灯在左）验证同一结构在两个平台的适配。</p>
+    </div>
+    <div class="platform-switch" role="group" aria-label="平台预览">
+      <button class="active" data-platform="linux">Linux / Win（按钮在右）</button>
+      <button data-platform="mac">macOS（按钮在左）</button>
+    </div>
+  </div>
+
+  <!-- ================= 方案 A ================= -->
+  <section class="option" data-screen-label="A 极简拖带">
+    <div class="option-head">
+      <span class="option-no">A</span>
+      <h2>极简拖带</h2>
+      <span class="option-tag">参考：Raycast / Linear</span>
+    </div>
+    <p class="option-desc">标题栏不再承载会话标题——收缩成一条 36px 的窄拖带，只剩侧栏开关和通高贴边的窗口按钮。会话标题回归内容区页眉，信息分层更干净。</p>
+
+    <div class="window">
+      <div class="tb-a">
+        <span class="traffic"><i></i><i></i><i></i></span>
+        <div class="a-left">
+          <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></span>
+        </div>
+        <div class="a-spacer"></div>
+        <div class="win-controls">
+          <span class="wc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+          <span class="wc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></span>
+          <span class="wc close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+        </div>
+      </div>
+      <div class="win-body">
+        <div class="rail">
+          <span class="dot on"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></span>
+        </div>
+        <div class="sidebar">
+          <div class="brand">DYWorker<small>大亚湾营促局出品</small></div>
+          <div class="side-sec">最近</div>
+          <div class="side-item on">新任务</div>
+          <div class="side-item">介绍一下什么是Harness？</div>
+          <div class="side-item">我当前环境下git pull很卡。</div>
+        </div>
+        <div class="content">
+          <div class="content-topbar">
+            <span class="ic t-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></svg></span>
+            <span class="t">新任务</span>
+            <span class="spacer"></span>
+            <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></span>
+          </div>
+          <div class="stage">
+            <span class="ic spark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span>
+            <span class="big">我们要完成什么？</span>
+          </div>
+          <div class="composer">描述要完成的工作</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note good"><h3>优点</h3><ul>
+        <li>窗口按钮独占一行右端，和应用图标零混淆，截图里的拥挤感彻底消失</li>
+        <li>36px 窄条给内容让出垂直空间，窗口显得更高</li>
+        <li>标题只在内容区出现一次，不再与侧栏「最近」列表里的高亮项重复</li>
+      </ul></div>
+      <div class="note bad"><h3>取舍</h3><ul>
+        <li>侧栏收起时，需要拖窗口的位置偏小（中间仍是拖拽区，但视觉上没有提示）</li>
+        <li>标题离开窗口顶部，远距离扫视定位当前任务稍弱</li>
+      </ul></div>
+      <div class="note"><h3>macOS 适配</h3><ul>
+        <li>红绿灯嵌入窄条左侧，结构完全不变，只换左侧 padding</li>
+        <li>36px 窄条与 macOS 红绿灯比例协调（VS Code 同款做法）</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ================= 方案 B ================= -->
+  <section class="option" data-screen-label="B 居中命令胶囊">
+    <div class="option-head">
+      <span class="option-no">B</span>
+      <h2>居中命令胶囊</h2>
+      <span class="option-tag">参考：VS Code Command Center</span>
+    </div>
+    <p class="option-desc">会话标题从一行死文字升级为居中的胶囊按钮：显示当前任务，点击弹出会话快速切换（等价 ⌘K / Ctrl+K）。左右两段用 Grid 锁死对称，窗口按钮作为独立通高簇贴右缘。</p>
+
+    <div class="window">
+      <div class="tb-b">
+        <div class="b-left">
+          <span class="traffic"><i></i><i></i><i></i></span>
+          <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></span>
+        </div>
+        <span class="cmd-pill">
+          <span class="ic p-ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span>
+          <span class="p-title">新任务</span>
+          <kbd>Ctrl K</kbd>
+        </span>
+        <div class="b-right">
+          <div class="app-actions">
+            <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></span>
+          </div>
+          <span class="v-divider"></span>
+          <div class="win-controls">
+            <span class="wc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+            <span class="wc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></span>
+            <span class="wc close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="win-body">
+        <div class="rail">
+          <span class="dot on"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></span>
+        </div>
+        <div class="sidebar">
+          <div class="brand">DYWorker<small>大亚湾营促局出品</small></div>
+          <div class="side-sec">最近</div>
+          <div class="side-item on">新任务</div>
+          <div class="side-item">介绍一下什么是Harness？</div>
+          <div class="side-item">我当前环境下git pull很卡。</div>
+        </div>
+        <div class="content">
+          <div class="stage">
+            <span class="ic spark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span>
+            <span class="big">我们要完成什么？</span>
+          </div>
+          <div class="composer">描述要完成的工作</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note good"><h3>优点</h3><ul>
+        <li>胶囊是绝对视觉中心，标题不再"漂"，左右无论放多少按钮都对称稳定</li>
+        <li>标题变成入口：点击即切换/搜索会话，一个元素同时解决展示与导航</li>
+        <li>窗口按钮与应用按钮之间有分隔线 + 通高簇，两组功能一眼分清</li>
+      </ul></div>
+      <div class="note bad"><h3>取舍</h3><ul>
+        <li>需要实现会话快速切换浮层（工作量最大的一项，但本身也是功能增量）</li>
+        <li>超长标题受胶囊 max-width 限制，必须省略号截断</li>
+      </ul></div>
+      <div class="note"><h3>macOS 适配</h3><ul>
+        <li>Grid 三段式天然兼容：左侧换成红绿灯，胶囊依旧居中，右侧只剩面板开关</li>
+        <li>与 macOS 原生"居中标题"习惯一致，是三个方案里跨平台观感最统一的</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ================= 方案 C ================= -->
+  <section class="option" data-screen-label="C 标签页">
+    <div class="option-head">
+      <span class="option-no">C</span>
+      <h2>标签页</h2>
+      <span class="option-tag">参考：Arc / 浏览器标签条</span>
+    </div>
+    <p class="option-desc">标题栏本身就是会话标签条：每个进行中的任务是一枚标签，可切换、可关闭、可新建。窗口按钮通高贴右缘。多任务心智最强，和侧栏「最近」列表互为长短横跳。</p>
+
+    <div class="window">
+      <div class="tb-c">
+        <span class="traffic"><i></i><i></i><i></i></span>
+        <div class="c-left">
+          <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></span>
+        </div>
+        <div class="c-tabs">
+          <span class="tab on">
+            <span class="tab-t">新任务</span>
+            <span class="tab-x"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+          </span>
+          <span class="tab">
+            <span class="tab-t">介绍一下什么是Harness？</span>
+          </span>
+          <span class="tab-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+        </div>
+        <div class="c-spacer"></div>
+        <div class="win-controls">
+          <span class="wc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+          <span class="wc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></span>
+          <span class="wc close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+        </div>
+      </div>
+      <div class="win-body">
+        <div class="rail">
+          <span class="dot on"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></span>
+        </div>
+        <div class="sidebar">
+          <div class="brand">DYWorker<small>大亚湾营促局出品</small></div>
+          <div class="side-sec">最近</div>
+          <div class="side-item on">新任务</div>
+          <div class="side-item">介绍一下什么是Harness？</div>
+          <div class="side-item">我当前环境下git pull很卡。</div>
+        </div>
+        <div class="content">
+          <div class="content-topbar tools-only">
+            <span class="icon-btn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></span>
+          </div>
+          <div class="stage">
+            <span class="ic spark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span>
+            <span class="big">我们要完成什么？</span>
+          </div>
+          <div class="composer">描述要完成的工作</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note good"><h3>优点</h3><ul>
+        <li>多任务一目了然，切换/关闭/新建都在一行内，不需要展开侧栏</li>
+        <li>标签天然居左排列，右端只剩窗口按钮，重心问题不存在</li>
+        <li>标签条底色与窗口体分层（灰底 + 白色活动标签），信息层级最丰富</li>
+      </ul></div>
+      <div class="note bad"><h3>取舍</h3><ul>
+        <li>改动最大：会话模型要支持多开并存（当前是单会话 + 列表切换）</li>
+        <li>只有一两个任务时，标签条显得空旷，需要好的空态设计</li>
+      </ul></div>
+      <div class="note"><h3>macOS 适配</h3><ul>
+        <li>红绿灯嵌入标签条左端（Arc 浏览器同款），标签顺延，结构不变</li>
+        <li>macOS 用户对标签条心智零学习成本</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- ================= 方案 D ================= -->
+  <section class="option" data-screen-label="D 功能入口图标">
+    <div class="option-head">
+      <span class="option-no">D</span>
+      <h2>现有结构 + 功能入口图标</h2>
+      <span class="option-tag">按你的描述：加「审批箱」「机器人」两个入口</span>
+    </div>
+    <p class="option-desc">保持 48px 高度和现有骨架不动，Linux / Windows 下在左侧「收起侧栏」按钮右边新增两个入口：审批箱（铃铛，带未读角标）和机器人。</p>
+
+    <div class="window">
+      <div class="tb-d">
+        <div class="d-left">
+          <span class="traffic"><i></i><i></i><i></i></span>
+          <span class="icon-btn" title="收起侧栏"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></span>
+          <span class="d-sep"></span>
+          <span class="icon-btn has-badge" title="审批箱">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+            <i class="badge">3</i>
+          </span>
+          <span class="icon-btn" title="机器人"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></span>
+        </div>
+        <div class="d-title"><strong>新任务</strong></div>
+        <div class="d-right">
+          <span class="icon-btn" title="展开右侧工具栏"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></span>
+          <span class="d-gap"></span>
+          <div class="win-controls">
+            <span class="wc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+            <span class="wc"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg></span>
+            <span class="wc close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="win-body slim">
+        <div class="rail">
+          <span class="dot on"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg></span>
+          <span class="dot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg></span>
+        </div>
+        <div class="sidebar">
+          <div class="brand">DYWorker<small>大亚湾营促局出品</small></div>
+          <div class="side-sec">最近</div>
+          <div class="side-item on">新任务</div>
+          <div class="side-item">介绍一下什么是Harness？</div>
+        </div>
+        <div class="content">
+          <div class="stage">
+            <span class="ic spark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span>
+            <span class="big">我们要完成什么？</span>
+          </div>
+          <div class="composer">描述要完成的工作</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <div class="note good"><h3>本方案的修正点</h3><ul>
+        <li>铃铛（审批箱）+ 机器人放在「收起侧栏」右侧，左 3 图标 vs 右 1 图标 + 3 窗口按钮，两端重量对称</li>
+        <li>审批箱带未读角标（沿用品牌橙色），有待办时一眼可见</li>
+        <li>窗口按钮做成通高、贴右缘的独立簇，与圆角图标之间留 10px 空隙，不再挤成一串</li>
+        <li>48px 高度、标题位置、拖拽区域全部不动；macOS 下左侧让位红绿灯，其余不变</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <p class="footer-hint">
+    所有方案共同的底座：窗口按钮在任何方案里都做成「通高、直角、贴右缘」的独立簇（Windows 惯例），与应用内圆角图标在样式和空间上都分开；macOS 下同一结构把左端换成红绿灯即可。点右上角切换平台可逐一验证。
+  </p>
+</div>
+
+<script>
+  document.querySelectorAll(".platform-switch button").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.body.classList.toggle("platform-mac", btn.dataset.platform === "mac");
+      document.body.classList.toggle("platform-linux", btn.dataset.platform !== "mac");
+      document.querySelectorAll(".platform-switch button").forEach(function (b) { b.classList.toggle("active", b === btn); });
+    });
+  });
+</script>
+</body>
+</html>

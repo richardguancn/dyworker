@@ -105,7 +105,7 @@ export function normalizeHex(input: unknown): string | null {
 // 面板色派生的 CSS 变量映射。无自定义色、透明度为 0 且玻璃关闭时返回 null
 //（controller 移除内联变量、回退样式表默认，老用户观感不变）。文字色（ink/muted/quiet）
 // 与 accent 保持主题默认。
-export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--card-raised", "--bubble", "--table-head"] as const;
+export const PANEL_COLOR_VARS = ["--surface", "--surface-strong", "--sidebar", "--sidebar-active", "--card", "--card-raised", "--card-solid", "--bubble", "--table-head"] as const;
 
 /**
  * 派生规则：自定义色与主题默认面板色混合，得到协调的导航/面板底色；
@@ -147,6 +147,8 @@ export function derivePalette(
     // 卡片混入自定义色的比例高于其他面板（0.42），保持与整体色调一致；alpha 与侧边栏一致
     ["--card", mixColor(baseHex, defaults.card, 0.42), alpha],
     ["--card-raised", mixColor(baseHex, defaults.card, 0.42), raisedAlpha],
+    // 实色卡片：正文会尖锐地透出时（系统材质下 backdrop-filter 被禁用）供浮层托底
+    ["--card-solid", mixColor(baseHex, defaults.card, 0.42), 1],
     ["--bubble", mixColor(baseHex, defaults.bubble, 0.5), alpha],
     // 表格标题栏：色调与 bubble 一致，alpha 与侧边栏/卡片同一层级
     ["--table-head", mixColor(baseHex, defaults.bubble, 0.5), alpha],

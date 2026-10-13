@@ -489,6 +489,21 @@ test("托底色派生：--card-raised 比 --card 更实且单调不减，玻璃�
   assert.ok(alphaOf(glass["--card-raised"]) > alphaOf(glass["--card"]));
 });
 
+test("实色卡片派生：--card-solid 恒不透明，供浮层在模糊不可用时托底", () => {
+  const alphaOf = (value) => Number(/rgba\([\d.]+, [\d.]+, [\d.]+, ([\d.]+)\)/.exec(value)[1]);
+  const rgbOf = (value) => /^rgba\(([\d.]+, [\d.]+, [\d.]+),/.exec(value)[1];
+  const mid = derivePalette({ background: { transparency: 50 } }, "light");
+  assert.equal(alphaOf(mid["--card-solid"]), 1);
+  assert.equal(rgbOf(mid["--card-solid"]), rgbOf(mid["--card"]), "实色托底与卡片色同色");
+  const glass = derivePalette({ background: { transparency: 50 } }, "light", { glass: true });
+  assert.equal(alphaOf(glass["--card-solid"]), 1, "玻璃下浮层托底仍不透明");
+});
+
+test("模型菜单与思考档位对话框：data-translucent 下用实色卡片托底", async () => {
+  const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
+  assert.match(css, /html\[data-translucent="true"\]\s*\.model-menu,\s*html\[data-translucent="true"\]\s*\.reasoning-manager\s*\{[^}]*background:\s*var\(--card-solid, var\(--card\)\)/);
+});
+
 test("输入框与悬浮层托底：data-translucent 下输入框/toast/排队卡用加浓卡片色，不再强制透明", async () => {
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
   assert.match(css, /html\[data-translucent="true"\]\s*\.composer-card\s*\{[^}]*background:\s*var\(--card-raised, var\(--card\)\)/);

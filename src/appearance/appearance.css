@@ -128,6 +128,14 @@ html[data-translucent="true"] .conversation-turn-preview::before {
   background: var(--card);
 }
 
+/* 模型菜单与思考档位管理对话框改实色托底：它们的列表/表单直接压在对话正文上，
+   半透明靠 backdrop-filter 才可读，而系统材质下模糊被禁用（见文件头规则），
+   正文会尖锐地透出来（用户实报 2026-10-13：菜单与档位对话框看不清、像没背景） */
+html[data-translucent="true"] .model-menu,
+html[data-translucent="true"] .reasoning-manager {
+  background: var(--card-solid, var(--card));
+}
+
 /* 模态对话框沿用正文阅读面（surface-strong），深浅两态都与面板协调 */
 html[data-translucent="true"] .settings-dialog,
 html[data-translucent="true"] .identity-dialog {

@@ -7320,7 +7320,16 @@ export function App() {
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const sessionErrorTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
-  const composerDockRef = useRef<HTMLDivElement>(null);
+  // 对话区在机器人团队页/设置页之间会被整棵卸载重挂（App 主区域的条件分支），
+  // 用 state 承载节点，让依赖它们的 effect 在重挂后重新绑定
+  const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null);
+  const [composerDockNode, setComposerDockNode] = useState<HTMLDivElement | null>(null);
+  // 必须是稳定引用：内联箭头每次渲染都会先 ref(null) 再 ref(node)，
+  // 会让依赖 viewportNode 的贴底跟随 effect 每次渲染都重建并强制滚到底部
+  const bindViewport = useCallback((node: HTMLDivElement | null) => {
+    viewportRef.current = node;
+    setViewportNode(node);
+  }, []);
   const activeIdRef = useRef(activeId);
   const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   // 会话内搜索：所有已渲染消息行的引用（含助手消息），DOM 高亮与跳转都用它
@@ -7603,16 +7612,15 @@ export function App() {
   }, [ready, activeId, toolPanelTabs, activeToolPanelTabId, toolPanelWidth, rightPanelOpen]);
 
   useEffect(() => {
-    const node = composerDockRef.current;
-    if (!node) return;
+    if (!composerDockNode) return;
     const update = () => {
-      document.documentElement.style.setProperty("--composer-height", `${Math.ceil(node.getBoundingClientRect().height)}px`);
+      document.documentElement.style.setProperty("--composer-height", `${Math.ceil(composerDockNode.getBoundingClientRect().height)}px`);
     };
     update();
     const observer = new ResizeObserver(update);
-    observer.observe(node);
+    observer.observe(composerDockNode);
     return () => observer.disconnect();
-  }, []);
+  }, [composerDockNode]);
 
   // 图片预览浮层：Esc 关闭，多图时 ←/→ 切换
   useEffect(() => {
@@ -7939,7 +7947,7 @@ export function App() {
   // 把距离顶过阈值（实测 10px）误杀跟随。因此 stick 时按「当前距离 > 上次距离 +
   // 本帧增量 + 容差」识别用户上滚，scroll 事件只做补充判定。
   useEffect(() => {
-    const viewport = viewportRef.current;
+    const viewport = viewportNode;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight });
     setAtBottom(true);
@@ -8014,7 +8022,7 @@ export function App() {
       window.removeEventListener("pointerup", endInteraction);
       window.removeEventListener("pointercancel", endInteraction);
     };
-  }, [activeId, ready]);
+  }, [activeId, ready, viewportNode]);
 
   useEffect(() => {
     setHoveredTurnIndex(null);
@@ -13109,7 +13117,7 @@ export function App() {
 
         <div
           className="conversation-viewport"
-          ref={viewportRef}
+          ref={bindViewport}
           onScroll={() => {
             syncAtBottom();
             // 选区随滚动漂移，浮动条位置不再对准选区，直接收起
@@ -13519,7 +13527,7 @@ export function App() {
           />
         )}
 
-        <div className="composer-dock" ref={composerDockRef}>
+        <div className="composer-dock" ref={setComposerDockNode}>
           {(error || activeSessionError) && (
             <div className="status-toast error" role="alert">
               <span className="status-toast-text">{error || activeSessionError}</span>
