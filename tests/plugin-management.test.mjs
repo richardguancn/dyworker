@@ -800,8 +800,9 @@ test("客户端半边：宿主能解析入口并给出协议 URL，路径不会�
   assert.match(info.entries[0].url, /^dyworker-plugin:\/\/client\/with-client\/0\?rev=/);
 
   const file = await ctx.plugins.clientBundleFile("with-client", 0);
-  // macOS 的 /var 是 /private/var 的软链，比较前统一取 realpath
-  assert.equal(file, await fs.realpath(path.join(pkgDir, "lib", "client.js")), "协议处理器要拿到包内绝对路径");
+  // macOS 的 /var 是 /private/var 的软链、Windows 的临时目录可能是 8.3 短路径，
+  // 两边都取 realpath 再比较（异步 realpath 在 Windows 才会展开 8.3 短名）。
+  assert.equal(await fs.realpath(file), await fs.realpath(path.join(pkgDir, "lib", "client.js")), "协议处理器要拿到包内绝对路径");
   await assert.rejects(() => ctx.plugins.clientBundleFile("with-client", 9), /客户端入口不存在/);
 
   // 没有客户端半边的插件要给出明确原因，而不是空数组
