@@ -36,6 +36,13 @@ test("会话回退估算包含隐藏的跨轮工作记录", () => {
   assert.equal(estimateSessionTokens([], "已读取文件内容"), 3 + 7);
 });
 
+test('办公附件和未展开的大文本不按整个文件字节计入窗口，助手展示的附件不回传', () => {
+  const base = estimateSessionTokens([{ role: 'user', content: '' }]);
+  assert.equal(estimateSessionTokens([{ role: 'user', attachments: [{ name: '材料.pdf', size: 20_000_000 }] }]), base + 64);
+  assert.equal(estimateSessionTokens([{ role: 'user', attachments: [{ name: '材料.txt', size: 20_000_000 }] }]), base + 64);
+  assert.equal(estimateSessionTokens([{ role: 'assistant', attachments: [{ isImage: true, size: 500_000 }] }]), base);
+});
+
 test("模型名上下文覆盖后缀解析（k3[1M] / [256K] / [131072]）", () => {
   assert.deepEqual(parseModelContextOverride("k3[1M]"), { name: "k3", contextLimit: 1048576 });
   assert.deepEqual(parseModelContextOverride("Qwen3.8-27B [256k]"), { name: "Qwen3.8-27B", contextLimit: 262144 });

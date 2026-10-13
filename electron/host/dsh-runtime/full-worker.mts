@@ -56,6 +56,11 @@ function ask(kind: string, value: any, signal?: AbortSignal): Promise<any> {
   });
 }
 class ParentModel extends LlmAdapter {
+  contextWindow: number;
+  constructor(contextWindow: number) { super(); this.contextWindow = contextWindow; }
+  async resolveModel(provider: string, model: string) {
+    return { provider, id: model, name: model, context: { contextWindow: this.contextWindow } };
+  }
   async *stream(options: any) {
     const { signal, ...request } = options;
     // 一次只取一个块，由父进程保存提供方凭据与网络请求；插件拿不到应用设置。
@@ -76,7 +81,7 @@ process.once('message', async (input: any) => {
     ctx = await createOfficialDshContext({ ...input, ptc, attachments: attachmentProxy(ask), persistence: persistenceProxy((action, payload, signal) =>
       ask('persistence', { action, payload }, signal)) });
     const sessionHistory = createSessionHistory(ctx, input.sessionId, input.workspacePath);
-    ctx.llm.registerAdapter(['dyworker'], new ParentModel());
+    ctx.llm.registerAdapter(['dyworker'], new ParentModel(input.contextWindow));
     ctx.on('user-questions/request', (request: any) => {
       if (!request.agent || request.agent !== handle?.agent) throw new Error('提问必须属于当前正在运行的根任务');
       return ask('user-question', { sessionId: request.agent.id, questions: request.questions }, request.signal);
@@ -148,7 +153,12 @@ process.once('message', async (input: any) => {
       if (input.fixedExtraTools?.includes(tool.name)) fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));
     }
     await mountDshProfile(ctx, input);
-    ctx.on('session/event', (session: any, event: any) => send({ type: 'session-event', sessionId: session.id, event }));
+    const contextUsage = (session: any) => {
+      const measured = ctx.tokenMeter.measure(session);
+      return { used: measured.totalTokens, completion: 0, estimated: true };
+    };
+    ctx.on('session/event', (session: any, event: any) => send({ type: 'session-event', sessionId: session.id, event,
+      contextUsage: contextUsage(session) }));
     const exists = await ctx.sessionPersistence.stat(input.sessionId);
     if (exists && exists.header.cwd !== input.workspacePath) throw new Error('已保存的 DSH 会话属于另一个工作目录');
     handle = exists
@@ -171,7 +181,7 @@ process.once('message', async (input: any) => {
         const agent = handle.agent;
         let result: any;
         if (call.action === 'snapshot') result = { header: agent.session.header, events: agent.session.snapshotEvents(),
-          projections: ctx.sessionProjections.snapshot(agent.session), status: agent.status, jobs: ctx.jobs.list(agent.id) };
+          projections: ctx.sessionProjections.snapshot(agent.session), contextUsage: contextUsage(agent.session), status: agent.status, jobs: ctx.jobs.list(agent.id) };
         else if (call.action === 'session-image') result = await readSessionImage(ctx, input.sessionId, call.payload, controller.signal);
         else if (['history-page', 'history-open', 'history-next', 'history-close', 'history-list', 'history-control-open', 'history-state', 'history-search', 'session-rename'].includes(call.action))
           result = await sessionHistory.request(call.action, call.payload, controller.signal);

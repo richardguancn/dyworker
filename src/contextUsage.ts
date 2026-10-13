@@ -1,11 +1,15 @@
 interface AttachmentLike {
   size?: number;
   isImage?: boolean;
+  name?: string;
+  path?: string;
+  mimeType?: string;
 }
 
 interface MessageLike {
   content?: string;
   attachments?: AttachmentLike[];
+  role?: string;
 }
 
 export function formatTokenCount(value: number) {
@@ -29,8 +33,13 @@ export function estimateSessionTokens(messages: MessageLike[], workingContext = 
   tokens += estimateTextTokens(String(workingContext || ""));
   for (const message of messages || []) {
     tokens += 4 + estimateTextTokens(String(message.content || ""));
+    if (message.role === 'assistant') continue;
     for (const attachment of message.attachments || []) {
-      tokens += attachment.isImage ? 1024 : Math.ceil(Math.max(0, Number(attachment.size) || 0) / 4);
+      const bytes = Math.max(0, Number(attachment.size) || 0);
+      const textFile = attachment.mimeType?.startsWith('text/') || /\.(txt|md|markdown|csv|tsv|json|jsonl|xml|html?|css|js|jsx|ts|tsx|py|sql|yaml|yml|log)$/i.test(attachment.path || attachment.name || '');
+      // 大文件及办公附件发送的是说明/文件引用，不能把整份二进制文件大小计入窗口。
+      tokens += attachment.isImage ? (bytes <= 12 * 1024 * 1024 ? 1024 : 64)
+        : textFile && bytes <= 2 * 1024 * 1024 ? Math.ceil(bytes / 4) : 64;
     }
   }
   return tokens;

@@ -200,7 +200,7 @@ export class DshRuntimeService extends Service {
     const extraTools = [...nativeSkills.tools, ...memoryTools, ...(options.extraTools || [])].map((tool: any) => tool.function ?? tool).filter((tool: any, index: number, all: any[]) =>
       all.findIndex(candidate => candidate.name === tool.name) === index &&
       !specification.some((plugin: any) => tool.name?.startsWith(`plugin__${plugin.id.replace(/[^a-zA-Z0-9_]/g, '_')}__`)));
-    const version = JSON.stringify([options.workspacePath, settings.model, specification, extraTools]);
+    const version = JSON.stringify([options.workspacePath, settings.model, options.contextLimit, specification, extraTools]);
     const hooks = await options.resolvers.readHooks(options.workspacePath);
     const standingRules=await options.resolvers.readStandingRules();
     if (this.opening.has(sessionId)) await this.opening.get(sessionId);
@@ -222,7 +222,7 @@ export class DshRuntimeService extends Service {
     if (!entry) {
       const runtime = new OfficialDshSession({ profileDir: this.ctx.plugins.dir,
         dataDir: path.join(this.config.dir, createHash('sha256').update(sessionId).digest('hex')),
-        workspacePath: options.workspacePath, sessionId, model: settings.model, plugins: specification, extraTools, fixedExtraTools: nativeToolNames,
+        workspacePath: options.workspacePath, sessionId, model: settings.model, contextLimit: options.contextLimit, plugins: specification, extraTools, fixedExtraTools: nativeToolNames,
         mods:this.ctx.get('mods') });
       entry = { runtime, busy: true, version, ownerIds: specification.map((item: any) => item.id) };
       this.sessions.set(sessionId, entry);
@@ -319,7 +319,7 @@ export class DshRuntimeService extends Service {
       },
       });
     };
-    runtime.options.onEvent = ({ sessionId: owner, event }: any) => {
+    runtime.options.onEvent = ({ sessionId: owner, event, contextUsage }: any) => {
       trace.event(owner, event);
       if (owner === sessionId) liveTurns.event(event);
       const data = event.data || {};
@@ -343,7 +343,10 @@ export class DshRuntimeService extends Service {
         }
         emit({ type: 'activity-update', id: key, status: data.message?.isError ? 'error' : 'success', detail: JSON.stringify(data.message?.content ?? data.error ?? '') });
       }
-      if (['compaction/summary', 'compaction/prune'].includes(event.type)) emit({ type: 'context-compacted' });
+      if (owner === sessionId) {
+        if (['compaction/summary', 'compaction/prune'].includes(event.type)) emit({ type: 'context-compacted' });
+        if (contextUsage) emit({ type: 'context-usage', ...contextUsage });
+      }
       options.onDshEvent?.({ sessionId: owner, event });
     };
     try {

@@ -35,7 +35,7 @@ import FileUploads from '@deepseek-ai/dsh-client-file-upload';
 import { ConnectionService } from '../services/connection.mts';
 import path from 'node:path';
 
-export async function createOfficialDshContext({ dataDir, workspacePath, persistence, ptc, attachments }: { dataDir: string; workspacePath: string; persistence?: any; ptc?: any; attachments?: any }) {
+export async function createOfficialDshContext({ dataDir, workspacePath, persistence, ptc, attachments, contextWindow = 128000 }: { dataDir: string; workspacePath: string; persistence?: any; ptc?: any; attachments?: any; contextWindow?: number }) {
   const ctx = new Context();
   try {
     await ctx.plugin(Llm);
@@ -55,7 +55,7 @@ export async function createOfficialDshContext({ dataDir, workspacePath, persist
     await ctx.plugin(StorageDomain, { backend: 'json' });
     await ctx.plugin(ProjectionCache, { writeEveryEvents: 200, writeIntervalMs: 5000 });
     await ctx.plugin(TokenMeter);
-    await ctx.plugin(Compaction);
+    await ctx.plugin(Compaction, { headroomTokens: Math.max(1, Math.min(8192, Math.floor(contextWindow / 8))), maxTokens: Math.max(1, Math.min(8192, Math.floor(contextWindow / 8))) });
     await ctx.plugin(AgentLoop, { agents: [] });
     await ctx.plugin(Subagents);
     await ctx.plugin(SpawnSubagent);

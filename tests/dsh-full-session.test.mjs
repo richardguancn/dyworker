@@ -244,6 +244,37 @@ test('官方压缩实际调用摘要模型并写入可重放的压缩记录', as
   assert.match(JSON.stringify(snapshot.events), /保留要点的简短摘要/);
 });
 
+test('官方自动压缩按模型容量触发，下一轮使用摘要，占用随压缩下降且重启保留', async t => {
+  const requests = [], updates = [];
+  const { runtime, options } = await setup(t, { model: 'selected[32K]',
+    onEvent: event => updates.push(event), async *generate(request) {
+      requests.push(request);
+      yield* text(request.purpose === 'compaction' ? '原始材料已核对，继续完成最新任务。' : '历史结果。'.repeat(6000));
+    } });
+  await runtime.start();
+  await runtime.request('prompt', { text: '第一轮原始资料。'.repeat(11000) });
+  const before = await runtime.request('snapshot');
+  const second = await runtime.request('prompt', { text: '第二轮继续核对最新要求。' });
+  const after = await runtime.request('snapshot');
+  assert.ok(second.events.some(e => e.type === 'compaction/summary'));
+  assert.ok(requests.some(r => r.purpose === 'compaction'), '没有手动命令也应调用摘要模型');
+  const last = requests.filter(r => r.purpose !== 'compaction').at(-1);
+  assert.match(JSON.stringify(last.messages), /原始材料已核对/);
+  assert.match(JSON.stringify(last.messages), /第二轮继续核对最新要求/);
+  assert.ok(JSON.stringify(last.messages).length < 50000, '后续实际请求不能重新发送完整历史');
+  assert.ok(after.contextUsage.used < before.contextUsage.used);
+  const compacted = updates.find(e => e.event.surfaceOp && e.event.surfaceOp !== 'append');
+  assert.ok(compacted.contextUsage.used < before.contextUsage.used, '摘要替换历史时立即携带新的实际占用');
+  assert.equal(after.projections.values.contextPressure.contextWindow, 32768);
+  await runtime.close();
+  const cold = new OfficialDshSession(options);
+  try {
+    await cold.start();
+    const resumed = await cold.request('snapshot');
+    assert.equal(resumed.contextUsage.used, after.contextUsage.used);
+  } finally { await cold.close(); }
+});
+
 test('DSH 模型桥沿用现有提供方，保留工具身份和真实用量，凭据只用于父进程请求', async () => {
   const sent = [];
   const settings = { endpoint: 'https://model.example.test/v1/chat/completions', model: 'selected', apiKey: 'parent-only-secret' };

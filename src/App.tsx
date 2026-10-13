@@ -11316,13 +11316,8 @@ export function App() {
               },
             }));
           } else if (agentEvent.type === "context-compacted") {
-            updateSession(updatedSession.id, (session) => ({
-              ...session,
-              contextTokens: undefined,
-              contextTokensExact: undefined,
-              contextModel: undefined,
-              contextEndpoint: undefined,
-            }));
+            // 保留最近实际用量，随后由压缩后的请求/有效上下文更新；
+            // 清空会让回退估算重新把完整聊天记录计入，显示虚假的 100%。
             showSessionNotice(taskSessionId, "上下文空间不足，已自动把早前工作压缩为摘要，任务继续");
           } else if (agentEvent.type === "agent-finished") {
             finishedEventSeen = true;

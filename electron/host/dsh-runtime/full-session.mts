@@ -50,7 +50,11 @@ export class OfficialDshSession {
     signal?.throwIfAborted();
     if (this.child) throw new Error('DSH 会话已经启动');
     await fs.mkdir(this.options.dataDir, { recursive: true });
-    const input = { profileDir: this.options.profileDir, sessionId: this.options.sessionId, model: this.options.model,
+    const override = String(this.options.model || '').match(/\[([0-9]+(?:\.[0-9]+)?)\s*([kKmM])?\]$/);
+    const declaredWindow = override ? Number(override[1]) * (override[2]?.toLowerCase() === 'm' ? 1048576 : override[2]?.toLowerCase() === 'k' ? 1024 : 1) : 0;
+    const requestedWindow = Number(this.options.contextLimit) || declaredWindow;
+    const contextWindow = Number.isFinite(requestedWindow) && requestedWindow >= 1 ? Math.floor(requestedWindow) : 128000;
+    const input = { profileDir: this.options.profileDir, sessionId: this.options.sessionId, model: this.options.model, contextWindow,
       plugins: (this.options.plugins || []).map(({ id, entryUrl, config, options }: any) => ({ id, entryUrl, config, options })),
       extraTools: this.options.extraTools || [],
       fixedExtraTools: this.options.fixedExtraTools || [],
