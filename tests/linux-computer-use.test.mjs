@@ -130,7 +130,7 @@ linuxTest("麒麟环境安装工具使用系统授权安装固定依赖", () => 
 
 linuxTest("麒麟安装由受系统托管的单任务在软件锁内完成", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   assert.match(source, /systemd-run/);
@@ -199,7 +199,7 @@ linuxTest("系统原生软件锁在后台 worker 运行期间持续生效", asyn
 
 linuxTest("Linux 只截取目标应用窗口，不会退回上传整个桌面", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   assert.match(source, /import", \["-window", window\.id, file\]/);
@@ -253,7 +253,7 @@ linuxTest("Linux 无障碍助手支持控件身份指纹绑定与过期检测", 
 
 linuxTest("Linux 桌面服务支持控件身份指纹缓存与自动补全", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   assert.match(source, /elementSignatureCache/);
@@ -263,7 +263,7 @@ linuxTest("Linux 桌面服务支持控件身份指纹缓存与自动补全", asy
 
 linuxTest("Linux 桌面服务提供坐标滚动与悬停入口", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   const scrollTool = desktopToolDefinitions().find((t) => t.name === "scroll");
@@ -277,7 +277,7 @@ linuxTest("Linux 桌面服务提供坐标滚动与悬停入口", async () => {
 
 linuxTest("Linux 虚拟显示启动失败时明确拒绝回落到用户桌面", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   assert.match(source, /virtualDisplayUnavailableError/);
@@ -288,7 +288,7 @@ linuxTest("Linux 虚拟显示启动失败时明确拒绝回落到用户桌面", 
 
 linuxTest("Linux 桌面服务在退出时释放按键与鼠标残留", async () => {
   const source = await fs.readFile(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs"),
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
   assert.match(source, /releaseInputDevices/);
@@ -300,7 +300,7 @@ linuxTest("Linux 桌面服务在退出时释放按键与鼠标残留", async () 
 });
 
 linuxTest("Linux 桌面服务可通过 DYWorker 的基础工具通道完成握手", async () => {
-  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts");
   const client = new McpClient({ command: process.execPath, args: [server] });
   await client.connect();
   assert.equal(client.serverInfo?.name, "DYWorker Linux Computer Use");
@@ -319,7 +319,7 @@ linuxTest("Linux 桌面服务把麒麟窗口转换为模型可读的应用列表
     "printf '%s\\n' '0x03e00007  0 host-name wps.wps 项目汇报.docx - WPS Office'",
   ].join("\n"));
   await fs.chmod(wmctrl, 0o755);
-  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts");
   const client = new McpClient({
     command: process.execPath,
     args: [server],
@@ -373,7 +373,7 @@ linuxTest("Linux 安装工具获得系统授权后执行固定安装并重新检
     ].join("\n"),
   };
   await writeMockScripts(root, scripts);
-  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts");
   const client = new McpClient({
     command: process.execPath,
     args: [server],
@@ -453,7 +453,7 @@ linuxTest("关闭聊天后系统后台安装继续，重新连接可以检查结
     ].join("\n"),
   };
   await writeMockScripts(root, scripts);
-  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts");
   const env = {
     ...process.env,
     PATH: `${root}:${process.env.PATH || ""}`,
@@ -544,7 +544,7 @@ linuxTest("管理员级安装计划发生变化时停止安装", async (t) => {
     ].join("\n"),
   };
   await writeMockScripts(root, scripts);
-  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mjs");
+  const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts");
   const client = new McpClient({
     command: process.execPath,
     args: [server],

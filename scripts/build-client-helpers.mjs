@@ -84,10 +84,11 @@ async function buildSessionController(checkOnly) {
   const source = path.join(root, 'vendor/dsh-session-controller');
   const license = await readFile(path.join(source, 'LICENSE'), 'utf8');
   const gateway = path.join(source, 'packages/api/gateway/src/client');
-  const gatewayIndex = await readFile(path.join(gateway, 'index.ts'), 'utf8');
+  // Windows 上 actions/checkout 默认 autocrlf=true，vendor 源码会带 CRLF，先归一化再做正则截取
+  const gatewayIndex = (await readFile(path.join(gateway, 'index.ts'), 'utf8')).replace(/\r\n/g, '\n');
   const classifier = gatewayIndex.match(/export function isRemoteFailure\(error: unknown\): error is RemoteFailure \{\n[^}]+\}/)?.[0];
   if (!classifier) throw new Error('固定官方 Gateway 失败识别函数缺失');
-  const commands=await readFile(path.join(source,'packages/api/session-controller/src/commands.ts'),'utf8');
+  const commands=(await readFile(path.join(source,'packages/api/session-controller/src/commands.ts'),'utf8')).replace(/\r\n/g,'\n');
   const forkBoundary=commands.match(/function latestCompletedPrefixBoundary\(events: readonly SessionEvent\[\]\): SessionSeq \| undefined \{\n[\s\S]+?\n\}/)?.[0];
   if(!forkBoundary)throw new Error('固定官方完整回合分叉边界函数缺失');
   const clientTarget = path.join(root, 'src/pluginRuntime/vendor/dsh-session-controller/index.js');

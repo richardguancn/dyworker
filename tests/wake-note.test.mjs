@@ -5,15 +5,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "../src/wakeNote.ts";
 
-// 与 App.tsx 生成侧逐字一致的挂起说明（桌面会话）
+// 与 App.tsx 生成侧逐字一致的挂起说明（桌面会话）。
+// 时间文案必须走 formatWakeTime 生成：CI 跑在 UTC，硬编码本地时间的写法会整体失配。
+const WAKE_AT = "2026-10-02T15:05:02.000+08:00";
+const WAKE_AT_TEXT = formatWakeTime(WAKE_AT);
+
 const SLEEPING_CONTENT = [
   "文章编辑器需要视频转码完成后才能插入。先等转码（3 分钟后检查）：",
   "",
-  "**已主动挂起**：将于 2026/10/2 15:05:02 自动唤醒继续（原因：等待公众号后台对上传的 123 秒视频完成转码，以便插入文章形成视频文章草稿）。期间可以关闭应用，到点会照常继续。",
+  `**已主动挂起**：将于 ${WAKE_AT_TEXT} 自动唤醒继续（原因：等待公众号后台对上传的 123 秒视频完成转码，以便插入文章形成视频文章草稿）。期间可以关闭应用，到点会照常继续。`,
 ].join("\n");
-
-const WAKE_AT = "2026-10-02T15:05:02.000+08:00";
-const WAKE_AT_TEXT = formatWakeTime(WAKE_AT);
 
 test("formatWakeTime：本地时间展示；非法/缺失时间戳退回「到点」而不是 Invalid Date", () => {
   assert.equal(formatWakeTime(WAKE_AT), new Date(WAKE_AT).toLocaleString("zh-CN"));
