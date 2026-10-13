@@ -8,7 +8,9 @@ import { readFilePreview, requestFilePreview, filePreviewToolDefinitions, MAX_PR
 import { runAgent } from '../electron/agent.mts';
 
 async function fixture(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-preview-'));
+  // realpath 归一 os.tmpdir 的 8.3 短路径（Windows runner 上 RUNNER~1 与长路径不一致，
+  // 会让 Workspace 边界判定与前一步 resolvePreviewFile 的 realpath 结果对不上）。
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-preview-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   return root;
 }

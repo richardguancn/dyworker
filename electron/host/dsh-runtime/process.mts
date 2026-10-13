@@ -22,6 +22,13 @@ export function spawnPluginProcess(entry: string, { profileDir, packageDir, work
   if (workspacePath) reads.add(real(workspacePath));
   if (dataDir) reads.add(real(dataDir));
   const execArgv = ["--permission", ...[...reads].map(dir => `--allow-fs-read=${dir}`)];
+  if (process.platform === "win32") {
+    // 官方运行时包的 Windows 路径依赖 koffi 原生插件：dsh-fs-local 覆盖已有文件时
+    // 用 ReplaceFileW 保留 ACL，windows-acl 沙箱也经 koffi 调系统 API。Node 权限模型
+    // 默认禁用原生插件，不放行则官方文件服务在 Windows 上无法覆盖任何已有文件。
+    // 其余 fs/child 限制仍然生效；macOS/Linux 的 flock 绑定是可选懒加载，维持禁用。
+    execArgv.push("--allow-addons");
+  }
   if (workspacePath && !readOnlyWorkspace) execArgv.push(`--allow-fs-write=${real(workspacePath)}`);
   if (dataDir) execArgv.push(`--allow-fs-write=${real(dataDir)}`);
   return fork(entryFile, [], {

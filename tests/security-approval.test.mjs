@@ -36,7 +36,9 @@ test("视频检查复合命令遵循完全访问与替我审批，不被删除�
   }
 });
 
-test("真实清理与重建：完全访问免审批，审核可放行，明确限制仍生效", async (t) => {
+// run_command 在 Windows 上走 cmd.exe，下面的 bash 复合命令（rm -rf/for/do/done）无法执行；
+// 审批口径的纯逻辑覆盖由后面的「安全审批组合矩阵」在各平台保障。
+test("真实清理与重建：完全访问免审批，审核可放行，明确限制仍生效", { skip: process.platform === "win32" }, async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-cleanup-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const cases = [

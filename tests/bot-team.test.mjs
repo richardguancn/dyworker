@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createBotTeam, botModelProfiles } from '../electron/host/services/bot-team.mts';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { conversationMessages } from '../builtin-plugins/ds-bot/src/messages.ts';
 
 const entryUrl = new URL('../builtin-plugins/ds-bot/upstream/index.js', import.meta.url).href;
-const builtinPluginsDir = new URL('../builtin-plugins/', import.meta.url).pathname;
+const builtinPluginsDir = fileURLToPath(new URL('../builtin-plugins/', import.meta.url));
 const settings = { endpoint: 'http://127.0.0.1:9999/v1/chat/completions', model: 'test-one', apiKey: '',
   profiles: [{ id: 'second', name: '第二模型', endpoint: 'http://127.0.0.1:9999/v1/chat/completions', model: 'test-two', apiKey: '' }] };
 const text = value => [

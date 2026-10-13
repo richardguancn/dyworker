@@ -26,7 +26,9 @@ test('先检查失败，再补装依赖，同一进程内重新检查和加载�
   await fs.writeFile(path.join(dep, 'lib/index.js'), "export { value } from './feature.js';");
   await fs.writeFile(path.join(dep, 'lib/feature.js'), "export const value=42;");
   refreshPluginModules(profile);
-  assert.equal(require.resolve('cache-dep'), await fs.realpath(path.join(dep, 'lib/index.js')));
+  // Windows 上 os.tmpdir() 可能返回 8.3 短路径（RUNNER~1），require.resolve 保留原样，
+  // realpath 才展开成长路径，两边统一 realpath 后再比。
+  assert.equal(await fs.realpath(require.resolve('cache-dep')), await fs.realpath(path.join(dep, 'lib/index.js')));
   const loaded = await import(pluginModuleUrl(entry, profile));
   assert.equal(loaded.value, 42);
   assert.deepEqual(loaded.inject, ['example']);

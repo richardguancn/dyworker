@@ -5,13 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { sessionToolDefinitions } from '../electron/session-tools.mts';
 import { toolDefinitions } from '../electron/agent.mts';
 import { BOT_HARNESS_TOOL_NAMES } from '../electron/host/dsh-runtime/bot-harness.mts';
 
 const entryUrl = new URL('../builtin-plugins/ds-bot/upstream/index.js', import.meta.url).href;
-const builtinPluginsDir = new URL('../builtin-plugins/', import.meta.url).pathname;
+const builtinPluginsDir = fileURLToPath(new URL('../builtin-plugins/', import.meta.url));
 const text = value => [
   { type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text: value },
   { type: 'block-end', index: 0, block: { type: 'text', text: value } },
@@ -65,7 +66,7 @@ async function waitForApproval(team, timeoutMs = 5000) {
 test('机器人继承桌面任务工具并真实执行：文件、命令、审批同意与拒绝', { timeout: 60000 }, async t => {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-harness-')));
   // 临时目录按应用规则视为工作区内，所以工作区外读取用仓库里的真实文件。
-  const outside = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'package.json');
+  const outside = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
   await fs.writeFile(path.join(dir, 'settings.json'), JSON.stringify({
     endpoint: 'http://127.0.0.1:9999/v1/chat/completions', model: 'test-one', apiKey: '', approvalMode: 'interactive',
   }), 'utf8');
@@ -132,7 +133,9 @@ test('机器人继承桌面任务工具并真实执行：文件、命令、审�
   assert.match(approval.title, /运行命令|命令/);
   await call(team, 'dyworker-approve', { id: approval.id, allow: true });
   await waitTurn(team, session);
-  assert.equal(await fs.readFile(path.join(workspace, '命令结果.txt'), 'utf8').catch(() => ''), '完成\n');
+  // Windows 下该命令由 cmd.exe 执行：重定向会带上命令里空格并写入 CRLF 行尾。
+  const commandOutput = await fs.readFile(path.join(workspace, '命令结果.txt'), 'utf8').catch(() => '');
+  assert.equal(commandOutput.replace(/\s+$/, ''), '完成');
   assert.equal((await call(team, 'dyworker-approvals')).items.length, 0);
 
   // 5) 工作区外读取：需要确认；拒绝后不读取，且把拒绝结果交给模型。

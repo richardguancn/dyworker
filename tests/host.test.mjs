@@ -64,7 +64,8 @@ test("SettingsService：写入规范化 updateUrl 并加密密钥，读回一致
     assert.equal(raw.encrypted, true);
     assert.ok(!JSON.stringify(raw).includes("sk-test"));
     const stat = await fs.stat(path.join(dir, "settings.json"));
-    assert.equal(stat.mode & 0o777, 0o600);
+    // Windows 没有 POSIX 权限位，stat.mode 恒为合成值（0666），只在 POSIX 上校验 0600
+    if (process.platform !== "win32") assert.equal(stat.mode & 0o777, 0o600);
   } finally {
     await disposeHost(ctx);
   }

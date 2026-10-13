@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import vm from 'node:vm';
 import test from 'node:test';
 import { runAgent, compactConversation, reviewApproval } from '../electron/agent.mts';
@@ -7,7 +9,7 @@ const settings = { endpoint: 'http://mock.local/v1/chat/completions', model: 'au
 const response = (message) => ({ ok: true, json: async () => ({ choices: [{ message }], usage: { prompt_tokens: 100, completion_tokens: 10 } }) });
 const usageEvents = events => events.filter(event => event.type === 'token-usage');
 async function workspace(t) {
-  const root = await fs.mkdtemp('/tmp/dyworker-token-test-');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-token-test-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   return root;
 }

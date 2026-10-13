@@ -12,12 +12,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createClientRuntime } from "../src/pluginRuntime/index.ts";
 import { ClientPluginHost } from "../src/pluginRuntime/clientHost.ts";
 import { resolveClientEntries } from "../electron/host/plugin-client.mts";
 
-const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const builtinRoot = path.join(repoRoot, "builtin-plugins");
 const PLUGINS = ["dyworker-trajectory", "dyworker-context", "dyworker-terminal", "ds-bot"];
 
@@ -110,7 +111,7 @@ test("内置插件：包形状能被宿主扫描并解析出两半", async () =>
     assert.equal(entries[0]?.primary, true, `${name} 的 ./client 必须是主入口`);
     await fs.access(entries[0].file);
     // 主机半边是纯 ESM（builtin 不参与 TS 编译），形状必须是 cordis 插件
-    const host = await import(path.join(dir, manifest.main));
+    const host = await import(pathToFileURL(path.join(dir, manifest.main)).href);
     assert.equal(host.name, name);
     assert.ok(Array.isArray(host.inject) && host.inject.length > 0, "主机半边要声明 inject");
     assert.equal(typeof host.apply, "function");
@@ -156,7 +157,7 @@ test("轨迹插件主机半边：按 offset 分页读本会话 trace，非法 id
   await fs.writeFile(path.join(hostDir, "traces", `${sessionId}.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n", "utf8");
 
   const { ctx, routes } = makeFakeCtx({ hostDir });
-  const plugin = await import(path.join(builtinRoot, "dyworker-trajectory", "index.js"));
+  const plugin = await import(pathToFileURL(path.join(builtinRoot, "dyworker-trajectory", "index.js")).href);
   plugin.apply(ctx);
   assert.deepEqual(routes.map((route) => route.path), ["/api/dyworker-trajectory/read"]);
 
@@ -223,7 +224,7 @@ test("上下文插件主机半边：detail 汇总构成/事件/文件活动/计�
     },
   };
   const { ctx, routes } = makeFakeCtx({ hostDir, sessions: { [sessionId]: session }, projections });
-  const plugin = await import(path.join(builtinRoot, "dyworker-context", "index.js"));
+  const plugin = await import(pathToFileURL(path.join(builtinRoot, "dyworker-context", "index.js")).href);
   plugin.apply(ctx);
   assert.deepEqual(
     routes.map((route) => route.path).sort(),
@@ -320,7 +321,7 @@ test("上下文插件：配了价目就按真实用量算费用（含缓存单�
     hostDir,
     sessions: { [sessionId]: session },
   });
-  const plugin = await import(path.join(builtinRoot, "dyworker-context", "index.js"));
+  const plugin = await import(pathToFileURL(path.join(builtinRoot, "dyworker-context", "index.js")).href);
   plugin.apply(ctx);
   const detailRoute = routes.find((route) => route.path.endsWith("/detail"));
   const detail = await (await post(detailRoute, { sessionId })).json();

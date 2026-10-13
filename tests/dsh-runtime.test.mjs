@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { PluginRouteRegistry } from '../electron/host/services/connection.mts';
@@ -283,7 +284,7 @@ test('包管理器清理手工已登记的另一插件时，安装事务保留�
   assert.equal(installed.ok,true,JSON.stringify(installed));
   assert.deepEqual(await fs.readFile(path.join(office,'lib/index.js')),original);
   assert.equal(ctx.plugins.entries().find(row=>row.id==='office').active,true);
-  assert.equal((await import(path.join(clientDir,'index.mjs'))).renderLabel(),'原来的界面依赖仍可使用');
+  assert.equal((await import(pathToFileURL(path.join(clientDir, 'index.mjs')).href)).renderLabel(), '原来的界面依赖仍可使用');
   assert.equal(ctx.plugins.entries().find(row=>row.id==='manual-view').active,true);
   await call(ctx,'plugin__office__word_create',{path:'preserved-office.docx',paragraphs:['其他插件安装后原办公功能仍正常']},execution);
   assert.equal((await call(ctx,'plugin__office__word_read',{path:'preserved-office.docx'},execution)).text.includes('其他插件安装后原办公功能仍正常'),true);

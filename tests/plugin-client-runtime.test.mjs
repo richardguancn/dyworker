@@ -271,7 +271,7 @@ test("客户端模块依赖图：依赖在前、循环安全、解析不到的�
   // 每个模块只出现一次（循环不会重复入队）
   assert.equal(new Set(plan.ordered.map((node) => node.spec)).size, plan.ordered.length);
   assert.deepEqual(plan.missing, ["@deepseek-ai/dsh-not-installed"], "解析不到的模块要如实报出来");
-  assert.equal(plan.ordered[0].file, "/nm/remotes/lib/client.js", "入口要解析成绝对路径");
+  assert.equal(plan.ordered[0].file, path.resolve("/nm/remotes/lib/client.js"), "入口要解析成绝对路径");
 });
 
 test('同一官方界面模块由包名与 client 子路径引用时，只执行一次 factory', async t => {

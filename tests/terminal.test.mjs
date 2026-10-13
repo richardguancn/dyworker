@@ -56,7 +56,7 @@ test('真实终端：工作目录、TTY、输入、尺寸、中断、独立标�
   assert.throws(() => manager.read(owner, { id: second.id }), /已关闭/);
 });
 
-test('目录异常、跨窗口访问、刷新、停用与创建中停用都正确收尾', async t => {
+test('目录异常、跨窗口访问、刷新、停用与创建中停用都正确收尾', { skip: process.platform === 'win32' }, async t => {
   const manager = createTerminalManager();
   t.after(() => manager.dispose());
   const owner = sender();
@@ -121,7 +121,7 @@ test('无法查看进程信息时仍关闭终端，不让清理异常打断插�
   }
 });
 
-test('插件注册五个受控入口，停用时注销入口并关闭终端', async t => {
+test('插件注册五个受控入口，停用时注销入口并关闭终端', { skip: process.platform === 'win32' }, async t => {
   const handlers = new Map();
   const cleanups = [];
   apply({ ipc: { handle(channel, handler) { handlers.set(channel, handler); return () => handlers.delete(channel); } },

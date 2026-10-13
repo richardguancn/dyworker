@@ -351,7 +351,7 @@ test("来源识别：包名 / GitHub / 本地目录 各自解析正确", async (
 
   const local = parsePluginSource("~/dev/my-plugin");
   assert.equal(local.kind, "local");
-  assert.ok(local.path.startsWith("/"), "本地路径应展开为绝对路径");
+  assert.ok(path.isAbsolute(local.path), "本地路径应展开为绝对路径");
   assert.equal(parsePluginSource("/abs/path/plugin").kind, "local");
 });
 
@@ -604,7 +604,7 @@ test("本地目录安装：直接把绝对路径交给 npm", async () => {
   });
   assert.equal(result.ok, true);
   assert.equal(result.kind, "local");
-  assert.equal(calls[0][calls[0].length - 1], "/Users/someone/dev/my-plugin");
+  assert.equal(calls[0][calls[0].length - 1], path.resolve("/Users/someone/dev/my-plugin"));
 });
 
 test("装完能识别包名：git/本地来源靠 profile 依赖 diff", async () => {
@@ -625,7 +625,10 @@ test("装完能识别包名：git/本地来源靠 profile 依赖 diff", async ()
   }
 });
 
-test("PATH 处理：保持用户登录 shell 的 PATH 顺序，npm 目录只追加到末尾", async () => {
+// Windows 跳过：本用例钉死的是 Unix 语义——登录 shell（zsh/bash）PATH 用 ":" 分隔、
+// nvm/Homebrew 目录优先；Windows 的 path.delimiter 是 ";"，且 npm/git 走 cmd.exe，
+// 该不变量在 Windows 上不成立。
+test("PATH 处理：保持用户登录 shell 的 PATH 顺序，npm 目录只追加到末尾", { skip: process.platform === "win32" }, async () => {
   const { installPackageIntoProfile } = await import("../electron/host/plugin-install.mts");
   let captured = null;
   const loginPath = "/custom/nvm/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin";
@@ -653,7 +656,9 @@ test("PATH 处理：保持用户登录 shell 的 PATH 顺序，npm 目录只追�
     `npm 目录不得排到登录 PATH 之前（登录 PATH ${loginDirs.length} 项，实际位置 ${finalIndex}）`);
 });
 
-test("登录 shell PATH：从交互式 shell 取真实 PATH（GUI 应用的 PATH 不含 nvm/Homebrew）", async () => {
+// Windows 跳过：登录交互式 shell 取 PATH 是 Unix 专属机制（$SHELL -lic，nvm/Homebrew 的
+// GUI PATH 问题只在 macOS 存在）；Windows 没有对应的登录 shell 语义。
+test("登录 shell PATH：从交互式 shell 取真实 PATH（GUI 应用的 PATH 不含 nvm/Homebrew）", { skip: process.platform === "win32" }, async () => {
   const { resolveLoginShellPath, resetLoginPathCache } = await import("../electron/host/plugin-install.mts");
   resetLoginPathCache();
   const { EventEmitter } = await import("node:events");
@@ -1095,10 +1100,10 @@ test("客户端模块闭包：扫客户端半边的 require，纯库模块回退
     assert.ok(specs.includes("@deepseek-ai/lib-lib"), `要扫到客户端半边的 require，实际：${JSON.stringify(specs)}`);
     // ② 纯库模块没有客户端半边，也要在计划里（回退主入口），不能被当成缺失丢掉
     const libNode = plan.ordered.find((node) => node.spec === "@deepseek-ai/lib-lib");
-    assert.ok(libNode?.file.endsWith("lib/index.js"), `纯库模块要回退主入口：${libNode?.file}`);
+    assert.ok(libNode?.file.endsWith(path.join("lib", "index.js")), `纯库模块要回退主入口：${libNode?.file}`);
     assert.deepEqual(plan.missing, [], "不该有缺失模块");
     // ③ 协议取文件也要能拿到纯库模块
-    assert.ok(ctx.plugins.clientModuleFile("@deepseek-ai/lib-lib", 0).endsWith("lib/index.js"));
+    assert.ok(ctx.plugins.clientModuleFile("@deepseek-ai/lib-lib", 0).endsWith(path.join("lib", "index.js")));
     // ④ 依赖在前：@deepseek-ai/lib-lib 要排在 @deepseek-ai/mod-with-half 之前
     assert.ok(specs.indexOf("@deepseek-ai/lib-lib") < specs.indexOf("@deepseek-ai/mod-with-half"), "依赖要先于使用者");
   } finally {

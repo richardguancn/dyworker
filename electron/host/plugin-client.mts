@@ -26,7 +26,7 @@ export interface ClientEntry {
   subpath: string;
   /** 绝对路径 */
   file: string;
-  /** 相对包目录的路径（用于日志与界面展示） */
+  /** 相对包目录的路径（用于日志与界面展示；正斜杠，跨平台稳定） */
   relative: string;
   /** 是否主入口（"./client"，界面默认加载它） */
   primary: boolean;
@@ -49,6 +49,10 @@ function insidePackage(pkgDir: string, target: string): boolean {
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+// 包内相对路径一律用正斜杠（跨平台稳定，展示层直接用）；
+// Windows 上 path.relative 给的是反斜杠，会让界面与日志里的路径形态随平台漂移。
+const pkgRelative = (pkgDir: string, file: string) => path.relative(pkgDir, file).split(path.sep).join("/");
+
 /**
  * 列出插件包的客户端 bundle 入口。
  * @param manifest 插件包的 package.json 内容
@@ -64,7 +68,7 @@ export function resolveClientEntries(manifest: any, pkgDir: string): ClientEntry
     if (!insidePackage(pkgDir, file) || seen.has(file)) return;
     seen.add(file);
     // relative 一律是**规范化后的包内相对路径**（清单里可能写成 "./lib/client.js"）
-    entries.push({ subpath, file, relative: path.relative(pkgDir, file), primary: subpath === "./client" });
+    entries.push({ subpath, file, relative: pkgRelative(pkgDir, file), primary: subpath === "./client" });
   };
 
   // ① exports 里所有 ./client* 子路径
@@ -143,7 +147,7 @@ export function resolveModuleEntries(found: { manifest: any; dir: string; relati
   const push = (file: string, subpath: string) => {
     const resolved = path.resolve(file);
     if (out.some((entry) => entry.file === resolved)) return;
-    out.push({ subpath, file: resolved, relative: path.relative(found.dir, resolved), primary: out.length === 0 });
+    out.push({ subpath, file: resolved, relative: pkgRelative(found.dir, resolved), primary: out.length === 0 });
   };
   if (found.relative) push(path.resolve(found.dir, found.relative), "./client");
   for (const entry of resolveClientEntries(found.manifest, found.dir)) push(entry.file, entry.subpath);
