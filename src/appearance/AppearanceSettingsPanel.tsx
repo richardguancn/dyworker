@@ -1,7 +1,7 @@
 // 外观设置面板：主题 / 背景 / 液态玻璃 / 字体字号 + 底部操作条。
 // 所有改动只写 controller 的草稿并实时预览；「保存外观」才持久化，「取消」恢复已保存值。
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ImagePlus, RefreshCw, Trash2 } from "lucide-react";
+import { ImagePlus, RefreshCw, Trash2, UserRound } from "lucide-react";
 import type { AppearanceImageFit, AppearanceSettings, AppearanceTheme } from "../types";
 import {
   discardSession,
@@ -95,6 +95,7 @@ export function AppearanceSettingsPanel() {
       <div className="appearance-fields">
       {store.capabilities?.platform === "darwin" && <DockIconSection draft={draft} />}
       <ThemeSection draft={draft} />
+      <AccountAvatarSection draft={draft} />
       <BackgroundSection draft={draft} imageUrl={store.imageUrl} imageError={store.imageError} previewOnly={store.previewOnly} />
       <GlassSection draft={draft} capabilities={store.capabilities} effective={store.effective} />
       <TypographySection draft={draft} />
@@ -166,6 +167,70 @@ function ThemeSection({ draft }: { draft: AppearanceSettings }) {
         ))}
       </div>
       <p className="dialog-note">预设只调整外观草稿，不立即保存；浅色和深色分别记忆自定义背景色，互不覆盖。</p>
+    </>
+  );
+}
+
+// ---- 账户图标 ----
+
+const ACCOUNT_COLORS = [
+  { color: "#ef9b24", label: "橙色" },
+  { color: "#3975d5", label: "蓝色" },
+  { color: "#36866a", label: "绿色" },
+  { color: "#8863c7", label: "紫色" },
+  { color: "#c45363", label: "红色" },
+];
+
+function AccountAvatarSection({ draft }: { draft: AppearanceSettings }) {
+  const value = draft.accountAvatarColor;
+  const [hexText, setHexText] = useState(value);
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => {
+    setHexText(value);
+    setInvalid(false);
+  }, [value]);
+
+  const applyColor = (raw: string) => {
+    const color = normalizeHex(raw);
+    if (!color) {
+      setInvalid(true);
+      return;
+    }
+    setHexText(color);
+    setInvalid(false);
+    updateDraft(current => ({ ...current, accountAvatarColor: color }));
+  };
+
+  return (
+    <>
+      <div className="dialog-section-title">账户图标</div>
+      <div className="appearance-row appearance-color-row">
+        <span className="appearance-color-label" id="account-avatar-color-label">登录后图标背景色</span>
+        <span className="avatar" data-auth-status="logged-in" aria-hidden="true"><UserRound size={16} /></span>
+        <div className="appearance-swatches" role="group" aria-labelledby="account-avatar-color-label">
+          {ACCOUNT_COLORS.map(({ color, label }) => (
+            <button key={color} type="button"
+              className={`appearance-swatch ${value === color ? "active" : ""}`}
+              style={{ "--swatch-color": color } as CSSProperties}
+              aria-label={`账户图标${label}`} aria-pressed={value === color} title={label}
+              onClick={() => applyColor(color)} />
+          ))}
+        </div>
+        <label className="appearance-swatch appearance-swatch-picker" title="自定义账户图标颜色">
+          <input type="color" aria-label="自定义账户图标颜色" value={value}
+            onChange={event => applyColor(event.target.value)} />
+        </label>
+        <input className={`appearance-hex-input ${invalid ? "invalid" : ""}`}
+          aria-label="账户图标颜色值" aria-invalid={invalid} placeholder="#rrggbb"
+          value={hexText} spellCheck={false}
+          onChange={event => setHexText(event.target.value)}
+          onBlur={event => applyColor(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === "Enter") applyColor(event.currentTarget.value);
+          }} />
+        {invalid && <span className="appearance-status error" role="alert">颜色格式不正确（#rgb / #rrggbb）</span>}
+      </div>
+      <p className="dialog-note">当前图标显示未登录的灰色；这里可以预先保存登录后使用的颜色，默认橙色。修改后点击“保存外观”即可保留。</p>
     </>
   );
 }

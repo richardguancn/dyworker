@@ -22,6 +22,7 @@ export function defaultAppearance() {
     version: APPEARANCE_VERSION,
     theme: "system",
     dockIcon: "dark",
+    accountAvatarColor: "#ef9b24",
     background: {
       lightColor: null,
       darkColor: null,
@@ -107,6 +108,7 @@ export function normalizeAppearance(input) {
     version: APPEARANCE_VERSION,
     theme: pickEnum(source.theme, ["system", "light", "dark"], "system"),
     dockIcon: pickEnum(source.dockIcon, ["light", "dark"], "dark"),
+    accountAvatarColor: normalizeColor(source.accountAvatarColor) ?? "#ef9b24",
     background: {
       lightColor: normalizeColor(background.lightColor),
       darkColor: normalizeColor(background.darkColor),

@@ -26,6 +26,7 @@ export function defaultAppearance(): AppearanceSettings {
     version: 1,
     theme: "system",
     dockIcon: "dark",
+    accountAvatarColor: "#ef9b24",
     background: {
       lightColor: null,
       darkColor: null,
@@ -59,6 +60,9 @@ export function normalizeAppearance(input: unknown): AppearanceSettings {
   const out = defaultAppearance();
   out.theme = raw.theme === "light" || raw.theme === "dark" ? raw.theme : "system";
   out.dockIcon = raw.dockIcon === "light" ? "light" : "dark";
+  if (typeof raw.accountAvatarColor === "string" && parseHexColor(raw.accountAvatarColor)) {
+    out.accountAvatarColor = normalizeHexLocal(raw.accountAvatarColor);
+  }
   const bg = raw.background && typeof raw.background === "object" ? raw.background : {};
   for (const key of ["lightColor", "darkColor"] as const) {
     const value = bg[key];
@@ -250,6 +254,7 @@ function applyToDom(settings: AppearanceSettings) {
   // 受控主题：始终输出明确的 data-theme，并同步 colorScheme
   root.dataset.theme = resolved;
   root.style.colorScheme = resolved;
+  root.style.setProperty("--account-avatar-bg", settings.accountAvatarColor);
 
   const glass = settings.glass;
   root.dataset.glass = glass.enabled ? glass.strength : "off";

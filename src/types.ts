@@ -754,6 +754,7 @@ export interface AppearanceSettings {
   version: 1;
   theme: AppearanceTheme;
   dockIcon: "light" | "dark";
+  accountAvatarColor: string;
   background: {
     // null = 使用该主题默认底色
     lightColor: string | null;

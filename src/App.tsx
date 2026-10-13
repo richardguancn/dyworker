@@ -12791,7 +12791,7 @@ export function App() {
           <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
             onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
           <button className="rail-profile" aria-label="设置" title="设置" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
-            <span className="avatar"><UserRound size={15} /></span>
+            <span className="avatar" data-auth-status="logged-out"><UserRound size={15} /></span>
           </button>
         </div>
       </nav>

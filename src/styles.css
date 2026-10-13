@@ -2202,7 +2202,11 @@ body.resizing-panels .app-shell {
   justify-content: center;
   border-radius: 50%;
   color: white;
-  background: #ef9b24;
+  background: #91959c;
+}
+
+.avatar[data-auth-status="logged-in"] {
+  background: var(--account-avatar-bg, #ef9b24);
 }
 
 .main-panel {

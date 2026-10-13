@@ -55,6 +55,20 @@ test("默认外观结构符合方案 §4.1", () => {
   assert.deepEqual(defaults.typography, { family: "system", uiSize: 14, contentSize: 16 });
 });
 
+test("账户图标颜色：旧配置用橙色，非法颜色回落默认，自定义颜色保存后保留", async t => {
+  assert.equal(defaultAppearance().accountAvatarColor, "#ef9b24");
+  assert.equal(normalizeAppearance({}).accountAvatarColor, "#ef9b24");
+  for (const value of [null, 123, "bad", "red", "#zzzzzz"]) {
+    assert.equal(normalizeAppearance({ accountAvatarColor: value }).accountAvatarColor, "#ef9b24");
+  }
+  assert.equal(normalizeAppearance({ accountAvatarColor: "#ABC" }).accountAvatarColor, "#aabbcc");
+  const dir = await makeTmpDir(t);
+  const file = path.join(dir, "appearance.json");
+  const result = await saveAppearance(file, { ...defaultAppearance(), accountAvatarColor: "#3975D5" }, 0);
+  assert.equal(result.ok, true);
+  assert.equal((await readAppearance(file)).settings.accountAvatarColor, "#3975d5");
+});
+
 test("空配置与缺字段补默认", () => {
   assert.deepEqual(normalizeAppearance({}), defaultAppearance());
   assert.deepEqual(normalizeAppearance(null), defaultAppearance());
