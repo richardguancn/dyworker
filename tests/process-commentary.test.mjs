@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contentEchoesProcessCommentary } from "../src/processCommentary.ts";
+import { contentEchoesProcessCommentary, processActivitiesWithCommentary } from "../src/processCommentary.ts";
 
 const 说明 = "已生成 10/13 素材（199 条）。四个选题里「中加建交」「法国进入第四共和国」在素材清单内，现在并行核实史实。";
 
@@ -92,4 +92,65 @@ test("子代理分支里的说明不算：正文该显示就显示", () => {
     ],
   };
   assert.equal(contentEchoesProcessCommentary(message, { streaming: true }), false);
+});
+
+const call = (name) => ({ function: { name } });
+const oldMessage = () => ({
+  activities: [
+    { id: "t1", kind: "thinking", status: "success", detail: "内部推理" },
+    { id: "a1", kind: "run_command", status: "success" },
+    { id: "t2", kind: "thinking", status: "success" },
+    { id: "a2", kind: "read_file", status: "success" },
+    { id: "t3", kind: "thinking", status: "success" },
+  ],
+  executedMessages: [
+    { role: "assistant", content: "先检查成片。", tool_calls: [call("run_command")] },
+    { role: "tool", content: "检查输出" },
+    { role: "assistant", content: "检查通过，接着核对说明。", tool_calls: [call("read_file")] },
+    { role: "tool", content: "文件内容" },
+    { role: "assistant", content: "已完成。" },
+  ],
+});
+
+test("旧存档按轮恢复过程正文，保留工具顺序，最终答复与推理不混入说明", () => {
+  const message = oldMessage();
+  const activities = processActivitiesWithCommentary(message);
+  assert.deepEqual(activities.map(a => a.id), ["t1", "a1", "t2", "a2", "t3"]);
+  assert.equal(activities[0].commentary, "先检查成片。");
+  assert.equal(activities[2].commentary, "检查通过，接着核对说明。");
+  assert.equal(activities[4].commentary, undefined);
+  assert.equal(activities[0].detail, "内部推理");
+  assert.equal(message.activities[0].commentary, undefined, "不改写原始存档");
+});
+
+test("已有说明与显式清空值不被旧记录覆盖，finish_task 的交付正文不重复", () => {
+  const message = oldMessage();
+  message.activities[0].commentary = "已保存的说明";
+  message.activities[2].commentary = "";
+  message.executedMessages.at(-1).tool_calls = [call("finish_task")];
+  assert.equal(processActivitiesWithCommentary(message), message.activities);
+});
+
+test("缺失轮次、失败轮次与 DSH 会话不猜测归属", () => {
+  for (const edit of [
+    m => m.executedMessages.pop(),
+    m => { m.activities[0].status = "error"; },
+    m => { m.activities[0].status = "running"; },
+    m => { m.dshTurnId = "dsh-turn"; },
+    m => { m.executedMessages = []; },
+  ]) {
+    const message = oldMessage();
+    edit(message);
+    assert.equal(processActivitiesWithCommentary(message), message.activities);
+  }
+});
+
+test("重复的进度说明仍保留各自轮次，子代理思考不占主任务轮次", () => {
+  const message = oldMessage();
+  message.executedMessages[2].content = "先检查成片。";
+  message.activities.splice(1, 0, { id: "child", kind: "thinking", status: "success", branch: { parentId: "parent" } });
+  const activities = processActivitiesWithCommentary(message);
+  assert.equal(activities[0].commentary, "先检查成片。");
+  assert.equal(activities[3].commentary, "先检查成片。");
+  assert.equal(activities[1].commentary, undefined);
 });

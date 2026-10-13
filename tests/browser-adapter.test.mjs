@@ -140,6 +140,22 @@ test("BrowserPageAdapter: observe 提取语义树与视口截图", async () => {
   adapter.dispose();
 });
 
+test("BrowserPageAdapter: 页面脚本注入一直不返回时按超时收口，不再无限挂住任务", async () => {
+  const mockContents = createMockWebContents();
+  mockContents.executeJavaScript = () => new Promise(() => {});
+  const adapter = new BrowserPageAdapter(mockContents, { scriptTimeoutMs: 60, screenshotTimeoutMs: 60 });
+
+  const startedAt = Date.now();
+  await assert.rejects(() => adapter.observe(), /网页没有响应/);
+  assert.ok(Date.now() - startedAt < 3000, "卡住的页面读取必须在超时上限内结束");
+
+  const read = await adapter.readPageText();
+  assert.equal(read.ok, false);
+  assert.match(read.result, /网页没有响应/);
+
+  adapter.dispose();
+});
+
 test("BrowserPageAdapter: validateObservation 拦截过期或缺失的 observationId", async () => {
   const mockContents = createMockWebContents();
   const adapter = new BrowserPageAdapter(mockContents);

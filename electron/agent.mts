@@ -6709,9 +6709,47 @@ export async function runAgent({
         const name = String(call?.function?.name || "");
         return READ_ONLY_TOOLS.has(name) || name === "dispatch_agent";
       };
+      // 停止/取消必须能立刻打断正在执行的工具：有些工具会卡在自己不可取消的等待上
+      // （网页无响应时的页面脚本注入/截图、第三方插件、MCP 长时间不返回），只等下一轮
+      // 循环检查 isCancelled 会让界面一直停在“正在处理任务”，点了停止也停不下来。
+      // 这里把工具执行与取消信号赛跑：取消先到就先收尾，不再等工具自己结束。
+      const awaitToolCall = (toolCall, taskPromise) => new Promise<any>((resolve) => {
+        let settled = false;
+        let poll = null;
+        const cleanup = () => {
+          if (poll) { clearInterval(poll); poll = null; }
+          cancellationSignal?.removeEventListener?.("abort", onCancel);
+        };
+        const settle = (settlement) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(settlement);
+        };
+        const onCancel = () => settle({ cancelled: true });
+        if (cancellationSignal) {
+          if (cancellationSignal.aborted) { onCancel(); return; }
+          cancellationSignal.addEventListener("abort", onCancel, { once: true });
+        }
+        // 渠道「停止」等只翻转 isCancelled 的场景靠轮询兜底（与 runCommand 的 100ms 对齐）
+        poll = setInterval(() => { if (isCancelled()) onCancel(); }, 100);
+        taskPromise.then(
+          (outcome) => settle({ outcome }),
+          (error) => settle({ outcome: { message: { role: "tool", tool_call_id: toolCall.id, content: `失败\n工具执行异常：${String(error?.message || error)}` } } }),
+        );
+      });
       if (toolCalls.length > 1 && toolCalls.every(parallelizable)) {
         // 纯只读轮次并行执行，加快资料收集
-        const outcomes = await Promise.all(toolCalls.map((call) => executeToolCall(call)));
+        const races = await Promise.all(toolCalls.map((call) => awaitToolCall(call, executeToolCall(call))));
+        // 中途被停止：已完成的工具结果照常入账，未返回的按“操作已取消”收口后立即结束本轮
+        if (races.some((race) => race.cancelled)) {
+          races.forEach((race, index) => {
+            if (race.outcome?.message) messages.push(race.outcome.message);
+            else if (race.cancelled) messages.push({ role: "tool", tool_call_id: toolCalls[index].id, content: "操作已取消" });
+          });
+          return withChanges({ status: "cancelled", finalText });
+        }
+        const outcomes = races.map((race) => race.outcome);
         for (const outcome of outcomes) {
           if (outcome?.message) messages.push(outcome.message);
         }
@@ -6726,7 +6764,7 @@ export async function runAgent({
         const outcomes = [];
         for (let idx = 0; idx < toolCalls.length; idx++) {
           const toolCall = toolCalls[idx];
-          if (isCancelled()) {
+          if (isCancelled() || cancellationSignal?.aborted) {
             for (let rem = idx; rem < toolCalls.length; rem++) {
               messages.push({
                 role: "tool",
@@ -6736,7 +6774,18 @@ export async function runAgent({
             }
             return withChanges({ status: "cancelled", finalText });
           }
-          const outcome = await executeToolCall(toolCall);
+          const race = await awaitToolCall(toolCall, executeToolCall(toolCall));
+          if (race.cancelled) {
+            for (let rem = idx; rem < toolCalls.length; rem++) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCalls[rem].id,
+                content: "操作已取消",
+              });
+            }
+            return withChanges({ status: "cancelled", finalText });
+          }
+          const outcome = race.outcome;
           if (outcome?.message) {
             messages.push(outcome.message);
           }

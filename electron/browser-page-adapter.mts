@@ -5,6 +5,30 @@ import path from "node:path";
 
 const PAGE_TEXT_LIMIT = 8000;
 const SNAPSHOT_MAX_ELEMENTS = 120;
+// 页面脚本注入与截图没有内置超时：网页卡住（加载不完、渲染进程无响应）时 Electron
+// 的 executeJavaScript / capturePage 会一直挂着不返回，任务会跟着永远停在这一步。
+// 这里给它们加硬上限（默认值可经构造函数覆盖，测试用小值），超时按“页面无响应”
+// 报错返回，让模型能换页或换手段继续，而不是整轮任务一起卡死。
+const PAGE_SCRIPT_TIMEOUT_MS = 15000;
+const PAGE_SCREENSHOT_TIMEOUT_MS = 15000;
+
+/** 给可能永远不返回的页面操作加超时；超时抛错，由调用方按页面异常处理。 */
+function withPageDeadline(operation: any, timeoutMs: number, message: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+    Promise.resolve()
+      .then(operation)
+      .then(
+        (value) => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); },
+        (error) => { if (settled) return; settled = true; clearTimeout(timer); reject(error); },
+      );
+  });
+}
 
 /**
  * 将截图坐标系中的像素点 (imageX, imageY) 准确转换为网页 CSS 坐标系
@@ -321,12 +345,16 @@ lastInputState;
 documentEpoch;
 viewportEpoch;
 currentLeaseChecker;
-constructor(contents) {
+pageScriptTimeoutMs;
+pageScreenshotTimeoutMs;
+constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTimeoutMs = PAGE_SCREENSHOT_TIMEOUT_MS } = {} as any) {
     this.contents = contents;
     this.debuggerAttached = false;
     this.currentObservation = null;
     this.observationHistory = new Map();
     this.lastInputState = { mouseDown: false, lastKey: null };
+    this.pageScriptTimeoutMs = scriptTimeoutMs;
+    this.pageScreenshotTimeoutMs = screenshotTimeoutMs;
 
     // 双代次机制：导航代次与视口代次
     this.documentEpoch = 1;
@@ -451,7 +479,11 @@ constructor(contents) {
     })()`;
 
     try {
-      const text = await this.contents.executeJavaScript(script, true);
+      const text = await withPageDeadline(
+        () => this.contents.executeJavaScript(script, true),
+        this.pageScriptTimeoutMs,
+        `网页没有响应：正文读取超过 ${this.pageScriptTimeoutMs / 1000} 秒仍未返回`,
+      );
       const title = this.contents.getTitle?.() || "";
       const url = this.contents.getURL?.() || "";
       const truncated = text.length > maxChars;
@@ -478,7 +510,11 @@ constructor(contents) {
     // 1. 提取语义元素与视口元信息并为元素写入本次观察特有的 observationId 印章
     let snapshot;
     try {
-      snapshot = await this.contents.executeJavaScript(buildExtractScript(observationId), true);
+      snapshot = await withPageDeadline(
+        () => this.contents.executeJavaScript(buildExtractScript(observationId), true),
+        this.pageScriptTimeoutMs,
+        `网页没有响应：页面信息读取超过 ${this.pageScriptTimeoutMs / 1000} 秒仍未返回`,
+      );
     } catch (err: any) {
       throw new Error(`OBSERVE_FAILED: 提取页面信息失败: ${err.message}`);
     }
@@ -493,7 +529,11 @@ constructor(contents) {
 
     if (captureScreenshot && typeof this.contents.capturePage === "function") {
       try {
-        const nativeImg = await this.contents.capturePage();
+        const nativeImg = await withPageDeadline(
+          () => this.contents.capturePage(),
+          this.pageScreenshotTimeoutMs,
+          `网页截图超过 ${this.pageScreenshotTimeoutMs / 1000} 秒未返回`,
+        );
         if (!nativeImg.isEmpty()) {
           const imgSize = nativeImg.getSize();
           imageWidth = imgSize.width;

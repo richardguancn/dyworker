@@ -129,7 +129,7 @@ import { assistantImageAttachments } from './assistantImages.ts';
 import { AppearanceSettingsPanel } from "./appearance/AppearanceSettingsPanel";
 import { beginSession, discardSession } from "./appearance/controller";
 import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
-import { contentEchoesProcessCommentary } from "./processCommentary.ts";
+import { contentEchoesProcessCommentary, processActivitiesWithCommentary } from "./processCommentary.ts";
 import { McpSettingsPanel } from "./McpSettingsPanel";
 
 const now = new Date().toISOString();
@@ -3636,7 +3636,7 @@ const ProcessTimeline = memo(function ProcessTimeline({
   collapsedActivities: Set<string>;
   onToggleCollapse: (messageKey: string, nextCollapsed: boolean) => void;
 }) {
-  const activities = message.activities || [];
+  const activities = useMemo(() => processActivitiesWithCommentary(message), [message]);
   const hasReasoning = Boolean(message.reasoning?.trim());
   const hasProcess = activities.length > 0 || hasReasoning || isStreaming;
   if (!hasProcess) return null;
@@ -11181,6 +11181,14 @@ export function App() {
           }
         };
         let finishedEventSeen = false;
+        // 收尾结果只应用一次：agent-finished 事件与 sendTask 的返回值是两条通道，
+        // 谁先到不保证；两边都应用会让"已按你的要求停止。"之类追加重叠出现两遍。
+        let agentResultApplied = false;
+        const applyAgentResultOnce = (result: AgentResult) => {
+          if (agentResultApplied) return;
+          agentResultApplied = true;
+          applyAgentResult(result);
+        };
         const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
           if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
           const agentEvent = sessionAgentEvent.event;
@@ -11304,7 +11312,7 @@ export function App() {
           } else if (agentEvent.type === "agent-finished") {
             finishedEventSeen = true;
             void refreshMemories();
-            applyAgentResult(agentEvent.result);
+            applyAgentResultOnce(agentEvent.result);
             if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
               runningRunIdsRef.current.delete(taskSessionId);
             }
@@ -11348,7 +11356,7 @@ export function App() {
             if (!saved.ok) throw new Error(saved.error || '目标保存失败，请重试');
             const latest = sessionsRef.current.find(row => row.id === taskSessionId);
             if (activeGoal(updatedSession) && (!latest || !activeGoal(latest) || latest.goalState?.id !== updatedSession.goalState?.id)) {
-              applyAgentResult({ status: 'cancelled', finalText: '' });
+              applyAgentResultOnce({ status: 'cancelled', finalText: '' });
               if (!runningRunIdsRef.current.has(taskSessionId)) setRunningSessionIds(current => {
                 const next = new Set(current); next.delete(taskSessionId); return next;
               });
@@ -11374,7 +11382,7 @@ export function App() {
             markQueued(taskSessionId, taskRunId);
           } else {
             if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
-            if (!finishedEventSeen) applyAgentResult(response.result);
+            if (!finishedEventSeen) applyAgentResultOnce(response.result);
           }
         } finally {
           if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {

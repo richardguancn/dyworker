@@ -4017,6 +4017,71 @@ test("等待模型回复时可以立即停止当前任务", async () => {
   assert.notEqual(result.finalText, "不应返回");
 });
 
+test("工具卡住不返回时，停止也能立即结束任务", async () => {
+  const root = await makeWorkspace();
+  const controller = new AbortController();
+  let toolEntered = false;
+  let releaseTool;
+  const hangingTool = new Promise((resolve) => { releaseTool = resolve; });
+  const startedAt = Date.now();
+  const running = runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "打开一个一直没响应的网页" }],
+    extraTools: [{
+      type: "function",
+      function: { name: "mcp__hang__wait", description: "【MCP:hang】一直不返回", parameters: { type: "object", properties: {} } },
+    }],
+    onExtraTool: async () => { toolEntered = true; return hangingTool; },
+    requestApproval: async () => true,
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "mcp__hang__wait", {})] },
+      { role: "assistant", content: "不应继续执行" },
+    ]),
+    isCancelled: () => controller.signal.aborted,
+    signal: controller.signal,
+  });
+  while (!toolEntered) await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort();
+  const result = await running;
+  releaseTool({ ok: true, result: "迟到的结果" });
+  assert.equal(result.status, "cancelled");
+  assert.ok(Date.now() - startedAt < 3000, "停止后不应继续等卡住的工具返回");
+});
+
+test("并行只读轮次里有一个工具卡住，停止同样立即生效", async () => {
+  const root = await makeWorkspace({ "a.txt": "A", "b.txt": "B" });
+  const controller = new AbortController();
+  let hangingEntered = false;
+  let releaseHanging;
+  const hanging = new Promise((resolve) => { releaseHanging = resolve; });
+  const startedAt = Date.now();
+  const running = runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "同时看两个文件夹" }],
+    aroundToolCall: async ({ name, args, execute }) => {
+      if (name === "list_files" && String(args?.path || "") === "b") {
+        hangingEntered = true;
+        return hanging;
+      }
+      return execute(args);
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "list_files", { path: "a" }), toolCall("c2", "list_files", { path: "b" })] },
+      { role: "assistant", content: "不应继续执行" },
+    ]),
+    isCancelled: () => controller.signal.aborted,
+    signal: controller.signal,
+  });
+  while (!hangingEntered) await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort();
+  const result = await running;
+  releaseHanging(undefined);
+  assert.equal(result.status, "cancelled");
+  assert.ok(Date.now() - startedAt < 3000, "并行执行时停止也不应等卡住的工具");
+});
+
 test("McpClient 初始化超时后会关闭子进程", async () => {
   const serverFile = path.join(os.tmpdir(), `dyworker-hanging-mcp-${process.pid}.mjs`);
   await fs.writeFile(serverFile, "process.stdin.resume();");

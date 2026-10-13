@@ -1,5 +1,30 @@
 import type { ActivityRecord, ChatMessage } from "./types";
 
+/** 旧存档漏存了 commentary，但仍保留每轮模型回复；只有轮次完整对应时才恢复。 */
+export function processActivitiesWithCommentary(
+  message: Pick<ChatMessage, "activities" | "executedMessages" | "dshTurnId">,
+): ActivityRecord[] {
+  const activities = message.activities || [];
+  // DSH 的正文来自独立会话投影，不使用这里的逐轮恢复。
+  if (message.dshTurnId || !message.executedMessages?.length) return activities;
+  const thoughts = activities.filter(activity => activity.kind === "thinking" && !activity.branch);
+  const replies = message.executedMessages.filter(entry => entry.role === "assistant");
+  // 请求失败、重试或缺失记录时不能猜测文字属于哪一轮。
+  if (!thoughts.length || thoughts.length !== replies.length || thoughts.some(activity => activity.status !== "success")) return activities;
+  const recovered = new Map<string, string>();
+  thoughts.forEach((activity, index) => {
+    const reply = replies[index];
+    if (activity.commentary !== undefined || !reply.tool_calls?.length
+      || reply.tool_calls.some(call => call?.function?.name === "finish_task")) return;
+    const text = typeof reply.content === "string" ? reply.content.trim() : "";
+    if (text) recovered.set(activity.id, text);
+  });
+  if (!recovered.size) return activities;
+  return activities.map(activity => recovered.has(activity.id)
+    ? { ...activity, commentary: recovered.get(activity.id)! }
+    : activity);
+}
+
 /**
  * 任务执行中，模型某一轮的文字会同时落到两个地方，界面上就会重复显示同一段话：
  *   1. 该轮思考活动的 commentary —— 过程流里按发生顺序平铺的说明段落；

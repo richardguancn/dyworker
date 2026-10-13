@@ -2976,12 +2976,17 @@ function createTranscriptCollector(options: any = {}) {
         activities.push({ ...agentEvent.activity });
         patch(message=>({...message,activities:[...(message.activities || []),{...agentEvent.activity}]}));
       } else if (agentEvent.type === "activity-update") {
+        // 定时任务、唤醒与渠道共用这份存档；不能只保存思考/工具详情，
+        // 否则中途正文与思考耗时在收尾替换实时消息时会丢失。
+        const update = {
+          status: agentEvent.status,
+          ...(agentEvent.detail !== undefined ? { detail: agentEvent.detail } : {}),
+          ...(agentEvent.durationMs !== undefined ? { durationMs: agentEvent.durationMs } : {}),
+          ...(agentEvent.commentary !== undefined ? { commentary: agentEvent.commentary } : {}),
+        };
         const activity = activities.find((item) => item.id === agentEvent.id);
-        if (activity) {
-          activity.status = agentEvent.status;
-          if (agentEvent.detail !== undefined) activity.detail = agentEvent.detail;
-        }
-        messages = messages.map(message=>({...message,activities:message.activities?.map(item=>item.id===agentEvent.id ? {...item,status:agentEvent.status,...(agentEvent.detail !== undefined ? {detail:agentEvent.detail} : {})} : item)}));
+        if (activity) Object.assign(activity, update);
+        messages = messages.map(message=>({...message,activities:message.activities?.map(item=>item.id===agentEvent.id ? {...item,...update} : item)}));
       } else if (agentEvent.type === "file-change") {
         patch(message=>({...message,changes:agentEvent.changes}));
         changes = agentEvent.changes;
