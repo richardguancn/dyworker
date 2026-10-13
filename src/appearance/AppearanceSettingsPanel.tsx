@@ -93,6 +93,7 @@ export function AppearanceSettingsPanel() {
   return (
     <div className="appearance-panel">
       <div className="appearance-fields">
+      {store.capabilities?.platform === "darwin" && <DockIconSection draft={draft} />}
       <ThemeSection draft={draft} />
       <BackgroundSection draft={draft} imageUrl={store.imageUrl} imageError={store.imageError} previewOnly={store.previewOnly} />
       <GlassSection draft={draft} capabilities={store.capabilities} effective={store.effective} />
@@ -104,6 +105,39 @@ export function AppearanceSettingsPanel() {
 }
 
 // ---- 主题 ----
+
+const DOCK_ICONS = [
+  { id: "dark", label: "深色 Dock 图标", src: new URL("../../build/dyworker.svg", import.meta.url).href },
+  { id: "light", label: "浅色 Dock 图标", src: new URL("../../build/dyworker-light.svg", import.meta.url).href },
+] as const;
+
+function DockIconSection({ draft }: { draft: AppearanceSettings }) {
+  return (
+    <div className="appearance-dock-row">
+      <div className="appearance-dock-copy">
+        <strong id="dock-icon-title">Dock 图标</strong>
+        <p id="dock-icon-help">选择应用在 Dock 中使用的图标</p>
+      </div>
+      <div className="appearance-dock-choices" role="radiogroup" aria-labelledby="dock-icon-title" aria-describedby="dock-icon-help">
+        {DOCK_ICONS.map((icon, index) => (
+          <button key={icon.id} type="button" role="radio" aria-label={icon.label} title={icon.label}
+            aria-checked={draft.dockIcon === icon.id} tabIndex={draft.dockIcon === icon.id ? 0 : -1}
+            className={`appearance-dock-choice ${draft.dockIcon === icon.id ? "active" : ""}`}
+            onClick={() => updateDraft(current => ({ ...current, dockIcon: icon.id }))}
+            onKeyDown={event => {
+              if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+              event.preventDefault();
+              const next = (index + 1) % DOCK_ICONS.length;
+              updateDraft(current => ({ ...current, dockIcon: DOCK_ICONS[next].id }));
+              event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+            }}>
+            <img src={icon.src} width={44} height={44} alt="" aria-hidden="true" draggable={false} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ThemeSection({ draft }: { draft: AppearanceSettings }) {
   return (

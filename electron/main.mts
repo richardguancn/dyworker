@@ -34,7 +34,7 @@ import { settingsIpcPlugin } from "./host/plugins/settings-ipc.mts";
 import { sessionsIpcPlugin } from "./host/plugins/sessions-ipc.mts";
 import { appIpcPlugin } from "./host/plugins/app-ipc.mts";
 import { appearanceIpcPlugin } from "./host/plugins/appearance-ipc.mts";
-import { createWindowIconController } from "./theme-icons.mts";
+import { createDockIconController, createWindowIconController } from "./theme-icons.mts";
 import { browserIpcPlugin } from "./host/plugins/browser-ipc.mts";
 import { browserControlIpcPlugin } from "./host/plugins/browser-control-ipc.mts";
 import { browserImportIpcPlugin } from "./host/plugins/browser-import-ipc.mts";
@@ -111,6 +111,7 @@ if (
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const windowIcons = createWindowIconController({ platform: process.platform, directory: path.join(here, "assets"), nativeImage });
+const dockIcons = createDockIconController({ platform: process.platform, directory: path.join(here, "assets"), nativeImage, getDock: () => app.dock });
 
 // 崩溃兜底：任务执行期间任何未捕获异常不能再让整个进程无声退出。
 // 先记到终端标准输出，再持久化到 userData/crash.log（桌面图标启动时
@@ -275,6 +276,7 @@ function applyWindowAppearance() {
   const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
   mainWindow.setBackgroundColor(windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
   windowIcons.apply(mainWindow, resolvedAppearanceTheme(windowIconPreviewSettings ?? appearanceState.settings));
+  dockIcons.apply((windowIconPreviewSettings ?? appearanceState.settings).dockIcon);
   mainWindow.webContents?.invalidate?.();
 }
 
@@ -2610,6 +2612,7 @@ const appearanceBridge = {
   syncThemeSource: () => syncNativeThemeSource(),
   applyWindow: () => applyWindowAppearance(),
   applyWindowIcon: (settings) => windowIcons.apply(mainWindow, resolvedAppearanceTheme(settings)),
+  applyDockIcon: (settings) => dockIcons.apply(settings.dockIcon),
   setWindowIconPreview: (settings) => { windowIconPreviewSettings = settings; },
   resolvedTheme: (settings) => resolvedAppearanceTheme(settings),
   applySavedResult: (result, previousImageId) => applySavedAppearanceResult(result, previousImageId),

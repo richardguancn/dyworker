@@ -71,3 +71,16 @@ test('恢复默认草稿后忽略之前已发出的预览回复', async () => {
   h.pending[0].resolve({ effective: { ok: true, applied: 'vibrancy' } }); await settle();
   assert.equal(c.useAppearanceStore().effective.applied, 'none');
 });
+
+test('只切换 Dock 图标也发送原生预览，取消后恢复旧图标且不改变主题', async () => {
+  const h = harness(), c = h.controller;
+  await c.bootstrapAppearance(); c.beginSession();
+  c.updateDraft(s => ({ ...s, dockIcon: 'light' })); h.flush();
+  assert.equal(h.pending.length, 1);
+  assert.equal(h.pending[0].settings.dockIcon, 'light');
+  assert.equal(h.pending[0].settings.theme, 'system');
+  assert.equal(c.useAppearanceStore().dirty, true);
+  c.discardSession(); await settle();
+  assert.equal(c.useAppearanceStore().saved.dockIcon, 'dark');
+  assert.equal(c.useAppearanceStore().draft, null);
+});

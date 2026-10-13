@@ -753,6 +753,7 @@ export type AppearanceGlassStrength = "subtle" | "standard" | "strong";
 export interface AppearanceSettings {
   version: 1;
   theme: AppearanceTheme;
+  dockIcon: "light" | "dark";
   background: {
     // null = 使用该主题默认底色
     lightColor: string | null;

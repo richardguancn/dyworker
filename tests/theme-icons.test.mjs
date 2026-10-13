@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { createWindowIconController } from "../electron/theme-icons.mts";
+import { createDockIconController, createWindowIconController } from "../electron/theme-icons.mts";
 import { appearanceIpcPlugin } from "../electron/host/plugins/appearance-ipc.mts";
 import { defaultAppearance } from "../electron/appearance.mts";
 
@@ -98,4 +98,34 @@ test("主题通知晚于预览请求时保留预览图标，取消后清除预�
   await handlers.get("appearance:cancel-preview")(null, {});
   assert.equal(preview, null);
   assert.deepEqual(f.changes, ["light", "dark", "light"].map(theme => path.join("/icons", `icon-${theme}.png`)));
+});
+
+test("Mac Dock 图标可独立切换和恢复，深色使用原图，重复选择不更新", () => {
+  const calls = [], reads = [];
+  const icons = createDockIconController({ platform: "darwin", directory: "/icons",
+    nativeImage: { createFromPath(file) { reads.push(file); return { file, isEmpty: () => false }; } },
+    getDock: () => ({ setIcon: image => calls.push(image.file) }),
+  });
+  for (const choice of ["dark", "light", "light", "dark"]) assert.equal(icons.apply(choice), true);
+  assert.deepEqual(calls, ["dock-dark.png", "icon-light.png", "dock-dark.png"].map(file => path.join("/icons", file)));
+  assert.equal(reads.length, 2);
+});
+
+test("其他平台不读取 Dock，Mac 更新失败后能够重试", () => {
+  for (const platform of ["linux", "win32"]) {
+    const icons = createDockIconController({ platform, directory: "/icons", getDock: () => { throw new Error("不该读取"); } });
+    assert.equal(icons.apply("light"), false);
+  }
+  let reject = true;
+  const calls = [], warnings = [];
+  const icons = createDockIconController({ platform: "darwin", directory: "/icons",
+    nativeImage: { createFromPath: () => ({ isEmpty: () => false }) },
+    getDock: () => ({ setIcon: () => { if (reject) throw new Error("模拟失败"); calls.push(true); } }),
+    warn: (...args) => warnings.push(args),
+  });
+  assert.equal(icons.apply("light"), false);
+  reject = false;
+  assert.equal(icons.apply("light"), true);
+  assert.equal(calls.length, 1);
+  assert.equal(warnings.length, 1);
 });

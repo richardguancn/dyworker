@@ -21,6 +21,19 @@ async function makeTmpDir(t) {
   return dir;
 }
 
+test("Dock 图标：旧配置保持原深色图标，保存浅色后重新读取保持选择", async t => {
+  assert.equal(defaultAppearance().dockIcon, "dark");
+  assert.equal(normalizeAppearance({ theme: "light" }).dockIcon, "dark");
+  assert.equal(normalizeAppearance({ dockIcon: "未知" }).dockIcon, "dark");
+  const dir = await makeTmpDir(t);
+  const file = path.join(dir, "appearance.json");
+  const result = await saveAppearance(file, { ...defaultAppearance(), dockIcon: "light" }, 0);
+  assert.equal(result.ok, true);
+  const loaded = await readAppearance(file);
+  assert.equal(loaded.settings.dockIcon, "light");
+  assert.equal(loaded.settings.theme, "system");
+});
+
 test("默认外观结构符合方案 §4.1", () => {
   const defaults = defaultAppearance();
   assert.equal(defaults.version, 1);

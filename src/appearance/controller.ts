@@ -25,6 +25,7 @@ export function defaultAppearance(): AppearanceSettings {
   return {
     version: 1,
     theme: "system",
+    dockIcon: "dark",
     background: {
       lightColor: null,
       darkColor: null,
@@ -57,6 +58,7 @@ export function normalizeAppearance(input: unknown): AppearanceSettings {
   const raw = input as Record<string, any>;
   const out = defaultAppearance();
   out.theme = raw.theme === "light" || raw.theme === "dark" ? raw.theme : "system";
+  out.dockIcon = raw.dockIcon === "light" ? "light" : "dark";
   const bg = raw.background && typeof raw.background === "object" ? raw.background : {};
   for (const key of ["lightColor", "darkColor"] as const) {
     const value = bg[key];
@@ -338,6 +340,7 @@ function onSystemThemeChange() {
 
 const NATIVE_KEYS: Array<(settings: AppearanceSettings) => unknown> = [
   (s) => s.theme,
+  (s) => s.dockIcon,
   (s) => s.background.lightColor,
   (s) => s.background.darkColor,
   (s) => s.glass.enabled,

@@ -404,6 +404,38 @@ html .settings-page .appearance-fields .dialog-section-title:first-child {
   cursor: pointer;
 }
 
+.appearance-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding: 4px 0 24px;
+  border-bottom: 1px solid var(--border);
+}
+.appearance-dock-copy { min-width: 0; }
+.appearance-dock-copy strong { font-size: calc(16px * var(--font-ui-scale, 1)); font-weight: 600; }
+.appearance-dock-copy p { margin: 5px 0 0; color: var(--muted); font-size: calc(14px * var(--font-ui-scale, 1)); }
+.appearance-dock-choices { display: flex; flex: none; gap: 12px; }
+.appearance-dock-choice {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+.appearance-dock-choice.active { border-color: var(--ink); }
+.appearance-dock-choice:hover { background: var(--sidebar-hover); }
+.appearance-dock-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.appearance-dock-choice img { width: 44px; height: 44px; object-fit: contain; }
+@media (max-width: 540px) {
+  .appearance-dock-row { flex-wrap: wrap; gap: 12px; }
+}
+
 .appearance-preset:hover {
   color: var(--accent);
   border-color: var(--accent);

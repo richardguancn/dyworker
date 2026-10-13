@@ -21,6 +21,7 @@ export function defaultAppearance() {
   return {
     version: APPEARANCE_VERSION,
     theme: "system",
+    dockIcon: "dark",
     background: {
       lightColor: null,
       darkColor: null,
@@ -105,6 +106,7 @@ export function normalizeAppearance(input) {
   return {
     version: APPEARANCE_VERSION,
     theme: pickEnum(source.theme, ["system", "light", "dark"], "system"),
+    dockIcon: pickEnum(source.dockIcon, ["light", "dark"], "dark"),
     background: {
       lightColor: normalizeColor(background.lightColor),
       darkColor: normalizeColor(background.darkColor),

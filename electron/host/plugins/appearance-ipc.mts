@@ -62,6 +62,7 @@ export function appearanceIpcPlugin(deps) {
         const isBackdropActive = effective.applied === "vibrancy" || effective.applied === "background-material";
         mainWindow.setBackgroundColor(windowBackgroundFor(settings, bridge.resolvedTheme(settings), isBackdropActive));
         bridge.applyWindowIcon?.(settings);
+        bridge.applyDockIcon?.(settings);
         mainWindow.webContents?.invalidate?.();
         return { ok: true, effective };
       });
