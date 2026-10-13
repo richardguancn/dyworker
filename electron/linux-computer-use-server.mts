@@ -468,7 +468,9 @@ function run(program, args = [], {
       }, timeoutMs)
       : null;
     child.on("error", (error) => finish(error));
-    child.on("exit", (code, signal) => {
+    // 必须等 'close' 而不是 'exit'：'exit' 只表示进程终止，管道里缓冲的 stdout/stderr
+    // 可能还没送达（新版 Node 24 下调度变化让快退出的脚本稳定复现丢输出）。
+    child.on("close", (code, signal) => {
       activeChildren.delete(child);
       finish(null, { code: code ?? -1, signal, stdout, stderr });
       if (shutdownRequested && ![...activeChildren].some((item: any) => item.__dyworkerProtectedSystemTransaction)) {
