@@ -366,7 +366,7 @@ test("opening a conversation starts at the latest message", () => {
 
 test("任务完成时保持工作计划实际进度不盲目标记完成", () => {
   assert.match(app, /const plan = result\.plan\?\.length \? result\.plan : current\.plan;/);
-  assert.match(app, /function completedPlanForMessage/);
+  assert.match(app, /<PlanProgress running=\{activeTaskRunning\} message=\{activeSession\?\.messages\[streamingAssistantIndex\]\}/);
   assert.match(app, /taskStatus: result\.status/);
   assert.match(main, /const finalPlan = plan;/);
   assert.doesNotMatch(main, /finalResult\.plan\.map\(\(step\) => \(\{ \.\.\.step, status: "completed" \}\)\)/);
@@ -1289,11 +1289,11 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(agent, /case "update_plan"/);
   assert.match(agent, /type: "file-change"/);
   assert.match(agent, /type: "plan-update"/);
-  // 渲染端消费事件并展示计划卡片与变更摘要
+  // 渲染端消费事件并展示计划进度与变更摘要
   assert.match(app, /agentEvent\.type === "file-change"/);
   assert.match(app, /agentEvent\.type === "plan-update"/);
   assert.match(app, /ChangesSummary/);
-  assert.match(app, /PlanCard/);
+  assert.match(app, /PlanProgress/);
   // 改动卡片默认展开前 3 个文件，超出时「再显示 xx 个文件」点击展开（对照 Codex）
   assert.match(app, /changes\.slice\(0, 3\)/);
   assert.match(app, /再显示 \{hiddenCount\} 个文件/);

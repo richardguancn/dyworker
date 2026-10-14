@@ -1,3 +1,4 @@
+import { PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
@@ -28,7 +29,6 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   ChevronUp,
-  Circle,
   ClipboardPaste,
   Cookie,
   Database,
@@ -121,7 +121,7 @@ import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import { forgetSessionStream, forgetStreamMessage, isChannelRunEnvelope, isScheduleRunEnvelope, isWakeRunEnvelope, mergePrependedSession, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, PlanStep, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 import { ReasoningControl } from "./ReasoningControl";
@@ -1148,34 +1148,6 @@ function DebugConsole({ logs, onClear, onClose }: { logs: DebugLogEntry[]; onCle
           </details>
         ))}
       </div>
-    </div>
-  );
-}
-
-// Kimi Work / Codex 风格的任务计划清单：数据来自 agent 的 plan-update 事件
-function PlanCard({ steps }: { steps: PlanStep[] }) {
-  const completed = steps.filter((step) => step.status === "completed").length;
-  return (
-    <div className="plan-card">
-      <div className="plan-card-header">
-        <ListTodo size={15} />
-        <strong>工作计划</strong>
-        <span>{completed}/{steps.length} 已完成</span>
-      </div>
-      <ul className="plan-card-steps">
-        {steps.map((step, index) => (
-          <li className={`plan-step ${step.status}`} key={`${index}-${step.title}`}>
-            <span className="plan-step-icon">
-              {step.status === "completed"
-                ? <Check size={13} />
-                : step.status === "in_progress"
-                  ? <LoaderCircle className="spin" size={13} />
-                  : <Circle size={11} />}
-            </span>
-            <span>{step.title}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -3112,11 +3084,6 @@ function filterWorkspaceEntries(entries: WorkspaceEntry[], query: string): Works
     return entry.name.toLowerCase().includes(keyword) ? [entry] : [];
   });
   return walk(entries);
-}
-
-function completedPlanForMessage(message: ChatMessage) {
-  if (!message.plan?.length) return undefined;
-  return message.plan;
 }
 
 // Codex 风格的文件变更摘要卡片：数据来自 agent 的 file-change 事件（真实 +N/-M 统计，可展开 unified diff）
@@ -13320,7 +13287,6 @@ export function App() {
                     </>
                   ) : (
                     <div className="assistant-message" onContextMenu={(event) => handleMessageContextMenu(event, message)}>
-                      {Boolean(completedPlanForMessage(message)?.length) && <PlanCard steps={completedPlanForMessage(message)!} />}
                         <ProcessTimeline
                         message={message}
                         messageIndex={index}
@@ -13680,6 +13646,7 @@ export function App() {
             </div>
             {workspaceContext?.branch && <span className="composer-context-item composer-project-branch"><GitBranch size={15} /><span>{workspaceContext.branch}</span></span>}
           </div>}
+          <PlanProgress running={activeTaskRunning} message={activeSession?.messages[streamingAssistantIndex]} />
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
             onDragOver={handleComposerDragOver}
