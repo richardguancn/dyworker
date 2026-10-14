@@ -17969,3 +17969,40 @@ pre.trv-trace-inspector-body {
 .reference-layout .plan-progress { width: var(--chat-width); }
 @media (max-width: 1100px) { .plan-progress { width: 82%; } }
 @media (prefers-reduced-motion: reduce) { .plan-progress-fill { transition: none; } }
+
+.plan-progress { position: relative; }
+.plan-progress-toggle { display: block; list-style: none; cursor: pointer; border-radius: 6px; }
+.plan-progress-toggle::-webkit-details-marker { display: none; }
+.plan-progress-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.plan-progress-toggle:hover { color: var(--ink); }
+.plan-progress-chevron { transition: transform 160ms ease; }
+.plan-progress[open] .plan-progress-chevron { transform: rotate(180deg); }
+.plan-progress-details {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+  color: var(--ink);
+}
+.plan-progress-details > strong { font-weight: 560; }
+.plan-progress-steps { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.plan-progress-step { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
+.plan-progress-step > svg { flex-shrink: 0; margin-top: 2px; }
+.plan-progress-step > span { min-width: 0; overflow-wrap: anywhere; }
+.plan-progress-step.completed { color: var(--muted); }
+.plan-progress-step.completed > span { text-decoration: line-through; }
+.plan-progress-step.in_progress { font-weight: 560; }
+@media (prefers-reduced-motion: reduce) { .plan-progress-chevron { transition: none; } }
+
+.process-plan { margin: 4px 0 16px; color: var(--ink); font-size: calc(12px * var(--font-ui-scale, 1)); }
+.process-plan-heading { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.process-plan-heading strong { font-weight: 560; }
+.process-plan-heading > span { margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums; }
