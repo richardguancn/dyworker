@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { computerUseAction, isComputerUseTool } from "./computer-use.mts";
 import { effectiveReasoningEffort, getModelReasoningConfig } from "./model-reasoning.ts";
+import { adaptToolsForModel } from './tool-schema.mts';
 import { bundledCuratedRoot } from './curated-plugins.mts';
 import { formatSkillInstructions, skillContextSummary } from './skills.mts';
 import { localReview } from "./local-reviewer.mts";
@@ -3810,7 +3811,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
     : messages;
   const rewrittenMessages = await rewriteImagesForTextModel({ settings, messages: sanitizedMessages, fetchImpl, signal });
   const modelMessages = adaptMessagesForModel(rewrittenMessages, settings);
-  const selectedTools = tools || toolDefinitionsWith(extraTools);
+  const selectedTools = tools === false ? false : adaptToolsForModel(tools || toolDefinitionsWith(extraTools), settings);
   // 模型名可能带上下文覆盖后缀（如 k3[1M]），发给服务端前剥离
   const apiModel = bareModelName(settings.model);
   // 推理强度参数：按厂商官方 API 文档映射（档位由设置界面限定，见 reasoningRequestParams 注释）
