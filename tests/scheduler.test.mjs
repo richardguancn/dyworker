@@ -658,3 +658,58 @@ test("wakes IPC：「立即继续」受会话占用与后台锁双重守卫，�
   assert.equal(missing.ok, false);
   assert.match(missing.error, /没有待唤醒/);
 });
+
+test("唤醒定时器完整回调：忙碌重试只留下一个 10 秒闹钟", async (t) => {
+  const { ctx, scheduler, calls } = await makeScheduler(t, { hooks: { isSessionBusy: () => true } });
+  t.after(() => disposeHost(ctx));
+  await fs.writeFile(scheduler.file("wakes.json"), JSON.stringify([{
+    id: "busy-chain", sessionId: "busy-session", status: "pending", wakeAt: "2026-09-30T09:00:00Z",
+  }]));
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const timers = new Map();
+  globalThis.setTimeout = (fn, delay) => { const handle = { unref() {} }; timers.set(handle, { fn, delay }); return handle; };
+  globalThis.clearTimeout = (handle) => timers.delete(handle);
+  try {
+    await scheduler.scheduleNextWakeCheck();
+    const [handle, timer] = [...timers][0];
+    timers.delete(handle);
+    timer.fn();
+    for (let i = 0; i < 50 && scheduler.checkingWakes; i++) await new Promise(r => realSetTimeout(r, 5));
+    // Wait for any follow-up promise continuation to finish too.
+    await new Promise(r => realSetTimeout(r, 20));
+    assert.equal(timers.size, 1);
+    assert.deepEqual([...timers.values()].map(x => x.delay), [10_000]);
+    assert.equal(calls.woke.length, 0);
+  } finally {
+    scheduler.stop();
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("并发唤醒检查：同一任务只执行一次", async (t) => {
+  const { ctx, scheduler, calls } = await makeScheduler(t);
+  t.after(() => disposeHost(ctx));
+  await fs.writeFile(scheduler.file("wakes.json"), JSON.stringify([{
+    id: "single", sessionId: "single-session", status: "pending", wakeAt: "2026-09-30T09:00:00Z",
+  }]));
+  await Promise.all(Array.from({ length: 20 }, () => scheduler.checkDueWakes()));
+  assert.deepEqual(calls.woke, ["single-session"]);
+});
+
+test("并发设闹钟及停止：过期读请求不能留下多余闹钟", async (t) => {
+  const { ctx, scheduler } = await makeScheduler(t);
+  t.after(() => disposeHost(ctx));
+  let release;
+  scheduler.readWakes = () => new Promise(resolve => { release = resolve; });
+  const pending = scheduler.scheduleNextWakeCheck();
+  scheduler.stop();
+  release([{ status: "pending", wakeAt: "2026-09-30T11:00:00Z" }]);
+  await pending;
+  assert.equal(scheduler.wakeTimer, null);
+  scheduler.readWakes = async () => [{ status: "pending", wakeAt: "2026-09-30T11:00:00Z" }];
+  await Promise.all(Array.from({ length: 20 }, () => scheduler.scheduleNextWakeCheck()));
+  assert.ok(scheduler.wakeTimer);
+  scheduler.stop();
+});

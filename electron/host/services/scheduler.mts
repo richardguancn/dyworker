@@ -63,6 +63,8 @@ export class SchedulerService extends Service {
   schedulerTimer = null;
   bootTimer = null;
   wakeTimer = null;
+  wakeTimerGeneration = 0;
+  checkingWakes = false;
   // 壳层注入：关机判定、忙碌判定、会话活跃判定、任务执行、渲染端广播
   hooks;
 
@@ -368,11 +370,13 @@ export class SchedulerService extends Service {
   // 动态近邻定时器：只为最近的一条 pending 唤醒设闹钟，最长 2 小时后再对齐
   async scheduleNextWakeCheck({ minDelayMs = 0 } = {} as any) {
     if (this.hooks.isShuttingDown()) return;
+    const generation = ++this.wakeTimerGeneration;
     if (this.wakeTimer) {
       clearTimeout(this.wakeTimer);
       this.wakeTimer = null;
     }
     const wakes = await this.readWakes();
+    if (generation !== this.wakeTimerGeneration || this.hooks.isShuttingDown()) return;
     const pending = wakes.filter((wake) => wake.status === "pending" && wake.wakeAt);
     if (!pending.length) return;
     const nowMs = this.now().getTime();
@@ -389,17 +393,30 @@ export class SchedulerService extends Service {
     const delay = Math.max(Math.min(minWaitMs, 2 * 3600 * 1000), minDelayMs);
     this.wakeTimer = setTimeout(() => {
       this.wakeTimer = null;
-      void this.checkDueWakes().then(() => this.scheduleNextWakeCheck());
+      // checkDueWakes owns rearming, including the busy retry delay.
+      void this.checkDueWakes();
     }, delay);
     if (typeof this.wakeTimer.unref === "function") this.wakeTimer.unref();
   }
 
   async checkDueWakes() {
-    if (this.hooks.isShuttingDown()) return;
+    if (this.hooks.isShuttingDown() || this.checkingWakes) return;
+    this.checkingWakes = true;
+    try {
+      await this.checkDueWakesOnce();
+    } finally {
+      this.checkingWakes = false;
+    }
+  }
+
+  async checkDueWakesOnce() {
     const now = this.now();
     const wakes = await this.readWakes();
     const dueList = wakes.filter((wake) => wake.status === "pending" && wake.wakeAt && new Date(wake.wakeAt) <= now);
-    if (!dueList.length) return;
+    if (!dueList.length) {
+      await this.scheduleNextWakeCheck();
+      return;
+    }
 
     let deferred = false;
     for (const due of dueList) {
@@ -425,7 +442,7 @@ export class SchedulerService extends Service {
       }
     }
     // 被推迟的唤醒仍在 pending 且已到期：必须退避重试，否则会 0 延迟自旋
-    void this.scheduleNextWakeCheck({ minDelayMs: deferred ? WAKE_DEFERRED_RETRY_MS : 0 });
+    await this.scheduleNextWakeCheck({ minDelayMs: deferred ? WAKE_DEFERRED_RETRY_MS : 0 });
   }
 
   // awaitRun=false：只等「调度决策落盘」，不等 runScheduledTask 跑完。
@@ -499,6 +516,7 @@ export class SchedulerService extends Service {
   }
 
   stop() {
+    this.wakeTimerGeneration += 1;
     if (this.schedulerTimer) clearInterval(this.schedulerTimer);
     if (this.bootTimer) clearTimeout(this.bootTimer);
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
