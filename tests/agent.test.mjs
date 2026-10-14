@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { communicationGuidance } from "../electron/host/communication-guidance.mts";
 import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isIncompleteDeliveryEnding, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, pickDeliveryText, pointsElsewhereOnly, probeServerContextLimit, promisesDelivery, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mts";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mts";
@@ -4867,7 +4868,8 @@ test("系统提示词按静态纪律在前、动态信息在尾组织", async ()
   assert.match(system, /绝对路径.*Markdown 图片/);
   // 表达质量：技术解释/文档/操作/排障的写法标准，静态段且先于动态信息
   assert.match(system, /# 表达质量/);
-  assert.match(system, /不以短句、少字或堆列表为目标/);
+  assert.ok(system.includes(communicationGuidance), "实际模型请求应包含完整共用表达规则");
+  assert.match(system, /简洁不得牺牲准确性与任务可用性/);
   assert.match(system, /不把可能写成确定/);
   assert.ok(system.indexOf("# 表达质量") < system.indexOf("当前工作区"), "表达质量段应在动态工作区信息之前");
 });

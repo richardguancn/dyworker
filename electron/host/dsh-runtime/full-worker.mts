@@ -19,6 +19,7 @@ import { remoteErrorOf, RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { createInputAdmission } from './input-admission.mts';
 import { createChildControl } from './child-control.mts';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
+import { communicationGuidance } from '../communication-guidance.mts';
 
 installFileHandleBridge();
 const send = (value: any) => process.send?.(value);
@@ -86,6 +87,7 @@ process.once('message', async (input: any) => {
       if (!request.agent || request.agent !== handle?.agent) throw new Error('提问必须属于当前正在运行的根任务');
       return ask('user-question', { sessionId: request.agent.id, questions: request.questions }, request.signal);
     }, { global: true });
+    ctx.systemPrompt.section({ name: 'dyworker-communication', order: 100, text: communicationGuidance, interpolate: false });
     ctx.systemPrompt.context({ name: 'dyworker-task', order: 20, text: () => taskContext });
     const grants = new Map<any, string>();
     const questionTool = ctx.tools.get('ask_user_question');

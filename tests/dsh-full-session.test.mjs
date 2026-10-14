@@ -14,7 +14,11 @@ import { registerTrajectoryAssistantDefinition } from './fixtures/official-traje
 import { registerTrajectoryToolDefinition } from './fixtures/official-trajectory-assembly/trajectory-tool-definition.ts';
 import { registerTrajectoryCompactionDefinitions } from './fixtures/official-trajectory-assembly/trajectory-compaction-definition.ts';
 import { registerTrajectoryConversationView } from './fixtures/official-trajectory-assembly/trajectory-snapshot-builder.ts';
+import { communicationGuidance } from '../electron/host/communication-guidance.mts';
 const require = createRequire(import.meta.url);
+const systemText = request => [request.system || '', ...(request.messages || [])
+  .filter(message => message.role === 'system')
+  .map(message => typeof message.content === 'string' ? message.content : message.content.map(block => block.text || '').join('\n'))].join('\n');
 const text = value => [
   { type: 'block-start', index: 0, blockType: 'text' },
   { type: 'text-delta', index: 0, text: value },
@@ -48,6 +52,7 @@ test('原样官方轨迹定义装配真实任务：实际请求、工具、两�
   let rootCalls=0, modelCalls=0;
   const {runtime,options}=await setup(t,{async *generate(request) {
     modelCalls++;
+    assert.ok(systemText(request).includes(communicationGuidance), '根任务和独立子任务的实际模型请求都必须保留表达规则');
     if(request.sessionId!=='full-one') yield*text('子任务独立的真实回复');
     else yield* rootCalls++===0 ? tool('subagent',{prompt:'产生一份独立子任务记录',description:'装配验收',run_in_background:false}) : text(rootCalls===2?'父任务第一轮回复':'父任务第二轮回复');
   }});
@@ -259,6 +264,7 @@ test('官方自动压缩按模型容量触发，下一轮使用摘要，占用�
   assert.ok(second.events.some(e => e.type === 'compaction/summary'));
   assert.ok(requests.some(r => r.purpose === 'compaction'), '没有手动命令也应调用摘要模型');
   const last = requests.filter(r => r.purpose !== 'compaction').at(-1);
+  assert.ok(systemText(last).includes(communicationGuidance), '压缩历史后的实际请求仍应保留表达规则');
   assert.match(JSON.stringify(last.messages), /原始材料已核对/);
   assert.match(JSON.stringify(last.messages), /第二轮继续核对最新要求/);
   assert.ok(JSON.stringify(last.messages).length < 50000, '后续实际请求不能重新发送完整历史');
@@ -272,6 +278,8 @@ test('官方自动压缩按模型容量触发，下一轮使用摘要，占用�
     await cold.start();
     const resumed = await cold.request('snapshot');
     assert.equal(resumed.contextUsage.used, after.contextUsage.used);
+    await cold.request('prompt', { text: '重启后继续。' });
+    assert.ok(systemText(requests.filter(r => r.purpose !== 'compaction').at(-1)).includes(communicationGuidance), '重启恢复后的实际请求仍应保留表达规则');
   } finally { await cold.close(); }
 });
 
