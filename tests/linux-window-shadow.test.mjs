@@ -3,11 +3,12 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import fpmModule from "app-builder-lib/out/targets/FpmTarget.js";
 import { attachLinuxWindowShadow } from "../electron/linux-window-shadow.mts";
 
 test("圆角仅裁去四角，阴影柔和下移，多种缩放下渐变和四角衔接连续", (t) => {
-  const script = new URL("../electron/scripts/linux_window_shadow.py", import.meta.url).pathname;
+  const script = fileURLToPath(new URL("../electron/scripts/linux_window_shadow.py", import.meta.url));
   const result = spawnSync("python3", ["-c", `
 from pathlib import Path
 scope = {"__name__": "shadow_test"}
@@ -99,7 +100,7 @@ test("Linux 普通窗口提交阴影，最大化/全屏撤去，还原重新提�
   assert.equal(f.launches.length, 1);
   const [command, args] = f.launches[0];
   assert.equal(command, "/usr/bin/python3");
-  assert.ok(args[0].endsWith("/scripts/linux_window_shadow.py"));
+  assert.ok(args[0].replaceAll("\\", "/").endsWith("/scripts/linux_window_shadow.py"));
   assert.deepEqual(args.slice(1), ["42", "1.5"]);
   f.setMaximized(true); f.window.emit("maximize");
   f.setMaximized(false); f.window.emit("unmaximize");
