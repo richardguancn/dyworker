@@ -223,12 +223,12 @@ export class PluginHostService extends Service {
         const full = path.join(dir, name);
         if (prefix) {
           const manifest = this.readBuiltinManifest(full);
-          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full });
+          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full, defaultDisabled: manifest.dyworker?.defaultEnabled === false });
           continue;
         }
         if (name.startsWith("@")) { readDir(full, name); continue; }
         const manifest = this.readBuiltinManifest(full);
-        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full });
+        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full, defaultDisabled: manifest.dyworker?.defaultEnabled === false });
       }
     };
     readDir(root, "");
@@ -293,7 +293,7 @@ export class PluginHostService extends Service {
     const builtinIds = new Set(builtins.map((entry) => entry.id));
     const extraRows = builtins
       .filter((entry) => !this.baseRows.some((row) => row.id === entry.id || row.name === entry.name))
-      .map((entry) => ({ id: entry.id, name: entry.name }));
+      .map((entry) => ({ id: entry.id, name: entry.name, ...(entry.defaultDisabled ? { disabled: true } : {}) }));
     const rows = composeRows([...this.baseRows, ...extraRows], layers, (message: any, ...args: any[]) => {
       warnings.push(`${message}${args.length ? ` ${args.join(" ")}` : ""}`);
     });

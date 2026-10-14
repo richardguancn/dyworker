@@ -145,6 +145,23 @@ test("内置插件：客户端 bundle 在插槽表里留下轨迹 / 上下文的
   assert.equal(host.contributionsFor("workspace.page")[0]?.meta.key, "bot-team");
 });
 
+test("QwenPaw：真实界面包登记新旧窗口入口，停用时全部收回", async () => {
+  installDomStub();
+  const { dir, manifest } = await readManifest('qwenpaw');
+  assert.equal(manifest.dyworker.defaultEnabled, false);
+  await fs.access(resolveClientEntries(manifest, dir)[0].file);
+  const host = new ClientPluginHost();
+  const bundle = await loadRealBundle('qwenpaw');
+  const loaded = await host.load(bundle.exports, 'qwenpaw');
+  assert.equal(loaded.ok, true, loaded.error);
+  for (const slot of ['workspace.page', 'conversation.view']) {
+    assert.equal(host.contributionsFor(slot)[0]?.meta.key, 'qwenpaw');
+  }
+  assert.equal(await host.unload('qwenpaw'), true);
+  assert.deepEqual(host.contributionsFor('workspace.page'), []);
+  assert.deepEqual(host.contributionsFor('conversation.view'), []);
+});
+
 test("轨迹插件主机半边：按 offset 分页读本会话 trace，非法 id 与缺文件都如实回答", async () => {
   const hostDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyw-traj-"));
   const sessionId = "session-demo-1";

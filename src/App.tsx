@@ -1,4 +1,4 @@
-import { PlanProgress } from "./PlanProgress";
+import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
 import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
@@ -3607,7 +3607,8 @@ const ProcessTimeline = memo(function ProcessTimeline({
 }) {
   const activities = useMemo(() => processActivitiesWithCommentary(message), [message]);
   const hasReasoning = Boolean(message.reasoning?.trim());
-  const hasProcess = activities.length > 0 || hasReasoning || isStreaming;
+  const hasArchivedPlan = !isStreaming && Boolean(message.plan?.length);
+  const hasProcess = activities.length > 0 || hasReasoning || isStreaming || hasArchivedPlan;
   if (!hasProcess) return null;
 
   const messageKey = message.id || `${message.createdAt}-${messageIndex}`;
@@ -3621,7 +3622,7 @@ const ProcessTimeline = memo(function ProcessTimeline({
     ? `用时 ${durationText}`
     : isStreaming
       ? "正在处理任务"
-      : "用时已记录";
+      : "处理过程";
   // 任务执行中直接平铺过程行（对标 Codex 执行中的排版：过程行与正文同一起始边，
   // 顶部不出现折叠条）；只有任务结束、或用户主动收起后才显示「用时 XX 〉」折叠条。
   const showTrigger = collapsed || !isStreaming;
@@ -3649,6 +3650,7 @@ const ProcessTimeline = memo(function ProcessTimeline({
       )}
       {showContent && (
         <div className="process-timeline-content">
+          {hasArchivedPlan && <ArchivedPlan steps={message.plan!} />}
           {/* 旧消息兼容：如果 activities 中没有 thinking 项，但 message.reasoning 存在，在此渲染思考 */}
           {Boolean(hasReasoning && !activities.some((a) => a.kind === "thinking")) && (
             <ProcessThoughtItem
@@ -7050,6 +7052,7 @@ export function App() {
   const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
   const [botTeamPageOpen, setBotTeamPageOpen] = useState(false);
   const [botTeamAvailable, setBotTeamAvailable] = useState(false);
+  const [botTeamProvider, setBotTeamProvider] = useState("ds-bot");
   const [railMenuOpen, setRailMenuOpen] = useState(false);
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   const [conversationView, setConversationView] = useState("chat");
@@ -10248,7 +10251,10 @@ export function App() {
   useEffect(() => {
     const host = clientHost();
     const sync = () => {
-      const available = host.contributionsFor("workspace.page").some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
+      const pages = host.contributionsFor("workspace.page");
+      const qwenpaw = pages.some(item => item.pluginId === "qwenpaw" && item.meta.key === "qwenpaw");
+      const available = qwenpaw || pages.some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
+      setBotTeamProvider(qwenpaw ? "qwenpaw" : "ds-bot");
       setBotTeamAvailable(available);
       if (!available) setBotTeamPageOpen(false);
     };
@@ -12662,7 +12668,7 @@ export function App() {
               <PanelLeftIcon size={18} />
             </button>
             {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? "机器人团队" : activeSession?.title || "新任务"}</strong>
+            <strong>{botTeamPageOpen ? (botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队") : activeSession?.title || "新任务"}</strong>
           </div>
           {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}
@@ -12898,9 +12904,9 @@ export function App() {
 
           {botTeamAvailable && <section className="sidebar-section bot-team-section">
             <button className={`recent-section-toggle bot-team-entry ${botTeamPageOpen ? "active" : ""}`}
-              aria-label="机器人团队" aria-current={botTeamPageOpen ? "page" : undefined}
+              aria-label={botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队"} aria-current={botTeamPageOpen ? "page" : undefined}
               onClick={() => { setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
-              <Bot size={16} /><span>机器人团队</span><ChevronRight size={13} />
+              <Bot size={16} /><span>{botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队"}</span><ChevronRight size={13} />
             </button>
           </section>}
 
@@ -12938,8 +12944,8 @@ export function App() {
       )}
 
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
-        {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
-          <PluginSlotView slot="workspace.page" pluginId="ds-bot" pluginKey="bot-team" visible={!settingsOpen} />
+        {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label={botTeamProvider === "qwenpaw" ? "QwenPaw 助手页面" : "机器人团队页面"}>
+          <PluginSlotView slot="workspace.page" pluginId={botTeamProvider} pluginKey={botTeamProvider === "qwenpaw" ? "qwenpaw" : "bot-team"} visible={!settingsOpen} />
         </section> : <>
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}

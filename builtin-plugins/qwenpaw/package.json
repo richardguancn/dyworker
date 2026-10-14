@@ -1,0 +1,13 @@
+{
+  "name": "qwenpaw",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "index.js",
+  "description": "在 DYWorker 中使用 QwenPaw 原版界面，管理长期助手、记忆和协作。首次使用需安装独立运行环境。",
+  "homepage": "https://github.com/agentscope-ai/QwenPaw",
+  "exports": { ".": "./index.js", "./client": "./client.js" },
+  "dsh": { "client": { "platform": "web" } },
+  "dyworker": { "builtin": true, "defaultEnabled": false },
+  "license": "Apache-2.0"
+}
