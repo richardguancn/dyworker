@@ -16,7 +16,7 @@ const SENSITIVE_PATH_PATTERNS = [
   { re: /(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)$/i, label: "SSH 私钥" },
   { re: /(^|[\\/])\.aws([\\/]|$)/, label: "AWS 凭据" },
   { re: /(^|[\\/])\.(git-credentials|netrc)([\\/]|$)/, label: "Git/HTTP 凭据" },
-  { re: /(^|[\\/])\.npmrc([\\/]|$)/, label: "npm 令牌" },
+  { re: /(^|[\\/])\.npmrc([\\/]|$)/, label: "npm 配置（可能含令牌）" },
   { re: /(^|[\\/])\.docker[\\/]config\.json$/, label: "Docker 凭据" },
   { re: /(^|[\\/])\.kube[\\/]config$/, label: "Kubernetes 凭据" },
   { re: /(^|[\\/])\.env(\.[A-Za-z0-9_-]+)?$/, label: "环境变量文件" },

@@ -1857,10 +1857,37 @@ function basenameOf(word) {
   return text.includes("/") ? text.slice(text.lastIndexOf("/") + 1) : text;
 }
 
+// 只在引号之外拆复合命令，避免把参数里的 "cd x; ..." 当成真实目录切换。
+function shellCommandSegments(command) {
+  const segments = [];
+  const text = String(command || "");
+  let start = 0, quote = "", escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\" && quote !== "'" && process.platform !== "win32") { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = ""; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (!";&|\n".includes(char) || (char === "&" && /[<>]/.test(text[index - 1] || ""))) continue;
+    const operator = (char === "&" || char === "|") && text[index + 1] === char ? char + char : char;
+    segments.push({ text: text.slice(start, index), operator });
+    index += operator.length - 1; start = index + 1;
+  }
+  segments.push({ text: text.slice(start), operator: "" });
+  return segments;
+}
+
 function commandPathCandidates(command, workspace) {
   const candidates = [];
+  let directories = [workspace.root];
+  let skippedDirectories = [];
+  const segments = shellCommandSegments(command);
+  // 动态执行片段的目录变化无法静态证明，沿用保守候选，不据此消除越界提示。
+  let trackDirectories = !/[`()]/.test(String(command || ""))
+    && !segments.some((segment, index) => segment.operator === "||" || segment.operator === "&"
+      || (shellWords(segment.text)[0] === "cd" && (segment.operator === "|" || segments[index - 1]?.operator === "|")));
   // 逐段（&&/||/;/| 分隔）处理：每个词的上下文（所属段的 argv[0]、前一个词）都在段内判断
-  for (const segment of String(command || "").split(/&&|\|\||[;|]/)) {
+  for (const { text: segment, operator } of segments) {
     const words = shellWords(segment);
     // 段头：跳过前导的环境赋值（FOO=bar）与包装命令（nohup/env/time 等），取剩下的第一个词
     let headIndex = 0;
@@ -1886,8 +1913,8 @@ function commandPathCandidates(command, workspace) {
         if (/^~(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice(1));
         else if (/^\$HOME(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("$HOME".length));
         else if (/^\$\{HOME\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(os.homedir(), expanded.slice("${HOME}".length));
-        else if (/^\$PWD(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("$PWD".length));
-        else if (/^\$\{PWD\}(?=[\\/]|$)/.test(expanded)) expanded = path.join(workspace.root, expanded.slice("${PWD}".length));
+        else if (/^\$PWD(?=[\\/]|$)/.test(expanded)) expanded = `.${expanded.slice("$PWD".length)}`;
+        else if (/^\$\{PWD\}(?=[\\/]|$)/.test(expanded)) expanded = `.${expanded.slice("${PWD}".length)}`;
         // 拆开后残留的 $PATH 等未展开变量不是真实路径
         if (!expanded || expanded.startsWith("$") || isPseudoPathWord(expanded)) continue;
         // 豁免 A：本段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
@@ -1905,8 +1932,27 @@ function commandPathCandidates(command, workspace) {
         // 豁免 D：只读段查看可执行根目录（如 ls -d ~/.nvm/versions/node/*​/bin/node、which 同类检查），
         // 纯 inspection，不涉及隐私数据；删除/移动/写入段不适用，仍照常上报
         if (readOnlySegment && isExecutableRooted(expanded)) continue;
-        candidates.push(expanded);
+        // 相对文件参数按该段可能的执行目录解析；未切目录时保留原表示，兼容现有授权记录。
+        if (trackDirectories && !path.isAbsolute(expanded) && /[\\/]|^\./.test(expanded)
+          && !/^[a-z][a-z0-9+.-]*:/i.test(expanded)) {
+          for (const directory of directories) candidates.push(directory === workspace.root ? expanded : path.resolve(directory, expanded));
+        } else candidates.push(expanded);
       }
+    }
+    if (trackDirectories && words[0] === "cd") {
+      const target = words.length === 2 ? words[1] : "";
+      if (target && !target.startsWith("-") && !/[$`<>]/.test(target)) {
+        const expanded = /^~(?=[\\/]|$)/.test(target) ? path.join(os.homedir(), target.slice(1)) : target;
+        const changed = directories.map(directory => workspace.canonicalPath(path.resolve(directory, expanded)));
+        // && 的下一段仅在 cd 成功时执行；; / 换行还需考虑 cd 失败后沿用旧目录。
+        // || 的下一段仅在 cd 失败时执行；管道、后台中的 cd 不改变下一段的目录。
+        if (operator === "&&") { skippedDirectories = [...new Set([...skippedDirectories, ...directories])]; directories = [...new Set(changed)]; }
+        else if (operator === ";" || operator === "\n") directories = [...new Set([...directories, ...changed])];
+        if (directories.length > 32) { trackDirectories = false; directories = [workspace.root]; }
+      }
+    }
+    if (operator === ";" || operator === "\n") {
+      directories = [...new Set([...directories, ...skippedDirectories])]; skippedDirectories = [];
     }
   }
   return candidates;
@@ -4045,16 +4091,39 @@ export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval 
   return true;
 }
 
-export function parseReviewerDecision(text) {
-  const match = String(text || "").match(/\{[\s\S]*\}/);
-  if (!match) return { decision: "ask", reason: "审核助手没有返回可解析的结果" };
-  try {
-    const parsed = JSON.parse(match[0]);
-    const decision = ["allow", "deny", "ask"].includes(parsed?.decision) ? parsed.decision : "ask";
-    return { decision, reason: String(parsed?.reason || "").slice(0, 300) || "（未说明理由）" };
-  } catch {
-    return { decision: "ask", reason: "审核助手返回了无法解析的结果" };
+function parseReviewerOutput(text) {
+  const raw = String(text || "");
+  const failed = (reason, invalidFormat = true) => ({ result: { decision: "ask", reason }, invalidFormat });
+  // 思考内容不是正式结论，不能从未结束的思考段里抢救一个允许决定。
+  const value = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  if (/<think>/i.test(value)) return failed("审核助手的回复尚未完整结束");
+  const objects = [];
+  let start = -1, depth = 0, quoted = false, escaped = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (depth === 0) { if (char === "{") { start = index; depth = 1; } continue; }
+    if (escaped) { escaped = false; continue; }
+    if (quoted && char === "\\") { escaped = true; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (quoted) continue;
+    if (char === "{") depth++;
+    if (char === "}" && --depth === 0) {
+      try { objects.push(JSON.parse(value.slice(start, index + 1))); } catch {}
+    }
   }
+  if (depth) return failed("审核助手返回了无法解析的结果");
+  const decisions = objects.filter(item => item && typeof item === "object" && Object.hasOwn(item, "decision"));
+  if (decisions.length > 1) return failed("审核助手返回了多个结论，无法确定本次决定", false);
+  const parsed = decisions[0];
+  if (!parsed) return failed(objects.length || value.includes("{") ? "审核助手返回了无法解析的结果" : "审核助手没有返回可解析的结果");
+  if (!["allow", "deny", "ask"].includes(parsed.decision)
+    || (parsed.reason !== undefined && typeof parsed.reason !== "string")
+    || Object.keys(parsed).some(key => key !== "decision" && key !== "reason")) return failed("审核助手返回了不符合格式的结果");
+  return { result: { decision: parsed.decision, reason: (parsed.reason || "").slice(0, 300) || "（未说明理由）" }, invalidFormat: false };
+}
+
+export function parseReviewerDecision(text) {
+  return parseReviewerOutput(text).result;
 }
 
 // 审核请求补全工作区边界事实：小模型无法自行推断路径内外，显式标注（含已授权的外部路径——授权只免问询，不免审核确认）
@@ -4219,7 +4288,14 @@ export async function reviewApproval({ settings, action = {}, context = "", fetc
   try {
     // 审核失败走 fail-closed（返回 ask），测试靠注入小退避值避免真实等待网络重试阶梯
     const message = await requestAuxiliaryModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
-    return { ...parseReviewerDecision(messageText(message)), policyHash };
+    const parsed = parseReviewerOutput(messageText(message));
+    if (!parsed.invalidFormat) return { ...parsed.result, policyHash };
+    // 格式错误先用完全相同的授权材料重新核对一次，不让用户替接口格式问题做决定。
+    // 多个结论属于歧义，不重试挑选允许；真正的 ask/deny 也不重试。
+    signal?.throwIfAborted();
+    const retryMessages = [{ role: "system", content: `${policy}\n\n上次回复格式无法读取。请根据这次提供的完整用户要求和操作重新审核，只返回一个 JSON 对象，decision 为小写 allow、deny 或 ask，reason 为字符串。不要输出思考、示例或额外对象。` }, ...request.slice(1)];
+    const retry = await requestAuxiliaryModel({ settings: effectiveSettings, messages: retryMessages, fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
+    return { ...parseReviewerDecision(messageText(retry)), policyHash };
   } catch (error: any) {
     return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
   }
