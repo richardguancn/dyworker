@@ -198,7 +198,14 @@
       "dist/client/**/*",
       "dist/electron/**/*",
       "package.json",
-      "builtin-plugins/**/*"
+      "builtin-plugins/**/*",
+      "!node_modules/node-llama-cpp/llama/llama.cpp/**",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/llama.cpp/**",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/CMakeFiles/**",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/CMakeCache.txt",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/Makefile",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/cmake_install.cmake",
+      "!node_modules/node-llama-cpp/llama/localBuilds/*/compile_commands.json"
     ],
     "mac": {
       "category": "public.app-category.productivity",
