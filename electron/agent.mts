@@ -1790,6 +1790,8 @@ function isPseudoPathWord(word) {
   if (!word) return true;
   if (process.platform === "win32") {
     if (windowsDeviceNamePattern.test(word)) return true;
+    // Git Bash / MSYS2 里同样存在 POSIX 设备路径，它指向空设备而不是工作区外的数据
+    if (safeDeviceFiles.has(word)) return true;
     // 盘符、UNC、`..` 开头的按真实路径处理，不做正则片段猜测
     if (/^(?:[a-zA-Z]:[\\/]|[\\/]{2}|\.{1,2}[\\/])/.test(word)) return false;
     return /[{}]/.test(word) || (/^\//.test(word) && word.includes("\\"));
@@ -1828,6 +1830,12 @@ function collectExecutableRoots() {
     roots.push(path.join(home, "scoop", "shims"), "C:\\ProgramData\\chocolatey\\bin");
     if (process.env.NVM_HOME) roots.push(process.env.NVM_HOME);
     if (process.env.PYENV) roots.push(process.env.PYENV);
+    // Git Bash / MSYS2 与手动安装的版本管理器也常把工具链放在家目录下，
+    // 与 POSIX 分支保持一致的豁免，避免把"正在运行的工具"误报成访问工作区外数据
+    for (const sub of [".nvm", ".pyenv", ".volta", ".bun", ".deno",
+      ".local/bin", ".cargo/bin", ".go/bin"]) {
+      roots.push(path.join(home, sub));
+    }
   }
   for (const dir of String(process.env.PATH || "").split(process.platform === "win32" ? ";" : ":")) {
     if (dir.trim()) roots.push(dir.trim());
