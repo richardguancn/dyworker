@@ -26,6 +26,7 @@
   --bubble: #efeee9;
   --accent: #2f6fed;
   --ink: #262823;
+  --sleep-primary-ink: #fbfbfa;
   --shadow-xs: 0 1px 2px rgba(34, 35, 31, 0.05);
   --shadow-sm: 0 1px 2px rgba(34, 35, 31, 0.05), 0 2px 6px rgba(34, 35, 31, 0.05);
   --shadow-md: 0 2px 6px rgba(34, 35, 31, 0.05), 0 12px 32px rgba(34, 35, 31, 0.09);
@@ -5399,24 +5400,27 @@ body.resizing-panels .app-shell {
 /* 主动挂起（等待自动唤醒）：输入框禁用期间的唯一出口卡片，同样紧贴在输入框上方 */
 .sleep-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border, #e5e5df);
   border-radius: 14px;
-  background: var(--surface, #f6f6f2);
+  background: var(--card, #fffdf7);
   font-size: calc(12.5px * var(--font-ui-scale, 1));
-  color: var(--muted, #646861);
+  color: var(--ink);
+  line-height: 1.6;
 }
 
 .sleep-card-icon {
   flex: none;
-  color: var(--quiet, #8a8f85);
+  color: var(--muted, #646861);
 }
 
 .sleep-card-text {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sleep-card-actions {
@@ -5424,30 +5428,39 @@ body.resizing-panels .app-shell {
   flex: none;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .sleep-card-button {
+  min-height: 30px;
   padding: 4px 10px;
-  border: 1px solid var(--border, #e5e5df);
+  border: 1px solid var(--border-strong, #e5e5df);
   border-radius: 8px;
-  background: var(--card, #fff);
+  background: transparent;
   color: var(--ink);
   font-size: calc(12px * var(--font-ui-scale, 1));
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .sleep-card-button:hover {
-  background: rgba(69, 71, 66, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .sleep-card-button.primary {
   border-color: transparent;
   background: var(--ink);
-  color: #fbfbfa;
+  color: var(--sleep-primary-ink);
 }
 
 .sleep-card-button.primary:hover {
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--ink) 90%, var(--sleep-primary-ink));
+}
+
+.sleep-card-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .queue-card-more-wrap {
@@ -7546,7 +7559,7 @@ body.resizing-panels .app-shell {
 /* ---- 代理工具活动列表（Codex 风格：无卡片边框，竖向导线连接标题，行式平铺） ---- */
 
 .activity-list {
-  margin: 0 0 16px 7px;
+  margin: 0 0 8px 7px;
   padding: 2px 0 3px 12px;
   border-left: 1px solid var(--border);
   font-size: calc(14px * var(--font-ui-scale, 1));
@@ -7564,13 +7577,13 @@ body.resizing-panels .app-shell {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
+  min-height: 26px;
   padding: 1px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   font: inherit;
-  color: #6d7168;
+  color: #767b72;
   line-height: 1.45;
   text-align: left;
 }
@@ -7594,12 +7607,12 @@ body.resizing-panels .app-shell {
 }
 
 .activity-status-command {
-  color: #8d9289;
+  color: #959a92;
 }
 
 .activity-row-main > svg {
   flex: 0 0 auto;
-  color: #959a91;
+  color: #9ea39a;
   stroke-width: 1.8;
 }
 
@@ -7620,7 +7633,7 @@ body.resizing-panels .app-shell {
 }
 
 .activity-row.command .activity-title {
-  color: #8e928b;
+  color: #979b94;
   font-size: calc(14px * var(--font-ui-scale, 1));
   letter-spacing: -0.006em;
 }
@@ -7634,7 +7647,7 @@ body.resizing-panels .app-shell {
 }
 
 .activity-row.command .activity-status-command {
-  color: #8d9289;
+  color: #959a92;
 }
 
 .activity-row.command.error .activity-status-command {
@@ -7646,7 +7659,7 @@ body.resizing-panels .app-shell {
   max-height: 220px;
   overflow: auto;
   padding: 2px 14px 8px 38px;
-  color: #7b7e76;
+  color: #858b81;
   font-family: var(--font-mono, monospace);
   font-size: calc(12px * var(--font-ui-scale, 1));
   line-height: 1.55;
@@ -8619,6 +8632,7 @@ body.resizing-panels .app-shell {
     --bubble: #2a2b27;
     --accent: #78a0ff;
     --ink: #e7e9e2;
+    --sleep-primary-ink: #181916;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.24);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 3px 8px rgba(0, 0, 0, 0.18);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25), 0 16px 38px rgba(0, 0, 0, 0.28);
@@ -10108,6 +10122,7 @@ html:not([data-theme]) .step-track {
     --bubble: #2a2b27;
     --accent: #78a0ff;
     --ink: #e7e9e2;
+    --sleep-primary-ink: #181916;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.24);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 3px 8px rgba(0, 0, 0, 0.18);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.25), 0 16px 38px rgba(0, 0, 0, 0.28);
@@ -15973,14 +15988,14 @@ html[data-theme="dark"] {
    ========================================================================== */
 
 .process-collapse-container {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   width: 100%;
 }
 
 /* 执行中：过程行直接平铺在正文位置，没有折叠条，也没有左侧竖线，
    与结论正文同一起始边（对标 Codex 执行中的过程排版） */
 .process-collapse-container.expanded-inline {
-  margin: 0 0 14px;
+  margin: 0 0 10px;
 }
 
 /* 顶部方案 A 极简单行折叠条 (对标 Codex 图 1: "用时 18m 1s >") */
@@ -15991,7 +16006,7 @@ html[data-theme="dark"] {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-muted, #8c9188);
+  color: var(--text-muted, #969b92);
   font-size: calc(13.5px * var(--font-ui-scale, 1));
   font-weight: 450;
   line-height: 1.4;
@@ -16022,8 +16037,8 @@ html[data-theme="dark"] {
 .process-timeline-content {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  margin: 8px 0 16px;
+  gap: 5px;
+  margin: 6px 0 10px;
   padding: 0;
 }
 
@@ -16034,7 +16049,7 @@ html[data-theme="dark"] {
 .process-thinking-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
 }
 
@@ -16044,7 +16059,7 @@ html[data-theme="dark"] {
   max-width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .process-thought-header {
@@ -16053,11 +16068,11 @@ html[data-theme="dark"] {
   align-items: center;
   gap: 7px;
   margin-left: -6px;
-  padding: 3px 8px;
+  padding: 2px 8px;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-muted, #7e837a);
+  color: var(--text-muted, #888d85);
   font-size: calc(13.5px * var(--font-ui-scale, 1));
   line-height: 1.45;
   cursor: pointer;
@@ -16097,21 +16112,21 @@ html[data-theme="dark"] {
   font-family: inherit;
   font-size: calc(13px * var(--font-ui-scale, 1));
   line-height: 1.55;
-  color: var(--text-muted, #6c7167);
+  color: var(--text-muted, #767b72);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 /* 2. 阶段性推导与意图说明段落 (对标 Codex 图 2 文本段落) */
 .process-commentary-item {
-  color: var(--text-secondary, #4d514a);
+  color: var(--text-secondary, #5f645c);
   font-size: calc(14px * var(--font-ui-scale, 1));
-  line-height: 1.65;
-  margin: 1px 0;
+  line-height: 1.6;
+  margin: 0;
 }
 
 .process-commentary-item p {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
 }
 
 .process-commentary-item p:last-child {
@@ -16124,7 +16139,7 @@ html[data-theme="dark"] {
   max-width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .process-subagent-header {
@@ -16133,11 +16148,11 @@ html[data-theme="dark"] {
   align-items: center;
   gap: 7px;
   margin-left: -6px;
-  padding: 3px 8px;
+  padding: 2px 8px;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-muted, #72776e);
+  color: var(--text-muted, #7d827a);
   font-size: calc(13.5px * var(--font-ui-scale, 1));
   font-weight: 450;
   line-height: 1.45;
@@ -16207,11 +16222,11 @@ html[data-theme="dark"] {
   align-items: center;
   gap: 7px;
   margin-left: -6px;
-  padding: 3px 6px;
+  padding: 2px 6px;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-muted, #72776e);
+  color: var(--text-muted, #7d827a);
   font-size: calc(13.5px * var(--font-ui-scale, 1));
   line-height: 1.45;
   cursor: pointer;
@@ -16257,7 +16272,7 @@ html[data-theme="dark"] {
   border: 1px solid rgba(140, 145, 136, 0.16);
   border-radius: 4px;
   font-size: calc(12px * var(--font-ui-scale, 1));
-  color: var(--text-muted, #666a61);
+  color: var(--text-muted, #73786f);
   max-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -16267,7 +16282,7 @@ html[data-theme="dark"] {
 /* 深色模式适配 */
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .process-collapse-trigger {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html:not([data-theme]) .process-collapse-trigger:hover {
@@ -16275,7 +16290,7 @@ html[data-theme="dark"] {
   }
 
   html:not([data-theme]) .process-thought-header {
-    color: #a4a99f;
+    color: #90958c;
   }
 
   html:not([data-theme]) .process-thought-header:hover {
@@ -16284,15 +16299,15 @@ html[data-theme="dark"] {
   }
 
   html:not([data-theme]) .process-thought-text {
-    color: #a4a99f;
+    color: #90958c;
   }
 
   html:not([data-theme]) .process-commentary-item {
-    color: #c5cac0;
+    color: #aaafa5;
   }
 
   html:not([data-theme]) .process-subagent-item.completed .process-subagent-header {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html:not([data-theme]) .process-subagent-item.running .process-subagent-header {
@@ -16308,7 +16323,7 @@ html[data-theme="dark"] {
   }
 
   html:not([data-theme]) .process-action-header {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html:not([data-theme]) .process-action-header:hover:not(:disabled) {
@@ -16319,14 +16334,30 @@ html[data-theme="dark"] {
   html:not([data-theme]) .process-action-detail {
     background: rgba(255, 255, 255, 0.04);
     border-color: rgba(160, 165, 156, 0.2);
-    color: #9ea39a;
+    color: #8a8f87;
+  }
+
+  /* 非正文：子代理展开后的活动行跟随同档弱化（单列声明，避免牵连同组的按钮/弹窗文字） */
+  html:not([data-theme]) .activity-row-main,
+  html:not([data-theme]) .activity-detail,
+  html:not([data-theme]) .activity-status-command,
+  html:not([data-theme]) .activity-row.command .activity-status-command {
+    color: #8a8f87;
+  }
+
+  html:not([data-theme]) .activity-row.command .activity-title {
+    color: #83887f;
+  }
+
+  html:not([data-theme]) .activity-row-main > svg {
+    color: #969b92;
   }
 }
 
 /* 显式深色主题（用户选择或系统解析结果） */
 
   html[data-theme="dark"] .process-collapse-trigger {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html[data-theme="dark"] .process-collapse-trigger:hover {
@@ -16334,7 +16365,7 @@ html[data-theme="dark"] {
   }
 
   html[data-theme="dark"] .process-thought-header {
-    color: #a4a99f;
+    color: #90958c;
   }
 
   html[data-theme="dark"] .process-thought-header:hover {
@@ -16343,15 +16374,15 @@ html[data-theme="dark"] {
   }
 
   html[data-theme="dark"] .process-thought-text {
-    color: #a4a99f;
+    color: #90958c;
   }
 
   html[data-theme="dark"] .process-commentary-item {
-    color: #c5cac0;
+    color: #aaafa5;
   }
 
   html[data-theme="dark"] .process-subagent-item.completed .process-subagent-header {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html[data-theme="dark"] .process-subagent-item.running .process-subagent-header {
@@ -16367,7 +16398,7 @@ html[data-theme="dark"] {
   }
 
   html[data-theme="dark"] .process-action-header {
-    color: #9ea39a;
+    color: #8a8f87;
   }
 
   html[data-theme="dark"] .process-action-header:hover:not(:disabled) {
@@ -16378,7 +16409,23 @@ html[data-theme="dark"] {
   html[data-theme="dark"] .process-action-detail {
     background: rgba(255, 255, 255, 0.04);
     border-color: rgba(160, 165, 156, 0.2);
-    color: #9ea39a;
+    color: #8a8f87;
+  }
+
+  /* 非正文：子代理展开后的活动行跟随同档弱化（单列声明，避免牵连同组的按钮/弹窗文字） */
+  html[data-theme="dark"] .activity-row-main,
+  html[data-theme="dark"] .activity-detail,
+  html[data-theme="dark"] .activity-status-command,
+  html[data-theme="dark"] .activity-row.command .activity-status-command {
+    color: #8a8f87;
+  }
+
+  html[data-theme="dark"] .activity-row.command .activity-title {
+    color: #83887f;
+  }
+
+  html[data-theme="dark"] .activity-row-main > svg {
+    color: #969b92;
   }
 
 /* ===== 深色模式：面板内胶囊/选中态/输入框改用白色微叠加 =====
