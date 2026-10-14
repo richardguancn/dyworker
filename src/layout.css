@@ -245,8 +245,8 @@ html .reference-layout.platform-linux.sidebar-collapsed { --titlebar-content-lef
 .reference-layout .composer-toolbar { flex-wrap: nowrap; gap: 8px; min-height: 32px; }
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
 .reference-layout .composer-send-actions { margin-left: auto; flex: 1 1 0; justify-content: flex-end; }
-.reference-layout .composer-send-actions > .model-menu-wrap { flex: 0 1 210px; min-width: 0; }
-.reference-layout .composer-mode { color: var(--ink); width: 100%; max-width: 210px; }
+.reference-layout .composer-send-actions > .model-menu-wrap { flex: 0 1 auto; min-width: 0; }
+.reference-layout .composer-mode { color: var(--ink); width: auto; max-width: 210px; }
 .reference-layout .composer-actions > .icon-button,
 .reference-layout .composer-actions > .send-button,
 .reference-layout .composer-actions > .context-ring { flex: 0 0 auto; }
@@ -279,8 +279,8 @@ html .reference-layout.platform-linux.sidebar-collapsed { --titlebar-content-lef
   html .reference-layout { transition: none; }
 }
 
-.reference-layout .composer-card textarea { height: 40px; min-height: 40px; }
-.reference-layout .dsh-composer-input { min-height: 40px; }
+.reference-layout .composer-card textarea { height: 64px; min-height: 64px; }
+.reference-layout .dsh-composer-input { min-height: 64px; }
 
 .reference-layout.sidebar-collapsed .sidebar,
 .reference-layout.right-panel-collapsed .tool-panel { visibility: hidden; }
