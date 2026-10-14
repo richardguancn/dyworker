@@ -2819,6 +2819,31 @@ async function resumeWake(wake, options: any = {}) {
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
     const collector = createTranscriptCollector({runId:wakeRunId});
+    // 先发唤醒消息再开跑（与定时任务、渠道任务同一口径）：续跑开始前就把"谁在什么时候
+    // 因为什么把任务唤醒"写进会话并推给界面。等收尾才和回答一起补上去的话，模型跑多久，
+    // 用户在聊天里就有多久看不到这次唤醒的来由，中途崩溃/被关掉还会连同记录一起丢。
+    const wakeSessionBefore = await ctx.sessions.getAsync(wake.sessionId);
+    // DSH 会话的唤醒提示就是 DSH 轮次正文（不带「（到点自动唤醒）」前缀），归档也按轮次回写；
+    // 两处口径要一致，否则开跑前上屏的这条会在收尾归并时被改写一次。
+    const wakeUserMessage = {
+      id:`${wakeRunId}:user`,runId:wakeRunId,role:"user",
+      content:wakeSessionBefore?.runtime === "dsh" ? wakeText : `（到点自动唤醒）${wakeText}`,
+      createdAt:new Date().toISOString(),
+    };
+    if (wakeSessionBefore) {
+      await ctx.sessions.replace({...wakeSessionBefore,messages:mergeDshTranscript(wakeSessionBefore.messages || [],[wakeUserMessage]),updatedAt:new Date().toISOString()});
+    } else {
+      // 会话存档缺失（历史被清理过）时也要留痕：不建的话这次续跑整段都无处落地
+      await ctx.sessions.upsert({id:wake.sessionId,workspacePath:wake.workspacePath,
+        createdAt:wakeUserMessage.createdAt,updatedAt:wakeUserMessage.createdAt,messages:[wakeUserMessage]});
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("sessions:append", {
+        runId:wakeRunId,sessionId: wake.sessionId,
+        workspacePath: wake.workspacePath,
+        messages:[wakeUserMessage],
+      });
+    }
     // 到点续跑的生效审批模式：interactive 提升为 auto；reviewer（替我审批）保持 reviewer，
     // 让审核助手继续逐条把关——工作区内的低风险操作（含带 rm/ffmpeg 的复合命令）由助手放行，
     // 只在越界、外发、破坏性或助手判不准时才转人工收件箱。降级成 auto 会让工作区内的 ask
@@ -2899,10 +2924,14 @@ async function resumeWake(wake, options: any = {}) {
     const settledWake = settledStoredGoal(savedWake, wakeGoal, result);
     if (savedWake) await ctx.sessions.replace({...settledWake,messages:mergeDshTranscript(savedWake.messages || [],wakeMessages),updatedAt:new Date().toISOString()});
     if (mainWindow && !mainWindow.isDestroyed()) {
+      // 唤醒消息已在开跑前上屏（见上面的 sessions:append），收尾只补助手消息，
+      // 让同一轮用户消息只有一条；DSH 转录按轮次整段下发时不拆。
+      const wakeTranscript = wakeMessages.some(message=>message.dshTurnId)
+        ? wakeMessages : wakeMessages.filter(message=>message.role!=="user");
       mainWindow.webContents.send("sessions:append", {
         runId:wakeRunId,sessionId: wake.sessionId,
         workspacePath: wake.workspacePath,
-        messages: wakeMessages,
+        messages: wakeTranscript,
         goalState: settledWake?.goalState,
       });
       mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:{type:'agent-finished',result}});

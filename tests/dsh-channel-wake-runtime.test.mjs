@@ -77,7 +77,38 @@ test('真实唤醒入口沿用原任务的 DSH，两轮完整保存并释放归�
   await host.dshRuntime.request('wake-root','input-admit',{requestId:'wake-second',mode:'queue',content:[{type:'text',text:'唤醒后实际追加'}]});release();await running;
   const saved=await host.sessions.getAsync('wake-root');assert.equal(saved.messages.length,6);assert.equal(saved.messages[0].content,'旧要求');assert.equal(saved.messages[3].content,'唤醒实际第1轮');assert.equal(saved.messages[4].content,'唤醒后实际追加');assert.equal(saved.messages[5].content,'唤醒实际第2轮');
   assert.equal(wakeRuns.size,0);assert.ok(envelopes.some(e=>e.type==='agent:event'&&e.payload.wakeRun&&e.payload.event.type==='agent-finished'));
-  assert.deepEqual(envelopes.find(e=>e.type==='sessions:append').payload.messages,saved.messages.slice(2));
+  // 先发唤醒消息：开跑前一条（只有用户消息），收尾再补 DSH 轮次转录（整轮下发）
+  const appends=envelopes.filter(e=>e.type==='sessions:append'&&e.payload.runId);
+  assert.equal(appends[0].payload.messages.length,1);
+  assert.equal(appends[0].payload.messages[0].role,'user');
+  assert.equal(appends[0].payload.messages[0].content,saved.messages[2].content);
+  assert.deepEqual(appends.at(-1).payload.messages,saved.messages.slice(2));
+});
+
+test('唤醒消息在模型开始产出之前就已上屏并落盘，收尾不重复下发用户消息',async t=>{
+  let entered,release;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);t.after(()=>release());
+  const {host,workspacePath,envelopes,wake}=await setup(t,async()=>{entered();await gate;return response('唤醒后的实际回复');});
+  await host.sessions.replace({id:'wake-first',workspacePath,messages:[{id:'old-user',role:'user',content:'旧要求'},{id:'old-assistant',role:'assistant',content:'旧回复'}]});
+  const running=wake({sessionId:'wake-first',workspacePath,prompt:'旧要求',finalText:'此前的进展内容',reason:'先发唤醒消息验收',createdAt:new Date().toISOString(),wakeAt:new Date().toISOString()});
+  // 模型请求已经发出（这轮执行已经开始），但还没有返回
+  await started;
+  const runId=envelopes.find(e=>e.type==='wake:status'&&e.payload.status==='running')?.payload.runId;
+  assert.ok(runId);
+  const early=envelopes.filter(e=>e.type==='sessions:append'&&e.payload.runId===runId);
+  assert.equal(early.length,1);
+  assert.equal(early[0].payload.messages.length,1);
+  assert.equal(early[0].payload.messages[0].role,'user');
+  assert.match(early[0].payload.messages[0].content,/^（到点自动唤醒）你于/);
+  assert.match(early[0].payload.messages[0].content,/先发唤醒消息验收/);
+  assert.match(early[0].payload.messages[0].content,/此前的进展内容/);
+  const mid=await host.sessions.getAsync('wake-first');
+  assert.deepEqual(mid.messages.map(m=>m.role),['user','assistant','user']);
+  assert.equal(mid.messages.at(-1).content,early[0].payload.messages[0].content);
+  assert.equal(mid.messages.at(-1).runId,runId);
+  release();await running;
+  const saved=await host.sessions.getAsync('wake-first');
+  assert.deepEqual(saved.messages.map(m=>m.content),['旧要求','旧回复',early[0].payload.messages[0].content,'唤醒后的实际回复']);
+  assert.deepEqual(envelopes.filter(e=>e.type==='sessions:append'&&e.payload.runId).at(-1).payload.messages.map(m=>m.role),['assistant']);
 });
 
 test('实际唤醒停止保留片段，旧历史和本轮要求不被覆盖，所属占用完成释放',async t=>{
@@ -103,7 +134,7 @@ test('目标自动唤醒沿用当前目标，达成后先保存完成状态再�
   assert.equal(saved.goalState.status,'complete');
   assert.ok(saved.goalState.elapsedMs>=5000);
   assert.equal(saved.goalState.activeSince,undefined);
-  assert.equal(envelopes.find(e=>e.type==='sessions:append').payload.goalState.status,'complete');
+  assert.equal(envelopes.filter(e=>e.type==='sessions:append').at(-1).payload.goalState.status,'complete');
   assert.equal(queuedGoalPayload({goal:'核对两项文字'},saved).goal,'');
 });
 

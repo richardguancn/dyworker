@@ -126,6 +126,20 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
 
   // 8. 唤醒状态向渲染端同步
   assert.match(mainCode, /wake:status/);
+
+  // 9. 先发唤醒消息再执行：唤醒消息的落盘 + 上屏必须发生在续跑启动（ctx.agent.run）之前，
+  //    否则模型跑多久，界面就有多久看不到这次唤醒的来由（收尾才补，中途崩溃还会一起丢）
+  const wakeStart = mainCode.indexOf("async function resumeWake(");
+  const wakeEnd = mainCode.indexOf("\n// ----", wakeStart);
+  assert.ok(wakeStart > 0 && wakeEnd > wakeStart);
+  const wakeCode = mainCode.slice(wakeStart, wakeEnd);
+  const wakeNoticeIndex = wakeCode.indexOf('"sessions:append"');
+  const wakeRunIndex = wakeCode.indexOf("await ctx.agent.run(");
+  assert.ok(wakeNoticeIndex > 0 && wakeRunIndex > 0 && wakeNoticeIndex < wakeRunIndex);
+  assert.match(wakeCode, /messages:\[wakeUserMessage\]/);
+  assert.match(wakeCode, /mergeDshTranscript\(wakeSessionBefore\.messages \|\| \[\],\[wakeUserMessage\]\)/);
+  // 收尾只补助手消息（用户消息已经在开跑前上过屏了）
+  assert.match(wakeCode, /wakeMessages\.filter\(message=>message\.role!=="user"\)/);
 });
 
 test("App.tsx 契约：会话内直显待审批卡片、列表项橙点徽标、唤醒运行提示", async () => {
