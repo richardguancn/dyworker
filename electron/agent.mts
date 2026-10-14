@@ -1655,8 +1655,11 @@ export function toolDefinitions() {
         content: stringProperty("正文内容，每行一个段落")
       },
       ["path", "content"]),
-    functionTool("dispatch_agent", "派发一个子代理独立完成一个子任务并返回结果。子代理拥有同样的文件、搜索等工具，但看不到当前对话，任务描述必须完整自足。适合相互独立、可并行的子任务（如多主题调研、多文件分析）；有先后顺序依赖的步骤不要派发。同一轮最多派发 3 个。",
-      { task: stringProperty("完整的子任务描述，包含背景、要做什么、期望的产出形式") },
+    functionTool("dispatch_agent", "派发一个子代理独立完成一个子任务并返回结果。子代理拥有同样的文件、搜索等工具，但看不到当前对话，任务描述必须完整自足。适合相互独立、可并行的子任务（如多主题调研、多文件分析）；有先后顺序依赖的步骤不要派发。同一轮最多派发 3 个。用户界面里的子代理只显示 title 主题，不显示任务描述，所以 title 要能一眼看出这个子代理在做什么。",
+      {
+        title: stringProperty("子任务主题：8-14 字的中文短语，概括这个子代理要做什么（如「核查 1999 年史实」「整理三份素材」）。界面只显示它，不要照抄任务描述、不要复述角色设定或工作区信息"),
+        task: stringProperty("完整的子任务描述，包含背景、要做什么、期望的产出形式"),
+      },
       ["task"]),
     functionTool("ask_user", "向用户提问并等待回答（借鉴 openworker 的 ask 工具）。只在确实缺少无法自行获取的关键信息时使用，一次只问一个问题；能自己查到的不要问。无人值守的定时任务中，问题会进入审批收件箱，任务挂起等待答复。",
       {
@@ -2659,6 +2662,39 @@ const computerUseToolLabels = {
   type_text: "在应用中输入文字",
 };
 
+// 子代理主题：过程流里那一行（「正在执行：X / X 已完成」）只显示主题，
+// 优先用模型在 dispatch_agent 里给出的 title，缺失时再从任务描述里挑一句最像主题的话。
+// 为什么不直接截任务描述开头：子代理的提示词常带同一套角色/工作区开头（多个子代理
+// 前几十个字完全一样），截出来的行标题彼此无法分辨，等于把提示词摊在过程流里。
+export function subAgentTopic(title, task) {
+  const tidy = (value) => String(value ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s"'「『【\[（(]+/, "")
+    .replace(/[\s"'」』】\]）)。，、；;：:]+$/, "")
+    .trim();
+  const given = tidy(title);
+  let candidate = given;
+  if (!candidate) {
+    const text = tidy(task);
+    if (!text) return "子任务";
+    // 先按句/行断句，模板句（「你是…」「工作区…」）整句丢掉；全是模板句时退回按逗号切分
+    const sentences = text.split(/\n+|(?<=[。！？!?；;])/).map(tidy).filter(Boolean);
+    const boilerplate = /^(你是|您好|工作区|背景|上下文|角色|以下是|本次)/;
+    let pool = sentences.filter((sentence) => !boilerplate.test(sentence));
+    if (!pool.length) pool = text.split(/[，,]/).map(tidy).filter((sentence) => sentence && !boilerplate.test(sentence));
+    if (!pool.length) pool = sentences.length ? sentences : [text];
+    const action = /(写|撰写|编写|整理|核查|核对|校对|调研|分析|收集|搜集|查找|搜索|汇总|生成|创作|排版|配图|修改|更新|检查|排查|翻译|计算|对比|提取|列出)/;
+    candidate = pool.find((sentence) => action.test(sentence) && sentence.length <= 60)
+      || pool.slice().sort((a, b) => a.length - b.length)[0];
+  }
+  const stripped = candidate.replace(/^(任务|子任务|目标|要求|要做的事|事项)\s*[：:]\s*/, "");
+  // 超长时先在第一处停顿处收口，避免行标题停在半句话中间
+  const brief = stripped.length > 24
+    ? (stripped.split(/[，,、；;：:]/).map((part) => part.trim()).find(Boolean) || stripped)
+    : stripped;
+  return clipped(brief, 24);
+}
+
 export function toolSummary(name, args) {
   switch (name) {
     case "list_files": return `查看文件夹 ${args.path || "（工作区根目录）"}`;
@@ -2692,7 +2728,7 @@ export function toolSummary(name, args) {
     case "check_official_document": return `公文格式检查 ${args.path || ""}`;
     case "calculate_workdays": return "计算办事时限";
     case "export_word_document": return `导出 Word ${args.path || ""}`;
-    case "dispatch_agent": return `派发子任务：${String(args.task || "").replace(/\s+/g, " ").slice(0, 40)}`;
+    case "dispatch_agent": return `派发子任务：${subAgentTopic(args.title, args.task)}`;
     case "finish_task": return "交付任务结果";
     case "ask_user": return "向用户提问";
     case "sleep_until": return `挂起到 ${args.wake_at || `${args.minutes || "?"} 分钟后`} 继续`;
@@ -5276,7 +5312,7 @@ export async function runAgent({
     projectInstructions, approvals: userApprovals, replies: userReplies, recentTools: reviewToolEvidence });
   const messages: any[] = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity) }];
   if (depth === 0) {
-    messages[0].content += "对相互独立、可并行的子任务（如多主题调研、多文件分析），可以用 dispatch_agent 派发子代理并行处理；子代理看不到当前对话，任务描述必须完整自足并说明期望的产出形式；有先后顺序依赖的步骤不要派发。子代理的写入、命令等操作仍会按当前审批设置处理。";
+    messages[0].content += "对相互独立、可并行的子任务（如多主题调研、多文件分析），可以用 dispatch_agent 派发子代理并行处理；子代理看不到当前对话，任务描述必须完整自足并说明期望的产出形式；每次派发都要给一个 8-14 字的主题 title（说明这个子代理在做什么），过程流里只显示主题、不显示任务描述；有先后顺序依赖的步骤不要派发。子代理的写入、命令等操作仍会按当前审批设置处理。";
   } else {
     messages.push({ role: "system", content: "你是主代理派发的子代理。用户消息是一个完整自足的子任务描述：专注完成它并直接交付结果，不要询问澄清，不要再派发新的子代理（你也没有这个工具）。" });
   }
@@ -6674,7 +6710,8 @@ export async function runAgent({
               if (depth >= 1) throw new Error("子代理不能再派发子代理");
               const task = clipped(String(args.task || ""), 4000).trim();
               if (!task) throw new Error("子任务描述不能为空");
-              const taskTitle = clipped(task.replace(/\s+/g, " "), 80);
+              // 分支标题与过程流行标题用同一个主题，轨迹/后台任务里的子代理名字才和界面一致
+              const taskTitle = subAgentTopic(args.title, task);
               const sub = await runAgent({
                 settings: resolveSubAgentSettings(settings),
                 workspacePath,

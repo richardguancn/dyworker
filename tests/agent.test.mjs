@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import { communicationGuidance } from "../electron/host/communication-guidance.mts";
-import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isIncompleteDeliveryEnding, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, pickDeliveryText, pointsElsewhereOnly, probeServerContextLimit, promisesDelivery, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
+import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isIncompleteDeliveryEnding, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, pickDeliveryText, pointsElsewhereOnly, probeServerContextLimit, promisesDelivery, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, subAgentTopic, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mts";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mts";
 import { McpClient } from "../electron/mcp.mts";
@@ -4359,7 +4359,7 @@ test("dispatch_agent 派发子代理：独立上下文、结果回传主代理",
     workspacePath: root,
     conversation: [{ role: "user", content: "同时调研两个主题" }],
     fetchImpl: mockFetch([
-      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { task: "调研主题甲并给出三条要点" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { title: "调研主题甲", task: "调研主题甲并给出三条要点" })] },
       { role: "assistant", content: "主题甲要点：一、二、三。" },
       { role: "assistant", content: "两个主题调研完成。" },
     ], calls),
@@ -4389,7 +4389,7 @@ test("子代理写入的文件变更合并进主代理变更摘要", async () =>
     conversation: [{ role: "user", content: "让子代理写个文件" }],
     approvalMode: "allow-writes",
     fetchImpl: mockFetch([
-      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { task: "把要点写入 子报告.md" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { title: "写入子报告", task: "把要点写入 子报告.md" })] },
       { role: "assistant", content: null, tool_calls: [toolCall("s1", "write_file", { path: "子报告.md", content: "要点\n" })] },
       { role: "assistant", content: "已写入 子报告.md" },
       { role: "assistant", content: "子任务已完成。" },
@@ -4412,8 +4412,8 @@ test("一轮派发多个子代理并行执行", async () => {
       {
         role: "assistant", content: null,
         tool_calls: [
-          toolCall("c1", "dispatch_agent", { task: "子任务甲" }),
-          toolCall("c2", "dispatch_agent", { task: "子任务乙" }),
+          toolCall("c1", "dispatch_agent", { title: "子任务甲", task: "子任务甲" }),
+          toolCall("c2", "dispatch_agent", { title: "子任务乙", task: "子任务乙" }),
         ],
       },
       { role: "assistant", content: "子结果一" },
@@ -4437,8 +4437,8 @@ test("子代理尝试再派发时被深度限制拒绝", async () => {
     workspacePath: root,
     conversation: [{ role: "user", content: "派发" }],
     fetchImpl: mockFetch([
-      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { task: "子任务" })] },
-      { role: "assistant", content: null, tool_calls: [toolCall("s1", "dispatch_agent", { task: "孙任务" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { title: "子任务", task: "子任务" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("s1", "dispatch_agent", { title: "孙任务", task: "孙任务" })] },
       { role: "assistant", content: "无法继续派发，直接给出结果。" },
       { role: "assistant", content: "完成。" },
     ], calls),
@@ -4469,8 +4469,8 @@ test("并行子代理的审批串行弹出", async () => {
       {
         role: "assistant", content: null,
         tool_calls: [
-          toolCall("c1", "dispatch_agent", { task: "写 甲.md" }),
-          toolCall("c2", "dispatch_agent", { task: "写 乙.md" }),
+          toolCall("c1", "dispatch_agent", { title: "写 甲.md", task: "写 甲.md" }),
+          toolCall("c2", "dispatch_agent", { title: "写 乙.md", task: "写 乙.md" }),
         ],
       },
       { role: "assistant", content: null, tool_calls: [toolCall("s1", "write_file", { path: "甲.md", content: "甲\n" })] },
@@ -6298,7 +6298,7 @@ test("子代理事件走分支通道：活动带 branch 标记、trace depth 加
     conversation: [{ role: "user", content: "派子任务" }],
     emit: (event) => events.push(event),
     fetchImpl: mockFetch([
-      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { task: "子任务甲" })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { title: "子任务甲", task: "子任务甲" })] },
       { role: "assistant", content: "子任务甲完成。" },
       { role: "assistant", content: "全部完成。" },
     ]),
@@ -6319,6 +6319,75 @@ test("子代理事件走分支通道：活动带 branch 标记、trace depth 加
   assert.ok(deepActivityTraces.some((event) => event.trace.branch && typeof event.trace.branch.parentId === "string"), "子代理 activity trace 应带 branch.parentId");
   // 主活动流仍有不带 branch 的活动（如 thinking），未被分支事件污染
   assert.ok(events.some((event) => event.type === "activity" && !event.activity?.branch), "主活动流应保留无分支活动");
+});
+
+// 过程流里的子代理行标题只显示主题：多路子代理的提示词常共用同一段角色/工作区开头，
+// 截提示词开头会让每行看起来一模一样，用户分不清哪个子代理在做什么。
+test("subAgentTopic：模型给了主题就用主题，没给就从任务描述里挑出任务句", () => {
+  // 模型给出的主题：原样使用（去掉引号、句号这类装饰）
+  assert.equal(subAgentTopic("核查 1999 年史实", "你是「历史上的今天」撰稿助手"), "核查 1999 年史实");
+  assert.equal(subAgentTopic(" 「整理三份素材」。 ", ""), "整理三份素材");
+  // 没给主题：丢掉「你是…」「工作区…」这类模板句，取带动作的句子并剥掉「任务：」前缀
+  const prompt = "你是「历史上的今天」微信公众号的撰稿助手，工作区是 /Users/gdy/Documents/我的/App/mp。\n任务：核查 1999 年 10 月 1 日的史实，列出三条要点。";
+  assert.equal(subAgentTopic("", prompt), "核查 1999 年 10 月 1 日的史实");
+  // 整段都是模板句：仍然只能给短的，不能把提示词摊在过程流里
+  const boilerplateOnly = subAgentTopic("", "你是「历史上的今天」微信公众号的撰稿助手，工作区是 /Users/gdy/Documents/我的/App/mp，请按要求完成工作。".repeat(6));
+  assert.ok(boilerplateOnly.length <= 24, `行标题应短，实际 ${boilerplateOnly.length} 字`);
+  assert.equal(subAgentTopic("", ""), "子任务");
+});
+
+test("dispatch_agent 的过程流行标题是子任务主题，不是任务提示词", async () => {
+  const root = await makeWorkspace();
+  const prompt = "你是「历史上的今天」微信公众号的撰稿助手，工作区是 /Users/gdy/Documents/我的/App/mp。\n任务：核查 1999 年 10 月 1 日的史实。";
+  const events = [];
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "核查这一天的史实" }],
+    emit: (event) => events.push(event),
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", { title: "核查 1999 年史实", task: prompt })] },
+      { role: "assistant", content: "史实核查完毕。" },
+      { role: "assistant", content: "全部完成。" },
+    ]),
+  });
+  assert.equal(result.status, "done");
+  const dispatch = events.find((event) => event.type === "activity" && event.activity.kind === "dispatch_agent");
+  assert.ok(dispatch, "应有 dispatch_agent 活动");
+  assert.equal(dispatch.activity.title, "派发子任务：核查 1999 年史实");
+  assert.ok(!dispatch.activity.title.includes("撰稿助手"), "行标题不应摊出任务提示词");
+  // 分支/轨迹标题与界面同一主题（子代理在后台任务拓扑里也叫这个名字）
+  const branch = events.find((event) => event.type === "activity" && event.activity?.branch)?.activity.branch;
+  assert.equal(branch.title, "核查 1999 年史实");
+});
+
+test("dispatch_agent 没给主题：照常派发，行标题回退到任务句而不是摊出提示词", async () => {
+  const root = await makeWorkspace();
+  const prompt = "你是「历史上的今天」微信公众号的撰稿助手，工作区是 /Users/gdy/Documents/我的/App/mp。\n任务：核查 1999 年 10 月 1 日的史实。";
+  // 主题要么是空串要么干脆没写：两种都照常派发（主题只是显示用的名字，不能反过来卡住任务），
+  // 行标题回退到任务句
+  for (const args of [{ title: "", task: prompt }, { task: prompt }]) {
+    const events = [];
+    const calls = [];
+    const result = await runAgent({
+      settings,
+      workspacePath: root,
+      conversation: [{ role: "user", content: "核查这一天的史实" }],
+      emit: (event) => events.push(event),
+      fetchImpl: mockFetch([
+        { role: "assistant", content: null, tool_calls: [toolCall("c1", "dispatch_agent", args)] },
+        { role: "assistant", content: "史实核查完毕。" },
+        { role: "assistant", content: "全部完成。" },
+      ], calls),
+    });
+    assert.equal(result.status, "done");
+    const dispatch = events.find((event) => event.type === "activity" && event.activity.kind === "dispatch_agent");
+    assert.ok(dispatch, "缺主题也应照常派发子代理");
+    assert.equal(dispatch.activity.title, "派发子任务：核查 1999 年 10 月 1 日的史实");
+    // 子代理仍然拿到完整的任务描述（主题只影响显示）
+    const subUser = calls[1].messages.filter((message) => message.role === "user")[0];
+    assert.equal(subUser.content, prompt);
+  }
 });
 
 test("sanitizeToolCalls: 自动修复未闭合的 tool_calls，防止模型服务端报 400 invalid_request_error", () => {

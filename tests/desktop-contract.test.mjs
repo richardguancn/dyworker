@@ -1352,6 +1352,10 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(agent, /子代理不能再派发子代理/);
   assert.match(agent, /queuedApproval/);
   assert.match(app, /dispatch_agent/);
+  // 子代理那一行显示主题而不是任务提示词：派发工具带 title 主题，行标题经 subAgentTopic 归一
+  assert.match(agent, /子任务主题/);
+  assert.match(agent, /subAgentTopic/);
+  assert.match(app, /process-subagent-text/);
   // 下拉菜单失焦关闭：统一 data-menu-root 标记 + 外部点击/Esc 监听
   assert.match(app, /data-menu-root/);
   assert.match(app, /anyMenuOpen/);
