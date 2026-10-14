@@ -6,7 +6,7 @@ const helperPath = fileURLToPath(new URL("./scripts/linux_window_shadow.py", imp
   .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 
 // X11 无边框窗口不一定由桌面自动加阴影。向支持该协议的合成器提供
-// _KDE_NET_WM_SHADOW 图像，助手同步裁出 8px 圆角。
+// _KDE_NET_WM_SHADOW 图像，助手同步裁出 14px 圆角。
 // 不扩大窗口、不使用透明窗口或整窗鼠标穿透。
 // Python 连接必须保持存活：断开 X11 连接会释放它持有的阴影 pixmap。
 export function attachLinuxWindowShadow(window, {

@@ -12,7 +12,7 @@ import select
 import sys
 
 
-CORNER_RADIUS = 8
+CORNER_RADIUS = 14
 
 
 def rounded_rectangles(width, height, radius):
@@ -30,19 +30,30 @@ def rounded_rectangles(width, height, radius):
 
 def shadow_tiles(scale=1.0):
     scale = max(1.0, min(4.0, float(scale)))
-    size = round(24 * scale)
-    sigma = 8 * scale
+    sigma = 26 * scale
+    offset = 16 * scale
     radius = round(CORNER_RADIUS * scale)
-    span = size + radius
+    side = math.ceil(3 * sigma)
+    top = math.ceil(3 * sigma - offset)
+    bottom = math.ceil(3 * sigma + offset)
+    margins = (top, side, bottom, side)
+    # Include the shifted silhouette inside the corner tiles so their
+    # junctions with the straight edges lie beyond the rounded quadrant.
+    horizontal_inset = radius + math.ceil(2 * offset)
+    upper_inset = horizontal_inset + math.ceil(offset)
+    lower_inset = horizontal_inset - math.ceil(offset)
 
     def alpha(distance):
-        return round(76 * math.exp(-max(0, distance) ** 2 / (2 * sigma * sigma)))
+        # Blur the window silhouette instead of painting a dense ring along
+        # its outline. A half-plane Gaussian integral keeps fading through
+        # the edge; the downward offset makes the upper edge lighter.
+        return round(64 * .5 * math.erfc(distance / (math.sqrt(2) * sigma)))
 
     # Top, top-right, right, bottom-right, bottom, bottom-left, left, top-left.
-    specs = [(1, span, 0, -1), (span, span, 1, -1),
-             (span, 1, 1, 0), (span, span, 1, 1),
-             (1, span, 0, 1), (span, span, -1, 1),
-             (span, 1, -1, 0), (span, span, -1, -1)]
+    specs = [(1, top + upper_inset, 0, -1), (side + horizontal_inset, top + upper_inset, 1, -1),
+             (side + horizontal_inset, 1, 1, 0), (side + horizontal_inset, bottom + lower_inset, 1, 1),
+             (1, bottom + lower_inset, 0, 1), (side + horizontal_inset, bottom + lower_inset, -1, 1),
+             (side + horizontal_inset, 1, -1, 0), (side + horizontal_inset, top + upper_inset, -1, -1)]
     tiles = []
     for width, height, sx, sy in specs:
         pixels = []
@@ -51,10 +62,22 @@ def shadow_tiles(scale=1.0):
             for x in range(width):
                 dx = (x + .5 if sx > 0 else width - x - .5) if sx else 0
                 dy = (y + .5 if sy > 0 else height - y - .5) if sy else 0
-                row.append(alpha((math.hypot(dx, dy) if sx and sy else dx + dy) - radius))
+                if sx:
+                    dx += radius - horizontal_inset
+                if sy:
+                    dy += radius - (upper_inset if sy < 0 else lower_inset) - sy * offset
+                if sx and sy:
+                    # Signed distance to a rounded quadrant. Inside the
+                    # radius the distance stays negative, without a flat
+                    # opacity band; corners join the adjacent edge tiles.
+                    distance = (math.hypot(max(dx, 0), max(dy, 0))
+                                + min(max(dx, dy), 0) - radius)
+                else:
+                    distance = dx + dy - radius
+                row.append(alpha(distance))
             pixels.append(row)
         tiles.append((width, height, pixels))
-    return size, tiles
+    return margins, tiles
 
 
 class X11:
@@ -201,7 +224,7 @@ def run(window, scale):
         if not supports_shadow:
             print("desktop does not advertise native shadow support", flush=True)
         shape = RoundedShape(x)
-        size, tiles = shadow_tiles(scale)
+        margins, tiles = shadow_tiles(scale)
         for width, height, pixels in tiles if supports_shadow else []:
             pixmap = x.lib.XCreatePixmap(x.display, root, width, height, 32)
             pixmaps.append(pixmap)
@@ -215,7 +238,7 @@ def run(window, scale):
             finally:
                 x.lib.XFreeGC(x.display, gc)
         x.sync()
-        values = (C.c_ulong * 12)(*pixmaps, size, size, size, size) if supports_shadow else None
+        values = (C.c_ulong * 12)(*pixmaps, *margins) if supports_shadow else None
         # Also observe native state: desktop shortcuts can toggle fullscreen
         # without Electron emitting enter-full-screen/leave-full-screen.
         state_atom = x.atom("_NET_WM_STATE")

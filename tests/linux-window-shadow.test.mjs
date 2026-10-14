@@ -6,13 +6,13 @@ import { spawnSync } from "node:child_process";
 import fpmModule from "app-builder-lib/out/targets/FpmTarget.js";
 import { attachLinuxWindowShadow } from "../electron/linux-window-shadow.mts";
 
-test("圆角仅裁去四角，极小窗口仍可操作，多种缩放下阴影边缘连续", (t) => {
+test("圆角仅裁去四角，阴影柔和下移，多种缩放下渐变和四角衔接连续", (t) => {
   const script = new URL("../electron/scripts/linux_window_shadow.py", import.meta.url).pathname;
   const result = spawnSync("python3", ["-c", `
 from pathlib import Path
 scope = {"__name__": "shadow_test"}
 exec(compile(Path(${JSON.stringify(script)}).read_text(), "shadow_test", "exec"), scope)
-for width, height, radius in [(1184,736,8), (2,2,8), (1,1,8), (100,30,100), (980,660,0)]:
+for width, height, radius in [(1184,736,scope["CORNER_RADIUS"]), (2,2,14), (1,1,14), (100,30,100), (980,660,0)]:
     rects = scope["rounded_rectangles"](width, height, radius)
     assert all(w > 0 and h > 0 and x >= 0 and y >= 0 and x+w <= width and y+h <= height for x,y,w,h in rects)
     def contains(x,y): return any(a <= x < a+w and b <= y < b+h for a,b,w,h in rects)
@@ -20,12 +20,40 @@ for width, height, radius in [(1184,736,8), (2,2,8), (1,1,8), (100,30,100), (980
     if width > 16 and height > 16 and radius > 0:
         assert not any(contains(x,y) for x,y in [(0,0), (width-1,0), (0,height-1), (width-1,height-1)])
     if radius == 0: assert rects == [(0,0,width,height)]
-for scale in [1, 1.5, 2, 4]:
-    pad, tiles = scope["shadow_tiles"](scale)
+for scale in [1, 1.25, 1.5, 2, 4]:
+    margins, tiles = scope["shadow_tiles"](scale)
+    top, right, bottom, left = margins
     assert len(tiles) == 8
-    assert all(0 <= pixel <= 76 for _,_,rows in tiles for row in rows for pixel in row)
-    assert tiles[0][2][0][0] == tiles[7][2][0][-1]
-    assert tiles[0][2][-1][0] == tiles[7][2][-1][-1]
+    assert top < left == right < bottom
+    # The wider shadow remains visible 40 logical pixels from the edge,
+    # rather than becoming effectively transparent around 20 pixels.
+    outer_index = tiles[2][0] - right + round(40 * scale)
+    assert 2 <= tiles[2][2][0][outer_index] <= 10
+    assert all(0 <= pixel <= 64 for _,_,rows in tiles for row in rows for pixel in row)
+    # Opacity at the actual window edge: light above, moderate beside,
+    # stronger below, without the former 76/255 dark outline.
+    upper = tiles[0][2][top-1][0]
+    lateral = tiles[2][2][0][tiles[2][0]-right]
+    lower = tiles[4][2][tiles[4][1]-bottom][0]
+    assert 0 < upper < lateral < lower < 50
+    for index, margin in [(0,top), (4,bottom)]:
+        rows = tiles[index][2]
+        profile = [row[0] for row in rows]
+        if index == 4: profile.reverse()
+        assert profile[0] == 0
+        assert all(a <= b for a,b in zip(profile,profile[1:]))
+        assert len(set(profile[:margin])) > 12
+    assert tiles[2][2][0][-1] == tiles[6][2][0][0] == 0
+    # Every corner joins both adjacent edge tiles with at most rounding
+    # error, including the larger bottom margin and fractional scaling.
+    for corner, vertical, horizontal, side_sign, down in [
+        (1,0,2,1,False), (3,4,2,1,True),
+        (5,4,6,-1,True), (7,0,6,-1,False)]:
+        rows = tiles[corner][2]
+        inner_x = 0 if side_sign > 0 else -1
+        inner_y = 0 if down else -1
+        assert all(abs(row[inner_x]-edge[0]) <= 1 for row,edge in zip(rows,tiles[vertical][2]))
+        assert all(abs(a-b) <= 1 for a,b in zip(rows[inner_y],tiles[horizontal][2][0]))
 `], { encoding: "utf8" });
   if (result.error?.code === "ENOENT") return t.skip("本机未安装 Python3");
   assert.equal(result.status, 0, result.stderr || String(result.error));
