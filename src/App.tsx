@@ -12677,7 +12677,9 @@ export function App() {
         </header>
   );
 
-  const linuxLayout = (platform || "linux") === "linux";
+  // Linux 与 Windows 的窗口都由应用自绘标题栏：品牌与侧栏同列、侧栏首行放新建任务与收件箱。
+  // macOS 保留原生红绿灯，标题栏布局维持原样。
+  const desktopToolbarLayout = (platform || "linux") !== "darwin";
   const newTaskButton = (
     <button className="new-task-button" onClick={() => createTask()}>
       <SquarePen size={18} />
@@ -12696,9 +12698,9 @@ export function App() {
       style={panelStyle}
     >
       <header className="titlebar" aria-label="标题栏">
-        {linuxLayout && <span className="titlebar-app-logo"><AppLogo /></span>}
+        {desktopToolbarLayout && <span className="titlebar-app-logo"><AppLogo /></span>}
         <div className="titlebar-left">
-          {linuxLayout && <span className="titlebar-brand"><span>DYWorker</span></span>}
+          {desktopToolbarLayout && <span className="titlebar-brand"><span>DYWorker</span></span>}
           <button className="icon-button subtle" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
             title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
@@ -12771,8 +12773,8 @@ export function App() {
       </nav>
       <aside className="sidebar" aria-label="任务侧栏">
         <div className="native-controls-space" />
-        <div className={linuxLayout ? "sidebar-primary-row" : "sidebar-brand-row"}>
-          {linuxLayout ? newTaskButton : <span className="brand-button" aria-label="DYWorker">
+        <div className={desktopToolbarLayout ? "sidebar-primary-row" : "sidebar-brand-row"}>
+          {desktopToolbarLayout ? newTaskButton : <span className="brand-button" aria-label="DYWorker">
             {platform !== "darwin" && <AppLogo />}
             <span>DYWorker</span>
           </span>}
@@ -12802,7 +12804,7 @@ export function App() {
           </div>
         </div>
 
-        {!linuxLayout && newTaskButton}
+        {!desktopToolbarLayout && newTaskButton}
 
         {query !== "" && (
           <div className="sidebar-search-wrap">
