@@ -199,6 +199,7 @@
       "dist/electron/**/*",
       "package.json",
       "builtin-plugins/**/*",
+      "!builtin-plugins/qwenpaw/**/*",
       "!node_modules/node-llama-cpp/llama/llama.cpp/**",
       "!node_modules/node-llama-cpp/llama/localBuilds/*/llama.cpp/**",
       "!node_modules/node-llama-cpp/llama/localBuilds/*/CMakeFiles/**",

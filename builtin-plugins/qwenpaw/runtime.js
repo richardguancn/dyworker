@@ -63,8 +63,12 @@ export function createRuntime({ root, python, port = PORT, launch = spawn, probe
         }
         throw new Error(error || (token !== generation ? '启动已取消' : `QwenPaw 未能启动，请查看 ${path.join(root, 'runtime.log')}`));
       } catch (failure) {
+        // 子进程自身启动失败（无执行权限、文件格式不可执行等）带不出 failure.code：
+        // Windows 下这类情况同样报 ENOENT，直接抛出会只给用户看英文的 spawn 错误。
+        // 保留原始原因并加中文前缀，既让用户看懂，也便于排查。
         error = failure.code === 'ENOENT' ? '尚未安装 QwenPaw 运行环境，请先运行项目中的安装脚本。'
-          : failure.code === 'EADDRINUSE' ? `QwenPaw 端口 ${port} 已被占用，请关闭占用它的程序后重试。` : String(failure.message || failure);
+          : failure.code === 'EADDRINUSE' ? `QwenPaw 端口 ${port} 已被占用，请关闭占用它的程序后重试。`
+          : !failure.code && error ? `QwenPaw 启动失败：${error}` : String(failure.message || failure);
         await stop(); throw new Error(error);
       } finally { starting = null; }
     })();
