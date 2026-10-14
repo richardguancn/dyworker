@@ -1184,8 +1184,8 @@ function PlanCard({ steps }: { steps: PlanStep[] }) {
 
 // 浏览器起始页的快捷链接（新标签页未打开网页时展示）
 const BROWSER_START_LINKS = [
-  { name: "OA", url: "https://" },
-  { name: "营商环境综合服务平台", url: "https://59.33.255.205/" },
+  { name: "OA", url: "" },
+  { name: "综合服务平台", url: "" },
 ];
 
 // 设备工具栏预设（设备模拟）
