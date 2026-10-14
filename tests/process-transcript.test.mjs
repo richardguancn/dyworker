@@ -103,7 +103,7 @@ test("完整清单与计划收尾同轮时，执行结束和存档重读后都�
         }] }) }),
       });
       assert.equal(result.status, "done");
-      assert.equal(result.finalText, `${answer}\n\n回复编号即可。`);
+      assert.equal(result.finalText, answer);
       assert.ok(events.some(event => event.type === "activity-update" && event.commentary === ""));
       const saved = JSON.parse(JSON.stringify(collector.buildMessages("给我候选清单", result))).at(-1);
       assert.equal(saved.content, result.finalText);
@@ -129,5 +129,62 @@ test("提升到最终正文的完成声明仍接受真实执行核验", async ()
     });
     assert.equal(result.status, "unverified");
     assert.match(result.finalText, /系统核验提示/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("不展示的收尾总结仍参与完成声明核验", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-summary-evidence-"));
+  try {
+    for (const explicit of [false, true]) {
+      let round = 0;
+      const answer = "建议先检查文章内容，再决定是否上传。";
+      const result = await runAgent({
+        settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "test" },
+        workspacePath: root,
+        conversation: [{ role: "user", content: "上传文章" }],
+        fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: round++ === 0
+          ? { role: "assistant", content: answer, tool_calls: [{ id: "plan", type: "function", function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "检查", status: "completed" }] }) } }] }
+          : { role: "assistant", content: "文章已全部上传到公众号草稿箱。", ...(explicit ? { tool_calls: [{ id: "finish", type: "function", function: { name: "finish_task", arguments: JSON.stringify({ summary: "文章已全部上传到公众号草稿箱。", evidence: "已完成", answer_source: "previous_reply" }) } }] } : {}) },
+        }] }) }),
+      });
+      assert.equal(result.status, "unverified");
+      assert.ok(result.finalText.startsWith(answer));
+      assert.match(result.finalText, /系统核验提示/);
+      // 没展示的那一段（末轮正文或 finish_task 的 summary）仍参与完成声明核验：
+      // 正文里看不到这句虚报，任务照样被判为未经验证
+      assert.equal(result.finalText.includes("文章已全部上传到公众号草稿箱。"), false);
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("正式结束明确选择前段、本轮或参数正文时，执行、保存和重开使用同一答案", async () => {
+  const { messageWithDeliveryContent } = await import("../src/processCommentary.ts");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-answer-source-"));
+  const earlier = "初步分析：包内多了源码，需要进一步确认。";
+  const current = "更正：最终确认多出的是本地构建产物，建议如下。";
+  const summary = "最后的完整结论：已经核对两版内容，差异和建议如下。";
+  try {
+    for (const source of ["previous_reply", "current_reply", "summary"]) {
+      let round = 0;
+      const collector = createTranscriptCollector({ runId: source });
+      const result = await runAgent({
+        settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "test" },
+        workspacePath: root,
+        conversation: [{ role: "user", content: "分析打包大小" }],
+        emit: event => collector.handle(event),
+        fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: round++ === 0
+          ? { role: "assistant", content: earlier, tool_calls: [{ id: "plan", type: "function", function: { name: "update_plan", arguments: JSON.stringify({ steps: [{ title: "分析", status: "completed" }] }) } }] }
+          : { role: "assistant", content: current, tool_calls: [{ id: "finish", type: "function", function: { name: "finish_task", arguments: JSON.stringify({ answer_source: source, summary, evidence: "已核对" }) } }] },
+        }] }) }),
+      });
+      const expected = source === "previous_reply" ? earlier : source === "current_reply" ? current : summary;
+      assert.equal(result.status, "done");
+      assert.equal(result.finalText, expected);
+      const saved = JSON.parse(JSON.stringify(collector.buildMessages("分析打包大小", result))).at(-1);
+      assert.equal(saved.content, expected);
+      assert.equal(messageWithDeliveryContent(saved).content, expected);
+      if (source === "previous_reply") assert.equal(saved.activities[0].commentary, "");
+      else assert.equal(saved.activities[0].commentary, earlier);
+    }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

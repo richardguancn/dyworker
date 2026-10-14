@@ -1671,8 +1671,9 @@ export function toolDefinitions() {
         reason: stringProperty("挂起原因，唤醒时会带回给你"),
       },
       ["reason"]),
-    functionTool("finish_task", "确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。调用前先确认用户的答案已经在回复正文里写完：正文只留「现在给你完整答案」这类预告、内容却放在参数里，用户会看不到结论。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
+    functionTool("finish_task", "交付时用 answer_source 明确指定唯一的正式回答来源；如果本轮修正或补充了前文，须整理完整回答后选择 current_reply 或 summary。确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。调用前先确认用户的答案已经在回复正文里写完：正文只留「现在给你完整答案」这类预告、内容却放在参数里，用户会看不到结论。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
       {
+        answer_source: { type: "string", enum: ["current_reply", "previous_reply", "summary"], description: "明确指定用户最终只看到的正式回答。current_reply：本轮正文是完整回答；previous_reply：结束前最近一段非空正文已是完整回答，之后只有保存记忆或更新全部完成的计划，本轮和 summary 只是重复收尾；summary：完整回答写在本工具的 summary 中。不得凭篇幅选择；有修正、新结论或补充时，必须在本轮正文或 summary 写成完整回答，不能选 previous_reply。" },
         summary: stringProperty("交付内容，必须完整、能独立阅读——用户在消息里看到的结论就来自正文或这里。若正文已给出完整结论，这里写一句交付说明即可；若正文没有写完（只有预告、半句话、或只有一句「已完成」），必须把完整结论连同依据与建议写在这里，不要只写标题式或半句引子"),
         evidence: stringProperty("说明做过哪些结果检查"),
         goalAchieved: { type: "boolean", description: "会话设有长期目标（系统提示会说明）时使用：确认长期目标已达成设为 true；未达成或不确定则省略" }
@@ -5758,7 +5759,7 @@ export async function runAgent({
       verification = verifyTaskEvidence({
         // 核验口径用 claimsText（交付轮正文 + summary 的合集）而不是展示出来的那一份：
         // 交付正文被替换时，被换掉的正文里如果有虚报，只核验展示文本就会放过它。
-        finalText: [text, result.verificationText].filter(Boolean).join("\n\n"),
+        finalText: [text, result.verificationText || result.finalText].filter(Boolean).join("\n\n"),
         executedTools,
         fileChanges,
         planSteps,

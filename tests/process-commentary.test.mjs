@@ -177,7 +177,7 @@ test("旧聊天完整候选答复恢复到正文，过程仅保留实际进度�
   const original = completedMessage();
   const restored = messageWithDeliveryContent(original);
   assert.match(restored.content, /## 候选清单/);
-  assert.match(restored.content, /回复编号即可/);
+  assert.equal(restored.content, original.executedMessages[2].content);
   assert.equal(restored.activities[0].commentary, "正在核实日期。");
   assert.equal(processActivitiesWithCommentary(restored)[1].commentary, "");
   assert.equal(original.activities[1].commentary, original.executedMessages[2].content);
@@ -199,4 +199,37 @@ test("旧聊天轮次不匹配仍恢复答案，但不误删过程记录", () =>
   const restored = messageWithDeliveryContent(message);
   assert.match(restored.content, /## 候选清单/);
   assert.equal(restored.activities[1].commentary, message.activities[1].commentary);
+});
+
+
+test("旧聊天未明确来源时，重开只显示最完整的一段", () => {
+  const original = completedMessage();
+  original.content = `${original.executedMessages[2].content}\n\n${original.content}`;
+  const restored = messageWithDeliveryContent(original);
+  assert.equal(restored.content, original.executedMessages[2].content);
+  assert.equal(messageWithDeliveryContent(JSON.parse(JSON.stringify(restored))).content, restored.content);
+});
+
+
+test("存档明确引用前段时，重开保留正式回答且清除过程里的重复正文", () => {
+  const original = completedMessage();
+  original.executedMessages.at(-1).tool_calls = [{ function: { name: "finish_task", arguments: JSON.stringify({ answer_source: "previous_reply", summary: original.content }) } }];
+  const restored = messageWithDeliveryContent(original);
+  assert.equal(restored.content, original.executedMessages[2].content);
+  assert.equal(restored.activities[1].commentary, "");
+  assert.equal(messageWithDeliveryContent(JSON.parse(JSON.stringify(restored))).content, restored.content);
+});
+
+test("存档明确选择最后一段时，展示最后的完整答案，不拼接前段", () => {
+  for (const source of ["current_reply", "summary"]) {
+    const message = completedMessage();
+    const current = "更正后的完整回答。";
+    const summary = "参数中指定的完整回答。";
+    message.executedMessages.at(-1).content = current;
+    message.executedMessages.at(-1).tool_calls = [{ function: { name: "finish_task", arguments: JSON.stringify({ answer_source: source, summary }) } }];
+    message.content = `${message.executedMessages[2].content}\n\n${current}`;
+    const restored = messageWithDeliveryContent(message);
+    assert.equal(restored.content, source === "current_reply" ? current : summary);
+    assert.equal(restored.activities[1].commentary, message.activities[1].commentary);
+  }
 });

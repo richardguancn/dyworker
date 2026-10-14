@@ -10,7 +10,7 @@ export function messageWithDeliveryContent(message: ChatMessage): ChatMessage {
   const cached = deliveryMessageCache.get(message);
   if (cached) return cached;
   const delivery = resolveAssistantDelivery(message.executedMessages, message.content || "");
-  if (!delivery.promotedReplyIndexes.length) {
+  if (!delivery.promotedReplyIndexes.length && delivery.text === (message.content || "")) {
     deliveryMessageCache.set(message, message);
     return message;
   }
