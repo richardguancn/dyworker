@@ -80,6 +80,7 @@ import { DEFAULT_UPDATE_URL, createUpdaterController } from "./app-updater.mts";
 import { createBackgroundTasksManager } from "./background-tasks.mts";
 import { collectOrphanAssets, commitStagedImage, defaultAppearance, discardStagedImage, importAppearanceImage, normalizeAppearance, readAppearance, readAppearanceImage, removeAppearanceImage, saveAppearance } from "./appearance.mts";
 import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "./appearance-platform.mts";
+import { attachLinuxWindowShadow } from "./linux-window-shadow.mts";
 import { createTelemetryController } from "./telemetry.mts";
 import { createRemoteMessagesManager } from "./remote-messages.mts";
 
@@ -280,7 +281,7 @@ function applyWindowAppearance() {
   mainWindow.webContents?.invalidate?.();
 }
 
-// Linux 使用不透明的无标题栏窗口，由桌面环境提供阴影；不为自绘阴影扩大输入区域。
+// Linux 原生阴影由独立 X11 助手提供；外观变化不扩大输入区域。
 // 系统主题变化只在「跟随系统」时生效：显式主题下 themeSource 已固定，此事件不会因系统明暗切换而触发。
 nativeTheme.on("updated", () => {
   applyWindowAppearance();
@@ -793,7 +794,7 @@ function createWindow() {
     title: "DYWorker",
     ...(process.platform === "linux" ? { icon: windowIcons.iconFor(resolvedAppearanceTheme()) } : {}),
     // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
-    // 保持不透明，不恢复旧的透明阴影留白或整窗鼠标穿透。
+    // 阴影交给合成器绘制，内容区保持不透明。
     frame: false,
     // mac 原生红绿灯位于独立的 44px 窗口工具栏，聊天侧栏品牌行不再占用窗口控件空间。
     // 16px 原生按钮在该行垂直居中；工具栏仍支持拖动窗口。
@@ -809,6 +810,9 @@ function createWindow() {
   };
 
   mainWindow = new BrowserWindow(windowOptions as any);
+  attachLinuxWindowShadow(mainWindow, {
+    scaleFactor: screen.getDisplayMatching(mainWindow.getBounds()).scaleFactor,
+  });
   applyWindowAppearance();
   // preload 加载失败（文件缺失、语法错误、沙箱限制）以前只在 Linux 记录，
   // mac 上完全没有日志，现象就是「界面正常、保存全无效」。改为全平台记录。

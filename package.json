@@ -184,6 +184,7 @@
     "asarUnpack": [
       "dist/electron/host/**/*",
       "dist/electron/scripts/linux_computer_use.py",
+      "dist/electron/scripts/linux_window_shadow.py",
       "dist/electron/scripts/macos_computer_use.js",
       "node_modules/**/*",
       "builtin-plugins/curated/**/*"
@@ -234,6 +235,20 @@
       "syncDesktopName": true
     },
     "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "python3",
+        "libx11-6",
+        "libxext6"
+      ],
       "artifactName": "dyworker-${version}-${arch}.${ext}"
     },
     "publish": {
