@@ -41,7 +41,7 @@ function oracleApprovalDecision({ approvalMode = "interactive", name = "", args 
     if (oracleWorkspaceWriteTools.has(name)) return "allow";
     if (name === "run_command" && (
       isAutoApprovableCommand(args.command)
-      || (approvalMode === "reviewer" && (isReviewerAutoApprovableCommand(args.command) || isLowRiskCommand(args.command)))
+      || (approvalMode === "reviewer" && isReviewerAutoApprovableCommand(args.command))
     )) return "allow";
     return "ask";
   }

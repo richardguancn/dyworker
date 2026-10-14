@@ -6468,7 +6468,7 @@ function SettingsDialog({
         </>)}
         <div className="dialog-section-title">自动审批模型（可选）</div>
         <p className="dialog-note">
-          审批严格度为“替我审批”时，本来要人工确认的操作会先交给审核助手判断是否放行。同一操作在本次任务内重复出现时直接复用已有判断，不再重复询问。
+          审批严格度为“替我审批”时，本来要人工确认的操作会先交给审核助手判断。相同操作只有在任务要求和审批政策一致时才复用判断；界面操作每次读取最新状态。
         </p>
         <label>
           审核模型来源
@@ -6477,12 +6477,13 @@ function SettingsDialog({
             onChange={(event) => setDraft({ ...draft, reviewerBackend: event.target.value as ProviderSettings["reviewerBackend"] })}
           >
             <option value="main">跟随当前模型</option>
-            <option value="local">本地内置小模型（Qwen3-0.6B，离线可用）</option>
+            <option value="local">本地内置小模型（离线建议，放行须确认）</option>
             <option value="custom">自定义端点（OpenAI 兼容）</option>
           </select>
         </label>
         {draft.reviewerBackend === "local" && (
           <div className="dialog-note">
+            <p>本地小模型仅提供审核建议，需要授权的操作仍须你确认后才会执行。普通只读操作继续自动执行。界面操作会交给当前模型，根据最新界面判断。</p>
             {reviewerLocal?.downloaded
               ? "模型已就绪：Qwen3-0.6B（610 MB，已存本机）。任务运行时按需加载，空闲 5 分钟后自动释放。"
               : "模型未下载：Qwen3-0.6B（约 610 MB），从 ModelScope 下载到保存目录，下载完成后离线可用。"}

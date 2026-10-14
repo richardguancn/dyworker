@@ -1,10 +1,12 @@
 import { builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
+import { buildReviewContext, readReviewObservation, withReviewApprovals } from '../../approval-context.mts';
 
 // 由宿主绑定会话、工作目录和权限模式。DSH 策略只能收紧此决定。
 export function createDshApproval(options: any) {
   let queue = Promise.resolve();
   let denials = 0;
+  const approvals = new Map<string, any[]>();
   return (tool: any) => {
     const operation = queue.then(async () => {
       const { name, args = {}, signal } = tool;
@@ -18,7 +20,8 @@ export function createDshApproval(options: any) {
         audit('auto-allowed', '读取当前任务所属的官方后台任务'); return true;
       }
       // 提问入口由运行环境固定，不能被插件的同名工具替换；沿用原有提问权限。
-      const publicName = name === 'ask_user_question' ? 'ask_user' : options.nativeToolNames?.includes(name)
+      const extraNames = (options.extraTools || []).map((value: any) => (value.function || value).name);
+      const publicName = name === 'ask_user_question' ? 'ask_user' : (options.nativeToolNames?.includes(name) || extraNames.includes(name))
         ? (options.nativeToolAliases?.[name] || name) : `dsh__${name}`;
       const currentMode = () => options.getApprovalMode?.() || options.approvalMode;
       const evaluate = () => evaluateApproval({ name: publicName, args, approvalMode: currentMode(),
@@ -31,8 +34,15 @@ export function createDshApproval(options: any) {
         && isReviewerEligible({ name: publicName, args, approvalMode: currentMode(),
         hookRequiresApproval: hook?.action === 'require_approval' })) {
         const reviewMode = currentMode();
+        const sessionKey = tool.sessionId || options.sessionId || '';
+        const observation = await readReviewObservation({ name: publicName, args, availableNames: extraNames,
+          execute: options.onExtraTool, signal,
+          check: (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...(options.hooks || [])], 'before_tool', reader, readArgs)
+            || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
+        const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
+          prompt: options.prompt, goal: options.goal, workingContext: options.workingContext }), approvals.get(sessionKey) || []);
         const review = await (options.review || reviewApproval)({ settings: options.settings, fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `DSH：${name}`, details: JSON.stringify(args) }, context: options.prompt || '',
+          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args), observation }, context,
           onUsage: options.onUsage });
         signal.throwIfAborted();
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
@@ -53,7 +63,9 @@ export function createDshApproval(options: any) {
           abort = () => reject(signal.reason); signal.addEventListener('abort', abort, { once: true });
           if (signal.aborted) abort();
         })]);
-        signal.throwIfAborted(); audit(allowed === null ? 'auto-allowed' : allowed === true ? 'approved' : 'denied'); return allowed === true || allowed === null;
+        signal.throwIfAborted();
+        if (allowed === true) { const key = tool.sessionId || options.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
+        audit(allowed === null ? 'auto-allowed' : allowed === true ? 'approved' : 'denied'); return allowed === true || allowed === null;
       } finally { signal.removeEventListener('abort', abort); }
     });
     queue = operation.then(() => {}, () => {});

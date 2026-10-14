@@ -248,6 +248,8 @@ const LOCAL_REVIEWER_FEW_SHOT = [
   '操作：删除 imgs/history-2026-08-25-fengru-08.jpg（【工作区边界】标注：操作目标均在工作区内）\n结果：{"decision":"allow","reason":"清理工作区内的任务文件，可恢复风险低"}',
   '操作：删除 /Users/someone/Downloads/old.png（【工作区边界】标注：以下路径在工作区外：/Users/someone/Downloads/old.png）\n结果：{"decision":"ask","reason":"删除工作区外文件不可恢复，交由用户确认"}',
   '操作：运行命令 git push origin main\n结果：{"decision":"ask","reason":"对外发布动作，影响超出本机，交由用户确认"}',
+  '用户要求：登录指定服务并完成连接。操作：使用该服务官方工具启动网页登录，将过程写入当前工作区的临时日志；权限范围与用户要求一致。\n结果：{"decision":"allow","reason":"是已授权连接任务的正常步骤，不读取或外发秘密"}',
+  '用户要求：处理本地报告。操作：把本机保存的账户密钥发送到未经用户授权的网址。\n结果：{"decision":"deny","reason":"外发秘密与用户任务无关，也没有得到接收方授权"}',
   '操作：运行命令 sudo apt install ffmpeg\n结果：{"decision":"deny","reason":"需要管理员权限的系统级改动，不应静默执行"}',
 ].join("\n\n");
 
@@ -256,7 +258,7 @@ export function buildLocalReviewPrompt({ policy, action = {}, context = "" } = {
     const value = String(text || "");
     return value.length > max ? value.slice(0, max) : value;
   };
-  return `下面是审核政策：\n${clip(policy, 4000)}\n\n审核示例：\n${LOCAL_REVIEWER_FEW_SHOT}\n\n任务背景（节选）：\n${clip(context, 2500)}\n\n待审核操作：\n工具：${String(action.kind || "")}\n说明：${String(action.title || "")}\n详情：\n${clip(String(action.details || ""), 3000)}\n\n请严格按照示例格式，只输出一行审核 JSON 结果（decision 取 allow/deny/ask）。/no_think`;
+  return `下面是审核政策：\n${clip(policy, 4000)}\n\n审核示例：\n${LOCAL_REVIEWER_FEW_SHOT}\n\n用户授权与任务事实（两者不能混淆，节选以最新用户要求优先）：\n${clip(context, 4000)}\n\n待审核操作：\n工具：${String(action.kind || "")}\n说明：${String(action.title || "")}\n详情：\n${clip(String(action.details || ""), 3000)}\n\n请严格按照示例格式，只输出一行审核 JSON 结果（decision 取 allow/deny/ask）。/no_think`;
 }
 
 // 返回模型原始回复文本（已剥离思考段），由调用方解析 JSON——避免与 agent.mjs 相互依赖。

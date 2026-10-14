@@ -37,12 +37,18 @@ test("evaluateApproval: reviewer 与 auto 模式放行多行安全命令，auto 
   assert.equal(evaluateApproval({ approvalMode: "auto", name: "save_skill", args: { name: "test" } }), "allow");
   assert.equal(evaluateApproval({ approvalMode: "auto", name: "update_skill", args: { name: "test" } }), "allow");
 
-  // 多行低风险命令在 reviewer 模式下放行
+  // 多行命令在 reviewer 模式下只放行可证明只读的（git status / git diff 一类）；
+  // 会执行脚本的多行命令（node check.js）交审核助手结合用户任务判断
+  assert.equal(evaluateApproval({
+    approvalMode: "reviewer",
+    name: "run_command",
+    args: { command: "git status\ngit diff --stat" },
+  }), "allow");
   assert.equal(evaluateApproval({
     approvalMode: "reviewer",
     name: "run_command",
     args: { command: "npm test\nnode check.js" },
-  }), "allow");
+  }), "ask");
 
   // 高危命令在 reviewer 模式下拦截 (ask)
   assert.equal(evaluateApproval({

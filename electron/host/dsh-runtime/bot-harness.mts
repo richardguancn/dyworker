@@ -16,6 +16,7 @@ import {
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
+import { buildReviewContext, readReviewObservation, withReviewApprovals } from '../../approval-context.mts';
 
 /** 机器人从桌面任务继承的工具名（与 toolDefinitions() 的描述/参数一一对应）。 */
 export const BOT_HARNESS_TOOL_NAMES = Object.freeze([
@@ -46,6 +47,7 @@ function text(value: any) {
 export function createBotApproval(options: any) {
   let queue = Promise.resolve();
   let denials = 0;
+  const approvals = new Map<string, any[]>();
   const audit = (item: any) => options.audit?.(item);
   const resolved = async (value: any) => (typeof value === 'function' ? await value() : value) || [];
   return (tool: any) => {
@@ -76,9 +78,15 @@ export function createBotApproval(options: any) {
           forExternalPaths: externalPaths.length > 0 });
       if (denials < 3 && reviewable) {
         const reviewMode = mode();
+        const observation = await readReviewObservation({ name, args, availableNames: await resolved(options.extraToolNames),
+          execute: (reader: string, readArgs: any) => options.onExtraTool?.(reader, readArgs, tool), signal,
+          check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
+            || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
+        const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
+          prompt: options.context }), approvals.get(tool.sessionId || '') || []);
         const review = await (options.review || reviewApproval)({ settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) },
-          context: options.context || '', onUsage: options.onUsage });
+          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args), observation },
+          context, onUsage: options.onUsage });
         signal?.throwIfAborted();
         if (mode() !== reviewMode) {
           const updated = evaluate();
@@ -103,6 +111,7 @@ export function createBotApproval(options: any) {
           signal?.addEventListener('abort', abort, { once: true });
           if (signal?.aborted) abort();
         })]);
+        if (allowed === true) { const key = tool.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
         detail(allowed === true ? 'approved' : 'denied', allowed === null ? '按更新后的权限自动放行' : '');
         return allowed === true || allowed === null;
       } finally { signal?.removeEventListener?.('abort', abort); }

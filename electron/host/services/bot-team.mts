@@ -10,6 +10,7 @@ import { skillContextSummary } from '../../skills.mts';
 import { selectWikiPages } from '../../memory-wiki.mts';
 import { normalizeApprovalMode } from '../../settings.mts';
 import { createBotApproval, createBotHarnessTools } from '../dsh-runtime/bot-harness.mts';
+import { buildReviewContext } from '../../approval-context.mts';
 
 // 机器人自己不做第二套权限判断：审批模式沿用应用设置，人工确认落到「机器人团队」面板。
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -92,6 +93,15 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
     hooks: async () => (typeof resolvers.readHooks === 'function' ? await resolvers.readHooks(workspacePath) : []),
     standingRules: async () => (typeof resolvers.readStandingRules === 'function' ? await resolvers.readStandingRules() : []),
     settings: () => appSettings, requestApproval,
+    extraToolNames: async () => (await resolvers.mcpExtraTools?.(appSettings) || []).map((value: any) => (value.function || value).name),
+    onExtraTool: (name: string, args: any, tool: any) => routeFor(tool.sessionId)?.(name, args),
+    getReviewContext: async ({ sessionId }: any) => {
+      const agent = handles.get(sessionId)?.agent;
+      const events = agent?.session?.snapshotEvents?.() || [];
+      const conversation = events.filter((event: any) => event.type === 'user/message' && event.data?.source?.kind === 'user')
+        .map((event: any) => ({ role: 'user', content: event.data?.content || [] }));
+      return buildReviewContext({ conversation });
+    },
     audit: (item: any) => hostCtx.audit?.record?.({ ...item, approvalMode: approvalMode() }) });
   const routeFor = (sessionId: string) => {
     let route = routers.get(sessionId);
