@@ -25,3 +25,4 @@ qa-tmp/launch-custom-tier-qa.sh
 qa-tmp/multi-tab-live.png
 qa-tmp/
 .playwright-mcp/
+.dyworker/
