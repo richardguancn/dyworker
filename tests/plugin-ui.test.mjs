@@ -5,10 +5,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
-const app = read("../src/App.tsx");
+// App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
+const app = readRendererSource();
 const panel = read("../src/PluginsPage.tsx");
 const dialog = read("../src/AddPluginDialog.tsx");
 const preload = read("../electron/preload.cjs");

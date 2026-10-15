@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), "dyworker-channel-stream-test-"));
 const outfile = path.join(tempDir, "channelStream.mjs");
@@ -35,7 +36,8 @@ const {
 // 统一读成 LF，避免 Windows 检出 CRLF 时多行正则失效（同 desktop-contract）。
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 const main = readSource(new URL("../electron/main.mts", import.meta.url));
-const app = readSource(new URL("../src/App.tsx", import.meta.url));
+// App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
+const app = readRendererSource();
 const types = readSource(new URL("../src/types.ts", import.meta.url));
 const styles = readSource(new URL("../src/styles.css", import.meta.url));
 

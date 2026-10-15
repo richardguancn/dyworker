@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateApproval, isLowRiskCommand } from "../electron/agent.mts";
 import { normalizeApprovalMode } from "../electron/settings.mts";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,7 +144,7 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
 });
 
 test("App.tsx 契约：会话内直显待审批卡片、列表项橙点徽标、唤醒运行提示", async () => {
-  const appCode = await fs.readFile(path.join(root, "src/App.tsx"), "utf8");
+  const appCode = readRendererSource();
 
   // 1. 会话专属待审批计算与卡片就地渲染
   assert.match(appCode, /activeSessionPendingInboxApproval/);

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 // 统一读成 LF，避免 Windows 检出 CRLF 时多行正则失效。
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
 
-const app = readSource(new URL("../src/App.tsx", import.meta.url));
+// App.tsx 已按域拆分，契约断言改为扫整个渲染层源码，避免符号搬家就失效。
+const app = readRendererSource();
 const appearanceController = readSource(new URL("../src/appearance/controller.ts", import.meta.url));
 const appearancePanel = readSource(new URL("../src/appearance/AppearanceSettingsPanel.tsx", import.meta.url));
 const appearanceTokens = readSource(new URL("../src/appearance/tokens.ts", import.meta.url));

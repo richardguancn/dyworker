@@ -11,9 +11,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-const app = read("../src/App.tsx");
+// App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
+const app = readRendererSource();
 const css = read("../src/styles.css");
 
 /** 取出某个选择器的规则体（源码文本层面，够用且不依赖 CSS 解析器） */

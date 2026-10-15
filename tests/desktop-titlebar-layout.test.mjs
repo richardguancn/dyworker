@@ -6,10 +6,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readRendererSource } from "./helpers/renderer-source.mjs";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 const layout = read("../src/layout.css");
-const app = read("../src/App.tsx");
+// App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
+const app = readRendererSource();
 
 test("标题栏品牌排布同时覆盖 Windows 与 Linux", () => {
   assert.match(layout, /:is\(\.platform-win32, \.platform-linux\) \.titlebar-left \{/, "标题栏左区要同时匹配 win32 与 linux");
