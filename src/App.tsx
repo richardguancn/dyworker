@@ -49,7 +49,8 @@ import { useBrowserStore } from "./state/browserStore";
 import { useComposerStore } from "./state/composerStore";
 import type { ComposerPasteBlock } from "./state/composerStore";
 import { useSessionStore } from "./state/sessionStore";
-import type { WakingSessionEntry } from "./state/sessionStore";
+import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, showSessionError } from "./state/sessionActions";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef } from "./state/sharedRefs";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -181,7 +182,7 @@ import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 import { ReasoningControl } from "./ReasoningControl";
@@ -189,7 +190,7 @@ import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-r
 import { recordTaskFailure } from './taskFailure.ts';
 import { assistantImageAttachments } from './assistantImages.ts';
 import { beginSession, discardSession } from "./appearance/controller";
-import { closeWakingNote, formatWakeTime, rephraseSleepNote, settleResolvedSleepNote, wakingNoteTexts } from "./wakeNote";
+import { formatWakeTime, wakingNoteTexts } from "./wakeNote";
 import { contentEchoesProcessCommentary, messageWithDeliveryContent, processActivitiesWithCommentary } from "./processCommentary.ts";
 import { ClampedUserText, renderInlineTokens } from "./features/message/ClampedText";
 import { isVoiceAttachment, isVoiceMessage, VoiceMessageBubble } from "./features/message/VoiceMessage";
@@ -628,39 +629,6 @@ export function App() {
   };
   // 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
   const voiceTargetRef = useRef<"composer" | ((text: string) => void)>("composer");
-  // 事件回调里要读"当前正在续跑的会话"做气泡收口，同时保持 setState updater 纯净
-  const wakingSessionsRef = useRef<Record<string, WakingSessionEntry>>({});
-  const refreshPendingWakes = async () => {
-    const list = await window.dyworker?.listPendingWakes?.();
-    if (!Array.isArray(list)) return;
-    const next: Record<string, PendingWakeRecord> = {};
-    for (const item of list) {
-      if (item?.sessionId) next[item.sessionId] = { ...item, sessionId: item.sessionId };
-    }
-    setSleepingSessions(next);
-    // 这一觉已经走完（到点跑过 / 被取消 / 窗口关着时已触发）的会话：气泡里那句
-    // "将于 X 自动唤醒继续"要收口成"原定 X 自动唤醒"，否则重启后它还在声称将来会唤醒。
-    // 仍在待唤醒列表、或正在续跑中的会话不动。
-    setSessions((current) => {
-      let changedAny = false;
-      const settled = current.map((session) => {
-        if (next[session.id] || wakingSessionsRef.current[session.id]) return session;
-        let changed = false;
-        const messages = session.messages.map((message) => {
-          if (message.role !== "assistant" || message.taskStatus !== "sleeping" || !message.content) return message;
-          const content = String(message.content);
-          const settledContent = settleResolvedSleepNote(content);
-          if (settledContent === content) return message;
-          changed = true;
-          return { ...message, content: settledContent };
-        });
-        if (!changed) return session;
-        changedAny = true;
-        return { ...session, messages };
-      });
-      return changedAny ? settled : current;
-    });
-  };
   const composerModelsKeyRef = useRef("");
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
@@ -813,8 +781,6 @@ export function App() {
       if (sessionSaveRetryRef.current !== null) window.clearTimeout(sessionSaveRetryRef.current);
     };
   }, []);
-  const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
-  const sessionErrorTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
   // 对话区在机器人团队页/设置页之间会被整棵卸载重挂（App 主区域的条件分支），
   // 用 state 承载节点，让依赖它们的 effect 在重挂后重新绑定
@@ -853,97 +819,6 @@ export function App() {
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
   const sessionRenameRequestsRef = useRef(new Map<string, {title:string;token:symbol}>());
-
-  // 会话更新与通知工具：定义在状态之后、各 effect 之前，供渠道实时事件监听器与 runTask 共用
-  const updateSession = (id: string, updater: (session: SessionRecord) => SessionRecord) => {
-    setNewTaskDraft((current) => current?.id === id ? updater(current) : current);
-    setSessions((current) => current.map((session) => session.id === id ? updater(session) : session));
-  };
-
-  // 续跑开始/结束时改写那条挂起气泡的说明（只动我们自己生成的那句，不碰模型正文）。
-  // 目标靠"将于/原定 {wakeAt} 自动唤醒"这个精确时间 + 注入的 marker 定位：同一会话可能
-  // 挂起过多轮，不能简单按"最后一条 sleeping"取，否则会把新一轮的挂起说明也改掉。
-  const patchWakingSleepNote = (sessionId: string, wakeAt: string, marker: string, phase: "waking" | "woke", done = "") => {
-    const wakeAtText = formatWakeTime(wakeAt);
-    updateSession(sessionId, (session) => {
-      let changed = false;
-      const messages = session.messages.map((message) => {
-        if (message.role !== "assistant" || !message.content) return message;
-        const content = String(message.content);
-        if (phase === "waking") {
-          const next = rephraseSleepNote(content, wakeAtText, marker);
-          if (next === content) return message;
-          changed = true;
-          return { ...message, content: next };
-        }
-        const next = closeWakingNote(content, marker, done);
-        if (next === content) return message;
-        changed = true;
-        return { ...message, content: next };
-      });
-      return changed ? { ...session, messages } : session;
-    });
-  };
-
-  const clearSessionNotice = (sessionId: string) => {
-    const previous = sessionNoticeTimersRef.current.get(sessionId);
-    if (previous) {
-      window.clearTimeout(previous);
-      sessionNoticeTimersRef.current.delete(sessionId);
-    }
-    setSessionNotices((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-  };
-
-  const clearSessionError = (sessionId: string) => {
-    const previous = sessionErrorTimersRef.current.get(sessionId);
-    if (previous) {
-      window.clearTimeout(previous);
-      sessionErrorTimersRef.current.delete(sessionId);
-    }
-    setSessionErrors((current) => {
-      if (!current[sessionId]) return current;
-      const next = { ...current };
-      delete next[sessionId];
-      return next;
-    });
-  };
-
-  const showSessionNotice = (sessionId: string, message: string) => {
-    setSessionNotices((current) => ({ ...current, [sessionId]: message }));
-    const previous = sessionNoticeTimersRef.current.get(sessionId);
-    if (previous) window.clearTimeout(previous);
-    const timeout = window.setTimeout(() => {
-      setSessionNotices((current) => {
-        if (current[sessionId] !== message) return current;
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
-      sessionNoticeTimersRef.current.delete(sessionId);
-    }, 3200);
-    sessionNoticeTimersRef.current.set(sessionId, timeout);
-  };
-
-  const showSessionError = (sessionId: string, message: string, duration = 5000) => {
-    setSessionErrors((current) => ({ ...current, [sessionId]: message }));
-    const previous = sessionErrorTimersRef.current.get(sessionId);
-    if (previous) window.clearTimeout(previous);
-    const timeout = window.setTimeout(() => {
-      setSessionErrors((current) => {
-        if (current[sessionId] !== message) return current;
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
-      sessionErrorTimersRef.current.delete(sessionId);
-    }, duration);
-    sessionErrorTimersRef.current.set(sessionId, timeout);
-  };
 
   // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
   // 对话列表底部 padding 据此预留空间，避免最后一条消息被输入框遮挡。
