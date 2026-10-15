@@ -51,9 +51,10 @@ import { useSessionStore } from "./state/sessionStore";
 import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, showSessionError, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
 import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
 import { updateToolPanelTab, focusToolPanelTab, openToolPanelTab, openFilePreview, choosePreviewFile, closeToolPanelTab } from "./state/toolPanelActions";
+import { resolveTokenFile, resolveTokenSession, openReferencedFile, insertFileToken, handleComposerDragOver, handleComposerDragLeave, handleComposerDrop, handleComposerPaste, openContextMenu, closeContextMenu, handleConversationMouseUp, addSelectionToComposer, sendSelectionToSideChat, updateAnnotationMarkers, handleMessageContextMenu, pasteComposerText, applyMention, chooseWorkspace, chooseAttachments } from "./state/composerActions";
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef } from "./state/sharedRefs";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef } from "./state/sharedRefs";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -269,8 +270,6 @@ function playCompletionSound() {
     // 音频不可用时静默跳过，不影响任务结果
   }
 }
-
-const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
 
@@ -650,7 +649,6 @@ export function App() {
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   // 平台标识初始值同步取自 preload（process.platform），首帧就能渲染正确布局，
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
-  const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
   const closeDshChildHistory = useCallback(() => setDshChildHistory(null), []);
   // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
   // 每条消息都会因新函数引用而击穿 memo
@@ -769,7 +767,6 @@ export function App() {
       if (sessionSaveRetryRef.current !== null) window.clearTimeout(sessionSaveRetryRef.current);
     };
   }, []);
-  const viewportRef = useRef<HTMLDivElement>(null);
   // 对话区在机器人团队页/设置页之间会被整棵卸载重挂（App 主区域的条件分支），
   // 用 state 承载节点，让依赖它们的 effect 在重挂后重新绑定
   // 必须是稳定引用：内联箭头每次渲染都会先 ref(null) 再 ref(node)，
@@ -787,13 +784,8 @@ export function App() {
   const searchMatchRangesRef = useRef<Array<{ row: HTMLDivElement; range: Range }>>([]);
   // 上一次自动滚动定位的命中标识（query#index），避免流式更新时反复滚动
   const searchScrollKeyRef = useRef<string | null>(null);
-  const textareaRef = useRef<ComposerHandle | null>(null);
   // @引用高亮镜像层：与 textarea 同步滚动，保持 token 背景对齐
   const composerMirrorRef = useRef<HTMLDivElement>(null);
-  // @token → 实际选择的文件路径：同名文件时以用户候选菜单里点选的那个为准
-  const mentionTokenPathsRef = useRef<Map<string, string>>(new Map());
-  // @「标题」token → 实际选择的会话 id：同名会话时以用户点选的那个为准（与文件同构）
-  const sessionTokenIdsRef = useRef<Map<string, string>>(new Map());
   const appShellRef = useRef<HTMLDivElement>(null);
   const panelGeometryRef = useRef({ rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth });
   panelGeometryRef.current = { rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth };
@@ -1715,6 +1707,8 @@ export function App() {
     setNotice("");
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
+  // 注册 createTask 给 composerActions：applyMention 触发内置 /new 时调用
+  createTaskRef.current = createTask;
 
   const prepareExtensionCreation = ({ kind, requirement, workspacePath: targetDirectory }: ExtensionCreationRequest) => {
     const bundled = authoringSkill(kind);
@@ -1787,29 +1781,8 @@ export function App() {
     walk(workspaceEntries);
     return out;
   }, [workspaceEntries]);
-
-  // 把文件解析成 @token 引用：优先用用户在候选菜单里点选的路径，同名文件退回按名字匹配
-  const resolveTokenFile = (name: string): WorkspaceEntry | undefined => {
-    const recorded = mentionTokenPathsRef.current.get(name);
-    if (recorded) {
-      const exact = workspaceFiles.find((file) => file.path === recorded);
-      if (exact) return exact;
-    }
-    return workspaceFiles.find((file) => file.name === name);
-  };
-
-  // 把 @「标题」token 解析成会话：优先用候选菜单点选时记录的 id（同名会话不串），
-  // 退回按标题匹配（最新优先），并排除当前会话——引用自己没有意义
-  const resolveTokenSession = (title: string): SessionRecord | undefined => {
-    const recorded = sessionTokenIdsRef.current.get(title);
-    if (recorded) {
-      const exact = sessions.find((session) => session.id === recorded);
-      if (exact) return exact;
-    }
-    return sessions
-      .filter((session) => session.title === title && session.id !== activeSession?.id && session.messages.length > 0)
-      .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
-  };
+  // 刷新 @token 解析用的文件列表镜像：composerActions 读 workspaceFilesRef.current
+  workspaceFilesRef.current = workspaceFiles;
 
   // 输入框正文里能解析成文件引用的 @token：镜像层只为这些 token 画高亮
   const activeTokenNames = useMemo(() => {
@@ -1840,171 +1813,6 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composer, sessions]);
 
-  // 打开气泡里被引用的文件（@token 点击）：优先用消息里记录的附件路径，桌面版调主进程，预览环境给提示
-  const openReferencedFile = async (name: string, knownPath?: string) => {
-    const filePath = knownPath || resolveTokenFile(name)?.path;
-    if (!filePath) {
-      setNotice(`没有找到文件 ${name}，可能已移动或删除`);
-      return;
-    }
-    openFilePreview(filePath, workspacePath);
-  };
-
-  // 在光标处插入「@文件名 」内联 token：引用随正文按顺序展示（对齐 Codex 的 @ 引用体验）
-  const insertFileToken = (file: WorkspaceEntry) => {
-    const token = `@${file.name} `;
-    const textarea = textareaRef.current;
-    const start = textarea ? textarea.selectionStart : composer.length;
-    const end = textarea ? textarea.selectionEnd : composer.length;
-    mentionTokenPathsRef.current.set(file.name, file.path);
-    setComposer(composer.slice(0, start) + token + composer.slice(end));
-    setMentionMenu(null);
-    setNotice(`已引用文件：${file.name}`);
-    window.setTimeout(() => {
-      const target = textareaRef.current;
-      if (target) {
-        const pos = start + token.length;
-        target.focus();
-        target.setSelectionRange(pos, pos);
-      }
-    }, 0);
-  };
-
-  const handleComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes(WORKSPACE_FILE_DRAG_TYPE)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setComposerDragActive(true);
-  };
-
-  const handleComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
-    setComposerDragActive(false);
-  };
-
-  const handleComposerDrop = (event: DragEvent<HTMLDivElement>) => {
-    const filePath = event.dataTransfer.getData(WORKSPACE_FILE_DRAG_TYPE);
-    if (!filePath) return;
-    event.preventDefault();
-    setComposerDragActive(false);
-    const file = workspaceFiles.find((entry) => entry.path === filePath);
-    if (file) insertFileToken(file);
-  };
-
-  // 超过阈值的大段粘贴文本折叠成块，避免撑爆输入框；发送时自动附在消息正文后
-  const addLongPasteBlock = (text: string) => {
-    setComposerPastes((current) => [...current, { id: crypto.randomUUID(), text }]);
-    setNotice(`长文本已折叠（${text.length.toLocaleString()} 字），发送时会自动附带`);
-  };
-
-  const handleComposerPaste = async (event: ClipboardEvent<HTMLElement>) => {
-    const imageItem = Array.from(event.clipboardData.items).find((item) => item.kind === "file" && item.type.startsWith("image/"));
-    const image = imageItem?.getAsFile();
-    if (!image) {
-      const text = event.clipboardData.getData("text/plain");
-      if (text.length >= COMPOSER_LONG_PASTE_THRESHOLD) {
-        event.preventDefault();
-        addLongPasteBlock(text);
-      }
-      return;
-    }
-    event.preventDefault();
-    setError("");
-    if (image.size > 12 * 1024 * 1024) {
-      setError("剪贴板图片超过 12 MB，无法添加");
-      return;
-    }
-    try {
-      const owner = activeIdRef.current;
-      const bytes = Array.from(new Uint8Array(await image.arrayBuffer()));
-      let attachment: Attachment | undefined;
-      if (window.dyworker?.saveClipboardImage) {
-        const result = await window.dyworker.saveClipboardImage({ data: bytes, mimeType: image.type || "image/png", sessionId: owner });
-        if (!result.ok || !result.attachment) throw new Error(result.error || "剪贴板图片保存失败");
-        attachment = result.attachment;
-      } else {
-        const previewUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ""));
-          reader.onerror = () => reject(new Error("剪贴板图片预览失败"));
-          reader.readAsDataURL(image);
-        });
-        attachment = {
-          name: "剪贴板图片.png",
-          path: `clipboard-preview:${crypto.randomUUID()}`,
-          size: image.size,
-          mimeType: image.type || "image/png",
-          isImage: true,
-          previewUrl,
-        };
-      }
-      if (activeIdRef.current !== owner) {
-        const draft = sessionDraftsRef.current[owner];
-        if (draft) draft.attachments = [...draft.attachments, attachment].slice(0, 12);
-        return;
-      }
-      setAttachments((current) => current.some((entry) => entry.path === attachment!.path)
-        ? current
-        : [...current, attachment!].slice(0, 12));
-      setNotice("已粘贴剪贴板图片");
-    } catch (pasteError) {
-      setError(`无法添加剪贴板图片：${pasteError instanceof Error ? pasteError.message : String(pasteError)}`);
-    }
-  };
-
-  const openContextMenu = (x: number, y: number, items: ContextMenuItem[]) => {
-    setContextMenu({ x, y, items });
-  };
-
-  const closeContextMenu = () => setContextMenu(null);
-
-  // 会话内容区松手：有选中文本时弹出「添加到对话 / 侧边聊天」浮动条，
-  // 定位在选区上方（fixed + 边缘钳制）；composer/输入框里的选区不响应
-  const handleConversationMouseUp = () => {
-    const selection = window.getSelection();
-    const selected = selection?.toString() ?? "";
-    const anchor = selection?.anchorNode;
-    const collapsed = !selection || selection.isCollapsed || !selected.trim();
-    const inside = Boolean(
-      anchor?.nodeType === Node.TEXT_NODE
-        ? anchor.parentElement?.closest(".conversation-column")
-        : (anchor as Element | null)?.closest?.(".conversation-column"),
-    );
-    if (collapsed || !inside) {
-      setSelectionQuote(null);
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-    const text = normalizeQuote(selected);
-    if (!text) {
-      setSelectionQuote(null);
-      return;
-    }
-    setSelectionQuote({ text, x: rect.left + rect.width / 2, y: rect.top });
-  };
-
-  // 浮动条「添加到对话」：注释进 composer，评论编辑卡锚到选区上方
-  const addSelectionToComposer = () => {
-    if (!selectionQuote) return;
-    const annotation: MessageAnnotation = { id: crypto.randomUUID(), quote: selectionQuote.text, comment: "" };
-    setAnnotations((current) => [...current, annotation]);
-    setAnnotationEditor({ id: annotation.id, x: selectionQuote.x, y: selectionQuote.y });
-    setSelectionQuote(null);
-    window.getSelection()?.removeAllRanges();
-  };
-
-  // 浮动条「侧边聊天」：打开右栏聊天页并把选中文本预填进草稿
-  const sendSelectionToSideChat = () => {
-    if (!selectionQuote) return;
-    const text = selectionQuote.text;
-    setRightPanelOpen(true);
-    openToolPanelTab("chat");
-    setSideChatSeed({ text, nonce: Date.now() });
-    setSelectionQuote(null);
-    window.getSelection()?.removeAllRanges();
-  };
-
   // 选区浮动条的关闭时机：选区塌陷（重新选择/点空白）、Esc、视口滚动
   useEffect(() => {
     if (!selectionQuote) return;
@@ -2023,37 +1831,6 @@ export function App() {
     };
   }, [selectionQuote]);
 
-  // 从当前正文定位引用，不保留可能因文本节点替换而失效的 Range。
-  const annotationQuotesRef = useRef<Array<{ id: string; n: number; quote: string }>>([]);
-  const updateAnnotationMarkers = () => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const viewportRect = viewport.getBoundingClientRect();
-    const column = viewport.querySelector(".conversation-column");
-    const nextMarkers = annotationQuotesRef.current.flatMap(({ id, n, quote }) => {
-      // React 可能替换文本节点，旧 Range 会退化到父元素；每次从当前正文重新找引用。
-      const range = findQuoteRange(column, quote);
-      if (!range) return [];
-      const element = range.startContainer.parentElement;
-      const row = element?.closest(".message-row");
-      const rowRect = row?.getBoundingClientRect();
-      if (rowRect && (rowRect.bottom <= viewportRect.top || rowRect.top >= viewportRect.bottom)) return [];
-      // content-visibility:auto 跳过的正文没有可靠文字坐标，不能把它画到视口左边。
-      if (element && !element.checkVisibility({ contentVisibilityAuto: true })) return [];
-      const rect = range.getBoundingClientRect();
-      if (!rect || (!rect.width && !rect.height)) return [];
-      return [{
-        id,
-        n,
-        top: Math.max(2, rect.top - viewportRect.top - viewport.clientTop + viewport.scrollTop - 24),
-        left: rect.left - viewportRect.left - viewport.clientLeft + viewport.scrollLeft,
-      }];
-    });
-    setAnnotationMarkers(previous => previous.length === nextMarkers.length && previous.every((entry, index) => {
-      const next = nextMarkers[index];
-      return entry.id === next.id && entry.n === next.n && entry.top === next.top && entry.left === next.left;
-    }) ? previous : nextMarkers);
-  };
   // 注释增删、切换会话或新消息落盘时更新引用列表
   const activeMessageCount = activeSession?.messages.length ?? 0;
   useEffect(() => {
@@ -2099,31 +1876,6 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
-
-  // 消息文本上右键：始终提供「复制」。有选中文本时复制选中内容，
-  // 未选中时复制整条消息正文（跳过操作按钮、时间等非正文区域）。
-  const handleMessageContextMenu = (event: MouseEvent<HTMLElement>, message?: ChatMessage) => {
-    event.preventDefault();
-    const selection = window.getSelection();
-    const selected = selection?.toString().trim() ?? "";
-    const anchor = selection?.anchorNode;
-    const inside = Boolean(anchor && event.currentTarget.contains(anchor));
-    const hasSelected = inside && selected.length > 0;
-    const bodyEl = event.currentTarget.querySelector(".message-content, .user-message-text");
-    const text = hasSelected ? selected : (bodyEl?.textContent ?? event.currentTarget.textContent ?? "").trim();
-    if (!text) return;
-    openContextMenu(event.clientX, event.clientY, [
-      {
-        key: "copy-selection",
-        label: hasSelected ? "复制" : "复制消息",
-        icon: <Copy size={15} />,
-        onSelect: () => {
-          // 复制一律为纯文本（图片由缩略图上的复制按钮单独复制）
-          void copyTextToClipboard(text).then((copied) => setNotice(copied ? "已复制" : "复制失败，请检查剪贴板权限"));
-        },
-      },
-    ]);
-  };
 
   // 输入框右键：复制 / 剪切 / 粘贴
   const handleComposerContextMenu = (event: MouseEvent<HTMLElement>) => {
@@ -2174,56 +1926,6 @@ export function App() {
         },
       },
     ]);
-  };
-
-  // 向输入框光标处粘贴剪贴板文本；优先用异步剪贴板 API，被拦截时回退到 execCommand
-  const pasteComposerText = async (start: number, end: number) => {
-    const textarea = textareaRef.current;
-    let text = "";
-    // 主进程剪贴板读取不依赖渲染端权限，最可靠，优先使用
-    try {
-      if (window.dyworker?.readClipboardText) {
-        text = await window.dyworker.readClipboardText();
-      }
-    } catch {
-      text = "";
-    }
-    if (!text) {
-      try {
-        if (navigator.clipboard?.readText) {
-          text = await navigator.clipboard.readText();
-        }
-      } catch {
-        text = "";
-      }
-    }
-    if (!text) {
-      textarea?.focus();
-      if (document.execCommand("paste")) {
-        window.setTimeout(() => {
-          const target = textareaRef.current;
-          if (target && target.value !== composer) setComposer(target.value);
-          setMentionMenu(null);
-        }, 0);
-      } else {
-        setNotice("粘贴失败，请检查剪贴板权限");
-      }
-      return;
-    }
-    if (text.length >= COMPOSER_LONG_PASTE_THRESHOLD) {
-      addLongPasteBlock(text);
-      textarea?.focus();
-      return;
-    }
-    setComposer(composer.slice(0, start) + text + composer.slice(end));
-    setMentionMenu(null);
-    window.setTimeout(() => {
-      const target = textareaRef.current;
-      if (target) {
-        target.focus();
-        target.setSelectionRange(start + text.length, start + text.length);
-      }
-    }, 0);
   };
 
   useEffect(() => clientHost().subscribeInputSources(() => setPluginInputRevision(value => value + 1)), []);
@@ -2324,6 +2026,8 @@ export function App() {
       detail: item.candidate.description || '插件引用', pluginInput: item }));
     return [...plugins, ...sessionCandidates, ...fileCandidates];
   }, [mentionMenu, mentionSkills, workspaceFiles, sessions, activeSession, pluginInputCandidates]);
+  // 刷新 @// 候选镜像：composerActions 的 applyMention 读 mentionItemsRef.current
+  mentionItemsRef.current = mentionItems;
 
   // 候选菜单触发（对照 Codex/Claude 的 @、/ 引用）：以光标位置为准检测紧邻的触发 token，
   // 文本中间随时可触发；触发符前只允许行首/空白/中日韩字符——邮箱(a@b)与路径(src/)这类
@@ -2381,158 +2085,6 @@ export function App() {
     if (activeSkills.length) {
       const inlineSkillNames = skillTokensInText(value);
       setActiveSkills((current) => current.filter((skill) => inlineSkillNames.has(skill.name)));
-    }
-  };
-
-  const applyMention = (index: number, action: 'pick' | 'drill' = 'pick') => {
-    const item = mentionItems[index];
-    if (!item || !mentionMenu) return;
-    if (item.pluginInput && activeSession?.runtime === 'dsh') {
-      try {
-        dismissedPluginMention.current = { sessionId: activeSession.id, text: composer,
-          start: mentionMenu.start, query: mentionMenu.query };
-        const draftRev = clientHost().setInputDraft(activeSession.id, composer);
-        clientHost().pickInputCandidate(activeSession.id, item.pluginInput, { start: mentionMenu.start,
-          end: mentionMenu.end ?? mentionMenu.start + mentionMenu.query.length + 1, draftRev }, action);
-        if (action === 'pick') setMentionMenu(null);
-      } catch (error) { dismissedPluginMention.current = null; setError(String((error as any)?.message || error)); }
-      return;
-    }
-    const nativeSpan = activeSession?.runtime === 'dsh' ? clientHost().inputEditor(activeSession.id)?.clipboardSpan({
-      start: mentionMenu.start, end: mentionMenu.end ?? mentionMenu.start + mentionMenu.query.length + 1,
-    }) : undefined;
-    const nativeStart = nativeSpan?.start ?? mentionMenu.start;
-    const nativeEnd = nativeSpan?.end ?? mentionMenu.start + mentionMenu.query.length + 1;
-    if (mentionMenu.kind === "slash" && item.id === "builtin:new") {
-      setMentionMenu(null);
-      setComposer("");
-      setAttachments([]);
-      setActiveSkills([]);
-      setComposerPastes([]);
-      setAnnotations([]);
-      if (activeSession && activeSession.messages.length === 0) {
-        setNotice("当前已是新会话");
-        window.setTimeout(() => textareaRef.current?.focus(), 0);
-      } else {
-        createTask();
-        setNotice("已开启新会话");
-      }
-      return;
-    }
-    if (mentionMenu.kind === "slash" && item.prompt) {
-      // 内置命令（如 /init）：把预设指令填入输入框，由用户确认后发送
-      setComposer(item.prompt);
-    } else if (mentionMenu.kind === "at" && item.file) {
-      // 文件引用：在 @ 位置原地插入内联 token，引用按输入顺序留在正文里
-      const token = `@${item.file.name} `;
-      const start = nativeStart;
-      const end = nativeEnd;
-      mentionTokenPathsRef.current.set(item.file.name, item.file.path);
-      setComposer(composer.slice(0, start) + token + composer.slice(end));
-      window.setTimeout(() => {
-        const target = textareaRef.current;
-        if (target) {
-          const pos = start + token.length;
-          target.focus();
-          target.setSelectionRange(pos, pos);
-        }
-      }, 0);
-    } else if (mentionMenu.kind === "at" && item.session) {
-      // 会话引用：在 @ 位置原地插入「@「标题」」内联 token，标题用全角括号定界（可含空格）
-      const session = item.session;
-      const token = `@「${session.title}」 `;
-      const start = nativeStart;
-      const end = nativeEnd;
-      sessionTokenIdsRef.current.set(session.title, session.id);
-      setComposer(composer.slice(0, start) + token + composer.slice(end));
-      setNotice(`已引用会话：${session.title}`);
-      window.setTimeout(() => {
-        const target = textareaRef.current;
-        if (target) {
-          const pos = start + token.length;
-          target.focus();
-          target.setSelectionRange(pos, pos);
-        }
-      }, 0);
-    } else if (mentionMenu.kind === "slash" && item.skill) {
-      // 技能引用：在 / 触发位置原地插入 /技能名 内联 token，前后正文保留（与 @文件 同一融合呈现）
-      const skill = item.skill;
-      const token = `/${skill.name} `;
-      const start = nativeStart;
-      const end = nativeEnd;
-      setActiveSkills((current) => current.some((entry) => entry.id === skill.id) ? current : [...current, skill]);
-      setComposer(composer.slice(0, start) + token + composer.slice(end));
-      window.setTimeout(() => {
-        const target = textareaRef.current;
-        if (target) {
-          const pos = start + token.length;
-          target.focus();
-          target.setSelectionRange(pos, pos);
-        }
-      }, 0);
-    } else {
-      // 防御：仅清掉触发文本
-      setComposer(composer.slice(0, mentionMenu.start));
-    }
-    setMentionMenu(null);
-    if (mentionMenu.kind === "slash") window.setTimeout(() => textareaRef.current?.focus(), 0);
-  };
-
-  const chooseWorkspace = async () => {
-    setAddMenuOpen(false);
-    setError("");
-    try {
-      const result = window.dyworker
-        ? await window.dyworker.chooseWorkspace()
-        : { canceled: false, path: "/workspace/dyworker", entries: previewWorkspace };
-      if (result.canceled || !result.path) {
-        setNotice("已取消选择工作文件夹");
-        return;
-      }
-      setWorkspacePath(result.path);
-      setWorkspaceEntries(result.entries || []);
-      setWorkspaceOpen(true);
-      setNotice(`工作文件夹已选择：${displayWorkspace(result.path)}`);
-      if (activeSession) updateSession(activeSession.id, (session) => ({ ...session, workspacePath: result.path! }));
-    } catch (workspaceError) {
-      setError(`无法打开工作文件夹：${workspaceError instanceof Error ? workspaceError.message : String(workspaceError)}`);
-    }
-  };
-
-  const chooseAttachments = async () => {
-    const owner = activeIdRef.current;
-    setAddMenuOpen(false);
-    setError("");
-    try {
-      const result = window.dyworker
-        ? await window.dyworker.chooseAttachments(owner)
-        : {
-            canceled: false,
-            attachments: [{
-              name: "界面需求说明.md",
-              path: "/preview/界面需求说明.md",
-              size: 1840,
-              mimeType: "text/markdown",
-              isImage: false,
-            }],
-          };
-      if (result.canceled || !result.attachments.length) {
-        setNotice("未添加附件");
-        return;
-      }
-      if (activeIdRef.current !== owner) {
-        const draft = sessionDraftsRef.current[owner];
-        if (draft) draft.attachments = [...draft.attachments, ...result.attachments].slice(0, 12);
-        return;
-      }
-      setAttachments((current) => {
-        const known = new Set(current.map((attachment) => attachment.path));
-        return [...current, ...result.attachments.filter((attachment) => !known.has(attachment.path))].slice(0, 12);
-      });
-      setNotice(`已添加 ${result.attachments.length} 个附件`);
-      textareaRef.current?.focus();
-    } catch (attachmentError) {
-      setError(`无法添加附件：${attachmentError instanceof Error ? attachmentError.message : String(attachmentError)}`);
     }
   };
 

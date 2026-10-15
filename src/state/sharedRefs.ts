@@ -3,8 +3,10 @@
 // 这几个 ref 原本在 App.tsx 内用 useRef 声明，随会话辅助函数一起搬到模块级 actions
 // 后必须保证「同一实例」——App 的清理 effect、IPC 订阅运行时与 actions 三处读写都要
 // 指向同一份数据，因此抽成普通 `{ current: … }` 对象（模块只求值一次，天然单例）。
-import type { Attachment, MessageAnnotation, SessionRecord } from "../types";
+import type { Attachment, MessageAnnotation, SessionRecord, SkillRecord, WorkspaceEntry } from "../types";
 import type { BrowserWebviewElement } from "../features/browser/browserUtils";
+import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
+import type { ComposerHandle } from "../pluginRuntime/dshDraftEditor.ts";
 import type { ComposerPasteBlock } from "./composerStore";
 import type { ToolPanelTab } from "./layoutStore";
 import type { WakingSessionEntry } from "./sessionStore";
@@ -37,3 +39,22 @@ export const closeToolPanelTabRef: { current: ((id: string) => void) | null } = 
 
 // 打开文件预览：由 toolPanelActions 模块初始化后指向真正的实现
 export const openFilePreviewRef: { current: (filePath: string, root: string) => void } = { current: () => {} };
+
+// 输入区 / 选区标注 / 右键菜单的模块级 ref：App 的 JSX 绑定与 composerActions 的读写
+// 必须指向同一实例，随这组操作函数一起从 App.tsx 的 useRef 挪到模块级。
+export const textareaRef: { current: ComposerHandle | null } = { current: null };
+export const viewportRef: { current: HTMLDivElement | null } = { current: null };
+// @token → 实际选择的文件路径：同名文件时以用户候选菜单里点选的那个为准
+export const mentionTokenPathsRef: { current: Map<string, string> } = { current: new Map() };
+// @「标题」token → 实际选择的会话 id：同名会话时以用户点选的那个为准（与文件同构）
+export const sessionTokenIdsRef: { current: Map<string, string> } = { current: new Map() };
+// 注释定位标记的引用列表：从当前正文重新定位，不保留可能失效的 Range
+export const annotationQuotesRef: { current: Array<{ id: string; n: number; quote: string }> } = { current: [] };
+// 插件候选菜单被主动关掉的记忆：文本/触发位一致时不再自动弹回（跨 actions 共享同一份）
+export const dismissedPluginMention: { current: { sessionId: string; text: string; start: number; query: string } | null } = { current: null };
+// 工作区文件扁平列表与 @// 候选项的渲染镜像：派生自 state，App 每次渲染刷新，actions 读取
+export const workspaceFilesRef: { current: WorkspaceEntry[] } = { current: [] };
+export type MentionItem = { id: string; title: string; detail: string; pluginInput?: RegisteredInputCandidate; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string; session?: SessionRecord };
+export const mentionItemsRef: { current: MentionItem[] } = { current: [] };
+// 新建任务：由 App 注册后指向真正的实现（applyMention 触发内置 /new 时调用）
+export const createTaskRef: { current: (targetWorkspacePath?: string) => void } = { current: () => {} };
