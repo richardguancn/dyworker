@@ -155,3 +155,16 @@ export const useSessionStore = create<SessionState>((set) => ({
   dshChildHistory: null,
   setDshChildHistory: (value) => set((s) => ({ dshChildHistory: resolve(value, s.dshChildHistory) })),
 }));
+
+// 当前活动会话：与 App.tsx 里 activeSession 的推导完全一致
+// （未发送的新任务优先，其次按 activeId 命中，再退回列表首项）。
+export function selectActiveSession(state: SessionState) {
+  return state.newTaskDraft?.id === state.activeId ? state.newTaskDraft : state.sessions.find((session) => session.id === state.activeId) || state.sessions[0];
+}
+
+// 输入区工作目录：与 App.tsx 里 composerWorkspacePath 的推导完全一致。
+export function getComposerWorkspacePath(): string {
+  const state = useSessionStore.getState();
+  const activeSession = selectActiveSession(state);
+  return String(activeSession?.workspacePath || state.workspacePath || "").trim();
+}

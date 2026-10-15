@@ -49,6 +49,7 @@ import { useBrowserStore } from "./state/browserStore";
 import { useComposerStore } from "./state/composerStore";
 import { useSessionStore } from "./state/sessionStore";
 import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, showSessionError, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
+import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
 import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef } from "./state/sharedRefs";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
@@ -1535,136 +1536,12 @@ export function App() {
   }, [ready, composerWorkspacePath, showComposerContext]);
 
   // 工作区 Git 状态：顶栏分支下拉与提交推送面板共用
-  const refreshGitInfo = async () => {
-    if (!ready || !window.dyworker?.gitBranches || !composerWorkspacePath) {
-      setGitInfo(null);
-      return;
-    }
-    try {
-      const info = await window.dyworker.gitBranches(composerWorkspacePath);
-      setGitInfo(info.isRepo ? info : null);
-    } catch {
-      setGitInfo(null);
-    }
-  };
-
   useEffect(() => {
     setBranchMenuOpen(false);
     setCommitPanelOpen(false);
     setConversationToolsOpen(false);
     void refreshGitInfo();
   }, [ready, composerWorkspacePath]);
-
-  const toggleBranchMenu = () => {
-    setCommitPanelOpen(false);
-    setBranchQuery("");
-    setCreatingBranch(false);
-    setBranchMenuOpen((value) => !value);
-    void refreshGitInfo();
-  };
-
-  const openCommitPanel = () => {
-    setBranchMenuOpen(false);
-    setCommitPanelOpen(true);
-    setDiffStats(null);
-    if (window.dyworker?.gitDiffStats && composerWorkspacePath) {
-      void window.dyworker.gitDiffStats(composerWorkspacePath).then(setDiffStats).catch(() => {});
-    }
-  };
-
-  const switchBranch = async (name: string) => {
-    if (!window.dyworker?.gitCheckout || gitBusy || name === gitInfo?.current) return;
-    setGitBusy("switch");
-    try {
-      const result = await window.dyworker.gitCheckout(composerWorkspacePath, name);
-      if (!result.ok) {
-        setError(result.error || "切换分支失败");
-        return;
-      }
-      setNotice(`已切换到分支 ${name}`);
-      setBranchMenuOpen(false);
-      await refreshGitInfo();
-    } finally {
-      setGitBusy("");
-    }
-  };
-
-  const createBranch = async () => {
-    const name = newBranchName.trim();
-    if (!window.dyworker?.gitCreateBranch || !name || gitBusy) return;
-    setGitBusy("switch");
-    try {
-      const result = await window.dyworker.gitCreateBranch(composerWorkspacePath, name);
-      if (!result.ok) {
-        setError(result.error || "创建分支失败");
-        return;
-      }
-      setNotice(`已创建并切换到分支 ${name}`);
-      setNewBranchName("");
-      setCreatingBranch(false);
-      setBranchMenuOpen(false);
-      await refreshGitInfo();
-    } finally {
-      setGitBusy("");
-    }
-  };
-
-  // AI 生成提交信息（独立按钮触发，写入输入框供用户确认或修改）
-  const generateCommitMessage = async () => {
-    if (!window.dyworker?.gitSuggestCommitMessage || gitBusy) return;
-    setGitBusy("generate");
-    try {
-      const result = await window.dyworker.gitSuggestCommitMessage(composerWorkspacePath);
-      if (!result.ok || !result.message) setError(result.error || "生成提交信息失败");
-      else setCommitMessage(result.message);
-    } catch {
-      setError("生成提交信息失败");
-    } finally {
-      setGitBusy("");
-    }
-  };
-
-  const runCommit = async (push: boolean) => {
-    if (!window.dyworker?.gitCommit || gitBusy) return;
-    setGitBusy(push ? "commit-push" : "commit");
-    try {
-      const commit = await window.dyworker.gitCommit({
-        workspacePath: composerWorkspacePath,
-        message: commitMessage,
-        includeUnstaged,
-      });
-      if (!commit.ok) {
-        setError(commit.error || "提交失败");
-        return;
-      }
-      if (push && window.dyworker.gitPush) {
-        const pushed = await window.dyworker.gitPush(composerWorkspacePath);
-        if (!pushed.ok) setError(`已提交（${commit.message}），但推送失败：${pushed.error}`);
-        else setNotice(`已提交并推送：${commit.message}`);
-      } else {
-        setNotice(`已提交：${commit.message}`);
-      }
-      setCommitMessage("");
-      setCommitPanelOpen(false);
-      await refreshGitInfo();
-    } finally {
-      setGitBusy("");
-    }
-  };
-
-  const runPushOnly = async () => {
-    if (!window.dyworker?.gitPush || gitBusy) return;
-    setGitBusy("push");
-    try {
-      const result = await window.dyworker.gitPush(composerWorkspacePath);
-      if (result.ok) setNotice("已推送到远程仓库");
-      else setError(result.error || "推送失败");
-      setCommitPanelOpen(false);
-      await refreshGitInfo();
-    } finally {
-      setGitBusy("");
-    }
-  };
 
   const conversationIndex = useMemo(() => indexConversation(activeSession?.messages || []), [activeSession?.messages]);
   const conversationTurns = conversationIndex.turns;
