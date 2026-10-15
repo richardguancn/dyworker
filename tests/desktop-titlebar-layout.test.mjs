@@ -37,14 +37,19 @@ test("窗口按钮独立于标题栏，拖动区域不覆盖按钮", () => {
   assert.match(layout, /\.reference-layout > \.window-controls \* \{ -webkit-app-region: no-drag; \}/);
 });
 
-test("右侧标签条不声明窗口拖动区域：否则会截走窗口按钮上的点击", () => {
-  // 标签条横跨标题栏、压在右上角三个窗口按钮下面。它一旦自己声明 drag，
-  // 鼠标落在按钮上会先被拖动区域截走，按钮点不动（Windows 实报，Linux 同一套规则）。
+test("标签栏拖动区域必须避开窗口按钮", () => {
+  // 共用标签栏横跨窗口按钮时不允许拖动；Linux 标签栏已从几何范围上避开按钮，
+  // 可以恢复空白处拖动，同时保持交互控件的 no-drag。
   assert.match(layout, /\.reference-layout \.tool-panel-tabs \{ -webkit-app-region: initial; \}/, "参考布局里标签条必须清掉自己的拖动区域");
-  // styles.css 里给旧布局写的 drag 不受影响，但参考布局的标签条规则一条都不能再声明 drag
+  // 只有明确避开窗口按钮的 Linux 标签栏可以声明 drag。
   const tabsRules = [...layout.matchAll(/\.reference-layout[^{}]*\.tool-panel-tabs[^{}]*\{([^}]*)\}/g)];
   assert.ok(tabsRules.length > 0, "layout.css 应有作用于参考布局标签条的规则");
-  for (const rule of tabsRules) assert.doesNotMatch(rule[1], /app-region: drag/);
+  for (const rule of tabsRules) {
+    if (/\.platform-linux \.tool-panel-tabs\s*\{/.test(rule[0])) {
+      assert.match(rule[1], /right: calc\(var\(--window-controls-width\) - var\(--frame-gap\)\)/);
+      assert.match(rule[1], /app-region: drag/);
+    } else assert.doesNotMatch(rule[1], /app-region: drag/);
+  }
 });
 
 test("界面按「除 macOS 外都自绘标题栏」决定排布，且不留 Linux 专用分支", () => {

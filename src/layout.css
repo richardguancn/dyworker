@@ -528,7 +528,8 @@ html .app-shell.reference-layout.platform-linux .tool-panel { grid-row: 2; }
   left: 0;
   right: calc(var(--window-controls-width) - var(--frame-gap));
   padding-right: 80px;
-  -webkit-app-region: no-drag;
+  /* 标签栏已避开窗口按钮；空白处恢复拖动，交互控件继续使用 no-drag。 */
+  -webkit-app-region: drag;
 }
 .reference-layout.platform-linux .tool-panel-tabs-actions { right: 10px; }
 .reference-layout.platform-linux .tool-panel::before { top: calc(12px - var(--titlebar-height)); }
