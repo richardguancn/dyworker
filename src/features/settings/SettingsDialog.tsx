@@ -13,11 +13,11 @@ import { PlansPanel } from "../plans/PlansPanel";
 import type { ScheduleDraft } from "../plans/PlansPanel";
 import { UsageStatsPanel } from "../usage/UsagePanels";
 import { ChannelsPanel, HooksPanel, IdentitySettingsPanel, TelemetrySettingsSection } from "./SettingsSubPanels";
-import type { ApprovalMode, AppUpdateStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus, ScheduleRecord, SkillRecord, TtsLocalStatus, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow } from "../../types";
+import type { ApprovalMode, AppUpdateStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus, ScheduleRecord, SettingsTab, SkillRecord, TtsLocalStatus, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow } from "../../types";
 import { blobToWavMono } from "../../lib/audio";
 import { settingsWithProfile } from "../../lib/settings";
 
-export type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
+export type { SettingsTab } from "../../types";
 
 // 图标既可能是 lucide 的，也可能是应用内自绘的（如插件图标），只要求接受 size
 export type SettingsNavIcon = (props: { size?: number; className?: string }) => ReactNode;

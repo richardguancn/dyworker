@@ -70,7 +70,9 @@ test("溢出线索按溢出方向出现：两端渐隐 + 滚动按钮，标签�
     /\{!pristineMenuPage && toolPanelTabOverflow\.end && \(\s*<button\s+className="tool-panel-tab-scroll next"/,
     "只有右侧确实藏了标签才渲染右滚动按钮",
   );
-  assert.match(app, /const \[toolPanelTabOverflow, setToolPanelTabOverflow\] = useState\(\{ start: false, end: false \}\)/);
+  // 状态已迁入 layoutStore（zustand），默认值不变
+  assert.match(app, /toolPanelTabOverflow: \{ start: false, end: false \}/);
+  assert.match(app, /setToolPanelTabOverflow: \(value\) => set/);
   const sync = app.slice(app.indexOf("const syncToolPanelTabOverflow = useCallback("), app.indexOf("}, []);", app.indexOf("const syncToolPanelTabOverflow = useCallback(")));
   assert.match(sync, /start:\s*strip\.scrollLeft > 1/);
   assert.match(sync, /end:\s*maxScrollLeft - strip\.scrollLeft > 1/);

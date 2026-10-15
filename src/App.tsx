@@ -42,6 +42,9 @@ import { AppUpdateAction, AppUpdateDialog, FullAccessDialog, IdentitySetupDialog
 import { SettingsDialog } from "./features/settings/SettingsDialog";
 import type { SettingsTab } from "./features/settings/SettingsDialog";
 import { ConversationToolsIcon, ForkBranchIcon, PanelLeftIcon, PanelRightIcon } from "./app/icons";
+import { useLayoutStore } from "./state/layoutStore";
+import type { ToolPanelTab } from "./state/layoutStore";
+import { useSettingsStore } from "./state/settingsStore";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -350,31 +353,6 @@ interface ComposerPasteBlock {
 }
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
-type ToolPanelTab = {
-  id: string;
-  kind: "browser" | "files" | "review" | "chat" | "tasks" | "plugin" | "preview";
-  filePath?: string;
-  previewWorkspacePath?: string;
-  previewRevision?: number;
-  /** kind === "plugin"：插件登记的右侧面板标签（sidebar.right.pane.tab 插槽） */
-  pluginId?: string;
-  pluginKey?: string;
-  title: string;
-  url?: string;
-  loadedUrl?: string;
-  // 浏览器标签页实时状态：随 webview 导航事件同步
-  favicon?: string;
-  loading?: boolean;
-  loadError?: string;
-  canGoBack?: boolean;
-  canGoForward?: boolean;
-  zoom?: number;
-  /** 当前站点已保存的密码条数（dom-ready 时探测，用于填充提示） */
-  fillHint?: number;
-  /** 设备模拟（手机/平板视图） */
-  device?: { name: string; width: number; height: number };
-};
-
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
 
 let browserDefaultUserAgent = "";
@@ -621,6 +599,25 @@ const ConversationMessageRow = memo(function ConversationMessageRow({
 });
 
 export function App() {
+  // 布局 / 外壳 / 设置类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    sidebarOpen, setSidebarOpen, sidebarWidth, setSidebarWidth, toolPanelWidth, setToolPanelWidth,
+    viewportWidth, setViewportWidth, rightPanelOpen, setRightPanelOpen,
+    toolPanelTabs, setToolPanelTabs, toolPanelTabOverflow, setToolPanelTabOverflow,
+    activeToolPanelTabId, setActiveToolPanelTabId, toolPanelMenuOpen, setToolPanelMenuOpen,
+    toolPanelAddMenuOpen, setToolPanelAddMenuOpen, settingsOpen, setSettingsOpen,
+    addMenuOpen, setAddMenuOpen, modelMenuOpen, setModelMenuOpen, approvalMenuOpen, setApprovalMenuOpen,
+    railMenuOpen, setRailMenuOpen, topMenuOpen, setTopMenuOpen, conversationToolsOpen, setConversationToolsOpen,
+    sessionMenuId, setSessionMenuId, workspaceMenuPath, setWorkspaceMenuPath, renamingId, setRenamingId,
+    pluginsPageOpen, setPluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen,
+    botTeamAvailable, setBotTeamAvailable, botTeamProvider, setBotTeamProvider,
+    conversationView, setConversationView, pluginConversationViews, setPluginConversationViews,
+    showArchived, setShowArchived, workspaceOpen, setWorkspaceOpen,
+    workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionsExpanded, setWorkspaceSessionsExpanded,
+    terminalOpen, setTerminalOpen, terminalMounted, setTerminalMounted, terminalAvailable, setTerminalAvailable,
+    debugOpen, setDebugOpen, appUpdateDialogOpen, setAppUpdateDialogOpen,
+  } = useLayoutStore();
+  const { settings, setSettings, settingsTab, setSettingsTab, appUpdate, setAppUpdate, approvalMode, setApprovalMode, platform, setPlatform, windowMaximized, setWindowMaximized } = useSettingsStore();
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
   const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
@@ -646,7 +643,6 @@ export function App() {
   // 本地状态是空的/默认的，此时任何写回都会把磁盘上的真实数据覆盖掉。
   // 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
   const bootstrapFailedRef = useRef(false);
-  const [settings, setSettings] = useState<ProviderSettings>(defaultSettings);
   const [query, setQuery] = useState("");
   const [composer, setComposer] = useState("");
   // 长粘贴折叠块：当前会话输入框中折叠的大段粘贴文本
@@ -718,40 +714,20 @@ export function App() {
   const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   // 模型菜单里「此密钥可用的模型」段：菜单打开时按 endpoint+key 拉一次 /models 并缓存，
   // 换服务地址或密钥后重新拉；拉取失败静默降级（菜单仍列出已保存的配置）
   const [composerModels, setComposerModels] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
   const [composerModelsLoading, setComposerModelsLoading] = useState(false);
   const composerModelsKeyRef = useRef("");
-  const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
-  const [pluginsPageOpen, setPluginsPageOpen] = useState(false);
-  const [botTeamPageOpen, setBotTeamPageOpen] = useState(false);
-  const [botTeamAvailable, setBotTeamAvailable] = useState(false);
-  const [botTeamProvider, setBotTeamProvider] = useState("ds-bot");
-  const [railMenuOpen, setRailMenuOpen] = useState(false);
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
-  const [conversationView, setConversationView] = useState("chat");
-  const [pluginConversationViews, setPluginConversationViews] = useState<Array<{ key: string; label: string }>>([]);
-
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
   useEffect(() => {
     if (!activeId) return;
     setPluginsPageOpen(false);
     setBotTeamPageOpen(false);
   }, [activeId]);
-  const [sidebarWidth, setSidebarWidth] = useState(240);
-  const [toolPanelWidth, setToolPanelWidth] = useState(() => {
-    const viewportWidth = typeof window === "undefined" ? 1280 : window.innerWidth;
-    return Math.min(520, Math.max(340, Math.round(viewportWidth * 0.28)));
-  });
   // 视口宽度跟随窗口变化：面板宽度只在拖动时按当时窗口夹取，窗口之后缩小
   // （如从高分屏搬到低分屏/笔记本屏）时必须重新夹取，否则固定像素宽度会吞掉整个主区域
-  const [viewportWidth, setViewportWidth] = useState(() =>
-    typeof window === "undefined" ? 1280 : window.innerWidth);
   useEffect(() => {
     const onResize = () => {
       setViewportWidth(window.innerWidth);
@@ -760,7 +736,6 @@ export function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   // 夹取的是“生效宽度”而不是存储值：回到大窗口时用户拖出的宽度偏好自动恢复
   const appliedToolPanelWidth = Math.min(
     toolPanelWidth,
@@ -771,16 +746,11 @@ export function App() {
     Math.max(220, viewportWidth - 58 - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420),
   );
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
-  const [toolPanelTabs, setToolPanelTabs] = useState<ToolPanelTab[]>([]);
   // 标签条横向溢出状态：两侧滚动按钮与渐隐遮罩只在真正放不下时出现
-  const [toolPanelTabOverflow, setToolPanelTabOverflow] = useState({ start: false, end: false });
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
   const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
-  const [activeToolPanelTabId, setActiveToolPanelTabId] = useState("");
   const [browserOpening, setBrowserOpening] = useState(false);
-  const [toolPanelMenuOpen, setToolPanelMenuOpen] = useState(false);
-  const [toolPanelAddMenuOpen, setToolPanelAddMenuOpen] = useState(false);
   const [browserMoreOpen, setBrowserMoreOpen] = useState(false);
   const [browserSection, setBrowserSection] = useState<"history" | "downloads" | "clear" | null>(null);
   const [browserSuggestionsOpen, setBrowserSuggestionsOpen] = useState(false);
@@ -796,14 +766,9 @@ export function App() {
   const [skillEdit, setSkillEdit] = useState<SkillRecord | null>(null);
   // 已导入的浏览记录：地址栏输入联想
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
-  const [workspaceOpen, setWorkspaceOpen] = useState(true);
-  const [workspaceGroupOpen, setWorkspaceGroupOpen] = useState<Record<string, boolean>>({});
-  const [workspaceSessionsExpanded, setWorkspaceSessionsExpanded] = useState<Record<string, boolean>>({});
   const [ready, setReady] = useState(false);
   // 平台标识初始值同步取自 preload（process.platform），首帧就能渲染正确布局，
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
-  const [platform, setPlatform] = useState(() => window.dyworker?.platform || "");
-  const [windowMaximized, setWindowMaximized] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   // 会话内朗读（助手回复转语音播放）：与渠道语音发送共用同一套 TTS 设置
@@ -819,7 +784,6 @@ export function App() {
   const [inboxTab, setInboxTab] = useState<"inbox" | "messages">("inbox");
   const [systemMessageFocusId, setSystemMessageFocusId] = useState("");
   const [systemMessagesUnread, setSystemMessagesUnread] = useState(0);
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>("reviewer");
   const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
   const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
   const [memories, setMemories] = useState<WikiMemoryPage[]>([]);
@@ -827,9 +791,6 @@ export function App() {
   const [memoriesLintMessage, setMemoriesLintMessage] = useState("");
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
-  const [sessionMenuId, setSessionMenuId] = useState<string | null>(null);
-  const [workspaceMenuPath, setWorkspaceMenuPath] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [mentionMenu, setMentionMenu] = useState<{ kind: "slash" | "at"; query: string; start: number; end?: number; programmatic?: boolean } | null>(null);
   const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -857,14 +818,8 @@ export function App() {
   }, []);
   const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
   const [atBottom, setAtBottom] = useState(true);
-  const [topMenuOpen, setTopMenuOpen] = useState(false);
-  const [conversationToolsOpen, setConversationToolsOpen] = useState(false);
-  const [debugOpen, setDebugOpen] = useState(false);
   const debugOpenRef = useRef(debugOpen);
   debugOpenRef.current = debugOpen;
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalMounted, setTerminalMounted] = useState(false);
-  const [terminalAvailable, setTerminalAvailable] = useState(false);
   useEffect(() => {
     const host = clientHost();
     const sync = () => {
@@ -923,10 +878,6 @@ export function App() {
     };
   }, [debugOpen, traceBuffer]);
   const [usageStats, setUsageStats] = useState<UsageRecord[] | null>(null);
-  const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: "idle", currentVersion: "" });
-  const [appUpdateDialogOpen, setAppUpdateDialogOpen] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
   const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
   const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ url: string; name: string; path?: string } | null>(null);

@@ -17,27 +17,7 @@ import { GitReviewPanel } from "../review/GitReviewPanel";
 import { ReviewPanel } from "../review/ReviewPanels";
 import { BROWSER_DEVICE_PRESETS, BROWSER_START_LINKS, type BrowserWebviewElement } from "../browser/browserUtils";
 import type { BrowserControlState, FileChange, ProviderSettings, SessionRecord, WorkspaceEntry } from "../../types";
-
-type ToolPanelTab = {
-  id: string;
-  kind: "browser" | "files" | "review" | "chat" | "tasks" | "plugin" | "preview";
-  filePath?: string;
-  previewWorkspacePath?: string;
-  previewRevision?: number;
-  pluginId?: string;
-  pluginKey?: string;
-  title: string;
-  url?: string;
-  loadedUrl?: string;
-  favicon?: string;
-  loading?: boolean;
-  loadError?: string;
-  canGoBack?: boolean;
-  canGoForward?: boolean;
-  zoom?: number;
-  fillHint?: number;
-  device?: { name: string; width: number; height: number };
-};
+import type { ToolPanelTab } from "../../state/layoutStore";
 
 export interface ToolPanelProps {
   activeToolPanelKind: ToolPanelTab["kind"];

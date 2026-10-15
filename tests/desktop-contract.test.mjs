@@ -1800,7 +1800,8 @@ test("分支管理与提交推送端到端接线（Codex 风格）", () => {
 
 test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   // 初始没有任何标签页：浏览器只是菜单里的一个选项，用户选择之前什么都不打开（对照 Codex）
-  assert.match(app, /useState<ToolPanelTab\[\]>\(\[\]\)/);
+  // 状态已迁入 layoutStore（zustand），默认值不变
+  assert.match(app, /toolPanelTabs: \[\],/);
   // 收起时的加号直接展示全部可用面板，选择后再展开。
   assert.match(app, /rightPanelOpen \? addMenuItems : toolPanelMenuItems\.filter/);
   // 菜单作为面板页面内容展示(对照 Codex),不是下拉浮层
