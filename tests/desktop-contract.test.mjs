@@ -463,7 +463,7 @@ test("文件面板为左右分栏，Markdown 即时渲染编辑（Codex 式）",
   // CodeMirror 装饰渲染编辑器按文件挂载，源码即文档
   assert.match(app, /function MarkdownLiveEditorPane/);
   assert.match(app, /<MarkdownLiveEditorPane\n\s*key=\{selection\.path\}/);
-  assert.match(app, /import\("\.\/markdownLiveEditor"\)/);
+  assert.match(app, /import\("[^"]*markdownLiveEditor"\)/);
   assert.match(app, /plainSource=\{showSource\}/);
   assert.match(workspaceIpcSource, /trustedHandle\("workspace:read-markdown"/);
   assert.match(main, /readWorkspaceMarkdown/);

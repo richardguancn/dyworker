@@ -2,6 +2,8 @@
 // 原先内联在 App.tsx，文件面板、审阅面板、输入框引用共用。
 import type { Attachment, GitReviewFile, WorkspaceEntry } from "../types";
 
+export const WORKSPACE_FILE_DRAG_TYPE = "application/x-dyworker-workspace-file";
+
 export function isMarkdownFile(filePath: string) {
   return /\.(?:md|markdown)$/i.test(filePath);
 }
