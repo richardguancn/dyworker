@@ -1,3 +1,6 @@
+import { createTraceBuffer, trimRecentText } from "./traceBuffer";
+import { createSessionSaveQueue } from "./sessionSaveQueue";
+import { createTextCache, createConversationIndex } from "./performanceCache";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
@@ -121,7 +124,7 @@ import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import { forgetSessionStream, forgetStreamMessage, isChannelRunEnvelope, isScheduleRunEnvelope, isWakeRunEnvelope, mergePrependedSession, reconcileChannelAppend, registerStreamMessage, takeStreamMessage } from "./channelStream";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord, SessionSavePayload, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, PendingWakeRecord, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
 import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
 import { ReasoningControl } from "./ReasoningControl";
@@ -561,20 +564,10 @@ function stripControlMarkers(text: string) {
   return stripped || String(text || "").trim();
 }
 
-// 渲染路径的缓存版：同一输入引用直接复用结果，保证传给 InteractiveMessage
-// 等子组件的 props 引用稳定（否则每个流式事件都会触发全部消息重新解析 Markdown）。
-// 清洗是纯函数，按字符串值缓存即正确；容量封顶防长会话下无界增长。
-const STRIP_CACHE_LIMIT = 400;
-const strippedTextCache = new Map<string, string>();
-
+// 字符串按值比较；缓存只节省文字清理，不承担 Markdown 子组件的更新隔离。
+const strippedTextCache = createTextCache();
 function stripControlMarkersCached(text: string) {
-  const source = String(text || "");
-  const hit = strippedTextCache.get(source);
-  if (hit !== undefined) return hit;
-  const stripped = stripControlMarkers(source);
-  if (strippedTextCache.size >= STRIP_CACHE_LIMIT) strippedTextCache.clear();
-  strippedTextCache.set(source, stripped);
-  return stripped;
+  return strippedTextCache.get(String(text || ""), stripControlMarkers);
 }
 
 function messageVisibleText(message: ChatMessage) {
@@ -853,15 +846,9 @@ async function copyTextToClipboard(content: string) {
   }
 }
 
-function conversationTurnPreview(messages: ChatMessage[], messageIndex: number) {
-  const userMessage = messages[messageIndex];
+function conversationTurnPreview(userMessage: ChatMessage, assistant?: ChatMessage) {
   const userText = plainConversationText(userMessage.displayContent ?? userMessage.content);
-  const nextUserIndex = messages.findIndex((message, index) => index > messageIndex && message.role === "user");
-  const assistantText = plainConversationText(
-    messages
-      .slice(messageIndex + 1, nextUserIndex === -1 ? undefined : nextUserIndex)
-      .find((message) => message.role === "assistant")?.content || "",
-  );
+  const assistantText = plainConversationText(assistant?.content || "");
   const title = shortTitle(userText);
   const detail = userText.length > title.length
     ? userText.slice(title.length).trim()
@@ -871,6 +858,8 @@ function conversationTurnPreview(messages: ChatMessage[], messageIndex: number) 
     detail: detail.length > 140 ? `${detail.slice(0, 140)}…` : detail,
   };
 }
+
+const indexConversation = createConversationIndex(conversationTurnPreview);
 
 function latestWorkingContext(messages: ChatMessage[]): string | undefined {
   const message = [...messages].reverse().find((item) => Object.prototype.hasOwnProperty.call(item, "workingContext"));
@@ -6942,11 +6931,251 @@ function ForkBranchIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+const speakMessageKey = (message: ChatMessage) => message.id || `${message.role}:${message.createdAt}`;
+
+type MessageRowActions = { [Key in "openReferencedFile" | "openImagePreview" | "handleMessageContextMenu" | "togglePlayVoice" | "toggleActivityCollapse" | "copyMessage" | "startMessageEdit" | "toggleSpeakMessage" | "openMessageSession" | "forkSessionAt" | "openPluginReference" | "openReview" | "bindMessageRow"]: (...args: any[]) => any };
+
+// 回调始终读取最新的会话与设置，消息行的展示数据则全部通过 props 明确传入。
+function useStableHandlers<T extends Record<string, (...args: any[]) => any>>(handlers: T): T {
+  const latest = useRef(handlers);
+  useLayoutEffect(() => { latest.current = handlers; });
+  return useMemo(() => Object.fromEntries(Object.keys(handlers).map(key => [key,
+    (...args: any[]) => latest.current[key](...args),
+  ])) as T, []);
+}
+
+const ConversationMessageRow = memo(function ConversationMessageRow({
+  message, index, turnIndex, sessionId, workspacePath, isEditing, activeTaskRunning, isStreamingMessage,
+  playingVoicePath, voiceLoadingPath, speakingMessageKey, speakingLoadingKey, collapsedActivities, actions,
+}: {
+  message: ChatMessage; index: number; turnIndex: number; sessionId: string; workspacePath: string;
+  isEditing: boolean; activeTaskRunning: boolean; isStreamingMessage: boolean;
+  playingVoicePath: string | null; voiceLoadingPath: string | null; speakingMessageKey: string | null; speakingLoadingKey: string | null;
+  collapsedActivities: Set<string>; actions: MessageRowActions;
+}) {
+  message = messageWithDeliveryContent(message);
+  // 仍在输出中的助手消息（没有终态 taskStatus）不显示时间/复制行；
+  // 不能按最后一条下标判断——后面可能跟着排队占位消息
+  const hideAssistantActions = message.role === "assistant"
+    && activeTaskRunning
+    && !message.taskStatus
+    && isStreamingMessage;
+  // 未定稿（仍在流式输出）的助手消息：交给 InteractiveMessage 走增量 Markdown 路径
+  // （按块解析、已定稿的块 memo 冻结，见该组件 streaming 说明）。
+  // streamingAssistantIndex 在无运行任务时为 -1，下标不可能等于 -1，故天然安全
+
+  // 旧路径（非 DSH 回合）执行中：模型的话在过程流里实时出现，正文区只在收尾后
+  // 显示最终答复，避免同一段文字在过程流和正文区各出现一次。
+  // DSH 回合的正文本身就是逐条回复累积的会话输出，照旧显示。
+  const liveOutputInProcess = isStreamingMessage && !message.dshTurnId;
+  // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
+  const inlineTokenNames = message.role === "user"
+    ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
+    : new Set<string>();
+  const messageSkillNames = message.role === "user"
+    ? new Set(message.skillsUsed ?? [])
+    : new Set<string>();
+  // 用户气泡：@「标题」会话 token 高亮，点击切到被引会话
+  const messageSessionTitles = message.role === "user"
+    ? new Set((message.sessionRefs ?? []).map((ref) => ref.title))
+    : new Set<string>();
+  // 旧消息兼容：正文里没有 /技能名 token 时才退回 chip 展示（新消息已内联融合）
+  const legacySkillChips = message.role === "user"
+    ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
+    : [];
+  // 纯图片消息：占位文字已去掉，气泡里没有文字/chip/粘贴块/注释/语音时整个气泡不渲染，只留图片
+  const bubbleHasContent = message.role === "user" && (
+    isVoiceMessage(message)
+    || Boolean(messageVisibleText(message).trim())
+    || legacySkillChips.length > 0
+    || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
+    || Boolean(message.pasteBlocks?.length)
+    || Boolean(message.annotations?.length)
+    || Boolean(message.dshAttachmentNames?.length)
+  );
+  // 气泡里只有注释 chip：不套气泡边框，chip 直接裸放（套框显得笨重）
+  const bubbleBare = message.role === "user"
+    && Boolean(message.annotations?.length)
+    && !isVoiceMessage(message)
+    && !messageVisibleText(message).trim()
+    && !legacySkillChips.length
+    && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
+    && !message.pasteBlocks?.length;
+  const openMessageFile = (name: string) => {
+    const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
+    void actions.openReferencedFile(name, recorded?.path);
+  };
+  const assistantImages = message.role === 'assistant' ? assistantImageAttachments(message) : [];
+  const userImages: Attachment[] = message.role === 'user' ? [
+    ...(message.attachments?.filter(attachment=>attachment.isImage) || []),
+    ...(message.dshAttachments || []).flatMap((part,index)=>part.type === 'image' ? [{
+      name:part.name || message.dshAttachmentNames?.[index] || '图片附件',path:'',mimeType:part.mediaType,
+      size:Math.floor(part.data.length * 3 / 4),isImage:true,previewUrl:`data:${part.mediaType};base64,${part.data}`,
+    }] : []),
+  ] : [];
+  // 点击气泡里的会话引用：切到对应会话（会话可能已被删除，找不到就提示）
+  const openMessageSession = (title: string) => actions.openMessageSession(message, title);
+  return (
+  <div
+    className={`message-row ${message.role}`}
+    // key 用稳定的消息 id：此前拼 createdAt-index，任务收尾改写 createdAt 会让
+    // 流式期间建好的整棵子树（高亮代码、mermaid 图）整体卸载重建
+    // 旧版唤醒收尾曾给用户和助手写入同一个 id；按角色区分以兼容这些历史记录。
+    key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
+    ref={(node) => actions.bindMessageRow(node, index, turnIndex, message.role === "user")}
+  >
+    {message.role === "system" ? null : message.role === "user" ? (
+      <>
+        <div className="user-message-stack">
+          {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
+          {Boolean(userImages.length) && (
+            <div className="message-attachments">
+              {userImages.map((attachment,index) => (
+                attachment.path || attachment.previewUrl ? (
+                  <ImageAttachmentView
+                    key={`${message.createdAt}-${index}-${attachment.path || attachment.previewUrl}`}
+                    attachment={attachment}
+                    onPreview={(payload) => actions.openImagePreview(payload, userImages)}
+                  />
+                ) : (
+                  <span key={`${message.createdAt}-${attachment.path}`}>
+                    <FileImage size={13} />
+                    图片
+                  </span>
+                )
+              ))}
+            </div>
+          )}
+          {bubbleHasContent && (
+          <div
+            className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
+            onContextMenu={(event) => actions.handleMessageContextMenu(event, message)}
+          >
+          {!!message.dshAttachmentNames?.length && <span className="message-inline-refs" aria-label="已发送的插件附件">
+            {message.dshAttachmentNames.map((name,at)=><span className="ref-chip" key={at}><FileText size={13} /><span>{name}</span></span>)}
+          </span>}
+          {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
+            <span className="message-inline-refs">
+              {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
+              {legacySkillChips.map((name) => (
+                <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
+                  <Package size={13} />
+                  <span>{name}</span>
+                </span>
+              ))}
+              {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
+              {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)).map((attachment) => (
+                <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
+                  {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
+                  <span>{attachment.name}</span>
+                </span>
+              ))}
+            </span>
+          )}
+          {isVoiceMessage(message) ? (
+            <VoiceMessageBubble
+              message={message}
+              playingPath={playingVoicePath}
+              loadingPath={voiceLoadingPath}
+              onTogglePlay={actions.togglePlayVoice}
+              tokenNames={inlineTokenNames}
+              skillNames={messageSkillNames}
+              onFileToken={openMessageFile}
+            />
+          ) : (
+            <ClampedUserText
+              text={messageVisibleText(message)}
+              tokenNames={inlineTokenNames}
+              skillNames={messageSkillNames}
+              onFileToken={openMessageFile}
+              sessionTitles={messageSessionTitles}
+              onSessionToken={openMessageSession}
+              pluginReferences={message.pluginReferences}
+              onPluginReference={ref => actions.openPluginReference(sessionId, ref)}
+            />
+          )}
+          {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
+          {Boolean(message.annotations?.length) && <MessageAnnotationChip annotations={message.annotations!} />}
+          </div>
+          )}
+          <div className="message-actions user" aria-label="用户消息操作">
+            <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
+              <Copy size={16} />
+            </button>
+            {!activeTaskRunning && (
+              <button type="button" onClick={() => actions.startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
+                <Pencil size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      </>
+    ) : (
+      <div className="assistant-message" onContextMenu={(event) => actions.handleMessageContextMenu(event, message)}>
+          <ProcessTimeline
+          message={message}
+          messageIndex={index}
+          isStreaming={activeTaskRunning && !message.taskStatus && isStreamingMessage}
+          collapsedActivities={collapsedActivities}
+          onToggleCollapse={actions.toggleActivityCollapse}
+        />
+        {message.content && !liveOutputInProcess && (
+          <InteractiveMessage
+            content={stripControlMarkersCached(message.content)}
+            streaming={isStreamingMessage}
+          />
+        )}
+        {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
+          {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
+            attachment={attachment} onPreview={payload => actions.openImagePreview(payload, assistantImages)} />)}
+        </div>}
+        {/* 改动文件卡片固定放在最后（对标 Codex：过程折叠条 → 结论 → 修改的文件） */}
+        {Boolean(message.changes?.length) && (
+          <ChangesSummary
+            changes={message.changes!}
+            workspacePath={workspacePath}
+            onOpenReview={actions.openReview}
+          />
+        )}
+        {!hideAssistantActions && (
+          <div className="message-actions assistant" aria-label="助手消息操作">
+            {Boolean(messageVisibleText(message).trim()) && (
+              <button
+                type="button"
+                onClick={() => void actions.toggleSpeakMessage(message)}
+                aria-label={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
+                title={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
+              >
+                {speakingLoadingKey === speakMessageKey(message)
+                  ? <LoaderCircle className="spin" size={16} />
+                  : speakingMessageKey === speakMessageKey(message)
+                    ? <Square size={16} />
+                    : <Volume2 size={16} />}
+              </button>
+            )}
+            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
+              <Copy size={16} />
+            </button>
+            <button type="button" onClick={() => actions.forkSessionAt(sessionId, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
+              <ForkBranchIcon size={16} />
+            </button>
+            <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
+            <span className="ai-disclaimer">由AI生成，请注意甄别</span>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+  );
+});
+
 export function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
   const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
   const [activeId, setActiveId] = useState(previewSessions[0].id);
+  const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
   const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext | null>(null);
   // 工作区 Git 状态：分支下拉与提交推送面板
@@ -7181,6 +7410,8 @@ export function App() {
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const [conversationToolsOpen, setConversationToolsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
+  const debugOpenRef = useRef(debugOpen);
+  debugOpenRef.current = debugOpen;
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalMounted, setTerminalMounted] = useState(false);
   const [terminalAvailable, setTerminalAvailable] = useState(false);
@@ -7203,41 +7434,44 @@ export function App() {
   // debug-log 事件频率与模型流式对齐，逐条 setState 会让整个 App 高频重渲染；
   // 先进 ref 缓冲，1 秒合并刷入一次（TraceConsole 是诊断视图，秒级延迟无感知）
   const pendingDebugLogsRef = useRef<DebugLogEntry[]>([]);
+  const recentDebugLogsRef = useRef<DebugLogEntry[]>([]);
   const debugLogFlushTimerRef = useRef<number | null>(null);
   const queueDebugLog = useCallback((entry: DebugLogEntry) => {
-    pendingDebugLogsRef.current.push(entry);
+    pendingDebugLogsRef.current = trimRecentText([...pendingDebugLogsRef.current, entry]);
     if (debugLogFlushTimerRef.current !== null) return;
     debugLogFlushTimerRef.current = window.setTimeout(() => {
       debugLogFlushTimerRef.current = null;
       const pending = pendingDebugLogsRef.current.splice(0);
-      if (pending.length) setDebugLogs((logs) => [...logs, ...pending].slice(-300));
+      if (pending.length) {
+        recentDebugLogsRef.current = trimRecentText([...recentDebugLogsRef.current, ...pending]);
+        if (debugOpenRef.current) setDebugLogs(recentDebugLogsRef.current);
+      }
     }, 1000);
   }, []);
-  // 统一轨迹事件流（trace-console）：当前 run 的 trace 缓存（含子代理分支，depth 区分），
-  // 供轨迹控制台与「需求→实现」链路视图使用；内存上限 5000 条，历史靠 userData 落盘回放
+  useEffect(() => () => {
+    if (debugLogFlushTimerRef.current !== null) window.clearTimeout(debugLogFlushTimerRef.current);
+  }, []);
+  // 面板关闭时仅保存最近记录，不触发主界面更新；历史在控制台打开后按需读取。
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
-  const traceEventsRef = useRef<TraceEvent[]>([]);
-  // 子代理分支活动（带 branch）直接挂到父活动（dispatch_agent）的 children 上，
-  // 见 appendBranchActivity / patchActivityTree；随 message.activities 一并落盘
-  // 按 run 缓存 trace 事件（不可变更新，保证渲染端 useMemo 能感知新事件）：
-  // 「需求→实现」链路视图按消息 runId 取本 run 的事件流归约
-  const runTraceEventsRef = useRef<Map<string, TraceEvent[]>>(new Map());
-  // 历史回放合并（轨迹控制台「载入历史」按钮）：把落盘的 TraceEvent 按 runId+seq 去重后
-  // 并入内存流，同时按 runId 归位到 run 缓存，让链路视图也能随回放恢复
-  const appendSessionTraces = (records: TraceEvent[]) => {
-    if (!records.length) return;
-    const known = new Set(traceEventsRef.current.map((entry) => `${entry.runId || ""}:${entry.seq}`));
-    const fresh = records.filter((record) => !known.has(`${record.runId || ""}:${record.seq}`));
-    if (!fresh.length) return;
-    traceEventsRef.current = [...traceEventsRef.current, ...fresh].slice(-5000);
-    setTraceEvents(traceEventsRef.current);
-    for (const record of fresh) {
-      if (!record.runId) continue;
-      const previous = runTraceEventsRef.current.get(record.runId) || [];
-      const next = [...previous, record];
-      runTraceEventsRef.current.set(record.runId, next.length > 5000 ? next.slice(-5000) : next);
-    }
-  };
+  const traceBuffer = useMemo(() => createTraceBuffer(), []);
+  const tracePublishTimerRef = useRef<number | null>(null);
+  const appendSessionTraces = useCallback((records: TraceEvent[]) => {
+    if (!traceBuffer.append(records) || !debugOpenRef.current || tracePublishTimerRef.current !== null) return;
+    tracePublishTimerRef.current = window.setTimeout(() => {
+      tracePublishTimerRef.current = null;
+      if (debugOpenRef.current) setTraceEvents(traceBuffer.snapshot());
+    }, 100);
+  }, [traceBuffer]);
+  useEffect(() => {
+    if (debugOpen) {
+      setTraceEvents(traceBuffer.snapshot());
+      setDebugLogs(trimRecentText([...recentDebugLogsRef.current, ...pendingDebugLogsRef.current]));
+    } else { setTraceEvents([]); setDebugLogs([]); }
+    return () => {
+      if (tracePublishTimerRef.current !== null) window.clearTimeout(tracePublishTimerRef.current);
+      tracePublishTimerRef.current = null;
+    };
+  }, [debugOpen, traceBuffer]);
   const [usageStats, setUsageStats] = useState<UsageRecord[] | null>(null);
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus>({ state: "idle", currentVersion: "" });
   const [appUpdateDialogOpen, setAppUpdateDialogOpen] = useState(false);
@@ -7287,7 +7521,23 @@ export function App() {
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
   // 已保存会话的引用镜像（id → 上次发给主进程的对象）：会话更新全部走
   // 不可变替换，比较引用即可零成本找出「变化的会话」，保存只发增量
-  const savedSessionsRef = useRef<Map<string, SessionRecord>>(new Map());
+  const sessionSaveQueue = useMemo(() => createSessionSaveQueue(
+    async payload => {
+      const result = await window.dyworker!.saveSessions(payload);
+      if (result?.ok && clientHost().dshSettings.sessionId()) void clientHost().dshSettings.refresh();
+      return result;
+    },
+    session => session.goalState?.status === "active" ? { ...session, goalState: { ...session.goalState, elapsedMs: goalElapsed(session), activeSince: Date.now() } } : session,
+  ), []);
+  const sessionSaveRetryRef = useRef<number | null>(null);
+  const sessionSaveMountedRef = useRef(true);
+  useEffect(() => {
+    sessionSaveMountedRef.current = true;
+    return () => {
+      sessionSaveMountedRef.current = false;
+      if (sessionSaveRetryRef.current !== null) window.clearTimeout(sessionSaveRetryRef.current);
+    };
+  }, []);
   const sessionNoticeTimersRef = useRef<Map<string, number>>(new Map());
   const sessionErrorTimersRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -7334,6 +7584,9 @@ export function App() {
   // 密码和自动填充管理对话框
   const [browserPasswordsOpen, setBrowserPasswordsOpen] = useState(false);
   const [browserClearKinds, setBrowserClearKinds] = useState({ cookies: true, cache: true, siteData: false });
+  const appShellRef = useRef<HTMLDivElement>(null);
+  const panelGeometryRef = useRef({ rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth });
+  panelGeometryRef.current = { rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth };
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
   const toolPanelTabSequenceRef = useRef(1);
   const composingRef = useRef(false);
@@ -7679,7 +7932,7 @@ export function App() {
       searchScrollKeyRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationSearchOpen, conversationSearchQuery, conversationSearchMatchIndex, sessions, activeId, collapsedActivities]);
+  }, [conversationSearchOpen, conversationSearchQuery, conversationSearchMatchIndex, activeSession?.messages, activeId, collapsedActivities]);
 
   // 关闭搜索或切换会话时清掉残留高亮；换会话后命中序号失效，回到第一个
   useEffect(() => {
@@ -7766,29 +8019,55 @@ export function App() {
   }, [anyMenuOpen]);
 
   useEffect(() => {
-    const onPointerMove = (event: PointerEvent) => {
+    let frame = 0;
+    let pendingX: number | null = null;
+    let width: number | null = null;
+    const apply = () => {
+      frame = 0;
       const resize = panelResizeRef.current;
-      if (!resize) return;
+      const shell = appShellRef.current;
+      if (!resize || !shell || pendingX === null) return;
+      const geometry = panelGeometryRef.current;
       if (resize.edge === "left") {
-        const maxWidth = Math.max(220, window.innerWidth - 58 - (rightPanelOpen ? appliedToolPanelWidth : 0) - 420);
-        setSidebarWidth(Math.min(Math.max(resize.startWidth + event.clientX - resize.startX, 220), Math.min(520, maxWidth)));
+        const max = Math.max(220, window.innerWidth - 58 - (geometry.rightPanelOpen ? geometry.appliedToolPanelWidth : 0) - 420);
+        width = Math.min(Math.max(resize.startWidth + pendingX - resize.startX, 220), Math.min(520, max));
+        shell.style.setProperty("--sidebar-width", `${width}px`);
       } else {
-        const nextWidth = resize.startWidth + resize.startX - event.clientX;
-        const maxWidth = Math.max(360, window.innerWidth - 58 - (sidebarOpen ? appliedSidebarWidth : 0) - 420);
-        setToolPanelWidth(Math.min(Math.max(nextWidth, 320), maxWidth));
+        const max = Math.max(360, window.innerWidth - 58 - (geometry.sidebarOpen ? geometry.appliedSidebarWidth : 0) - 420);
+        width = Math.min(Math.max(resize.startWidth + resize.startX - pendingX, 320), max);
+        shell.style.setProperty("--tool-panel-width", `${width}px`);
       }
     };
-    const onPointerUp = () => {
+    const onPointerMove = (event: PointerEvent) => {
+      if (!panelResizeRef.current) return;
+      pendingX = event.clientX;
+      if (!frame) frame = requestAnimationFrame(apply);
+    };
+    const finish = () => {
+      if (!panelResizeRef.current) return;
+      cancelAnimationFrame(frame);
+      apply();
+      if (width !== null) {
+        if (panelResizeRef.current.edge === "left") setSidebarWidth(width);
+        else setToolPanelWidth(width);
+      }
       panelResizeRef.current = null;
+      pendingX = width = null;
       document.body.classList.remove("resizing-panels");
     };
     window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish);
     return () => {
+      cancelAnimationFrame(frame);
+      document.body.classList.remove("resizing-panels");
       window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
     };
-  }, [rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -7812,7 +8091,7 @@ export function App() {
           ? { ...session, ...startGoal(session.goal) }
           : session));
         // 种子保存基线：首次保存不需要把整档重发一遍
-        savedSessionsRef.current = new Map(loaded.map((session) => [session.id, session]));
+        sessionSaveQueue.seed(loaded, state.activeSessionId || loaded[0]?.id || "");
         // 恢复上次选中的会话；已不存在（被删/来自旧版本存档）则回退到列表第一项
         const restoredActiveId = loaded.some((session) => session.id === state.activeSessionId) ? state.activeSessionId : loaded[0]?.id;
         setActiveId(restoredActiveId || initialDraft!.id);
@@ -7848,21 +8127,21 @@ export function App() {
     return () => unsubscribe?.();
   }, []);
 
-  // 会话保存增量：与上次实际发出的快照比引用，只带变化的会话/删除的 id/
-  // 权威顺序与渠道 meta。主进程按会话拆分落盘（sessions/<id>.json）。
-  const buildSessionSavePayload = (current: SessionRecord[]): SessionSavePayload => {
-    const saved = savedSessionsRef.current;
-    const changed = current.filter((session) => saved.get(session.id) !== session);
-    const currentIds = new Set(current.map((session) => session.id));
-    const removed = [...saved.keys()].filter((id) => !currentIds.has(id));
-    savedSessionsRef.current = new Map(current.map((session) => [session.id, session]));
-    return {
-      changed: changed.map(session => session.goalState?.status === "active" ? { ...session, goalState: { ...session.goalState, elapsedMs: goalElapsed(session), activeSince: Date.now() } } : session),
-      removed,
-      order: current.map((session) => session.id),
-      activeId: currentIds.has(activeIdRef.current) ? activeIdRef.current : "",
-      meta: current.map((session) => ({ id: session.id, channel: session.channel, workspacePath: session.workspacePath })),
-    };
+  // 保存队列负责串行、合并和成功确认；失败后用最新状态重试，不漏报未保存的会话。
+  const saveSessionSnapshot = async () => {
+    if (!window.dyworker || bootstrapFailedRef.current) return;
+    const ok = await sessionSaveQueue.request(sessionsRef.current, activeIdRef.current);
+    if (!sessionSaveMountedRef.current) return;
+    if (ok) {
+      if (sessionSaveRetryRef.current !== null) window.clearTimeout(sessionSaveRetryRef.current);
+      sessionSaveRetryRef.current = null;
+    } else if (sessionSaveRetryRef.current === null) {
+      setError(`会话保存失败，将自动重试：${sessionSaveQueue.error()}`);
+      sessionSaveRetryRef.current = window.setTimeout(() => {
+        sessionSaveRetryRef.current = null;
+        void saveSessionSnapshot();
+      }, 2000);
+    }
   };
 
   useEffect(() => {
@@ -7871,9 +8150,7 @@ export function App() {
     // 说明）；任务结束 runningSessionIds 变化后本 effect 重跑，最终内容
     // 会按 180ms 防抖立即落盘，流式期间的内容不会丢
     if (runningSessionIds.size) return;
-    const timeout = window.setTimeout(() => void window.dyworker?.saveSessions(buildSessionSavePayload(sessions)).then((result) => {
-      if (result?.ok && clientHost().dshSettings.sessionId()) void clientHost().dshSettings.refresh();
-    }), 180);
+    const timeout = window.setTimeout(() => void saveSessionSnapshot(), 180);
     return () => window.clearTimeout(timeout);
   }, [ready, sessions, activeId, runningSessionIds]);
 
@@ -7881,7 +8158,7 @@ export function App() {
   useEffect(() => {
     if (!ready || !window.dyworker || bootstrapFailedRef.current || !runningSessionIds.size) return;
     const interval = window.setInterval(() => {
-      void window.dyworker?.saveSessions(buildSessionSavePayload(sessionsRef.current));
+      void saveSessionSnapshot();
     }, SESSION_STREAMING_SAVE_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [ready, runningSessionIds]);
@@ -8526,42 +8803,19 @@ export function App() {
     syncAtBottom();
   }, [sessions, runningSessionIds, activeId]);
 
-  const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
   // 输入区展示的工作目录以当前会话为准，全局值仅作兜底（老会话可能保存了自己的目录）
   const composerWorkspacePath = String(activeSession?.workspacePath || workspacePath || "").trim();
   // 后台任务拓扑按当前会话隔离：只取本会话消息 runId 对应的轨迹，避免切换会话后串看别的会话。
   // 会话消息没有 runId（空会话、纯问答等非任务消息）时本会话没有自己的轨迹，返回空，
   // 不能回退到全量轨迹池——那是所有会话混合的数据，会造成轨迹串会话
   const activeSessionTraceEvents = useMemo(() => {
+    if (!debugOpen) return [];
     const runIds = new Set((activeSession?.messages || []).map((message) => message.runId).filter((runId): runId is string => Boolean(runId)));
     if (!runIds.size) return [];
     return traceEvents.filter((entry) => Boolean(entry.runId) && runIds.has(entry.runId!));
-  }, [traceEvents, activeSession?.messages]);
+  }, [debugOpen, traceEvents, activeSession?.messages]);
 
-  // 重启后内存轨迹为空：活动会话切换时自动从落盘 jsonl 补载本会话历史轨迹（分页读全），
-  // 让轨迹控制台与「需求→实现」链路视图都能回看历史；已补载过的会话不重复读
-  const sessionHistoryLoadedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const sessionId = activeSession?.id;
-    if (!sessionId || !window.dyworker?.readTraces) return;
-    if (sessionHistoryLoadedRef.current.has(sessionId)) return;
-    sessionHistoryLoadedRef.current.add(sessionId);
-    let cancelled = false;
-    const page = (offset: number) => {
-      void window.dyworker!.readTraces({ sessionId, offset, limit: 2000 }).then((result) => {
-        if (cancelled) return;
-        if (result?.ok && Array.isArray(result.records) && result.records.length) {
-          appendSessionTraces(result.records);
-          const next = offset + result.records.length;
-          if (next < (result.total || 0)) { page(next); return; }
-        }
-      });
-    };
-    page(0);
-    return () => { cancelled = true; };
-    // appendSessionTraces 读取最新的 ref 状态，无需加入依赖；仅在活动会话切换时触发
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.id]);
+  // 历史轨迹由 TraceConsole 在打开时读取，不在每次切换普通会话时预装全部记录。
 
   // 点开会话即视为已读，清掉未读小绿点
   useEffect(() => {
@@ -8721,18 +8975,8 @@ export function App() {
     }
   };
 
-  const conversationTurns = useMemo(() => {
-    if (!activeSession) return [];
-    return activeSession.messages.reduce<Array<{ messageIndex: number; preview: ReturnType<typeof conversationTurnPreview> }>>((turns, message, messageIndex) => {
-      if (message.role === "user") {
-        turns.push({
-          messageIndex,
-          preview: conversationTurnPreview(activeSession.messages, messageIndex),
-        });
-      }
-      return turns;
-    }, []);
-  }, [activeSession]);
+  const conversationIndex = useMemo(() => indexConversation(activeSession?.messages || []), [activeSession?.messages]);
+  const conversationTurns = conversationIndex.turns;
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
   // 当前会话是否有待唤醒的挂起任务：有则禁止发送——挂起期间再起一轮会让老任务的到点续跑
   // 追到新任务的回复后面（同一会话两个线程），这正是"回复框串味"的来源
@@ -9392,7 +9636,7 @@ export function App() {
     if (!viewport) return;
     const viewportRect = viewport.getBoundingClientRect();
     const column = viewport.querySelector(".conversation-column");
-    setAnnotationMarkers(annotationQuotesRef.current.flatMap(({ id, n, quote }) => {
+    const nextMarkers = annotationQuotesRef.current.flatMap(({ id, n, quote }) => {
       // React 可能替换文本节点，旧 Range 会退化到父元素；每次从当前正文重新找引用。
       const range = findQuoteRange(column, quote);
       if (!range) return [];
@@ -9410,7 +9654,11 @@ export function App() {
         top: Math.max(2, rect.top - viewportRect.top - viewport.clientTop + viewport.scrollTop - 24),
         left: rect.left - viewportRect.left - viewport.clientLeft + viewport.scrollLeft,
       }];
-    }));
+    });
+    setAnnotationMarkers(previous => previous.length === nextMarkers.length && previous.every((entry, index) => {
+      const next = nextMarkers[index];
+      return entry.id === next.id && entry.n === next.n && entry.top === next.top && entry.left === next.left;
+    }) ? previous : nextMarkers);
   };
   // 注释增删、切换会话或新消息落盘时更新引用列表
   const activeMessageCount = activeSession?.messages.length ?? 0;
@@ -9435,7 +9683,7 @@ export function App() {
     const frame = requestAnimationFrame(updateAnnotationMarkers);
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions]);
+  }, [activeSession?.messages]);
   useEffect(() => {
     let frame = 0;
     const schedule = () => {
@@ -11253,13 +11501,7 @@ export function App() {
               activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail, agentEvent.durationMs, agentEvent.commentary),
             }));
           } else if (agentEvent.type === "trace") {
-            traceEventsRef.current.push(agentEvent.trace);
-            if (traceEventsRef.current.length > 5000) traceEventsRef.current = traceEventsRef.current.slice(-5000);
-            setTraceEvents(traceEventsRef.current);
-            // 按 run 归位（不可变更新），供「需求→实现」链路视图按消息定位
-            const runPrevious = runTraceEventsRef.current.get(taskRunId) || [];
-            const runNext = [...runPrevious, agentEvent.trace];
-            runTraceEventsRef.current.set(taskRunId, runNext.length > 5000 ? runNext.slice(-5000) : runNext);
+            appendSessionTraces([agentEvent.trace]);
           } else if (agentEvent.type === "assistant-text" && !activeDshTurnId) {
             patchAssistant((current) => ({ ...current, content: agentEvent.text }));
           } else if (agentEvent.type === "assistant-reasoning" && !activeDshTurnId) {
@@ -11983,7 +12225,6 @@ export function App() {
     setSpeakingLoadingKey(null);
   };
 
-  const speakMessageKey = (message: ChatMessage) => message.id || `${message.role}:${message.createdAt}`;
 
   const toggleSpeakMessage = async (message: ChatMessage) => {
     const key = speakMessageKey(message);
@@ -12263,6 +12504,34 @@ export function App() {
     };
     document.body.classList.add("resizing-panels");
   };
+
+  const messageRowActions = useStableHandlers({
+    openReferencedFile, openImagePreview, handleMessageContextMenu, togglePlayVoice, toggleActivityCollapse,
+    copyMessage, startMessageEdit, toggleSpeakMessage,
+    openMessageSession(message: ChatMessage, title: string) {
+      const reference = message.sessionRefs?.find(entry => entry.title === title);
+      const target = reference && sessionsRef.current.some(session => session.id === reference.id)
+        ? reference.id : sessionsRef.current.find(session => session.title === title && session.id !== activeIdRef.current)?.id;
+      if (target) { setActiveId(target); setNotice("已切换到引用的会话"); }
+      else setNotice(`会话「${title}」已不存在，可能已被删除`);
+    },
+    forkSessionAt(sessionId: string, index: number) {
+      const session = sessionsRef.current.find(entry => entry.id === sessionId);
+      if (session) forkSession(session, index);
+    },
+    openPluginReference(sessionId: string, reference: any) {
+      try {
+        if (!clientHost().openInputReference(sessionId, reference)) setNotice('此引用暂时不能打开，请确认对应插件已启用');
+      } catch (error) { setError(String((error as any)?.message || error)); }
+    },
+    openReview(changes: NonNullable<ChatMessage["changes"]>) {
+      setReviewFocusChanges(changes); setRightPanelOpen(true); openToolPanelTab("review");
+    },
+    bindMessageRow(node: HTMLDivElement | null, index: number, turnIndex: number, user: boolean) {
+      messageRowRefs.current[index] = node;
+      if (user) conversationTurnRefs.current[turnIndex] = node;
+    },
+  });
 
   const panelStyle = {
     "--sidebar-width": `${appliedSidebarWidth}px`,
@@ -12716,6 +12985,7 @@ export function App() {
     {dshChildHistory && <DshChildHistory target={dshChildHistory} onClose={closeDshChildHistory} />}
     <div className="appearance-backdrop" aria-hidden="true" />
     <div
+      ref={appShellRef}
       className={`app-shell reference-layout platform-${platform || "linux"} ${settingsOpen ? "settings-page-open" : ""} ${pluginConversationViews.length ? "has-conversation-views" : ""} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
       style={panelStyle}
     >
@@ -13131,252 +13401,18 @@ export function App() {
               </div>
             ) : (
               activeSession.messages.map((message, index) => {
-                message = messageWithDeliveryContent(message);
-                const turnIndex = message.role === "user"
-                  ? conversationTurns.findIndex((turn) => turn.messageIndex === index)
-                  : -1;
-                const isEditing = editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index;
-                // 排队中的消息（含其空助手占位）不渲染在对话流里，统一收在输入框上方的队列卡片（对照 Codex）
-                const isQueuedMessage = Boolean(message.runId && queuedRunIds.has(message.runId));
-                if (isQueuedMessage) return null;
-                // 仍在输出中的助手消息（没有终态 taskStatus）不显示时间/复制行；
-                // 不能按最后一条下标判断——后面可能跟着排队占位消息
-                const hideAssistantActions = message.role === "assistant"
-                  && activeTaskRunning
-                  && !message.taskStatus
-                  && index === streamingAssistantIndex;
-                // 未定稿（仍在流式输出）的助手消息：交给 InteractiveMessage 走增量 Markdown 路径
-                // （按块解析、已定稿的块 memo 冻结，见该组件 streaming 说明）。
-                // streamingAssistantIndex 在无运行任务时为 -1，下标不可能等于 -1，故天然安全
-                const isStreamingMessage = index === streamingAssistantIndex;
-                // 旧路径（非 DSH 回合）执行中：模型的话在过程流里实时出现，正文区只在收尾后
-                // 显示最终答复，避免同一段文字在过程流和正文区各出现一次。
-                // DSH 回合的正文本身就是逐条回复累积的会话输出，照旧显示。
-                const liveOutputInProcess = isStreamingMessage && !message.dshTurnId;
-                // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
-                const inlineTokenNames = message.role === "user"
-                  ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
-                  : new Set<string>();
-                const messageSkillNames = message.role === "user"
-                  ? new Set(message.skillsUsed ?? [])
-                  : new Set<string>();
-                // 用户气泡：@「标题」会话 token 高亮，点击切到被引会话
-                const messageSessionTitles = message.role === "user"
-                  ? new Set((message.sessionRefs ?? []).map((ref) => ref.title))
-                  : new Set<string>();
-                // 旧消息兼容：正文里没有 /技能名 token 时才退回 chip 展示（新消息已内联融合）
-                const legacySkillChips = message.role === "user"
-                  ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
-                  : [];
-                // 纯图片消息：占位文字已去掉，气泡里没有文字/chip/粘贴块/注释/语音时整个气泡不渲染，只留图片
-                const bubbleHasContent = message.role === "user" && (
-                  isVoiceMessage(message)
-                  || Boolean(messageVisibleText(message).trim())
-                  || legacySkillChips.length > 0
-                  || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
-                  || Boolean(message.pasteBlocks?.length)
-                  || Boolean(message.annotations?.length)
-                  || Boolean(message.dshAttachmentNames?.length)
-                );
-                // 气泡里只有注释 chip：不套气泡边框，chip 直接裸放（套框显得笨重）
-                const bubbleBare = message.role === "user"
-                  && Boolean(message.annotations?.length)
-                  && !isVoiceMessage(message)
-                  && !messageVisibleText(message).trim()
-                  && !legacySkillChips.length
-                  && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
-                  && !message.pasteBlocks?.length;
-                const openMessageFile = (name: string) => {
-                  const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
-                  void openReferencedFile(name, recorded?.path);
-                };
-                const assistantImages = message.role === 'assistant' ? assistantImageAttachments(message) : [];
-                const userImages: Attachment[] = message.role === 'user' ? [
-                  ...(message.attachments?.filter(attachment=>attachment.isImage) || []),
-                  ...(message.dshAttachments || []).flatMap((part,index)=>part.type === 'image' ? [{
-                    name:part.name || message.dshAttachmentNames?.[index] || '图片附件',path:'',mimeType:part.mediaType,
-                    size:Math.floor(part.data.length * 3 / 4),isImage:true,previewUrl:`data:${part.mediaType};base64,${part.data}`,
-                  }] : []),
-                ] : [];
-                // 点击气泡里的会话引用：切到对应会话（会话可能已被删除，找不到就提示）
-                const openMessageSession = (title: string) => {
-                  const ref = (message.sessionRefs ?? []).find((entry) => entry.title === title);
-                  const target = ref && sessions.some((session) => session.id === ref.id)
-                    ? ref.id
-                    : sessions.find((session) => session.title === title && session.id !== activeSession?.id)?.id;
-                  if (target) {
-                    setActiveId(target);
-                    setNotice("已切换到引用的会话");
-                  } else {
-                    setNotice(`会话「${title}」已不存在，可能已被删除`);
-                  }
-                };
-                return (
-                <div
-                  className={`message-row ${message.role}`}
-                  // key 用稳定的消息 id：此前拼 createdAt-index，任务收尾改写 createdAt 会让
-                  // 流式期间建好的整棵子树（高亮代码、mermaid 图）整体卸载重建
-                  // 旧版唤醒收尾曾给用户和助手写入同一个 id；按角色区分以兼容这些历史记录。
+                // 排队消息不渲染在对话流里，继续展示在输入框上方的队列中。
+                if (message.runId && queuedRunIds.has(message.runId)) return null;
+                return <ConversationMessageRow
                   key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
-                  ref={(node) => {
-                    // 会话内搜索需要所有消息行的引用；用户消息行同时供回合导航使用
-                    messageRowRefs.current[index] = node;
-                    if (message.role === "user") conversationTurnRefs.current[turnIndex] = node;
-                  }}
-                >
-                  {message.role === "system" ? null : message.role === "user" ? (
-                    <>
-                      <div className="user-message-stack">
-                        {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
-                        {Boolean(userImages.length) && (
-                          <div className="message-attachments">
-                            {userImages.map((attachment,index) => (
-                              attachment.path || attachment.previewUrl ? (
-                                <ImageAttachmentView
-                                  key={`${message.createdAt}-${index}-${attachment.path || attachment.previewUrl}`}
-                                  attachment={attachment}
-                                  onPreview={(payload) => openImagePreview(payload, userImages)}
-                                />
-                              ) : (
-                                <span key={`${message.createdAt}-${attachment.path}`}>
-                                  <FileImage size={13} />
-                                  图片
-                                </span>
-                              )
-                            ))}
-                          </div>
-                        )}
-                        {bubbleHasContent && (
-                        <div
-                          className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
-                          onContextMenu={(event) => handleMessageContextMenu(event, message)}
-                        >
-                        {!!message.dshAttachmentNames?.length && <span className="message-inline-refs" aria-label="已发送的插件附件">
-                          {message.dshAttachmentNames.map((name,at)=><span className="ref-chip" key={at}><FileText size={13} /><span>{name}</span></span>)}
-                        </span>}
-                        {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
-                          <span className="message-inline-refs">
-                            {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
-                            {legacySkillChips.map((name) => (
-                              <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
-                                <Package size={13} />
-                                <span>{name}</span>
-                              </span>
-                            ))}
-                            {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
-                            {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)).map((attachment) => (
-                              <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
-                                {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
-                                <span>{attachment.name}</span>
-                              </span>
-                            ))}
-                          </span>
-                        )}
-                        {isVoiceMessage(message) ? (
-                          <VoiceMessageBubble
-                            message={message}
-                            playingPath={playingVoicePath}
-                            loadingPath={voiceLoadingPath}
-                            onTogglePlay={togglePlayVoice}
-                            tokenNames={inlineTokenNames}
-                            skillNames={messageSkillNames}
-                            onFileToken={openMessageFile}
-                          />
-                        ) : (
-                          <ClampedUserText
-                            text={messageVisibleText(message)}
-                            tokenNames={inlineTokenNames}
-                            skillNames={messageSkillNames}
-                            onFileToken={openMessageFile}
-                            sessionTitles={messageSessionTitles}
-                            onSessionToken={openMessageSession}
-                            pluginReferences={message.pluginReferences}
-                            onPluginReference={ref => {
-                              try {
-                                if (!clientHost().openInputReference(activeSession.id, ref)) setNotice('此引用暂时不能打开，请确认对应插件已启用');
-                              } catch (error) { setError(String((error as any)?.message || error)); }
-                            }}
-                          />
-                        )}
-                        {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
-                        {Boolean(message.annotations?.length) && <MessageAnnotationChip annotations={message.annotations!} />}
-                        </div>
-                        )}
-                        <div className="message-actions user" aria-label="用户消息操作">
-                          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-                          <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
-                            <Copy size={16} />
-                          </button>
-                          {!activeTaskRunning && (
-                            <button type="button" onClick={() => startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
-                              <Pencil size={16} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="assistant-message" onContextMenu={(event) => handleMessageContextMenu(event, message)}>
-                        <ProcessTimeline
-                        message={message}
-                        messageIndex={index}
-                        isStreaming={activeTaskRunning && !message.taskStatus && index === streamingAssistantIndex}
-                        collapsedActivities={collapsedActivities}
-                        onToggleCollapse={toggleActivityCollapse}
-                      />
-                      {message.content && !liveOutputInProcess && (
-                        <InteractiveMessage
-                          content={stripControlMarkersCached(message.content)}
-                          streaming={isStreamingMessage}
-                        />
-                      )}
-                      {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
-                        {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
-                          attachment={attachment} onPreview={payload => openImagePreview(payload, assistantImages)} />)}
-                      </div>}
-                      {/* 改动文件卡片固定放在最后（对标 Codex：过程折叠条 → 结论 → 修改的文件） */}
-                      {Boolean(message.changes?.length) && (
-                        <ChangesSummary
-                          changes={message.changes!}
-                          workspacePath={activeSession.workspacePath || workspacePath}
-                          onOpenReview={(changes) => {
-                            // 在右侧审阅窗口打开这条消息的文件改动（对照 Codex「查看更改」）
-                            setReviewFocusChanges(changes);
-                            setRightPanelOpen(true);
-                            openToolPanelTab("review");
-                          }}
-                        />
-                      )}
-                      {!hideAssistantActions && (
-                        <div className="message-actions assistant" aria-label="助手消息操作">
-                          {Boolean(messageVisibleText(message).trim()) && (
-                            <button
-                              type="button"
-                              onClick={() => void toggleSpeakMessage(message)}
-                              aria-label={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
-                              title={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
-                            >
-                              {speakingLoadingKey === speakMessageKey(message)
-                                ? <LoaderCircle className="spin" size={16} />
-                                : speakingMessageKey === speakMessageKey(message)
-                                  ? <Square size={16} />
-                                  : <Volume2 size={16} />}
-                            </button>
-                          )}
-                          <button type="button" onClick={() => void copyMessage(message)} aria-label="复制消息" title="复制消息">
-                            <Copy size={16} />
-                          </button>
-                          <button type="button" onClick={() => forkSession(activeSession, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
-                            <ForkBranchIcon size={16} />
-                          </button>
-                          <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-                          <span className="ai-disclaimer">由AI生成，请注意甄别</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                );
+                  message={message} index={index} turnIndex={conversationIndex.byMessageIndex.get(index) ?? -1}
+                  sessionId={activeSession.id} workspacePath={activeSession.workspacePath || workspacePath}
+                  isEditing={editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index}
+                  activeTaskRunning={message.role === "user" ? activeTaskRunning : index === streamingAssistantIndex} isStreamingMessage={index === streamingAssistantIndex}
+                  playingVoicePath={playingVoicePath} voiceLoadingPath={voiceLoadingPath}
+                  speakingMessageKey={speakingMessageKey} speakingLoadingKey={speakingLoadingKey}
+                  collapsedActivities={collapsedActivities} actions={messageRowActions}
+                />;
               })
             )}
 
@@ -13484,10 +13520,10 @@ export function App() {
             logs={debugLogs}
             sessionId={activeSession?.id}
             onClear={() => {
-              traceEventsRef.current = [];
+              traceBuffer.clear();
               setTraceEvents([]);
-              runTraceEventsRef.current.clear();
               pendingDebugLogsRef.current = [];
+              recentDebugLogsRef.current = [];
               if (debugLogFlushTimerRef.current !== null) {
                 window.clearTimeout(debugLogFlushTimerRef.current);
                 debugLogFlushTimerRef.current = null;

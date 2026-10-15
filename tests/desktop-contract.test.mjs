@@ -1903,14 +1903,14 @@ test("会话存档保存链路做写放大治理：流式暂停常规保存 + �
   // 且必须是 await/race 真正等它，而不是 fire-and-forget
   assert.match(main, /app\.on\("before-quit"[\s\S]{0,2000}await Promise\.race\(\[\s*Promise\.resolve\(disposeHost\(ctx\)\)/);
   // 渲染端：按引用身份构建增量载荷（changed/removed/order/meta），不再整档重发
-  assert.match(app, /buildSessionSavePayload/);
-  assert.match(app, /savedSessionsRef\.current = new Map\(loaded\.map\(\(session\) => \[session\.id, session\]\)\)/);
-  assert.match(app, /saveSessions\(buildSessionSavePayload\(sessions\)\)/);
-  // 有任务运行（流式输出让 sessions 以分片频率变化）时暂停 180ms
-  // 常规保存，只保留低频兜底快照；任务结束后常规保存立即恢复
-  assert.match(app, /if \(runningSessionIds\.size\) return;\s*\n\s*const timeout = window\.setTimeout\(\(\) => void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessions\)\)\.then/);
+  assert.match(app, /createSessionSaveQueue/);
+  assert.match(app, /sessionSaveQueue\.seed\(loaded/);
+  assert.match(app, /sessionSaveQueue\.request\(sessionsRef\.current, activeIdRef\.current\)/);
+  // 串行队列的成功确认、失败重试和快照合并由 performance-state.test.mjs 实际验证。
+  assert.match(app, /if \(runningSessionIds\.size\) return;\s*\n\s*const timeout = window\.setTimeout\(\(\) => void saveSessionSnapshot\(\), 180\)/);
   assert.match(app, /SESSION_STREAMING_SAVE_INTERVAL_MS/);
-  assert.match(app, /setInterval\(\(\) => \{\s*void window\.dyworker\?\.saveSessions\(buildSessionSavePayload\(sessionsRef\.current\)\)/);
+  assert.match(app, /setInterval\(\(\) => \{\s*void saveSessionSnapshot\(\)/);
+
 });
 
 test("运行痕迹与渠道诊断日志有封顶清理，不再无限增长", () => {
