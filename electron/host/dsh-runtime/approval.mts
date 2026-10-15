@@ -1,4 +1,4 @@
-import { builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval } from '../../agent.mts';
+import { Workspace, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
 import { buildReviewContext, readReviewObservation, withReviewApprovals } from '../../approval-context.mts';
 
@@ -32,7 +32,7 @@ export function createDshApproval(options: any) {
       let reason = hook?.message || '';
       if (denials < 3 && !isReviewerProtectedPath(tool.workspacePath || options.workspacePath || '', args.path)
         && isReviewerEligible({ name: publicName, args, approvalMode: currentMode(),
-        hookRequiresApproval: hook?.action === 'require_approval' })) {
+        hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true })) {
         const reviewMode = currentMode();
         const sessionKey = tool.sessionId || options.sessionId || '';
         const observation = await readReviewObservation({ name: publicName, args, availableNames: extraNames,
@@ -41,8 +41,13 @@ export function createDshApproval(options: any) {
             || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
           prompt: options.prompt, goal: options.goal, workingContext: options.workingContext }), approvals.get(sessionKey) || []);
+        const entryScripts = await readReviewEntryScripts({ workspace: options.workspace || new Workspace(tool.workspacePath || options.workspacePath || ''),
+          name: publicName, args, signal,
+          preparedFiles: (approvals.get(sessionKey) || []).filter(record => record.tool === 'write_file').map(record => record.args),
+          check: (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...(options.hooks || [])], 'before_tool', reader, readArgs)
+            || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const review = await (options.review || reviewApproval)({ settings: options.settings, fetchImpl: options.fetchImpl,
-          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args), observation }, context,
+          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args) + entryScripts, observation }, context,
           onUsage: options.onUsage });
         signal.throwIfAborted();
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
@@ -54,7 +59,7 @@ export function createDshApproval(options: any) {
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,
-        title: `DSH 插件操作：${name}`, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') }, evaluate);
+        title: `DSH 插件操作：${name}`, approvalReason: reason, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') }, evaluate);
       if (!pending) { audit('denied', '没有可用的审批入口'); return false; }
       // 用户关闭会话或停止时不能留下等待中的审批调用。
       let abort: () => void;

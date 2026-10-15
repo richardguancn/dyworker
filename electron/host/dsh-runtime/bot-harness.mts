@@ -12,7 +12,7 @@ import {
   exportWordDocument, exportExcelWorkbook, calculateWorkdays, currentDatetime,
   webSearch, govSearch, fetchPublicPage, runOcrFile,
   builtinHooks, evaluateHooks, evaluateApproval, externalPathsForTool,
-  isReviewerEligible, isReviewerProtectedPath, reviewApproval, toolSummary, htmlToText, isLikelyBackgroundCommand,
+  isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
@@ -74,7 +74,7 @@ export function createBotApproval(options: any) {
       let reason = hook?.message || '';
       const reviewable = !REVIEWER_EXEMPT.has(name)
         && !isReviewerProtectedPath(workspacePath, args.path)
-        && isReviewerEligible({ name, args, approvalMode: mode(), hookRequiresApproval: hook?.action === 'require_approval',
+        && isReviewerEligible({ name, args, approvalMode: mode(), hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true,
           forExternalPaths: externalPaths.length > 0 });
       if (denials < 3 && reviewable) {
         const reviewMode = mode();
@@ -84,8 +84,12 @@ export function createBotApproval(options: any) {
             || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
           prompt: options.context }), approvals.get(tool.sessionId || '') || []);
+        const entryScripts = await readReviewEntryScripts({ workspace, name, args, signal,
+          preparedFiles: (approvals.get(tool.sessionId || '') || []).filter(record => record.tool === 'write_file').map(record => record.args),
+          check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
+            || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const review = await (options.review || reviewApproval)({ settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args), observation },
+          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) + entryScripts, observation },
           context, onUsage: options.onUsage });
         signal?.throwIfAborted();
         if (mode() !== reviewMode) {
@@ -102,7 +106,7 @@ export function createBotApproval(options: any) {
         ? `工作区外路径（批准后本次调用有效）：\n${externalPaths.join('\n')}` : '', reason,
         `执行内容：\n${text(args)}`].filter(Boolean).join('\n\n');
       const pending = options.requestApproval?.({ id, kind: name, title: `机器人要执行：${toolSummary(name, args)}`,
-        details, sessionId: tool.sessionId, tool: name, signal });
+        details, approvalReason: reason, sessionId: tool.sessionId, tool: name, signal });
       if (!pending) { detail('denied', '没有可用的确认入口'); return false; }
       let abort: any;
       try {

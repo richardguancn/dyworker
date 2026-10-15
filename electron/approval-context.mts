@@ -28,12 +28,38 @@ export function buildReviewContext({ conversation = [], prompt = "", goal = "", 
   return withReviewApprovals(context, approvals);
 }
 
-// 回调提供的用户上下文与审批器保存的真实人工批准必须同时进入审核。
-// 记录不截断、不扩大范围；过长时沿用完整资料的人工确认边界。
+// 人工批准是正向凭证，不是用户的新限制。正文保留在原记录中；送审时只发送完整的
+// 小凭证或带哈希的索引，绝不把截断命令当成已批准的命令，也不从标题推断授权。
+// 省略旧凭证只会收窄可证明的授权，不会丢弃用户原话、答复或禁止事项。
+function approvalReceipt(record: any) {
+  const raw = JSON.stringify(record);
+  if (raw.length <= 1200) return record;
+  const args = record.args || {};
+  return {
+    tool: record.tool,
+    receipt: createHash("sha256").update(raw).digest("hex"),
+    targets: Object.fromEntries(["path", "source", "target"].filter(key => typeof args[key] === "string").map(key => [key, args[key]])),
+    note: "仅证明这份完整操作曾获人工批准；正文未在此展示，不能据此推断脚本内容或扩大授权",
+  };
+}
+
 export function withReviewApprovals(context: string, approvals: any[] = []) {
-  return approvals.length
-    ? `${context}\n\n【用户在本任务中实际批准过的操作；仅表示这些操作已批准，不能扩大成任意授权】\n${JSON.stringify(approvals)}`
-    : context;
+  if (!approvals.length) return context;
+  const receipts: any[] = [];
+  let size = 0;
+  for (const record of [...approvals].reverse()) {
+    const receipt = approvalReceipt(record);
+    const length = JSON.stringify(receipt).length;
+    if (size + length > 6000) continue;
+    receipts.unshift(receipt); size += length;
+  }
+  return `${context}\n\n【用户在本任务中实际批准过的操作；仅表示这些操作已批准，不能扩大成任意授权】\n${JSON.stringify(receipts)}`
+    + (receipts.length < approvals.length ? `\n另有 ${approvals.length - receipts.length} 条较早批准未在此展示，不能假定其授权范围；用户要求和禁止事项仍须完整遵守。` : "");
+}
+
+// 人工卡片可提供预览，模型必须核对当前操作的完整参数。
+export function reviewActionDetails(name: string, args: any = {}) {
+  return name === "run_command" ? String(args.command || "") : JSON.stringify(args);
 }
 
 export function isStatefulUiOperation(name: string) {

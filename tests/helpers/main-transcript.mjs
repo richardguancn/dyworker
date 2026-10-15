@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import crypto from 'node:crypto';
 import {reconcileDshMessages,patchDshAssistant} from '../../electron/host/dsh-runtime/presentation.mts';
+import {formatChannelApproval} from '../../electron/channels/shared.mts';
 // Exercise the actual shared main-process collector without initializing Electron or external channels.
 const main=await fs.readFile(new URL('../../electron/main.mts',import.meta.url),'utf8');
 const source=main.slice(main.indexOf('function createTranscriptCollector('),main.indexOf('async function runScheduledTask('));
@@ -15,6 +16,7 @@ export function mainScheduledEntry(deps) {
 }
 
 export function mainChannelEntry(deps) {
+  deps={formatChannelApproval,...deps};
   const start=main.indexOf('async function runChannelTask(');
   const end=main.indexOf('\n// channels:get-status',start);
   return new Function(...Object.keys(deps),stripTypeScriptTypes('let runningChannelTaskCount=0;\n'+main.slice(start,end))+'\nreturn runChannelTask;')(...Object.values(deps));

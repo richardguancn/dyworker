@@ -76,11 +76,11 @@ test("真实代理保留较早禁止要求，后续多次补充后仍阻止生�
   await assert.rejects(fs.access(path.join(root, "blocked.txt")), { code: "ENOENT" });
 });
 
-test("资料或待审操作过长时直接转人工，不能截掉禁止要求或命令尾部后放行", async () => {
+test("超过审核容量时转人工，不能截掉禁止要求或命令尾部后放行", async () => {
   for (const [context, details] of [
     [buildReviewContext({ conversation: [{ role: "user", content: "准备发布。" },
-      { role: "user", content: "资料。".repeat(5000) + "禁止推送。" }] }), "git push origin main"],
-    ["只允许检查文字。", "echo '" + "资料。".repeat(2000) + "'; report-cli upload --target another-account"],
+      { role: "user", content: "资料。".repeat(30000) + "禁止推送。" }] }), "git push origin main"],
+    ["只允许检查文字。", "echo '" + "资料。".repeat(30000) + "'; report-cli upload --target another-account"],
   ]) {
     for (const reviewerBackend of ["main", "local"]) {
       const result = await reviewApproval({ settings: { ...settings, reviewerBackend }, context,

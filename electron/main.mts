@@ -1,5 +1,6 @@
 import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
+import { formatChannelApproval } from "./channels/shared.mts";
 import { queuedGoalPayload, settledStoredGoal } from "./goal.mts";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn } from "node:child_process";
@@ -3820,11 +3821,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           impact: action.impact,
         }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, channelAbort.signal]) : channelAbort.signal});
         registerPending({ itemId: pending.itemId, kind: "approval" });
-        // IM 是纯文本：影响要点以纯文本列表附带，与桌面端 Markdown 渲染同一份内容
-        const impactText = action.impact ? `\n\n操作影响：\n${action.impact}` : "";
-        await reply(
-          `⚠️ 需要审批\n${action.title || action.kind}\n${String(action.details || "").slice(0, 400)}${impactText}\n\n回复 1 允许 / 0 拒绝 / 2 停止整个任务。10 分钟未回复将自动取消。`.trim(),
-        ).catch(() => { });
+        await reply(formatChannelApproval(action)).catch(() => { });
         const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消");
         clearPending();
         if (resolution?.timedOut) {
