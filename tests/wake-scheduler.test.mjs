@@ -174,7 +174,8 @@ test("App.tsx 契约：会话内直显待审批卡片、列表项橙点徽标、
   // 5. 续跑进行中：状态行与气泡说明都要改口，不能一边说"将于 X 自动唤醒"一边在跑
   // 文案改写本身抽在 src/wakeNote.ts，由 tests/wake-note.test.mjs 做行为测试；
   // 这里只锁接线：状态、状态行、气泡改写三处都不能少
-  assert.match(appCode, /const \[wakingSessions, setWakingSessions\]/);
+  // 唤醒会话状态已迁入 sessionStore（zustand），默认空表不变
+  assert.match(appCode, /wakingSessions: \{\},/);
   assert.match(appCode, /const activeWaking = activeSession\?\.id \? wakingSessions\[activeSession\.id\] : undefined/);
   // RunningStatusLabel 支持 waking：自动唤醒说"已到点自动唤醒（时间）"，手动续跑另说
   assert.match(appCode, /wakingPrefix = waking/);

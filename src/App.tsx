@@ -48,6 +48,9 @@ import { useSettingsStore } from "./state/settingsStore";
 import { useBrowserStore } from "./state/browserStore";
 import { useComposerStore } from "./state/composerStore";
 import type { ComposerPasteBlock } from "./state/composerStore";
+import { useSessionStore } from "./state/sessionStore";
+import type { WakingSessionEntry } from "./state/sessionStore";
+import { previewSessions, previewWorkspace } from "./state/previewData";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -191,88 +194,11 @@ import { ProcessTimeline, RunningStatusLabel } from "./features/message/ProcessT
 // 兼容既有引用（tests/fixtures/file-browser.tsx 等）从 App 引入文件面板
 export { FilesSplitPanel };
 
-const now = new Date().toISOString();
-// 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
-type WakingSessionEntry = { wakeAt: string; manual?: boolean; marker: string; done: string };
 // 任务运行中的会话快照兜底保存间隔：流式输出让 sessions 状态以分片频率
 // 变化，常规 180ms 防抖保存会把整份存档（大档几十 MB）以秒级频率整档
 // 写盘 + IPC 克隆，曾在 Linux 上打出 194MB/s 磁盘写入并把进程拖死；
 // 任务期间只按此间隔低频兜底，任务结束后常规保存立即恢复。
 const SESSION_STREAMING_SAVE_INTERVAL_MS = 30000;
-
-const previewSessions: SessionRecord[] = [
-  {
-    id: "codex-layout",
-    title: "优化 UI 布局为 Codex 风格",
-    workspacePath: "/workspace/dyworker",
-    createdAt: now,
-    updatedAt: now,
-    messages: [
-      {
-        role: "user",
-        createdAt: now,
-        content: "主区域对话内容块的样式也要跟 Codex 对齐。",
-      },
-      {
-        role: "assistant",
-        createdAt: now,
-        plan: [
-          { title: "对比 Codex 参考截图与当前布局", status: "completed" },
-          { title: "调整用户消息与助手回复样式", status: "completed" },
-          { title: "统一 Markdown 内容层级", status: "completed" },
-        ],
-        changes: [
-          {
-            path: "src/styles.css",
-            added: 3,
-            removed: 2,
-            diff: "--- a/src/styles.css\n+++ b/src/styles.css\n@@ -892,7 +892,7 @@\n .user-bubble {\n-  max-width: min(680px, 76%);\n-  padding: 11px 16px;\n+  max-width: min(680px, 78%);\n+  padding: 10px 16px;\n+  border-radius: 14px;\n   background: #efeee9;",
-          },
-          { path: "src/App.tsx", added: 58, removed: 23 },
-        ],
-        durationMs: 185_000,
-        activities: [
-          { id: "preview-act-1", kind: "read_file", title: "读取 src/App.tsx", detail: "界面主组件", status: "success" },
-          { id: "preview-act-2", kind: "edit_file", title: "编辑 src/styles.css", detail: "已编辑 src/styles.css（+96 -41）", status: "success" },
-        ],
-        content:
-          "**已完成主对话区优化：**\n\n- 用户消息改为 Codex 风格的浅灰内容块。\n- 助手回复采用开放式排版，不再堆叠卡片和分割线。\n- 统一了标题、正文、列表、引用、表格和代码内容的层级与间距。\n- 长内容更容易连续阅读，重要信息也更容易扫描。\n\n新界面已经切换到 Electron，后续可以继续完善任务执行和文件处理能力。",
-      },
-    ],
-  },
-  {
-    id: "model-settings",
-    title: "修复模型切换参数错误",
-    workspacePath: "/workspace/dyworker",
-    createdAt: now,
-    updatedAt: new Date(Date.now() - 60_000).toISOString(),
-    messages: [],
-  },
-  {
-    id: "project-readme",
-    title: "完善项目使用说明",
-    workspacePath: "/workspace/dyworker",
-    createdAt: now,
-    updatedAt: new Date(Date.now() - 120_000).toISOString(),
-    messages: [],
-  },
-];
-
-const previewWorkspace: WorkspaceEntry[] = [
-  { name: "build", path: "/dyworker/build", kind: "directory", children: [] },
-  {
-    name: "electron",
-    path: "/dyworker/electron",
-    kind: "directory",
-    children: [
-      { name: "channels", path: "/dyworker/electron/channels", kind: "directory", children: [] },
-      { name: "main.mjs", path: "/dyworker/electron/main.mjs", kind: "file" },
-      { name: "agent.mjs", path: "/dyworker/electron/agent.mjs", kind: "file" },
-    ],
-  },
-  { name: "src", path: "/dyworker/src", kind: "directory", children: [] },
-  { name: "tests", path: "/dyworker/tests", kind: "directory", children: [] },
-];
 
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
@@ -636,32 +562,30 @@ export function App() {
     activeSkills, setActiveSkills, speakingMessageKey, setSpeakingMessageKey, speakingLoadingKey, setSpeakingLoadingKey,
     playingVoicePath, setPlayingVoicePath, voiceLoadingPath, setVoiceLoadingPath,
   } = useComposerStore();
-  const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
-  // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
-  const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
-  const [activeId, setActiveId] = useState(previewSessions[0].id);
+  // 会话 / 工作区 / Git / 运行态 state 已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    sessions, setSessions, newTaskDraft, setNewTaskDraft, activeId, setActiveId,
+    workspacePath, setWorkspacePath, workspaceContext, setWorkspaceContext,
+    gitInfo, setGitInfo, branchMenuOpen, setBranchMenuOpen, branchQuery, setBranchQuery,
+    creatingBranch, setCreatingBranch, newBranchName, setNewBranchName,
+    commitPanelOpen, setCommitPanelOpen, commitMessage, setCommitMessage,
+    includeUnstaged, setIncludeUnstaged, diffStats, setDiffStats, gitBusy, setGitBusy,
+    workspaceEntries, setWorkspaceEntries, pinnedWorkspacePaths, setPinnedWorkspacePaths,
+    query, setQuery, composerSessionId, setComposerSessionId,
+    runningSessionIds, setRunningSessionIds, sleepingSessions, setSleepingSessions,
+    wakingSessions, setWakingSessions, runningStartedAt, setRunningStartedAt,
+    scheduledRunSessions, setScheduledRunSessions, pendingAutoOpenSessionId, setPendingAutoOpenSessionId,
+    sessionErrors, setSessionErrors, sessionNotices, setSessionNotices,
+    pendingApprovals, setPendingApprovals, pendingQuestions, setPendingQuestions,
+    skillSummarySessionId, setSkillSummarySessionId, loopStates, setLoopStates,
+    dshChildHistory, setDshChildHistory,
+  } = useSessionStore();
   const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
-  const [workspacePath, setWorkspacePath] = useState(previewSessions[0].workspacePath);
-  const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext | null>(null);
-  // 工作区 Git 状态：分支下拉与提交推送面板
-  const [gitInfo, setGitInfo] = useState<GitBranchesInfo | null>(null);
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [branchQuery, setBranchQuery] = useState("");
-  const [creatingBranch, setCreatingBranch] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
-  const [commitPanelOpen, setCommitPanelOpen] = useState(false);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [includeUnstaged, setIncludeUnstaged] = useState(true);
-  const [diffStats, setDiffStats] = useState<GitDiffStats | null>(null);
-  const [gitBusy, setGitBusy] = useState<"" | "switch" | "commit" | "commit-push" | "push" | "generate">("");
-  const [workspaceEntries, setWorkspaceEntries] = useState<WorkspaceEntry[]>(previewWorkspace);
-  const [pinnedWorkspacePaths, setPinnedWorkspacePaths] = useState<string[]>([]);
 
   // 引导是否失败：getInitialState 拿不到数据时（主进程 handler 抛错、IPC 异常等），
   // 本地状态是空的/默认的，此时任何写回都会把磁盘上的真实数据覆盖掉。
   // 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
   const bootstrapFailedRef = useRef(false);
-  const [query, setQuery] = useState("");
   // hover 弹层延迟关闭：mouseleave 后留短暂宽限，斜向移入弹层经过空隙时不闪关
   const annotationListCloseTimerRef = useRef(0);
   const openAnnotationList = () => {
@@ -674,13 +598,6 @@ export function App() {
   };
   // 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
   const voiceTargetRef = useRef<"composer" | ((text: string) => void)>("composer");
-  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
-  // 主动挂起（有待唤醒）的会话：主进程 wakes.json 是权威状态，这里只做镜像。
-  // 不能用气泡上的 taskStatus=sleeping 代替——取消唤醒后它不会自己变，重启也读不出来。
-  const [sleepingSessions, setSleepingSessions] = useState<Record<string, PendingWakeRecord>>({});
-  // 正在续跑（已唤醒）的会话：气泡那句将来时的挂起说明要改写成"正在继续处理"，
-  // 运行状态行也要说清是自动唤醒还是用户点的「立即继续」
-  const [wakingSessions, setWakingSessions] = useState<Record<string, WakingSessionEntry>>({});
   // 事件回调里要读"当前正在续跑的会话"做气泡收口，同时保持 setState updater 纯净
   const wakingSessionsRef = useRef<Record<string, WakingSessionEntry>>({});
   const refreshPendingWakes = async () => {
@@ -714,7 +631,6 @@ export function App() {
       return changedAny ? settled : current;
     });
   };
-  const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
   const composerModelsKeyRef = useRef("");
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
@@ -747,8 +663,7 @@ export function App() {
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
   const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
-  // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
-  const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
+  // 「总结为工作模板」：待确认的草稿（非空即打开对话框）
   const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
   const [creationKind, setCreationKind] = useState<AuthoringKind | null>(null);
   // 设置面板里的手动编辑：正在编辑的记忆行 / 工作模板（非空即打开编辑对话框）
@@ -761,10 +676,6 @@ export function App() {
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
-  const [sessionNotices, setSessionNotices] = useState<Record<string, string>>({});
-  const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalAction>>({});
-  const [pendingQuestions, setPendingQuestions] = useState<Record<string, QuestionRequest>>({});
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
   // 收件箱分类页签（任务待办 / 系统消息）与系统消息未读、通知点击定位
@@ -772,14 +683,12 @@ export function App() {
   const [systemMessageFocusId, setSystemMessageFocusId] = useState("");
   const [systemMessagesUnread, setSystemMessagesUnread] = useState(0);
   const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
-  const [loopStates, setLoopStates] = useState<Record<string, { iteration: number; maximum: number; status: string }>>({});
   const [memories, setMemories] = useState<WikiMemoryPage[]>([]);
   const [memoriesLinting, setMemoriesLinting] = useState(false);
   const [memoriesLintMessage, setMemoriesLintMessage] = useState("");
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
-  const [dshChildHistory, setDshChildHistory] = useState<{ id: string; rootSessionId: string; displayTitle: string } | null>(null);
   const closeDshChildHistory = useCallback(() => setDshChildHistory(null), []);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
   // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
@@ -1068,7 +977,6 @@ export function App() {
   const attachmentsRef = useRef(attachments);
   const sessionDraftsRef = useRef<Record<string, { text: string; pastes: ComposerPasteBlock[]; annotations: MessageAnnotation[]; attachments: Attachment[] }>>({});
   const lastActiveIdRef = useRef(activeId);
-  const [composerSessionId, setComposerSessionId] = useState(activeId);
   useEffect(() => { composerRef.current = composer; }, [composer]);
   useEffect(() => { composerPastesRef.current = composerPastes; }, [composerPastes]);
   useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
@@ -1111,14 +1019,8 @@ export function App() {
   // 定时计划运行（scheduleRun 打标）复用同一套登记：它的占位气泡同样按会话清理。
   const channelStreamIdsRef = useRef<Map<string, string>>(new Map());
   const channelStreamRunsRef: { current: ChannelStreamRuns } = useRef(new Map<string, ChannelStreamRef>());
-  // 正在进行定时计划运行的会话（主进程 runScheduledTask 在跑）：这些会话的输入框要禁用，
-  // 否则用户中途发消息会和后台那轮计划任务同时写同一个会话，收尾 prepend 会把新消息覆盖掉
-  const [scheduledRunSessions, setScheduledRunSessions] = useState<Set<string>>(() => new Set());
   // 刚点了「立即执行」的计划 id：等主进程回 schedules:run-started 时把这次运行的会话直接打开
   const manualRunScheduleRef = useRef<string>("");
-  // 「立即执行」后要自动打开的会话：等它进了会话列表再由 selectSession 走完整切换流程
-  // （切工作区、关旧审阅标签、刷新工作区文件），否则会话可能落在别的分组的折叠里
-  const [pendingAutoOpenSessionId, setPendingAutoOpenSessionId] = useState("");
 
   // 工作台布局持久化：面板 Tab、分栏比例按会话保存到 localStorage，切换会话恢复、重启不丢。
   // 恢复先于保存执行，避免启动时用空状态覆盖已保存布局；没有自定义过布局（无 Tab）的会话不落盘。
