@@ -3,7 +3,7 @@
 // 这几个 ref 原本在 App.tsx 内用 useRef 声明，随会话辅助函数一起搬到模块级 actions
 // 后必须保证「同一实例」——App 的清理 effect、IPC 订阅运行时与 actions 三处读写都要
 // 指向同一份数据，因此抽成普通 `{ current: … }` 对象（模块只求值一次，天然单例）。
-import type { Attachment, MessageAnnotation, SessionRecord, SkillRecord, WorkspaceEntry } from "../types";
+import type { Attachment, DebugLogEntry, MessageAnnotation, SessionRecord, SkillRecord, TraceEvent, WorkspaceEntry } from "../types";
 import type { BrowserWebviewElement } from "../features/browser/browserUtils";
 import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
 import type { ComposerHandle } from "../pluginRuntime/dshDraftEditor.ts";
@@ -70,3 +70,20 @@ export const speakObjectUrlRef: { current: string } = { current: "" };
 export const speakTokenRef: { current: number } = { current: 0 };
 export const voiceAudioRef: { current: HTMLAudioElement | null } = { current: null };
 export const voiceObjectUrlRef: { current: string } = { current: "" };
+
+// 发消息 / 排队消息（sendMessageActions）共享的模块级 ref：App 的清理 effect、运行时与
+// actions 必须指向同一实例，随这组函数一起从 App.tsx 的 useRef 挪到模块级。
+export const queuedRunsRef: { current: Map<string, Set<string>> } = { current: new Map() };
+export const agentUnsubscribeRefs: { current: Map<string, () => void> } = { current: new Map() };
+export const runningRunIdsRef: { current: Map<string, string> } = { current: new Map() };
+export const shouldScrollToBottomRef: { current: string | null } = { current: null };
+// 当前活动的图片/文件附件镜像：async 发送期间用于判断附件是否还是同一次选择
+export const attachmentsRef: { current: Attachment[] } = { current: [] };
+
+// 仍留在 App 的本地实现：由 App 在各自定义处挂载，sendMessageActions 经此调用，避免 import App。
+export const handleGoalActionRef: { current: (sessionId: string, action: "pause" | "resume" | "remove" | "complete") => void } = { current: () => undefined as never };
+export const refreshMemoriesRef: { current: () => void } = { current: () => undefined as never };
+export const refreshSkillsRef: { current: (announce?: boolean) => void } = { current: () => undefined as never };
+export const queueDebugLogRef: { current: (entry: DebugLogEntry) => void } = { current: () => undefined as never };
+export const appendSessionTracesRef: { current: (records: TraceEvent[]) => void } = { current: () => undefined as never };
+export const playCompletionSoundRef: { current: () => void } = { current: () => undefined as never };
