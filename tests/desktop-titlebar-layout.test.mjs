@@ -30,13 +30,11 @@ test("窗口外框的细线收边只用于 Linux", () => {
   assert.doesNotMatch(layout, /:is\(\.platform-win32, \.platform-linux\)\s*\{\s*outline/);
 });
 
-test("窗口按钮贴着窗口右上角：标题栏右内边距与窗口留白都不参与", () => {
-  // 关闭键离窗口右边缘原来是「标题栏右内边距 + 内容区右侧留白」两段间隔，用户口径：去掉。
-  assert.match(layout, /:is\(\.platform-win32, \.platform-linux\) \.titlebar \{ padding-right: 0; \}/);
-  assert.match(
-    layout,
-    /:is\(\.platform-win32, \.platform-linux\) \.titlebar-right \{ margin-left: auto; margin-right: calc\(-1 \* var\(--frame-gap\)\); \}/,
-  );
+test("窗口按钮独立于标题栏，拖动区域不覆盖按钮", () => {
+  assert.match(app, /<\/header>\s*<div className="window-controls"/);
+  assert.match(layout, /\.reference-layout > \.window-controls \{[^}]*position: absolute;[^}]*top: 0;[^}]*right: 0;/);
+  assert.match(layout, /width: calc\(100% \+ var\(--frame-gap\) - var\(--window-controls-width\)\)/);
+  assert.match(layout, /\.reference-layout > \.window-controls \* \{ -webkit-app-region: no-drag; \}/);
 });
 
 test("右侧标签条不声明窗口拖动区域：否则会截走窗口按钮上的点击", () => {

@@ -59,7 +59,15 @@ const settings = {
   profiles: [],
 };
 
+// 记录预览中的窗口操作；验收真实鼠标点击是否到达对应入口，不操作宿主窗口。
+(window as any).__windowControlCalls = [];
+const recordWindowControl = async (action: string) => {
+  (window as any).__windowControlCalls.push(action);
+};
 const bridge = {
+  minimize: () => recordWindowControl("minimize"),
+  toggleMaximize: () => recordWindowControl("toggleMaximize"),
+  close: () => recordWindowControl("close"),
   platform,
   getInitialState: async () => ({
     sessions: [],

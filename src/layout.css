@@ -3,6 +3,7 @@
   --rail-width: 52px;
   --frame-gap: 5px;
   --titlebar-height: 44px;
+  --window-controls-width: 138px;
   --window-surface: #f0f0f0;
   --surface: #fafafa;
   /* 左侧栏与正文区共用同一块底：两边底色必须一致（用户实报） */
@@ -71,10 +72,24 @@ html .reference-layout.sidebar-collapsed.right-panel-collapsed { grid-template-c
 .reference-layout .titlebar-brand > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .reference-layout .sidebar-brand-row .brand-button { align-items: center; gap: 8px; min-width: 0; }
 .reference-layout:is(.platform-win32, .platform-linux) .titlebar-left > button { flex: none; }
-/* Windows 与 Linux 的窗口按钮在右侧，关闭键要贴着窗口右上角（对齐系统自绘标题栏）：
-   去掉标题栏右内边距，并把整组按钮压过内容区右侧的窗口留白。 */
-.reference-layout:is(.platform-win32, .platform-linux) .titlebar { padding-right: 0; }
-.reference-layout:is(.platform-win32, .platform-linux) .titlebar-right { margin-left: auto; margin-right: calc(-1 * var(--frame-gap)); }
+/* 窗口按钮独立于标题栏和右侧面板，直接以窗口为定位基准。
+   标题栏的拖动区域在按钮左侧结束，不与 Linux 的原生点击区域重叠。 */
+.reference-layout:is(.platform-win32, .platform-linux) .titlebar {
+  width: calc(100% + var(--frame-gap) - var(--window-controls-width));
+  padding-right: 0;
+}
+.reference-layout:is(.platform-win32, .platform-linux) .titlebar-right { margin-left: auto; }
+.reference-layout > .window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 50;
+  width: var(--window-controls-width);
+  height: var(--titlebar-height);
+  margin: 0;
+}
+.reference-layout > .window-controls,
+.reference-layout > .window-controls * { -webkit-app-region: no-drag; }
 .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed .titlebar-left {
   left: calc(var(--rail-width) + 8px);
   width: 28px;

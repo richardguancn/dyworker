@@ -12725,19 +12725,19 @@ export function App() {
                 </button>
               </div>
             )}
-          <div className="window-controls" aria-label="窗口控制">
-            <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
-              <Minus size={15} />
-            </button>
-            <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
-              <Square size={11} />
-            </button>
-            <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
-              <X size={15} />
-            </button>
-          </div>
         </div>
       </header>
+      <div className="window-controls" aria-label="窗口控制">
+        <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
+          <Minus size={15} />
+        </button>
+        <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
+          <Square size={11} />
+        </button>
+        <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
+          <X size={15} />
+        </button>
+      </div>
       <nav className="navigation-rail" aria-label="主导航">
         <button className={`rail-button ${!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "active" : ""}`}
           aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "page" : undefined}
