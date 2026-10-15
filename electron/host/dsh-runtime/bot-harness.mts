@@ -16,7 +16,7 @@ import {
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
-import { buildReviewContext, readReviewObservation, withReviewApprovals } from '../../approval-context.mts';
+import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition } from '../../approval-context.mts';
 
 /** 机器人从桌面任务继承的工具名（与 toolDefinitions() 的描述/参数一一对应）。 */
 export const BOT_HARNESS_TOOL_NAMES = Object.freeze([
@@ -89,7 +89,8 @@ export function createBotApproval(options: any) {
           check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
             || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const review = await (options.review || reviewApproval)({ settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) + entryScripts, observation },
+          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) + entryScripts, observation,
+            toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
           context, onUsage: options.onUsage });
         signal?.throwIfAborted();
         if (mode() !== reviewMode) {

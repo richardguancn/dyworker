@@ -94,6 +94,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
     standingRules: async () => (typeof resolvers.readStandingRules === 'function' ? await resolvers.readStandingRules() : []),
     settings: () => appSettings, requestApproval,
     extraToolNames: async () => (await resolvers.mcpExtraTools?.(appSettings) || []).map((value: any) => (value.function || value).name),
+    extraToolDefinitions: async () => (await resolvers.mcpExtraTools?.(appSettings) || []),
     onExtraTool: (name: string, args: any, tool: any) => routeFor(tool.sessionId)?.(name, args),
     getReviewContext: async ({ sessionId }: any) => {
       const agent = handles.get(sessionId)?.agent;

@@ -14,6 +14,7 @@
 import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sensitiveMetadataInspection } from "../../sensitive-metadata.mts";
 const SENSITIVE_PATH_PATTERNS = [
   { re: /(^|[\\/])\.ssh([\\/]|$)/, label: "SSH 目录（可能含私钥）" },
   { re: /(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)$/i, label: "SSH 私钥" },
@@ -48,7 +49,8 @@ function collectStrings(value, out = []) {
 export function findSensitiveReference(args, name = "") {
   if (name === "save_memory") return null;
   const values = FILE_TARGET_TOOLS.has(name) ? { path: args?.path, source: args?.source, target: args?.target } : args;
-  const texts = collectStrings(values);
+  const metadata = name === "run_command" ? sensitiveMetadataInspection(args?.command) : null;
+  const texts = collectStrings(metadata?.facts.length ? { ...args, command: metadata.residual } : values);
   // 公钥文件不能通过软链接伪装成私钥。这里仅解析文件名，不读取文件内容。
   if (name === "read_file" && typeof args?.path === "string") {
     try { texts.push(realpathSync(args.path.startsWith("~/") ? path.join(os.homedir(), args.path.slice(2)) : args.path)); } catch {}
@@ -72,7 +74,7 @@ export function findSensitiveReference(args, name = "") {
       publicReference = { label: "SSH 公共文件（需核对读写用途）", sample: text.slice(0, 200), reviewable: true };
     } else return { label, sample: text.slice(0, 200) };
   }
-  return publicReference;
+  return publicReference || (metadata?.facts.length ? { label: "受限元信息检查", sample: metadata.facts.join("；"), reviewable: true } : null);
 }
 
 export function sensitivePathGuardPlugin(options: any = {}) {

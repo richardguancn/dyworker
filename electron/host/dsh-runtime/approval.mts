@@ -1,6 +1,6 @@
-import { Workspace, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts } from '../../agent.mts';
+import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
-import { buildReviewContext, readReviewObservation, withReviewApprovals } from '../../approval-context.mts';
+import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition } from '../../approval-context.mts';
 
 // 由宿主绑定会话、工作目录和权限模式。DSH 策略只能收紧此决定。
 export function createDshApproval(options: any) {
@@ -47,7 +47,8 @@ export function createDshApproval(options: any) {
           check: (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...(options.hooks || [])], 'before_tool', reader, readArgs)
             || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const review = await (options.review || reviewApproval)({ settings: options.settings, fetchImpl: options.fetchImpl,
-          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args) + entryScripts, observation }, context,
+          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args) + entryScripts, observation,
+            toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
           onUsage: options.onUsage });
         signal.throwIfAborted();
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
