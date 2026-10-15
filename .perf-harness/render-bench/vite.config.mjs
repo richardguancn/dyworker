@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "../..");
@@ -10,7 +11,16 @@ const projectRoot = path.resolve(here, "../..");
 export default defineConfig({
   root: here,
   base: "./",
-  plugins: [react()],
+  plugins: [
+    // 比较旧版时替换原始 App 源码，保留相同夹具和其余依赖，不改动工作区源码。
+    ...(process.env.BENCH_APP_SOURCE ? [{
+      name: "bench-source-override", enforce: "pre",
+      load(id) {
+        if (id === path.join(projectRoot, "src/App.tsx")) return fs.readFileSync(process.env.BENCH_APP_SOURCE, "utf8");
+      },
+    }] : []),
+    react(),
+  ],
   resolve: {
     alias: {
       "@src": path.join(projectRoot, "src"),
@@ -20,7 +30,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: path.join(here, "dist"),
+    outDir: path.join(here, process.env.BENCH_VARIANT === "before" ? "dist-before" : "dist"),
     emptyOutDir: true,
     minify: false,
     chunkSizeWarningLimit: 100000,

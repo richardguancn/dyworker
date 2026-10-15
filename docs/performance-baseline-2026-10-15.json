@@ -1,0 +1,304 @@
+{
+  "date": "2026-10-15",
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v22.21.1",
+  "recordedBaseCommit": "c9bcf27",
+  "finalObservedCommit": "6ef3b74",
+  "appSourceSha256": "d3f630a97a7333bf1135cffbc10edfd7f9ba75e1fed68478cdefd00428c510f7",
+  "scope": "真实界面组件与模拟事件；非目标 Linux 安装包；各场景一次；没有整机 CPU、内存或磁盘测量",
+  "limitations": [
+    "基准关闭图形加速，模拟 platform=darwin",
+    "idle 是主动更新而非静置",
+    "all 未确认真实输出状态",
+    "longstream 的 streamMarkup=null，持续输出路径覆盖不成立",
+    "运行期间原有注释改动被其他工作提交，本次未改动产品代码"
+  ],
+  "results": {
+    "120_messages_all": {
+      "result": {
+        "messageCount": 120,
+        "domNodes": 9347,
+        "boot": {
+          "n": 5,
+          "min": 1.7,
+          "p50": 4.4,
+          "p95": 129,
+          "max": 129,
+          "mean": 34.72,
+          "total": 173.6
+        },
+        "bootCommitCount": 5,
+        "idle": {
+          "n": 30,
+          "min": 0,
+          "p50": 2.3,
+          "p95": 3.4,
+          "max": 3.6,
+          "mean": 2.35,
+          "total": 70.5
+        },
+        "idleCommits": 30,
+        "stream": {
+          "n": 261,
+          "min": 0,
+          "p50": 1.7,
+          "p95": 3.9,
+          "max": 7.8,
+          "mean": 1.96,
+          "total": 511
+        },
+        "streamCommits": 261,
+        "streamElapsedMs": 3192,
+        "streamDomNodes": 9402,
+        "eventLoopLag": {
+          "n": 199,
+          "min": 0,
+          "p50": 0.1,
+          "p95": 2.4,
+          "max": 5.3,
+          "mean": 0.51,
+          "total": 101.7
+        },
+        "longTasks": {
+          "n": 0,
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "total": 0
+        },
+        "forcedLayoutMs": 0,
+        "finalDomNodes": 9402,
+        "streamingNodes": 0,
+        "markdownNodes": 61,
+        "errors": []
+      },
+      "consoleWarningsPresent": true
+    },
+    "600_messages_all": {
+      "result": {
+        "messageCount": 600,
+        "domNodes": 45829,
+        "boot": {
+          "n": 3,
+          "min": 1.7,
+          "p50": 31.1,
+          "p95": 418.1,
+          "max": 418.1,
+          "mean": 150.3,
+          "total": 450.9
+        },
+        "bootCommitCount": 3,
+        "idle": {
+          "n": 30,
+          "min": 0,
+          "p50": 8.7,
+          "p95": 15.3,
+          "max": 19,
+          "mean": 9.43,
+          "total": 283
+        },
+        "idleCommits": 30,
+        "stream": {
+          "n": 212,
+          "min": 0,
+          "p50": 9.9,
+          "p95": 19,
+          "max": 65.5,
+          "mean": 10.35,
+          "total": 2194.2
+        },
+        "streamCommits": 212,
+        "streamElapsedMs": 4286,
+        "streamDomNodes": 45882,
+        "eventLoopLag": {
+          "n": 106,
+          "min": 0,
+          "p50": 22.8,
+          "p95": 49.1,
+          "max": 102.2,
+          "mean": 24.47,
+          "total": 2593.5
+        },
+        "longTasks": {
+          "n": 1,
+          "min": 85,
+          "p50": 85,
+          "p95": 85,
+          "max": 85,
+          "mean": 85,
+          "total": 85
+        },
+        "forcedLayoutMs": 0.2,
+        "finalDomNodes": 45882,
+        "streamingNodes": 0,
+        "markdownNodes": 301,
+        "errors": []
+      },
+      "consoleWarningsPresent": true
+    },
+    "120_messages_longstream": {
+      "result": {
+        "messageCount": 120,
+        "domNodes": 9347,
+        "boot": {
+          "n": 5,
+          "min": 1.3,
+          "p50": 3.6,
+          "p95": 105.5,
+          "max": 105.5,
+          "mean": 27.58,
+          "total": 137.9
+        },
+        "bootCommitCount": 5,
+        "longStream": {
+          "chunk": 40,
+          "streamingPath": true,
+          "finalLen": 16000,
+          "streamMarkup": null,
+          "elapsedMs": 21329,
+          "commits": {
+            "n": 1376,
+            "min": 0,
+            "p50": 1.5,
+            "p95": 12.2,
+            "max": 20.3,
+            "mean": 3.48,
+            "total": 4785.3
+          },
+          "settleCommits": [
+            34,
+            1.7,
+            1.8
+          ],
+          "settleStats": {
+            "n": 3,
+            "min": 1.7,
+            "p50": 1.8,
+            "p95": 34,
+            "max": 34,
+            "mean": 12.5,
+            "total": 37.5
+          },
+          "eventLoopLag": {
+            "n": 1360,
+            "min": 0,
+            "p50": 0.1,
+            "p95": 8.9,
+            "max": 46.1,
+            "mean": 1.68,
+            "total": 2291.3
+          },
+          "longTasks": {
+            "n": 0,
+            "min": 0,
+            "p50": 0,
+            "p95": 0,
+            "max": 0,
+            "mean": 0,
+            "total": 0
+          },
+          "domNodes": 13027,
+          "curve": [
+            {
+              "len": 40,
+              "ms": 1.8,
+              "t": 97
+            },
+            {
+              "len": 1360,
+              "ms": 0.1,
+              "t": 1858
+            },
+            {
+              "len": 2680,
+              "ms": 1.3,
+              "t": 3616
+            },
+            {
+              "len": 4000,
+              "ms": 1.2,
+              "t": 5366
+            },
+            {
+              "len": 5320,
+              "ms": 0.1,
+              "t": 7127
+            },
+            {
+              "len": 6640,
+              "ms": 1.5,
+              "t": 8882
+            },
+            {
+              "len": 7960,
+              "ms": 1.1,
+              "t": 10630
+            },
+            {
+              "len": 9280,
+              "ms": 0.1,
+              "t": 12388
+            },
+            {
+              "len": 10600,
+              "ms": 1.3,
+              "t": 14136
+            },
+            {
+              "len": 11920,
+              "ms": 1.4,
+              "t": 15892
+            },
+            {
+              "len": 13240,
+              "ms": 0.1,
+              "t": 17651
+            },
+            {
+              "len": 14560,
+              "ms": 1.1,
+              "t": 19409
+            },
+            {
+              "len": 15880,
+              "ms": 0.3,
+              "t": 21168
+            }
+          ],
+          "first10": [
+            1.8,
+            1.6,
+            1.9,
+            1.8,
+            1.5,
+            1.7,
+            2.2,
+            0,
+            0.2,
+            0.1
+          ],
+          "last10": [
+            1.4,
+            1.2,
+            0.1,
+            0.2,
+            0.2,
+            0.2,
+            0.3,
+            1,
+            1.2,
+            1.1
+          ]
+        },
+        "finalDomNodes": 13027,
+        "streamingNodes": 0,
+        "markdownNodes": 61,
+        "errors": []
+      },
+      "consoleWarningsPresent": true
+    }
+  }
+}

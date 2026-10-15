@@ -10,6 +10,9 @@ import { createRoot } from "react-dom/profiling";
 import "katex/dist/katex.min.css";
 import "@src/styles.css";
 import "@src/appearance/appearance.css";
+import "@src/layout.css";
+import "@xterm/xterm/css/xterm.css";
+import "@src/terminal.css";
 
 // 错误捕获：把栈存起来供运行器读取（渲染进程 console 只能拿到短消息）
 const captured: string[] = [];
@@ -109,6 +112,7 @@ const initialState = {
   workspacePath: "",
   workspaceEntries: [],
   settings: {
+    identity: "general",
     endpoint: "http://127.0.0.1:1/chat/completions",
     apiKey: "bench",
     model: "bench-model",
@@ -119,7 +123,7 @@ const initialState = {
     approvalMode: "interactive",
   },
   pinnedWorkspacePaths: [],
-  platform: "darwin",
+  platform: BENCH_PARAMS.get("platform") || "darwin",
   windowMaximized: false,
 };
 
@@ -129,10 +133,16 @@ const listeners: Record<string, ((payload: any) => void) | null> = {};
 const never = () => undefined;
 const resolveUndefined = () => Promise.resolve(undefined);
 
+const agentListeners = new Set<(event: any) => void>();
+listeners.agentEvent = event => { for (const callback of agentListeners) callback(event); };
+let desktopRequest: any = null;
+let desktopResolve: ((value: any) => void) | null = null;
+let desktopCancelled = false;
+
 const explicit: Record<string, any> = {
-  platform: "darwin",
+  platform: BENCH_PARAMS.get("platform") || "darwin",
   getInitialState: () => Promise.resolve(initialState),
-  saveSessions: resolveUndefined,
+  saveSessions: () => Promise.resolve({ ok: true }),
   saveSettings: resolveUndefined,
   savePinnedWorkspaces: resolveUndefined,
   refreshWorkspace: () => Promise.resolve([]),
@@ -141,7 +151,19 @@ const explicit: Record<string, any> = {
   refreshSkills: () => Promise.resolve([]),
   getPendingWakes: () => Promise.resolve([]),
   onWindowStateChange: (cb: any) => { listeners.windowState = cb; return () => { listeners.windowState = null; }; },
-  onAgentEvent: (cb: any) => { listeners.agentEvent = cb; return () => { listeners.agentEvent = null; }; },
+  onAgentEvent: (cb: any) => { agentListeners.add(cb); return () => { agentListeners.delete(cb); }; },
+  sendTask: (payload: any) => {
+    desktopRequest = payload;
+    listeners.agentEvent?.({ sessionId: payload.sessionId, runId: payload.runId, event: { type: "queue-start" } });
+    return new Promise(resolve => { desktopResolve = resolve; });
+  },
+  cancelTask: (sessionId: string, runId: string) => {
+    desktopCancelled = true;
+    const result = { status: "cancelled", finalText: "桌面停止检查" };
+    listeners.agentEvent?.({ sessionId, runId, event: { type: "agent-finished", result } });
+    desktopResolve?.({ ok: true, result });
+    return Promise.resolve({ ok: true });
+  },
   onChannelsStatus: (cb: any) => { listeners.channelsStatus = cb; return () => { listeners.channelsStatus = null; }; },
   onBrowserPanelRequest: () => never,
   onBrowserControlState: () => never,
@@ -246,22 +268,146 @@ async function idleRerenders(count: number) {
   return commits.slice(before).map((c) => c.actual);
 }
 
+function emitRun(event: any) {
+  listeners.agentEvent?.({ sessionId: SESSION_ID, runId: RUN_ID, channelRun: true, event });
+}
+function emitText(text: string) {
+  emitRun({ type: "dsh-conversation", turns: [{
+    user: { id: "bench-live-user", text: "请生成本次性能检查报告", createdAt: "2026-10-15T00:00:00.000Z" },
+    replies: [{ id: "bench-live-reply", text, partial: true, createdAt: "2026-10-15T00:00:01.000Z", executedMessages: [] }],
+  }] });
+}
+function assertStreaming() {
+  if (!document.querySelector(".streaming-markdown")) throw new Error("持续输出正文没有出现，不能记录为有效性能结果");
+}
+
+async function waitUntil(check: () => boolean, reason: string) {
+  const deadline = performance.now() + 5000;
+  while (!check()) { if (performance.now() > deadline) throw new Error(reason); await sleep(20); }
+}
+async function checkRuntimeRoutes() {
+  const input = document.querySelector('textarea[placeholder="描述要完成的工作"]') as HTMLTextAreaElement;
+  if (!input) throw new Error("找不到桌面输入框");
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '检查持续输出与停止');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(50);
+  (document.querySelector('[aria-label="发送"]') as HTMLButtonElement).click();
+  await waitUntil(() => Boolean(desktopRequest), '桌面发送未进入真实页面处理流程');
+  const turns = (text: string) => [{ user: { id: `route-user-${text}`, text: '检查持续输出与停止', createdAt: '2026-10-15T00:00:00.000Z' },
+    replies: [{ id: `route-reply-${text}`, text, partial: true, createdAt: '2026-10-15T00:00:01.000Z', executedMessages: [] }] }];
+  const eventFor = (sessionId: string, runId: string, route: string, event: any) => listeners.agentEvent?.({
+    sessionId, runId, ...(route === 'schedule' ? { scheduleRun: true } : route === 'wake' ? { wakeRun: true } : {}), event,
+  });
+  eventFor(desktopRequest.sessionId, desktopRequest.runId, 'desktop', { type: 'dsh-conversation', turns: turns('**桌面持续输出**') });
+  await waitUntil(() => Boolean(document.querySelector('.streaming-markdown strong')), '桌面持续输出没有显示');
+  (document.querySelector('[aria-label="停止当前任务"]') as HTMLButtonElement).click();
+  await waitUntil(() => !document.querySelector('.streaming-markdown'), '桌面停止后未收口');
+  if (!desktopCancelled) throw new Error('停止没有传到取消入口');
+  listeners.onScheduleRunStarted?.({ sessionId: 'route-schedule', runId: 'route-schedule-run', title: '计划性能检查', prompt: '检查计划输出' });
+  await sleep(50);
+  (document.querySelector('.session-item[title="计划性能检查"]') as HTMLButtonElement).click();
+  await sleep(50);
+  eventFor('route-schedule', 'route-schedule-run', 'schedule', { type: 'dsh-conversation', turns: turns('**计划持续输出**') });
+  await waitUntil(() => Boolean(document.querySelector('.streaming-markdown strong')), '计划持续输出没有显示');
+  eventFor('route-schedule', 'route-schedule-run', 'schedule', { type: 'agent-finished', result: {status: 'cancelled', finalText: '计划持续输出'} });
+  await waitUntil(() => !document.querySelector('.streaming-markdown'), '计划结束后未收口');
+  (document.querySelector('.session-item[title="性能基准会话"]') as HTMLButtonElement).click();
+  await sleep(50);
+  listeners.onWakeStatus?.({ sessionId: SESSION_ID, runId: 'route-wake-run', status: 'running', wakeAt: new Date().toISOString() });
+  await sleep(50);
+  eventFor(SESSION_ID, 'route-wake-run', 'wake', { type: 'dsh-conversation', turns: turns('**唤醒持续输出**') });
+  await waitUntil(() => Boolean(document.querySelector('.streaming-markdown strong')), '唤醒持续输出没有显示');
+  eventFor(SESSION_ID, 'route-wake-run', 'wake', { type: 'agent-finished', result: {status: 'cancelled', finalText: '唤醒持续输出'} });
+  await waitUntil(() => !document.querySelector('.streaming-markdown'), '唤醒结束后未收口');
+  return { desktop: true, desktopStop: desktopCancelled, schedule: true, wake: true };
+}
+
+async function checkPanelDrag() {
+  const handle = document.querySelector('[aria-label="调整左侧面板宽度"]')!;
+  const shell = document.querySelector('.app-shell')!;
+  const before = parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-width'));
+  const start = handle.getBoundingClientRect().x;
+  const beforeCommits = commits.length;
+  handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: start }));
+  for (let index = 1; index <= 20; index++) {
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: start + index * 3 }));
+    await nextFrame();
+  }
+  const duringCommits = commits.length - beforeCommits;
+  const during = parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-width'));
+  window.dispatchEvent(new PointerEvent('pointerup', { clientX: start + 60 }));
+  await nextFrame(); await nextFrame();
+  const after = parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-width'));
+  if (during <= before || after !== during) throw new Error('面板拖动没有生效或松手后宽度没有保持');
+  return { before, during, after, duringCommits, totalCommits: commits.length - beforeCommits };
+}
+
+// 会话内搜索：用真实快捷键打开搜索并输入命中词，确认命中高亮落到实际消息行、
+// 滚动定位后可见区域内确实有内容，而不是只更新命中计数。
+async function checkConversationSearch() {
+  const rowsBefore = document.querySelectorAll('.message-row').length;
+  if (!rowsBefore) throw new Error('消息行未渲染，无法检查搜索');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, ctrlKey: true, bubbles: true }));
+  await waitUntil(() => Boolean(document.querySelector('.conversation-search')), '搜索框没有打开');
+  const input = document.querySelector('.conversation-search input') as HTMLInputElement;
+  if (!input) throw new Error('找不到搜索输入框');
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '风险');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await waitUntil(() => (document.querySelector('.conversation-search-count')?.textContent || '').includes('/'), '命中计数没有出现');
+  const countText = document.querySelector('.conversation-search-count')!.textContent || '';
+  const total = Number(countText.split('/').pop()!.trim()) || 0;
+  if (!total) throw new Error(`搜索没有命中任何内容：${countText}`);
+  const rowsAfter = document.querySelectorAll('.message-row').length;
+  if (rowsAfter !== rowsBefore) throw new Error(`搜索打开后消息行数量变化：${rowsBefore} → ${rowsAfter}`);
+  const viewport = document.querySelector('.conversation-viewport')!;
+  const viewportRect = viewport.getBoundingClientRect();
+  const scrollViewport = viewport as HTMLElement;
+  const matchRow = () => {
+    const highlights = (CSS as any).highlights as Map<string, any> | undefined;
+    const current = highlights?.get('conversation-search-current');
+    const firstRange = current ? [...current][0] : null;
+    return firstRange ? (firstRange.startContainer.parentElement?.closest?.('.message-row') ?? null) : null;
+  };
+  const rowOffset = () => {
+    const row = matchRow();
+    if (!row) return Number.POSITIVE_INFINITY;
+    const rect = row.getBoundingClientRect();
+    return Math.abs((rect.top + rect.bottom) / 2 - (viewportRect.top + viewportRect.bottom) / 2);
+  };
+  // 平滑滚动是异步的：轮询到位或超时，避免把滚动动画的中间状态当成结果
+  const deadline = performance.now() + 5000;
+  while (rowOffset() > viewportRect.height / 2 && performance.now() < deadline) await sleep(100);
+  const overlap = (row: Element) => {
+    const rect = row.getBoundingClientRect();
+    return Math.min(rect.bottom, viewportRect.bottom) - Math.max(rect.top, viewportRect.top);
+  };
+  const visibleRows = [...document.querySelectorAll('.message-row')].filter(row => overlap(row) > 8).length;
+  const diagnostics = `scrollTop=${scrollViewport.scrollTop}, scrollHeight=${scrollViewport.scrollHeight}, clientHeight=${scrollViewport.clientHeight}, 可见行=${visibleRows}, 命中行偏移=${Math.round(rowOffset())}`;
+  if (visibleRows < 1) throw new Error(`搜索定位后可见区域内没有任何消息行（${diagnostics}）`);
+  const highlights = (CSS as any).highlights as Map<string, any> | undefined;
+  const all = highlights?.get('conversation-search');
+  if (!matchRow()) throw new Error('当前命中没有落到消息行上');
+  const offset = rowOffset();
+  if (offset > viewportRect.height / 2) throw new Error(`当前命中行不在可见区域中间附近（${diagnostics}）`);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(120);
+  return { rows: rowsAfter, total, visibleRows, highlightRanges: all ? [...all].length : 0, currentOffset: +offset.toFixed(1) };
+}
+
 // 按主进程真实的 50ms 合流节流节奏推送流式正文
 async function streamTokens(tokenCount: number, intervalMs = 50) {
   const before = commits.length;
+  emitRun({ type: "queue-start" });
+  await sleep(30);
   const base = markdownChunk(7);
   let text = "";
   const started = performance.now();
   for (let index = 0; index < tokenCount; index += 1) {
     text += base.slice((index * 37) % base.length, ((index * 37) % base.length) + 12);
-    listeners.agentEvent?.({
-      sessionId: SESSION_ID,
-      runId: RUN_ID,
-      channelRun: true,
-      event: { type: "assistant-text", text },
-    });
+    emitText(text);
     await sleep(intervalMs);
   }
+  assertStreaming();
   const elapsed = performance.now() - started;
   return { commits: commits.slice(before).map((c) => c.actual), elapsedMs: +elapsed.toFixed(0) };
 }
@@ -298,12 +444,7 @@ async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40
   }
   while (text.length < totalChars) {
     text = doc.slice(0, Math.min(doc.length, text.length + chunkSize));
-    listeners.agentEvent?.({
-      sessionId: SESSION_ID,
-      runId: RUN_ID,
-      channelRun: true,
-      event: { type: "assistant-text", text },
-    });
+    emitText(text);
     await sleep(intervalMs);
     const last = commits[commits.length - 1];
     series.push({
@@ -312,6 +453,7 @@ async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40
       t: +(performance.now() - started).toFixed(0),
     });
   }
+  if (withStart) assertStreaming();
   const streamedMs = +(performance.now() - started).toFixed(0);
   // 流式途中（消息尚未定稿）抽样 DOM：验证未定稿正文确实渲染成了 Markdown，
   // 而不是像修复前那样把 `**加粗**`、``` 围栏原样显示成源码。
@@ -359,6 +501,10 @@ async function run() {
     boot: stats(boot.durations),
     bootCommitCount: boot.commits,
   };
+
+  if (mode === 'interaction') out.panelDrag = await checkPanelDrag();
+  if (mode === 'routes') out.runtimeRoutes = await checkRuntimeRoutes();
+  if (mode === 'search') out.conversationSearch = await checkConversationSearch();
 
   if (mode === "all" || mode === "idle") {
     commits.length = 0;
@@ -433,12 +579,7 @@ async function run() {
     await sleep(120);
     while (text.length < target) {
       text = doc.slice(0, Math.min(doc.length, text.length + 40));
-      listeners.agentEvent?.({
-        sessionId: SESSION_ID,
-        runId: RUN_ID,
-        channelRun: true,
-        event: { type: "assistant-text", text },
-      });
+      emitText(text);
       await sleep(20);
     }
     await sleep(500);
@@ -492,7 +633,7 @@ async function run() {
   return out;
 }
 
-(window as any).__perf = { run, commits, listeners, stats, captured, idleRerenders, streamTokens };
+(window as any).__perf = { run, commits, listeners, stats, captured, idleRerenders, streamTokens, checkPanelDrag, checkConversationSearch };
 
 // ---------------------------------------------------------------- 挂载
 

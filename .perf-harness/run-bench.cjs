@@ -2,6 +2,12 @@
 // 用法：ELECTRON_RUN_AS_NODE 必须未设置；传入 messages/mode 由 npm script 封装
 const { app, BrowserWindow } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
+
+// 每次运行使用独立临时配置，避免场景之间及与已安装应用互相污染。
+app.setPath("userData", fs.mkdtempSync(path.join(os.tmpdir(), "dyw-perf-profile-")));
+if (process.env.BENCH_CDP_PORT) app.commandLine.appendSwitch("remote-debugging-port", process.env.BENCH_CDP_PORT);
 
 app.commandLine.appendSwitch("no-sandbox");
 app.commandLine.appendSwitch("disable-gpu");
@@ -9,7 +15,7 @@ app.commandLine.appendSwitch("disable-background-timer-throttling");
 app.disableHardwareAcceleration();
 
 const here = __dirname;
-const indexFile = path.join(here, "render-bench", "dist", "index.html");
+const indexFile = path.join(here, "render-bench", process.env.BENCH_VARIANT === "before" ? "dist-before" : "dist", "index.html");
 const messages = process.env.BENCH_MESSAGES || "120";
 const mode = process.env.BENCH_MODE || "all";
 const chunk = process.env.BENCH_CHUNK || "40";
@@ -41,7 +47,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1184,
     height: 736,
-    show: Boolean(shotPath),
+    show: Boolean(shotPath) || process.env.BENCH_MANUAL === "1",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -58,11 +64,17 @@ app.whenReady().then(async () => {
     console.error("RENDER_GONE", JSON.stringify(details));
   });
 
-  const url = `file://${indexFile}?messages=${messages}&mode=${mode}&chunk=${chunk}&chars=${chars}${nostart}${settlelast}`;
+  const platform = process.env.BENCH_PLATFORM === "linux" ? "linux" : "darwin";
+  const url = `file://${indexFile}?messages=${messages}&mode=${mode}&chunk=${chunk}&chars=${chars}&platform=${platform}${nostart}${settlelast}`;
   await win.loadURL(url);
 
   try {
     await waitFor(win, "window.__perfReady === true", 60_000);
+    if (process.env.BENCH_MANUAL === "1") { console.log("BENCH_MANUAL_READY"); return; }
+    const processSamples = [];
+    const sampleTimer = setInterval(() => processSamples.push(app.getAppMetrics().map(metric => ({
+      pid: metric.pid, type: metric.type, cpu: metric.cpu, memory: metric.memory,
+    }))), 1000);
     const runPromise = win.webContents.executeJavaScript("window.__perf.run()", true);
     if (shotPath) {
       await waitFor(win, 'document.title === "BENCH_SNAPSHOT_READY"', 120_000).catch(() => undefined);
@@ -72,15 +84,19 @@ app.whenReady().then(async () => {
       console.log("BENCH_SHOT " + shotPath);
     }
     const result = await runPromise;
+    clearInterval(sampleTimer);
+    result.processSamples = processSamples;
+    if (result.errors?.length) throw new Error(JSON.stringify(result.errors));
     console.log("BENCH_RESULT " + JSON.stringify(result));
   } catch (error) {
+    process.exitCode = 1;
     console.log("BENCH_ERROR " + String(error && error.message ? error.message : error));
     const title = await win.webContents.executeJavaScript("document.title", true).catch(() => "?");
     console.log("BENCH_TITLE " + title);
   }
 
   if (errors.length) console.log("BENCH_CONSOLE " + JSON.stringify(errors.slice(0, 8)));
-  app.exit(0);
+  app.exit(process.exitCode || 0);
 });
 
 setTimeout(() => {
