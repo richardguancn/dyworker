@@ -4,6 +4,9 @@ import { createConversationIndex, createTextCache } from "../performanceCache";
 import { formatMessageTime } from "./format";
 import type { ChatMessage, SessionRecord } from "../types";
 
+// 项目会话列表默认最多平铺的条数，超出后折叠为「展开显示」。
+export const WORKSPACE_SESSION_LIMIT = 5;
+
 export function displayWorkspace(path: string) {
   if (!path) return "选择工作文件夹";
   const chunks = path.split(/[\\/]/).filter(Boolean);
