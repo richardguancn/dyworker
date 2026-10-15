@@ -16,7 +16,7 @@ CORNER_RADIUS = 14
 
 
 def rounded_rectangles(width, height, radius):
-    """X Shape rectangles, with the same cutouts for drawing and hit testing."""
+    """X Shape rectangles for hit testing only; Chromium paints smooth edges."""
     radius = max(0, min(round(radius), width // 2, height // 2))
     if not radius:
         return [(0, 0, width, height)]
@@ -196,9 +196,9 @@ class RoundedShape:
             return
         rectangles = rounded_rectangles(width, height, radius)
         values = (self.Rectangle * len(rectangles))(*(self.Rectangle(*r) for r in rectangles))
-        # ShapeBounding also limits the default input region. No whole-window
-        # ignore-mouse toggling: only the small rounded cutouts are excluded.
-        self.lib.XShapeCombineRectangles(self.x.display, window, 0, 0, 0,
+        # ShapeInput (2) excludes only the corner cutouts from hit testing.
+        # Never shape the bounding region: its binary mask destroys antialiasing.
+        self.lib.XShapeCombineRectangles(self.x.display, window, 2, 0, 0,
                                         values, len(rectangles), 0, 0)
         self.x.sync()
         self.last_geometry = key
@@ -206,7 +206,7 @@ class RoundedShape:
     def reset(self, window):
         if self.lib:
             # None removes the mask entirely, so future resizing remains normal.
-            self.lib.XShapeCombineMask(self.x.display, window, 0, 0, 0, 0, 0)
+            self.lib.XShapeCombineMask(self.x.display, window, 2, 0, 0, 0, 0)
             self.x.sync()
             self.last_geometry = None
 

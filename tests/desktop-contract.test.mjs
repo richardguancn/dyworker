@@ -1223,7 +1223,8 @@ test("Linux/Windows 使用应用标题栏，mac 保留内嵌红绿灯", () => {
 test("linux 隐藏系统标题栏，保留桌面阴影且不扩大窗口输入区域", () => {
   assert.match(main, /frame: false/);
   assert.match(main, /hasShadow: true/);
-  assert.doesNotMatch(main, /transparent: true|LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
+  assert.match(main, /transparent: process\.platform === "linux"/);
+  assert.doesNotMatch(main, /LINUX_SHADOW_MARGIN|rebuildLinuxWindowAsSolid/);
   assert.doesNotMatch(app + styles, /native-window-frame/);
   assert.doesNotMatch(app, /platform === "linux" && conversationHeader|platform !== "linux" && \(/);
   const layout = readSource(new URL("../src/layout.css", import.meta.url));

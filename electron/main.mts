@@ -276,7 +276,7 @@ function applyWindowAppearance() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   appearanceEffective = applyWindowBackdrop(mainWindow, appearanceState.settings, appearanceCapabilities);
   const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
-  mainWindow.setBackgroundColor(windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
+  mainWindow.setBackgroundColor(process.platform === "linux" ? "#00000000" : windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
   windowIcons.apply(mainWindow, resolvedAppearanceTheme(windowIconPreviewSettings ?? appearanceState.settings));
   dockIcons.apply((windowIconPreviewSettings ?? appearanceState.settings).dockIcon);
   mainWindow.webContents?.invalidate?.();
@@ -790,12 +790,13 @@ function createWindow() {
     height: 736,
     minWidth: 980,
     minHeight: 660,
-    backgroundColor: windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
+    backgroundColor: process.platform === "linux" ? "#00000000" : windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
+    transparent: process.platform === "linux",
     show: process.platform === "linux",
     title: "DYWorker",
     ...(process.platform === "linux" ? { icon: windowIcons.iconFor(resolvedAppearanceTheme()) } : {}),
     // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
-    // 阴影交给合成器绘制，内容区保持不透明。
+    // Linux 仅四角透明，由页面平滑裁切；阴影仍交给合成器绘制。
     frame: false,
     // mac 原生红绿灯位于独立的 44px 窗口工具栏，聊天侧栏品牌行不再占用窗口控件空间。
     // 16px 原生按钮在该行垂直居中；工具栏仍支持拖动窗口。
@@ -850,6 +851,8 @@ function createWindow() {
     mainWindow?.setIgnoreMouseEvents(false);
     mainWindow?.webContents.send("window:maximized-changed", false);
   });
+  mainWindow.on("enter-full-screen", () => mainWindow?.webContents.send("window:maximized-changed", true));
+  mainWindow.on("leave-full-screen", () => mainWindow?.webContents.send("window:maximized-changed", mainWindow.isMaximized()));
   // 使用统计的窗口状态信号：后台/最小化/失焦立即封口当前使用区间。
   // 关闭窗口（macOS 进程仍在）同样视为不可计时状态。
   const noteTelemetryWindowState = () => {

@@ -21,6 +21,23 @@ for width, height, radius in [(1184,736,scope["CORNER_RADIUS"]), (2,2,14), (1,1,
     if width > 16 and height > 16 and radius > 0:
         assert not any(contains(x,y) for x,y in [(0,0), (width-1,0), (0,height-1), (width-1,height-1)])
     if radius == 0: assert rects == [(0,0,width,height)]
+# The native mask must affect input only; bounding masks are binary and jagged.
+import ctypes as C
+calls = []
+class FakeLib:
+    def XShapeCombineRectangles(self, *args): calls.append(("apply", args[2]))
+    def XShapeCombineMask(self, *args): calls.append(("reset", args[2]))
+class FakeX:
+    display = 1
+    def sync(self): pass
+class Rectangle(C.Structure):
+    _fields_ = [("x", C.c_short), ("y", C.c_short), ("w", C.c_ushort), ("h", C.c_ushort)]
+shape = scope["RoundedShape"].__new__(scope["RoundedShape"])
+shape.x, shape.lib, shape.Rectangle, shape.last_geometry = FakeX(), FakeLib(), Rectangle, None
+shape.apply(1, 1184, 736, 14)
+shape.apply(1, 1184, 736, 14)
+shape.apply(1, 1184, 736, 0)
+assert calls == [("apply", 2), ("reset", 2)], calls
 for scale in [1, 1.25, 1.5, 2, 4]:
     margins, tiles = scope["shadow_tiles"](scale)
     top, right, bottom, left = margins

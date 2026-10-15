@@ -561,3 +561,21 @@ html .app-shell.reference-layout.platform-linux .tool-panel { grid-row: 2; }
 /* 机器人团队由左侧入口在主区域打开，填满可用高度。 */
 .main-panel.bot-team-page-open .bot-team-page { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
 .reference-layout .bot-team-entry.active { background: var(--sidebar-active); color: var(--ink); border-radius: 8px; }
+
+/* Linux 外框只在四角透出桌面，避免 X11 二值裁切产生台阶。 */
+html:has(.reference-layout.platform-linux),
+html:has(.reference-layout.platform-linux) body,
+html:has(.reference-layout.platform-linux) #root { background: transparent !important; }
+html:has(.reference-layout.platform-linux) #root {
+  border-radius: 14px;
+  clip-path: inset(0 round 14px);
+}
+html.window-maximized:has(.reference-layout.platform-linux) #root {
+  border-radius: 0;
+  clip-path: none;
+}
+/* 消息滚到标题栏下方时渐隐；遮罩随视口固定，不拦截点击和滚动。 */
+.reference-layout .conversation-viewport {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 24px);
+  mask-image: linear-gradient(to bottom, transparent, #000 24px);
+}
