@@ -2230,9 +2230,18 @@ function unwrapCommandWrappers(argv) {
 
 function isReviewerAutoApprovableSegment(argv) {
   const unwrapped = unwrapCommandWrappers(argv);
-  if (unwrapped !== argv) return isReviewerAutoApprovableSegment(unwrapped);
+  if (unwrapped !== argv) {
+    // Node 启动选项可预加载任意脚本，不能只看包装后那段版本表达式。
+    if (basenameOf(unwrapped[0] || "") === "node" && argv.some(token => /^NODE_(?:OPTIONS|PATH)=/.test(token))) return false;
+    return isReviewerAutoApprovableSegment(unwrapped);
+  }
   const program = argv[0] || "";
   if (!program || ruleNeverAllowCommands.has(program)) return false;
+  // 仅识别读取 JSON 版本字段这一种表达式；不放行任意解释器代码或预加载参数。
+  const executable = program.startsWith("~/") ? path.join(os.homedir(), program.slice(2)) : program;
+  if ((program === "node" || (basenameOf(program) === "node" && isExecutableRooted(executable)))
+    && argv.length === 3 && argv[1] === "-p"
+    && /^require\((['"])\.\/package\.json\1\)\.version$/.test(argv[2])) return true;
   if (isCdSegment(argv) || isTrustedReadOnlySegment(argv)) return true;
   if (program === "git") {
     const subcommand = argv[1] || "";
@@ -2262,8 +2271,25 @@ export function isReviewerAutoApprovableCommand(command) {
   if (lines.length !== 1) {
     return lines.length > 0 && lines.every((line) => !line.endsWith("\\") && isReviewerAutoApprovableCommand(line));
   }
-  const segments = splitSafeCompoundCommand(text);
+  const segments = splitSafeCompoundCommand(text) || splitReviewerLiteralCommand(text);
   return Boolean(segments) && segments.every(isReviewerAutoApprovableSegment);
+}
+
+// 旧拆分器保守拒绝所有括号，也会拆开引号内的分号。补充识别字面量参数，
+// 仍拒绝动态展开、转义、重定向、后台执行和未闭合引号，不猜测 shell 运行结果。
+function splitReviewerLiteralCommand(text) {
+  let quote = "";
+  for (const char of text) {
+    if (quote) {
+      if (char === quote) quote = "";
+      else if (quote === '"' && /[$`\\]/.test(char)) return null;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (/[<>`$\\(){}#\r\n]/.test(char)) return null;
+  }
+  if (quote) return null;
+  const segments = shellCommandSegments(text);
+  if (segments.some(segment => segment.operator === "&" || !segment.text.trim())) return null;
+  return segments.map(segment => shellWords(segment.text));
 }
 
 // 危险命令清单（供 isLowRiskCommand 使用，渠道「自动执行」模式按它放行低风险命令）。
@@ -4248,6 +4274,12 @@ export function summarizeCommandEffects(command) {
       if (rest[0]) add(`等待 ${rest[0]} 秒`);
     } else if (program === "ss" || program === "lsof" || program === "ps") {
       add(`检查系统状态（${program}，只读）`);
+    } else if (program === "git") {
+      if (words[1] === "push") add(`向远端推送本地提交${words.slice(2).length ? `（${words.slice(2).join(" ")}）` : ""}`);
+      else if (words[1] === "fetch") add("获取远端提交并更新本地远端记录");
+      else if (["log", "status", "diff", "rev-list"].includes(words[1])) add("查看代码提交或差异（只读）");
+    } else if (program === "node" && words[1] === "-p" && /^require\((['"])\.\/package\.json\1\)\.version$/.test(words[2] || "")) {
+      add("读取 package.json 中的版本号（只读）");
     } else if (program === "grep" || program === "rg") {
       if (rest[0]) add(`查找「${rest[0]}」（只读）`);
     }
@@ -4279,7 +4311,39 @@ export async function summarizeApprovalImpact({ settings, action = {}, context =
   }
 }
 
-export async function reviewApproval({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, modelTimeoutMs = MODEL_TIMEOUT_MS, onUsage = null, localReviewImpl = null, networkRetryBaseDelayMs = MODEL_NETWORK_RETRY_BASE_DELAY_MS } = {} as any) {
+const REVIEW_TIMEOUT_MS = 30_000;
+
+// 审核共享一个总时限，覆盖连接、读取正文、断线重试、格式恢复和本地推理。
+// 即使服务没有响应取消，也及时返回人工入口，迟到的允许结论不再生效。
+export async function reviewApproval(options = {} as any) {
+  const { signal = null, modelTimeoutMs = REVIEW_TIMEOUT_MS } = options;
+  const controller = new AbortController();
+  const abort = () => controller.abort(signal.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timeoutMs = Math.min(REVIEW_TIMEOUT_MS, Math.max(1, Number(modelTimeoutMs) || REVIEW_TIMEOUT_MS));
+  const timer = setTimeout(() => controller.abort(new Error("审核等待超时，请人工确认本次操作")), timeoutMs);
+  let cancel;
+  try {
+    return await Promise.race([
+      performApprovalReview({ ...options, signal: controller.signal }),
+      new Promise((_, reject) => {
+        cancel = () => reject(controller.signal.reason);
+        controller.signal.addEventListener("abort", cancel, { once: true });
+        if (controller.signal.aborted) cancel();
+      }),
+    ]);
+  } catch (error) {
+    return { decision: "ask", reason: error instanceof Error ? error.message : String(error), policyHash: loadReviewerPolicy().hash };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+    controller.signal.removeEventListener("abort", cancel);
+  }
+}
+
+async function performApprovalReview({ settings, action = {}, context = "", fetchImpl = fetch, signal = null, onUsage = null, localReviewImpl = null, networkRetryBaseDelayMs = 500 } = {} as any) {
+  signal?.throwIfAborted();
   // 实时读取策略文件：策略被修改后新决策立即生效，policyHash 随之变化
   const { text: policy, hash: policyHash } = loadReviewerPolicy();
   // 审核必须看到完整的授权材料和待审操作。预算之外转人工，不能静默截掉禁止要求或命令尾部。
@@ -4330,18 +4394,33 @@ export async function reviewApproval({ settings, action = {}, context = "", fetc
         : reviewText,
     },
   ];
+  const requestReview = async (messages) => {
+    // 只在暂时性故障时完整重发一次，包含响应正文断线；关闭底层长退避，避免多层重试叠加。
+    for (let attempt = 0; ; attempt++) {
+      signal?.throwIfAborted();
+      try {
+        return await requestAuxiliaryModel({ settings: effectiveSettings, messages, fetchImpl, signal, tools: false, onUsage,
+          retryLimit: 0, statusRetryLimit: 0 });
+      } catch (error) {
+        if (signal?.aborted || attempt >= 1 || (!isModelTransportError(error) && !isRetryableStatusError(error?.status))) throw error;
+        await waitModelRetry(Math.min(1000, Math.max(1, Number(networkRetryBaseDelayMs) || 500)), signal);
+      }
+    }
+  };
   try {
-    // 审核失败走 fail-closed（返回 ask），测试靠注入小退避值避免真实等待网络重试阶梯
-    const message = await requestAuxiliaryModel({ settings: effectiveSettings, messages: request, fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
+    const message = await requestReview(request);
     const parsed = parseReviewerOutput(messageText(message));
     if (!parsed.invalidFormat) return { ...parsed.result, policyHash };
     // 格式错误先用完全相同的授权材料重新核对一次，不让用户替接口格式问题做决定。
     // 多个结论属于歧义，不重试挑选允许；真正的 ask/deny 也不重试。
     signal?.throwIfAborted();
     const retryMessages = [{ role: "system", content: `${policy}\n\n上次回复格式无法读取。请根据这次提供的完整用户要求和操作重新审核，只返回一个 JSON 对象，decision 为小写 allow、deny 或 ask，reason 为字符串。不要输出思考、示例或额外对象。` }, ...request.slice(1)];
-    const retry = await requestAuxiliaryModel({ settings: effectiveSettings, messages: retryMessages, fetchImpl, signal, tools: false, onUsage, retryBaseDelayMs: networkRetryBaseDelayMs });
+    const retry = await requestReview(retryMessages);
     return { ...parseReviewerDecision(messageText(retry)), policyHash };
   } catch (error: any) {
+    if (!signal?.aborted && isModelTransportError(error)) {
+      return { decision: "ask", reason: "审核助手不可用：连接中断，自动重试后仍未恢复，请人工确认本次操作", policyHash };
+    }
     return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
   }
 }
@@ -6231,7 +6310,9 @@ export async function runAgent({
             const askApproval = async (escalationReason = "") => {
               // 影响说明在审批排队期间并发生成，出队时多半已就绪；
               // 生成失败或 20 秒超时静默回退为无说明，绝不阻塞审批卡本身
+              // 审核服务已故障时不再向它索取说明，立即用静态摘要显示确认卡。
               const impactPromise = isImpactSummaryEligible(approvalToolName)
+                && !/审核助手不可用|本地审核模型不可用|审核等待超时/.test(escalationReason)
                 ? Promise.race([
                     withModelTimeout((signal) => summarizeApprovalImpact({
                       settings, fetchImpl, signal,
