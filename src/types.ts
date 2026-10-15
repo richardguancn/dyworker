@@ -999,7 +999,7 @@ export interface DyworkerBridge {
   gitStage(workspacePath: string, paths: string[]): Promise<{ ok: boolean; error?: string }>;
   gitDiscard(workspacePath: string, paths: string[]): Promise<{ ok: boolean; error?: string }>;
   listTraces(sessionId: string): Promise<{ ok: boolean; count: number; size: number; updatedAt: string }>;
-  readTraces(payload: { sessionId: string; offset?: number; limit?: number }): Promise<{ ok: boolean; records: TraceEvent[]; total: number; offset: number }>;
+  readTraces(payload: { sessionId: string; offset?: number; limit?: number }): Promise<{ ok: boolean; records: TraceEvent[]; total: number; offset: number; nextOffset?: number }>;
   openPath(path: string): Promise<{ ok: boolean; error?: string }>;
   revealInFolder(path: string): Promise<{ ok: boolean; error?: string }>;
   openBrowser(payload: { url: string; workspacePath?: string }): Promise<{ ok: boolean; result?: string; error?: string; url?: string }>;

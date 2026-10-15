@@ -626,8 +626,8 @@ export function TraceConsole({ traces, logs, sessionId, onClear, onClose, onAppe
           const known = new Set(tracesRef.current.map((trace) => traceKey(trace)));
           const fresh = result.records.filter((record) => !known.has(traceKey(record)));
           if (fresh.length) onAppendTraces?.(fresh);
-          const next = offset + result.records.length;
-          if (result.records.length && next < (result.total || 0)) {
+          const next = result.nextOffset ?? offset + result.records.length;
+          if (next > offset && next < (result.total || 0)) {
             page(next);
             return;
           }

@@ -21,6 +21,39 @@ const makeSession = (id, marker = id, extra = {}) => ({
   ...extra,
 });
 
+test("缓存淘汰不删除历史：全量读取、同步读取和修改保存均保持完整", async () => {
+  const dir = await tempDir();
+  const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "legacy.json"), cacheMaxEntries: 1, cacheMaxBytes: 1024 });
+  const records = Array.from({ length: 24 }, (_, index) => makeSession(`cache-${index}`));
+  await archive.saveAll(records);
+  assert.deepEqual((await archive.loadAll()).map(row => row.id), records.map(row => row.id));
+  assert.ok(archive.cacheStats().entries <= 1);
+  assert.ok(archive.cacheStats().bytes <= 1024);
+  assert.equal(archive.getSync('cache-0').messages[0].content, '内容-cache-0');
+  const first = await archive.get('cache-1');
+  await archive.applyDelta({ changed: [{ ...first, title: '淘汰后修改' }], order: records.map(row => row.id) });
+  await archive.appendMessages('cache-0', [{ role: 'assistant', content: '淘汰后追加' }]);
+  const restarted = createSessionArchive({ dir, legacyFile: path.join(dir, "legacy.json"), cacheMaxEntries: 0 });
+  const loaded = await restarted.loadAll();
+  assert.equal(loaded.length, 24);
+  assert.equal(loaded[1].title, '淘汰后修改');
+  assert.equal(loaded[0].messages.at(-1).content, '淘汰后追加');
+  assert.equal(restarted.cacheStats().entries, 0);
+});
+
+test("索引和完整会话均未变化时不重复写盘，即使会话已从缓存淘汰", async () => {
+  const dir = await tempDir();
+  const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "legacy.json"), cacheMaxEntries: 0 });
+  const rows = [makeSession('a'), makeSession('b')];
+  await archive.saveAll(rows);
+  const names = (await fs.readdir(dir)).filter(name => name.endsWith('.json'));
+  const before = await Promise.all(names.map(async name => (await fs.stat(path.join(dir, name))).mtimeMs));
+  await sleep(20);
+  await archive.saveAll(rows);
+  const after = await Promise.all(names.map(async name => (await fs.stat(path.join(dir, name))).mtimeMs));
+  assert.deepEqual(after, before);
+});
+
 test("saveAll 按会话拆分落盘，loadAll 按顺序完整读回", async () => {
   const dir = await tempDir();
   const archive = createSessionArchive({ dir, legacyFile: path.join(dir, "sessions.json") });

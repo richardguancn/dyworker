@@ -1,3 +1,4 @@
+import { createBoundedCache } from "./bounded-cache.mts";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { readFileSync } from "node:fs";
@@ -29,8 +30,14 @@ function encodeSessionId(id) {
   return `${base}-${hash}.json`;
 }
 
+const sessionByteSizes = new WeakMap<object, number>();
+function serializeSession(value) {
+  const serialized = JSON.stringify(value, null, 2);
+  sessionByteSizes.set(value, serialized.length * 2);
+  return serialized;
+}
 function contentFingerprint(value) {
-  return crypto.createHash("sha1").update(JSON.stringify(value, null, 2)).digest("hex");
+  return crypto.createHash("sha1").update(serializeSession(value)).digest("hex");
 }
 
 // 退役的会话文件不删除，移入 sessions/.removed/<时间戳>/ 保留
@@ -89,13 +96,14 @@ async function readJsonFile(file, fallback) {
   }
 }
 
-export function createSessionArchive({ dir, legacyFile }) {
+export function createSessionArchive({ dir, legacyFile, cacheMaxBytes = 32 * 1024 * 1024, cacheMaxEntries = 64 }) {
   let entries = []; // 有序 [{ id, file }]
-  let byId = new Map(); // id -> 已解析会话对象（主进程内存镜像）
+  const byId = createBoundedCache<any>(cacheMaxEntries, cacheMaxBytes, value => sessionByteSizes.get(value) ?? serializeSession(value).length * 2);
   let fingerprints = new Map(); // id -> 内容指纹（saveAll 差异化写入用）
   let migrated = false;
   // 渲染端最后选中的会话 id：随 index.json 持久化，重启后恢复选中（recoverFromDirectory 无法恢复时保持空串）
   let activeId = "";
+  let lastIndexContent = "";
   let chain = Promise.resolve();
 
   const enqueue = (job) => {
@@ -107,19 +115,23 @@ export function createSessionArchive({ dir, legacyFile }) {
   const indexPath = () => path.join(dir, INDEX_NAME);
 
   const writeIndex = async () => {
-    await writeAtomic(indexPath(), JSON.stringify({ version: 1, order: entries.map((entry) => entry.id), activeId: activeId || undefined }, null, 2));
+    const content = JSON.stringify({ version: 1, order: entries.map((entry) => entry.id), activeId: activeId || undefined }, null, 2);
+    if (content === lastIndexContent) return;
+    await writeAtomic(indexPath(), content);
+    lastIndexContent = content;
   };
 
-  const writeSessionFile = async (session) => {
+  const writeSessionFile = async (session, serialized = serializeSession(session)) => {
     const file = path.join(dir, encodeSessionId(session.id));
-    await writeAtomic(file, JSON.stringify(session, null, 2));
+    await writeAtomic(file, serialized);
+    fingerprints.set(String(session.id), crypto.createHash("sha1").update(serialized).digest("hex"));
     return file;
   };
 
   // 内存镜像单会话读取：命中缓存直接返回，否则读对应文件
-  const readSession = async (key) => {
+  const readSession = async (key, knownEntry = null) => {
     if (byId.has(key)) return byId.get(key);
-    const entry = entries.find((item) => item.id === key);
+    const entry = knownEntry || entries.find((item) => item.id === key);
     if (!entry) return null;
     const session = await readJsonFile(path.join(dir, entry.file), null);
     if (session?.id) {
@@ -239,18 +251,16 @@ export function createSessionArchive({ dir, legacyFile }) {
   });
 
   return {
+    cacheStats: () => byId.stats(),
     // 全量装载（主进程各只读消费方：历史检索、会话工具、渠道工作区推导等）
     loadAll(): any {
       return withArchive(async () => {
-        const missing = entries.filter((entry) => !byId.has(entry.id));
-        await Promise.all(missing.map(async (entry) => {
-          const session = await readJsonFile(path.join(dir, entry.file), null);
-          if (session?.id) {
-            byId.set(String(session.id), session);
-            fingerprints.set(String(session.id), contentFingerprint(session));
-          }
-        }));
-        const loaded = entries.map((entry) => byId.get(entry.id)).filter(Boolean);
+        // 返回数组独立于有界缓存，淘汰旧缓存不等于缺失或删除会话。
+        const loaded = [];
+        for (let start = 0; start < entries.length; start += 16) {
+          const batch = await Promise.all(entries.slice(start, start + 16).map(entry => readSession(entry.id, entry)));
+          loaded.push(...batch.filter(Boolean));
+        }
         // index 里有但文件缺失的会话剔除出顺序，避免每次装载都重复读失败
         if (loaded.length !== entries.length) {
           entries = loaded.map((session) => ({ id: String(session.id), file: encodeSessionId(session.id) }));
@@ -297,12 +307,12 @@ export function createSessionArchive({ dir, legacyFile }) {
         const nextFingerprints = new Map();
         for (const session of incoming) {
           const key = String(session.id);
-          const fingerprint = contentFingerprint(session);
+          const serialized = serializeSession(session);
+          const fingerprint = crypto.createHash("sha1").update(serialized).digest("hex");
           nextFingerprints.set(key, fingerprint);
-          if (fingerprints.get(key) === fingerprint && byId.has(key)) continue;
-          await writeSessionFile(session);
+          if (fingerprints.get(key) === fingerprint) { byId.set(key, session); continue; }
+          await writeSessionFile(session, serialized);
           byId.set(key, session);
-          fingerprints.set(key, fingerprint);
         }
         await persistOrder(incoming.map((session) => String(session.id)));
         fingerprints = nextFingerprints;
@@ -318,7 +328,6 @@ export function createSessionArchive({ dir, legacyFile }) {
           const key = String(session.id);
           await writeSessionFile(session);
           byId.set(key, session);
-          fingerprints.set(key, contentFingerprint(session));
         }
         const removedStamp = new Date().toISOString().replace(/[:.]/g, "-");
         for (const id of removed) {
@@ -348,7 +357,6 @@ export function createSessionArchive({ dir, legacyFile }) {
         if (entries.some((entry) => entry.id === key)) return;
         await writeSessionFile(session);
         byId.set(key, session);
-        fingerprints.set(key, contentFingerprint(session));
         entries = [{ id: key, file: encodeSessionId(key) }, ...entries];
         await writeIndex();
       });
@@ -364,7 +372,7 @@ export function createSessionArchive({ dir, legacyFile }) {
           if(!current||current.runtime!=='dsh'||current.createdAt!==source.createdAt||current.workspacePath!==source.workspacePath)
             throw new Error('原任务已经删除或更换工作目录，请重新复制');
         }
-        await writeSessionFile(session);byId.set(session.id,session);fingerprints.set(session.id,contentFingerprint(session));
+        await writeSessionFile(session);byId.set(session.id,session);
         entries=[{id:session.id,file:encodeSessionId(session.id)},...entries];await writeIndex();
       });
     },
@@ -375,7 +383,7 @@ export function createSessionArchive({ dir, legacyFile }) {
         if (!session?.id) return;
         const key=String(session.id);
         await writeSessionFile(session);
-        byId.set(key,session);fingerprints.set(key,contentFingerprint(session));
+        byId.set(key,session);
         if (!entries.some(entry=>entry.id===key)) entries=[{id:key,file:encodeSessionId(key)},...entries];
         await writeIndex();
       });
@@ -394,7 +402,7 @@ export function createSessionArchive({ dir, legacyFile }) {
         }
         session.updatedAt = new Date().toISOString();
         await writeSessionFile(session);
-        fingerprints.set(key, contentFingerprint(session));
+        byId.set(key, session);
       });
     },
   };

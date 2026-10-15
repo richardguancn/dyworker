@@ -1,3 +1,4 @@
+import { createTraceWriter } from "./trace-writer.mts";
 import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
 import { formatChannelApproval } from "./channels/shared.mts";
@@ -2134,8 +2135,10 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
   const abortController = new AbortController();
   const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController, sender };
   // 统一轨迹事件流（trace-console）：本 run 内所有 trace 记录先攒在内存，
-  // 任务结束时异步追加到 userData/traces/<sessionId>.jsonl（append-only，可回放）
-  const runTrace = [];
+  // 运行中分批追加到 userData/traces/<sessionId>.jsonl（append-only，可回放）
+  const traceDir = path.join(app.getPath("userData"), "traces");
+  const traceFile = path.join(traceDir, `${String(sessionId).replace(/[^a-zA-Z0-9_-]/g, "") || "session"}.jsonl`);
+  const traceWriter = createTraceWriter(traceFile);
   // run 内统一重编号：子代理自带从 1 起的 seq，与主代理重叠，这里统一递增，
   // 保证 runId+seq 唯一（渲染端列表 key 与回放去重都依赖它），并同步重映射 parentSeq
   let runTraceSeq = 0;
@@ -2185,7 +2188,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       };
       lastTraceTurnStep = { turn: Number(traceWithRun.turn) || 0, step: Number(traceWithRun.step) || 0 };
       if (traceWithRun.kind === "plan-update") lastProjectedPlanContent = String(traceWithRun.content || "");
-      runTrace.push(traceWithRun);
+      traceWriter.push(traceWithRun);
       emitToSession(sender, sessionId, runId, { ...agentEvent, trace: traceWithRun });
       return;
     }
@@ -2205,7 +2208,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         title: "任务结束",
         content: JSON.stringify(agentEvent.result),
       };
-      runTrace.push(finishTrace);
+      traceWriter.push(finishTrace);
       emitToSession(sender, sessionId, runId, { type: "trace", trace: finishTrace });
     }
     if (agentEvent?.type === "plan-update" && Array.isArray(agentEvent.steps)) {
@@ -2225,7 +2228,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
           title: "计划更新",
           content,
         };
-        runTrace.push(planTrace);
+        traceWriter.push(planTrace);
         emitToSession(sender, sessionId, runId, { type: "trace", trace: planTrace });
         lastProjectedPlanContent = content;
       }
@@ -2398,22 +2401,15 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     emit({ type: "agent-finished", result: { status: "error", finalText: "", reason } });
     return { ok: false, error: reason };
   } finally {
-    // trace 落盘：异步追加，绝不阻塞任务结束；单个会话一个 jsonl（append-only，可回放）
-    if (runTrace.length) {
-      const traceDir = path.join(app.getPath("userData"), "traces");
-      const traceFile = path.join(traceDir, `${String(sessionId).replace(/[^a-zA-Z0-9_-]/g, "") || "session"}.jsonl`);
-      const lines = runTrace.map((trace) => JSON.stringify(trace)).join("\n") + "\n";
-      void (async () => {
-        try {
-          await fs.mkdir(traceDir, { recursive: true });
-          await fs.appendFile(traceFile, lines, "utf8");
-          // 总量封顶：traces 只增不减会把 userData 吃满（实测一年 177MB），
-          // 超过 128MB 时按最旧优先清理，当前文件保留
-          await enforceDirTotalSize(traceDir, 128 * 1024 * 1024, { keep: [traceFile] });
-        } catch {
-          // 落盘失败不影响任务与界面，轨迹视图会降级为内存事件
-        }
-      })();
+    // 每秒/每批持续落盘，收尾只冲刷剩余内容；完整记录仍保留在原来的 jsonl 文件。
+    // 等待最后一批写入，避免调用方收到结束后立即退出时丢掉队列中的轨迹。
+    try {
+      await traceWriter.close();
+      if (traceWriter.stats().writtenBytes) {
+        await enforceDirTotalSize(traceDir, 128 * 1024 * 1024, { keep: [traceFile] });
+      }
+    } catch (error) {
+      console.warn("[trace] 最后一批轨迹未能保存", error);
     }
     trackTaskEnd();
     if (activeAgents.get(sessionId) === agentState) {
