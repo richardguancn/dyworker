@@ -58,3 +58,15 @@ export type MentionItem = { id: string; title: string; detail: string; pluginInp
 export const mentionItemsRef: { current: MentionItem[] } = { current: [] };
 // 新建任务：由 App 注册后指向真正的实现（applyMention 触发内置 /new 时调用）
 export const createTaskRef: { current: (targetWorkspacePath?: string) => void } = { current: () => {} };
+
+// 语音录制 / 朗读 / 播放的模块级 ref：App 的清理 effect 与 messageActions 的读写必须同一实例
+export const recorderRef: { current: MediaRecorder | null } = { current: null };
+export const recordingChunksRef: { current: Blob[] } = { current: [] };
+export const microphoneStreamRef: { current: MediaStream | null } = { current: null };
+// 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
+export const voiceTargetRef: { current: "composer" | ((text: string) => void) } = { current: "composer" };
+export const speakAudioRef: { current: HTMLAudioElement | null } = { current: null };
+export const speakObjectUrlRef: { current: string } = { current: "" };
+export const speakTokenRef: { current: number } = { current: 0 };
+export const voiceAudioRef: { current: HTMLAudioElement | null } = { current: null };
+export const voiceObjectUrlRef: { current: string } = { current: "" };

@@ -52,9 +52,10 @@ import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionN
 import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
 import { updateToolPanelTab, focusToolPanelTab, openToolPanelTab, openFilePreview, choosePreviewFile, closeToolPanelTab } from "./state/toolPanelActions";
 import { resolveTokenFile, resolveTokenSession, openReferencedFile, insertFileToken, handleComposerDragOver, handleComposerDragLeave, handleComposerDrop, handleComposerPaste, openContextMenu, closeContextMenu, handleConversationMouseUp, addSelectionToComposer, sendSelectionToSideChat, updateAnnotationMarkers, handleMessageContextMenu, pasteComposerText, applyMention, chooseWorkspace, chooseAttachments } from "./state/composerActions";
+import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceInput, copyMessage, toggleSpeakMessage, togglePlayVoice, startMessageEdit, cancelMessageEdit, speakMessageKey } from "./state/messageActions";
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef } from "./state/sharedRefs";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef } from "./state/sharedRefs";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -66,7 +67,6 @@ import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
 import { defaultSettings, settingsWithProfile } from "./lib/settings";
-import { blobToWavMono } from "./lib/audio";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
@@ -176,7 +176,7 @@ import { reconcileDshTurns, patchDshAssistant, mergeCreatedDshTask } from './dsh
 import { DshComposer } from './DshComposer';
 import type { ComposerHandle } from './pluginRuntime/dshDraftEditor.ts';
 import { loadEnabledClientHalves } from "./pluginRuntime/builtinPlugins.ts";
-import { attachmentImageSource, copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
+import { copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
 import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
 import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
 import { TokenActivity } from "./TokenActivityPanel";
@@ -274,8 +274,6 @@ function playCompletionSound() {
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
 
 // ===== 浏览器「导入 Cookie 和密码」对话框（对照 Codex 浏览器更多菜单） =====
-
-const speakMessageKey = (message: ChatMessage) => message.id || `${message.role}:${message.createdAt}`;
 
 type MessageRowActions = { [Key in "openReferencedFile" | "openImagePreview" | "handleMessageContextMenu" | "togglePlayVoice" | "toggleActivityCollapse" | "copyMessage" | "startMessageEdit" | "toggleSpeakMessage" | "openMessageSession" | "forkSessionAt" | "openPluginReference" | "openReview" | "bindMessageRow"]: (...args: any[]) => any };
 
@@ -615,8 +613,6 @@ export function App() {
     window.clearTimeout(annotationListCloseTimerRef.current);
     annotationListCloseTimerRef.current = window.setTimeout(() => setAnnotationListOpen(false), 200);
   };
-  // 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
-  const voiceTargetRef = useRef<"composer" | ((text: string) => void)>("composer");
   const composerModelsKeyRef = useRef("");
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
@@ -722,29 +718,9 @@ export function App() {
       tracePublishTimerRef.current = null;
     };
   }, [debugOpen, traceBuffer]);
-  const openImagePreview = (payload: { url: string; name: string; path?: string }, peers?: Array<Pick<Attachment, "path" | "previewUrl" | "name">>) => {
-    setImagePreviewPeers(peers ?? []);
-    setImagePreview(payload);
-  };
-  const closeImagePreview = () => {
-    setImagePreview(null);
-    setImagePreviewPeers([]);
-  };
   const imagePreviewIndex = imagePreview
     ? imagePreviewPeers.findIndex((peer) => (peer.path || peer.previewUrl || "") === (imagePreview.path || imagePreview.url))
     : -1;
-  // 左右切换（循环）：目标图可能还没读过原图，先经附件通道取 dataURL
-  const navigateImagePreview = (direction: -1 | 1) => {
-    const current = imagePreview;
-    if (!current || imagePreviewPeers.length < 2) return;
-    const currentKey = current.path || current.url;
-    const index = imagePreviewPeers.findIndex((peer) => (peer.path || peer.previewUrl || "") === currentKey);
-    const next = imagePreviewPeers[(Math.max(index, 0) + direction + imagePreviewPeers.length) % imagePreviewPeers.length];
-    if (!next) return;
-    void attachmentImageSource(next).then((result) => {
-      if (result.ok && result.dataUrl) setImagePreview({ url: result.dataUrl, name: next.name || "图片", path: next.path });
-    });
-  };
   const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
@@ -791,9 +767,6 @@ export function App() {
   panelGeometryRef.current = { rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth };
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
   const composingRef = useRef(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordingChunksRef = useRef<Blob[]>([]);
-  const microphoneStreamRef = useRef<MediaStream | null>(null);
   const shouldScrollToBottomRef = useRef<string | null>(null);
 
   // 输入区高度随内容（编辑条、附件、提示条）变化，把实际高度写入 CSS 变量，
@@ -2414,110 +2387,6 @@ export function App() {
     };
   }, []);
 
-  const finishRecording = async (recorder: MediaRecorder) => {
-    const stream = microphoneStreamRef.current;
-    microphoneStreamRef.current = null;
-    stream?.getTracks().forEach((track) => track.stop());
-    const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-    recordingChunksRef.current = [];
-    if (!blob.size) {
-      setVoiceState("idle");
-      setError("没有录到声音，请检查麦克风后重试");
-      return;
-    }
-    setVoiceState("transcribing");
-    setNotice("正在把录音转换成文字");
-    try {
-      if (!window.dyworker) {
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
-        applyVoiceText("请根据当前工作文件夹整理一份工作摘要。");
-      } else {
-        // 本地引擎只认 WAV：webm 录音先解码重采样成 16k 单声道；云端直接发原始格式
-        const engineLocal = settings.transcriptionEngine === "local";
-        const audio = engineLocal
-          ? await blobToWavMono(blob, 16000)
-          : new Uint8Array(await blob.arrayBuffer());
-        const result = await window.dyworker.transcribeAudio({
-          settings,
-          audio: Array.from(audio),
-          mimeType: engineLocal ? "audio/wav" : blob.type || "audio/webm",
-        });
-        applyVoiceText(result.text);
-      }
-      setNotice("语音已转换为文字");
-      window.setTimeout(() => textareaRef.current?.focus(), 0);
-    } catch (voiceError) {
-      setError(voiceError instanceof Error ? voiceError.message : String(voiceError));
-    } finally {
-      recorderRef.current = null;
-      setVoiceState("idle");
-    }
-  };
-
-  // 转写结果按目标分发：默认写进 composer，评论卡录音时由 voiceTargetRef 指向评论 setter
-  const applyVoiceText = (text: string) => {
-    const target = voiceTargetRef.current;
-    voiceTargetRef.current = "composer";
-    if (target === "composer") {
-      setComposer((current) => `${current}${current && !current.endsWith("\n") ? "\n" : ""}${text}`);
-    } else {
-      target(text);
-    }
-  };
-
-  const toggleVoiceInput = async () => {
-    setError("");
-    if (voiceState === "transcribing") return;
-    if (voiceState === "recording") {
-      recorderRef.current?.stop();
-      return;
-    }
-    if (!window.dyworker) {
-      setVoiceState("transcribing");
-      setNotice("正在把录音转换成文字");
-      await new Promise((resolve) => window.setTimeout(resolve, 650));
-      applyVoiceText("请根据当前工作文件夹整理一份工作摘要。");
-      setVoiceState("idle");
-      setNotice("语音已转换为文字");
-      return;
-    }
-    // 本地引擎不需要云端密钥与转写地址；模型没下载时由主进程转写报错提示
-    if (settings.transcriptionEngine !== "local"
-      && (!settings.apiKey || (!settings.transcriptionEndpoint && !settings.endpoint))) {
-      setError("请先在设置中配置模型密钥和语音转写服务");
-      setSettingsOpen(true);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setError("当前系统没有提供可用的录音能力");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const preferredType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]
-        .find((type) => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(stream, preferredType ? { mimeType: preferredType } : undefined);
-      microphoneStreamRef.current = stream;
-      recorderRef.current = recorder;
-      recordingChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) recordingChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => void finishRecording(recorder);
-      recorder.onerror = () => {
-        stream.getTracks().forEach((track) => track.stop());
-        recorderRef.current = null;
-        setVoiceState("idle");
-        setError("录音中断，请检查麦克风权限后重试");
-      };
-      recorder.start(250);
-      setVoiceState("recording");
-      setNotice("正在录音，再次点击麦克风即可结束");
-    } catch (voiceError) {
-      setError(`无法使用麦克风：${voiceError instanceof Error ? voiceError.message : String(voiceError)}`);
-    }
-  };
-
   const refreshWorkspace = async () => {
     if (!window.dyworker || !workspacePath) return;
     setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
@@ -3642,168 +3511,6 @@ export function App() {
     closeFilePanelTabs();
     updateSession(activeSession.id, (session) => ({ ...session, workspacePath: "" }));
     setNotice("已移除这个会话的工作目录，会话归入最近");
-  };
-
-  const copyMessage = async (message: ChatMessage) => {
-    const text = messageVisibleText(message);
-    // 复制按钮只复制文本：图文混排进剪贴板时，部分粘贴目标（如输入框）会只取到图片、
-    // 丢掉文本。图片由缩略图上的复制按钮单独复制。
-    const copied = await copyTextToClipboard(text);
-    setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
-  };
-
-  // 朗读助手回复：主进程合成 wav → 渲染层 Blob 播放；再点一次停止。token 防止停止后旧合成结果继续播放
-  const speakAudioRef = useRef<HTMLAudioElement | null>(null);
-  const speakObjectUrlRef = useRef("");
-  const speakTokenRef = useRef(0);
-
-  const stopSpeakingMessage = () => {
-    speakTokenRef.current += 1;
-    if (speakAudioRef.current) {
-      speakAudioRef.current.pause();
-      speakAudioRef.current = null;
-    }
-    if (speakObjectUrlRef.current) {
-      URL.revokeObjectURL(speakObjectUrlRef.current);
-      speakObjectUrlRef.current = "";
-    }
-    setSpeakingMessageKey(null);
-    setSpeakingLoadingKey(null);
-  };
-
-
-  const toggleSpeakMessage = async (message: ChatMessage) => {
-    const key = speakMessageKey(message);
-    if (speakingMessageKey === key || speakingLoadingKey === key) {
-      stopSpeakingMessage();
-      return;
-    }
-    // 已有合成进行中：先停掉，避免两条音频叠加
-    stopSpeakingMessage();
-    const text = messageVisibleText(message).trim();
-    if (!text) {
-      setNotice("这条消息没有可朗读的文本");
-      return;
-    }
-    const token = speakTokenRef.current;
-    setSpeakingLoadingKey(key);
-    try {
-      const result = await window.dyworker?.speakText({ text: text.slice(0, 2000) });
-      if (token !== speakTokenRef.current) return;
-      if (!result?.ok || !result.wav?.length) {
-        setNotice(result?.error || "语音合成失败，请重试");
-        return;
-      }
-      // IPC 结构化克隆拿到的是 Uint8Array<ArrayBufferLike>：拷贝成独立 ArrayBuffer 再建 Blob
-      const wavBuffer = result.wav.buffer.slice(result.wav.byteOffset, result.wav.byteOffset + result.wav.byteLength) as ArrayBuffer;
-      const url = URL.createObjectURL(new Blob([wavBuffer], { type: "audio/wav" }));
-      const audio = new Audio(url);
-      speakObjectUrlRef.current = url;
-      speakAudioRef.current = audio;
-      audio.onended = () => stopSpeakingMessage();
-      audio.onerror = () => {
-        setNotice("语音播放失败");
-        stopSpeakingMessage();
-      };
-      setSpeakingMessageKey(key);
-      await audio.play();
-    } catch (error) {
-      if (token === speakTokenRef.current) setNotice(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (token === speakTokenRef.current) setSpeakingLoadingKey(null);
-    }
-  };
-
-  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
-  const voiceObjectUrlRef = useRef("");
-
-  const stopPlayingVoice = () => {
-    if (voiceAudioRef.current) {
-      voiceAudioRef.current.pause();
-      voiceAudioRef.current = null;
-    }
-    if (voiceObjectUrlRef.current) {
-      URL.revokeObjectURL(voiceObjectUrlRef.current);
-      voiceObjectUrlRef.current = "";
-    }
-    setPlayingVoicePath(null);
-    setVoiceLoadingPath(null);
-  };
-
-  const togglePlayVoice = async (attachment: Attachment) => {
-    const pathKey = attachment.path || attachment.name;
-    if (playingVoicePath === pathKey || voiceLoadingPath === pathKey) {
-      stopPlayingVoice();
-      return;
-    }
-    stopPlayingVoice();
-    stopSpeakingMessage();
-    if (!attachment.path) {
-      setNotice("语音文件路径不存在");
-      return;
-    }
-    setVoiceLoadingPath(pathKey);
-    try {
-      const result = await window.dyworker?.readAudioAttachment(attachment.path);
-      if (!result?.ok || (!result.wav?.length && !result.bytes?.length)) {
-        setNotice(result?.error || "语音文件无法读取或已清理");
-        return;
-      }
-      const audioBuffer = result.wav ? result.wav : result.bytes!;
-      const mimeType = result.wav ? "audio/wav" : (result.mimeType || "audio/mpeg");
-      const bufferCopy = audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength) as ArrayBuffer;
-      const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType }));
-      const audio = new Audio();
-      audio.src = url;
-      audio.preload = "auto";
-      voiceObjectUrlRef.current = url;
-      voiceAudioRef.current = audio;
-      audio.onended = () => stopPlayingVoice();
-      audio.onerror = () => {
-        const errorMsg = audio.error?.message || "语音播放失败";
-        setNotice(errorMsg.includes("supported source") ? "语音格式无法播放或文件已损坏" : "语音播放失败");
-        stopPlayingVoice();
-      };
-      setPlayingVoicePath(pathKey);
-      await audio.play();
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
-      stopPlayingVoice();
-    } finally {
-      setVoiceLoadingPath(null);
-    }
-  };
-
-  const startMessageEdit = (message: ChatMessage, messageIndex: number) => {
-    if (!activeSession || message.role !== "user") return;
-    // 任务运行期间只允许编辑排队中、尚未开始执行的消息
-    if (activeTaskRunning && !(message.runId && queuedRunIds.has(message.runId))) return;
-    const text = messageVisibleText(message);
-    if (activeSession.runtime === 'dsh') {
-      const editor = clientHost().inputEditor(activeSession.id);
-      if (!editor || !clientHost().inputReady(activeSession.id)) { setNotice('本会话输入尚未就绪，请稍后重试'); return; }
-      try { editor.restore({ text, references: message.pluginReferences || [] }); editor.refreshSources(); }
-      catch (error) { setNotice(`无法恢复这条消息的引用：${error instanceof Error ? error.message : String(error)}`); return; }
-    }
-    setEditingMessage({ sessionId: activeSession.id, messageIndex, original: message });
-    setComposer(text);
-    setAttachments(message.attachments ? [...message.attachments] : []);
-    setActiveSkills(message.skillsUsed?.length ? skills.filter((skill) => message.skillsUsed?.includes(skill.name)) : []);
-    // 引用注释一并恢复进 composer，重发时按编辑后的版本重新编号拼进正文
-    setAnnotations(message.annotations ? message.annotations.map((annotation) => ({ ...annotation })) : []);
-    setMentionMenu(null);
-    setNotice("已载入消息，修改后点击发送即可替换原消息并重新处理");
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
-  };
-
-  const cancelMessageEdit = () => {
-    setEditingMessage(null);
-    setComposer("");
-    setAttachments([]);
-    setActiveSkills([]);
-    setAnnotations([]);
-    setNotice("已取消编辑");
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
   // 从队列移除一条排队消息（同时移除它的空助手占位）
