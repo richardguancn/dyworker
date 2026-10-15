@@ -285,19 +285,12 @@ test("待发消息与挂起唤醒提示独立成列表收在输入框上方，�
   assert.ok(sleepAt > pendingAt && sleepAt < composerAt, "挂起唤醒提示必须收在上方列表里，不能嵌进输入框卡片");
   assert.match(app, /aria-label="待发送列表"/);
   assert.match(app, /className="queue-card-head"/);
-  // 比输入框(min(940px,76%))窄一档、底边压到输入框下面，
-  // 且要能接住指针事件（composer-dock 本身是 pointer-events: none）
+  // 计划条可能出现在列表与输入框之间，三者必须保持独立间距。
   const pendingRule = /\.composer-pending\s*\{([^}]*)\}/.exec(styles)?.[1] || "";
-  assert.match(pendingRule, /width:\s*min\(880px,\s*71\.5%\)/, "待发送列表要比输入框窄一点");
-  assert.match(pendingRule, /margin-bottom:\s*-8px/, "待发送列表底边要压到输入框下面，中间不留空隙");
+  assert.match(pendingRule, /width:\s*min\(940px,\s*76%\)/);
+  assert.match(pendingRule, /margin-bottom:\s*10px/);
   assert.match(pendingRule, /pointer-events:\s*auto/);
-  // 紧贴输入框的那张卡：下缘不圆、不留底边框，整条列表塞到输入框底下
-  const attachedRule = /\.composer-pending > :last-child\s*\{([^}]*)\}/.exec(styles)?.[1] || "";
-  assert.match(attachedRule, /border-bottom:\s*0/, "待发送框不要底边框");
-  assert.match(attachedRule, /border-radius:\s*14px 14px 0 0/, "待发送框下缘不能有圆角");
-  assert.match(attachedRule, /padding-bottom:\s*15px/, "被输入框盖住的那一截要留出下内边距，别压住最后一行");
-  // 输入框浮在列表之上：上缘补一层向上投影，把前后层次压出来
-  assert.match(styles, /\.composer-pending \+ \.composer-card\s*\{[^}]*box-shadow:\s*0 -6px 14px -6px/);
+  assert.doesNotMatch(styles, /\.composer-pending > :last-child\s*\{/);
   // 悬浮在对话流上方的卡片必须有加浓托底，半透明模式下不能透成一片
   assert.match(appearanceCss, /html\[data-translucent="true"\] \.sleep-card\s*\{[^}]*background:\s*var\(--card-raised, var\(--card\)\)/);
 });

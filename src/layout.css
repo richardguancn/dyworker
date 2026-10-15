@@ -260,7 +260,7 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-context-item svg { color: inherit; flex: none; }
 .reference-layout .composer-project-branch { overflow: hidden; }
 .reference-layout .composer-project-branch span { overflow: hidden; text-overflow: ellipsis; }
-.reference-layout .composer-pending { width: min(712px, calc(100% - 76px)); }
+.reference-layout .composer-pending { width: var(--chat-width); }
 .reference-layout .goal-banner { width: var(--chat-width); }
 .reference-layout .composer-toolbar { flex-wrap: nowrap; gap: 8px; min-height: 32px; }
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
@@ -288,8 +288,7 @@ html .reference-layout.platform-linux {
   .reference-layout .main-panel { border-radius: 12px; }
   .reference-layout .tool-panel { grid-row: auto; grid-column: auto; top: var(--titlebar-height); bottom: var(--frame-gap); height: auto; width: min(var(--tool-panel-width), calc(100% - var(--rail-width) - 12px)); }
   html .reference-layout { --chat-width: calc(100% - 28px); }
-  .reference-layout .composer-project-bar,
-  .reference-layout .composer-pending { width: calc(100% - 44px); gap: 12px; }
+  .reference-layout .composer-project-bar { width: calc(100% - 44px); gap: 12px; }
   .reference-layout .composer-mode { max-width: 110px; }
   .reference-layout .context-ring-wrap { display: none; }
   .reference-layout .composer-project-button span { max-width: 130px; }
