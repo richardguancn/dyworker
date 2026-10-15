@@ -20,6 +20,9 @@ import {
   stripControlMarkers,
   stripControlMarkersCached,
 } from "./lib/text";
+import { activityDisplayTitle, appendBranchActivity, patchActivityTree } from "./lib/activity";
+import { buildReviewTree, filterWorkspaceEntries, isMarkdownFile, isTextPreviewFile, parseReviewDiff, workspaceFileAttachment } from "./lib/files";
+import type { ReviewTreeDir } from "./lib/files";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
@@ -730,21 +733,6 @@ function VoiceMessageBubble({
   );
 }
 
-function isMarkdownFile(filePath: string) {
-  return /\.(?:md|markdown)$/i.test(filePath);
-}
-
-function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
-  const isImage = /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name);
-  return {
-    name: file.name,
-    path: file.path,
-    size: 0,
-    mimeType: isImage ? "image/*" : "text/plain",
-    isImage,
-  };
-}
-
 // 输入框长粘贴折叠块：超过阈值的大段粘贴文本不直接灌进输入框，
 // 折叠成块随消息一起发送（对照 Codex 的长粘贴折叠呈现）
 interface ComposerPasteBlock {
@@ -1026,74 +1014,6 @@ const browserPasswordFillScript = (username: string, password: string) => `(() =
   return user ? "已填充用户名和密码" : "已填充密码";
 })()`;
 
-// 可在代码标签页预览的文本文件类型(其余交给系统默认应用)
-const TEXT_PREVIEW_EXTENSIONS = new Set([
-  "js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts", "json", "jsonc",
-  "css", "scss", "less", "html", "htm", "svg", "xml",
-  "py", "sh", "bash", "zsh", "md", "markdown", "txt", "log",
-  "yml", "yaml", "toml", "ini", "cfg", "conf", "env", "properties",
-  "java", "c", "h", "cpp", "cc", "cxx", "hpp", "go", "rs", "rb", "php", "sql", "vue",
-  "gitignore", "gitattributes", "editorconfig", "dockerignore", "npmignore",
-]);
-
-function fileExtension(filePath: string) {
-  const name = filePath.split(/[\\/]/).pop() || "";
-  if (name.startsWith(".") && !name.includes(".", 1)) return name.slice(1).toLowerCase(); // .gitignore 等点文件
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
-
-function isTextPreviewFile(filePath: string) {
-  return TEXT_PREVIEW_EXTENSIONS.has(fileExtension(filePath));
-}
-
-// 面包屑:工作区名 › 目录 › 文件
-function codeBreadcrumbSegments(filePath: string, workspacePath: string) {
-  const root = workspacePath.replace(/[\\/]+$/, "");
-  let relative = filePath;
-  if (root && (filePath.startsWith(`${root}/`) || filePath.startsWith(`${root}\\`))) {
-    relative = filePath.slice(root.length + 1);
-  }
-  const workspaceName = root.split(/[\\/]/).pop() || root;
-  return [workspaceName, ...relative.split(/[\\/]/).filter(Boolean)];
-}
-
-type ReviewDiffRow =
-  | { type: "add" | "del" | "ctx"; oldNo?: number; newNo?: number; text: string }
-  | { type: "gap"; count: number };
-
-// 解析 unified diff:带行号输出,hunk 之间插入"N unmodified lines"折叠条(对照 Codex 审阅视图)
-function parseReviewDiff(diff: string): ReviewDiffRow[] {
-  const rows: ReviewDiffRow[] = [];
-  const hunkPattern = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
-  let oldNo = 0;
-  let newNo = 0;
-  let inHunk = false;
-  for (const line of diff.split("\n")) {
-    const hunk = hunkPattern.exec(line);
-    if (hunk) {
-      const nextOld = Number(hunk[1]);
-      if (inHunk) {
-        const gap = nextOld - oldNo;
-        if (gap > 0) rows.push({ type: "gap", count: gap });
-      } else if (nextOld > 1) {
-        rows.push({ type: "gap", count: nextOld - 1 });
-      }
-      oldNo = nextOld;
-      newNo = Number(hunk[2]);
-      inHunk = true;
-      continue;
-    }
-    if (!inHunk || line.startsWith("\\")) continue;
-    const marker = line[0];
-    const text = line.slice(1);
-    if (marker === "+") rows.push({ type: "add", newNo: newNo++, text });
-    else if (marker === "-") rows.push({ type: "del", oldNo: oldNo++, text });
-    else if (marker === " ") rows.push({ type: "ctx", oldNo: oldNo++, newNo: newNo++, text });
-  }
-  return rows;
-}
-
 function ReviewDiffView({ diff }: { diff: string }) {
   const rows = useMemo(() => parseReviewDiff(diff), [diff]);
   if (!rows.length) return <p className="panel-empty">暂无可展示的修改内容。</p>;
@@ -1158,28 +1078,6 @@ function ReviewPanel({ changes, workspacePath }: { changes: FileChange[]; worksp
 }
 
 // ===== Codex 风格审阅视图:Git 工作区改动 vs 基线,左 diff 右文件树 =====
-
-type ReviewTreeDir = { name: string; path: string; dirs: ReviewTreeDir[]; files: GitReviewFile[] };
-
-// 把扁平的文件路径列表组装成目录树（对照 Codex 审阅页右侧的分组文件列表）
-function buildReviewTree(files: GitReviewFile[]): ReviewTreeDir {
-  const root: ReviewTreeDir = { name: "", path: "", dirs: [], files: [] };
-  for (const file of files) {
-    const segments = file.path.split("/");
-    let node = root;
-    for (let index = 0; index < segments.length - 1; index++) {
-      const dirPath = segments.slice(0, index + 1).join("/");
-      let next = node.dirs.find((dir) => dir.path === dirPath);
-      if (!next) {
-        next = { name: segments[index], path: dirPath, dirs: [], files: [] };
-        node.dirs.push(next);
-      }
-      node = next;
-    }
-    node.files.push(file);
-  }
-  return root;
-}
 
 const reviewStatusLabels: Record<GitReviewFile["status"], string> = { M: "已修改", A: "新增", D: "已删除", U: "未跟踪" };
 
@@ -2805,20 +2703,6 @@ function BrowserPasswordsDialog({
   );
 }
 
-// 按名称筛选文件树:保留命中项的祖先目录链
-function filterWorkspaceEntries(entries: WorkspaceEntry[], query: string): WorkspaceEntry[] {
-  const keyword = query.trim().toLowerCase();
-  if (!keyword) return entries;
-  const walk = (list: WorkspaceEntry[]): WorkspaceEntry[] => list.flatMap((entry) => {
-    if (entry.kind === "directory") {
-      const children = walk(entry.children || []);
-      return children.length || entry.name.toLowerCase().includes(keyword) ? [{ ...entry, children }] : [];
-    }
-    return entry.name.toLowerCase().includes(keyword) ? [entry] : [];
-  });
-  return walk(entries);
-}
-
 // Codex 风格的文件变更摘要卡片：数据来自 agent 的 file-change 事件（真实 +N/-M 统计，可展开 unified diff）
 function DiffView({ diff }: { diff: string }) {
   return (
@@ -2979,15 +2863,6 @@ function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
   }
 }
 
-function activityDisplayTitle(activity: ActivityRecord) {
-  if (activity.kind !== "run_command") return activity.title;
-  const command = activity.title.replace(/^运行命令[：:]\s*/, "");
-  if (/^(已运行|正在运行|运行失败)\s/.test(activity.title)) return activity.title;
-  if (activity.status === "running") return `正在运行 ${command}`;
-  if (activity.status === "error") return `运行失败 ${command}`;
-  return `已运行 ${command}`;
-}
-
 // 地址栏协议补全：localhost/内网地址默认 http（本地开发服务多无 TLS），其余默认 https。
 // 单标签主机名（无点，如 nas:8080）公网不存在，按内网处理；裸 IPv6 补方括号。
 function normalizeBrowserInput(raw: string): string {
@@ -3020,44 +2895,6 @@ function normalizeBrowserInput(raw: string): string {
     || (!host.includes(".") && !host.includes(":")); // 单标签主机名视为内网
   const normalized = bareIpv6 ? `[${head}]${tail}` : raw;
   return `${isLocal ? "http" : "https"}://${normalized}`;
-}
-
-// 子代理分支活动挂载：把带 branch 的活动追加到父活动（dispatch_agent）的 children 上，
-// 成为 message.activities 的一部分（随 sessions.json 落盘，天然按消息归属，不会跨会话串数据）。
-// 找不到父活动（极端时序）时返回 attached: false，由调用方丢弃，不混进主活动流。
-function appendBranchActivity(list: ActivityRecord[], activity: ActivityRecord): { list: ActivityRecord[]; attached: boolean } {
-  const parentId = activity.branch?.parentId;
-  if (!parentId) return { list, attached: false };
-  let attached = false;
-  const next = list.map((parent) => {
-    if (parent.id !== parentId) return parent;
-    attached = true;
-    return { ...parent, children: [...(parent.children || []), activity] };
-  });
-  return { list: next, attached };
-}
-
-// 按 id 不可变更新活动状态/详情（同时覆盖主活动与子代理 children 嵌套层），主/子活动共用
-function patchActivityTree(list: ActivityRecord[], id: string, status: ActivityRecord["status"], detail: string | undefined, durationMs?: number, commentary?: string): ActivityRecord[] {
-  return list.map((activity) => {
-    if (activity.id === id) {
-      return {
-        ...activity,
-        status,
-        detail: detail ?? activity.detail,
-        ...(durationMs !== undefined ? { durationMs } : {}),
-        ...(commentary !== undefined ? { commentary } : {}),
-      };
-    }
-    if (activity.children?.some((child) => child.id === id)) {
-      return {
-        ...activity,
-        children: (activity.children || []).map((child) =>
-          child.id === id ? { ...child, status, detail: detail ?? child.detail, ...(durationMs !== undefined ? { durationMs } : {}), ...(commentary !== undefined ? { commentary } : {}) } : child),
-      };
-    }
-    return activity;
-  });
 }
 
 // 推理模型的思考过程：固定高度滚动框，流式期间自动跟随到底部显示最新内容。
