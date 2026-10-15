@@ -50,6 +50,9 @@ import { useComposerStore } from "./state/composerStore";
 import type { ComposerPasteBlock } from "./state/composerStore";
 import { useSessionStore } from "./state/sessionStore";
 import type { WakingSessionEntry } from "./state/sessionStore";
+import { useInboxStore } from "./state/inboxStore";
+import { usePanelStore } from "./state/panelStore";
+import { useViewStore } from "./state/viewStore";
 import { previewSessions, previewWorkspace } from "./state/previewData";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
@@ -580,6 +583,32 @@ export function App() {
     skillSummarySessionId, setSkillSummarySessionId, loopStates, setLoopStates,
     dshChildHistory, setDshChildHistory,
   } = useSessionStore();
+  // 收件箱 / 系统消息 / 导入记录类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    inboxItems, setInboxItems, inboxOpen, setInboxOpen, inboxTab, setInboxTab,
+    systemMessageFocusId, setSystemMessageFocusId, systemMessagesUnread, setSystemMessagesUnread,
+    importedHistory, setImportedHistory, fullAccessDialogOpen, setFullAccessDialogOpen,
+  } = useInboxStore();
+  // 右侧面板 / 记忆 / 技能 / 计划 / 调试诊断类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    memories, setMemories, memoriesLinting, setMemoriesLinting, memoriesLintMessage, setMemoriesLintMessage,
+    skills, setSkills, schedules, setSchedules, usageStats, setUsageStats,
+    debugLogs, setDebugLogs, traceEvents, setTraceEvents, planSeed, setPlanSeed,
+    skillDraft, setSkillDraft, creationKind, setCreationKind, memoryEdit, setMemoryEdit,
+    skillEdit, setSkillEdit, pluginPanelChoices, setPluginPanelChoices,
+  } = usePanelStore();
+  // 视图 / 提示 / 搜索 / 交互浮层类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    error, setError, notice, setNotice, ready, setReady,
+    hoveredTurnIndex, setHoveredTurnIndex, atBottom, setAtBottom,
+    collapsedActivities, setCollapsedActivities, editingMessage, setEditingMessage,
+    imagePreview, setImagePreview, imagePreviewPeers, setImagePreviewPeers,
+    reviewFocusChanges, setReviewFocusChanges, conversationSearchOpen, setConversationSearchOpen,
+    conversationSearchQuery, setConversationSearchQuery, conversationSearchMatchIndex, setConversationSearchMatchIndex,
+    conversationMatchTotal, setConversationMatchTotal, queuedRunIds, setQueuedRunIds,
+    queueMenuRunId, setQueueMenuRunId, contextMenu, setContextMenu,
+    viewportNode, setViewportNode, composerDockNode, setComposerDockNode,
+  } = useViewStore();
   const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
 
   // 引导是否失败：getInitialState 拿不到数据时（主进程 handler 抛错、IPC 异常等），
@@ -662,35 +691,10 @@ export function App() {
   // 标签条横向溢出状态：两侧滚动按钮与渐隐遮罩只在真正放不下时出现
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
-  const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
-  // 「总结为工作模板」：待确认的草稿（非空即打开对话框）
-  const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
-  const [creationKind, setCreationKind] = useState<AuthoringKind | null>(null);
-  // 设置面板里的手动编辑：正在编辑的记忆行 / 工作模板（非空即打开编辑对话框）
-  const [memoryEdit, setMemoryEdit] = useState<WikiMemoryRow | null>(null);
-  const [skillEdit, setSkillEdit] = useState<SkillRecord | null>(null);
-  // 已导入的浏览记录：地址栏输入联想
-  const [importedHistory, setImportedHistory] = useState<ImportedHistoryEntry[]>([]);
-  const [ready, setReady] = useState(false);
   // 平台标识初始值同步取自 preload（process.platform），首帧就能渲染正确布局，
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
-  const [inboxOpen, setInboxOpen] = useState(false);
-  // 收件箱分类页签（任务待办 / 系统消息）与系统消息未读、通知点击定位
-  const [inboxTab, setInboxTab] = useState<"inbox" | "messages">("inbox");
-  const [systemMessageFocusId, setSystemMessageFocusId] = useState("");
-  const [systemMessagesUnread, setSystemMessagesUnread] = useState(0);
-  const [fullAccessDialogOpen, setFullAccessDialogOpen] = useState(false);
-  const [memories, setMemories] = useState<WikiMemoryPage[]>([]);
-  const [memoriesLinting, setMemoriesLinting] = useState(false);
-  const [memoriesLintMessage, setMemoriesLintMessage] = useState("");
-  const [skills, setSkills] = useState<SkillRecord[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
   const closeDshChildHistory = useCallback(() => setDshChildHistory(null), []);
-  const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
   // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
   // 每条消息都会因新函数引用而击穿 memo
   const toggleActivityCollapse = useCallback((messageKey: string, nextCollapsed: boolean) => {
@@ -706,8 +710,6 @@ export function App() {
       return next;
     });
   }, []);
-  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
-  const [atBottom, setAtBottom] = useState(true);
   const debugOpenRef = useRef(debugOpen);
   debugOpenRef.current = debugOpen;
   useEffect(() => {
@@ -725,7 +727,6 @@ export function App() {
     setTerminalMounted(true);
     setTerminalOpen(value => !value);
   };
-  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   // debug-log 事件频率与模型流式对齐，逐条 setState 会让整个 App 高频重渲染；
   // 先进 ref 缓冲，1 秒合并刷入一次（TraceConsole 是诊断视图，秒级延迟无感知）
   const pendingDebugLogsRef = useRef<DebugLogEntry[]>([]);
@@ -747,7 +748,6 @@ export function App() {
     if (debugLogFlushTimerRef.current !== null) window.clearTimeout(debugLogFlushTimerRef.current);
   }, []);
   // 面板关闭时仅保存最近记录，不触发主界面更新；历史在控制台打开后按需读取。
-  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
   const traceBuffer = useMemo(() => createTraceBuffer(), []);
   const tracePublishTimerRef = useRef<number | null>(null);
   const appendSessionTraces = useCallback((records: TraceEvent[]) => {
@@ -767,12 +767,6 @@ export function App() {
       tracePublishTimerRef.current = null;
     };
   }, [debugOpen, traceBuffer]);
-  const [usageStats, setUsageStats] = useState<UsageRecord[] | null>(null);
-  const [planSeed, setPlanSeed] = useState<{ name: string; prompt: string } | null>(null);
-  const [editingMessage, setEditingMessage] = useState<{ sessionId: string; messageIndex: number; original: ChatMessage } | null>(null);
-  const [imagePreview, setImagePreview] = useState<{ url: string; name: string; path?: string } | null>(null);
-  // 同一条消息的全部图片附件：预览灯箱用它在多张图之间左右切换
-  const [imagePreviewPeers, setImagePreviewPeers] = useState<Array<Pick<Attachment, "path" | "previewUrl" | "name">>>([]);
   const openImagePreview = (payload: { url: string; name: string; path?: string }, peers?: Array<Pick<Attachment, "path" | "previewUrl" | "name">>) => {
     setImagePreviewPeers(peers ?? []);
     setImagePreview(payload);
@@ -796,17 +790,6 @@ export function App() {
       if (result.ok && result.dataUrl) setImagePreview({ url: result.dataUrl, name: next.name || "图片", path: next.path });
     });
   };
-  // 会话内搜索：在当前会话的消息 DOM 里高亮命中并按出现位置跳转（⌘F / Ctrl+F 打开）
-  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
-  const [conversationSearchQuery, setConversationSearchQuery] = useState("");
-  const [conversationSearchMatchIndex, setConversationSearchMatchIndex] = useState(0);
-  const [conversationMatchTotal, setConversationMatchTotal] = useState(0);
-  // 排队中的任务运行标识：同会话内串行执行，排队消息未执行前允许编辑或取消
-  const [queuedRunIds, setQueuedRunIds] = useState<Set<string>>(new Set());
-  // 队列卡片里 ⋯ 菜单当前挂在哪条排队消息上
-  const [queueMenuRunId, setQueueMenuRunId] = useState<string | null>(null);
-  // 右键菜单：消息文本选中复制、输入框复制/剪切/粘贴
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const queuedRunsRef = useRef<Map<string, Set<string>>>(new Map());
   const agentUnsubscribeRefs = useRef<Map<string, () => void>>(new Map());
   const runningRunIdsRef = useRef<Map<string, string>>(new Map());
@@ -834,8 +817,6 @@ export function App() {
   const viewportRef = useRef<HTMLDivElement>(null);
   // 对话区在机器人团队页/设置页之间会被整棵卸载重挂（App 主区域的条件分支），
   // 用 state 承载节点，让依赖它们的 effect 在重挂后重新绑定
-  const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null);
-  const [composerDockNode, setComposerDockNode] = useState<HTMLDivElement | null>(null);
   // 必须是稳定引用：内联箭头每次渲染都会先 ref(null) 再 ref(node)，
   // 会让依赖 viewportNode 的贴底跟随 effect 每次渲染都重建并强制滚到底部
   const bindViewport = useCallback((node: HTMLDivElement | null) => {
@@ -3715,8 +3696,6 @@ export function App() {
     return [];
   }, [activeSession]);
 
-  // 「查看更改」点开的具体那条消息的改动（非 Git 工作区时作为审阅面板的数据源）
-  const [reviewFocusChanges, setReviewFocusChanges] = useState<FileChange[] | null>(null);
   useEffect(() => { setReviewFocusChanges(null); }, [activeId]);
 
   const activeBrowserUrl = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "";
