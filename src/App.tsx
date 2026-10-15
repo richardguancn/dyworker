@@ -46,6 +46,8 @@ import { useLayoutStore } from "./state/layoutStore";
 import type { ToolPanelTab } from "./state/layoutStore";
 import { useSettingsStore } from "./state/settingsStore";
 import { useBrowserStore } from "./state/browserStore";
+import { useComposerStore } from "./state/composerStore";
+import type { ComposerPasteBlock } from "./state/composerStore";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -346,12 +348,6 @@ function playCompletionSound() {
   }
 }
 
-// 输入框长粘贴折叠块：超过阈值的大段粘贴文本不直接灌进输入框，
-// 折叠成块随消息一起发送（对照 Codex 的长粘贴折叠呈现）
-interface ComposerPasteBlock {
-  id: string;
-  text: string;
-}
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
@@ -628,6 +624,18 @@ export function App() {
     browserPasswordPrompt, setBrowserPasswordPrompt, browserControlState, setBrowserControlState,
     browserPasswordsOpen, setBrowserPasswordsOpen, browserClearKinds, setBrowserClearKinds,
   } = useBrowserStore();
+  // 输入区 / 语音 / 标注类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
+  const {
+    composer, setComposer, composerPastes, setComposerPastes, expandedPasteId, setExpandedPasteId,
+    annotations, setAnnotations, selectionQuote, setSelectionQuote, annotationEditor, setAnnotationEditor,
+    annotationListOpen, setAnnotationListOpen, annotationMarkers, setAnnotationMarkers,
+    sideChatSeed, setSideChatSeed, attachments, setAttachments, composerDragActive, setComposerDragActive,
+    voiceState, setVoiceState, composerModels, setComposerModels, composerModelsLoading, setComposerModelsLoading,
+    mentionMenu, setMentionMenu, mentionIndex, setMentionIndex, mentionSkills, setMentionSkills,
+    pluginInputCandidates, setPluginInputCandidates, pluginInputRevision, setPluginInputRevision,
+    activeSkills, setActiveSkills, speakingMessageKey, setSpeakingMessageKey, speakingLoadingKey, setSpeakingLoadingKey,
+    playingVoicePath, setPlayingVoicePath, voiceLoadingPath, setVoiceLoadingPath,
+  } = useComposerStore();
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
   const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
@@ -654,18 +662,6 @@ export function App() {
   // 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
   const bootstrapFailedRef = useRef(false);
   const [query, setQuery] = useState("");
-  const [composer, setComposer] = useState("");
-  // 长粘贴折叠块：当前会话输入框中折叠的大段粘贴文本
-  const [composerPastes, setComposerPastes] = useState<ComposerPasteBlock[]>([]);
-  const [expandedPasteId, setExpandedPasteId] = useState("");
-  // 引用注释：会话内容里选中文字添加的注释，随消息一起发送
-  const [annotations, setAnnotations] = useState<MessageAnnotation[]>([]);
-  // 选区浮动条：选中会话内容后弹出的「添加到对话 / 侧边聊天」条
-  const [selectionQuote, setSelectionQuote] = useState<{ text: string; x: number; y: number } | null>(null);
-  // 评论编辑卡：固定定位锚点 + 目标注释 id，编辑内容用卡片局部 state
-  const [annotationEditor, setAnnotationEditor] = useState<{ id: string; x: number; y: number } | null>(null);
-  // composer 注释 chip 的 hover 弹层开关
-  const [annotationListOpen, setAnnotationListOpen] = useState(false);
   // hover 弹层延迟关闭：mouseleave 后留短暂宽限，斜向移入弹层经过空隙时不闪关
   const annotationListCloseTimerRef = useRef(0);
   const openAnnotationList = () => {
@@ -678,9 +674,6 @@ export function App() {
   };
   // 语音转写结果的分发目标：默认写进 composer，评论卡录音时指向评论 setter
   const voiceTargetRef = useRef<"composer" | ((text: string) => void)>("composer");
-  // 侧边聊天预填：nonce 变化时把 text 填入侧边聊天草稿
-  const [sideChatSeed, setSideChatSeed] = useState<{ text: string; nonce: number } | null>(null);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   // 主动挂起（有待唤醒）的会话：主进程 wakes.json 是权威状态，这里只做镜像。
   // 不能用气泡上的 taskStatus=sleeping 代替——取消唤醒后它不会自己变，重启也读不出来。
@@ -722,12 +715,6 @@ export function App() {
     });
   };
   const [runningStartedAt, setRunningStartedAt] = useState<Record<string, number>>({});
-  const [composerDragActive, setComposerDragActive] = useState(false);
-  const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
-  // 模型菜单里「此密钥可用的模型」段：菜单打开时按 endpoint+key 拉一次 /models 并缓存，
-  // 换服务地址或密钥后重新拉；拉取失败静默降级（菜单仍列出已保存的配置）
-  const [composerModels, setComposerModels] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
-  const [composerModelsLoading, setComposerModelsLoading] = useState(false);
   const composerModelsKeyRef = useRef("");
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
@@ -774,9 +761,6 @@ export function App() {
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  // 会话内朗读（助手回复转语音播放）：与渠道语音发送共用同一套 TTS 设置
-  const [speakingMessageKey, setSpeakingMessageKey] = useState<string | null>(null);
-  const [speakingLoadingKey, setSpeakingLoadingKey] = useState<string | null>(null);
   const [sessionErrors, setSessionErrors] = useState<Record<string, string>>({});
   const [sessionNotices, setSessionNotices] = useState<Record<string, string>>({});
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalAction>>({});
@@ -794,15 +778,9 @@ export function App() {
   const [memoriesLintMessage, setMemoriesLintMessage] = useState("");
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
-  const [mentionMenu, setMentionMenu] = useState<{ kind: "slash" | "at"; query: string; start: number; end?: number; programmatic?: boolean } | null>(null);
   const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [mentionSkills, setMentionSkills] = useState<SkillRecord[]>([]);
-  const [pluginInputCandidates, setPluginInputCandidates] = useState<RegisteredInputCandidate[]>([]);
-  const [pluginInputRevision, setPluginInputRevision] = useState(0);
   const [dshChildHistory, setDshChildHistory] = useState<{ id: string; rootSessionId: string; displayTitle: string } | null>(null);
   const closeDshChildHistory = useCallback(() => setDshChildHistory(null), []);
-  const [activeSkills, setActiveSkills] = useState<SkillRecord[]>([]);
   const [collapsedActivities, setCollapsedActivities] = useState<Set<string>>(new Set());
   // 传给 memo 化的 ProcessTimeline 的回调必须引用稳定，否则整树重渲染时
   // 每条消息都会因新函数引用而击穿 memo
@@ -3016,9 +2994,7 @@ export function App() {
     };
   }, [selectionQuote]);
 
-  // 注释定位标记：composer 待发送注释与已发送消息里的注释，都在引用文本起点上方放编号小气泡。
   // 从当前正文定位引用，不保留可能因文本节点替换而失效的 Range。
-  const [annotationMarkers, setAnnotationMarkers] = useState<Array<{ id: string; n: number; top: number; left: number }>>([]);
   const annotationQuotesRef = useRef<Array<{ id: string; n: number; quote: string }>>([]);
   const updateAnnotationMarkers = () => {
     const viewport = viewportRef.current;
@@ -5657,9 +5633,6 @@ export function App() {
     }
   };
 
-  // 播放用户语音附件（QQ/微信渠道语音）
-  const [playingVoicePath, setPlayingVoicePath] = useState<string | null>(null);
-  const [voiceLoadingPath, setVoiceLoadingPath] = useState<string | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceObjectUrlRef = useRef("");
 
