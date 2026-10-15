@@ -87,3 +87,15 @@ export const refreshSkillsRef: { current: (announce?: boolean) => void } = { cur
 export const queueDebugLogRef: { current: (entry: DebugLogEntry) => void } = { current: () => undefined as never };
 export const appendSessionTracesRef: { current: (records: TraceEvent[]) => void } = { current: () => undefined as never };
 export const playCompletionSoundRef: { current: () => void } = { current: () => undefined as never };
+
+// 设置保存 / 应用更新 / 模型档案（settingsActions）共享的模块级 ref：App 的引导失败标记、
+// 设置页就地提示与模型菜单的拉取去重都要指向同一实例，随这组函数一起从 App.tsx 的 useRef
+// 挪到模块级。
+// 引导是否失败：getInitialState 拿不到数据时（主进程 handler 抛错、IPC 异常等），
+// 本地状态是空的/默认的，此时任何写回都会把磁盘上的真实数据覆盖掉。
+// 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
+export const bootstrapFailedRef: { current: boolean } = { current: false };
+// 最近一次保存失败的原因：设置页整页展示时用于就地提示（聊天区提示条此时不可见）
+export const settingsSaveErrorRef: { current: string } = { current: "" };
+// 模型列表拉取去重键：同一 endpoint+key 只拉一次，换地址或密钥后重新拉
+export const composerModelsKeyRef: { current: string } = { current: "" };

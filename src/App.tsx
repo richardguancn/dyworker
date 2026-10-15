@@ -56,7 +56,8 @@ import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceI
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
 import { sendMessage, removeQueuedMessage, cancelQueuedMessage, runQueuedMessageNow } from "./state/sendMessageActions";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef } from "./state/sharedRefs";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef } from "./state/sharedRefs";
+import { saveProviderSettings, checkAppUpdate, openAppUpdateDialog, downloadAppUpdate, installAppUpdate, chooseIdentity, selectApprovalMode, confirmFullAccess, activateModelProfile, ensureComposerModels, switchComposerModel } from "./state/settingsActions";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -67,7 +68,7 @@ import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
-import { defaultSettings, settingsWithProfile } from "./lib/settings";
+import { defaultSettings } from "./lib/settings";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
@@ -187,9 +188,9 @@ import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, ModelProfile, ProviderSettings, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, UserIdentity, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
+import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
 import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
-import { isGlmNativeVisionModel, matchProvider, modelContextLimit, providerPresets, usesResponsesApi } from "./providers";
+import { isGlmNativeVisionModel, modelContextLimit, usesResponsesApi } from "./providers";
 import { ReasoningControl } from "./ReasoningControl";
 import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-runtime/model-settings.mts";
 import { recordTaskFailure } from './taskFailure.ts';
@@ -601,10 +602,6 @@ export function App() {
   } = useViewStore();
   const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
 
-  // 引导是否失败：getInitialState 拿不到数据时（主进程 handler 抛错、IPC 异常等），
-  // 本地状态是空的/默认的，此时任何写回都会把磁盘上的真实数据覆盖掉。
-  // 真实事故：app:initial-state 因缺依赖抛错 → ready 仍被置真 → 会话/配置/置顶被整批覆盖。
-  const bootstrapFailedRef = useRef(false);
   // hover 弹层延迟关闭：mouseleave 后留短暂宽限，斜向移入弹层经过空隙时不闪关
   const annotationListCloseTimerRef = useRef(0);
   const openAnnotationList = () => {
@@ -615,7 +612,6 @@ export function App() {
     window.clearTimeout(annotationListCloseTimerRef.current);
     annotationListCloseTimerRef.current = window.setTimeout(() => setAnnotationListOpen(false), 200);
   };
-  const composerModelsKeyRef = useRef("");
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
   useEffect(() => {
@@ -2545,151 +2541,6 @@ export function App() {
       event.preventDefault();
       void sendMessage();
     }
-  };
-
-  // 最近一次保存失败的原因：设置页整页展示时用于就地提示（聊天区提示条此时不可见）
-  const settingsSaveErrorRef = useRef("");
-
-  const saveProviderSettings = async (nextSettings: ProviderSettings, successMessage = "设置已保存") => {
-    const failSave = (message: string) => {
-      // 设置是整页界面，聊天区的错误条在设置页打开时不可见，把原因一并留给设置页就地提示
-      settingsSaveErrorRef.current = message;
-      setError(message);
-      return false;
-    };
-    if (bootstrapFailedRef.current) {
-      return failSave("启动时未能读到本地配置，已阻止保存以免覆盖磁盘上的数据；请重启应用后重试。");
-    }
-    // 桥接缺失必须报错而不是"保存成功"：window.dyworker?.saveSettings 是可选链，
-    // 没有 preload 时会静默返回 undefined，被当成保存成功——用户看到「设置已保存」，
-    // 磁盘上一个字都没写（设置里改不动的现场）。浏览器里单独跑界面预览时没有桥接
-    // 属于正常情况，那种场景不报错。
-    if (!window.dyworker?.saveSettings && /Electron\//.test(navigator.userAgent)) {
-      return failSave("桌面桥接没有加载（preload 缺失），设置无法写入磁盘。请重新构建并重启 DYWorker；若重启后依旧如此，说明安装包不完整。");
-    }
-    try {
-      settingsSaveErrorRef.current = "";
-      const result = await window.dyworker?.saveSettings(nextSettings);
-      if (result && !result.ok) {
-        return failSave(result.error || "模型设置保存失败");
-      }
-      setSettings({ ...nextSettings, updateUrl: result?.updateUrl || nextSettings.updateUrl });
-      setNotice(successMessage);
-      return true;
-    } catch (saveError) {
-      return failSave(saveError instanceof Error ? saveError.message : String(saveError));
-    }
-  };
-
-  const checkAppUpdate = async () => {
-    setAppUpdateDialogOpen(true);
-    try {
-      const result = await window.dyworker?.checkForAppUpdate();
-      if (result && !result.ok && result.error) setNotice(result.error);
-    } catch (updateError) {
-      setNotice(updateError instanceof Error ? updateError.message : String(updateError));
-    }
-  };
-
-  const openAppUpdateDialog = () => {
-    setAppUpdateDialogOpen(true);
-    if (["idle", "not-available", "error", "unavailable"].includes(appUpdate.state)) void checkAppUpdate();
-  };
-
-  const downloadAppUpdate = () => {
-    void window.dyworker?.downloadAppUpdate().then((result) => {
-      if (!result.ok && result.error) setNotice(result.error);
-    });
-  };
-
-  const installAppUpdate = () => {
-    void window.dyworker?.installAppUpdate().then((result) => {
-      if (!result.ok && result.error) setNotice(result.error);
-    });
-  };
-
-  const chooseIdentity = (identity: UserIdentity) =>
-    saveProviderSettings({ ...settings, identity }, "身份设置已保存");
-
-  const selectApprovalMode = (nextMode: ApprovalMode) => {
-    if (nextMode === "full-access") {
-      setApprovalMenuOpen(false);
-      setFullAccessDialogOpen(true);
-      return;
-    }
-    setApprovalMode(nextMode);
-    setApprovalMenuOpen(false);
-    void saveProviderSettings({ ...settings, approvalMode: nextMode }, "审批模式已记住，下次启动继续生效");
-  };
-
-  const confirmFullAccess = async () => {
-    const saved = await saveProviderSettings({ ...settings, approvalMode: "full-access" }, "完整访问权限已开启");
-    if (!saved) return false;
-    setApprovalMode("full-access");
-    setFullAccessDialogOpen(false);
-    return true;
-  };
-
-  const activateModelProfile = async (profile: ModelProfile) => {
-    const nextSettings = settingsWithProfile(settings, profile);
-    setModelMenuOpen(false);
-    await saveProviderSettings(nextSettings, `已切换到 ${profile.name}`);
-  };
-
-  // 模型菜单打开时拉一次「此密钥可用的模型」；同一 endpoint+key 只拉一次，换地址或密钥后重新拉
-  const ensureComposerModels = () => {
-    const endpoint = settings.endpoint.trim();
-    const key = `${endpoint}\n${settings.apiKey.trim()}`;
-    if (!endpoint || composerModelsKeyRef.current === key) return;
-    composerModelsKeyRef.current = key;
-    setComposerModels(null);
-    setComposerModelsLoading(true);
-    window.dyworker?.listModels({ endpoint, apiKey: settings.apiKey })
-      .then((result) => setComposerModels(result?.ok ? (result.models || []) : []))
-      .catch(() => setComposerModels([]))
-      .finally(() => setComposerModelsLoading(false));
-  };
-
-  // 在同一密钥下切换到另一个模型：已有对应配置就整个启用；没有就按当前密钥现做一套并保存，
-  // 之后它会出现在「已保存的模型」列表里，可与其它厂商配置一样管理
-  const switchComposerModel = async (modelId: string) => {
-    const endpoint = settings.endpoint.trim();
-    const model = modelId.trim();
-    if (!endpoint || !model) return;
-    setModelMenuOpen(false);
-    const existing = (settings.profiles || []).find((item) => item.endpoint === endpoint && item.model === model);
-    if (existing) {
-      await saveProviderSettings(settingsWithProfile(settings, existing), `已切换到 ${existing.name}`);
-      return;
-    }
-    let shortProvider = providerPresets.find((item) => item.id === matchProvider(endpoint))?.name.replace(/（.*?）/g, "") || "";
-    if (matchProvider(endpoint) === "custom") {
-      try {
-        shortProvider = new URL(endpoint).host;
-      } catch {
-        shortProvider = "自定义";
-      }
-    }
-    const profile: ModelProfile = {
-      id: crypto.randomUUID(),
-      name: `${shortProvider} · ${model}`.trim(),
-      endpoint,
-      model,
-      apiKey: settings.apiKey.trim(),
-      reasoningEffort: "",
-      transcriptionEndpoint: settings.transcriptionEndpoint,
-      transcriptionModel: settings.transcriptionModel,
-    };
-    const next = {
-      ...settings,
-      model,
-      reasoningEffort: "",
-      profiles: [
-        ...(settings.profiles || []).filter((item) => !(item.endpoint === endpoint && item.model === model)),
-        profile,
-      ],
-    };
-    await saveProviderSettings(next, `已切换到 ${profile.name}`);
   };
 
   const saveSchedule = async (draft: ScheduleDraft) => {
