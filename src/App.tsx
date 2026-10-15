@@ -43,6 +43,7 @@ import { SettingsDialog } from "./features/settings/SettingsDialog";
 import type { SettingsTab } from "./features/settings/SettingsDialog";
 import { ConversationToolsIcon, ForkBranchIcon, PanelLeftIcon, PanelRightIcon } from "./app/icons";
 import { Sidebar } from "./app/Sidebar";
+import { ShellChrome } from "./app/ShellLayout";
 import { defaultSettings, settingsWithProfile } from "./lib/settings";
 import { blobToWavMono } from "./lib/audio";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
@@ -6119,229 +6120,6 @@ export function App() {
     }
   };
 
-  const taskMenu = (
-    <div className="topbar-menu-wrap" data-menu-root>
-      <button
-        className="icon-button subtle"
-        aria-label="任务操作"
-        title="任务操作"
-        onClick={() => { setTopMenuOpen((value) => !value); setConversationToolsOpen(false); setBranchMenuOpen(false); setCommitPanelOpen(false); setToolPanelAddMenuOpen(false); }}
-      >
-        <MoreHorizontal size={17} />
-      </button>
-      {topMenuOpen && activeSession && (
-        <div className="session-menu topbar-menu" role="menu">
-          <button role="menuitem" onClick={() => { setTopMenuOpen(false); setRenamingId(activeSession.id); }}>重命名任务</button>
-          <button role="menuitem" onClick={() => togglePin(activeSession.id)}>
-            {activeSession.pinned ? "取消置顶" : "置顶任务"}
-          </button>
-          <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
-          <button role="menuitem" onClick={() => { setTopMenuOpen(false); exportSessionMarkdown(activeSession); }}>导出为 Markdown</button>
-          <button
-            role="menuitem"
-            disabled={skillSummarySessionId === activeSession.id}
-            onClick={() => { setTopMenuOpen(false); void summarizeSessionToSkill(activeSession); }}
-          >总结为工作模板</button>
-          <button role="menuitem" onClick={() => {
-            setTopMenuOpen(false);
-            setPlanSeed({ name: activeSession.title, prompt: "" });
-            setSettingsTab("plans");
-            setSettingsOpen(true);
-          }}>添加计划任务</button>
-        </div>
-      )}
-    </div>
-  );
-
-  const conversationTools = (
-    <div className="conversation-tools-wrap" data-menu-root>
-      <button
-        className={`icon-button subtle conversation-tools-toggle ${conversationToolsOpen || branchMenuOpen || commitPanelOpen ? "active" : ""}`}
-        aria-label="会话工具"
-        title="会话工具"
-        aria-haspopup="menu"
-        aria-expanded={conversationToolsOpen || branchMenuOpen || commitPanelOpen}
-        onClick={() => {
-          setConversationToolsOpen(value => !value);
-          setBranchMenuOpen(false);
-          setCommitPanelOpen(false);
-          setTopMenuOpen(false);
-          setToolPanelAddMenuOpen(false);
-          void refreshGitInfo();
-        }}
-      >
-        <ConversationToolsIcon size={19} />
-      </button>
-      {conversationToolsOpen && (
-        <div className="session-menu conversation-tools-menu" role="menu" aria-label="会话工具">
-          {gitInfo && (
-            <button role="menuitem" className="conversation-tools-git" aria-label="Git 信息" onClick={() => {
-              setConversationToolsOpen(false);
-              toggleBranchMenu();
-            }}>
-              <GitBranch size={16} />
-              <span>Git 信息</span>
-              <small title={gitInfo.current}>{gitInfo.current}</small>
-              <ChevronRight size={14} />
-            </button>
-          )}
-          <button role="menuitem" onClick={() => {
-            setConversationToolsOpen(false);
-            setConversationSearchOpen(true);
-            requestAnimationFrame(() => conversationSearchInputRef.current?.select());
-          }}>
-            <Search size={16} />
-            <span>搜索会话内容</span>
-            <kbd>{platform === "darwin" ? "⌘F" : "Ctrl+F"}</kbd>
-          </button>
-        </div>
-      )}
-      {gitInfo && (<>
-                {branchMenuOpen && (
-                  <div className="branch-menu" role="menu" aria-label="分支管理">
-                    <button className="branch-menu-action" role="menuitem" onClick={openCommitPanel}>
-                      <GitCommitHorizontal size={16} />
-                      <span>提交或推送</span>
-                      {gitInfo.uncommitted > 0 && <small className="tool-panel-count">{gitInfo.uncommitted}</small>}
-                    </button>
-                    <div className="branch-search">
-                      <Search size={14} />
-                      <input
-                        aria-label="搜索分支"
-                        placeholder={`搜索 ${workspaceContext?.name || displayWorkspace(composerWorkspacePath)} 分支`}
-                        value={branchQuery}
-                        onChange={(event) => setBranchQuery(event.target.value)}
-                      />
-                    </div>
-                    <div className="branch-list">
-                      {gitInfo.branches
-                        .filter((name) => !branchQuery.trim() || name.toLowerCase().includes(branchQuery.trim().toLowerCase()))
-                        .map((name) => (
-                          <button
-                            className={`branch-item ${name === gitInfo.current ? "current" : ""}`}
-                            role="menuitemradio"
-                            aria-checked={name === gitInfo.current}
-                            key={name}
-                            disabled={gitBusy === "switch"}
-                            onClick={() => void switchBranch(name)}
-                          >
-                            <GitBranch size={14} />
-                            <span className="branch-item-name">{name}</span>
-                            {name === gitInfo.current && (
-                              <span className="branch-item-meta">未提交：{gitInfo.uncommitted} 个文件</span>
-                            )}
-                            {name === gitInfo.current && <Check size={15} />}
-                          </button>
-                        ))}
-                      {gitInfo.branches.filter((name) => !branchQuery.trim() || name.toLowerCase().includes(branchQuery.trim().toLowerCase())).length === 0 && (
-                        <div className="branch-empty">没有匹配的分支</div>
-                      )}
-                    </div>
-                    {creatingBranch ? (
-                      <div className="branch-create">
-                        <input
-                          autoFocus
-                          aria-label="新分支名称"
-                          placeholder="新分支名称，Enter 确认"
-                          value={newBranchName}
-                          onChange={(event) => setNewBranchName(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") void createBranch();
-                            if (event.key === "Escape") { setCreatingBranch(false); setNewBranchName(""); }
-                          }}
-                        />
-                        <button disabled={!newBranchName.trim() || gitBusy === "switch"} onClick={() => void createBranch()}>创建</button>
-                      </div>
-                    ) : (
-                      <button className="branch-create-toggle" role="menuitem" onClick={() => setCreatingBranch(true)}>
-                        <Plus size={14} />
-                        <span>创建并检出新分支…</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-                {commitPanelOpen && (
-                  <div className="commit-panel" role="dialog" aria-label="提交或推送">
-                    <div className="commit-panel-branch">
-                      <GitBranch size={15} />
-                      <span>{gitInfo.current}</span>
-                    </div>
-                    <textarea
-                      className="commit-message-input"
-                      aria-label="提交信息"
-                      placeholder="提交信息（留空按文件名自动生成）"
-                      rows={3}
-                      value={commitMessage}
-                      onChange={(event) => setCommitMessage(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void runCommit(true);
-                      }}
-                    />
-                    <div className="commit-ai-row">
-                      <button type="button" onClick={() => void generateCommitMessage()} disabled={Boolean(gitBusy)} title="用当前模型按改动生成提交信息">
-                        <Sparkles size={14} />
-                        <span>{gitBusy === "generate" ? "生成中…" : "AI 生成提交信息"}</span>
-                      </button>
-                    </div>
-                    <label className="commit-include-row">
-                      <span className="commit-include-label">
-                        <input
-                          type="checkbox"
-                          checked={includeUnstaged}
-                          onChange={(event) => setIncludeUnstaged(event.target.checked)}
-                        />
-                        <span>包含未暂存的更改</span>
-                      </span>
-                      {diffStats && (diffStats.added > 0 || diffStats.removed > 0) && (
-                        <span className="commit-diff-stats">
-                          <span className="diff-added">+{diffStats.added.toLocaleString()}</span>
-                          <span className="diff-removed">-{diffStats.removed.toLocaleString()}</span>
-                        </span>
-                      )}
-                    </label>
-                    <div className="commit-actions">
-                      <button disabled={Boolean(gitBusy)} onClick={() => void runCommit(false)}>
-                        <GitCommitHorizontal size={15} />
-                        <span>{gitBusy === "commit" ? "提交中…" : "提交"}</span>
-                      </button>
-                      <button className="commit-primary" disabled={Boolean(gitBusy)} onClick={() => void runCommit(true)}>
-                        <Upload size={15} />
-                        <span>{gitBusy === "commit-push" ? "提交并推送中…" : "提交并推送"}</span>
-                        <kbd>{platform === "darwin" ? "⌘↩" : "Ctrl+↩"}</kbd>
-                      </button>
-                      <button disabled={Boolean(gitBusy) || !gitInfo.hasRemote} title={gitInfo.hasRemote ? "推送当前分支到远程" : "当前仓库没有配置远程"} onClick={() => void runPushOnly()}>
-                        <Upload size={15} />
-                        <span>{gitBusy === "push" ? "推送中…" : "推送"}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-      </>)}
-    </div>
-  );
-
-  const conversationHeader = (
-        <header className="topbar">
-          <div className="topbar-left">
-            <button
-              className="icon-button subtle sidebar-toggle"
-              aria-label="展开侧栏"
-              title="展开侧栏"
-              onClick={() => setSidebarOpen(true)}
-            >
-              {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
-              <PanelLeftIcon size={18} />
-            </button>
-            {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? (botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队") : activeSession?.title || "新任务"}</strong>
-          </div>
-          {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
-            {taskMenu}
-            {conversationTools}
-          </div>}
-        </header>
-  );
-
   // Linux 与 Windows 的窗口都由应用自绘标题栏：品牌与侧栏同列、侧栏首行放新建任务与收件箱。
   // macOS 保留原生红绿灯，标题栏布局维持原样。
   const desktopToolbarLayout = (platform || "linux") !== "darwin";
@@ -6363,80 +6141,76 @@ export function App() {
       className={`app-shell reference-layout platform-${platform || "linux"} ${settingsOpen ? "settings-page-open" : ""} ${pluginConversationViews.length ? "has-conversation-views" : ""} ${sidebarOpen ? "" : "sidebar-collapsed"} ${rightPanelOpen ? "" : "right-panel-collapsed"}`}
       style={panelStyle}
     >
-      <header className="titlebar" aria-label="标题栏">
-        {desktopToolbarLayout && <span className="titlebar-app-logo"><AppLogo /></span>}
-        <div className="titlebar-left">
-          {desktopToolbarLayout && <span className="titlebar-brand"><span>DYWorker</span></span>}
-          <button className="icon-button subtle" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"}
-            title={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen}
-            onClick={() => setSidebarOpen(open => !open)}><PanelLeftIcon size={18} /></button>
-        </div>
-        {!settingsOpen && !pluginsPageOpen && (
-          <div className="titlebar-conversation">{conversationHeader}</div>
-        )}
-        <div className="titlebar-right">
-            {!rightPanelOpen && !settingsOpen && !pluginsPageOpen && (
-              <div className="titlebar-panel-actions">
-                <button
-                  className="icon-button subtle tool-panel-toggle"
-                  aria-label="展开右侧工具栏"
-                  title="展开右侧工具栏"
-                  onClick={() => {
-                    setRightPanelOpen(true);
-                    // 还没有任何标签页时展示菜单页，由用户决定打开什么（对照 Codex）
-                    setToolPanelMenuOpen(toolPanelTabs.length === 0);
-                  }}
-                >
-                  <PanelRightIcon size={18} />
-                </button>
-              </div>
-            )}
-        </div>
-      </header>
-      <div className="window-controls" aria-label="窗口控制">
-        <button type="button" onClick={() => void window.dyworker?.minimize()} aria-label="最小化窗口" title="最小化">
-          <Minus size={15} />
-        </button>
-        <button type="button" onClick={() => void window.dyworker?.toggleMaximize()} aria-label="最大化或还原窗口" title="最大化或还原">
-          <Square size={11} />
-        </button>
-        <button type="button" className="window-close" onClick={() => void window.dyworker?.close()} aria-label="关闭窗口" title="关闭">
-          <X size={15} />
-        </button>
-      </div>
-      <nav className="navigation-rail" aria-label="主导航">
-        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "active" : ""}`}
-          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "page" : undefined}
-          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
-          <House size={21} />
-        </button>
-        <button className={`rail-button ${settingsOpen && settingsTab === "plans" ? "active" : ""}`}
-          aria-label="计划任务" title="计划任务" onClick={() => { setSettingsTab("plans"); setSettingsOpen(true); setRailMenuOpen(false); }}>
-          <AlarmClock size={20} />
-        </button>
-        <button className={`rail-button sidebar-plugins-button ${settingsOpen && settingsTab === "plugins" ? "active" : ""}`}
-          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
-          aria-label="插件" title="插件" aria-current={settingsOpen && settingsTab === "plugins" ? "page" : undefined}>
-          <PluginIcon size={20} />
-        </button>
-        <div className="rail-more-wrap" data-menu-root>
-          <button className={`rail-button ${railMenuOpen ? "active" : ""}`} aria-label="更多菜单" title="更多"
-            aria-haspopup="menu" aria-expanded={railMenuOpen} onClick={() => setRailMenuOpen(open => !open)}><MoreHorizontal size={21} /></button>
-          {railMenuOpen && <div className="session-menu rail-menu" role="menu">
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); createTask(); }}><SquarePen size={16} />新建任务</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}><Settings size={16} />设置</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsTab("about"); setSettingsOpen(true); }}><Info size={16} />关于</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSidebarOpen(true); setShowArchived(value => !value); }}><History size={16} />{showArchived ? "隐藏归档任务" : "显示归档任务"}</button>
-          </div>}
-        </div>
-        <div className="rail-footer">
-          <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
-            onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
-          <button className="rail-profile" aria-label="设置" title="设置" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
-            <span className="avatar" data-auth-status="logged-out"><UserRound size={15} /></span>
-          </button>
-        </div>
-      </nav>
+      <ShellChrome
+        desktopToolbarLayout={desktopToolbarLayout}
+        platform={platform}
+        activeSession={activeSession}
+        conversationSearchInputRef={conversationSearchInputRef}
+        topMenuOpen={topMenuOpen}
+        setTopMenuOpen={setTopMenuOpen}
+        conversationToolsOpen={conversationToolsOpen}
+        setConversationToolsOpen={setConversationToolsOpen}
+        branchMenuOpen={branchMenuOpen}
+        setBranchMenuOpen={setBranchMenuOpen}
+        commitPanelOpen={commitPanelOpen}
+        setCommitPanelOpen={setCommitPanelOpen}
+        setToolPanelAddMenuOpen={setToolPanelAddMenuOpen}
+        setRenamingId={setRenamingId}
+        skillSummarySessionId={skillSummarySessionId}
+        setPlanSeed={setPlanSeed}
+        setSettingsTab={setSettingsTab}
+        setSettingsOpen={setSettingsOpen}
+        togglePin={togglePin}
+        archiveSession={archiveSession}
+        exportSessionMarkdown={exportSessionMarkdown}
+        summarizeSessionToSkill={summarizeSessionToSkill}
+        gitInfo={gitInfo}
+        gitBusy={gitBusy}
+        workspaceContext={workspaceContext}
+        composerWorkspacePath={composerWorkspacePath}
+        branchQuery={branchQuery}
+        setBranchQuery={setBranchQuery}
+        creatingBranch={creatingBranch}
+        setCreatingBranch={setCreatingBranch}
+        newBranchName={newBranchName}
+        setNewBranchName={setNewBranchName}
+        commitMessage={commitMessage}
+        setCommitMessage={setCommitMessage}
+        includeUnstaged={includeUnstaged}
+        setIncludeUnstaged={setIncludeUnstaged}
+        diffStats={diffStats}
+        refreshGitInfo={refreshGitInfo}
+        toggleBranchMenu={toggleBranchMenu}
+        openCommitPanel={openCommitPanel}
+        switchBranch={switchBranch}
+        createBranch={createBranch}
+        generateCommitMessage={generateCommitMessage}
+        runCommit={runCommit}
+        runPushOnly={runPushOnly}
+        setConversationSearchOpen={setConversationSearchOpen}
+        botTeamPageOpen={botTeamPageOpen}
+        botTeamProvider={botTeamProvider}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        settingsOpen={settingsOpen}
+        pluginsPageOpen={pluginsPageOpen}
+        rightPanelOpen={rightPanelOpen}
+        setRightPanelOpen={setRightPanelOpen}
+        toolPanelTabs={toolPanelTabs}
+        setToolPanelMenuOpen={setToolPanelMenuOpen}
+        setPluginsPageOpen={setPluginsPageOpen}
+        setBotTeamPageOpen={setBotTeamPageOpen}
+        setConversationView={setConversationView}
+        setRailMenuOpen={setRailMenuOpen}
+        railMenuOpen={railMenuOpen}
+        settingsTab={settingsTab}
+        showArchived={showArchived}
+        setShowArchived={setShowArchived}
+        createTask={createTask}
+        appUpdate={appUpdate}
+        setAppUpdateDialogOpen={setAppUpdateDialogOpen}
+        downloadAppUpdate={downloadAppUpdate}
+      />
       <Sidebar
         desktopToolbarLayout={desktopToolbarLayout}
         newTaskButton={newTaskButton}
