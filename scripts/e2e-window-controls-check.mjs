@@ -36,7 +36,9 @@ for (const platform of ['linux', 'win32', 'darwin']) {
               appRegion: getComputedStyle(button).getPropertyValue('-webkit-app-region'),
               clear: [.1,.5,.9].every(x => [.1,.5,.9].every(y => button.contains(document.elementFromPoint(r.left+r.width*x,r.top+r.height*y)))) };
           });
-          return { width: innerWidth, hidden: getComputedStyle(controls).display === 'none', titleRight: title.right, boxes };
+          return { width: innerWidth, hidden: getComputedStyle(controls).display === 'none', titleRight: title.right, boxes,
+            panelTop: document.querySelector('.tool-panel').getBoundingClientRect().top,
+            tabsRight: document.querySelector('.tool-panel-tabs').getBoundingClientRect().right };
         })()`);
         if (platform === 'darwin') {
           assert.equal(state.hidden, true, 'macOS 保留原生窗口按钮');
@@ -44,6 +46,10 @@ for (const platform of ['linux', 'win32', 'darwin']) {
           assert.equal(state.boxes.at(-1).right, width, '关闭按钮必须贴右边缘');
           assert.ok(state.titleRight <= state.boxes[0].left, '标题栏拖动区域不得覆盖窗口按钮');
           assert.ok(state.boxes.every(b => b.top === 0 && b.bottom === 44 && b.clear && b.appRegion === 'no-drag'), JSON.stringify(state));
+          if (platform === 'linux' && expanded) {
+            assert.ok(state.panelTop >= 44, 'Linux 面板本身不得跨入窗口按钮所在的标题行');
+            assert.ok(state.tabsRight <= state.boxes[0].left, 'Linux 标签栏不得伸入窗口按钮区域');
+          }
           evaluate('window.__windowControlCalls = []');
           for (const button of state.boxes) run('click', `[aria-label="${button.label}"]`);
           assert.deepEqual(evaluate('window.__windowControlCalls'), ['minimize', 'toggleMaximize', 'close']);
