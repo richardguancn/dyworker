@@ -9384,28 +9384,37 @@ export function App() {
   }, [selectionQuote]);
 
   // 注释定位标记：composer 待发送注释与已发送消息里的注释，都在引用文本起点上方放编号小气泡。
-  // 只按 Range 量位置渲染绝对定位气泡，不改消息 DOM；Range 是 live 的，内容流式变化时自动跟随。
+  // 从当前正文定位引用，不保留可能因文本节点替换而失效的 Range。
   const [annotationMarkers, setAnnotationMarkers] = useState<Array<{ id: string; n: number; top: number; left: number }>>([]);
-  const annotationRangesRef = useRef<Array<{ id: string; n: number; range: Range }>>([]);
+  const annotationQuotesRef = useRef<Array<{ id: string; n: number; quote: string }>>([]);
   const updateAnnotationMarkers = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const viewportRect = viewport.getBoundingClientRect();
-    setAnnotationMarkers(annotationRangesRef.current.flatMap(({ id, n, range }) => {
+    const column = viewport.querySelector(".conversation-column");
+    setAnnotationMarkers(annotationQuotesRef.current.flatMap(({ id, n, quote }) => {
+      // React 可能替换文本节点，旧 Range 会退化到父元素；每次从当前正文重新找引用。
+      const range = findQuoteRange(column, quote);
+      if (!range) return [];
+      const element = range.startContainer.parentElement;
+      const row = element?.closest(".message-row");
+      const rowRect = row?.getBoundingClientRect();
+      if (rowRect && (rowRect.bottom <= viewportRect.top || rowRect.top >= viewportRect.bottom)) return [];
+      // content-visibility:auto 跳过的正文没有可靠文字坐标，不能把它画到视口左边。
+      if (element && !element.checkVisibility({ contentVisibilityAuto: true })) return [];
       const rect = range.getBoundingClientRect();
       if (!rect || (!rect.width && !rect.height)) return [];
       return [{
         id,
         n,
-        top: Math.max(2, rect.top - viewportRect.top + viewport.scrollTop - 24),
-        left: rect.left - viewportRect.left + viewport.scrollLeft,
+        top: Math.max(2, rect.top - viewportRect.top - viewport.clientTop + viewport.scrollTop - 24),
+        left: rect.left - viewportRect.left - viewport.clientLeft + viewport.scrollLeft,
       }];
     }));
   };
-  // 注释增删、切换会话或新消息落盘时重新定位引用文本（流式期间只按 live Range 重算位置，见下方 rAF effect）
+  // 注释增删、切换会话或新消息落盘时更新引用列表
   const activeMessageCount = activeSession?.messages.length ?? 0;
   useEffect(() => {
-    const column = viewportRef.current?.querySelector(".conversation-column") ?? null;
     const quotes: Array<{ id: string; n: number; quote: string }> = [
       ...annotations.map((annotation, index) => ({ id: annotation.id, n: index + 1, quote: annotation.quote })),
       ...(activeSession?.messages ?? []).flatMap((message, messageIndex) =>
@@ -9415,26 +9424,39 @@ export function App() {
           quote: annotation.quote,
         }))),
     ];
-    annotationRangesRef.current = quotes.flatMap((entry) => {
-      const range = findQuoteRange(column, entry.quote);
-      return range ? [{ id: entry.id, n: entry.n, range }] : [];
-    });
+    annotationQuotesRef.current = quotes;
     updateAnnotationMarkers();
     // activeSession 由 sessions 派生，消息数变化已能覆盖注释落盘的时机
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annotations, activeId, activeMessageCount]);
-  // 内容流式变化后按现有 Range 重新量位置（rAF 合帧，避免逐 token 重排）
+  // 内容更新后重新定位引用（rAF 合帧）
   useEffect(() => {
-    if (!annotationRangesRef.current.length) return;
+    if (!annotationQuotesRef.current.length) return;
     const frame = requestAnimationFrame(updateAnnotationMarkers);
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions]);
   useEffect(() => {
-    window.addEventListener("resize", updateAnnotationMarkers);
-    return () => window.removeEventListener("resize", updateAnnotationMarkers);
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateAnnotationMarkers);
+    };
+    const viewport = viewportRef.current;
+    const observer = new ResizeObserver(schedule);
+    if (viewport) observer.observe(viewport);
+    const column = viewport?.querySelector(".conversation-column");
+    if (column) observer.observe(column);
+    viewport?.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      viewport?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeId]);
 
   // 消息文本上右键：始终提供「复制」。有选中文本时复制选中内容，
   // 未选中时复制整条消息正文（跳过操作按钮、时间等非正文区域）。
