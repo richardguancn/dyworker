@@ -1,6 +1,6 @@
 // 设置项的默认值。原先内联在 App.tsx，初始化状态、设置面板与技能库面板共用，
 // 放在 lib 里避免 features 之间互相依赖。
-import type { ProviderSettings } from "../types";
+import type { ModelProfile, ProviderSettings } from "../types";
 
 export const defaultSettings: ProviderSettings = {
   identity: null,
@@ -62,3 +62,16 @@ export const defaultSettings: ProviderSettings = {
   }],
   profiles: [],
 };
+
+// 把模型配置档案覆盖到设置上（切换档案时用），避免调用方各自散写字段映射。
+export function settingsWithProfile(settings: ProviderSettings, profile: ModelProfile): ProviderSettings {
+  return {
+    ...settings,
+    endpoint: profile.endpoint,
+    model: profile.model,
+    apiKey: profile.apiKey,
+    reasoningEffort: profile.reasoningEffort ?? "",
+    transcriptionEndpoint: profile.transcriptionEndpoint ?? settings.transcriptionEndpoint,
+    transcriptionModel: profile.transcriptionModel || settings.transcriptionModel,
+  };
+}
