@@ -45,6 +45,7 @@ import { ConversationToolsIcon, ForkBranchIcon, PanelLeftIcon, PanelRightIcon } 
 import { useLayoutStore } from "./state/layoutStore";
 import type { ToolPanelTab } from "./state/layoutStore";
 import { useSettingsStore } from "./state/settingsStore";
+import { useBrowserStore } from "./state/browserStore";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -618,6 +619,15 @@ export function App() {
     debugOpen, setDebugOpen, appUpdateDialogOpen, setAppUpdateDialogOpen,
   } = useLayoutStore();
   const { settings, setSettings, settingsTab, setSettingsTab, appUpdate, setAppUpdate, approvalMode, setApprovalMode, platform, setPlatform, windowMaximized, setWindowMaximized } = useSettingsStore();
+  const {
+    browserOpening, setBrowserOpening, browserMoreOpen, setBrowserMoreOpen, browserSection, setBrowserSection,
+    browserSuggestionsOpen, setBrowserSuggestionsOpen, browserSuggestionIndex, setBrowserSuggestionIndex,
+    browserClearing, setBrowserClearing, importDialogOpen, setImportDialogOpen,
+    browserUrlDraft, setBrowserUrlDraft, browserFind, setBrowserFind,
+    browserSessionHistory, setBrowserSessionHistory, browserDownloads, setBrowserDownloads,
+    browserPasswordPrompt, setBrowserPasswordPrompt, browserControlState, setBrowserControlState,
+    browserPasswordsOpen, setBrowserPasswordsOpen, browserClearKinds, setBrowserClearKinds,
+  } = useBrowserStore();
   const [sessions, setSessions] = useState<SessionRecord[]>(previewSessions);
   // 未发送的新任务只保留在页面内，不进入会话列表和保存流程。
   const [newTaskDraft, setNewTaskDraft] = useState<SessionRecord | null>(null);
@@ -750,13 +760,6 @@ export function App() {
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
   const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
   const [pluginPanelChoices, setPluginPanelChoices] = useState<PluginPanelTab[]>([]);
-  const [browserOpening, setBrowserOpening] = useState(false);
-  const [browserMoreOpen, setBrowserMoreOpen] = useState(false);
-  const [browserSection, setBrowserSection] = useState<"history" | "downloads" | "clear" | null>(null);
-  const [browserSuggestionsOpen, setBrowserSuggestionsOpen] = useState(false);
-  const [browserSuggestionIndex, setBrowserSuggestionIndex] = useState(-1);
-  const [browserClearing, setBrowserClearing] = useState(false);
-  const [importDialogOpen, setImportDialogOpen] = useState(false);
   // 「总结为工作模板」：正在提炼的会话 id（防重复点击）与待确认的草稿（非空即打开对话框）
   const [skillSummarySessionId, setSkillSummarySessionId] = useState<string | null>(null);
   const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; instructions: string } | null>(null);
@@ -970,21 +973,6 @@ export function App() {
   const sessionTokenIdsRef = useRef<Map<string, string>>(new Map());
   // 每个浏览器标签页一个常驻 webview：切换标签不销毁页面（对照 Codex 浏览器）
   const browserWebviewsRef = useRef<Map<string, BrowserWebviewElement>>(new Map());
-  // 地址栏编辑草稿：输入过程中不把中间态写进标签页（导航同步会覆盖回来）
-  const [browserUrlDraft, setBrowserUrlDraft] = useState<{ tabId: string; value: string } | null>(null);
-  // 页内查找栏：文本 + 命中计数（found-in-page 事件回填）
-  const [browserFind, setBrowserFind] = useState<{ tabId: string; text: string; matches: number; active: number } | null>(null);
-  // 本会话导航历史：更多菜单里可回跳
-  const [browserSessionHistory, setBrowserSessionHistory] = useState<Array<{ url: string; title: string; at: number }>>([]);
-  // 内置浏览器下载记录（进度广播回填）
-  const [browserDownloads, setBrowserDownloads] = useState<BrowserDownloadRecord[]>([]);
-  // 页面提交了登录表单后询问是否保存密码（密码只暂存在内存里，用户确认才落盘）
-  const [browserPasswordPrompt, setBrowserPasswordPrompt] = useState<{ tabId: string; origin: string; username: string; password: string } | null>(null);
-  // 浏览器 Computer Use 控制状态
-  const [browserControlState, setBrowserControlState] = useState<BrowserControlState | null>(null);
-  // 密码和自动填充管理对话框
-  const [browserPasswordsOpen, setBrowserPasswordsOpen] = useState(false);
-  const [browserClearKinds, setBrowserClearKinds] = useState({ cookies: true, cache: true, siteData: false });
   const appShellRef = useRef<HTMLDivElement>(null);
   const panelGeometryRef = useRef({ rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth });
   panelGeometryRef.current = { rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth };
