@@ -39,13 +39,16 @@ for (const maximized of [false, true]) {
   }
 }
 
+const solidWindowBackground = "#f7f7f4";
+const layoutStyles = fs.readFileSync(new URL("../src/layout.css", import.meta.url), "utf8");
+
 for (const platform of ["linux", "darwin", "win32"]) {
   test(`窗口不使用系统标题栏，保留实色内容和桌面阴影：${platform}`, () => {
     const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
     const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
       process: { platform },
       // 外观接入后窗口底色来自已保存外观，此处桩为默认浅色
-      windowBackgroundFor: () => "#f7f7f4",
+      windowBackgroundFor: () => solidWindowBackground,
       appearanceState: { settings: { theme: "system" } },
       resolvedAppearanceTheme: () => "light",
       // Linux 图标来自窗口图标控制器，此处桩为固定值
@@ -57,7 +60,25 @@ for (const platform of ["linux", "darwin", "win32"]) {
     });
     assert.equal(options.frame, false);
     assert.equal(options.hasShadow, true);
-    assert.equal(options.backgroundColor, "#f7f7f4");
+    if (platform === "linux") {
+      // Linux 窗口自身透明，只让四角透出桌面：圆角由页面绘制平滑 14px 轮廓，
+      // 不再交给 X Shape 二值裁切（二值裁切会产生台阶）。
+      // 实色内容改由页面承担，窗口层必须是透明底色，否则四角会露出方角。
+      assert.equal(options.transparent, true);
+      assert.equal(options.backgroundColor, "#00000000");
+      assert.match(
+        layoutStyles,
+        /html \.reference-layout \{[^}]*background: var\(--window-surface\)/,
+        "Linux 透明窗口的实色内容必须来自页面底色",
+      );
+      assert.match(
+        layoutStyles,
+        /html:has\(\.reference-layout\.platform-linux\) #root \{[\s\S]*?clip-path: inset\(0 round 14px\)/,
+        "Linux 页面必须裁出与窗口一致的圆角",
+      );
+      return;
+    }
+    assert.equal(options.backgroundColor, solidWindowBackground);
     assert.notEqual(options.transparent, true);
   });
 }
