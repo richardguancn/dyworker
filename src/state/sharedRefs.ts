@@ -71,6 +71,10 @@ export const speakTokenRef: { current: number } = { current: 0 };
 export const voiceAudioRef: { current: HTMLAudioElement | null } = { current: null };
 export const voiceObjectUrlRef: { current: string } = { current: "" };
 
+// 刚点了「立即执行」的计划 id：等主进程回 schedules:run-started 时把这次运行的会话直接打开
+// （scheduleActions 手动触发 与 sessionIpcRuntime 订阅 共用同一实例）
+export const manualRunScheduleRef: { current: string } = { current: "" };
+
 // 发消息 / 排队消息（sendMessageActions）共享的模块级 ref：App 的清理 effect、运行时与
 // actions 必须指向同一实例，随这组函数一起从 App.tsx 的 useRef 挪到模块级。
 export const queuedRunsRef: { current: Map<string, Set<string>> } = { current: new Map() };

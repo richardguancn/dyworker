@@ -36,7 +36,6 @@ import { AnnotationEditorCard, ContextMenuPopup, MessageAnnotationChip, Selectio
 import { MemoryEditDialog } from "./features/memory/MemoryPanels";
 import { SkillDraftDialog, SkillEditDialog } from "./features/skills/SkillPanels";
 import { composerApprovalModes } from "./features/plans/PlansPanel";
-import type { ScheduleDraft } from "./features/plans/PlansPanel";
 import { ContextRing } from "./features/usage/UsagePanels";
 import { AppUpdateAction, AppUpdateDialog, FullAccessDialog, IdentitySetupDialog } from "./features/settings/SettingsSubPanels";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
@@ -56,8 +55,10 @@ import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceI
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
 import { sendMessage, removeQueuedMessage, cancelQueuedMessage, runQueuedMessageNow } from "./state/sendMessageActions";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef } from "./state/sharedRefs";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef, manualRunScheduleRef } from "./state/sharedRefs";
 import { saveProviderSettings, checkAppUpdate, openAppUpdateDialog, downloadAppUpdate, installAppUpdate, chooseIdentity, selectApprovalMode, confirmFullAccess, activateModelProfile, ensureComposerModels, switchComposerModel } from "./state/settingsActions";
+import { saveSchedule, toggleSchedule, deleteSchedule, triggerSchedule } from "./state/scheduleActions";
+import { refreshMemories, refreshSkills, refreshImportedHistory, syncAtBottom, refreshWorkspace } from "./state/panelActions";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -817,8 +818,6 @@ export function App() {
   // 定时计划运行（scheduleRun 打标）复用同一套登记：它的占位气泡同样按会话清理。
   const channelStreamIdsRef = useRef<Map<string, string>>(new Map());
   const channelStreamRunsRef: { current: ChannelStreamRuns } = useRef(new Map<string, ChannelStreamRef>());
-  // 刚点了「立即执行」的计划 id：等主进程回 schedules:run-started 时把这次运行的会话直接打开
-  const manualRunScheduleRef = useRef<string>("");
 
   // 工作台布局持久化：面板 Tab、分栏比例按会话保存到 localStorage，切换会话恢复、重启不丢。
   // 恢复先于保存执行，避免启动时用空状态覆盖已保存布局；没有自定义过布局（无 Tab）的会话不落盘。
@@ -1425,29 +1424,8 @@ export function App() {
     updateSession, showSessionNotice, refreshPendingWakes, playCompletionSound,
   });
 
-  const refreshMemories = async () => {
-    if (window.dyworker?.listMemories) setMemories(await window.dyworker.listMemories());
-  };
   refreshMemoriesRef.current = refreshMemories;
-
-  const refreshSkills = async (announce = false) => {
-    if (!window.dyworker?.listSkills) return;
-    const items = await window.dyworker.listSkills(workspacePath);
-    setSkills(items);
-    setMentionSkills(items);
-    setActiveSkills(current => current.flatMap(skill => {
-      const updated = items.find(item => item.id === skill.id && item.enabled);
-      return updated ? [updated] : [];
-    }));
-    if (announce) setNotice(`已刷新技能，共发现 ${items.length} 个`);
-  };
   refreshSkillsRef.current = refreshSkills;
-
-  const syncAtBottom = () => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    setAtBottom(viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 48);
-  };
 
   useEffect(() => {
     syncAtBottom();
@@ -2113,10 +2091,6 @@ export function App() {
   const activeBrowserUrl = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "";
 
   // 加载已导入的浏览记录（地址栏联想）；导入成功后由对话框回调刷新
-  const refreshImportedHistory = () => {
-    if (!window.dyworker?.listImportedHistory) return;
-    void window.dyworker.listImportedHistory().then(setImportedHistory).catch(() => {});
-  };
   useEffect(refreshImportedHistory, []);
 
   // 内置插件（随应用分发、默认启用）的客户端半边开机自动加载——内置就该开机即用，
@@ -2360,11 +2334,6 @@ export function App() {
     };
   }, []);
 
-  const refreshWorkspace = async () => {
-    if (!window.dyworker || !workspacePath) return;
-    setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
-  };
-
   const goalActionsRef = useRef(new Set<string>());
   const handleGoalAction = async (sessionId: string, action: 'pause' | 'resume' | 'remove' | 'complete') => {
     const session = sessionsRef.current.find(row => row.id === sessionId);
@@ -2541,47 +2510,6 @@ export function App() {
       event.preventDefault();
       void sendMessage();
     }
-  };
-
-  const saveSchedule = async (draft: ScheduleDraft) => {
-    const planWorkspacePath = (draft.workspacePath || "").trim() || workspacePath;
-    const result = await window.dyworker?.saveSchedule({ ...draft, workspacePath: planWorkspacePath });
-    if (!result?.ok) {
-      setError(result?.error || "保存计划失败");
-      return false;
-    }
-    setNotice("定时计划已保存");
-    setSchedules(await window.dyworker?.listSchedules() || []);
-    return true;
-  };
-
-  const toggleSchedule = (id: string, enabled: boolean) => {
-    setSchedules((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
-    void window.dyworker?.setScheduleEnabled(id, enabled);
-  };
-
-  const deleteSchedule = (id: string) => {
-    setSchedules((current) => current.filter((item) => item.id !== id));
-    void window.dyworker?.deleteSchedule(id);
-  };
-
-  const triggerSchedule = (id: string) => {
-    // 记下这次是手动触发的哪个计划：主进程回 schedules:run-started 时把这次运行的会话
-    // 直接打开（用户点了「立即执行」就是要马上看到它在跑）
-    manualRunScheduleRef.current = id;
-    void window.dyworker?.triggerSchedule(id).then((result) => {
-      if (!result?.ok) {
-        manualRunScheduleRef.current = "";
-        setError(result?.error || "无法执行");
-      } else if (result.started === false) {
-        // 忙碌守卫把这一轮推迟了（桌面任务在跑或已有后台任务）：明说"已排队"，
-        // 别让用户以为点了没反应，也别谎报"已开始执行"
-        manualRunScheduleRef.current = "";
-        setNotice("当前有任务正在运行，这个计划已排队，等它结束后自动开始");
-      } else {
-        setNotice("计划已开始执行，正在打开这次运行的会话");
-      }
-    });
   };
 
   const hasModel = hasConfiguredModel(settings);
