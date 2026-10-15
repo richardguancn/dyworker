@@ -50,7 +50,10 @@ import { useComposerStore } from "./state/composerStore";
 import { useSessionStore } from "./state/sessionStore";
 import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, showSessionError, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
 import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef } from "./state/sharedRefs";
+import { updateToolPanelTab, focusToolPanelTab, openToolPanelTab, openFilePreview, choosePreviewFile, closeToolPanelTab } from "./state/toolPanelActions";
+import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
+import { pluginPanelPreferences } from "./state/pluginPreferences";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef } from "./state/sharedRefs";
 import { useInboxStore } from "./state/inboxStore";
 import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
@@ -162,7 +165,7 @@ import { PluginIcon } from "./PluginIcon";
 import { ModsPanelView } from './ModsPluginsPage';
 import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
 import type { PluginPanelRequest } from "./PluginSlotView";
-import { availablePluginPanels, pluginPanelTab, PluginPanelPreferences } from "./pluginPanelTabs";
+import { availablePluginPanels, pluginPanelTab } from "./pluginPanelTabs";
 import type { PluginPanelTab } from "./pluginPanelTabs";
 import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
 import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
@@ -270,8 +273,6 @@ function playCompletionSound() {
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
 // ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
-
-let browserDefaultUserAgent = "";
 
 // ===== 浏览器「导入 Cookie 和密码」对话框（对照 Codex 浏览器更多菜单） =====
 
@@ -647,7 +648,6 @@ export function App() {
   // 初始没有任何标签页：浏览器只是菜单中的一个选项，用户选择之前什么都不打开（对照 Codex）
   // 标签条横向溢出状态：两侧滚动按钮与渐隐遮罩只在真正放不下时出现
   const toolPanelTabStripRef = useRef<HTMLDivElement | null>(null);
-  const [pluginPanelPreferences] = useState(() => new PluginPanelPreferences(localStorage));
   // 平台标识初始值同步取自 preload（process.platform），首帧就能渲染正确布局，
   // 不会先按未知平台画出自绘标题栏再闪改（mac 红绿灯会盖到 DYWorker 文字上）
   const dismissedPluginMention = useRef<{ sessionId: string; text: string; start: number; query: string } | null>(null);
@@ -794,13 +794,10 @@ export function App() {
   const mentionTokenPathsRef = useRef<Map<string, string>>(new Map());
   // @「标题」token → 实际选择的会话 id：同名会话时以用户点选的那个为准（与文件同构）
   const sessionTokenIdsRef = useRef<Map<string, string>>(new Map());
-  // 每个浏览器标签页一个常驻 webview：切换标签不销毁页面（对照 Codex 浏览器）
-  const browserWebviewsRef = useRef<Map<string, BrowserWebviewElement>>(new Map());
   const appShellRef = useRef<HTMLDivElement>(null);
   const panelGeometryRef = useRef({ rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth });
   panelGeometryRef.current = { rightPanelOpen, sidebarOpen, appliedSidebarWidth, appliedToolPanelWidth };
   const panelResizeRef = useRef<{ edge: "left" | "right"; startX: number; startWidth: number } | null>(null);
-  const toolPanelTabSequenceRef = useRef(1);
   const composingRef = useRef(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
@@ -2580,241 +2577,9 @@ export function App() {
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];
   const activeToolPanelKind = activeToolPanelTab?.kind || "browser";
 
-  // ===== 内置浏览器：webview 生命周期 =====
-  // 每个浏览器标签页常驻一个 webview，切换标签不销毁页面；导航/标题/图标/加载状态
-  // 通过 webview 事件同步到标签页状态（对照 Codex 浏览器）。当前显示的 webview 上报给
-  // 主进程，让助手的 browser__* 工具只作用于用户可见的页面。
-
   // 每次渲染刷新镜像：ref 回调与 webview 事件闭包里读最新值
-  const activeToolPanelTabIdRef = useRef("");
   activeToolPanelTabIdRef.current = activeToolPanelTabId;
-  const toolPanelTabsRef = useRef<ToolPanelTab[]>([]);
   toolPanelTabsRef.current = toolPanelTabs;
-  // 助手要求关闭标签页时复用面板自己的关闭逻辑（面板 Tab 索引更新在下面统一处理）
-  const closeToolPanelTabRef = useRef<((id: string) => void) | null>(null);
-
-  // 浏览器标签页可以多开（对照真实浏览器）。开新页时的复用规则，按优先级：
-  // 1. 网址已经在某个标签页里打开：切到那个标签页，不重复开同一页；
-  // 2. 助手打开网页时还有没打开过网页的空标签页（起始页）：先用它，不堆叠空标签页；
-  // 3. 其余情况新开一个标签页。用户按 ⌘T / 点 + 属于这一类：每次都新开一个
-  //    （和真实浏览器一致），只有助手的打开才复用空白页。
-  // 助手打开网页同样走这里：旧页面留在自己的标签页里，不会被新网址顶掉。
-  const openBrowserTab = (initialUrl?: string, options: { reuseBlank?: boolean } = {}) => {
-    const target = String(initialUrl || "").trim();
-    const browserTabs = toolPanelTabsRef.current.filter((tab) => tab.kind === "browser");
-    if (target) {
-      const sameUrl = browserTabs.find((tab) => (tab.loadedUrl || tab.url || "") === target);
-      if (sameUrl) {
-        setRightPanelOpen(true);
-        setActiveToolPanelTabId(sameUrl.id);
-        setToolPanelMenuOpen(false);
-        return sameUrl.id;
-      }
-    }
-    const reuseBlank = options.reuseBlank === true;
-    const blank = reuseBlank ? browserTabs.find((tab) => !tab.loadedUrl) : undefined;
-    const id = blank?.id || `browser-${toolPanelTabSequenceRef.current++}`;
-    setToolPanelTabs((current) => {
-      if (blank && !target) {
-        // 空标签页任务栏复用：保持原样，只切过去
-        return current;
-      }
-      if (blank) {
-        return current.map((tab) => tab.id === blank.id
-          ? { ...tab, url: target, loadedUrl: target, title: browserTabTitleOf(target), loadError: "", favicon: "" }
-          : tab);
-      }
-      const created: ToolPanelTab = target
-        ? { id, kind: "browser", title: browserTabTitleOf(target), url: target, loadedUrl: target }
-        : { id, kind: "browser", title: "新标签页", url: "" };
-      return [...current, created];
-    });
-    setRightPanelOpen(true);
-    setActiveToolPanelTabId(id);
-    setToolPanelMenuOpen(false);
-    return id;
-  };
-
-  // 助手指定的标签页切换：切到指定标签页（由主进程等待渲染端上报后接管控制）
-  const activateBrowserTabById = (tabId: string) => {
-    const tab = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
-    if (!tab) return false;
-    setRightPanelOpen(true);
-    setActiveToolPanelTabId(tab.id);
-    setToolPanelMenuOpen(false);
-    return true;
-  };
-
-  // 助手指定的标签页关闭：复用关闭按钮那套（最后一个标签页关掉就回到菜单页）
-  const closeBrowserTabById = (tabId: string) => {
-    const closing = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
-    if (!closing) return false;
-    closeToolPanelTabRef.current?.(tabId);
-    return true;
-  };
-
-  // 面板里的浏览器标签页清单上报主进程：助手的标签页工具据此列出、切换、关闭
-  const reportBrowserTabState = () => {
-    if (!window.dyworker?.reportBrowserTabs) return;
-    const tabs = toolPanelTabsRef.current.filter((tab) => tab.kind === "browser").map((tab) => {
-      let webContentsId = 0;
-      try {
-        webContentsId = browserWebviewsRef.current.get(tab.id)?.getWebContentsId?.() || 0;
-      } catch {
-        webContentsId = 0;
-      }
-      return {
-        id: tab.id,
-        title: tab.title || "",
-        url: tab.loadedUrl || tab.url || "",
-        active: tab.id === activeToolPanelTabIdRef.current,
-        webContentsId,
-      };
-    });
-    window.dyworker.reportBrowserTabs({ ownerSessionId: activeIdRef.current, tabs });
-  };
-
-  const patchBrowserTab = (tabId: string, patch: Partial<ToolPanelTab>) => {
-    setToolPanelTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, ...patch } : tab));
-  };
-
-  const readWebviewNavState = (webview: BrowserWebviewElement) => ({
-    url: webview.getURL?.() || "",
-    canGoBack: webview.canGoBack?.() ?? false,
-    canGoForward: webview.canGoForward?.() ?? false,
-  });
-
-  // 主进程路由 agent 浏览器工具的目标：当前激活标签页的 webview
-  const reportActiveBrowserContents = () => {
-    reportBrowserTabState();
-    const webview = browserWebviewsRef.current.get(activeToolPanelTabIdRef.current);
-    try {
-      const id = webview?.getWebContentsId?.();
-      if (id) window.dyworker?.setActiveBrowserContents?.(id, activeIdRef.current);
-    } catch {
-      // webview 尚未 attach：did-attach 后会再报一次
-    }
-  };
-
-  // 首次访问站点时注入暂存的 localStorage（每个 URL 只注入一次，注入后刷新生效）；
-  // 同时探测该站点是否有已保存的密码，用于显示填充提示
-  const prepareGuestPage = (webview: BrowserWebviewElement, tabId: string) => {
-    const handledUrls = new Set<string>();
-    webview.addEventListener("dom-ready", () => {
-      const url = webview.getURL?.() || "";
-      if (!/^https?:\/\//i.test(url) || handledUrls.has(url)) return;
-      handledUrls.add(url);
-      let origin = "";
-      try {
-        origin = new URL(url).origin;
-      } catch {
-        return;
-      }
-      void (async () => {
-        try {
-          const entries = await window.dyworker?.getImportedLocalStorage?.(origin);
-          if (entries) {
-            await webview.executeJavaScript?.(
-              `(() => { const data = ${JSON.stringify(entries)}; for (const [k, v] of Object.entries(data)) { try { localStorage.setItem(k, v); } catch { /* 单键失败不阻塞其余 */ } } })()`,
-            );
-            await window.dyworker?.markImportedLocalStorageDone?.(origin);
-            webview.reload?.();
-          }
-        } catch {
-          // 注入失败：保留暂存数据，下次访问该站点时重试
-        }
-        try {
-          const stored = await window.dyworker?.listPasswords?.(origin);
-          patchBrowserTab(tabId, { fillHint: stored?.passwords?.length || undefined });
-        } catch {
-          // 探测失败不影响页面
-        }
-      })();
-    });
-  };
-
-  // 绑定单个 webview 的事件（ref 回调里调用；监听器随元素销毁，无需手动解绑）
-  const bindBrowserWebview = (tabId: string, webview: BrowserWebviewElement) => {
-    const navSync = () => patchBrowserTab(tabId, readWebviewNavState(webview));
-    const rememberInHistory = () => {
-      const url = webview.getURL?.() || "";
-      if (!/^https?:\/\//i.test(url)) return;
-      setBrowserSessionHistory((current) => {
-        if (current[0]?.url === url) return current;
-        const host = url.replace(/^https?:\/\//i, "").split("/")[0] || url;
-        return [{ url, title: host, at: Date.now() }, ...current].slice(0, 100);
-      });
-    };
-    webview.addEventListener("did-start-loading", () => patchBrowserTab(tabId, { loading: true, loadError: "" }));
-    webview.addEventListener("did-stop-loading", () => patchBrowserTab(tabId, { loading: false, ...readWebviewNavState(webview) }));
-    webview.addEventListener("did-navigate", () => { navSync(); rememberInHistory(); });
-    webview.addEventListener("did-navigate-in-page", () => { navSync(); rememberInHistory(); });
-    webview.addEventListener("page-title-updated", ((event: Event & { title: string }) => {
-      const title = event.title || "";
-      if (!title) return;
-      patchBrowserTab(tabId, { title });
-      const url = webview.getURL?.() || "";
-      setBrowserSessionHistory((current) => current.map((entry, index) => index === 0 && entry.url === url ? { ...entry, title } : entry));
-    }) as EventListener);
-    webview.addEventListener("page-favicon-updated", ((event: Event & { favicons: string[] }) => {
-      patchBrowserTab(tabId, { favicon: event.favicons?.[event.favicons.length - 1] || "" });
-    }) as EventListener);
-    webview.addEventListener("did-fail-load", ((event: Event & { errorCode: number; errorDescription: string; isMainFrame: boolean }) => {
-      // ERR_ABORTED 是导航被打断（如重定向、手动停止），不算失败；子框架失败不影响整页
-      if (event.errorCode === -3 || !event.isMainFrame) return;
-      patchBrowserTab(tabId, {
-        loading: false,
-        loadError: `网页加载失败（${event.errorDescription || event.errorCode}）`,
-      });
-    }) as EventListener);
-    webview.addEventListener("found-in-page", ((event: Event & { matches: number; activeMatchOrdinal: number }) => {
-      setBrowserFind((current) => current && current.tabId === tabId
-        ? { ...current, matches: event.matches ?? 0, active: event.activeMatchOrdinal ?? 0 }
-        : current);
-    }) as EventListener);
-    webview.addEventListener("did-attach", () => {
-      const zoom = toolPanelTabsRef.current.find((tab) => tab.id === tabId)?.zoom ?? 0;
-      if (zoom) webview.setZoomLevel?.(zoom);
-      if (tabId === activeToolPanelTabIdRef.current) reportActiveBrowserContents();
-    });
-    // 客页面报告的登录表单提交（webview-preload.cjs 经 sendToHost 发来）：弹出保存密码提示
-    webview.addEventListener("ipc-message", ((event: Event & { channel: string; args: unknown[] }) => {
-      if (event.channel !== "dyworker:password-submit") return;
-      const payload = event.args?.[0] as { origin?: string; username?: string; password?: string } | undefined;
-      if (!payload?.password) return;
-      // origin 由客页面自行上报、可被恶意站点伪造：一律以 webview 当前实际 URL 的 origin 为准
-      let actualOrigin = "";
-      try {
-        actualOrigin = new URL(webview.getURL?.() || "").origin;
-      } catch {
-        return;
-      }
-      if (!/^https?:\/\//i.test(actualOrigin)) return;
-      setBrowserPasswordPrompt({ tabId, origin: actualOrigin, username: payload.username || "", password: payload.password });
-    }) as EventListener);
-    prepareGuestPage(webview, tabId);
-  };
-
-  // ref 回调按 tabId 缓存稳定身份，避免每次渲染触发挥挂/卸载
-  const browserWebviewRefCallbacks = useRef<Map<string, (node: BrowserWebviewElement | null) => void>>(new Map());
-  const browserWebviewRefFor = (tabId: string) => {
-    let callback = browserWebviewRefCallbacks.current.get(tabId);
-    if (!callback) {
-      callback = (node: BrowserWebviewElement | null) => {
-        const previous = browserWebviewsRef.current.get(tabId);
-        if (previous === node) return;
-        if (node) {
-          browserWebviewsRef.current.set(tabId, node);
-          bindBrowserWebview(tabId, node);
-        } else {
-          browserWebviewsRef.current.delete(tabId);
-          if (activeToolPanelTabIdRef.current === tabId) window.dyworker?.setActiveBrowserContents?.(0, activeIdRef.current);
-        }
-      };
-      browserWebviewRefCallbacks.current.set(tabId, callback);
-    }
-    return callback;
-  };
 
   // 激活标签页或其 webview 变化后上报主进程：可见页（控制目标）+ 浏览器标签页清单
   useEffect(() => {
@@ -2855,15 +2620,6 @@ export function App() {
     void window.dyworker.listImportedHistory().then(setImportedHistory).catch(() => {});
   };
   useEffect(refreshImportedHistory, []);
-
-  const updateToolPanelTab = (id: string, patch: Partial<ToolPanelTab>) => {
-    setToolPanelTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...patch } : tab));
-  };
-
-  const focusToolPanelTab = (id: string) => {
-    setActiveToolPanelTabId(id);
-    setToolPanelMenuOpen(false);
-  };
 
   // 内置插件（随应用分发、默认启用）的客户端半边开机自动加载——内置就该开机即用，
   // 不需要用户去插件页点"加载界面半边"。失败只记录，不影响启动。
@@ -2961,52 +2717,6 @@ export function App() {
 
   useEffect(() => onPluginPanelRequest(openPluginPanel), [openPluginPanel]);
 
-  const openToolPanelTab = (kind: ToolPanelTab["kind"], createNew = false, initialUrl?: string) => {
-    if (!createNew) {
-      const existing = toolPanelTabs.find((tab) => tab.kind === kind);
-      if (existing) {
-        if (initialUrl !== undefined) {
-          updateToolPanelTab(existing.id, { url: initialUrl, title: initialUrl || existing.title });
-        }
-        focusToolPanelTab(existing.id);
-        return existing.id;
-      }
-    }
-    const sequence = toolPanelTabSequenceRef.current++;
-    const tab: ToolPanelTab = {
-      id: `${kind}-${sequence}`,
-      kind,
-      title: kind === "browser" ? (initialUrl || "新标签页") : kind === "review" ? "审阅" : kind === "chat" ? "侧边聊天" : kind === "tasks" ? "后台任务" : "打开文件",
-      ...(kind === "browser" ? { url: initialUrl || "" } : {}),
-    };
-    setToolPanelTabs((current) => [...current, tab]);
-    setActiveToolPanelTabId(tab.id);
-    setToolPanelMenuOpen(false);
-    return tab.id;
-  };
-
-  const openFilePreview = (filePath: string, root: string) => {
-    const current = toolPanelTabsRef.current;
-    const existing = current.find(tab => tab.kind === "preview" && tab.filePath === filePath && tab.previewWorkspacePath === root);
-    const id = existing?.id || `preview-${toolPanelTabSequenceRef.current++}`;
-    const next: ToolPanelTab[] = existing
-      ? current.map(tab => tab.id === id ? { ...tab, previewRevision: (tab.previewRevision || 0) + 1 } : tab)
-      : [...current, { id, kind: "preview", title: filePath.split(/[\\/]/).pop() || "文件预览", filePath, previewWorkspacePath: root }];
-    toolPanelTabsRef.current = next;
-    setToolPanelTabs(next);
-    setActiveToolPanelTabId(id);
-    setRightPanelOpen(true);
-    setToolPanelMenuOpen(false);
-    setToolPanelAddMenuOpen(false);
-  };
-  const choosePreviewFile = async () => {
-    try {
-      const choice = await window.dyworker?.choosePreviewFile();
-      if (choice && !choice.canceled && choice.path && choice.workspacePath) openFilePreview(choice.path, choice.workspacePath);
-    } catch (error) { setError(`打开文件失败：${String(error)}`); }
-  };
-  const openFilePreviewRef = useRef(openFilePreview);
-  openFilePreviewRef.current = openFilePreview;
   const pendingFilePreviews = useRef(new Map<string, Array<{ path: string; workspacePath: string }>>());
   useEffect(() => window.dyworker?.onFilePanelRequest?.(request => {
     if (!request.ownerSessionId) return;
@@ -3100,23 +2810,6 @@ export function App() {
     strip.scrollBy({ left: direction * step, behavior: "smooth" });
   };
 
-  const closeToolPanelTab = (id: string) => {
-    const closing = toolPanelTabs.find(tab => tab.id === id);
-    if (closing) pluginPanelPreferences.close(closing);
-    const nextTabs = toolPanelTabs.filter((tab) => tab.id !== id);
-    // 关掉最后一个标签页时回到菜单页，而不是再开一个空白浏览器（对照 Codex）
-    if (!nextTabs.length) {
-      setToolPanelTabs([]);
-      setActiveToolPanelTabId("");
-      setToolPanelMenuOpen(true);
-      return;
-    }
-    setToolPanelTabs(nextTabs);
-    if (id === activeToolPanelTabId) {
-      const index = toolPanelTabs.findIndex((tab) => tab.id === id);
-      setActiveToolPanelTabId(nextTabs[Math.max(0, index - 1)]?.id || nextTabs[0].id);
-    }
-  };
   closeToolPanelTabRef.current = closeToolPanelTab;
   browserPanelCommandsRef.current = {
     open: (url: string, tabId?: string) => {
@@ -3150,115 +2843,6 @@ export function App() {
   }, [browserSessionHistory, importedHistory, browserSuggestionQuery]);
   useEffect(() => { setBrowserSuggestionsOpen(false); setBrowserSuggestionIndex(-1); }, [activeToolPanelTabId]);
 
-  const openBrowserUrl = async (rawOverride?: string) => {
-    setBrowserSuggestionsOpen(false);
-    const tab = activeToolPanelTab?.kind === "browser" ? activeToolPanelTab : undefined;
-    const draft = tab && browserUrlDraft?.tabId === tab.id ? browserUrlDraft.value : "";
-    const raw = (rawOverride ?? draft ?? activeBrowserUrl).trim();
-    if (!tab) {
-      openToolPanelTab("browser", true, rawOverride);
-      return;
-    }
-    if (!raw) {
-      setError("请输入网址");
-      return;
-    }
-    const url = normalizeBrowserInput(raw);
-    setBrowserUrlDraft(null);
-    updateToolPanelTab(tab.id, { url, loadError: "" });
-    setError("");
-    setBrowserOpening(true);
-    try {
-      if (!window.dyworker?.openBrowser) {
-        setNotice("当前预览环境没有连接浏览器窗口");
-        return;
-      }
-      const result = await window.dyworker.openBrowser({ url, workspacePath });
-      if (!result.ok) {
-        setError(result.error || result.result || "网页打开失败");
-        return;
-      }
-      const loadedUrl = result.url || url;
-      const webview = browserWebviewsRef.current.get(tab.id);
-      // 地址未变化时 src 属性不变、不会触发导航，手动刷新一次
-      if (webview?.getURL?.() === loadedUrl) webview.reload?.();
-      updateToolPanelTab(tab.id, {
-        url: loadedUrl,
-        loadedUrl,
-        title: loadedUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "") || "新标签页",
-      });
-    } catch (browserError) {
-      setError(`网页打开失败：${browserError instanceof Error ? browserError.message : String(browserError)}`);
-    } finally {
-      setBrowserOpening(false);
-    }
-  };
-
-  const activeBrowserWebview = () => browserWebviewsRef.current.get(activeToolPanelTabId);
-
-  // ===== 页内查找 =====
-  const openBrowserFind = () => {
-    if (activeToolPanelKind !== "browser" || !activeToolPanelTab?.loadedUrl) return;
-    setBrowserFind({ tabId: activeToolPanelTabId, text: browserFind?.tabId === activeToolPanelTabId ? browserFind.text : "", matches: 0, active: 0 });
-  };
-  const runBrowserFind = (forward: boolean, findNext: boolean) => {
-    const webview = activeBrowserWebview();
-    const text = browserFind?.text ?? "";
-    if (!webview?.findInPage || !text) return;
-    void webview.findInPage(text, { forward, findNext });
-  };
-  const closeBrowserFind = () => {
-    if (browserFind?.tabId) browserWebviewsRef.current.get(browserFind.tabId)?.stopFindInPage?.("clearSelection");
-    setBrowserFind(null);
-  };
-
-  // ===== 缩放（1.2 的幂次，与 Chromium 缩放步进一致）=====
-  const browserZoomPercent = (tab: ToolPanelTab | undefined) => Math.round(100 * 1.2 ** (tab?.zoom ?? 0));
-  const changeBrowserZoom = (delta: number) => {
-    const tab = activeToolPanelTab;
-    if (!tab || tab.kind !== "browser") return;
-    const level = Math.min(8, Math.max(-5, (tab.zoom ?? 0) + delta));
-    updateToolPanelTab(tab.id, { zoom: level });
-    activeBrowserWebview()?.setZoomLevel?.(level);
-  };
-  const resetBrowserZoom = () => {
-    const tab = activeToolPanelTab;
-    if (!tab || tab.kind !== "browser") return;
-    updateToolPanelTab(tab.id, { zoom: 0 });
-    activeBrowserWebview()?.setZoomLevel?.(0);
-  };
-
-  // ===== 截图到剪贴板 =====
-  const captureBrowserScreenshot = async () => {
-    const webview = activeBrowserWebview();
-    if (!webview?.capturePage) {
-      setNotice("当前页面还不支持截取");
-      return;
-    }
-    try {
-      const image = await webview.capturePage();
-      await copyImageToClipboard({ ok: true, dataUrl: image.toDataURL() });
-      setNotice("已截取页面并复制到剪贴板");
-    } catch (captureError) {
-      setNotice(`截图失败：${captureError instanceof Error ? captureError.message : String(captureError)}`);
-    }
-  };
-
-  // ===== 在系统默认浏览器打开 =====
-  const openBrowserExternal = async () => {
-    const url = activeToolPanelTab?.url;
-    if (!url || !window.dyworker?.openBrowserExternal) {
-      if (url) setNotice("当前预览环境无法调用系统浏览器");
-      return;
-    }
-    const result = await window.dyworker.openBrowserExternal(url);
-    if (!result?.ok) setNotice(result?.error || "系统浏览器打开失败");
-  };
-
-  const clearBrowserSessionHistory = () => {
-    if (window.confirm("确定清空本次浏览历史吗？清空后无法恢复，已导入的历史记录不受影响。")) setBrowserSessionHistory([]);
-  };
-
   // ===== 下载进度 =====
   useEffect(() => window.dyworker?.onBrowserDownloadProgress?.((record) => {
     setBrowserDownloads((current) => [record, ...current.filter((entry) => entry.id !== record.id)].slice(0, 20));
@@ -3277,90 +2861,6 @@ export function App() {
       unsubscribe?.();
     };
   }, []);
-
-  // ===== 密码：保存提示 / 填充 =====
-  const dismissBrowserPasswordPrompt = () => setBrowserPasswordPrompt(null);
-  const saveBrowserPasswordPrompt = async () => {
-    const prompt = browserPasswordPrompt;
-    if (!prompt) return;
-    dismissBrowserPasswordPrompt();
-    if (!window.dyworker?.savePassword) {
-      setNotice("当前预览环境无法保存密码");
-      return;
-    }
-    const result = await window.dyworker.savePassword(prompt.origin, prompt.username, prompt.password);
-    setNotice(result.ok ? "密码已保存，下次登录时可一键填充" : (result.error || "保存失败"));
-  };
-  const fillSavedPassword = async () => {
-    const tab = activeToolPanelTab;
-    const webview = activeBrowserWebview();
-    if (!tab || !webview?.executeJavaScript) return;
-    let origin = "";
-    try {
-      origin = new URL(webview.getURL?.() || "").origin;
-    } catch {
-      return;
-    }
-    const stored = await window.dyworker?.listPasswords?.(origin);
-    const entry = stored?.passwords?.[0];
-    if (!entry) return;
-    const revealed = await window.dyworker?.revealPassword?.(entry.origin, entry.username);
-    if (!revealed?.ok || !revealed.password) {
-      setNotice(revealed?.error || "无法读取已保存的密码");
-      return;
-    }
-    try {
-      const result = await webview.executeJavaScript(browserPasswordFillScript(entry.username, revealed.password), true);
-      setNotice(typeof result === "string" ? result : "已填充密码");
-    } catch (fillError) {
-      setNotice(`填充失败：${fillError instanceof Error ? fillError.message : String(fillError)}`);
-    }
-  };
-
-  // ===== 打印 =====
-  const printBrowserPage = () => activeBrowserWebview()?.print?.();
-
-  // ===== 设备视图（手机/平板模拟）=====
-  const applyBrowserDevice = async (tab: ToolPanelTab, device: { name: string; width: number; height: number } | null) => {
-    const webview = browserWebviewsRef.current.get(tab.id);
-    updateToolPanelTab(tab.id, { device: device ? { ...device } : undefined });
-    if (!webview) return;
-    try {
-      if (!browserDefaultUserAgent && webview.getUserAgent) browserDefaultUserAgent = webview.getUserAgent();
-      if (device && webview.setUserAgent) webview.setUserAgent(BROWSER_MOBILE_UA);
-      else if (!device && browserDefaultUserAgent && webview.setUserAgent) webview.setUserAgent(browserDefaultUserAgent);
-      await window.dyworker?.emulateDevice?.(webview.getWebContentsId?.() || 0, device ? device.width : 0, device ? device.height : 0);
-    } catch {
-      // 模拟失败时仅保留容器尺寸，页面照常显示
-    }
-  };
-  const rotateBrowserDevice = () => {
-    const tab = activeToolPanelTab;
-    if (!tab?.device) return;
-    void applyBrowserDevice(tab, { ...tab.device, width: tab.device.height, height: tab.device.width });
-  };
-
-  // ===== 清除浏览数据 =====
-  const clearBrowserData = async () => {
-    if (browserClearing || !Object.values(browserClearKinds).some(Boolean)) return;
-    const selected = [browserClearKinds.cookies && "Cookie 和登录状态", browserClearKinds.cache && "缓存的图片和文件", browserClearKinds.siteData && "站点数据和网站设置"].filter(Boolean).join("、");
-    if (!window.confirm(`确定清除${selected}吗？此操作无法撤销。${browserClearKinds.cookies || browserClearKinds.siteData ? "部分网站可能需要重新登录。" : ""}`)) return;
-    if (!window.dyworker?.clearBrowserData) {
-      setNotice("当前预览环境无法清除浏览数据");
-      return;
-    }
-    setBrowserClearing(true);
-    try {
-    const result = await window.dyworker.clearBrowserData(browserClearKinds);
-    if (!result.ok) {
-      setNotice(result.error || "清除失败");
-      return;
-    }
-    for (const webview of browserWebviewsRef.current.values()) webview.reload?.();
-    setNotice("已清除所选的浏览数据");
-    setBrowserSection(null);
-    } catch { setNotice("清除失败，请重试"); } finally { setBrowserClearing(false); }
-  };
 
   const finishRecording = async (recorder: MediaRecorder) => {
     const stream = microphoneStreamRef.current;
@@ -4205,7 +3705,6 @@ export function App() {
   });
 
   // 浏览器 Computer Use 控制：响应“继续交给助手”广播，真正恢复任务执行 (F4 / 补充要求 4)
-  const browserResumeGuardRef = useRef(false);
   useEffect(() => {
     const unsubscribe = window.dyworker?.onBrowserControlResumed?.(async (payload) => {
       if (browserResumeGuardRef.current) return;
