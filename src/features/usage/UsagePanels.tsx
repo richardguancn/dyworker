@@ -3,20 +3,19 @@ import { contextUsageSummary, formatTokenCount } from "../../contextUsage";
 import { TokenActivity } from "../../TokenActivityPanel";
 import type { UsageRecord } from "../../types";
 
-// 上下文用量圆环：当前会话已用标记 / 当前模型上下文上限；tooltip 附带会话累计 token 用量
-export function ContextRing({ used, limit, exact, stats }: {
+// 输入区只呈现当前上下文占用和模型上限；累计消耗统一在统计页查看。
+export function ContextRing({ used, limit, exact }: {
   used: number;
   limit: number;
   exact?: boolean;
-  stats?: { prompt: number; completion: number; requests: number } | null;
 }) {
   const summary = contextUsageSummary(used, limit);
-  const { ratio, percent } = summary;
+  const { ratio } = summary;
   const radius = 8;
   const circumference = 2 * Math.PI * radius;
   const level = ratio >= 0.95 ? "danger" : ratio >= 0.8 ? "warn" : "ok";
   const ringRef = useRef<HTMLSpanElement | null>(null);
-  // 圆环在输入框左侧工具组的最右边，气泡默认向左展开会超出输入框、被侧栏盖住。
+  // 用量位于输入框工具栏中，气泡根据实际可用空间选择展开方向。
   // 弹出前量一次可用空间：朝余量大的一侧展开，并把最大宽度收到输入框内边距之间，
   // 内容长时换成多行，而不是溢出到别的面板后面。
   const [placement, setPlacement] = useState<{ side: "left" | "right"; maxWidth: number } | null>(null);
@@ -47,26 +46,22 @@ export function ContextRing({ used, limit, exact, stats }: {
       onFocus={placeTooltip}
       aria-label={`上下文窗口：${summary.percentLabel} 已用，已用 ${summary.usedLabel} 标记，共 ${summary.limitLabel}`}
     >
-      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
-        <circle cx="11" cy="11" r={radius} fill="none" strokeWidth="2.5" className="context-ring-track" />
-        <circle
-          cx="11"
-          cy="11"
-          r={radius}
-          fill="none"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          className="context-ring-value"
-          strokeDasharray={`${(ratio * circumference).toFixed(1)} ${circumference.toFixed(1)}`}
-          transform="rotate(-90 11 11)"
-        />
-      </svg>
-      <span className="context-ring-text">{percent === 0 && used > 0 ? "<1%" : `${percent}%`}</span>
-      {stats && stats.requests > 0 && (
-        <span className="context-ring-tokens">
-          累计 {formatTokenCount(stats.prompt + stats.completion)}
-        </span>
-      )}
+      <span className="context-ring-gauge">
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+          <circle cx="11" cy="11" r={radius} fill="none" strokeWidth="2.5" className="context-ring-track" />
+          <circle
+            cx="11"
+            cy="11"
+            r={radius}
+            fill="none"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            className="context-ring-value"
+            strokeDasharray={`${(ratio * circumference).toFixed(1)} ${circumference.toFixed(1)}`}
+            transform="rotate(-90 11 11)"
+          />
+        </svg>
+      </span>
       <span
         className="context-ring-tooltip"
         role="tooltip"
@@ -83,13 +78,7 @@ export function ContextRing({ used, limit, exact, stats }: {
           <strong className={`context-tip-percent ${level}`}>{summary.percentLabel} 已用</strong>
         </span>
         <span className="context-tip-line">已用 {summary.usedLabel} 标记，共 {summary.limitLabel}</span>
-        {stats && stats.requests > 0 && (
-          <>
-            <span className="context-tip-line">本会话累计 {stats.requests} 次请求</span>
-            <span className="context-tip-line">输入 {formatTokenCount(stats.prompt)} · 输出 {formatTokenCount(stats.completion)} tokens</span>
-          </>
-        )}
-        <small className="context-tip-note">压缩后按保留内容计算占用；累计用量不会清零</small>
+        <small className="context-tip-note">压缩后按保留内容计算上下文占用</small>
         {!exact && <small className="context-tip-note">当前占用为估算值，收到实际用量后更新</small>}
       </span>
     </span>

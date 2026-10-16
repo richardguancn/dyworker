@@ -541,7 +541,7 @@ export function ComposerDock(props: ComposerDockProps) {
                 </div>
               </div>
               <div className="composer-actions composer-send-actions">
-                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
+                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />
                 <div className="model-menu-wrap" data-menu-root>
                   <button
                     className={`composer-mode ${modelMenuOpen ? "active" : ""}`}

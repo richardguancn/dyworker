@@ -6064,10 +6064,21 @@ html:root .user-bubble.bare {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  gap: 6px;
+  width: auto;
   height: 26px;
   margin-right: 2px;
   cursor: default;
+}
+
+.context-ring-gauge {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
 }
 
 .context-ring-track {
@@ -6085,35 +6096,6 @@ html:root .user-bubble.bare {
 
 .context-ring.danger .context-ring-value {
   stroke: #b94b42;
-}
-
-.context-ring-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #8a8d85;
-  font-size: calc(7.5px * var(--font-ui-scale, 1));
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-/* 会话累计 token 数：显示在圆环右侧，悬停展示输入/输出明细 */
-.context-ring-tokens {
-  position: absolute;
-  left: calc(100% + 4px);
-  top: 50%;
-  transform: translateY(-50%);
-  white-space: nowrap;
-  color: #8a8d85;
-  font-size: calc(10.5px * var(--font-ui-scale, 1));
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-.context-ring-tokens:hover {
-  color: #5f635a;
 }
 
 .context-ring-tooltip {
@@ -9132,7 +9114,6 @@ html:not([data-theme]) .model-menu-title,
 html:not([data-theme]) .model-menu > button,
 html:not([data-theme]) .model-menu small,
 html:not([data-theme]) .model-menu > button.manage-models,
-html:not([data-theme]) .context-ring-text,
 html:not([data-theme]) .status-toast,
 html:not([data-theme]) .jump-bottom,
 html:not([data-theme]) .settings-nav-group,
@@ -10622,7 +10603,6 @@ html[data-theme="dark"] .model-menu-title,
 html[data-theme="dark"] .model-menu > button,
 html[data-theme="dark"] .model-menu small,
 html[data-theme="dark"] .model-menu > button.manage-models,
-html[data-theme="dark"] .context-ring-text,
 html[data-theme="dark"] .status-toast,
 html[data-theme="dark"] .jump-bottom,
 html[data-theme="dark"] .settings-nav-group,
