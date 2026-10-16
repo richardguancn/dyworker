@@ -1,3 +1,4 @@
+import { resolvePanelShortcut, type PanelShortcut } from "../electron/panel-shortcuts";
 import { createTraceBuffer, trimRecentText } from "./traceBuffer";
 import { createSessionSaveQueue } from "./sessionSaveQueue";
 import { formatMessageTime } from "./lib/format";
@@ -1127,36 +1128,30 @@ export function App() {
 
   // 处理器经 ref 读取最新状态，effect 只在挂载时挂一次监听；
   // 此前无依赖数组，流式期间每个 token 都 remove+add 一次 window keydown
+  const panelShortcutHandlerRef = useRef<(action: PanelShortcut) => void>(() => {});
+  panelShortcutHandlerRef.current = (action) => {
+    // 模态窗口内保留当前输入；普通输入框和终端仍能使用面板快捷键。
+    if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
+    setToolPanelAddMenuOpen(false);
+    if (action === "terminal") { toggleTerminal(); return; }
+    setRightPanelOpen(true);
+    if (action === "browser") openBrowserTab();
+    else openToolPanelTab(action);
+  };
   const keydownHandlerRef = useRef<(event: globalThis.KeyboardEvent) => void>(() => {});
-  keydownHandlerRef.current = (event: globalThis.KeyboardEvent) => {
-    const key = event.key.toLowerCase();
-    const modOnly = (isMacPlatform ? event.metaKey : event.ctrlKey) && !event.shiftKey && !event.altKey;
-    if (modOnly && key === "t") {
-      event.preventDefault();
-      setRightPanelOpen(true);
-      // 新标签页：浏览器可以多开，不覆盖已打开的页面
-      openBrowserTab();
-    } else if (modOnly && key === "p") {
-      event.preventDefault();
-      setRightPanelOpen(true);
-      openToolPanelTab("files");
-    } else if (modOnly && key === "j") {
-      event.preventDefault();
-      toggleTerminal();
-    } else if (event.ctrlKey && event.shiftKey && key === "g" && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      setRightPanelOpen(true);
-      openToolPanelTab("review");
-    } else if (key === "s" && event.altKey && (isMacPlatform ? event.metaKey : event.ctrlKey)) {
-      event.preventDefault();
-      setRightPanelOpen(true);
-      openToolPanelTab("chat");
-    }
+  keydownHandlerRef.current = (event) => {
+    if (event.defaultPrevented) return;
+    const action = resolvePanelShortcut(event, platform);
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) panelShortcutHandlerRef.current(action);
   };
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => keydownHandlerRef.current(event);
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    const unsubscribe = window.dyworker?.onPanelShortcut?.(action => panelShortcutHandlerRef.current(action));
+    return () => { window.removeEventListener("keydown", onKeyDown, true); unsubscribe?.(); };
   }, []);
 
   const activeToolPanelTab = toolPanelTabs.find((tab) => tab.id === activeToolPanelTabId) || toolPanelTabs[0];

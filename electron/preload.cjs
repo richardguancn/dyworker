@@ -114,6 +114,13 @@ contextBridge.exposeInMainWorld("dyworker", {
   previewAppearance: (settings) => ipcRenderer.invoke("appearance:preview", settings),
   cancelAppearancePreview: (payload) => ipcRenderer.invoke("appearance:cancel-preview", payload),
   resetAppearance: () => ipcRenderer.invoke("appearance:reset"),
+  onPanelShortcut: (callback) => {
+    const listener = (_event, action) => {
+      if (["browser", "files", "terminal", "review", "chat"].includes(action)) callback(action);
+    };
+    ipcRenderer.on("panel:shortcut", listener);
+    return () => ipcRenderer.removeListener("panel:shortcut", listener);
+  },
   onAppearanceReset: (callback) => {
     const listener = (_event, snapshot) => callback(snapshot);
     ipcRenderer.on("appearance:reset", listener);

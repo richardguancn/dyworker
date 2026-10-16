@@ -1,3 +1,4 @@
+import { forwardNativePanelShortcut } from "./panel-shortcuts.ts";
 import { createTraceWriter } from "./trace-writer.mts";
 import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
@@ -831,6 +832,8 @@ function createWindow() {
   }
   // 注册按键级应急恢复外观监听（CmdOrCtrl+Alt+R），独立于菜单显示状态，界面字号过大时仍可触发
   mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (forwardNativePanelShortcut(event, input, process.platform,
+      action => mainWindow?.webContents.send("panel:shortcut", action))) return;
     const isCmdOrCtrl = process.platform === "darwin" ? input.meta : input.control;
     if (isCmdOrCtrl && input.alt && input.key?.toLowerCase() === "r" && input.type === "keyDown") {
       // 阻止同一按键继续触发菜单 accelerator；长按也只恢复一次。
@@ -1078,7 +1081,11 @@ app.on("web-contents-created", (_event, contents) => {
         event.preventDefault();
         browserControlManager.takeover({ reason: "检测到用户键盘按键，已由你接管" });
       }
+      return;
     }
+    // 网页拥有焦点时按键不会冒泡到主界面，统一转发应用面板快捷键。
+    forwardNativePanelShortcut(event, input, process.platform,
+      action => mainWindow?.webContents.send("panel:shortcut", action));
   });
   // 下载进度跟踪：保存位置仍由 BrowserAgent 决定（工作区“下载”目录），
   // 这里只观察并广播给面板展示。持久分区所有 webview 共享，只挂一次。

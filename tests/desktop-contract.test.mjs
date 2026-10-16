@@ -744,7 +744,7 @@ test("内置浏览器可以多开标签页：⌘T/+ 菜单/工具栏 + 都新开
   assert.match(app, /const openBrowserTab = \(initialUrl\?: string/);
   assert.match(app, /kind: "browser", title: "新标签页", url: "" \}/);
   // ⌘T / Ctrl+T 是新标签页，不是「切到唯一那个浏览器标签页」
-  assert.match(app, /if \(modOnly && key === "t"\) \{[\s\S]{0,160}openBrowserTab\(\);/);
+  assert.match(app, /if \(action === "browser"\) openBrowserTab\(\);/);
   // 用户开的标签页一律新开；只有助手打开网页时才会先用掉空白标签页
   assert.match(app, /const reuseBlank = options\.reuseBlank === true;/);
   assert.match(app, /openBrowserTab\(url, \{ reuseBlank: true \}\)/);
@@ -1825,8 +1825,8 @@ test("右侧面板默认展示菜单且快捷键多平台适配", () => {
   assert.match(app, /shortcutLabel\("⌘P", "Ctrl\+P"\)/);
   assert.match(app, /shortcutLabel\("⌥⌘S", "Ctrl\+Alt\+S"\)/);
   // 快捷键实际接线
-  assert.match(app, /key === "t"/);
-  assert.match(app, /key === "p"/);
+  assert.match(app, /resolvePanelShortcut\(event, platform\)/);
+  assert.match(app, /onPanelShortcut/);
 });
 
 test("应用更新入口在设置的应用更新页,发现新版本时主导航底部出现下载按钮", () => {

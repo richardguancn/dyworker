@@ -1061,6 +1061,7 @@ export interface DyworkerBridge {
   cancelAppearancePreview?(payload?: { discardStaged?: string[] }): Promise<{ ok: boolean; effective?: AppearanceEffectiveState }>;
   resetAppearance?(): Promise<AppearanceSnapshot>;
   /** 应用菜单"恢复默认外观"应急入口触发时广播 */
+  onPanelShortcut?(callback: (action: import('../electron/panel-shortcuts').PanelShortcut) => void): () => void;
   onAppearanceReset?(callback: (snapshot: AppearanceSnapshot) => void): () => void;
   probeCredentials(payload: { endpoint: string; model: string; apiKey: string }): Promise<{ ok: boolean; status?: number; latencyMs?: number; message?: string; error?: string }>;
   /** 拉取同一服务地址 + 密钥下的可用模型列表（GET /models），用于模型名称下拉切换 */
