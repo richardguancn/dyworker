@@ -38,7 +38,7 @@ export async function readFilePreview(workspacePath, filePath) {
     if (file.size > 2 * 1024 * 1024) throw new Error("文本超过 2 MB，请使用系统应用打开");
     const data = await fs.readFile(file.path);
     if (data.includes(0)) return { ok: true, ...file, kind: "unsupported", note: "此文件包含二进制内容，请使用系统应用打开。" };
-    return { ok: true, ...file, kind: /\.md|\.markdown/.test(extension) ? "markdown" : "text", content: data.toString("utf8") };
+    return { ok: true, ...file, kind: [".html", ".htm"].includes(extension) ? "html" : /\.md|\.markdown/.test(extension) ? "markdown" : "text", content: data.toString("utf8") };
   } catch (error) {
     return { ok: false, error: error?.code === "ENOENT" ? "文件不存在，可能已移动或删除" : error instanceof Error ? error.message : String(error) };
   }
@@ -47,7 +47,7 @@ export async function readFilePreview(workspacePath, filePath) {
 export function filePreviewToolDefinitions() {
   return [{ type: "function", function: {
     name: "open_file",
-    description: "在用户当前会话的右侧文件面板直接预览工作目录内的本地文件。支持图片、PDF、Markdown、文本和办公文档文字预览。展示本地图片或文档时优先使用此工具，不要为预览启动 Python/HTTP 服务或改用浏览器网址。此工具只向用户展示文件，不会把图像内容返回给模型；需要分析文字请用 read_file。",
+    description: "在用户当前会话的右侧文件面板直接预览工作目录内的本地文件。支持 HTML 排版预览、图片、PDF、Markdown、文本和办公文档文字预览。HTML 仅显示静态内容和内联样式，不执行脚本或加载外部资源。展示本地图片或文档时优先使用此工具，不要为预览启动 Python/HTTP 服务或改用浏览器网址。此工具只向用户展示文件，不会把图像内容返回给模型；需要分析文字请用 read_file。",
     parameters: { type: "object", properties: { path: { type: "string", description: "工作目录内的相对或绝对文件路径" } }, required: ["path"], additionalProperties: false },
   } }];
 }

@@ -1362,7 +1362,7 @@ export type FilePreviewResult = {
   path?: string;
   name?: string;
   size?: number;
-  kind?: "image" | "pdf" | "markdown" | "text" | "unsupported";
+  kind?: "image" | "pdf" | "html" | "markdown" | "text" | "unsupported";
   mime?: string;
   data?: string;
   content?: string;

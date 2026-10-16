@@ -56,10 +56,10 @@ export function FilePreviewPanel({ path: initialPath, workspacePath, onChooseFil
   };
   return <section className="file-preview-panel" aria-label="文件预览">
     <FileBrowserToolbar path={path} workspacePath={workspacePath} content={result?.content}
-      textReady={Boolean(result?.ok && (result.kind === "text" || result.kind === "markdown"))}
+      textReady={Boolean(result?.ok && (result.kind === "text" || result.kind === "markdown" || result.kind === "html"))}
       wrap={wrap} onToggleWrap={() => setWrap(value => !value)}
       treeVisible={treeVisible} onToggleTree={() => setTreeVisible(value => !value)} onChooseFile={onChooseFile}
-      onToggleSource={result?.kind === "markdown" ? () => setShowSource(value => !value) : undefined} showSource={showSource}
+      onToggleSource={result?.kind === "markdown" || result?.kind === "html" ? () => setShowSource(value => !value) : undefined} showSource={showSource}
       onRefresh={() => setRevision(value => value + 1)} />
     <div className={`file-preview-body ${treeVisible ? "" : "tree-hidden"}`}><div className="file-preview-content">
     {result?.ok && result.kind === "image" && <div className="file-preview-image-tools">
@@ -76,8 +76,10 @@ export function FilePreviewPanel({ path: initialPath, workspacePath, onChooseFil
           <img src={resourceUrl} alt={result.name || path} onError={() => setImageError(true)} style={zoom === null ? undefined : { zoom }} />
         </div>)}
         {result.kind === "pdf" && resourceUrl && <iframe className="file-preview-pdf" title={`PDF 预览：${result.name}`} src={resourceUrl} />}
+        {result.kind === "html" && !showSource && <iframe className="file-preview-pdf" title={`HTML 预览：${result.name}`} sandbox="" referrerPolicy="no-referrer"
+          srcDoc={'<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; base-uri \'none\'; form-action \'none\';"><style>html{background:white;color:#222;overflow-wrap:anywhere}body{margin:24px;font-family:system-ui,sans-serif}img,svg,table{max-width:100%}</style></head><body>' + (result.content || "") + '</body></html>'} />}
         {result.kind === "markdown" && !showSource && <div className={`file-preview-markdown ${wrap ? "" : "no-wrap"}`}><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{ a: ({ children }) => <span>{children}</span>, img: ({ alt }) => <span>{alt ? `[图片：${alt}]` : "[图片]"}</span> }}>{result.content || "（空文件）"}</ReactMarkdown></div>}
-        {(result.kind === "text" || (result.kind === "markdown" && showSource)) && <FileTextEditor key={path} name={result.name || path} value={result.content || ""} wrap={wrap} readOnly />}
+        {(result.kind === "text" || ((result.kind === "markdown" || result.kind === "html") && showSource)) && <FileTextEditor key={path} name={result.name || path} value={result.content || ""} wrap={wrap} readOnly />}
         {result.kind === "unsupported" && <div className="browser-empty-state"><FileText size={40} /><strong>此格式暂不支持预览</strong><button className="code-open-external" onClick={() => void openExternal()}>系统应用打开</button></div>}
       </>}
     </div>{treeVisible && <aside className="file-preview-tree" aria-label="文件树">

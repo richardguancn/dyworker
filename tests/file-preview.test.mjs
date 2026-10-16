@@ -17,7 +17,7 @@ async function fixture(t) {
 test('图片、PDF、中文路径和文本直接读取，无需服务', async t => {
   const root = await fixture(t);
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2hZkAAAAASUVORK5CYII=', 'base64');
-  for (const [name, content, kind] of [['示例 # 图片.PNG', png, 'image'], ['报告.pdf', '%PDF-1.4\n', 'pdf'], ['说明.md', '# 标题\n正文', 'markdown'], ['数据.csv', '姓名,数量\n小明,3', 'text'], ['页面.html', '<script>alert(1)</script>', 'text']]) {
+  for (const [name, content, kind] of [['示例 # 图片.PNG', png, 'image'], ['报告.pdf', '%PDF-1.4\n', 'pdf'], ['说明.md', '# 标题\n正文', 'markdown'], ['数据.csv', '姓名,数量\n小明,3', 'text'], ['页面.html', '<h1>报告</h1><script>alert(1)</script>', 'html'], ['说明.HTM', '<p>正文</p>', 'html']]) {
     await fs.writeFile(path.join(root, name), content);
     const result = await readFilePreview(root, name);
     assert.equal(result.ok, true); assert.equal(result.kind, kind);

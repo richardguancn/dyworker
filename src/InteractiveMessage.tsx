@@ -17,6 +17,8 @@ import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
 import { localImagePathFromSource } from "../electron/local-image-path.mts";
 import { useResolvedTheme } from "./appearance/controller";
+import { getComposerWorkspacePath } from "./state/sessionStore";
+import { openFilePreviewRef } from "./state/sharedRefs";
 
 const localImageMarker = "dyworker-local-image:";
 
@@ -371,7 +373,18 @@ function remarkAutoSpace() {
   };
 }
 
-const markdownComponents = { img: MarkdownImage, pre: MarkdownPre, code: MarkdownCode };
+function MarkdownLink({ href, children, ...props }: ComponentPropsWithoutRef<"a">) {
+  // 只接管本地 HTML 文档链接；网络地址保留原来的打开方式。
+  let filePath = href || "";
+  try { filePath = decodeURIComponent(filePath); } catch { /* 保留原路径 */ }
+  const localHtml = /\.html?$/i.test(filePath) && !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(filePath.replace(/^[a-z]:[\\/]/i, "/"));
+  return <a {...props} href={href} onClick={localHtml ? event => {
+    event.preventDefault();
+    openFilePreviewRef.current(filePath, getComposerWorkspacePath());
+  } : undefined}>{children}</a>;
+}
+
+const markdownComponents = { a: MarkdownLink, img: MarkdownImage, pre: MarkdownPre, code: MarkdownCode };
 
 interface Metric {
   label: string;
