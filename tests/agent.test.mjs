@@ -6458,3 +6458,34 @@ test("sanitizeToolCalls: 自动修复未闭合的 tool_calls，防止模型服�
   assert.equal(adapted[2].role, "tool");
   assert.equal(adapted[2].tool_call_id, "call_00_ET_Hm7AAVcSr8scKzMNTAzN9384");
 });
+
+test("完整交付经过保存记忆和工作模板后仍进入最终正文", async (t) => {
+  for (const source of [undefined, "previous_reply"]) {
+    await t.test(source || "旧记录兼容", async () => {
+      const root = await makeWorkspace();
+      t.after(() => fs.rm(root, { recursive: true, force: true }));
+      const events = [];
+      const answer = "## 处理结果\n\n已整理两侧的启动顺序。\n\n## 使用说明\n\n先核对服务状态，再按约定窗口启动。\n\n## 检查范围\n\n这里只说明配置方案，不声称执行过设备验证。";
+      const result = await runAgent({
+        settings, workspacePath: root, approvalMode: "full-access",
+        conversation: [{ role: "user", content: "说明方案并保存工作模板" }],
+        emit: event => events.push(event),
+        fetchImpl: mockFetch([
+          { role: "assistant", content: answer, tool_calls: [
+            toolCall("plan", "update_plan", { steps: [{ title: "整理方案", status: "completed" }] }),
+            toolCall("memory", "save_memory", { category: "项目规则", content: "按约定窗口启动", kind: "rule", scope: "workspace" }),
+            toolCall("skill", "save_skill", { name: "双机启动", description: "启动顺序", instructions: "先核对状态，再按窗口启动。" }),
+          ] },
+          { role: "assistant", content: null, tool_calls: [toolCall("finish", "finish_task", {
+            answer_source: source, summary: "方案和模板已整理。", evidence: "已核对方案说明。",
+          })] },
+        ]),
+      });
+      assert.equal(result.status, "done");
+      assert.equal(result.finalText, answer);
+      assert.ok(events.some(event => event.type === "skill-saved"));
+      const firstThinking = events.find(event => event.type === "activity" && event.activity.kind === "thinking").activity.id;
+      assert.ok(events.some(event => event.type === "activity-update" && event.id === firstThinking && event.commentary === ""));
+    });
+  }
+});

@@ -242,7 +242,8 @@ function selectWindow(process, query, windowId, windowTitle) {
       || (Number.isFinite(numeric) && window.index === numeric));
     if (!match) throw new Error(`没有找到窗口编号“${windowId}”。请重新读取应用状态。`);
     const expected = norm(String(windowTitle || ""));
-    if (expected && norm(match.title) !== expected) {
+    // 状态文本把空标题显示为“（无标题）”；收到该原样标签时按同一标题比较。
+    if (expected && norm(match.title || "（无标题）") !== expected) {
       throw new Error(
         `窗口编号“${windowId}”的标题已经变化（现在是“${match.title || "（无标题）"}”），已停止操作。请重新读取应用状态。`,
       );

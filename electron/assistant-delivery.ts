@@ -4,7 +4,7 @@ type Reply = {
   tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
 };
 
-// 更新已完成的计划、保存记忆只是在收尾，不应把同轮的完整答复降为过程说明。
+// 更新已完成的计划、保存记忆、保存或更新工作模板只是在收尾，不应把同轮的完整答复降为过程说明。
 // 只取最终回复前连续的收尾轮；后面还有实际操作、计划未完成或参数不完整时不提升。
 export function resolveAssistantDelivery(messages: Reply[], finalText: string) {
   const replies = messages.filter(entry => entry.role === "assistant");
@@ -16,7 +16,7 @@ export function resolveAssistantDelivery(messages: Reply[], finalText: string) {
   for (let index = replies.length - 2; index >= 0; index--) {
     const calls = replies[index].tool_calls || [];
     if (!calls.length || !calls.every(call => {
-      if (call.function?.name === "save_memory") return true;
+      if (["save_memory", "save_skill", "update_skill"].includes(call.function?.name || "")) return true;
       if (call.function?.name !== "update_plan") return false;
       try {
         const steps = JSON.parse(call.function.arguments || "{}").steps;

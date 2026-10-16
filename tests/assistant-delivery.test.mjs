@@ -142,3 +142,37 @@ test("明确来源后的系统提示不因旧存档重开而消失", () => {
   const messages = [reply(answer, [completed]), reply(null, [tool("finish_task", { answer_source: "previous_reply", summary })])];
   assert.equal(resolveAssistantDelivery(messages, `${answer}\n\n${summary}\n\n${warning}`).text, `${answer}\n\n${warning}`);
 });
+
+test("截图回归：保存工作模板不会截断完整答案的收尾链", () => {
+  for (const name of ["save_skill", "update_skill"]) {
+    for (const source of [undefined, "previous_reply"]) {
+      for (const separate of [false, true]) {
+        const calls = [completed, tool("save_memory"), tool(name)];
+        const messages = separate
+          ? [reply(answer, [completed]), reply(null, [tool("save_memory")]), reply(null, [tool(name)])]
+          : [reply(answer, calls)];
+        messages.push(reply(null, [tool("finish_task", { answer_source: source, summary })]));
+        assert.deepEqual(resolveAssistantDelivery(messages, summary), { text: answer, promotedReplyIndexes: [0] });
+      }
+    }
+  }
+});
+
+test("保存模板后还有实际操作或未完成计划时不能引用旧答案", () => {
+  for (const calls of [[tool("read_file")], [tool("run_command")], [tool("update_plan", { steps: [{ status: "pending" }] })]]) {
+    assert.deepEqual(resolveAssistantDelivery([
+      reply(answer, [tool("save_skill")]), reply("继续处理", calls),
+      reply(null, [tool("finish_task", { answer_source: "previous_reply", summary })]),
+    ], summary), { text: summary, promotedReplyIndexes: [] });
+  }
+});
+
+test("模板收尾前后有更正时尊重明确选择，不强推前面的长回答", () => {
+  for (const source of ["current_reply", "summary"]) {
+    const corrected = "更正：当前方案不适用，请停止使用。";
+    assert.deepEqual(resolveAssistantDelivery([
+      reply(answer, [completed, tool("save_skill")]),
+      reply(corrected, [tool("finish_task", { answer_source: source, summary: corrected })]),
+    ], corrected), { text: corrected, promotedReplyIndexes: [] });
+  }
+});

@@ -2,6 +2,7 @@
 // 本文件不依赖 electron，方便用 node --test 直接测试。
 import { spawn, spawnSync } from "node:child_process";
 import { shellWords, shellCommandSegments } from "./shell-syntax.mts";
+import { isContainerHeaderReadCommand } from "./container-read-check.mts";
 import { workspaceFileGuidance } from './active-permissions.mts';
 import { communicationGuidance } from './host/communication-guidance.mts';
 import { createHash } from "node:crypto";
@@ -1677,7 +1678,7 @@ export function toolDefinitions() {
       ["reason"]),
     functionTool("finish_task", "交付时用 answer_source 明确指定唯一的正式回答来源；如果本轮修正或补充了前文，须整理完整回答后选择 current_reply 或 summary。确认目标已实现且已完成必要检查后，正式结束任务。不要在以下情况调用：计划还有未完成步骤、产出文件未实际生成或未抽查内容、用户的验收条件未逐条核对。持续执行模式下只有满足验收条件才可调用。调用前先确认用户的答案已经在回复正文里写完：正文只留「现在给你完整答案」这类预告、内容却放在参数里，用户会看不到结论。会话设有长期目标时：确认长期目标已达成，必须把 goalAchieved 设为 true；尚未达成则不要设置该参数。",
       {
-        answer_source: { type: "string", enum: ["current_reply", "previous_reply", "summary"], description: "明确指定用户最终只看到的正式回答。current_reply：本轮正文是完整回答；previous_reply：结束前最近一段非空正文已是完整回答，之后只有保存记忆或更新全部完成的计划，本轮和 summary 只是重复收尾；summary：完整回答写在本工具的 summary 中。不得凭篇幅选择；有修正、新结论或补充时，必须在本轮正文或 summary 写成完整回答，不能选 previous_reply。" },
+        answer_source: { type: "string", enum: ["current_reply", "previous_reply", "summary"], description: "明确指定用户最终只看到的正式回答。current_reply：本轮正文是完整回答；previous_reply：结束前最近一段非空正文已是完整回答，之后只有保存记忆、保存或更新工作模板、更新全部完成的计划，本轮和 summary 只是重复收尾；summary：完整回答写在本工具的 summary 中。不得凭篇幅选择；有修正、新结论或补充时，必须在本轮正文或 summary 写成完整回答，不能选 previous_reply。" },
         summary: stringProperty("交付内容，必须完整、能独立阅读——用户在消息里看到的结论就来自正文或这里。若正文已给出完整结论，这里写一句交付说明即可；若正文没有写完（只有预告、半句话、或只有一句「已完成」），必须把完整结论连同依据与建议写在这里，不要只写标题式或半句引子"),
         evidence: stringProperty("说明做过哪些结果检查"),
         goalAchieved: { type: "boolean", description: "会话设有长期目标（系统提示会说明）时使用：确认长期目标已达成设为 true；未达成或不确定则省略" }
@@ -2220,6 +2221,7 @@ function isReviewerAutoApprovableSegment(argv) {
 export function isReviewerAutoApprovableCommand(command) {
   const text = String(command || "").trim();
   if (!text) return false;
+  if (isContainerHeaderReadCommand(text)) return true;
   // 多行命令按行核对：每行都要通过同一份清单，任意一行不通过就整条交审核助手。
   // 续行符（行尾 \）让后续内容不可见，直接不认；行内 <>|& 与解释器内联代码由单行检查拦下。
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -2491,7 +2493,7 @@ export function approvalDecision(opts = {} as any) {
 // 保守边界：本机界面操作、浏览器变更操作一律不可规则化；
 // 命令只对受信只读程序（ls/cat/grep 等）开放,且按 argv 前缀匹配、拒绝管道与复合命令
 // （对齐 openworker allowed_commands 语义,比放任任意命令的"shell asks forever"更可审计）。
-const ruleEligiblePathTools = new Set(["write_file", "edit_file", "append_file", "delete_file", "export_word_document", "export_excel_workbook"]);
+const ruleEligiblePathTools = new Set(["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook"]);
 const ruleEligibleDomainTools = new Set(["fetch_web_page", "browser__open"]);
 const ruleTrustedPrograms = /^(ls|pwd|cat|head|tail|find|grep|rg|echo|printf|wc|file|stat|du|df|which|date|uname)$/;
 // 常用开发命令(写操作/网络/构建类)允许按 argv 前缀形成常驻规则,避免同类命令反复确认;
@@ -4366,8 +4368,45 @@ export async function reviewApproval(options = {} as any) {
   const timer = setTimeout(() => controller.abort(new Error("审核等待超时，请人工确认本次操作")), timeoutMs);
   let cancel;
   try {
+    const settings = options.settings || {};
+    const custom = settings.reviewerBackend === 'custom'
+      || (!settings.reviewerBackend && settings.reviewerEndpoint && settings.reviewerModel);
+    // 主模型已经参与当前任务。自定义审核服务故障时可让它核对同一份完整材料，
+    // 但 ask/deny 不是服务故障，不能换模型重新寻求允许。
+    const fallback = custom && settings.endpoint && settings.model && settings.reviewerEndpoint && settings.reviewerModel
+      && (normalizeModelEndpoint(settings.endpoint) !== normalizeModelEndpoint(settings.reviewerEndpoint)
+        || settings.model !== settings.reviewerModel
+        || (settings.reviewerApiKey && settings.reviewerApiKey !== settings.apiKey));
+    const perform = async () => {
+      const attempt = async (attemptOptions, budget) => {
+        const attemptController = new AbortController();
+        const attemptSignal = AbortSignal.any([controller.signal, attemptController.signal]);
+        const attemptTimer = setTimeout(() => attemptController.abort(new Error('审核等待超时，请人工确认本次操作')), budget);
+        let onAbort;
+        try {
+          return await Promise.race([
+            performApprovalReview({ ...attemptOptions, signal: attemptSignal }),
+            new Promise((_, reject) => {
+              onAbort = () => reject(attemptSignal.reason);
+              attemptSignal.addEventListener('abort', onAbort, { once: true });
+              if (attemptSignal.aborted) onAbort();
+            }),
+          ]);
+        } catch (error) {
+          return { decision: 'ask', reason: error instanceof Error ? error.message : String(error), unavailable: true };
+        } finally { clearTimeout(attemptTimer); attemptSignal.removeEventListener('abort', onAbort); }
+      };
+      const started = Date.now();
+      const primary: any = await attempt(options, fallback ? Math.max(1, Math.floor(timeoutMs / 2)) : timeoutMs);
+      if (!fallback || !primary.unavailable || controller.signal.aborted) return primary;
+      const remaining = timeoutMs - (Date.now() - started);
+      if (remaining <= 1) return primary;
+      const result: any = await attempt({ ...options, settings: { ...settings, reviewerBackend: 'main' } }, remaining);
+      return { ...result, ...(result.decision === 'allow' || result.decision === 'deny'
+        ? { reason: `专用审核服务不可用，已由当前任务模型复核：${result.reason}` } : {}) };
+    };
     return await Promise.race([
-      performApprovalReview({ ...options, signal: controller.signal }),
+      perform(),
       new Promise((_, reject) => {
         cancel = () => reject(controller.signal.reason);
         controller.signal.addEventListener("abort", cancel, { once: true });
@@ -4375,7 +4414,7 @@ export async function reviewApproval(options = {} as any) {
       }),
     ]);
   } catch (error) {
-    return { decision: "ask", reason: error instanceof Error ? error.message : String(error), policyHash: loadReviewerPolicy().hash };
+    return { decision: "ask", reason: error instanceof Error ? error.message : String(error), unavailable: true, policyHash: loadReviewerPolicy().hash };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
@@ -4443,7 +4482,7 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
     for (let attempt = 0; ; attempt++) {
       signal?.throwIfAborted();
       try {
-        return await requestAuxiliaryModel({ settings: effectiveSettings, messages, fetchImpl, signal, tools: false, onUsage,
+        return await requestAuxiliaryModel({ settings: { ...effectiveSettings, reasoningEffort: 'off' }, messages, fetchImpl, signal, tools: false, onUsage,
           retryLimit: 0, statusRetryLimit: 0 });
       } catch (error) {
         if (signal?.aborted || attempt >= 1 || (!isModelTransportError(error) && !isRetryableStatusError(error?.status))) throw error;
@@ -4463,9 +4502,14 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
     return { ...parseReviewerDecision(messageText(retry)), policyHash };
   } catch (error: any) {
     if (!signal?.aborted && isModelTransportError(error)) {
-      return { decision: "ask", reason: "审核助手不可用：连接中断，自动重试后仍未恢复，请人工确认本次操作", policyHash };
+      return { decision: "ask", reason: "审核助手不可用：连接中断，自动重试后仍未恢复，请人工确认本次操作", unavailable: true, policyHash };
     }
-    return { decision: "ask", reason: `审核助手不可用：${error instanceof Error ? error.message : String(error)}`, policyHash };
+    const status = Number(error?.status);
+    const detail = String(error?.message || error);
+    const quota = (status === 403 || status === 429) && /quota|usage.limit|insufficient|额度|配额/i.test(detail);
+    return { decision: "ask", reason: quota ? "审核助手不可用：审核服务额度已用完，请人工确认本次操作"
+      : status === 401 || status === 403 ? "审核助手不可用：审核服务认证或访问权限失败，请检查审核设置"
+      : `审核助手不可用：${detail}`, unavailable: true, policyHash };
   }
 }
 

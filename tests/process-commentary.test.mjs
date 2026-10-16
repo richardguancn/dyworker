@@ -233,3 +233,17 @@ test("存档明确选择最后一段时，展示最后的完整答案，不拼�
     assert.equal(restored.activities[1].commentary, message.activities[1].commentary);
   }
 });
+
+test("截图回归：完整答案后保存模板，重新打开仍在正文且过程不重复", () => {
+  for (const source of [undefined, "previous_reply"]) {
+    const original = completedMessage();
+    original.executedMessages[2].tool_calls.push(call("save_skill"));
+    original.executedMessages.at(-1).tool_calls = [{ function: { name: "finish_task", arguments: JSON.stringify({ answer_source: source, summary: original.content }) } }];
+    const restored = messageWithDeliveryContent(original);
+    assert.equal(restored.content, original.executedMessages[2].content);
+    assert.equal(processActivitiesWithCommentary(restored)[1].commentary, "");
+    const reopened = messageWithDeliveryContent(JSON.parse(JSON.stringify(restored)));
+    assert.equal(reopened.content, restored.content);
+    assert.equal(processActivitiesWithCommentary(reopened)[1].commentary, "");
+  }
+});
