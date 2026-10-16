@@ -2409,7 +2409,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         await enforceDirTotalSize(traceDir, 128 * 1024 * 1024, { keep: [traceFile] });
       }
     } catch (error) {
-      console.warn("[trace] 最后一批轨迹未能保存", error);
+      console.warn("[trace] 最后一批轨迹暂未保存，进程存活期间将继续重试", error);
     }
     trackTaskEnd();
     if (activeAgents.get(sessionId) === agentState) {

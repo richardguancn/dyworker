@@ -2,6 +2,40 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createTextCache, createConversationIndex} from '../src/performanceCache.ts';
 import {createSessionSaveQueue} from '../src/sessionSaveQueue.ts';
+import {useComposerStore} from '../src/state/composerStore.ts';
+
+test('重复定位和清除空选区不发布更新，真正变化的注释和选区仍及时发布', () => {
+  const store = useComposerStore;
+  const before = store.getState();
+  let updates = 0;
+  const unsubscribe = store.subscribe(() => { updates++; });
+  try {
+    before.setAnnotationMarkers(previous => previous);
+    before.setAnnotationMarkers(before.annotationMarkers);
+    before.setSelectionQuote(null);
+    before.setSelectionQuote(previous => previous);
+    assert.equal(updates, 0, '没有变化时不应唤醒整页订阅');
+
+    const markers = [{id: 'a', n: 1, top: 24, left: 40}];
+    before.setAnnotationMarkers(markers);
+    assert.equal(updates, 1);
+    assert.equal(store.getState().annotationMarkers, markers);
+    before.setAnnotationMarkers(previous => previous);
+    assert.equal(updates, 1);
+
+    const quote = {text: '准确引用', x: 40, y: 24};
+    before.setSelectionQuote(quote);
+    assert.equal(store.getState().selectionQuote, quote);
+    before.setSelectionQuote(previous => previous);
+    assert.equal(updates, 2);
+    before.setSelectionQuote(null);
+    before.setSelectionQuote(null);
+    assert.equal(updates, 3);
+  } finally {
+    unsubscribe();
+    store.setState({annotationMarkers: before.annotationMarkers, selectionQuote: before.selectionQuote});
+  }
+});
 
 test('文字缓存按最近使用淘汰，并限制 key 与结果的总字节量', () => {
   const cache = createTextCache(2, 24);

@@ -92,13 +92,20 @@ export const useComposerStore = create<ComposerState>((set) => ({
   annotations: [],
   setAnnotations: (value) => set((s) => ({ annotations: resolve(value, s.annotations) })),
   selectionQuote: null,
-  setSelectionQuote: (value) => set((s) => ({ selectionQuote: resolve(value, s.selectionQuote) })),
+  setSelectionQuote: (value) => set((s) => {
+    const selectionQuote = resolve(value, s.selectionQuote);
+    return Object.is(selectionQuote, s.selectionQuote) ? s : { selectionQuote };
+  }),
   annotationEditor: null,
   setAnnotationEditor: (value) => set((s) => ({ annotationEditor: resolve(value, s.annotationEditor) })),
   annotationListOpen: false,
   setAnnotationListOpen: (value) => set((s) => ({ annotationListOpen: resolve(value, s.annotationListOpen) })),
   annotationMarkers: [],
-  setAnnotationMarkers: (value) => set((s) => ({ annotationMarkers: resolve(value, s.annotationMarkers) })),
+  setAnnotationMarkers: (value) => set((s) => {
+    const annotationMarkers = resolve(value, s.annotationMarkers);
+    // 保留原来 useState 的同值跳过语义，尺寸和滚动观察不能唤醒整页订阅。
+    return Object.is(annotationMarkers, s.annotationMarkers) ? s : { annotationMarkers };
+  }),
 
   sideChatSeed: null,
   setSideChatSeed: (value) => set((s) => ({ sideChatSeed: resolve(value, s.sideChatSeed) })),

@@ -421,9 +421,28 @@ function buildLongDoc(): string {
   return parts.join("\n\n");
 }
 
+const displayText = (text: string) => text.replace(/\s/g, "");
+
+// 在计时前独立渲染参考正文，随后移除。不能只匹配重复段落的末句。
+async function referenceDisplayText(content: string) {
+  const reference = document.createElement("div");
+  reference.style.display = "none";
+  document.body.append(reference);
+  const root = createRoot(reference);
+  try {
+    const { InteractiveMessage } = await import("@src/InteractiveMessage");
+    root.render(createElement(InteractiveMessage, { content }));
+    await waitUntil(() => Boolean(reference.textContent), "参考正文未完成显示");
+    return displayText(reference.textContent || "");
+  } finally {
+    root.unmount();
+    reference.remove();
+  }
+}
+
 // 关键实验：把一条「逐字增长的完整 Markdown 回复」按 20 次/秒推给 App，
 // 记录每次 commit 的耗时随正文长度的变化 —— 用于判定 O(n²) 全量重解析是否成立
-async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40, withStart = true) {
+async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40, withStart = true, expectedDisplay = "") {
   const before = commits.length;
   const doc = buildLongDoc();
   let text = "";
@@ -453,11 +472,20 @@ async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40
       t: +(performance.now() - started).toFixed(0),
     });
   }
+  // 事件已送完不代表正文已经画完：繁忙时 deferred 内容仍可能落后。
+  // 对照参考正文的全部文字，避免重复末句使尚未显示完的内容提前通过。
+  const catchupStarted = performance.now();
+  const completedNode = () => [...document.querySelectorAll('.streaming-markdown')]
+    .find(node => displayText(node.textContent || "") === expectedDisplay);
+  if (withStart) {
+    await waitUntil(() => Boolean(completedNode()), '持续输出正文未显示完整，不能作为等量输出的对照');
+  }
+  const displayCatchupMs = +(performance.now() - catchupStarted).toFixed(1);
   if (withStart) assertStreaming();
   const streamedMs = +(performance.now() - started).toFixed(0);
   // 流式途中（消息尚未定稿）抽样 DOM：验证未定稿正文确实渲染成了 Markdown，
   // 而不是像修复前那样把 `**加粗**`、``` 围栏原样显示成源码。
-  const streamingNode = document.querySelector(".streaming-markdown");
+  const streamingNode = withStart ? completedNode() : document.querySelector(".streaming-markdown");
   const streamMarkup = streamingNode ? {
     strong: streamingNode.querySelectorAll("strong").length,
     pre: streamingNode.querySelectorAll("pre").length,
@@ -485,6 +513,9 @@ async function streamLongDoc(totalChars: number, intervalMs = 50, chunkSize = 40
     streamMarkup,
     elapsedMs: streamedMs,
     finalLen: text.length,
+    streamDisplayComplete: withStart && Boolean(streamingNode),
+    expectedDisplayLength: expectedDisplay.length,
+    displayCatchupMs,
   };
 }
 
@@ -534,16 +565,20 @@ async function run() {
   if (mode === "longstream") {
     const target = Number(params.get("chars") || 16_000);
     const chunk = Number(params.get("chunk") || 40);
+    const withStart = params.get("nostart") !== "1";
+    const expectedDisplay = withStart ? await referenceDisplayText(buildLongDoc().slice(0, target)) : "";
     commits.length = 0;
     longTasks.length = 0;
     const lag = startLagSampler();
-    const withStart = params.get("nostart") !== "1";
-    const result = await streamLongDoc(target, 50, chunk, withStart);
+    const result = await streamLongDoc(target, 50, chunk, withStart, expectedDisplay);
     const lagSamples = lag.stop();
     out.longStream = {
       chunk,
       streamingPath: withStart,
       finalLen: result.finalLen,
+      streamDisplayComplete: result.streamDisplayComplete,
+      expectedDisplayLength: result.expectedDisplayLength,
+      displayCatchupMs: result.displayCatchupMs,
       streamMarkup: result.streamMarkup,
       elapsedMs: result.elapsedMs,
       commits: stats(result.all),

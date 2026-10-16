@@ -22,6 +22,8 @@ env -u ELECTRON_RUN_AS_NODE BENCH_MESSAGES=120 BENCH_MODE=all npx electron .perf
 
 持续输出现在使用 DSH 会话事件，并断言 `.streaming-markdown` 实际出现。单纯传入 `streamingPath=true` 不算覆盖通过。夹具加载与正式入口相同的布局、外观和终端样式；`idle` 是主动触发更新的场景，不表示静置 CPU。
 
+`longstream` 在计时前独立渲染参考正文，取得完整可见文字后移除参考区域。输出过程中须与参考全文匹配（忽略空白差异），再记录结构并结束任务；重复出现的末句不能提前满足这项检查。结果中的 `streamDisplayComplete` 表示全文核对通过，`expectedDisplayLength` 是去除空白后的参考长度，`displayCatchupMs` 记录最后一个事件送出后等待画面追上的时间，这部分仍计入本轮耗时。前后比较还应核对输出中结构与结束后的完整正文；不能只凭事件已送完判断显示已完成。
+
 旧版对比可设置 `BENCH_APP_SOURCE` 为提前保存的旧版 `src/App.tsx` 绝对路径，配合 `BENCH_VARIANT=before` 构建到 `render-bench/dist-before/`；运行时也设置 `BENCH_VARIANT=before`。旧源码仍按项目 `src/` 目录解析相对导入。两边应使用相同夹具、依赖、数据、样式和图形设置，交替运行至少三次。不要在记录性能时同时运行构建或完整测试。
 
 `BENCH_PLATFORM=linux` 只选择 Linux 界面分支，不能模拟 Linux 系统和驱动。`BENCH_MANUAL=1` 显示隔离的检查窗口，`BENCH_CDP_PORT` 可指定本机调试端口供交互检查；不连接已安装应用。每次运行使用独立的临时用户目录。结果附带 Electron 的进程资源采样，单位与含义遵循 Electron API；不能与系统监视器截图直接混比。

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {setImmediate} from 'node:timers/promises';
 import {createTraceWriter} from '../electron/trace-writer.mts';
 import {createTraceBuffer} from '../src/traceBuffer.ts';
 import {tracesIpcPlugin} from '../electron/host/plugins/traces-ipc.mts';
@@ -37,6 +38,30 @@ test('轨迹写入失败保留未确认批次，恢复后重试无丢失、无�
   fail = false;
   await writer.close();
   assert.deepEqual(writes.join('').trim().split('\n').map(JSON.parse), [{seq: 1}, {seq: 2}]);
+});
+
+test('任务结束时保存失败，恢复后仍自动补存最后一批轨迹', async context => {
+  context.mock.timers.enable({apis: ['setTimeout']});
+  let fail = true;
+  const writes = [];
+  const writer = createTraceWriter('/tmp/dyw-test-final-trace.jsonl', {
+    delayMs: 10,
+    storage: {mkdir: async () => {}, appendFile: async (_file, text) => {
+      if (fail) throw new Error('暂时不可写');
+      writes.push(text);
+    }},
+  });
+  writer.push({seq: 1, content: '最终答复'});
+  await assert.rejects(writer.close(), /暂时不可写/);
+  assert.throws(() => writer.push({seq: 2}), /已关闭/);
+  fail = false;
+  context.mock.timers.tick(10);
+  await setImmediate();
+  assert.deepEqual(writes.join('').trim().split('\n').filter(Boolean).map(JSON.parse), [{seq: 1, content: '最终答复'}]);
+  assert.equal(writer.stats().pendingBytes, 0);
+  context.mock.timers.tick(100);
+  await setImmediate();
+  assert.equal(writes.length, 1);
 });
 
 test('轨迹展示缓存按容量淘汰、去重，不修改原始内容', () => {

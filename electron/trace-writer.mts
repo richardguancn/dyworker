@@ -14,7 +14,8 @@ export function createTraceWriter(file: string, {
   let ready = false;
   let writtenBytes = 0;
   const schedule = () => {
-    if (closed || timer || !pending.length) return;
+    // close 只停止接收新记录；收尾失败的记录仍须在进程存活期间自动重试。
+    if (timer || !pending.length) return;
     timer = setTimeout(() => { timer = null; void flush().catch(onError); }, delayMs);
     timer.unref?.();
   };
