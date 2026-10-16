@@ -4364,7 +4364,12 @@ html:root .user-bubble.bare {
   margin-top: 6px;
 }
 
+.message-paste-block {
+  display: grid;
+}
+
 .message-paste-toggle {
+  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 6px;
