@@ -659,3 +659,20 @@ html.window-maximized:has(.reference-layout.platform-linux) #root {
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 24px);
   mask-image: linear-gradient(to bottom, transparent, #000 24px);
 }
+
+/* 右侧工具入口：图标、名称、数量与快捷键分别对齐。 */
+.reference-layout .tool-panel-menu-page { padding: 20px 12px; justify-content: flex-start; }
+.reference-layout .tool-panel-menu { display: grid; gap: 4px; padding: 4px; }
+.reference-layout .tool-panel-menu button { min-height: 48px; padding: 10px 12px; gap: 12px; border-radius: 12px; color: var(--muted); }
+.reference-layout .tool-panel-menu button > svg,
+.reference-layout .tool-panel-add-menu button > svg { flex: 0 0 auto; }
+.reference-layout .tool-panel-menu button > span:first-of-type,
+.reference-layout .tool-panel-add-menu button > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-layout .tool-panel-menu button:is(:hover, .active),
+.reference-layout .tool-panel-add-menu button:is(:hover, .active) { color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.reference-layout .tool-panel-menu button:focus-visible,
+.reference-layout .tool-panel-add-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.reference-layout .tool-panel-shortcut { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; min-height: 22px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--muted); font-family: inherit; font-size: calc(11.5px * var(--font-ui-scale, 1)); line-height: 1.4; white-space: nowrap; }
+.reference-layout .tool-panel-count { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; }
+.reference-layout .tool-panel-add-menu { display: grid; gap: 4px; padding: 8px; border-radius: 16px; }
+.reference-layout .tool-panel-add-menu button { min-height: 40px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 3%, transparent); color: var(--ink); }

@@ -1740,7 +1740,7 @@ export function App() {
       icon: <SquarePlus size={18} />,
       label: "审阅",
       shortcut: shortcutLabel("⌃⇧G", "Ctrl+Shift+G"),
-      active: activeToolPanelKind === "review",
+      active: activeToolPanelTab?.kind === "review",
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("review"); },
     },
@@ -1748,7 +1748,7 @@ export function App() {
       key: "terminal",
       icon: <SquareTerminal size={18} />,
       label: "终端",
-      shortcut: shortcutLabel("⌘J", "Ctrl+J"),
+      shortcut: shortcutLabel("⌃`", "Ctrl+`"),
       active: terminalOpen,
       visible: terminalAvailable,
       onClick: toggleTerminal,
@@ -1758,7 +1758,7 @@ export function App() {
       icon: <Globe size={18} />,
       label: "浏览器",
       shortcut: shortcutLabel("⌘T", "Ctrl+T"),
-      active: activeToolPanelKind === "browser",
+      active: activeToolPanelTab?.kind === "browser",
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("browser"); },
     },
@@ -1767,7 +1767,7 @@ export function App() {
       icon: <FolderOpen size={18} />,
       label: "文件",
       shortcut: shortcutLabel("⌘P", "Ctrl+P"),
-      active: activeToolPanelKind === "files",
+      active: activeToolPanelTab?.kind === "files",
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("files"); },
     },
@@ -1776,7 +1776,7 @@ export function App() {
       icon: <MessageSquarePlus size={18} />,
       label: "侧边聊天",
       shortcut: shortcutLabel("⌥⌘S", "Ctrl+Alt+S"),
-      active: activeToolPanelKind === "chat",
+      active: activeToolPanelTab?.kind === "chat",
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("chat"); },
     },
@@ -1785,7 +1785,7 @@ export function App() {
       icon: <ListTree size={18} />,
       label: "后台任务",
       shortcut: "",
-      active: activeToolPanelKind === "tasks",
+      active: activeToolPanelTab?.kind === "tasks",
       visible: true,
       onClick: () => { setRightPanelOpen(true); openToolPanelTab("tasks"); },
     },
@@ -1800,8 +1800,19 @@ export function App() {
     })),
   ];
 
+  const onToolPanelMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')];
+    if (!buttons.length) return;
+    event.preventDefault();
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+  };
+
   const toolPanelMenu = (
-    <div className="tool-panel-menu" role="menu">
+    <div className="tool-panel-menu" role="menu" aria-label="右侧工具" onKeyDown={onToolPanelMenuKeyDown}>
       {toolPanelMenuItems.filter((item) => item.visible).map((item) => (
         <button
           role="menuitem"
@@ -1816,7 +1827,7 @@ export function App() {
           {item.icon}
           <span>{item.label}</span>
           {item.key === "review" && reviewChanges.length > 0 && <small className="tool-panel-count">{reviewChanges.length}</small>}
-          <span className="tool-panel-shortcut">{item.shortcut}</span>
+          {item.shortcut && <kbd className="tool-panel-shortcut">{item.shortcut}</kbd>}
         </button>
       ))}
     </div>
@@ -1825,6 +1836,7 @@ export function App() {
   // + 按钮的下拉菜单（对照 Codex：已打开为标签页的类型不再出现，终端始终可选）。
   // 浏览器例外：它支持多开，每次点都新开一个标签页，所以始终出现在列表里。
   const addMenuItems = toolPanelMenuItems.filter((item) => {
+    if (!item.visible) return false;
     if (item.key === "terminal") return true;
     if (item.key === "browser") return true;
     if (item.key.startsWith("plugin-")) return !toolPanelTabs.some(tab => tab.id === item.key);
@@ -1832,7 +1844,7 @@ export function App() {
     return !toolPanelTabs.some((tab) => tab.kind === kind);
   });
   const toolPanelAddMenu = toolPanelAddMenuOpen && (
-    <div className="session-menu tool-panel-add-menu" role="menu" data-menu-root>
+    <div className="session-menu tool-panel-add-menu" role="menu" aria-label="添加右侧工具" onKeyDown={onToolPanelMenuKeyDown} data-menu-root>
       {(rightPanelOpen ? addMenuItems : toolPanelMenuItems.filter(item => item.visible)).map((item) => (
         <button
           role="menuitem"
@@ -1851,7 +1863,8 @@ export function App() {
         >
           {item.icon}
           <span>{item.label}</span>
-          <span className="tool-panel-shortcut">{item.shortcut}</span>
+          {item.key === "review" && reviewChanges.length > 0 && <small className="tool-panel-count">{reviewChanges.length}</small>}
+          {item.shortcut && <kbd className="tool-panel-shortcut">{item.shortcut}</kbd>}
         </button>
       ))}
     </div>
