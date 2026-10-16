@@ -64,7 +64,7 @@ export function ContextRing({ used, limit, exact, stats }: {
       <span className="context-ring-text">{percent === 0 && used > 0 ? "<1%" : `${percent}%`}</span>
       {stats && stats.requests > 0 && (
         <span className="context-ring-tokens">
-          {formatTokenCount(stats.prompt + stats.completion)}
+          累计 {formatTokenCount(stats.prompt + stats.completion)}
         </span>
       )}
       <span
@@ -89,7 +89,8 @@ export function ContextRing({ used, limit, exact, stats }: {
             <span className="context-tip-line">输入 {formatTokenCount(stats.prompt)} · 输出 {formatTokenCount(stats.completion)} tokens</span>
           </>
         )}
-        {!exact && <small className="context-tip-note">当前为估算值，发送任务后按服务返回值更新</small>}
+        <small className="context-tip-note">压缩后按保留内容计算占用；累计用量不会清零</small>
+        {!exact && <small className="context-tip-note">当前占用为估算值，收到实际用量后更新</small>}
       </span>
     </span>
   );

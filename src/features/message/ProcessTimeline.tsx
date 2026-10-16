@@ -420,7 +420,7 @@ export const ProcessTimeline = memo(function ProcessTimeline({
           aria-expanded={!collapsed}
           title={collapsed ? "点击展开执行过程" : "点击收起执行过程"}
         >
-          <span className="process-trigger-label">{triggerLabel}</span>
+          <span className="process-trigger-label">{triggerLabel}{activities.some(activity => activity.title === "上下文已压缩") ? " · 上下文已压缩" : ""}</span>
           {collapsed ? (
             <ChevronRight size={14} className="process-trigger-icon" />
           ) : (

@@ -523,37 +523,42 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
             },
           }));
         } else if (agentEvent.type === "context-compacted") {
-          // 保留最近实际用量，随后由压缩后的请求/有效上下文更新；
-          // 清空会让回退估算重新把完整聊天记录计入，显示虚假的 100%。
-          showSessionNotice(taskSessionId, "上下文空间不足，已自动把早前工作压缩为摘要，任务继续");
+          patchAssistant(current => ({ ...current, activities: [...(current.activities || []), {
+            id: crypto.randomUUID(), kind: "commentary", status: "success",
+            title: "上下文已压缩", detail: "上下文已压缩，已保留继续任务所需的内容。",
+          }] }));
+          showSessionNotice(taskSessionId, "上下文已压缩，已保留继续任务所需的内容，任务继续");
         } else if (agentEvent.type === "agent-finished") {
           finishedEventSeen = true;
+          unmarkQueued(taskSessionId, taskRunId);
           void refreshMemoriesRef.current();
           applyAgentResultOnce(agentEvent.result);
           if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
             runningRunIdsRef.current.delete(taskSessionId);
           }
-          setRunningStartedAt((current) => {
-            const next = { ...current };
-            delete next[taskSessionId];
-            return next;
-          });
-          setPendingApprovals((current) => {
-            const next = { ...current };
-            delete next[taskSessionId];
-            return next;
-          });
-          setPendingQuestions((current) => {
-            const next = { ...current };
-            delete next[taskSessionId];
-            return next;
-          });
+          if (!runningRunIdsRef.current.has(taskSessionId)) {
+            setRunningStartedAt((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingApprovals((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingQuestions((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+          }
           // 排队消息的监听器一直保留到真正执行完成，这里统一收尾
           const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
           agentUnsubscribeRefs.current.delete(taskRunId);
           if (unsubscribe) window.setTimeout(unsubscribe, 1000);
           // 会话是否继续显示运行状态由队列决定：还有排队消息则保持，全部完成才收起
-          if (!sessionHasQueued(taskSessionId)) {
+          if (!sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
             setRunningSessionIds((current) => {
               if (!current.has(taskSessionId)) return current;
               const next = new Set(current);
@@ -595,14 +600,14 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
           runId: taskRunId,
         });
         if (response.queued) {
-          queuedResponse = true;
-          markQueued(taskSessionId, taskRunId);
+          queuedResponse = !finishedEventSeen;
+          if (!finishedEventSeen && runningRunIdsRef.current.get(taskSessionId) !== taskRunId) markQueued(taskSessionId, taskRunId);
         } else {
           if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
           if (!finishedEventSeen) applyAgentResultOnce(response.result);
         }
       } finally {
-        if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+        if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
           runningRunIdsRef.current.delete(taskSessionId);
         }
         // 非排队消息的监听器在此收尾；排队消息由 agent-finished 统一收尾（任务可能尚未开始）
@@ -612,8 +617,10 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
           agentUnsubscribeRefs.current.delete(taskRunId);
           if (unsubscribe) window.setTimeout(unsubscribe, 1000);
         }
-        // 预览模式没有主进程队列事件，由这里收起运行状态；桌面版由 agent-finished 维护
-        if (!queueSupported) {
+        // invoke 的完整结果也能收尾，不能依赖结束事件一定先送达。
+        // 若下一项已经开始，则不能清掉新任务的运行状态。
+        if (!queuedResponse && !sessionHasQueued(taskSessionId)
+          && !runningRunIdsRef.current.has(taskSessionId)) {
           setRunningSessionIds((current) => {
             if (!current.has(taskSessionId)) return current;
             const next = new Set(current);
@@ -622,7 +629,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
           });
         }
         // 排队消息尚未执行，不清理当前任务的循环状态（由 queue-start/agent-finished 维护）
-        if (!queuedResponse) {
+        if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
           setLoopStates((current) => {
             const next = { ...current };
             delete next[taskSessionId];
@@ -664,11 +671,11 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
     if (pluginSubmission) throw requestError;
   } finally {
     pluginSubmission?.signal.removeEventListener('abort', cancelPluginInput);
-    if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+    if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
       runningRunIdsRef.current.delete(taskSessionId);
     }
-    // 桌面版运行状态由主进程队列事件维护；预览模式（无队列事件）在这里收起
-    if (!window.dyworker?.sendTask) {
+    // 发送失败或响应先到时同样恢复输入状态；排队或新任务仍运行时保留。
+    if (!queuedResponse && !sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
       setRunningSessionIds((current) => {
         const next = new Set(current);
         next.delete(taskSessionId);
@@ -676,7 +683,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
       });
     }
     // 排队消息尚未执行：不清理当前任务的运行态，防止误删正在执行任务的审批/计时
-    if (!queuedResponse) {
+    if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
       setRunningStartedAt((current) => {
         const next = { ...current };
         delete next[taskSessionId];

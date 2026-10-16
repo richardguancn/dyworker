@@ -5255,6 +5255,7 @@ test("runAgent 上下文逼近模型上限时，首次模型请求前自动压�
     conversation.push({ role: "assistant", content: `第${index}条助手消息 ${"处理进展".repeat(2000)}` });
   }
   const compactedEvents = [];
+  const usageEvents = [];
   const result = await runAgent({
     settings,
     workspacePath: root,
@@ -5266,10 +5267,13 @@ test("runAgent 上下文逼近模型上限时，首次模型请求前自动压�
     ], calls),
     emit: (agentEvent) => {
       if (agentEvent.type === "context-compacted") compactedEvents.push(agentEvent);
+      if (agentEvent.type === "context-usage") usageEvents.push(agentEvent);
     },
   });
   assert.equal(result.status, "done");
   assert.equal(compactedEvents.length, 1, "应发出一次上下文压缩事件");
+  assert.ok(usageEvents[0].estimated, "压缩完成后立即发送新的占用估算");
+  assert.ok(usageEvents[0].used > 0 && usageEvents[0].used < estimateMessagesTokens(conversation), "保留内容占用不能清零或沿用旧值");
   assert.ok(calls.length >= 2, "应有压缩请求与正式请求");
   const summaryCall = calls[0];
   assert.equal("tools" in summaryCall, false, "压缩请求不带工具");

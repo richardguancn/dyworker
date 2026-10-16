@@ -11,6 +11,7 @@ import { appendBranchActivity, patchActivityTree } from "../lib/activity";
 import { applyReasoningStream } from "../reasoningStream";
 import { formatWakeTime } from "../wakeNote";
 import type { ChatMessage, SessionRecord } from "../types";
+import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 
 export interface SessionStreamRuntimeDeps {
@@ -159,6 +160,24 @@ export function useSessionStreamRuntime(deps: SessionStreamRuntimeDeps) {
         patchChannelAssistant(sessionId, (current) => ({ ...current, plan: event.steps }));
       } else if (event.type === "file-change") {
         patchChannelAssistant(sessionId, (current) => ({ ...current, changes: event.changes }));
+      } else if (event.type === "context-usage") {
+        updateSession(sessionId, session => ({ ...session,
+          contextTokens: event.total ?? event.used + event.completion, contextTokensExact: !event.estimated,
+          contextModel: useSettingsStore.getState().settings.model,
+          contextEndpoint: useSettingsStore.getState().settings.endpoint,
+        }));
+      } else if (event.type === "token-usage") {
+        updateSession(sessionId, session => ({ ...session, tokenStats: {
+          prompt: (session.tokenStats?.prompt || 0) + event.prompt,
+          completion: (session.tokenStats?.completion || 0) + event.completion,
+          requests: (session.tokenStats?.requests || 0) + 1,
+        } }));
+      } else if (event.type === "context-compacted") {
+        ensureChannelAssistant(sessionId, runId);
+        patchChannelAssistant(sessionId, current => ({ ...current, activities: [...(current.activities || []), {
+          id: crypto.randomUUID(), kind: "commentary", status: "success",
+          title: "上下文已压缩", detail: "上下文已压缩，已保留继续任务所需的内容。",
+        }] }));
       } else if (event.type === "loop-state") {
         setLoopStates((current) => {
           const next = { ...current };

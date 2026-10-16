@@ -16101,7 +16101,7 @@ html[data-theme="dark"] {
 
 /* 2. 阶段性推导与意图说明段落 (对标 Codex 图 2 文本段落) */
 .process-commentary-item {
-  color: var(--text-secondary, #5f645c);
+  color: var(--ink, #262823);
   font-size: calc(14px * var(--font-ui-scale, 1));
   line-height: 1.6;
   margin: 0;
@@ -16285,7 +16285,7 @@ html[data-theme="dark"] {
   }
 
   html:not([data-theme]) .process-commentary-item {
-    color: #aaafa5;
+    color: var(--ink, #f2f2f2);
   }
 
   html:not([data-theme]) .process-subagent-item.completed .process-subagent-header {
@@ -16360,7 +16360,7 @@ html[data-theme="dark"] {
   }
 
   html[data-theme="dark"] .process-commentary-item {
-    color: #aaafa5;
+    color: var(--ink, #f2f2f2);
   }
 
   html[data-theme="dark"] .process-subagent-item.completed .process-subagent-header {

@@ -6050,6 +6050,7 @@ export async function runAgent({
           onSummary: (summary) => {
             debugLog("tool-call", "上下文自动压缩（compact）", summary);
             traceEmit({ type: "context-compacted", summary });
+            traceEmit({ type: "context-usage", used: estimateMessagesTokens(messages), completion: 0, estimated: true });
           },
           onUsage: (usage) => {
             const used = Number(usage?.prompt_tokens);
@@ -6174,6 +6175,7 @@ export async function runAgent({
                 onSummary: (summary) => {
                   debugLog("tool-call", "服务端判定上下文超限，强制压缩（compact）", summary);
                   traceEmit({ type: "context-compacted", summary });
+                  traceEmit({ type: "context-usage", used: estimateMessagesTokens(messages), completion: 0, estimated: true });
                 },
                 onUsage: (usage) => {
                   const used = Number(usage?.prompt_tokens);

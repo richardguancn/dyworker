@@ -218,7 +218,7 @@ export function ComposerDock(props: ComposerDockProps) {
               )}
             </div>
           )}
-          {activeSession?.goal && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
+          {activeSession?.goal && activeSession.goalState?.status !== 'complete' && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
             session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
           {!activeSession?.messages.length && <div className="composer-project-bar" aria-label="当前工作上下文">
             <div className="composer-project-selection">
