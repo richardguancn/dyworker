@@ -1776,6 +1776,9 @@ function isPseudoPathWord(word) {
     if (safeDeviceFiles.has(word)) return true;
     // 盘符、UNC、`..` 开头的按真实路径处理，不做正则片段猜测
     if (/^(?:[a-zA-Z]:[\\/]|[\\/]{2}|\.{1,2}[\\/])/.test(word)) return false;
+    // Windows 不把反斜杠当转义符，POSIX 写法的转义序列会原样留下反斜杠，
+    // 这种词按 Windows 路径解析等于“当前盘符根目录下的相对路径”，会被误判成工作区外路径。
+    if (/^\\[$`()|&;<>*?]/.test(word)) return true;
     return /[{}]/.test(word) || (/^\//.test(word) && word.includes("\\"));
   }
   if (safeDeviceFiles.has(word)) return true;
