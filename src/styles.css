@@ -5325,9 +5325,9 @@ html:root .user-bubble.bare {
 .queue-card {
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--border, #e5e5df);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--card, #fff);
 }
 
@@ -5335,7 +5335,7 @@ html:root .user-bubble.bare {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px 4px;
+  padding: 2px 6px 6px;
   color: var(--quiet, #8a8f85);
   font-size: calc(11.5px * var(--font-ui-scale, 1));
 }
@@ -5348,15 +5348,19 @@ html:root .user-bubble.bare {
 .queue-card-hint {
   margin-left: auto;
   text-align: right;
+  line-height: 1.5;
 }
+
+.queue-card-count { font-variant-numeric: tabular-nums; }
 
 .queue-card-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
+  min-height: 36px;
+  padding: 5px 6px;
   border-radius: 9px;
-  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-size: calc(13px * var(--font-ui-scale, 1));
 }
 
 .queue-card-row:hover {
@@ -5387,7 +5391,8 @@ html:root .user-bubble.bare {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -18023,9 +18028,9 @@ pre.trv-trace-inspector-body {
   width: min(940px, 76%);
   min-width: 0;
   margin-bottom: 8px;
-  padding: 6px 14px 8px;
+  padding: 4px 16px 6px;
   color: var(--muted);
-  background: var(--surface);
+  background: transparent;
   border-radius: 12px;
   pointer-events: auto;
   font-size: calc(12px * var(--font-ui-scale, 1));
@@ -18033,8 +18038,8 @@ pre.trv-trace-inspector-body {
 .plan-progress-summary { display: flex; align-items: center; gap: 8px; min-height: 24px; }
 .plan-progress-summary > svg { flex-shrink: 0; }
 .plan-progress-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.plan-progress-count { flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.plan-progress-track { height: 3px; margin-top: 3px; overflow: hidden; border-radius: 3px; background: var(--border); }
+.plan-progress-count { color: var(--quiet); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.plan-progress-track { height: 2px; margin-top: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .plan-progress-fill { height: 100%; border-radius: inherit; background: var(--ink); transition: width 220ms ease; }
 .reference-layout .plan-progress { width: var(--chat-width); }
 @media (max-width: 1100px) { .plan-progress { width: 82%; } }

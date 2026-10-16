@@ -236,7 +236,7 @@ html .reference-layout.platform-linux {
 }
 .reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
 .reference-layout .composer-dock { padding: 0 0 16px; }
-.reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 100px; padding: 12px 12px 9px; border-radius: 23px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
+.reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 124px; padding: 14px 14px 10px; border-radius: 24px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
 .reference-layout .composer-card:focus-within { box-shadow: var(--shadow-sm); }
 .reference-layout .composer-project-bar {
   width: min(712px, calc(100% - 76px));
@@ -262,7 +262,7 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-project-branch span { overflow: hidden; text-overflow: ellipsis; }
 .reference-layout .composer-pending { width: var(--chat-width); }
 .reference-layout .goal-banner { width: var(--chat-width); }
-.reference-layout .composer-toolbar { flex-wrap: nowrap; gap: 8px; min-height: 32px; }
+.reference-layout .composer-toolbar { flex-wrap: wrap; gap: 6px 12px; min-height: 34px; }
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
 .reference-layout .composer-send-actions { margin-left: auto; flex: 1 1 0; justify-content: flex-end; }
 .reference-layout .composer-send-actions > .model-menu-wrap { flex: 0 1 auto; min-width: 0; }
@@ -271,7 +271,7 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-actions > .send-button,
 .reference-layout .composer-actions > .context-ring { flex: 0 0 auto; }
 .reference-layout .composer-send-actions .model-menu { left: auto; right: 0; }
-.reference-layout .send-button { border-radius: 50%; width: 28px; height: 28px; }
+.reference-layout .send-button { border-radius: 50%; width: 32px; height: 32px; }
 /* Native lights now belong to the separate titlebar, so plugin pages need no left inset. */
 .reference-layout.platform-darwin.sidebar-collapsed .plugins-page.plugins-formats { padding-left: 24px; }
 @media (max-width: 1120px) {
@@ -298,8 +298,19 @@ html .reference-layout.platform-linux {
   html .reference-layout { transition: none; }
 }
 
-.reference-layout .composer-card textarea { height: 64px; min-height: 64px; }
-.reference-layout .dsh-composer-input { min-height: 64px; }
+.reference-layout .composer-card textarea { height: 72px; min-height: 72px; }
+.reference-layout .dsh-composer-input { min-height: 72px; }
+
+/* 按输入区实际宽度响应，左右面板展开时同样保持操作完整。 */
+@container composer (max-width: 460px) {
+  .reference-layout .composer-toolbar > .composer-actions { flex: 1 1 100%; }
+  .reference-layout .composer-send-actions { justify-content: flex-end; }
+  .reference-layout .composer-mode { max-width: min(210px, 100%); }
+}
+@container composer (max-width: 300px) {
+  .reference-layout .composer-actions { flex-wrap: wrap; }
+  .reference-layout .attachment-strip .composer-input-wrap { min-width: 0; flex-basis: 100%; }
+}
 
 .reference-layout.sidebar-collapsed .sidebar,
 .reference-layout.right-panel-collapsed .tool-panel { visibility: hidden; }
