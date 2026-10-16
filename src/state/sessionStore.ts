@@ -2,15 +2,12 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { ApprovalAction, GitBranchesInfo, GitDiffStats, PendingWakeRecord, QuestionRequest, SessionRecord, WorkspaceContext, WorkspaceEntry } from "../types";
-import { previewSessions, previewWorkspace } from "./previewData";
+import { previewSessions, previewWorkspace } from "./previewData.ts";
 
 // 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
 export type WakingSessionEntry = { wakeAt: string; manual?: boolean; marker: string; done: string };
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface SessionState {
   sessions: SessionRecord[];
@@ -91,69 +88,69 @@ export interface SessionState {
 
 export const useSessionStore = create<SessionState>((set) => ({
   sessions: previewSessions,
-  setSessions: (value) => set((s) => ({ sessions: resolve(value, s.sessions) })),
+  setSessions: (value) => set((s) => updateField(s, "sessions", value)),
   newTaskDraft: null,
-  setNewTaskDraft: (value) => set((s) => ({ newTaskDraft: resolve(value, s.newTaskDraft) })),
+  setNewTaskDraft: (value) => set((s) => updateField(s, "newTaskDraft", value)),
   activeId: previewSessions[0].id,
-  setActiveId: (value) => set((s) => ({ activeId: resolve(value, s.activeId) })),
+  setActiveId: (value) => set((s) => updateField(s, "activeId", value)),
   workspacePath: previewSessions[0].workspacePath,
-  setWorkspacePath: (value) => set((s) => ({ workspacePath: resolve(value, s.workspacePath) })),
+  setWorkspacePath: (value) => set((s) => updateField(s, "workspacePath", value)),
   workspaceContext: null,
-  setWorkspaceContext: (value) => set((s) => ({ workspaceContext: resolve(value, s.workspaceContext) })),
+  setWorkspaceContext: (value) => set((s) => updateField(s, "workspaceContext", value)),
   gitInfo: null,
-  setGitInfo: (value) => set((s) => ({ gitInfo: resolve(value, s.gitInfo) })),
+  setGitInfo: (value) => set((s) => updateField(s, "gitInfo", value)),
   branchMenuOpen: false,
-  setBranchMenuOpen: (value) => set((s) => ({ branchMenuOpen: resolve(value, s.branchMenuOpen) })),
+  setBranchMenuOpen: (value) => set((s) => updateField(s, "branchMenuOpen", value)),
   branchQuery: "",
-  setBranchQuery: (value) => set((s) => ({ branchQuery: resolve(value, s.branchQuery) })),
+  setBranchQuery: (value) => set((s) => updateField(s, "branchQuery", value)),
   creatingBranch: false,
-  setCreatingBranch: (value) => set((s) => ({ creatingBranch: resolve(value, s.creatingBranch) })),
+  setCreatingBranch: (value) => set((s) => updateField(s, "creatingBranch", value)),
   newBranchName: "",
-  setNewBranchName: (value) => set((s) => ({ newBranchName: resolve(value, s.newBranchName) })),
+  setNewBranchName: (value) => set((s) => updateField(s, "newBranchName", value)),
   commitPanelOpen: false,
-  setCommitPanelOpen: (value) => set((s) => ({ commitPanelOpen: resolve(value, s.commitPanelOpen) })),
+  setCommitPanelOpen: (value) => set((s) => updateField(s, "commitPanelOpen", value)),
   commitMessage: "",
-  setCommitMessage: (value) => set((s) => ({ commitMessage: resolve(value, s.commitMessage) })),
+  setCommitMessage: (value) => set((s) => updateField(s, "commitMessage", value)),
   includeUnstaged: true,
-  setIncludeUnstaged: (value) => set((s) => ({ includeUnstaged: resolve(value, s.includeUnstaged) })),
+  setIncludeUnstaged: (value) => set((s) => updateField(s, "includeUnstaged", value)),
   diffStats: null,
-  setDiffStats: (value) => set((s) => ({ diffStats: resolve(value, s.diffStats) })),
+  setDiffStats: (value) => set((s) => updateField(s, "diffStats", value)),
   gitBusy: "",
-  setGitBusy: (value) => set((s) => ({ gitBusy: resolve(value, s.gitBusy) })),
+  setGitBusy: (value) => set((s) => updateField(s, "gitBusy", value)),
   workspaceEntries: previewWorkspace,
-  setWorkspaceEntries: (value) => set((s) => ({ workspaceEntries: resolve(value, s.workspaceEntries) })),
+  setWorkspaceEntries: (value) => set((s) => updateField(s, "workspaceEntries", value)),
   pinnedWorkspacePaths: [],
-  setPinnedWorkspacePaths: (value) => set((s) => ({ pinnedWorkspacePaths: resolve(value, s.pinnedWorkspacePaths) })),
+  setPinnedWorkspacePaths: (value) => set((s) => updateField(s, "pinnedWorkspacePaths", value)),
   query: "",
-  setQuery: (value) => set((s) => ({ query: resolve(value, s.query) })),
+  setQuery: (value) => set((s) => updateField(s, "query", value)),
   composerSessionId: previewSessions[0].id,
-  setComposerSessionId: (value) => set((s) => ({ composerSessionId: resolve(value, s.composerSessionId) })),
+  setComposerSessionId: (value) => set((s) => updateField(s, "composerSessionId", value)),
   runningSessionIds: new Set(),
-  setRunningSessionIds: (value) => set((s) => ({ runningSessionIds: resolve(value, s.runningSessionIds) })),
+  setRunningSessionIds: (value) => set((s) => updateField(s, "runningSessionIds", value)),
   sleepingSessions: {},
-  setSleepingSessions: (value) => set((s) => ({ sleepingSessions: resolve(value, s.sleepingSessions) })),
+  setSleepingSessions: (value) => set((s) => updateField(s, "sleepingSessions", value)),
   wakingSessions: {},
-  setWakingSessions: (value) => set((s) => ({ wakingSessions: resolve(value, s.wakingSessions) })),
+  setWakingSessions: (value) => set((s) => updateField(s, "wakingSessions", value)),
   runningStartedAt: {},
-  setRunningStartedAt: (value) => set((s) => ({ runningStartedAt: resolve(value, s.runningStartedAt) })),
+  setRunningStartedAt: (value) => set((s) => updateField(s, "runningStartedAt", value)),
   scheduledRunSessions: new Set(),
-  setScheduledRunSessions: (value) => set((s) => ({ scheduledRunSessions: resolve(value, s.scheduledRunSessions) })),
+  setScheduledRunSessions: (value) => set((s) => updateField(s, "scheduledRunSessions", value)),
   pendingAutoOpenSessionId: "",
-  setPendingAutoOpenSessionId: (value) => set((s) => ({ pendingAutoOpenSessionId: resolve(value, s.pendingAutoOpenSessionId) })),
+  setPendingAutoOpenSessionId: (value) => set((s) => updateField(s, "pendingAutoOpenSessionId", value)),
   sessionErrors: {},
-  setSessionErrors: (value) => set((s) => ({ sessionErrors: resolve(value, s.sessionErrors) })),
+  setSessionErrors: (value) => set((s) => updateField(s, "sessionErrors", value)),
   sessionNotices: {},
-  setSessionNotices: (value) => set((s) => ({ sessionNotices: resolve(value, s.sessionNotices) })),
+  setSessionNotices: (value) => set((s) => updateField(s, "sessionNotices", value)),
   pendingApprovals: {},
-  setPendingApprovals: (value) => set((s) => ({ pendingApprovals: resolve(value, s.pendingApprovals) })),
+  setPendingApprovals: (value) => set((s) => updateField(s, "pendingApprovals", value)),
   pendingQuestions: {},
-  setPendingQuestions: (value) => set((s) => ({ pendingQuestions: resolve(value, s.pendingQuestions) })),
+  setPendingQuestions: (value) => set((s) => updateField(s, "pendingQuestions", value)),
   skillSummarySessionId: null,
-  setSkillSummarySessionId: (value) => set((s) => ({ skillSummarySessionId: resolve(value, s.skillSummarySessionId) })),
+  setSkillSummarySessionId: (value) => set((s) => updateField(s, "skillSummarySessionId", value)),
   loopStates: {},
-  setLoopStates: (value) => set((s) => ({ loopStates: resolve(value, s.loopStates) })),
+  setLoopStates: (value) => set((s) => updateField(s, "loopStates", value)),
   dshChildHistory: null,
-  setDshChildHistory: (value) => set((s) => ({ dshChildHistory: resolve(value, s.dshChildHistory) })),
+  setDshChildHistory: (value) => set((s) => updateField(s, "dshChildHistory", value)),
 }));
 
 // 当前活动会话：与 App.tsx 里 activeSession 的推导完全一致

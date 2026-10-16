@@ -2,12 +2,9 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { Attachment, ChatMessage, FileChange } from "../types";
 import type { ContextMenuItem } from "../features/annotations/SelectionOverlays";
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface ViewState {
   error: string;
@@ -58,41 +55,41 @@ export interface ViewState {
 
 export const useViewStore = create<ViewState>((set) => ({
   error: "",
-  setError: (value) => set((s) => ({ error: resolve(value, s.error) })),
+  setError: (value) => set((s) => updateField(s, "error", value)),
   notice: "",
-  setNotice: (value) => set((s) => ({ notice: resolve(value, s.notice) })),
+  setNotice: (value) => set((s) => updateField(s, "notice", value)),
   ready: false,
-  setReady: (value) => set((s) => ({ ready: resolve(value, s.ready) })),
+  setReady: (value) => set((s) => updateField(s, "ready", value)),
   hoveredTurnIndex: null,
-  setHoveredTurnIndex: (value) => set((s) => ({ hoveredTurnIndex: resolve(value, s.hoveredTurnIndex) })),
+  setHoveredTurnIndex: (value) => set((s) => updateField(s, "hoveredTurnIndex", value)),
   atBottom: true,
-  setAtBottom: (value) => set((s) => ({ atBottom: resolve(value, s.atBottom) })),
+  setAtBottom: (value) => set((s) => updateField(s, "atBottom", value)),
   collapsedActivities: new Set(),
-  setCollapsedActivities: (value) => set((s) => ({ collapsedActivities: resolve(value, s.collapsedActivities) })),
+  setCollapsedActivities: (value) => set((s) => updateField(s, "collapsedActivities", value)),
   editingMessage: null,
-  setEditingMessage: (value) => set((s) => ({ editingMessage: resolve(value, s.editingMessage) })),
+  setEditingMessage: (value) => set((s) => updateField(s, "editingMessage", value)),
   imagePreview: null,
-  setImagePreview: (value) => set((s) => ({ imagePreview: resolve(value, s.imagePreview) })),
+  setImagePreview: (value) => set((s) => updateField(s, "imagePreview", value)),
   imagePreviewPeers: [],
-  setImagePreviewPeers: (value) => set((s) => ({ imagePreviewPeers: resolve(value, s.imagePreviewPeers) })),
+  setImagePreviewPeers: (value) => set((s) => updateField(s, "imagePreviewPeers", value)),
   reviewFocusChanges: null,
-  setReviewFocusChanges: (value) => set((s) => ({ reviewFocusChanges: resolve(value, s.reviewFocusChanges) })),
+  setReviewFocusChanges: (value) => set((s) => updateField(s, "reviewFocusChanges", value)),
   conversationSearchOpen: false,
-  setConversationSearchOpen: (value) => set((s) => ({ conversationSearchOpen: resolve(value, s.conversationSearchOpen) })),
+  setConversationSearchOpen: (value) => set((s) => updateField(s, "conversationSearchOpen", value)),
   conversationSearchQuery: "",
-  setConversationSearchQuery: (value) => set((s) => ({ conversationSearchQuery: resolve(value, s.conversationSearchQuery) })),
+  setConversationSearchQuery: (value) => set((s) => updateField(s, "conversationSearchQuery", value)),
   conversationSearchMatchIndex: 0,
-  setConversationSearchMatchIndex: (value) => set((s) => ({ conversationSearchMatchIndex: resolve(value, s.conversationSearchMatchIndex) })),
+  setConversationSearchMatchIndex: (value) => set((s) => updateField(s, "conversationSearchMatchIndex", value)),
   conversationMatchTotal: 0,
-  setConversationMatchTotal: (value) => set((s) => ({ conversationMatchTotal: resolve(value, s.conversationMatchTotal) })),
+  setConversationMatchTotal: (value) => set((s) => updateField(s, "conversationMatchTotal", value)),
   queuedRunIds: new Set(),
-  setQueuedRunIds: (value) => set((s) => ({ queuedRunIds: resolve(value, s.queuedRunIds) })),
+  setQueuedRunIds: (value) => set((s) => updateField(s, "queuedRunIds", value)),
   queueMenuRunId: null,
-  setQueueMenuRunId: (value) => set((s) => ({ queueMenuRunId: resolve(value, s.queueMenuRunId) })),
+  setQueueMenuRunId: (value) => set((s) => updateField(s, "queueMenuRunId", value)),
   contextMenu: null,
-  setContextMenu: (value) => set((s) => ({ contextMenu: resolve(value, s.contextMenu) })),
+  setContextMenu: (value) => set((s) => updateField(s, "contextMenu", value)),
   viewportNode: null,
-  setViewportNode: (value) => set((s) => ({ viewportNode: resolve(value, s.viewportNode) })),
+  setViewportNode: (value) => set((s) => updateField(s, "viewportNode", value)),
   composerDockNode: null,
-  setComposerDockNode: (value) => set((s) => ({ composerDockNode: resolve(value, s.composerDockNode) })),
+  setComposerDockNode: (value) => set((s) => updateField(s, "composerDockNode", value)),
 }));

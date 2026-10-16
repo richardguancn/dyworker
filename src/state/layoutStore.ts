@@ -2,6 +2,7 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 
 export type ToolPanelTab = {
   id: string;
@@ -27,10 +28,6 @@ export type ToolPanelTab = {
   /** 设备模拟（手机/平板视图） */
   device?: { name: string; width: number; height: number };
 };
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface LayoutState {
   sidebarOpen: boolean;
@@ -120,81 +117,81 @@ const initialToolPanelWidth = () => {
 
 export const useLayoutStore = create<LayoutState>((set) => ({
   sidebarOpen: typeof window === "undefined" || window.innerWidth > 820,
-  setSidebarOpen: (value) => set((s) => ({ sidebarOpen: resolve(value, s.sidebarOpen) })),
+  setSidebarOpen: (value) => set((s) => updateField(s, "sidebarOpen", value)),
   sidebarWidth: 240,
-  setSidebarWidth: (value) => set((s) => ({ sidebarWidth: resolve(value, s.sidebarWidth) })),
+  setSidebarWidth: (value) => set((s) => updateField(s, "sidebarWidth", value)),
   toolPanelWidth: initialToolPanelWidth(),
-  setToolPanelWidth: (value) => set((s) => ({ toolPanelWidth: resolve(value, s.toolPanelWidth) })),
+  setToolPanelWidth: (value) => set((s) => updateField(s, "toolPanelWidth", value)),
   viewportWidth: typeof window === "undefined" ? 1280 : window.innerWidth,
-  setViewportWidth: (value) => set((s) => ({ viewportWidth: resolve(value, s.viewportWidth) })),
+  setViewportWidth: (value) => set((s) => updateField(s, "viewportWidth", value)),
   rightPanelOpen: false,
-  setRightPanelOpen: (value) => set((s) => ({ rightPanelOpen: resolve(value, s.rightPanelOpen) })),
+  setRightPanelOpen: (value) => set((s) => updateField(s, "rightPanelOpen", value)),
 
   toolPanelTabs: [],
-  setToolPanelTabs: (value) => set((s) => ({ toolPanelTabs: resolve(value, s.toolPanelTabs) })),
+  setToolPanelTabs: (value) => set((s) => updateField(s, "toolPanelTabs", value)),
   toolPanelTabOverflow: { start: false, end: false },
-  setToolPanelTabOverflow: (value) => set((s) => ({ toolPanelTabOverflow: resolve(value, s.toolPanelTabOverflow) })),
+  setToolPanelTabOverflow: (value) => set((s) => updateField(s, "toolPanelTabOverflow", value)),
   activeToolPanelTabId: "",
-  setActiveToolPanelTabId: (value) => set((s) => ({ activeToolPanelTabId: resolve(value, s.activeToolPanelTabId) })),
+  setActiveToolPanelTabId: (value) => set((s) => updateField(s, "activeToolPanelTabId", value)),
   toolPanelMenuOpen: false,
-  setToolPanelMenuOpen: (value) => set((s) => ({ toolPanelMenuOpen: resolve(value, s.toolPanelMenuOpen) })),
+  setToolPanelMenuOpen: (value) => set((s) => updateField(s, "toolPanelMenuOpen", value)),
   toolPanelAddMenuOpen: false,
-  setToolPanelAddMenuOpen: (value) => set((s) => ({ toolPanelAddMenuOpen: resolve(value, s.toolPanelAddMenuOpen) })),
+  setToolPanelAddMenuOpen: (value) => set((s) => updateField(s, "toolPanelAddMenuOpen", value)),
 
   settingsOpen: false,
-  setSettingsOpen: (value) => set((s) => ({ settingsOpen: resolve(value, s.settingsOpen) })),
+  setSettingsOpen: (value) => set((s) => updateField(s, "settingsOpen", value)),
   addMenuOpen: false,
-  setAddMenuOpen: (value) => set((s) => ({ addMenuOpen: resolve(value, s.addMenuOpen) })),
+  setAddMenuOpen: (value) => set((s) => updateField(s, "addMenuOpen", value)),
   modelMenuOpen: false,
-  setModelMenuOpen: (value) => set((s) => ({ modelMenuOpen: resolve(value, s.modelMenuOpen) })),
+  setModelMenuOpen: (value) => set((s) => updateField(s, "modelMenuOpen", value)),
   approvalMenuOpen: false,
-  setApprovalMenuOpen: (value) => set((s) => ({ approvalMenuOpen: resolve(value, s.approvalMenuOpen) })),
+  setApprovalMenuOpen: (value) => set((s) => updateField(s, "approvalMenuOpen", value)),
   railMenuOpen: false,
-  setRailMenuOpen: (value) => set((s) => ({ railMenuOpen: resolve(value, s.railMenuOpen) })),
+  setRailMenuOpen: (value) => set((s) => updateField(s, "railMenuOpen", value)),
   topMenuOpen: false,
-  setTopMenuOpen: (value) => set((s) => ({ topMenuOpen: resolve(value, s.topMenuOpen) })),
+  setTopMenuOpen: (value) => set((s) => updateField(s, "topMenuOpen", value)),
   conversationToolsOpen: false,
-  setConversationToolsOpen: (value) => set((s) => ({ conversationToolsOpen: resolve(value, s.conversationToolsOpen) })),
+  setConversationToolsOpen: (value) => set((s) => updateField(s, "conversationToolsOpen", value)),
 
   sessionMenuId: null,
-  setSessionMenuId: (value) => set((s) => ({ sessionMenuId: resolve(value, s.sessionMenuId) })),
+  setSessionMenuId: (value) => set((s) => updateField(s, "sessionMenuId", value)),
   workspaceMenuPath: null,
-  setWorkspaceMenuPath: (value) => set((s) => ({ workspaceMenuPath: resolve(value, s.workspaceMenuPath) })),
+  setWorkspaceMenuPath: (value) => set((s) => updateField(s, "workspaceMenuPath", value)),
   renamingId: null,
-  setRenamingId: (value) => set((s) => ({ renamingId: resolve(value, s.renamingId) })),
+  setRenamingId: (value) => set((s) => updateField(s, "renamingId", value)),
 
   pluginsPageOpen: false,
-  setPluginsPageOpen: (value) => set((s) => ({ pluginsPageOpen: resolve(value, s.pluginsPageOpen) })),
+  setPluginsPageOpen: (value) => set((s) => updateField(s, "pluginsPageOpen", value)),
   botTeamPageOpen: false,
-  setBotTeamPageOpen: (value) => set((s) => ({ botTeamPageOpen: resolve(value, s.botTeamPageOpen) })),
+  setBotTeamPageOpen: (value) => set((s) => updateField(s, "botTeamPageOpen", value)),
   botTeamAvailable: false,
-  setBotTeamAvailable: (value) => set((s) => ({ botTeamAvailable: resolve(value, s.botTeamAvailable) })),
+  setBotTeamAvailable: (value) => set((s) => updateField(s, "botTeamAvailable", value)),
   botTeamProvider: "ds-bot",
-  setBotTeamProvider: (value) => set((s) => ({ botTeamProvider: resolve(value, s.botTeamProvider) })),
+  setBotTeamProvider: (value) => set((s) => updateField(s, "botTeamProvider", value)),
 
   conversationView: "chat",
-  setConversationView: (value) => set((s) => ({ conversationView: resolve(value, s.conversationView) })),
+  setConversationView: (value) => set((s) => updateField(s, "conversationView", value)),
   pluginConversationViews: [],
-  setPluginConversationViews: (value) => set((s) => ({ pluginConversationViews: resolve(value, s.pluginConversationViews) })),
+  setPluginConversationViews: (value) => set((s) => updateField(s, "pluginConversationViews", value)),
 
   showArchived: false,
-  setShowArchived: (value) => set((s) => ({ showArchived: resolve(value, s.showArchived) })),
+  setShowArchived: (value) => set((s) => updateField(s, "showArchived", value)),
   workspaceOpen: true,
-  setWorkspaceOpen: (value) => set((s) => ({ workspaceOpen: resolve(value, s.workspaceOpen) })),
+  setWorkspaceOpen: (value) => set((s) => updateField(s, "workspaceOpen", value)),
   workspaceGroupOpen: {},
-  setWorkspaceGroupOpen: (value) => set((s) => ({ workspaceGroupOpen: resolve(value, s.workspaceGroupOpen) })),
+  setWorkspaceGroupOpen: (value) => set((s) => updateField(s, "workspaceGroupOpen", value)),
   workspaceSessionsExpanded: {},
-  setWorkspaceSessionsExpanded: (value) => set((s) => ({ workspaceSessionsExpanded: resolve(value, s.workspaceSessionsExpanded) })),
+  setWorkspaceSessionsExpanded: (value) => set((s) => updateField(s, "workspaceSessionsExpanded", value)),
 
   terminalOpen: false,
-  setTerminalOpen: (value) => set((s) => ({ terminalOpen: resolve(value, s.terminalOpen) })),
+  setTerminalOpen: (value) => set((s) => updateField(s, "terminalOpen", value)),
   terminalMounted: false,
-  setTerminalMounted: (value) => set((s) => ({ terminalMounted: resolve(value, s.terminalMounted) })),
+  setTerminalMounted: (value) => set((s) => updateField(s, "terminalMounted", value)),
   terminalAvailable: false,
-  setTerminalAvailable: (value) => set((s) => ({ terminalAvailable: resolve(value, s.terminalAvailable) })),
+  setTerminalAvailable: (value) => set((s) => updateField(s, "terminalAvailable", value)),
   debugOpen: false,
-  setDebugOpen: (value) => set((s) => ({ debugOpen: resolve(value, s.debugOpen) })),
+  setDebugOpen: (value) => set((s) => updateField(s, "debugOpen", value)),
 
   appUpdateDialogOpen: false,
-  setAppUpdateDialogOpen: (value) => set((s) => ({ appUpdateDialogOpen: resolve(value, s.appUpdateDialogOpen) })),
+  setAppUpdateDialogOpen: (value) => set((s) => updateField(s, "appUpdateDialogOpen", value)),
 }));

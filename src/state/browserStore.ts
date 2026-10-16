@@ -2,12 +2,9 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { BrowserDownloadRecord } from "../features/browser/browserUtils";
 import type { BrowserControlState } from "../types";
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface BrowserState {
   browserOpening: boolean;
@@ -45,34 +42,34 @@ export interface BrowserState {
 
 export const useBrowserStore = create<BrowserState>((set) => ({
   browserOpening: false,
-  setBrowserOpening: (value) => set((s) => ({ browserOpening: resolve(value, s.browserOpening) })),
+  setBrowserOpening: (value) => set((s) => updateField(s, "browserOpening", value)),
   browserMoreOpen: false,
-  setBrowserMoreOpen: (value) => set((s) => ({ browserMoreOpen: resolve(value, s.browserMoreOpen) })),
+  setBrowserMoreOpen: (value) => set((s) => updateField(s, "browserMoreOpen", value)),
   browserSection: null,
-  setBrowserSection: (value) => set((s) => ({ browserSection: resolve(value, s.browserSection) })),
+  setBrowserSection: (value) => set((s) => updateField(s, "browserSection", value)),
   browserSuggestionsOpen: false,
-  setBrowserSuggestionsOpen: (value) => set((s) => ({ browserSuggestionsOpen: resolve(value, s.browserSuggestionsOpen) })),
+  setBrowserSuggestionsOpen: (value) => set((s) => updateField(s, "browserSuggestionsOpen", value)),
   browserSuggestionIndex: -1,
-  setBrowserSuggestionIndex: (value) => set((s) => ({ browserSuggestionIndex: resolve(value, s.browserSuggestionIndex) })),
+  setBrowserSuggestionIndex: (value) => set((s) => updateField(s, "browserSuggestionIndex", value)),
   browserClearing: false,
-  setBrowserClearing: (value) => set((s) => ({ browserClearing: resolve(value, s.browserClearing) })),
+  setBrowserClearing: (value) => set((s) => updateField(s, "browserClearing", value)),
   importDialogOpen: false,
-  setImportDialogOpen: (value) => set((s) => ({ importDialogOpen: resolve(value, s.importDialogOpen) })),
+  setImportDialogOpen: (value) => set((s) => updateField(s, "importDialogOpen", value)),
 
   browserUrlDraft: null,
-  setBrowserUrlDraft: (value) => set((s) => ({ browserUrlDraft: resolve(value, s.browserUrlDraft) })),
+  setBrowserUrlDraft: (value) => set((s) => updateField(s, "browserUrlDraft", value)),
   browserFind: null,
-  setBrowserFind: (value) => set((s) => ({ browserFind: resolve(value, s.browserFind) })),
+  setBrowserFind: (value) => set((s) => updateField(s, "browserFind", value)),
   browserSessionHistory: [],
-  setBrowserSessionHistory: (value) => set((s) => ({ browserSessionHistory: resolve(value, s.browserSessionHistory) })),
+  setBrowserSessionHistory: (value) => set((s) => updateField(s, "browserSessionHistory", value)),
   browserDownloads: [],
-  setBrowserDownloads: (value) => set((s) => ({ browserDownloads: resolve(value, s.browserDownloads) })),
+  setBrowserDownloads: (value) => set((s) => updateField(s, "browserDownloads", value)),
   browserPasswordPrompt: null,
-  setBrowserPasswordPrompt: (value) => set((s) => ({ browserPasswordPrompt: resolve(value, s.browserPasswordPrompt) })),
+  setBrowserPasswordPrompt: (value) => set((s) => updateField(s, "browserPasswordPrompt", value)),
   browserControlState: null,
-  setBrowserControlState: (value) => set((s) => ({ browserControlState: resolve(value, s.browserControlState) })),
+  setBrowserControlState: (value) => set((s) => updateField(s, "browserControlState", value)),
   browserPasswordsOpen: false,
-  setBrowserPasswordsOpen: (value) => set((s) => ({ browserPasswordsOpen: resolve(value, s.browserPasswordsOpen) })),
+  setBrowserPasswordsOpen: (value) => set((s) => updateField(s, "browserPasswordsOpen", value)),
   browserClearKinds: { cookies: true, cache: true, siteData: false },
-  setBrowserClearKinds: (value) => set((s) => ({ browserClearKinds: resolve(value, s.browserClearKinds) })),
+  setBrowserClearKinds: (value) => set((s) => updateField(s, "browserClearKinds", value)),
 }));

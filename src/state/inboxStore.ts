@@ -2,11 +2,8 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { ImportedHistoryEntry, InboxItem } from "../types";
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface InboxState {
   inboxItems: InboxItem[];
@@ -29,17 +26,17 @@ export interface InboxState {
 
 export const useInboxStore = create<InboxState>((set) => ({
   inboxItems: [],
-  setInboxItems: (value) => set((s) => ({ inboxItems: resolve(value, s.inboxItems) })),
+  setInboxItems: (value) => set((s) => updateField(s, "inboxItems", value)),
   inboxOpen: false,
-  setInboxOpen: (value) => set((s) => ({ inboxOpen: resolve(value, s.inboxOpen) })),
+  setInboxOpen: (value) => set((s) => updateField(s, "inboxOpen", value)),
   inboxTab: "inbox",
-  setInboxTab: (value) => set((s) => ({ inboxTab: resolve(value, s.inboxTab) })),
+  setInboxTab: (value) => set((s) => updateField(s, "inboxTab", value)),
   systemMessageFocusId: "",
-  setSystemMessageFocusId: (value) => set((s) => ({ systemMessageFocusId: resolve(value, s.systemMessageFocusId) })),
+  setSystemMessageFocusId: (value) => set((s) => updateField(s, "systemMessageFocusId", value)),
   systemMessagesUnread: 0,
-  setSystemMessagesUnread: (value) => set((s) => ({ systemMessagesUnread: resolve(value, s.systemMessagesUnread) })),
+  setSystemMessagesUnread: (value) => set((s) => updateField(s, "systemMessagesUnread", value)),
   importedHistory: [],
-  setImportedHistory: (value) => set((s) => ({ importedHistory: resolve(value, s.importedHistory) })),
+  setImportedHistory: (value) => set((s) => updateField(s, "importedHistory", value)),
   fullAccessDialogOpen: false,
-  setFullAccessDialogOpen: (value) => set((s) => ({ fullAccessDialogOpen: resolve(value, s.fullAccessDialogOpen) })),
+  setFullAccessDialogOpen: (value) => set((s) => updateField(s, "fullAccessDialogOpen", value)),
 }));

@@ -2,13 +2,10 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { DebugLogEntry, ScheduleRecord, SkillRecord, TraceEvent, UsageRecord, WikiMemoryPage, WikiMemoryRow } from "../types";
 import type { AuthoringKind } from "../../electron/authoring-skills";
 import type { PluginPanelTab } from "../pluginPanelTabs";
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface PanelState {
   memories: WikiMemoryPage[];
@@ -45,31 +42,31 @@ export interface PanelState {
 
 export const usePanelStore = create<PanelState>((set) => ({
   memories: [],
-  setMemories: (value) => set((s) => ({ memories: resolve(value, s.memories) })),
+  setMemories: (value) => set((s) => updateField(s, "memories", value)),
   memoriesLinting: false,
-  setMemoriesLinting: (value) => set((s) => ({ memoriesLinting: resolve(value, s.memoriesLinting) })),
+  setMemoriesLinting: (value) => set((s) => updateField(s, "memoriesLinting", value)),
   memoriesLintMessage: "",
-  setMemoriesLintMessage: (value) => set((s) => ({ memoriesLintMessage: resolve(value, s.memoriesLintMessage) })),
+  setMemoriesLintMessage: (value) => set((s) => updateField(s, "memoriesLintMessage", value)),
   skills: [],
-  setSkills: (value) => set((s) => ({ skills: resolve(value, s.skills) })),
+  setSkills: (value) => set((s) => updateField(s, "skills", value)),
   schedules: [],
-  setSchedules: (value) => set((s) => ({ schedules: resolve(value, s.schedules) })),
+  setSchedules: (value) => set((s) => updateField(s, "schedules", value)),
   usageStats: null,
-  setUsageStats: (value) => set((s) => ({ usageStats: resolve(value, s.usageStats) })),
+  setUsageStats: (value) => set((s) => updateField(s, "usageStats", value)),
   debugLogs: [],
-  setDebugLogs: (value) => set((s) => ({ debugLogs: resolve(value, s.debugLogs) })),
+  setDebugLogs: (value) => set((s) => updateField(s, "debugLogs", value)),
   traceEvents: [],
-  setTraceEvents: (value) => set((s) => ({ traceEvents: resolve(value, s.traceEvents) })),
+  setTraceEvents: (value) => set((s) => updateField(s, "traceEvents", value)),
   planSeed: null,
-  setPlanSeed: (value) => set((s) => ({ planSeed: resolve(value, s.planSeed) })),
+  setPlanSeed: (value) => set((s) => updateField(s, "planSeed", value)),
   skillDraft: null,
-  setSkillDraft: (value) => set((s) => ({ skillDraft: resolve(value, s.skillDraft) })),
+  setSkillDraft: (value) => set((s) => updateField(s, "skillDraft", value)),
   creationKind: null,
-  setCreationKind: (value) => set((s) => ({ creationKind: resolve(value, s.creationKind) })),
+  setCreationKind: (value) => set((s) => updateField(s, "creationKind", value)),
   memoryEdit: null,
-  setMemoryEdit: (value) => set((s) => ({ memoryEdit: resolve(value, s.memoryEdit) })),
+  setMemoryEdit: (value) => set((s) => updateField(s, "memoryEdit", value)),
   skillEdit: null,
-  setSkillEdit: (value) => set((s) => ({ skillEdit: resolve(value, s.skillEdit) })),
+  setSkillEdit: (value) => set((s) => updateField(s, "skillEdit", value)),
   pluginPanelChoices: [],
-  setPluginPanelChoices: (value) => set((s) => ({ pluginPanelChoices: resolve(value, s.pluginPanelChoices) })),
+  setPluginPanelChoices: (value) => set((s) => updateField(s, "pluginPanelChoices", value)),
 }));

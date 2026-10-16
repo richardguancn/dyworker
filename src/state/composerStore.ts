@@ -2,6 +2,7 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import { updateField, type Updater } from "./updateField.ts";
 import type { Attachment, MessageAnnotation, SkillRecord } from "../types";
 import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
 
@@ -11,10 +12,6 @@ export interface ComposerPasteBlock {
   id: string;
   text: string;
 }
-
-type Updater<T> = T | ((previous: T) => T);
-const resolve = <T,>(value: Updater<T>, previous: T): T =>
-  typeof value === "function" ? (value as (p: T) => T)(previous) : value;
 
 export interface ComposerState {
   composer: string;
@@ -83,63 +80,56 @@ export interface ComposerState {
 
 export const useComposerStore = create<ComposerState>((set) => ({
   composer: "",
-  setComposer: (value) => set((s) => ({ composer: resolve(value, s.composer) })),
+  setComposer: (value) => set((s) => updateField(s, "composer", value)),
   composerPastes: [],
-  setComposerPastes: (value) => set((s) => ({ composerPastes: resolve(value, s.composerPastes) })),
+  setComposerPastes: (value) => set((s) => updateField(s, "composerPastes", value)),
   expandedPasteId: "",
-  setExpandedPasteId: (value) => set((s) => ({ expandedPasteId: resolve(value, s.expandedPasteId) })),
+  setExpandedPasteId: (value) => set((s) => updateField(s, "expandedPasteId", value)),
 
   annotations: [],
-  setAnnotations: (value) => set((s) => ({ annotations: resolve(value, s.annotations) })),
+  setAnnotations: (value) => set((s) => updateField(s, "annotations", value)),
   selectionQuote: null,
-  setSelectionQuote: (value) => set((s) => {
-    const selectionQuote = resolve(value, s.selectionQuote);
-    return Object.is(selectionQuote, s.selectionQuote) ? s : { selectionQuote };
-  }),
+  setSelectionQuote: (value) => set((s) => updateField(s, "selectionQuote", value)),
   annotationEditor: null,
-  setAnnotationEditor: (value) => set((s) => ({ annotationEditor: resolve(value, s.annotationEditor) })),
+  setAnnotationEditor: (value) => set((s) => updateField(s, "annotationEditor", value)),
   annotationListOpen: false,
-  setAnnotationListOpen: (value) => set((s) => ({ annotationListOpen: resolve(value, s.annotationListOpen) })),
+  setAnnotationListOpen: (value) => set((s) => updateField(s, "annotationListOpen", value)),
   annotationMarkers: [],
-  setAnnotationMarkers: (value) => set((s) => {
-    const annotationMarkers = resolve(value, s.annotationMarkers);
-    // 保留原来 useState 的同值跳过语义，尺寸和滚动观察不能唤醒整页订阅。
-    return Object.is(annotationMarkers, s.annotationMarkers) ? s : { annotationMarkers };
-  }),
+  setAnnotationMarkers: (value) => set((s) => updateField(s, "annotationMarkers", value)),
 
   sideChatSeed: null,
-  setSideChatSeed: (value) => set((s) => ({ sideChatSeed: resolve(value, s.sideChatSeed) })),
+  setSideChatSeed: (value) => set((s) => updateField(s, "sideChatSeed", value)),
   attachments: [],
-  setAttachments: (value) => set((s) => ({ attachments: resolve(value, s.attachments) })),
+  setAttachments: (value) => set((s) => updateField(s, "attachments", value)),
   composerDragActive: false,
-  setComposerDragActive: (value) => set((s) => ({ composerDragActive: resolve(value, s.composerDragActive) })),
+  setComposerDragActive: (value) => set((s) => updateField(s, "composerDragActive", value)),
   voiceState: "idle",
-  setVoiceState: (value) => set((s) => ({ voiceState: resolve(value, s.voiceState) })),
+  setVoiceState: (value) => set((s) => updateField(s, "voiceState", value)),
 
   composerModels: null,
-  setComposerModels: (value) => set((s) => ({ composerModels: resolve(value, s.composerModels) })),
+  setComposerModels: (value) => set((s) => updateField(s, "composerModels", value)),
   composerModelsLoading: false,
-  setComposerModelsLoading: (value) => set((s) => ({ composerModelsLoading: resolve(value, s.composerModelsLoading) })),
+  setComposerModelsLoading: (value) => set((s) => updateField(s, "composerModelsLoading", value)),
 
   mentionMenu: null,
-  setMentionMenu: (value) => set((s) => ({ mentionMenu: resolve(value, s.mentionMenu) })),
+  setMentionMenu: (value) => set((s) => updateField(s, "mentionMenu", value)),
   mentionIndex: 0,
-  setMentionIndex: (value) => set((s) => ({ mentionIndex: resolve(value, s.mentionIndex) })),
+  setMentionIndex: (value) => set((s) => updateField(s, "mentionIndex", value)),
   mentionSkills: [],
-  setMentionSkills: (value) => set((s) => ({ mentionSkills: resolve(value, s.mentionSkills) })),
+  setMentionSkills: (value) => set((s) => updateField(s, "mentionSkills", value)),
   pluginInputCandidates: [],
-  setPluginInputCandidates: (value) => set((s) => ({ pluginInputCandidates: resolve(value, s.pluginInputCandidates) })),
+  setPluginInputCandidates: (value) => set((s) => updateField(s, "pluginInputCandidates", value)),
   pluginInputRevision: 0,
-  setPluginInputRevision: (value) => set((s) => ({ pluginInputRevision: resolve(value, s.pluginInputRevision) })),
+  setPluginInputRevision: (value) => set((s) => updateField(s, "pluginInputRevision", value)),
   activeSkills: [],
-  setActiveSkills: (value) => set((s) => ({ activeSkills: resolve(value, s.activeSkills) })),
+  setActiveSkills: (value) => set((s) => updateField(s, "activeSkills", value)),
 
   speakingMessageKey: null,
-  setSpeakingMessageKey: (value) => set((s) => ({ speakingMessageKey: resolve(value, s.speakingMessageKey) })),
+  setSpeakingMessageKey: (value) => set((s) => updateField(s, "speakingMessageKey", value)),
   speakingLoadingKey: null,
-  setSpeakingLoadingKey: (value) => set((s) => ({ speakingLoadingKey: resolve(value, s.speakingLoadingKey) })),
+  setSpeakingLoadingKey: (value) => set((s) => updateField(s, "speakingLoadingKey", value)),
   playingVoicePath: null,
-  setPlayingVoicePath: (value) => set((s) => ({ playingVoicePath: resolve(value, s.playingVoicePath) })),
+  setPlayingVoicePath: (value) => set((s) => updateField(s, "playingVoicePath", value)),
   voiceLoadingPath: null,
-  setVoiceLoadingPath: (value) => set((s) => ({ voiceLoadingPath: resolve(value, s.voiceLoadingPath) })),
+  setVoiceLoadingPath: (value) => set((s) => updateField(s, "voiceLoadingPath", value)),
 }));
