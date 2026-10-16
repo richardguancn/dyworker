@@ -58,6 +58,10 @@ export type MentionItem = { id: string; title: string; detail: string; pluginInp
 export const mentionItemsRef: { current: MentionItem[] } = { current: [] };
 // 新建任务：由 App 注册后指向真正的实现（applyMention 触发内置 /new 时调用）
 export const createTaskRef: { current: (targetWorkspacePath?: string) => void } = { current: () => {} };
+// 会话切换流程仍留在 App（点侧栏列表项同一条路）：forkSession 经此调用，避免 import App
+export const selectSessionRef: { current: (session: SessionRecord) => void } = { current: () => {} };
+// 会话内消息行的 DOM 引用：App 的 bindMessageRow 写入，jumpToConversationTurn 读取
+export const conversationTurnRefs: { current: Record<number, HTMLDivElement | null> } = { current: {} };
 
 // 语音录制 / 朗读 / 播放的模块级 ref：App 的清理 effect 与 messageActions 的读写必须同一实例
 export const recorderRef: { current: MediaRecorder | null } = { current: null };

@@ -5,15 +5,12 @@ import {
   FILE_TOKEN_REGEX,
   INLINE_TOKEN_REGEX,
   SESSION_TOKEN_REGEX,
-  buildSkillSummaryMessages,
-  buildSkillSummaryTranscript,
   copyTextToClipboard,
   displayWorkspace,
   formatSessionReference,
   indexConversation,
   latestWorkingContext,
   messageVisibleText,
-  parseSkillDraft,
   pathDirname,
   shortTitle,
   skillTokensInText,
@@ -47,7 +44,7 @@ import { useSettingsStore } from "./state/settingsStore";
 import { useBrowserStore } from "./state/browserStore";
 import { useComposerStore } from "./state/composerStore";
 import { useSessionStore } from "./state/sessionStore";
-import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, showSessionError, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
+import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
 import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
 import { updateToolPanelTab, focusToolPanelTab, openToolPanelTab, openFilePreview, choosePreviewFile, closeToolPanelTab } from "./state/toolPanelActions";
 import { resolveTokenFile, resolveTokenSession, openReferencedFile, insertFileToken, handleComposerDragOver, handleComposerDragLeave, handleComposerDrop, handleComposerPaste, openContextMenu, closeContextMenu, handleConversationMouseUp, addSelectionToComposer, sendSelectionToSideChat, updateAnnotationMarkers, handleMessageContextMenu, pasteComposerText, applyMention, chooseWorkspace, chooseAttachments } from "./state/composerActions";
@@ -55,7 +52,8 @@ import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceI
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
 import { sendMessage, removeQueuedMessage, cancelQueuedMessage, runQueuedMessageNow } from "./state/sendMessageActions";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef, manualRunScheduleRef } from "./state/sharedRefs";
+import { createTask, forkSession, applyWorkspaceSelection, closeFilePanelTabs, prepareExtensionCreation, handleGoalAction, sessionPendingInboxCount, jumpToConversationTurn, clearWorkspace, exportSessionMarkdown, summarizeSessionToSkill, openAnnotationList, scheduleCloseAnnotationList, toggleTerminal } from "./state/taskActions";
+import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, selectSessionRef, conversationTurnRefs, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef, manualRunScheduleRef } from "./state/sharedRefs";
 import { saveProviderSettings, checkAppUpdate, openAppUpdateDialog, downloadAppUpdate, installAppUpdate, chooseIdentity, selectApprovalMode, confirmFullAccess, activateModelProfile, ensureComposerModels, switchComposerModel } from "./state/settingsActions";
 import { saveSchedule, toggleSchedule, deleteSchedule, triggerSchedule } from "./state/scheduleActions";
 import { refreshMemories, refreshSkills, refreshImportedHistory, syncAtBottom, refreshWorkspace } from "./state/panelActions";
@@ -64,7 +62,7 @@ import { usePanelStore } from "./state/panelStore";
 import { useViewStore } from "./state/viewStore";
 import { useSessionIpcRuntime } from "./state/sessionIpcRuntime";
 import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
-import { previewSessions, previewWorkspace } from "./state/previewData";
+import { previewSessions } from "./state/previewData";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -73,14 +71,12 @@ import { defaultSettings } from "./lib/settings";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
-import { activeGoal, changeGoalStatus, goalElapsed, settleGoal, startGoal } from "./goal";
+import { goalElapsed, startGoal } from "./goal";
 import { FilePreviewPanel } from "./FilePreviewPanel";
 import { FileBrowserToolbar } from "./FileBrowserToolbar";
 import { FileTextEditor } from "./FileTextEditor";
 import { ExtensionCreationDialog } from './ExtensionCreationDialog';
 import { getModelReasoningConfig, reasoningModelKey, selectedReasoningEffort, updateReasoningOverride } from '../electron/model-reasoning.ts';
-import type { ExtensionCreationRequest } from './ExtensionCreationDialog';
-import { authoringSkill } from '../electron/authoring-skills';
 import type { AuthoringKind } from '../electron/authoring-skills';
 import {
   AlarmClock,
@@ -603,16 +599,6 @@ export function App() {
   } = useViewStore();
   const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
 
-  // hover 弹层延迟关闭：mouseleave 后留短暂宽限，斜向移入弹层经过空隙时不闪关
-  const annotationListCloseTimerRef = useRef(0);
-  const openAnnotationList = () => {
-    window.clearTimeout(annotationListCloseTimerRef.current);
-    setAnnotationListOpen(true);
-  };
-  const scheduleCloseAnnotationList = () => {
-    window.clearTimeout(annotationListCloseTimerRef.current);
-    annotationListCloseTimerRef.current = window.setTimeout(() => setAnnotationListOpen(false), 200);
-  };
   // 会话区视图标签：对话 / 轨迹 / 插件贡献的视图（DSH 的 conversation.view 插槽）
   // 切换到任意会话（含新建任务）时回到聊天：插件页是主内容区的临时视图，不是常驻模式
   useEffect(() => {
@@ -672,11 +658,6 @@ export function App() {
     sync();
     return host.subscribe(sync);
   }, []);
-  const toggleTerminal = () => {
-    if (!terminalAvailable) { setNotice("请先启用内置终端插件。"); return; }
-    setTerminalMounted(true);
-    setTerminalOpen(value => !value);
-  };
   // debug-log 事件频率与模型流式对齐，逐条 setState 会让整个 App 高频重渲染；
   // 先进 ref 缓冲，1 秒合并刷入一次（TraceConsole 是诊断视图，秒级延迟无感知）
   const pendingDebugLogsRef = useRef<DebugLogEntry[]>([]);
@@ -749,7 +730,6 @@ export function App() {
     viewportRef.current = node;
     setViewportNode(node);
   }, []);
-  const conversationTurnRefs = useRef<Record<number, HTMLDivElement | null>>({});
   // 会话内搜索：所有已渲染消息行的引用（含助手消息），DOM 高亮与跳转都用它
   const messageRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const conversationSearchInputRef = useRef<HTMLInputElement>(null);
@@ -1520,8 +1500,6 @@ export function App() {
   const activePendingQuestion = activeSession?.id ? pendingQuestions[activeSession.id] || null : null;
   const activeLoopState = activeSession?.id ? loopStates[activeSession.id] || null : null;
   const inboxPendingCount = inboxItems.filter((item) => item.status === "pending").length;
-  const sessionPendingInboxCount = (sessionId: string) =>
-    inboxItems.filter((item) => item.status === "pending" && item.sessionId === sessionId).length;
   const activeSessionPendingInboxApproval = useMemo(() => {
     if (!activeSession?.id) return null;
     return inboxItems.find((item) => item.status === "pending" && item.kind === "approval" && item.sessionId === activeSession.id) || null;
@@ -1573,126 +1551,8 @@ export function App() {
     };
   }, [pinnedWorkspacePaths, visibleSessions]);
 
-  // 切换会话/工作区时关掉旧工作区的审阅标签页（内容已过期）
-  const closeFilePanelTabs = () => {
-    if (!toolPanelTabs.some((tab) => tab.kind === "review")) return;
-    const kept = toolPanelTabs.filter((tab) => tab.kind !== "review");
-    setToolPanelTabs(kept);
-    if (!kept.some((tab) => tab.id === activeToolPanelTabId)) setActiveToolPanelTabId(kept[0]?.id || "");
-    if (kept.length === 0) setToolPanelMenuOpen(true);
-  };
-
-  const applyWorkspaceSelection = (targetWorkspacePath: string) => {
-    setWorkspacePath(targetWorkspacePath);
-    setWorkspaceMenuPath(null);
-    if (targetWorkspacePath) {
-      setWorkspaceOpen(true);
-      setWorkspaceGroupOpen((current) => ({ ...current, [targetWorkspacePath]: true }));
-      if (targetWorkspacePath !== workspacePath) {
-        if (window.dyworker?.refreshWorkspace) {
-          void window.dyworker.refreshWorkspace(targetWorkspacePath).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
-        } else {
-          setWorkspaceEntries(targetWorkspacePath === "/workspace/dyworker" ? previewWorkspace : []);
-        }
-      }
-    } else {
-      setWorkspaceEntries([]);
-    }
-  };
-
-  const createTask = (targetWorkspacePath = workspacePath) => {
-    setPluginsPageOpen(false);
-    setBotTeamPageOpen(false);
-    setConversationView("chat");
-    const nextWorkspacePath = String(targetWorkspacePath || "");
-    if (newTaskDraft) {
-      setActiveId(newTaskDraft.id);
-      updateSession(newTaskDraft.id, draft => ({ ...draft, workspacePath: nextWorkspacePath }));
-      applyWorkspaceSelection(nextWorkspacePath);
-      setActiveSkills([]);
-      setEditingMessage(null);
-      closeFilePanelTabs();
-      setNotice("");
-      window.setTimeout(() => textareaRef.current?.focus(), 0);
-      return;
-    }
-
-    // 新任务继承当前工作目录，避免切换新会话后助手提示要先选目录；
-    // 每个会话仍可在顶部或“+”菜单单独更换或移除工作目录。
-    const session = makeSession(nextWorkspacePath);
-    setNewTaskDraft(session);
-    setActiveId(session.id);
-    applyWorkspaceSelection(nextWorkspacePath);
-    setComposer("");
-    setAttachments([]);
-    setActiveSkills([]);
-    setEditingMessage(null);
-    closeFilePanelTabs();
-    setNotice("");
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
-  };
   // 注册 createTask 给 composerActions：applyMention 触发内置 /new 时调用
   createTaskRef.current = createTask;
-
-  const prepareExtensionCreation = ({ kind, requirement, workspacePath: targetDirectory }: ExtensionCreationRequest) => {
-    const bundled = authoringSkill(kind);
-    const creator: SkillRecord = skills.find(item => item.id === bundled.id) || {
-      ...bundled, enabled: true, builtIn: true, source: 'builtin', sourceLabel: '内置', createdAt: new Date().toISOString(),
-    };
-    const session = { ...makeSession(targetDirectory), title: kind === 'plugin' ? '制作插件' : '制作技能' };
-    const text = `/${creator.name}\n请根据以下需求制作${kind === 'plugin' ? 'DYWorker 插件' : '可复用技能'}，完成后实际检查并说明如何使用。\n\n${requirement}`;
-    // 先登记新会话的草稿，避免会话切换时的草稿恢复覆盖制作需求。
-    sessionDraftsRef.current[session.id] = { text, pastes: [], annotations: [], attachments: [] };
-    setSessions(current => [session, ...current]);
-    setActiveId(session.id);
-    setActiveSkills([creator]);
-    setEditingMessage(null);
-    setMentionMenu(null);
-    setCreationKind(null);
-    setSettingsOpen(false);
-    setPluginsPageOpen(false);
-    setConversationView('chat');
-    applyWorkspaceSelection(targetDirectory);
-    setNotice('制作需求已准备，发送后开始制作。');
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
-  };
-
-  // 从指定消息处分叉：复制会话开头到该消息(含)的内容为新会话，原会话保持不变（对照 Codex fork）
-  const forkSession = async (session: SessionRecord, messageIndex: number) => {
-    if (session.runtime === 'dsh') {
-      try {
-        const message = session.messages[messageIndex];
-        if (!message?.dshMessageId) throw new Error('这条消息还没有完整保存，请稍后再复制');
-        const reply = await window.dyworker?.dshOperation?.({sessionId: '', action: 'session-fork', payload: {
-          sourceRootId: session.id, address: {kind: 'session', sessionId: session.id},
-          messageId: message.dshMessageId, ...(message.dshTurnId ? {turnId: message.dshTurnId} : {}),
-        }});
-        if (!reply?.ok || !reply.value?.nativeSession) throw new Error(reply?.error?.message || '复制任务失败');
-        const forked = reply.value.nativeSession as SessionRecord;
-        clientHost().acceptCreatedSession(forked);
-        setSessions(current => [forked, ...current.filter(row => row.id !== forked.id)]);
-        selectSession(forked);
-        shouldScrollToBottomRef.current = forked.id;
-        setNotice('已从此处分叉出新任务，可继续独立对话');
-      } catch (error) { setNotice(error instanceof Error ? error.message : '复制任务失败'); }
-      return;
-    }
-    const now = new Date().toISOString();
-    const forked: SessionRecord = {
-      id: crypto.randomUUID(),
-      title: `${session.title}（分支）`,
-      workspacePath: session.workspacePath,
-      ...(session.runtime ? { runtime: session.runtime } : {}),
-      ...(session.goal ? { goal: session.goal, goalState: { ...startGoal(session.goal).goalState!, status: "paused", activeSince: undefined } } : {}),
-      createdAt: now,
-      updatedAt: now,
-      messages: session.messages.slice(0, messageIndex + 1).map((message) => ({ ...message })),
-    };
-    setSessions((current) => [forked, ...current]);
-    setActiveId(forked.id);
-    shouldScrollToBottomRef.current = forked.id;
-    setNotice("已从此处分叉出新任务，可继续独立对话");
-  };
 
   const workspaceFiles = useMemo(() => {
     const out: WorkspaceEntry[] = [];
@@ -2334,42 +2194,6 @@ export function App() {
     };
   }, []);
 
-  const goalActionsRef = useRef(new Set<string>());
-  const handleGoalAction = async (sessionId: string, action: 'pause' | 'resume' | 'remove' | 'complete') => {
-    const session = sessionsRef.current.find(row => row.id === sessionId);
-    if (!session?.goal || goalActionsRef.current.has(sessionId)) return;
-    if (session.goalState?.status === 'complete' && action !== 'remove') return;
-    goalActionsRef.current.add(sessionId);
-    try {
-      if (action === 'resume') {
-        if (runningSessionIds.has(sessionId) || runningRunIdsRef.current.has(sessionId)) {
-          showSessionNotice(sessionId, '当前任务结束后可继续目标。');
-          return;
-        }
-        void sendMessage(`继续推进目标：${session.goal}\n先核对已有进展，完成剩余工作并验证结果。`, sessionId, undefined, undefined, true);
-        return;
-      }
-      const next = action === 'remove' ? { ...session, goal: undefined, goalState: undefined }
-        : changeGoalStatus(session, action === 'pause' ? 'paused' : 'complete');
-      // Persist before cancellation drains the queue, so queued work cannot revive an old goal.
-      const updated = sessionsRef.current.map(row => row.id === sessionId ? next : row);
-      sessionsRef.current = updated;
-      setSessions(updated);
-      let saveError = "";
-      if (window.dyworker?.saveSessions) {
-        const saved = await window.dyworker.saveSessions({ changed: [next], removed: [], order: updated.map(row => row.id),
-          activeId: activeIdRef.current, meta: updated.map(row => ({ id: row.id, channel: row.channel, workspacePath: row.workspacePath })) }).catch(error => ({ ok: false, error: String(error) }));
-        if (!saved.ok) saveError = saved.error || '目标状态保存失败';
-      }
-      const runId = runningRunIdsRef.current.get(sessionId);
-      if (activeGoal(session) && runId) await window.dyworker?.cancelTask(sessionId, runId);
-      if (activeGoal(session) && sleepingSessions[sessionId]) await cancelSleepingTask(sessionId);
-      if (saveError) throw new Error(saveError);
-      showSessionNotice(sessionId, action === 'pause' ? '目标已暂停' : action === 'remove' ? '目标已删除' : '目标已标记完成');
-    } catch (error) {
-      showSessionError(sessionId, error instanceof Error ? error.message : '目标操作失败');
-    } finally { goalActionsRef.current.delete(sessionId); }
-  };
   handleGoalActionRef.current = handleGoalAction;
 
   useEffect(() => {
@@ -2584,6 +2408,8 @@ export function App() {
       void window.dyworker.refreshWorkspace(path).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
     }
   };
+  // 注册 selectSession 给 forkSession：分叉出新任务后走与点侧栏列表项一致的切换流程
+  selectSessionRef.current = selectSession;
 
   // 插件要求跳转会话（上下文仪表盘的会话卡片）：交给已有的 selectSession 走完整流程
   useEffect(() => window.dyworker?.onDshSessionCreated?.(({session}) => {
@@ -2608,11 +2434,6 @@ export function App() {
     }
   }), [sessions, selectSession]);
 
-  const jumpToConversationTurn = (turnIndex: number) => {
-    setHoveredTurnIndex(turnIndex);
-    conversationTurnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
   // 「立即执行」后自动打开这次运行的会话：会话已在 run-started 时建好并进了 sessions，
   // 这里走和点侧栏列表项完全一样的切换流程（切工作区、刷新工作区文件），
   // 确保它真的出现在眼前，而不是落在别的分组的折叠里
@@ -2623,15 +2444,6 @@ export function App() {
     setPendingAutoOpenSessionId("");
     selectSession(target);
   }, [pendingAutoOpenSessionId, sessions]);
-
-  const clearWorkspace = () => {
-    if (!activeSession) return;
-    setWorkspacePath("");
-    setWorkspaceEntries([]);
-    closeFilePanelTabs();
-    updateSession(activeSession.id, (session) => ({ ...session, workspacePath: "" }));
-    setNotice("已移除这个会话的工作目录，会话归入最近");
-  };
 
 
   const beginPanelResize = (edge: "left" | "right", event: React.PointerEvent<HTMLDivElement>) => {
@@ -2800,89 +2612,6 @@ export function App() {
       ))}
     </div>
   );
-
-  // 导出会话为 Markdown：正文用 displayContent（引用技能/长粘贴折叠时与气泡一致），
-  // 附件、技能标签与耗时一并带出，文件名含会话标题与日期
-  const exportSessionMarkdown = (session: SessionRecord) => {
-    const lines: string[] = [
-      `# ${session.title}`,
-      "",
-      `> 导出自 DYWorker · ${new Date().toLocaleString()}`,
-      "",
-    ];
-    for (const message of session.messages) {
-      const body = message.displayContent || message.content;
-      if (!body.trim()) continue;
-      const time = message.createdAt ? new Date(message.createdAt).toLocaleString() : "";
-      const header = message.role === "user" ? "🧑 用户" : message.role === "assistant" ? "🤖 助手" : "系统";
-      lines.push(`## ${header}${time ? ` · ${time}` : ""}`, "");
-      lines.push(body.trim(), "");
-      // 折叠的长粘贴块导出原文（与气泡展开后看到的一致），避免导出文件丢失内容
-      for (const [index, block] of (message.pasteBlocks || []).entries()) {
-        lines.push("", `<details><summary>长文本 ${block.text.length} 字（第 ${index + 1} 段）</summary>`, "", block.text, "", "</details>");
-      }
-      if (message.skillsUsed?.length) lines.push(`（使用技能：${message.skillsUsed.join("、")}）`, "");
-      if (message.attachments?.length) {
-        lines.push(`**附件：** ${message.attachments.map((item) => item.name).join("、")}`, "");
-      }
-    }
-    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 10);
-    anchor.href = url;
-    anchor.download = `${session.title.replace(/[\\/:*?"<>|]/g, "_")}-${stamp}.md`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setNotice("已导出会话为 Markdown 文件");
-  };
-
-  // 总结为工作模板：把会话转录发给模型提炼草稿，弹可编辑对话框，确认后写入技能库
-  const summarizeSessionToSkill = async (session: SessionRecord) => {
-    if (skillSummarySessionId) return;
-    if (buildSkillSummaryTranscript(session).length < 50) {
-      setError("会话内容太少，还没有可总结的做法");
-      return;
-    }
-    if (!window.dyworker?.completeChat) {
-      setError("当前预览环境没有连接模型，无法提炼工作模板");
-      return;
-    }
-    setSkillSummarySessionId(session.id);
-    showSessionNotice(session.id, "正在提炼工作模板…");
-    try {
-      const messages = buildSkillSummaryMessages(session);
-      let result = await window.dyworker.completeChat({ settings, messages });
-      if (result.demo) {
-        setError(result.content);
-        return;
-      }
-      let draft = parseSkillDraft(result.content || "");
-      if (!draft) {
-        // 输出不是合法 JSON：追加强调后重试一次
-        result = await window.dyworker.completeChat({
-          settings,
-          messages: [...messages, { role: "assistant" as const, content: result.content || "", createdAt: new Date().toISOString() }, { role: "user" as const, content: "上一次输出不是合法 JSON。请只输出一个 JSON 对象（name/description/instructions），不要用 Markdown 围栏，不要任何解释。", createdAt: new Date().toISOString() }],
-        });
-        if (result.demo) {
-          setError(result.content);
-          return;
-        }
-        draft = parseSkillDraft(result.content || "");
-      }
-      if (draft) {
-        setSkillDraft(draft);
-      } else {
-        // 兜底：打开空草稿让用户手动填写，不让这次提炼白跑
-        setSkillDraft({ name: session.title, description: "", instructions: "" });
-        setNotice("模型没能生成初稿，请手动填写");
-      }
-    } catch (summaryError) {
-      setError(`提炼失败：${summaryError instanceof Error ? summaryError.message : String(summaryError)}`);
-    } finally {
-      setSkillSummarySessionId(null);
-    }
-  };
 
   // Linux 与 Windows 的窗口都由应用自绘标题栏：品牌与侧栏同列、侧栏首行放新建任务与收件箱。
   // macOS 保留原生红绿灯，标题栏布局维持原样。
