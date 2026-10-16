@@ -1,5 +1,5 @@
 import { LoaderCircle, MessageSquare, MessageSquarePlus, MessagesSquare, Mic, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MessageAnnotation } from "../../types";
 
@@ -55,6 +55,7 @@ export function findQuoteRange(root: ParentNode | null, quote: string): Range | 
 // 弹层 portal 到 body：消息行有 content-visibility:auto（长会话虚拟化），其绘制裁剪会把
 // 任何超出消息行边界的子元素（含 fixed 定位）裁掉，弹层只有移出消息行 DOM 才能完整显示。
 export function MessageAnnotationChip({ annotations }: { annotations: MessageAnnotation[] }) {
+  const popupId = useId();
   const chipRef = useRef<HTMLDivElement>(null);
   // 延迟关闭：mouseleave 后留宽限，鼠标斜向移入弹层时不闪关
   const closeTimerRef = useRef(0);
@@ -101,13 +102,28 @@ export function MessageAnnotationChip({ annotations }: { annotations: MessageAnn
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
     >
-      <span className="message-annotation-chip-label">
-        <MessageSquare size={12} />
+      <button
+        type="button"
+        className="message-annotation-chip-label"
+        aria-expanded={Boolean(pos)}
+        aria-controls={pos ? popupId : undefined}
+        onClick={handleEnter}
+        onFocus={handleEnter}
+        onBlur={handleLeave}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            window.clearTimeout(closeTimerRef.current);
+            setPos(null);
+          }
+        }}
+      >
+        <MessageSquare size={14} />
         <span>{annotations.length} 条注释</span>
-      </span>
+      </button>
       {pos && createPortal(
         <div
           className="annotation-list-popup floating readonly"
+          id={popupId}
           role="list"
           style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
           onMouseEnter={handleEnter}

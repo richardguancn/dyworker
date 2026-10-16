@@ -3770,17 +3770,30 @@ body.resizing-panels .app-shell {
   box-shadow: 0 0 0 3px rgba(127, 164, 0, 0.1), var(--shadow-sm);
 }
 
-/* 纯注释消息：气泡里只有「x 条注释」chip，去掉气泡外框，chip 裸放 */
-.user-bubble.bare {
+/* 长文与注释入口独立显示；优先于深色气泡和背景图材质。 */
+html:root .user-bubble.bare {
   padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  color: var(--ink);
 }
 
 .user-bubble.bare .message-annotation-chip {
   margin: 0;
+}
+
+.user-bubble.bare .message-paste-blocks {
+  margin-top: 0;
+}
+
+.user-bubble.bare .message-paste-blocks + .message-annotation-chip {
+  margin-top: 8px;
+}
+
+.user-bubble.bare + .message-actions.user {
+  margin-top: 8px;
 }
 
 /* 渠道语音消息（微信/QQ 风格语音条 + 下方独立 ASR 转文字卡片） */
@@ -4354,19 +4367,27 @@ body.resizing-panels .app-shell {
 .message-paste-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  max-width: 100%;
   width: fit-content;
-  padding: 3px 9px;
-  border: 1px solid rgba(107, 127, 168, 0.28);
-  border-radius: 7px;
-  background: rgba(107, 127, 168, 0.08);
-  color: #5d6f94;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
   font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+  text-align: left;
   cursor: pointer;
 }
 
 .message-paste-toggle:hover {
-  background: rgba(107, 127, 168, 0.16);
+  background: var(--sidebar-hover);
+}
+
+.message-paste-toggle > svg {
+  flex-shrink: 0;
+  color: var(--muted);
 }
 
 .message-paste-content {
@@ -14479,15 +14500,35 @@ html[data-theme="dark"] .browser-import-picker-menu button.active {
 .message-annotation-chip-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border: 1px solid rgba(127, 164, 0, 0.24);
-  border-radius: 7px;
-  color: #6f9600;
-  background: rgba(127, 164, 0, 0.08);
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--ink);
+  background: var(--surface);
+  font-family: inherit;
   font-size: calc(12px * var(--font-ui-scale, 1));
   font-weight: 560;
   line-height: 1.5;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.message-annotation-chip-label > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.message-annotation-chip-label:hover,
+.message-annotation-chip-label[aria-expanded="true"] {
+  background: var(--sidebar-hover);
+  border-color: var(--border-strong);
+}
+
+.message-annotation-chip-label:focus-visible,
+.message-paste-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 /* ===== 轨迹控制台（trace-console：Overview 时间条 + 明细列表 + 检查器）===== */

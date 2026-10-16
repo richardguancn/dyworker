@@ -320,14 +320,14 @@ const ConversationMessageRow = memo(function ConversationMessageRow({
     || Boolean(message.annotations?.length)
     || Boolean(message.dshAttachmentNames?.length)
   );
-  // 气泡里只有注释 chip：不套气泡边框，chip 直接裸放（套框显得笨重）
+  // 只有长文块或注释入口时，由入口本身承载内容，不再套一层气泡。
   const bubbleBare = message.role === "user"
-    && Boolean(message.annotations?.length)
+    && Boolean(message.annotations?.length || message.pasteBlocks?.length)
     && !isVoiceMessage(message)
     && !messageVisibleText(message).trim()
     && !legacySkillChips.length
     && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
-    && !message.pasteBlocks?.length;
+    && !message.dshAttachmentNames?.length;
   const openMessageFile = (name: string) => {
     const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
     void actions.openReferencedFile(name, recorded?.path);
