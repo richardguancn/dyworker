@@ -1,8 +1,8 @@
 import { BarChart3, Bell, Check, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Palette, RefreshCw, Search, Settings, ShieldAlert, UserRound } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { beginSession, discardSession } from "../../appearance/controller";
-import { hasConfiguredModel, isLocalModelEndpoint } from "../../../electron/host/dsh-runtime/model-settings.mts";
-import { isGlmNativeVisionModel, matchProvider, providerPresets, usesResponsesApi } from "../../providers";
+import { hasConfiguredModel } from "../../../electron/host/dsh-runtime/model-settings.mts";
+import { matchProvider, providerPresets } from "../../providers";
 import { AppearanceSettingsPanel } from "../../appearance/AppearanceSettingsPanel";
 import { McpSettingsPanel } from "../../McpSettingsPanel";
 import { PluginsPage } from "../../PluginsPage";
