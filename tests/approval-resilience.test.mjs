@@ -129,6 +129,9 @@ test('审核断线后直接显示人工入口，不再等待影响说明，也�
 });
 
 test('在真实临时项目执行版本查询，不请求审核或人工确认', async t => {
+  // 这条检查用的是截图里的原样命令（grep/head、~/.nvm 路径、$(…) 展开），
+  // Windows 走 cmd.exe，跑不通这些 POSIX 语法；命令识别本身在上面一条用例里各平台都验。
+  if (process.platform === 'win32') return t.skip('仅 POSIX 语义');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-version-read-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.writeFile(path.join(root, 'package.json'), '{"version":"1.2.3"}');

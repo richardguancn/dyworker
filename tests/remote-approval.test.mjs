@@ -98,7 +98,10 @@ test('入口脚本以当前完整内容核对，不读取凭据、受限文件�
   const checks = [];
   const evidence = await readReviewEntryScripts({ workspace, name: 'run_command', args, check: (name, args) => { checks.push([name, args.path]); } });
   assert.match(evidence, /192\.16\.6\.138/); assert.match(evidence, /不是用户授权/);
-  assert.deepEqual(checks, [['read_file', await fs.realpath(script)]]);
+  // 两侧都过 realpath：Windows 的临时目录在 os.tmpdir() 里是 8.3 短路径（RUNNER~1）。
+  const normalizedChecks = [];
+  for (const [name, file] of checks) normalizedChecks.push([name, await fs.realpath(file)]);
+  assert.deepEqual(normalizedChecks, [['read_file', await fs.realpath(script)]]);
   await fs.writeFile(script, "# changed helper\nprint('different target')\n");
   assert.match(await readReviewEntryScripts({ workspace, name: 'run_command', args }), /different target/);
   const denied = await readReviewEntryScripts({ workspace, name: 'run_command', args, check: () => ({ action: 'require_approval', message: '禁止审前读取' }) });
@@ -150,6 +153,9 @@ test('影响说明核对完整操作，不能漏掉长命令末尾的写入', as
 });
 
 test('真实连续执行四十步排查：一次准备确认后继续，新增主机和秘密读取仍被拒绝', { timeout: 30000 }, async t => {
+  // 四十条命令用 `VAR=值 python3 … 2>&1 | grep -v` 的 POSIX 写法真实执行，
+  // Windows 走 cmd.exe 既没有环境变量前缀也没有 grep，命令本体跑不起来。
+  if (process.platform === 'win32') return t.skip('仅 POSIX 语义');
   const root = await fixture(t);
   await fs.mkdir(path.join(root, 'llm-gateway'));
   const helper = "import sys, os\nfrom pathlib import Path\nwith Path('executed.log').open('a') as f: f.write(os.getenv('SSH_HOST_OVERRIDE', '192.16.6.138') + ':' + sys.argv[1] + '\\n')\nprint('SIMULATED_AUDIT', sys.argv[1])\n";

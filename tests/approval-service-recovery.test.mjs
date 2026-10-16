@@ -21,6 +21,8 @@ test('截图中的容器头文件查询可直接核对，显式限制和只读�
 });
 
 test('实际运行截图的头文件过滤步骤，读取代表性文件并检查输出', async t => {
+  // 用 /bin/sh 的 docker 函数替代容器连接来跑原样管道，Windows 没有 /bin/sh。
+  if (process.platform === 'win32') return t.skip('仅 POSIX 语义');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-header-query-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const headers = path.join(root, 'aarch64-linux-gnu/qt6/QtGui');

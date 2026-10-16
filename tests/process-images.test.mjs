@@ -36,7 +36,9 @@ test('查看图片工具实际读取图片供模型理解，保留可展开记�
       assert.equal(done.status,file==='missing.png'?'error':'success');
       const images=received.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='image_url');
       if(file==='missing.png')assert.equal(images.length,0);
-      else {assert.equal(images.at(-1).image_url.url,`data:image/png;base64,${bytes}`);assert.equal(processImageAttachments(done)[0].path,await fs.realpath(path.join(root,file)));}
+      // 两侧都过 realpath：Windows 上 os.tmpdir() 给的是 8.3 短路径（RUNNER~1），
+      // 而 realpath 返回长路径，直接比较会把同一条路径判成不相等。
+      else {assert.equal(images.at(-1).image_url.url,`data:image/png;base64,${bytes}`);assert.equal(await fs.realpath(processImageAttachments(done)[0].path),await fs.realpath(path.join(root,file)));}
     }
   } finally {await fs.rm(root,{recursive:true,force:true});}
 });
