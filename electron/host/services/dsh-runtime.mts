@@ -341,7 +341,14 @@ export class DshRuntimeService extends Service {
           if (!data.message?.isError) outcome = controls.get(callId);
           controls.delete(callId);
         }
-        emit({ type: 'activity-update', id: key, status: data.message?.isError ? 'error' : 'success', detail: JSON.stringify(data.message?.content ?? data.error ?? '') });
+        const imageBlocks = !data.message?.isError && Array.isArray(data.message?.content)
+          ? data.message.content.filter((block: any) => block.type === 'image' && block.attachment) : [];
+        const images = imageBlocks.map((block: any) => ({
+          path: runtime.persistenceContext.attachments.imageHostPath(block.attachment),
+          name: block.attachment.name || '图片',
+        }));
+        emit({ type: 'activity-update', id: key, status: data.message?.isError ? 'error' : 'success',
+          detail: JSON.stringify(images.length ? { images } : data.message?.content ?? data.error ?? '') });
       }
       if (owner === sessionId) {
         if (['compaction/summary', 'compaction/prune'].includes(event.type)) emit({ type: 'context-compacted' });

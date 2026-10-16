@@ -7,6 +7,7 @@ export type ActivityKind =
   | "commentary"
   | "update_plan"
   | "list_files"
+  | "view_image"
   | "read_file"
   | "ocr_file"
   | "write_file"

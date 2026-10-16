@@ -26,7 +26,7 @@ const SENSITIVE_PATH_PATTERNS = [
   { re: /(^|[\\/])\.env(\.[A-Za-z0-9_-]+)?$/, label: "环境变量文件" },
   { re: /(channel-credentials|imported-passwords)\.json$/i, label: "DYWorker 凭据库" },
 ];
-const FILE_TARGET_TOOLS = new Set(["read_file", "write_file", "edit_file", "append_file", "delete_file", "make_directory",
+const FILE_TARGET_TOOLS = new Set(["read_file", "view_image", "write_file", "edit_file", "append_file", "delete_file", "make_directory",
   "list_files", "find_files", "search_in_files", "copy_file", "move_file", "scan_sensitive_info",
   "check_official_document", "export_word_document", "export_excel_workbook"]);
 const PUBLIC_SSH_REFERENCE = /(^|[\s"'=;|(&])(?:[^\s"'<>;|&()]*[\\/])?\.ssh[\\/](?:[^\s/\\]+\.pub|authorized_keys|known_hosts)(?=$|[\s"'<>;|&()])/g;
@@ -52,7 +52,7 @@ export function findSensitiveReference(args, name = "") {
   const metadata = name === "run_command" ? sensitiveMetadataInspection(args?.command) : null;
   const texts = collectStrings(metadata?.facts.length ? { ...args, command: metadata.residual } : values);
   // 公钥文件不能通过软链接伪装成私钥。这里仅解析文件名，不读取文件内容。
-  if (name === "read_file" && typeof args?.path === "string") {
+  if (["read_file", "view_image"].includes(name) && typeof args?.path === "string") {
     try { texts.push(realpathSync(args.path.startsWith("~/") ? path.join(os.homedir(), args.path.slice(2)) : args.path)); } catch {}
   }
   const fingerprintOnly = name === "run_command" && /^\s*ssh-keygen\s+-lf\s+(?:'[^']+'|"[^"$`]+"|[^\s;$`|&<>()"']+)\s*$/.test(String(args?.command || ""));

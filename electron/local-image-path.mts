@@ -44,7 +44,7 @@ export function localImagePathFromSource(source: unknown) {
           })()
       : value;
   if (!filePath || !isAbsoluteLocalPath(filePath)) return "";
-  return localImageExtensions.has(imageExtension(filePath)) ? filePath : "";
+  return localImageExtensions.has(imageExtension(filePath)) || /[\\/]objects[\\/][a-f0-9]{2}[\\/][a-f0-9]{64}$/.test(filePath) ? filePath : "";
 }
 
 export function localImageMimeType(filePath: string) {

@@ -30,9 +30,15 @@ export async function readLocalImageData(source, { maxBytes = defaultMaxBytes } 
     try {
       const content = await fs.readFile(candidate);
       if (content.length > maxBytes) return { ok: false, error: "图片过大，无法在对话中显示" };
+      const mimeType = localImageMimeType(candidate) || (
+        content.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? "image/png" :
+        content[0] === 255 && content[1] === 216 && content[2] === 255 ? "image/jpeg" :
+        /^GIF8[79]a/.test(content.subarray(0, 6).toString("ascii")) ? "image/gif" :
+        content.subarray(0, 4).toString("ascii") === "RIFF" && content.subarray(8, 12).toString("ascii") === "WEBP" ? "image/webp" : "");
+      if (!mimeType) return { ok: false, error: "图片格式无法识别" };
       return {
         ok: true,
-        dataUrl: `data:${localImageMimeType(candidate)};base64,${content.toString("base64")}`,
+        dataUrl: `data:${mimeType};base64,${content.toString("base64")}`,
       };
     } catch {
       return { ok: false, error: "图片不存在或读取失败" };

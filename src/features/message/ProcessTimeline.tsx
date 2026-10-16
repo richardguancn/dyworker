@@ -10,6 +10,7 @@ import {
   Folder,
   Globe,
   History,
+  Images,
   Landmark,
   ListTodo,
   LoaderCircle,
@@ -25,6 +26,9 @@ import {
   X,
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { ImageAttachmentView } from "../../ImageAttachment";
+import { openImagePreview } from "../../state/messageActions";
+import { processImageAttachments } from "../../processImages.ts";
 import { activityDisplayTitle } from "../../lib/activity";
 import { formatDuration, formatDurationCodex } from "../../lib/format";
 import type { ActivityRecord, ChatMessage } from "../../types";
@@ -56,6 +60,8 @@ export function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
       return <FileCode2 size={14} />;
     case "delete_file":
       return <Trash2 size={14} />;
+    case "view_image":
+      return <Images size={14} />;
     case "read_file":
       return <FileText size={14} />;
     case "ocr_file":
@@ -165,6 +171,11 @@ export function ReasoningBlock({ text, streaming }: { text: string; streaming: b
 }
 
 export function ActivityRow({ activity }: { activity: ActivityRecord }) {
+  if (activity.kind === "view_image" || processImageAttachments(activity).length) return <ProcessImageItem activity={activity} />;
+  return <StandardActivityRow activity={activity} />;
+}
+
+function StandardActivityRow({ activity }: { activity: ActivityRecord }) {
   const [open, setOpen] = useState(false);
   const childCount = activity.children?.length || 0;
   // 子代理（dispatch_agent）活动：children 有运行中条目时保持行首转圈，
@@ -295,7 +306,33 @@ export function ProcessSubagentItem({ activity }: { activity: ActivityRecord }) 
   );
 }
 
+export function ProcessImageItem({ activity }: { activity: ActivityRecord }) {
+  const [open, setOpen] = useState(false);
+  const images = useMemo(() => processImageAttachments(activity), [activity]);
+  const title = activity.status === "running" ? "正在查看图片" : activity.status === "error" ? "查看图片失败" : `已查看 ${images.length} 张图像`;
+  return (
+    <div className={`process-action-item process-image-item ${activity.status}`}>
+      <button type="button" className="process-action-header" aria-expanded={open}
+        onClick={() => setOpen(value => !value)} disabled={!images.length && !activity.detail}>
+        {activity.status === "running" ? <LoaderCircle className="spin" size={14} /> : <Images size={16} />}
+        <span className="process-action-title">{title}</span>
+        {(images.length > 0 || activity.detail) && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
+      </button>
+      {open && (images.length ? <div className="process-image-list">
+        {images.map((image, index) => <div className="process-image-thumb" key={`${image.path}:${index}`}>
+          <ImageAttachmentView attachment={image} onPreview={preview => openImagePreview(preview, images)} />
+        </div>)}
+      </div> : <pre className="process-action-detail">{activity.detail}</pre>)}
+    </div>
+  );
+}
+
 export function ProcessActionItem({ activity }: { activity: ActivityRecord }) {
+  if (activity.kind === "view_image" || processImageAttachments(activity).length) return <ProcessImageItem activity={activity} />;
+  return <StandardProcessActionItem activity={activity} />;
+}
+
+function StandardProcessActionItem({ activity }: { activity: ActivityRecord }) {
   const [open, setOpen] = useState(false);
   const expandable = Boolean(activity.detail);
   const isEdit = ["write_file", "edit_file", "append_file", "delete_file"].includes(activity.kind);
