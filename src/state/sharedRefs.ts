@@ -79,6 +79,38 @@ export const voiceObjectUrlRef: { current: string } = { current: "" };
 // （scheduleActions 手动触发 与 sessionIpcRuntime 订阅 共用同一实例）
 export const manualRunScheduleRef: { current: string } = { current: "" };
 
+// 启动 / 布局 / 搜索 / 草稿类运行时 effect 用的模块级 ref：随这批 effect 从 App.tsx 搬到
+// startupRuntime 后保证同一实例——startupRuntime 的订阅/清理与 App 的 JSX 绑定、本地回调
+// 三处读写都要指向同一份数据。
+export const pendingDebugLogsRef: { current: DebugLogEntry[] } = { current: [] };
+export const recentDebugLogsRef: { current: DebugLogEntry[] } = { current: [] };
+export const debugLogFlushTimerRef: { current: number | null } = { current: null };
+export const tracePublishTimerRef: { current: number | null } = { current: null };
+export const sessionSaveMountedRef: { current: boolean } = { current: true };
+export const sessionSaveRetryRef: { current: number | null } = { current: null };
+// 会话内消息行的 DOM 引用：App 的 bindMessageRow 写入、搜索高亮 effect 读取
+export const messageRowRefs: { current: Record<number, HTMLDivElement | null> } = { current: {} };
+export const conversationSearchInputRef: { current: HTMLInputElement | null } = { current: null };
+export const searchMatchRangesRef: { current: Array<{ row: HTMLDivElement; range: Range }> } = { current: [] };
+export const searchScrollKeyRef: { current: string | null } = { current: null };
+export const appShellRef: { current: HTMLDivElement | null } = { current: null };
+// 面板几何镜像与拖动状态：App 每次渲染刷新几何值，startupRuntime 的拖动 effect 读取
+export const panelGeometryRef: { current: { rightPanelOpen: boolean; sidebarOpen: boolean; appliedSidebarWidth: number; appliedToolPanelWidth: number } } = { current: { rightPanelOpen: false, sidebarOpen: false, appliedSidebarWidth: 0, appliedToolPanelWidth: 0 } };
+export const panelResizeRef: { current: { edge: "left" | "right"; startX: number; startWidth: number } | null } = { current: null };
+
+// 会话草稿快照 ref：切换会话时保留各自输入框内容，最新值经 ref 读取避免闭包取到旧值
+export const composerRef: { current: string } = { current: "" };
+export const composerPastesRef: { current: ComposerPasteBlock[] } = { current: [] };
+export const annotationsRef: { current: MessageAnnotation[] } = { current: [] };
+export const lastActiveIdRef: { current: string } = { current: previewSessions[0].id };
+
+// 助手发来的浏览器面板指令转发：startupRuntime 的监听器与 App 的标签页操作共用同一实例
+export const browserPanelCommandsRef: { current: {
+  open: (url: string, tabId?: string) => void;
+  activate: (tabId: string) => void;
+  close: (tabId: string) => void;
+} | null } = { current: null };
+
 // 发消息 / 排队消息（sendMessageActions）共享的模块级 ref：App 的清理 effect、运行时与
 // actions 必须指向同一实例，随这组函数一起从 App.tsx 的 useRef 挪到模块级。
 export const queuedRunsRef: { current: Map<string, Set<string>> } = { current: new Map() };
