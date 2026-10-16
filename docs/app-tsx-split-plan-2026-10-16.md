@@ -55,8 +55,18 @@
 - 测试：除 8 个依赖本机端口与沙箱执行的环境受限文件外全部通过，该 8 个文件在沙箱外 119/119 通过（与拆分前基线一致）；
 - 功能验收与性能对照见 `docs/performance-acceptance-2026-10-16.md`：发送/停止/计划/唤醒、搜索定位、审批、浏览器面板、设置弹窗等抽查无回归。
 
-## 6. 剩余事项（不属于本次拆分范围）
+## 6. 二次拆分（2026-10-16 完成）
+
+此前「剩余事项」列出的两个 oversized 面板已按「纯展示抽取、状态留在父组件」原则拆分，行为不变（提交 8e35c25、0ee3131、57b421b）：
+
+| 文件 | 拆分前 | 拆分后 | 新文件 |
+| --- | ---: | ---: | --- |
+| `features/settings/SettingsDialog.tsx` | 1,214 行 | 800 行 | `ModelSettingsPanel.tsx`（297 行，模型服务 tab）、`VoiceSettingsPanel.tsx`（261 行，语音 tab） |
+| `features/conversation/ConversationPane.tsx` | 1,244 行 | 610 行 | `ComposerDock.tsx`（688 行，输入区 dock 整段） |
+
+要点：设置面板的 draft/下载进度等状态仍由 `SettingsDialog` 持有，避免切换 tab 因子组件卸载丢失；`ComposerDock` 的 props 类型用 `Pick<ConversationPaneProps, …>` 从会话面板派生（`import type`，无运行时循环依赖），新增输入区 props 时只需改一处接口。抽取后的 JSX 与原代码逐行比对一致（VoiceSettingsPanel 207 行、ModelSettingsPanel 236 行；ComposerDock 604 行为逐字节一致），`tsc --noEmit` 与 `vite build` 均通过；`npm run test:settings` 在本机默认 Node 18 下无法运行（ERR_UNKNOWN_FILE_EXTENSION，拆分前基线提交同样复现），改用 Node 22（v22.21.1）后 18/18 通过；全量测试套件（155 个测试文件）在同一 Node 22 下运行：1742 项中 1719 通过、23 跳过、0 失败。
+
+## 7. 剩余事项（不属于本次拆分范围）
 
 - `App()` 仍持有约 2,050 行 JSX 与 40 个 effect，进一步瘦身（如会话区 JSX 下沉到 `ConversationPane`）收益递减，暂不做；
-- `SettingsDialog.tsx`（1,214 行）、`ConversationPane.tsx`（1,244 行）已接近需要二次拆分的规模，建议下次触及对应功能时顺带拆分，不单独立项；
 - 性能优化的未完成项沿用 `docs/performance-optimization-plan-2026-10-15.md` 第 5、6 节清单。
