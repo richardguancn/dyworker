@@ -236,7 +236,7 @@ html .reference-layout.platform-linux {
 }
 .reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
 .reference-layout .composer-dock { padding: 0 0 16px; }
-.reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 124px; padding: 14px 14px 10px; border-radius: 24px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
+.reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 104px; padding: 12px 12px 8px; border-radius: 24px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
 .reference-layout .composer-card:focus-within { box-shadow: var(--shadow-sm); }
 .reference-layout .composer-project-bar {
   width: min(712px, calc(100% - 76px));
@@ -261,6 +261,73 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-project-branch { overflow: hidden; }
 .reference-layout .composer-project-branch span { overflow: hidden; text-overflow: ellipsis; }
 .reference-layout .composer-pending { width: var(--chat-width); }
+html[data-theme="dark"] .reference-layout { --queue-stack-surface: #2c2c2c; --composer-stack-surface: #343434; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .reference-layout { --queue-stack-surface: #2c2c2c; --composer-stack-surface: #343434; }
+}
+/* 后层排队区略窄，输入框覆盖下沿，形成同一组连续的工作区。 */
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) {
+  width: calc(var(--chat-width) - 24px);
+  margin-bottom: -18px;
+}
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) + .composer-card,
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) + .plan-progress + .composer-card {
+  position: relative;
+  background: var(--composer-stack-surface, color-mix(in srgb, var(--ink) 11%, var(--surface)));
+  box-shadow: none;
+}
+.reference-layout .composer-pending .queue-card {
+  padding: 0 8px 22px;
+  border-radius: 18px 18px 0 0;
+  background: var(--queue-stack-surface, color-mix(in srgb, var(--ink) 7%, var(--surface)));
+}
+.reference-layout .queue-card-head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.reference-layout .queue-card-row { min-height: 34px; padding: 3px 4px; gap: 10px; }
+/* 图片和正文共用消息列，数量较多时换行，操作列保持完整。 */
+.queue-card-content { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
+.queue-card-images { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.queue-card-images .attachment-thumb-wrap { display: flex; flex: 0 0 40px; width: 40px; height: 36px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; }
+.queue-card-images .attachment-preview-image { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
+.queue-card-images .attachment-image-status { width: 100%; padding: 2px; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+.queue-card-images .attachment-preview-image:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.reference-layout .queue-card-text { color: var(--ink); }
+.reference-layout .queue-card-actions { gap: 8px; }
+.reference-layout .queue-card-steer { gap: 5px; padding-inline: 5px; }
+.reference-layout .queue-card-actions .icon-button { width: 26px; height: 28px; }
+@container pending (max-width: 480px) {
+  .reference-layout .queue-card-row { flex-wrap: nowrap; }
+  .reference-layout .queue-card-text { flex-basis: auto; }
+}
+@container pending (max-width: 280px) {
+  .reference-layout .queue-card-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 4px 8px; }
+  .reference-layout .queue-card-actions { grid-column: 2; justify-self: end; }
+}
+
+/* 有计划时，进度接在排队消息下方，仍与输入框共用后层底板。 */
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)):has(+ .plan-progress) { margin-bottom: 0; }
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)):has(+ .plan-progress) .queue-card {
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+.reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) + .plan-progress {
+  width: calc(var(--chat-width) - 24px);
+  margin-bottom: -18px;
+  padding: 4px 12px 26px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0;
+  background: var(--queue-stack-surface, color-mix(in srgb, var(--ink) 7%, var(--surface)));
+}
+.reference-layout .plan-progress-details { z-index: 3; }
+
 .reference-layout .goal-banner { width: var(--chat-width); }
 .reference-layout .composer-toolbar { flex-wrap: wrap; gap: 6px 12px; min-height: 34px; }
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
@@ -272,6 +339,8 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-actions > .context-ring { flex: 0 0 auto; }
 .reference-layout .composer-send-actions .model-menu { left: auto; right: 0; }
 .reference-layout .send-button { border-radius: 50%; width: 32px; height: 32px; }
+.reference-layout .send-button:not(.stop):not(:disabled) { background: #2f6bd2; color: #fff; box-shadow: none; }
+.reference-layout .send-button:not(.stop):not(:disabled):hover { background: #3977e1; }
 /* Native lights now belong to the separate titlebar, so plugin pages need no left inset. */
 .reference-layout.platform-darwin.sidebar-collapsed .plugins-page.plugins-formats { padding-left: 24px; }
 @media (max-width: 1120px) {
@@ -298,8 +367,8 @@ html .reference-layout.platform-linux {
   html .reference-layout { transition: none; }
 }
 
-.reference-layout .composer-card textarea { height: 72px; min-height: 72px; }
-.reference-layout .dsh-composer-input { min-height: 72px; }
+.reference-layout .composer-card textarea { height: 48px; min-height: 48px; }
+.reference-layout .dsh-composer-input { min-height: 48px; }
 
 /* 按输入区实际宽度响应，左右面板展开时同样保持操作完整。 */
 @container composer (max-width: 460px) {

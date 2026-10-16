@@ -207,6 +207,14 @@ export function ImageAttachmentThumb({ attachment, onPreview }: {
           src={state.dataUrl}
           alt="待发送的图片，点击预览"
           title="点击预览图片"
+          role={onPreview ? "button" : undefined}
+          tabIndex={onPreview ? 0 : undefined}
+          onKeyDown={event => {
+            if (onPreview && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault();
+              onPreview({ url: state.dataUrl, name, path: attachment.path });
+            }
+          }}
           onClick={() => onPreview?.({ url: state.dataUrl, name, path: attachment.path })}
         />
       ) : (

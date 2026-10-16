@@ -2,7 +2,7 @@
 // （状态提示 toast、待发送列表、目标横幅、项目栏、粘贴折叠、注释条、附件条、
 // 输入框与镜像层、工具栏、模型/审批菜单、语音与发送按钮、回到底部按钮）。
 // 机械搬运，不改类名/文案/aria；所有状态与回调仍由 App 经 ConversationPane 传入。
-import { ArrowDown, ArrowUp, AtSign, Check, ChevronDown, CornerUpLeft, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Play, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AtSign, Check, ChevronDown, CornerDownRight, ListEnd, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
 import { ContextRing } from "../usage/UsagePanels";
 import { composerApprovalModes } from "../plans/PlansPanel";
 import { displayWorkspace, messageVisibleText, shortTitle } from "../../lib/text";
@@ -115,8 +115,9 @@ export function ComposerDock(props: ComposerDockProps) {
               </button>
             </div>
           )}
-          {/* 待发送列表：排队消息与挂起唤醒提示都独立成卡，统一收在输入框上方。
-              输入框只负责正在编辑的这一条，不再和它们挤在同一张卡片里（对照 Codex） */}
+          {activeSession?.goal && activeSession.goalState?.status !== 'complete' && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
+            session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
+          {/* 排队消息在输入框后方叠放；挂起提示仍独立展示。 */}
           {(activeSleeping || (activeTaskRunning && activeQueuedMessages.length > 0)) && (
             <div className="composer-pending" aria-label="待发送列表">
               {activeSleeping && (
@@ -153,19 +154,33 @@ export function ComposerDock(props: ComposerDockProps) {
                   </div>
                   {activeQueuedMessages.map((entry) => (
                     <div className="queue-card-row" key={entry.message.runId}>
-                      <CornerUpLeft size={14} className="queue-card-icon" />
-                      <span className="queue-card-text" title={messageVisibleText(entry.message)}>
-                        {messageVisibleText(entry.message)}
-                      </span>
+                      <ListEnd size={16} className="queue-card-icon" aria-hidden="true" />
+                      <div className="queue-card-content">
+                        {messageVisibleText(entry.message) && <span className="queue-card-text" title={messageVisibleText(entry.message)}>
+                          {messageVisibleText(entry.message)}
+                        </span>}
+                        {entry.message.attachments?.some(attachment => attachment.isImage) && (
+                          <div className="queue-card-images" aria-label="待发送的图片">
+                            {entry.message.attachments.filter(attachment => attachment.isImage).map((attachment, index) => (
+                              <ImageAttachmentThumb
+                                key={`${attachment.path || attachment.previewUrl}-${index}`}
+                                attachment={attachment}
+                                onPreview={payload => openImagePreview(payload, entry.message.attachments!.filter(item => item.isImage))}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <span className="queue-card-actions">
                         <button
                           type="button"
                           className="queue-card-steer"
                           onClick={() => void runQueuedMessageNow(entry)}
                           title="停下当前任务，立即执行这条消息"
+                          aria-label="引导：停下当前任务，立即执行这条消息"
                         >
-                          <Play size={13} />
-                          立即执行
+                          <CornerDownRight size={15} aria-hidden="true" />
+                          引导
                         </button>
                         <button
                           type="button"
@@ -218,8 +233,6 @@ export function ComposerDock(props: ComposerDockProps) {
               )}
             </div>
           )}
-          {activeSession?.goal && activeSession.goalState?.status !== 'complete' && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
-            session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
           {!activeSession?.messages.length && <div className="composer-project-bar" aria-label="当前工作上下文">
             <div className="composer-project-selection">
               <button type="button" className="composer-project-button" onClick={() => void chooseWorkspace()}
@@ -526,9 +539,9 @@ export function ComposerDock(props: ComposerDockProps) {
                     </div>
                   )}
                 </div>
-                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
               </div>
               <div className="composer-actions composer-send-actions">
+                <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} stats={activeSession?.tokenStats} />
                 <div className="model-menu-wrap" data-menu-root>
                   <button
                     className={`composer-mode ${modelMenuOpen ? "active" : ""}`}
