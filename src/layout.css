@@ -261,9 +261,10 @@ html .reference-layout.platform-linux {
 .reference-layout .composer-project-branch { overflow: hidden; }
 .reference-layout .composer-project-branch span { overflow: hidden; text-overflow: ellipsis; }
 .reference-layout .composer-pending { width: var(--chat-width); }
-html[data-theme="dark"] .reference-layout { --queue-stack-surface: #2c2c2c; --composer-stack-surface: #343434; }
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme]) .reference-layout { --queue-stack-surface: #2c2c2c; --composer-stack-surface: #343434; }
+/* 跟随主题配色，保留原有叠放、尺寸和圆角。 */
+.reference-layout {
+  --queue-stack-surface: color-mix(in srgb, var(--sidebar-active) 55%, var(--surface));
+  --composer-stack-surface: var(--card-raised, var(--card));
 }
 /* 后层排队区略窄，输入框覆盖下沿，形成同一组连续的工作区。 */
 .reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) {
