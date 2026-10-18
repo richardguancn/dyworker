@@ -24,6 +24,12 @@ test('不完整、未知或缺失的保护均拒绝，完全访问只能来自�
   assert.equal(requireCommandProtection(full(), 'read-only').enforcement, 'full');
   assert.equal(requireCommandProtection({ argv: ['host'], enforcement: 'explicit-host-grant' }, 'danger-full-access').enforcement, 'explicit-host-grant');
   assert.throws(() => requireCommandProtection(full(), 'unknown'), { code: 'SANDBOX_UNAVAILABLE' });
+  const windows = { ...full(), enforcement: 'partial', runnerFailureRules: [
+    { allowedExitCodes: [127], fatalSignatures: ['windows-acl-run: '] },
+  ] };
+  assert.throws(() => requireCommandProtection(windows), { code: 'SANDBOX_UNAVAILABLE' });
+  assert.equal(requireCommandProtection(windows, 'workspace-write', 'windows-acl').enforcement, 'partial');
+  assert.throws(() => requireCommandProtection({ ...windows, runnerFailureRules: [] }, 'workspace-write', 'windows-acl'), { code: 'SANDBOX_UNAVAILABLE' });
 });
 
 const cases = [
@@ -104,14 +110,18 @@ test('实际前台和后台入口：partial 不启动程序，故障与拒绝被
     const { createBackgroundTasksManager } = await import(${JSON.stringify(pathToFileURL(path.resolve('electron/background-tasks.mts')).href)});
     const { prepareCommandExecution } = await import(${JSON.stringify(pathToFileURL(path.resolve('electron/command-execution.mts')).href)});
     const originalPlatform = process.platform;
-    // Windows 的固定 partial 后端在创建提供者、修改 ACL 之前已被阻止。
+    // 未识别的 partial 仍然拒绝；只有准备层识别出的官方 Windows runner 才有单独策略。
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    process.env.DYW_TEST_CONFINED = JSON.stringify({ ...plan, enforcement: 'partial', argv: [process.execPath, 'unknown-runner'] });
     for (const mode of ['read-only', 'workspace-write']) {
       await assert.rejects(prepareCommandExecution('unused', { workspacePath: root, mode }), { code: 'SANDBOX_UNAVAILABLE' });
     }
     const host = await prepareCommandExecution('unused', { workspacePath: root, mode: 'danger-full-access' });
     assert.equal(host.enforcement, 'explicit-host-grant');
-    assert.equal(host.argv[0], 'cmd.exe');
+    assert.equal(host.argv[0], process.execPath);
+    assert.ok(host.argv[1].endsWith('windows_command_runner.cjs'));
+    assert.equal(Buffer.from(host.argv[2], 'base64').toString(), 'unused');
+    assert.equal(host.env.ELECTRON_RUN_AS_NODE, '1');
     // 在宿主系统测试完整的调用链；在 Windows CI 中也走相同的模拟提供者分支。
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const workspace = new Workspace(root);
@@ -184,7 +194,7 @@ for (const scenario of ['passthrough-leak', 'runner-unavailable']) {
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
       await import(${JSON.stringify(pathToFileURL(path.resolve('scripts/diagnose-windows-command-protection.mjs')).href)});
     `);
-    const result = spawnSync(process.execPath, [fixture], { cwd: root, encoding: 'utf8', timeout: 25000, maxBuffer: 1024 * 1024 });
+    const result = spawnSync(process.execPath, [fixture, '--compare-launchers'], { cwd: root, encoding: 'utf8', timeout: 25000, maxBuffer: 1024 * 1024 });
     const report = JSON.parse(result.stdout);
     assert.equal(result.status, scenario === 'passthrough-leak' ? 1 : 2, result.stderr + result.stdout);
     assert.equal(report.conclusion, scenario === 'passthrough-leak' ? 'outside-or-read-only-write-observed' : 'probe-inconclusive');

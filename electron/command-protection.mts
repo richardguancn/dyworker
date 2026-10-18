@@ -9,16 +9,13 @@ export function protectionUnavailable(detail: string) {
   return Object.assign(new Error(detail), { code: 'SANDBOX_UNAVAILABLE' });
 }
 
-/** 本应用的受限命令要求完整写入保护；partial 不是可静默接受的成功。 */
-export function requireCommandProtection(confined: any, mode = 'workspace-write') {
+/** partial 必须有调用方明确识别的后端策略，且结果继续保留 partial，不能冒充 full。 */
+export function requireCommandProtection(confined: any, mode = 'workspace-write', partialBackend?: 'windows-acl') {
   if (!confined || !Array.isArray(confined.argv) || !confined.argv.length
     || confined.argv.some((value: any) => typeof value !== 'string') || !confined.argv[0]) {
     throw protectionUnavailable('执行保护没有提供有效的启动方式，命令未执行');
   }
   if (mode === 'danger-full-access' && confined.enforcement === 'explicit-host-grant') return confined;
-  if (!['workspace-write', 'read-only'].includes(mode) || confined.enforcement !== 'full') {
-    throw protectionUnavailable('当前执行保护不足以限制文件写入范围，命令未执行；没有自动扩大权限');
-  }
   const strings = (value: any) => Array.isArray(value) && value.every(item => typeof item === 'string' && item.trim());
   if (!strings(confined.denialSignatures) || !Array.isArray(confined.runnerFailureRules)
     || confined.runnerFailureRules.some((rule: any) => !rule || !strings(rule.fatalSignatures)
@@ -27,6 +24,12 @@ export function requireCommandProtection(confined: any, mode = 'workspace-write'
       || (rule.allowedExitCodes !== undefined && (!Array.isArray(rule.allowedExitCodes)
         || !rule.allowedExitCodes.length || rule.allowedExitCodes.some((code: any) => !Number.isInteger(code) || code === 0))))) {
     throw protectionUnavailable('执行保护的检查依据不完整，命令未执行');
+  }
+  const knownWindowsPartial = confined.enforcement === 'partial' && partialBackend === 'windows-acl'
+    && confined.runnerFailureRules.some((rule: any) => rule.allowedExitCodes?.includes(127)
+      && rule.fatalSignatures.includes('windows-acl-run: '));
+  if (!['workspace-write', 'read-only'].includes(mode) || (confined.enforcement !== 'full' && !knownWindowsPartial)) {
+    throw protectionUnavailable('当前执行保护不足以限制文件写入范围，命令未执行；没有自动扩大权限');
   }
   return confined;
 }

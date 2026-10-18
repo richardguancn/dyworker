@@ -57,7 +57,8 @@ if (process.platform !== 'win32') {
         // 模拟较早把父目录作为工作区运行过的情形，授权范围仅限本次自建夹具。
         report.observations.push({ phase: 'broader-grant', result: await run(root, 'workspace-write', 'process.exitCode=0') });
       }
-      for (const mode of ['workspace-write', 'read-only']) for (const invocation of ['node-direct', 'cmd-shell', 'node-shell-bridge']) {
+      const invocations = process.argv.includes('--compare-launchers') ? ['node-direct', 'cmd-shell', 'node-shell-bridge'] : ['node-shell-bridge'];
+      for (const mode of ['workspace-write', 'read-only']) for (const invocation of invocations) {
         const before = acls();
         const readiness = await run(work, mode, "process.stdout.write('DYWORKER_PROBE_READY')", invocation);
         const results = [];

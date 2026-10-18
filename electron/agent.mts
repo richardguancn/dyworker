@@ -728,7 +728,8 @@ constructor(root, options = {} as any) {
       const diagnostics = createCommandDiagnostics(confined);
       // detached：让 bash 自成进程组，终止时连子进程（如 docker、脚本）一起杀掉，
       // 否则只杀 bash 会留下孤儿进程继续占用资源
-      const child = spawn(program, args, { cwd: this.root, detached: !win32 });
+      const child = spawn(program, args, { cwd: this.root, detached: !win32,
+        ...(confined.env ? { env: { ...process.env, ...confined.env } } : {}) });
       let stdout = "";
       let stderr = "";
       let settled = false;
@@ -780,8 +781,9 @@ constructor(root, options = {} as any) {
         const protection = diagnostics.finish(code);
         const notice = protection.state === 'unavailable' ? `执行保护报告故障，不能确认命令已受保护地完成：${protection.detail}\n`
           : protection.state === 'denied' ? '执行保护拒绝了本次文件操作。\n' : '';
+        const scope = confined.enforcement === 'partial' ? '当前系统提供部分文件写入保护，存在后端已声明的范围限制。\n' : '';
         finish({ ok: code === 0 && protection.state === 'ready', ...(protection.errorCode ? { errorCode: protection.errorCode } : {}),
-          protection: { enforcement: confined.enforcement, ...protection }, output: `${notice}退出码 ${code}\n${output}` });
+          protection: { enforcement: confined.enforcement, ...protection }, output: `${scope}${notice}退出码 ${code}\n${output}` });
       });
     });
   }

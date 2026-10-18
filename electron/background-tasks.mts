@@ -62,7 +62,7 @@ constructor() {
       exitCode: null,
       ports: [...detectedPorts],
       urls: [...detectedUrls],
-      outputTail: [],
+      outputTail: confined.enforcement === 'partial' ? ['当前系统提供部分文件写入保护，存在后端已声明的范围限制。'] : [],
       childProcess: null,
       pid: undefined,
       protection: null,
@@ -73,6 +73,7 @@ constructor() {
         cwd: taskEntry.cwd,
         detached: !win32, // Unix 上创建独立进程组，便于整组杀死
         stdio: ["ignore", "pipe", "pipe"],
+        ...(confined.env ? { env: { ...process.env, ...confined.env } } : {}),
       });
 
       taskEntry.childProcess = child;
