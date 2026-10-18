@@ -188,7 +188,7 @@ for (const scenario of ['passthrough-leak', 'runner-unavailable']) {
     const report = JSON.parse(result.stdout);
     assert.equal(result.status, scenario === 'passthrough-leak' ? 1 : 2, result.stderr + result.stdout);
     assert.equal(report.conclusion, scenario === 'passthrough-leak' ? 'outside-or-read-only-write-observed' : 'probe-inconclusive');
-    assert.equal(report.observations.filter(item => item.results).length, 4);
+    assert.equal(report.observations.filter(item => item.results).length, 8);
     assert.equal(report.cleanupError, undefined);
     assert.deepEqual(await fs.readdir(root), ['diagnostic-fixture.mjs']);
   });

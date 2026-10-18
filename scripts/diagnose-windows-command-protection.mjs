@@ -9,9 +9,9 @@ if (process.platform !== 'win32') {
   process.exitCode = 2;
 } else {
   const report = { diagnosticOnly: true, platform: process.platform, node: process.version, observations: [] };
-  const execute = argv => {
+  const execute = (argv, cwd) => {
     const result = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 20000, maxBuffer: 256 * 1024,
-      windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+      cwd, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
     return { exitCode: result.status, signal: result.signal, stdout: result.stdout || '', stderr: result.stderr || '',
       ...(result.error ? { error: result.error.message } : {}) };
   };
@@ -27,9 +27,11 @@ if (process.platform !== 'win32') {
     await fs.writeFile(inside, 'original'); await fs.writeFile(outside, 'original');
     ctx = new Context();
     await ctx.plugin(LocalSandbox); await ctx.fiber.await();
-    const run = async (workspaceRoot, mode, program) => {
-      const confined = await ctx.sandbox.confine([process.execPath, '-e', program], { workspaceRoot, mode });
-      const outcome = execute(confined.argv);
+    const run = async (workspaceRoot, mode, program, invocation = 'node-direct') => {
+      const argv = invocation === 'cmd-shell' ? ['cmd.exe', '/d', '/s', '/c', `node -e "${program}"`]
+        : [process.execPath, '-e', program];
+      const confined = await ctx.sandbox.confine(argv, { workspaceRoot, mode });
+      const outcome = execute(confined.argv, workspaceRoot);
       return { enforcement: confined.enforcement, denialSignatures: confined.denialSignatures,
         runnerFailureRules: confined.runnerFailureRules, ...outcome,
         runnerFailure: classifyRunnerFailure(outcome.exitCode, outcome.stderr, confined.runnerFailureRules) };
@@ -40,20 +42,27 @@ if (process.platform !== 'win32') {
         // 模拟较早把父目录作为工作区运行过的情形，授权范围仅限本次自建夹具。
         report.observations.push({ phase: 'broader-grant', result: await run(root, 'workspace-write', 'process.exitCode=0') });
       }
-      for (const mode of ['workspace-write', 'read-only']) {
+      for (const mode of ['workspace-write', 'read-only']) for (const invocation of ['node-direct', 'cmd-shell']) {
         const before = acls();
-        const readiness = await run(work, mode, "process.stdout.write('DYWORKER_PROBE_READY')");
+        const readiness = await run(work, mode, "process.stdout.write('DYWORKER_PROBE_READY')", invocation);
         const results = [];
-        for (const [kind, target] of [['inside', inside], ['outside', outside]]) {
-          await fs.writeFile(target, 'original');
+        const created = path.join(work, `new-${phase}-${mode}-${invocation}.txt`);
+        for (const [kind, target, relative] of [['inside-existing', inside, "'inside.txt'"],
+          ['inside-new', created, `'${path.basename(created)}'`], ['outside', outside, "require('path').join('..','out'+'side.txt')"]]) {
+          if (kind !== 'inside-new') await fs.writeFile(target, 'original');
+          const changed = async () => (await fs.readFile(target, 'utf8').catch(error => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          })) === 'changed';
           try {
-            const result = await run(work, mode, `require('fs').writeFileSync(${JSON.stringify(target)}, 'changed')`);
-            results.push({ kind, target, ...result, actualWrite: (await fs.readFile(target, 'utf8')) === 'changed' });
+            // cmd 路径保留原失败用例的相对路径和单引号程序正文；不能用直接启动替代它。
+            const result = await run(work, mode, `require('fs').writeFileSync(${relative},'changed');process.stdout.write('WRITE_DONE')`, invocation);
+            results.push({ kind, target, ...result, actualWrite: await changed() });
           } catch (error) {
-            results.push({ kind, target, error: error.message, actualWrite: (await fs.readFile(target, 'utf8')) === 'changed' });
+            results.push({ kind, target, error: error.message, actualWrite: await changed() });
           }
         }
-        report.observations.push({ phase, mode, before, readiness, results, after: acls() });
+        report.observations.push({ phase, mode, invocation, before, readiness, results, after: acls() });
       }
     }
     const checks = report.observations.filter(item => item.results);
@@ -61,7 +70,7 @@ if (process.platform !== 'win32') {
     const inconclusive = checks.some(item => item.readiness.exitCode !== 0 || !item.readiness.stdout.includes('DYWORKER_PROBE_READY')
       || item.results.some(result => result.error || result.runnerFailure || result.exitCode === null)
       || [...item.before, ...item.after].some(acl => acl.exitCode !== 0)
-      || (item.mode === 'workspace-write' && !item.results.find(result => result.kind === 'inside').actualWrite));
+      || (item.mode === 'workspace-write' && !item.results.find(result => result.kind === 'inside-new').actualWrite));
     report.conclusion = leak ? 'outside-or-read-only-write-observed' : inconclusive ? 'probe-inconclusive' : 'not-reproduced-in-these-fixtures';
     process.exitCode = leak ? 1 : inconclusive ? 2 : 0;
   } catch (error) {
