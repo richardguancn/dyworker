@@ -35,6 +35,7 @@ import { localModelsIpcPlugin } from "./host/plugins/local-models-ipc.mts";
 import { speechIpcPlugin } from "./host/plugins/speech-ipc.mts";
 import { settingsIpcPlugin } from "./host/plugins/settings-ipc.mts";
 import { sessionsIpcPlugin } from "./host/plugins/sessions-ipc.mts";
+import { transferIpcPlugin } from "./host/plugins/transfer-ipc.mts";
 import { appIpcPlugin } from "./host/plugins/app-ipc.mts";
 import { appearanceIpcPlugin } from "./host/plugins/appearance-ipc.mts";
 import { createDockIconController, createWindowIconController } from "./theme-icons.mts";
@@ -2607,6 +2608,8 @@ ctx.plugin(localModelsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(speechIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(settingsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(sessionsIpcPlugin({ trustedHandle, ...shellDeps }));
+// 任务/项目跨机迁移：导出包打包与导入落盘（领域逻辑在 session-transfer.mts）
+ctx.plugin(transferIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(appIpcPlugin({ trustedHandle, ...shellDeps }));
 
 // 外观域的壳层状态桥：外观状态与应用逻辑被设置页/应用菜单/系统主题事件共用，

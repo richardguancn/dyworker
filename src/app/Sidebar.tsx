@@ -1,7 +1,7 @@
 // 任务侧栏：从 App.tsx 抽出的 <aside className="sidebar"> 整段与其中的会话项渲染闭包。
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（selectSession、createTask 等）仍留在 App.tsx，
 // 这里只通过 props 接收状态与回调。
-import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, Moon, MoreHorizontal, Pin, Search, SquarePen, X } from "lucide-react";
+import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, Moon, MoreHorizontal, Package, Pin, Search, SquarePen, Upload, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginSlotView } from "../PluginSlotView";
@@ -64,6 +64,12 @@ export interface SidebarProps {
   unarchiveSession: (id: string) => void;
   deleteSession: (id: string) => void;
   exportSessionMarkdown: (session: SessionRecord) => void;
+  /** 导出任务迁移包（.dyworker）：可导入到另一台电脑的 DYWorker */
+  exportSessionPackage: (session: SessionRecord) => Promise<void>;
+  /** 导出项目迁移包：该工作目录下全部任务 + 项目置顶状态 */
+  exportProjectPackage: (workspacePath: string) => Promise<void>;
+  /** 从迁移包导入任务或项目 */
+  importSessionPackage: () => Promise<void>;
   summarizeSessionToSkill: (session: SessionRecord) => Promise<void>;
   toggleWorkspacePin: (targetWorkspacePath: string) => void;
   openWorkspaceInFileManager: (targetWorkspacePath: string) => Promise<void>;
@@ -85,7 +91,8 @@ export function Sidebar(props: SidebarProps) {
     recentExpanded, showArchived, setShowArchived, sessions,
     runningSessionIds, sleepingSessions, skillSummarySessionId, fileManagerLabel,
     selectSession, createTask, renameSession, togglePin, archiveSession, unarchiveSession,
-    deleteSession, exportSessionMarkdown, summarizeSessionToSkill, toggleWorkspacePin,
+    deleteSession, exportSessionMarkdown, exportSessionPackage, exportProjectPackage, importSessionPackage,
+    summarizeSessionToSkill, toggleWorkspacePin,
     openWorkspaceInFileManager, sessionPendingInboxCount,
   } = props;
 
@@ -151,6 +158,7 @@ export function Sidebar(props: SidebarProps) {
             <button role="menuitem" onClick={() => { setSessionMenuId(null); archiveSession(session.id); }}>归档</button>
           )}
           <button role="menuitem" onClick={() => { setSessionMenuId(null); exportSessionMarkdown(session); }}>导出为 Markdown</button>
+          <button role="menuitem" onClick={() => { setSessionMenuId(null); void exportSessionPackage(session); }}>导出任务文件…</button>
           <button
             role="menuitem"
             disabled={skillSummarySessionId === session.id}
@@ -209,10 +217,20 @@ export function Sidebar(props: SidebarProps) {
 
         <div className="sidebar-scroll">
           <section className="sidebar-section workspace-session-section">
-            <button className="recent-section-toggle" aria-expanded={workspaceGroupOpen.__projects__ !== false}
-              onClick={() => setWorkspaceGroupOpen(current => ({ ...current, __projects__: current.__projects__ === false }))}>
-              <span>项目</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-            </button>
+            <div className="recent-section-toggle-row">
+              <button className="recent-section-toggle" aria-expanded={workspaceGroupOpen.__projects__ !== false}
+                onClick={() => setWorkspaceGroupOpen(current => ({ ...current, __projects__: current.__projects__ === false }))}>
+                <span>项目</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              </button>
+              <button
+                className="icon-button subtle tiny"
+                aria-label="导入任务或项目"
+                title="导入任务或项目（.dyworker 迁移包，可从其他电脑导入）"
+                onClick={() => void importSessionPackage()}
+              >
+                <Upload size={14} />
+              </button>
+            </div>
             {workspaceGroupOpen.__projects__ !== false && <div className="workspace-session-list">
                 {workspaceSessionGroups.workspaces.map((group) => {
                   const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
@@ -269,6 +287,14 @@ export function Sidebar(props: SidebarProps) {
                           <button role="menuitem" onClick={() => void openWorkspaceInFileManager(group.path)}>
                             <FolderOpen size={15} />
                             <span>{fileManagerLabel}</span>
+                          </button>
+                          <button role="menuitem" onClick={() => { setWorkspaceMenuPath(null); void exportProjectPackage(group.path); }}>
+                            <Package size={15} />
+                            <span>导出项目文件…</span>
+                          </button>
+                          <button role="menuitem" onClick={() => { setWorkspaceMenuPath(null); void importSessionPackage(); }}>
+                            <Upload size={15} />
+                            <span>导入任务或项目…</span>
                           </button>
                         </div>
                       )}

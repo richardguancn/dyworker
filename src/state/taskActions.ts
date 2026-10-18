@@ -275,6 +275,74 @@ export const exportSessionMarkdown = (session: SessionRecord) => {
   setNotice("已导出会话为 Markdown 文件");
 };
 
+// 跨机迁移：导出一个任务的完整迁移包（含消息、附件、项目信息），
+// 与「导出为 Markdown」的区别是可在另一台电脑的 DYWorker 里原样导入。
+export const exportSessionPackage = async (session: SessionRecord) => {
+  const { setNotice, setError } = useViewStore.getState();
+  const api = window.dyworker?.exportSessionPackage;
+  if (!api) { setError("当前环境不支持导出迁移包"); return; }
+  try {
+    const result = await api({ kind: "session", sessionId: session.id });
+    if (!result?.ok) { setError(result?.error || "导出失败"); return; }
+    if (result.canceled) return;
+    const skipped = result.skippedAttachments?.length || 0;
+    setNotice(`已导出任务迁移包：${result.path}${skipped ? `（${skipped} 个附件未随包导出）` : ""}`);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "导出失败");
+  }
+};
+
+// 跨机迁移：导出整个项目（该工作目录下的全部任务 + 项目置顶状态）
+export const exportProjectPackage = async (workspacePath: string) => {
+  const { setNotice, setError } = useViewStore.getState();
+  const api = window.dyworker?.exportSessionPackage;
+  if (!api) { setError("当前环境不支持导出迁移包"); return; }
+  const target = String(workspacePath || "").trim();
+  if (!target) { setError("请先选择要导出的项目"); return; }
+  try {
+    const result = await api({ kind: "project", workspacePath: target });
+    if (!result?.ok) { setError(result?.error || "导出失败"); return; }
+    if (result.canceled) return;
+    const skipped = result.skippedAttachments?.length || 0;
+    setNotice(`已导出项目迁移包（${result.sessions || 0} 个任务）：${result.path}${skipped ? `（${skipped} 个附件未随包导出）` : ""}`);
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "导出失败");
+  }
+};
+
+// 跨机迁移：从迁移包导入任务/项目。主进程负责落盘（含附件、目录映射），
+// 这里只把导入的会话并进列表并自动打开，随后由既有保存链路接管。
+export const importSessionPackage = async () => {
+  const { setSessions, setPendingAutoOpenSessionId, setPinnedWorkspacePaths } = useSessionStore.getState();
+  const { setNotice, setError } = useViewStore.getState();
+  const api = window.dyworker?.importSessionPackage;
+  if (!api) { setError("当前环境不支持导入迁移包"); return; }
+  try {
+    const result = await api();
+    if (!result?.ok) { setError(result?.error || "导入失败"); return; }
+    if (result.canceled) return;
+    const imported = Array.isArray(result.sessions) ? result.sessions : [];
+    if (!imported.length) { setNotice("迁移包里没有可导入的任务"); return; }
+    const importedIds = new Set(imported.map((session) => session.id));
+    setSessions((current) => [...imported, ...current.filter((session) => !importedIds.has(session.id))]);
+    if (result.pinnedWorkspace) {
+      setPinnedWorkspacePaths((current) => current.includes(result.pinnedWorkspace!) ? current : [...current, result.pinnedWorkspace!]);
+    }
+    // 走「立即执行」同一套自动打开流程：等会话进列表后完成工作区切换与文件刷新
+    setPendingAutoOpenSessionId(imported[0].id);
+    const parts = [`已导入 ${result.added || imported.length} 个任务`];
+    if (result.renamed) parts.push(`${result.renamed} 个与原任务编号重复已另存`);
+    if (result.attachments) parts.push(`${result.attachments} 个附件`);
+    if (result.skippedAttachments?.length) parts.push(`${result.skippedAttachments.length} 个附件未随包带来`);
+    setNotice(parts.join("，"));
+    if (result.missingWorkspaces?.length) {
+      setError(`以下工作目录在本机不存在，任务已导入但工作目录不可用：${result.missingWorkspaces.join("、")}`);
+    }
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "导入失败");
+  }
+};
+
 // 总结为工作模板：把会话转录发给模型提炼草稿，弹可编辑对话框，确认后写入技能库
 export const summarizeSessionToSkill = async (session: SessionRecord) => {
   const { skillSummarySessionId, setSkillSummarySessionId } = useSessionStore.getState();

@@ -966,6 +966,45 @@ export interface DyworkerBridge {
   }>;
   saveSessions(payload: SessionRecord[] | SessionSavePayload): Promise<{ ok: boolean; error?: string }>;
   savePinnedWorkspaces(paths: string[]): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * 导出任务/项目为迁移包（.dyworker）：kind=session 导出一个任务，
+   * kind=project 导出该工作目录下的全部任务与项目置顶状态。
+   * 附件按预算内联，超预算的只记名单（skippedAttachments）。
+   */
+  exportSessionPackage(payload: {
+    kind: "session" | "project";
+    sessionId?: string;
+    workspacePath?: string;
+    includeAttachments?: boolean;
+  }): Promise<{
+    ok: boolean;
+    canceled?: boolean;
+    path?: string;
+    title?: string;
+    sessions?: number;
+    attachments?: number;
+    skippedAttachments?: Array<{ name: string; reason: string }>;
+    error?: string;
+  }>;
+  /**
+   * 从迁移包导入任务/项目：原目录在本机不存在时主进程会逐个询问落点。
+   * 返回的 sessions 已落盘，渲染端合并进会话列表即可（顺序为导入先后）。
+   */
+  importSessionPackage(): Promise<{
+    ok: boolean;
+    canceled?: boolean;
+    kind?: "session" | "project";
+    sessions?: SessionRecord[];
+    added?: number;
+    renamed?: number;
+    attachments?: number;
+    skippedAttachments?: string[];
+    missingWorkspaces?: string[];
+    pinnedWorkspace?: string;
+    project?: { path: string; title: string; pinned?: boolean } | null;
+    source?: string;
+    error?: string;
+  }>;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(sessionId?: string): Promise<{ canceled: boolean; attachments: Attachment[] }>;
   serializeCommandAttachments(payload: { sessionId: string; grantIds: string[] }): Promise<{ ok: boolean; attachments?: import('./pluginRuntime/inputTriggers').SubmitAttachment[]; error?: string }>;

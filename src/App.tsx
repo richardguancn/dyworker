@@ -53,7 +53,7 @@ import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceI
 import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
 import { pluginPanelPreferences } from "./state/pluginPreferences";
 import { sendMessage, removeQueuedMessage, cancelQueuedMessage, runQueuedMessageNow } from "./state/sendMessageActions";
-import { createTask, forkSession, applyWorkspaceSelection, closeFilePanelTabs, prepareExtensionCreation, handleGoalAction, sessionPendingInboxCount, jumpToConversationTurn, clearWorkspace, exportSessionMarkdown, summarizeSessionToSkill, openAnnotationList, scheduleCloseAnnotationList, toggleTerminal } from "./state/taskActions";
+import { createTask, forkSession, applyWorkspaceSelection, closeFilePanelTabs, prepareExtensionCreation, handleGoalAction, sessionPendingInboxCount, jumpToConversationTurn, clearWorkspace, exportSessionMarkdown, exportSessionPackage, exportProjectPackage, importSessionPackage, summarizeSessionToSkill, openAnnotationList, scheduleCloseAnnotationList, toggleTerminal } from "./state/taskActions";
 import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, selectSessionRef, conversationTurnRefs, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef, manualRunScheduleRef, pendingDebugLogsRef, recentDebugLogsRef, debugLogFlushTimerRef, tracePublishTimerRef, sessionSaveMountedRef, sessionSaveRetryRef, messageRowRefs, conversationSearchInputRef, searchMatchRangesRef, searchScrollKeyRef, appShellRef, panelGeometryRef, panelResizeRef, composerRef, composerPastesRef, annotationsRef, lastActiveIdRef, browserPanelCommandsRef } from "./state/sharedRefs";
 import { saveProviderSettings, checkAppUpdate, openAppUpdateDialog, downloadAppUpdate, installAppUpdate, chooseIdentity, selectApprovalMode, confirmFullAccess, activateModelProfile, ensureComposerModels, switchComposerModel } from "./state/settingsActions";
 import { saveSchedule, toggleSchedule, deleteSchedule, triggerSchedule } from "./state/scheduleActions";
@@ -1913,6 +1913,7 @@ export function App() {
         togglePin={togglePin}
         archiveSession={archiveSession}
         exportSessionMarkdown={exportSessionMarkdown}
+        exportSessionPackage={exportSessionPackage}
         summarizeSessionToSkill={summarizeSessionToSkill}
         gitInfo={gitInfo}
         gitBusy={gitBusy}
@@ -2012,6 +2013,9 @@ export function App() {
         unarchiveSession={unarchiveSession}
         deleteSession={deleteSession}
         exportSessionMarkdown={exportSessionMarkdown}
+        exportSessionPackage={exportSessionPackage}
+        exportProjectPackage={exportProjectPackage}
+        importSessionPackage={importSessionPackage}
         summarizeSessionToSkill={summarizeSessionToSkill}
         toggleWorkspacePin={toggleWorkspacePin}
         openWorkspaceInFileManager={openWorkspaceInFileManager}

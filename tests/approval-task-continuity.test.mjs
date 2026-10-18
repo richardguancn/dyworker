@@ -99,11 +99,11 @@ test('单页服务失败后，其他在途页面结束也不能继续启动新�
   assert.equal(calls, 3);
 });
 
-test('配置示例只交语义审核，真实凭据、混合命令和用户强制确认不获得豁免', () => {
+test('命令中的敏感引用交完整语义审核，直接文件读取仍需人工确认', () => {
   const example = 'python3 -m compileall -q app tests && find . -name ".env.example" | sort';
   assert.equal(findSensitiveReference({ command: example }, 'run_command').reviewable, true);
   for (const command of [example + '; cat .env', 'cat .env.example ~/.ssh/id_ed25519', 'cat .env.example > .env', 'cat .env.production']) {
-    assert.notEqual(findSensitiveReference({ command }, 'run_command').reviewable, true, command);
+    assert.equal(findSensitiveReference({ command }, 'run_command').reviewable, true, command);
   }
   for (const name of ['save_skill', 'update_skill']) assert.equal(findSensitiveReference({ instructions: '后续检查 .env 中配置是否齐全。' }, name), null);
   assert.notEqual(findSensitiveReference({ path: '.env.example' }, 'read_file').reviewable, true);
@@ -184,4 +184,79 @@ test('长任务实际连续完成查找、编译、测试、临时改写和恢�
   assert.ok(saved?.instructions.includes('.env'));
   const output = JSON.stringify(result);
   assert.match(output, /probe passed/); assert.match(output, /Ran 1 test/);
+});
+
+const scopeProbe = `python3 - <<'PY'
+import os
+from dotenv import load_dotenv
+load_dotenv('.env', override=False)
+sc = os.getenv('AMZ_SCOPES', '').strip()
+print(len(sc.split()))
+PY`;
+
+test('截图中的配置检查和混合危险脚本均送完整审核，不按注释或文件名直接放行', async t => {
+  const root = await fixture(t);
+  const variants = [
+    { command: scopeProbe, verdict: 'allow', marker: true },
+    { command: scopeProbe + '\ncat .env', verdict: 'deny', marker: false },
+    { command: '# 仅统计，不涉及凭据\npython3 -c \'print(open(".env").read())\'', verdict: 'deny', marker: false },
+    { command: scopeProbe, verdict: 'ask', marker: false },
+  ];
+  for (const [index, variant] of variants.entries()) {
+    // 实际执行的是可检查的本地配置读取；截图完整脚本单独验证审核输入。
+    const command = variant.command + `\npython3 -c 'open("ran-${index}", "w").write("yes")'`;
+    let asks = 0, reviews = 0, step = 0;
+    const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
+      conversation: [{ role: 'user', content: '检查当前项目配置的公开权限名，不要显示或上传任何密钥。' }],
+      beforeToolExecute: ({ name, args }) => {
+        const hit = findSensitiveReference(args, name);
+        return hit && { action: 'require_approval', reviewable: hit.reviewable, message: hit.label };
+      },
+      requestApproval: async () => { asks++; return false; },
+      fetchImpl: async (_url, options) => {
+        const body = JSON.parse(options.body);
+        if (body.messages[0].content.includes('安全审核助手')) {
+          reviews++;
+          const input = body.messages.at(-1).content;
+          assert.ok(input.includes(command), '审核必须收到完整命令');
+          assert.match(input, /环境变量文件/);
+          return response(JSON.stringify({ decision: variant.verdict, reason: '受控服务返回，用于验证路由和执行边界' }));
+        }
+        return response(step++ === 0 ? toolCall(index, 'run_command', { command }) : { role: 'assistant', content: '结束。' });
+      } });
+    assert.equal(reviews, 1); assert.equal(asks, variant.verdict === 'ask' ? 1 : 0);
+    const exists = await fs.access(path.join(root, `ran-${index}`)).then(() => true, () => false);
+    assert.equal(exists, variant.marker);
+    assert.equal(result.status, 'done');
+  }
+});
+
+for (const [label, create] of [['DSH', createDshApproval], ['机器人', createBotApproval]]) {
+  test(`${label}服务故障不弹人工卡、不伪装成拒绝，后续正常审核仍可恢复`, async t => {
+    const root = await fixture(t); let asks = 0, reviews = 0;
+    const approve = create({ workspace: new Workspace(root), workspacePath: root, approvalMode: 'reviewer', settings,
+      nativeToolNames: ['run_command'], prompt: '检查配置',
+      beforeToolExecute: () => ({ action: 'require_approval', reviewable: true, message: '配置风险提示' }),
+      review: async () => ++reviews === 1 ? { decision: 'ask', unavailable: true, reason: '审核等待超时' } : { decision: 'allow', reason: '范围内' },
+      requestApproval: async () => { asks++; return false; } });
+    const call = () => approve({ name: 'run_command', args: { command: scopeProbe }, signal: new AbortController().signal });
+    await assert.rejects(call, /服务故障.*不是用户拒绝/);
+    assert.equal(await call(), true); assert.equal(asks, 0); assert.equal(reviews, 2);
+  });
+}
+
+test('桌面任务审核服务认证失败不弹人工卡、不执行，工具收到服务故障', async t => {
+  const root = await fixture(t); let asks = 0, step = 0;
+  const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
+    conversation: [{ role: 'user', content: '检查配置' }],
+    requestApproval: async () => { asks++; return true; },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.messages[0].content.includes('安全审核助手')) return { ok: false, status: 401, text: async () => 'unauthorized' };
+      if (step++ === 0) return response(toolCall('failure', 'run_command', { command: 'python3 -c \'open("must-not-run", "w").write("bad")\'' }));
+      assert.match(JSON.stringify(body.messages), /审核服务暂时不可用/);
+      return response({ role: 'assistant', content: '审核服务故障，操作未执行。' });
+    } });
+  assert.equal(asks, 0); assert.equal(result.status, 'done');
+  await assert.rejects(fs.access(path.join(root, 'must-not-run')));
 });

@@ -4382,10 +4382,15 @@ export async function summarizeApprovalImpact({ settings, action = {}, context =
   }
 }
 
+// 服务失败不是用户拒绝或缺少授权，不能转换为逐步人工审批，也不能视为允许。
+export function reviewerUnavailableMessage(reason = "") {
+  return `审核服务暂时不可用，本次操作未执行：${reason}。这是服务故障，不是用户拒绝或缺少授权。不要请求用户逐条批准，不要改写同一操作绕过审核；可以继续其他已获准工作。若该操作是必要步骤，应如实报告审核服务阻塞。`;
+}
+
 const REVIEW_TIMEOUT_MS = 30_000;
 
 // 审核共享一个总时限，覆盖连接、读取正文、断线重试、格式恢复和本地推理。
-// 即使服务没有响应取消，也及时返回人工入口，迟到的允许结论不再生效。
+// 即使服务没有响应取消，也及时返回服务故障，迟到的允许结论不再生效。
 export async function reviewApproval(options = {} as any) {
   const { signal = null, modelTimeoutMs = REVIEW_TIMEOUT_MS } = options;
   const controller = new AbortController();
@@ -4393,7 +4398,7 @@ export async function reviewApproval(options = {} as any) {
   if (signal?.aborted) abort();
   else signal?.addEventListener("abort", abort, { once: true });
   const timeoutMs = Math.min(REVIEW_TIMEOUT_MS, Math.max(1, Number(modelTimeoutMs) || REVIEW_TIMEOUT_MS));
-  const timer = setTimeout(() => controller.abort(new Error("审核等待超时，请人工确认本次操作")), timeoutMs);
+  const timer = setTimeout(() => controller.abort(new Error("审核等待超时，本次操作尚未执行")), timeoutMs);
   let cancel;
   try {
     const settings = options.settings || {};
@@ -4409,7 +4414,7 @@ export async function reviewApproval(options = {} as any) {
       const attempt = async (attemptOptions, budget) => {
         const attemptController = new AbortController();
         const attemptSignal = AbortSignal.any([controller.signal, attemptController.signal]);
-        const attemptTimer = setTimeout(() => attemptController.abort(new Error('审核等待超时，请人工确认本次操作')), budget);
+        const attemptTimer = setTimeout(() => attemptController.abort(new Error('审核等待超时，本次操作尚未执行')), budget);
         let onAbort;
         try {
           return await Promise.race([
@@ -4552,12 +4557,12 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
     return { ...parseReviewerDecision(messageText(retry)), policyHash };
   } catch (error: any) {
     if (!signal?.aborted && isModelTransportError(error)) {
-      return { decision: "ask", reason: "审核助手不可用：连接中断，自动重试后仍未恢复，请人工确认本次操作", unavailable: true, policyHash };
+      return { decision: "ask", reason: "审核助手不可用：连接中断，自动重试后仍未恢复，本次操作尚未执行", unavailable: true, policyHash };
     }
     const status = Number(error?.status);
     const detail = String(error?.message || error);
     const quota = (status === 403 || status === 429) && /quota|usage.limit|insufficient|额度|配额/i.test(detail);
-    return { decision: "ask", reason: quota ? "审核助手不可用：审核服务额度已用完，请人工确认本次操作"
+    return { decision: "ask", reason: quota ? "审核助手不可用：审核服务额度已用完，本次操作尚未执行"
       : status === 401 || status === 403 ? "审核助手不可用：审核服务认证或访问权限失败，请检查审核设置"
       : `审核助手不可用：${detail}`, unavailable: true, policyHash };
   }
@@ -6570,6 +6575,10 @@ export async function runAgent({
               reviewerState.total += 1;
               if (effectiveApprovalMode() !== decisionInput.approvalMode) {
                 approved = await askApproval();
+              } else if (review.unavailable) {
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-unavailable", detail: review.reason });
+                return { message: { role: "tool", tool_call_id: toolCall.id,
+                  content: reviewerUnavailableMessage(review.reason) } };
               } else if (review.decision === "allow") {
                 approved = true;
                 approvalSource = "reviewer";

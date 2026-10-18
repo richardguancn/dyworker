@@ -368,6 +368,15 @@ body.resizing-panels .app-shell {
   font-weight: 600;
 }
 
+/* 小节标题行：折叠按钮 + 右侧动作（项目区放「导入任务或项目」） */
+.recent-section-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+}
+
 .recent-section-toggle {
   display: inline-flex;
   align-items: center;

@@ -1,4 +1,4 @@
-import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts } from '../../agent.mts';
+import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
 import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition } from '../../approval-context.mts';
 
@@ -50,6 +50,10 @@ export function createDshApproval(options: any) {
             toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
           onUsage: options.onUsage });
         signal.throwIfAborted();
+        if (review.unavailable) {
+          audit('reviewer-unavailable', review.reason);
+          throw new Error(reviewerUnavailableMessage(review.reason));
+        }
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
         if (currentMode() !== reviewMode) {
           const updated = evaluate();

@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   getInitialState: () => ipcRenderer.invoke("app:initial-state"),
   saveSessions: (sessions) => ipcRenderer.invoke("sessions:save", sessions),
+  // 任务/项目跨机迁移：导出为 .dyworker 迁移包 / 从迁移包导入
+  exportSessionPackage: (payload) => ipcRenderer.invoke("sessions:export-package", payload),
+  importSessionPackage: () => ipcRenderer.invoke("sessions:import-package"),
   savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   chooseAttachments: (sessionId) => ipcRenderer.invoke("attachments:choose", sessionId),

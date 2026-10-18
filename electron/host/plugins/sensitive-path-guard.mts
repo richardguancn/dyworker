@@ -1,16 +1,7 @@
-// 策略插件样板：敏感凭据路径守卫（tools/pre-execute 的第一个真实消费者）。
-//
-// 接缝语义（见 host/events.mts 与 docs/architecture.md）：
-//   - 事件在 runAgent 判定「用户/工作区钩子没有结论」之后才被咨询；
-//   - 事件只能**追加限制**：这里对敏感文件强制审批，不能把已被钩子拦下的操作放行；
-//   - 返回 { action: "require_approval" } 会经 hookRequiresApproval 走「ask」分支，
-//     该分支在 evaluateApproval 里压过常驻允许规则与 full-access 放行
-//     （agent.mts：hookRequiresApproval 判定在 full-access 之前）。
-//
-// 为什么值得默认开启：凭据类文件（私钥、.env、凭据库）一旦被读取，内容就进了模型
-// 上下文与转录留痕，事后无法回收。审批是「收紧」而不是「阻断」——用户点一次即可继续。
-//
-// 本文件不依赖 electron，node --test 直测。
+// 敏感路径是风险证据，不等于秘密已被读取或外发。
+// 文件工具会将内容直接交给模型，保留人工入口；命令可能只在进程内使用
+// 配置，必须将完整命令和风险证据交给审核助手判断。reviewable 不是放行，
+// 只在用户选择「替我审批」时允许自动审核；用户钩子和 block 仍优先。
 import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +20,6 @@ const SENSITIVE_PATH_PATTERNS = [
 const FILE_TARGET_TOOLS = new Set(["read_file", "view_image", "write_file", "edit_file", "append_file", "delete_file", "make_directory",
   "list_files", "find_files", "search_in_files", "copy_file", "move_file", "scan_sensitive_info",
   "check_official_document", "export_word_document", "export_excel_workbook"]);
-const PUBLIC_SSH_REFERENCE = /(^|[\s"'=;|(&])(?:[^\s"'<>;|&()]*[\\/])?\.ssh[\\/](?:[^\s/\\]+\.pub|authorized_keys|known_hosts)(?=$|[\s"'<>;|&()])/g;
 function sensitiveMatch(text: string) {
   for (const token of [text, ...text.split(/[\s"'=<>;|&()]+/)]) {
     for (const { re, label } of SENSITIVE_PATH_PATTERNS) if (re.test(token)) return label;
@@ -67,13 +57,8 @@ export function findSensitiveReference(args, name = "") {
       ? text.replace(new RegExp(`(^|[\\s\\"'=;|(&])(?:[^\\s\\"'<>;|&()]*[\\\\/])?\\.ssh[\\\\/]${publicFiles}(?=$|[\\s\\"'<>;|&()])`, "g"), "$1[公开 SSH 文件]") : text;
     const label = sensitiveMatch(checked);
     if (!label) continue;
-    // 复合/远程命令中只出现公共 SSH 文件时不直接放行，也不把它断言成私钥读取。
-    // 审核助手须结合当前脚本、用户任务与实际读写方向判断；出现任何私钥/目录/
-    // 其他秘密引用仍强制人工确认，不能被同一命令中的公钥引用掩盖。
-    if (name === "run_command" && !sensitiveMatch(text.replace(PUBLIC_SSH_REFERENCE, "$1[公共 SSH 文件]"))) {
-      publicReference = { label: "SSH 公共文件（需核对读写用途）", sample: text.slice(0, 200), reviewable: true };
-    } else if (name === "run_command" && !sensitiveMatch(text.replace(/(^|[\s"'=;|(&])(?:[^\s"'<>;|&()]*[\\/])?\.env\.example(?=$|[\s"'<>;|&()])/g, "$1[配置示例]"))) {
-      publicReference = { label: "配置示例引用（需核对实际访问与数据流）", sample: text.slice(0, 200), reviewable: true };
+    if (name === "run_command") {
+      publicReference = { label, sample: text.slice(0, 200), reviewable: true };
     } else return { label, sample: text.slice(0, 200) };
   }
   return publicReference || (metadata?.facts.length ? { label: "受限元信息检查", sample: metadata.facts.join("；"), reviewable: true } : null);
@@ -91,7 +76,7 @@ export function sensitivePathGuardPlugin(options: any = {}) {
         return {
           action,
           reviewable: action === "require_approval" && hit.reviewable === true,
-          message: `「${name}」涉及受保护的文件（${hit.label}）：${hit.sample}。请核对本次访问的用途与影响。`,
+          message: `「${name}」涉及受保护的文件（${hit.label}）：${hit.sample}。这是路径风险提示，不代表已读取或泄露秘密。请结合完整操作核对：配置是否仅在进程内正常使用、输出哪些值、发送给谁、是否符合用户任务。不得仅凭注释或文件名放行。`,
         };
       });
     },

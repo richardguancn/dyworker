@@ -63,9 +63,9 @@ test('保存说明只检查真正写入位置，读取私钥、修改授权公�
   ]) {
     const hit = findSensitiveReference(args, name);
     assert.ok(hit, `${name} ${JSON.stringify(args)}`);
-    assert.notEqual(hit.reviewable, true, '真正的私钥与直接修改不能改成交自动审核');
+    assert.equal(hit.reviewable === true, name === 'run_command', '命令交语义审核；文件读取与修改仍需人工确认');
   }
-  assert.notEqual(findSensitiveReference({ command: 'python3 ssh_run.py "cat /root/.ssh/authorized_keys /root/.ssh/id_ed25519"' }, 'run_command').reviewable, true);
+  assert.equal(findSensitiveReference({ command: 'python3 ssh_run.py "cat /root/.ssh/authorized_keys /root/.ssh/id_ed25519"' }, 'run_command').reviewable, true);
   const root = await fixture(t);
   await fs.mkdir(path.join(root, '.ssh'));
   await fs.writeFile(path.join(root, '.ssh/id_ed25519'), 'fake private material');

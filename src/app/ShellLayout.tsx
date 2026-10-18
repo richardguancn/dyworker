@@ -33,6 +33,7 @@ export interface ShellChromeProps {
   togglePin: (id: string) => void;
   archiveSession: (id: string) => void;
   exportSessionMarkdown: (session: SessionRecord) => void;
+  exportSessionPackage: (session: SessionRecord) => Promise<void>;
   summarizeSessionToSkill: (session: SessionRecord) => Promise<void>;
   gitInfo: GitBranchesInfo | null;
   gitBusy: "" | "switch" | "commit" | "commit-push" | "push" | "generate";
@@ -105,6 +106,7 @@ export function ShellChrome(props: ShellChromeProps) {
     togglePin,
     archiveSession,
     exportSessionMarkdown,
+    exportSessionPackage,
     summarizeSessionToSkill,
     gitInfo,
     gitBusy,
@@ -172,6 +174,7 @@ export function ShellChrome(props: ShellChromeProps) {
           </button>
           <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
           <button role="menuitem" onClick={() => { setTopMenuOpen(false); exportSessionMarkdown(activeSession); }}>导出为 Markdown</button>
+          <button role="menuitem" onClick={() => { setTopMenuOpen(false); void exportSessionPackage(activeSession); }}>导出任务文件…</button>
           <button
             role="menuitem"
             disabled={skillSummarySessionId === activeSession.id}

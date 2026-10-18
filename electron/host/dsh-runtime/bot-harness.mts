@@ -12,7 +12,7 @@ import {
   exportWordDocument, exportExcelWorkbook, calculateWorkdays, currentDatetime,
   webSearch, govSearch, fetchPublicPage, runOcrFile,
   builtinHooks, evaluateHooks, evaluateApproval, externalPathsForTool,
-  isReviewerEligible, isReviewerProtectedPath, reviewApproval, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
+  isReviewerEligible, isReviewerProtectedPath, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
@@ -92,6 +92,10 @@ export function createBotApproval(options: any) {
             toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
           context, onUsage: options.onUsage });
         signal?.throwIfAborted();
+        if (review.unavailable) {
+          detail('reviewer-unavailable', review.reason);
+          throw new Error(reviewerUnavailableMessage(review.reason));
+        }
         if (mode() !== reviewMode) {
           const updated = evaluate();
           detail(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断');
