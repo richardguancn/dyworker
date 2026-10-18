@@ -7,7 +7,7 @@ import { CommandAttachmentGrants } from '../electron/host/dsh-runtime/attachment
 import { createOfficialDshContext } from '../electron/host/dsh-runtime/official-context.mts';
 import { ClientPluginHost } from '../src/pluginRuntime/clientHost.ts';
 
-async function temp(t) {const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-command-attachments-')));t.after(()=>fs.rm(dir,{recursive:true,force:true}));return dir;}
+async function temp(t) {const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-command-attachments-')));t.after(()=>fs.rm(dir,{recursive:true,force:true,maxRetries:8,retryDelay:150}));return dir;}
 async function bench(t, accept=true, submit=async()=>({kind:'success'})) {
  const host=new ClientPluginHost({sessionProvider:id=>({id,runtime:'dsh'})});t.after(()=>host.dispose());
  await host.load({name:'attachments-fixture',inject:['inputTriggers'],apply(ctx){ctx.inputTriggers.registerSource({name:'upload',trigger:'/',candidates:async()=>[],onPick:()=>undefined,

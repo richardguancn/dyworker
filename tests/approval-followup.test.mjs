@@ -103,7 +103,9 @@ test('两次格式错误仍转人工，停止后不再发第二次请求', async
 });
 
 test('真实任务的审核格式异常不会直接打扰用户，重新审核后才执行无害操作', async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-review-format-flow-'));
+  // realpath：Windows 的 os.tmpdir() 是 8.3 短路径（RUNNER~1），沙箱授权按规范化后的
+  // 长路径建立，cwd 用短路径会导致命令内写入被授权检查误判拒绝。
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-review-format-flow-')));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   let step = 0, reviews = 0, asks = 0;
   const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
