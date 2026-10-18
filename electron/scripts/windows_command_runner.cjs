@@ -10,8 +10,12 @@ if (process.platform !== 'win32') {
     const encoded = process.argv[2];
     if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('missing or invalid command');
     const command = Buffer.from(encoded, 'base64').toString('utf8');
+    // 只让外层 Node 引导程序使用启动标记，实际命令恢复调用前的环境。
+    const env = { ...process.env };
+    if (process.argv[3]) env.ELECTRON_RUN_AS_NODE = process.argv[3];
+    else delete env.ELECTRON_RUN_AS_NODE;
     const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${command}"`], {
-      windowsVerbatimArguments: true, windowsHide: true, stdio: 'inherit',
+      windowsVerbatimArguments: true, windowsHide: true, stdio: 'inherit', env,
     });
     child.on('error', error => {
       process.stderr.write(`dyworker-command-runner: ${error.message}\n`);

@@ -25,7 +25,7 @@
 
 新增 `electron/scripts/windows_command_runner.cjs`。外层 runner 启动 Node；命令通过 base64 参数无损传递给该程序，再按 Node 自身对 `cmd /d /s /c` 的启动约定执行：整体外层引号配合 `windowsVerbatimArguments`。新增程序和其启动的命令继续继承官方受限令牌与 Job；没有把保护失败改为 host 重试。完全访问路径也使用同一正确的命令传递方式，权限模式仍由原审批结果决定。
 
-Electron 场景为这些 Node 进程设置 `ELECTRON_RUN_AS_NODE=1`。构建复制并自检新增文件，Windows 打包将其解包到与启动路径对应的位置。这些构建设置已检查，不代表已安装应用完成实机验收。
+Electron 场景为这些 Node 引导进程设置 `ELECTRON_RUN_AS_NODE=1`；实际命令恢复调用前的该项环境设置，避免引导标记影响命令启动的其他 Electron 应用。构建复制并自检新增文件，Windows 打包将其解包到与启动路径对应的位置。这些构建设置已检查，不代表已安装应用完成实机验收。
 
 `prepareCommandExecution` 检查保护程度和诊断规则；仅在平台、实际 runner 路径及诊断约定符合当前固定官方 Windows 后端时，明确接受其 `partial` 能力。该标记继续进入前台结果、后台状态及范围说明，不伪装成 `full`。未知部分保护、缺失依据和非法模式仍在启动前拒绝；没有扩大工作区路径或增加长期 host 授权。
 

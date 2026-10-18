@@ -25,7 +25,7 @@ export async function prepareCommandExecution(command: string, { workspacePath, 
   const windows = process.platform === 'win32';
   const bridge = fileURLToPath(new URL('./scripts/windows_command_runner.cjs', import.meta.url))
     .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
-  const argv = windows ? [process.execPath, bridge, Buffer.from(String(command), 'utf8').toString('base64')]
+  const argv = windows ? [process.execPath, bridge, Buffer.from(String(command), 'utf8').toString('base64'), process.env.ELECTRON_RUN_AS_NODE || '']
     : ['/bin/bash', '-lc', String(command)];
   const env = windows ? { ELECTRON_RUN_AS_NODE: '1' } : undefined;
   const bridgeFailure = { allowedExitCodes: [127], fatalSignatures: ['dyworker-command-runner: '] };

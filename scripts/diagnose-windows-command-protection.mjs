@@ -40,7 +40,7 @@ if (process.platform !== 'win32') {
       const command = `node -e "${program}"`;
       const argv = invocation === 'cmd-shell' ? ['cmd.exe', '/d', '/s', '/c', command]
         : invocation === 'node-shell-bridge' ? [process.execPath,
-          fileURLToPath(new URL('../electron/scripts/windows_command_runner.cjs', import.meta.url)), Buffer.from(command).toString('base64')]
+          fileURLToPath(new URL('../electron/scripts/windows_command_runner.cjs', import.meta.url)), Buffer.from(command).toString('base64'), process.env.ELECTRON_RUN_AS_NODE || '']
         : [process.execPath, '-e', program];
       const confined = await ctx.sandbox.confine(argv, { workspaceRoot, mode });
       const outcome = execute(confined.argv, workspaceRoot);

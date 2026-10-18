@@ -30,6 +30,9 @@ test('Windows 前台命令真实执行：引号、空格、中文、复合命令
   const failed = await workspace.runCommand(`node -e "process.exitCode=7"`);
   assert.equal(failed.ok, false); assert.match(failed.output, /退出码 7/);
   assert.equal(failed.protection.state, 'ready');
+  const environment = await workspace.runCommand(`node -e "process.stdout.write('BOOTSTRAP_FLAG='+String(process.env.ELECTRON_RUN_AS_NODE||'unset'))"`);
+  assert.equal(environment.ok, true, JSON.stringify(environment));
+  assert.ok(environment.output.includes('BOOTSTRAP_FLAG=' + (process.env.ELECTRON_RUN_AS_NODE || 'unset')));
 });
 
 test('Windows 默认拒绝上级写入，明确单次权限真实生效且不延续，只读命令仍不能写入', { skip: process.platform !== 'win32' }, async t => {
