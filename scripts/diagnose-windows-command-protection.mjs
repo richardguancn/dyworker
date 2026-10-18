@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 if (process.platform !== 'win32') {
   console.error('此诊断必须在真实 Windows 上运行；未创建目录或修改权限。');
@@ -21,6 +22,14 @@ if (process.platform !== 'win32') {
     const { default: LocalSandbox } = await import('@deepseek-ai/dsh-sandbox-local');
     const { classifyRunnerFailure } = await import('@deepseek-ai/dsh-sandbox');
     root = await fs.realpath(await fs.mkdtemp(path.join(process.cwd(), '.dyw-windows-acl-probe-')));
+    // CI checkout 目录只有 Administrators 写权限；LUA 令牌会去掉该组。
+    // 给本次自建夹具的同一用户授予 Modify，确保下面测到的是限制侧而非普通用户侧拒绝。
+    const identity = execute(['whoami.exe', '/user', '/fo', 'csv', '/nh']);
+    const sid = identity.stdout.match(/S-1-5-[0-9-]+/)?.[0];
+    if (identity.exitCode !== 0 || !sid) throw new Error('无法确认诊断夹具所属用户');
+    report.fixturePrincipal = sid;
+    report.fixtureAclPreparation = execute(['icacls.exe', root, '/grant', `*${sid}:(OI)(CI)M`]);
+    if (report.fixtureAclPreparation.exitCode !== 0) throw new Error('无法为诊断夹具建立普通用户写权限');
     const work = path.join(root, 'work');
     await fs.mkdir(work);
     const inside = path.join(work, 'inside.txt'), outside = path.join(root, 'outside.txt');
@@ -28,7 +37,10 @@ if (process.platform !== 'win32') {
     ctx = new Context();
     await ctx.plugin(LocalSandbox); await ctx.fiber.await();
     const run = async (workspaceRoot, mode, program, invocation = 'node-direct') => {
-      const argv = invocation === 'cmd-shell' ? ['cmd.exe', '/d', '/s', '/c', `node -e "${program}"`]
+      const command = `node -e "${program}"`;
+      const argv = invocation === 'cmd-shell' ? ['cmd.exe', '/d', '/s', '/c', command]
+        : invocation === 'node-shell-bridge' ? [process.execPath,
+          fileURLToPath(new URL('../electron/scripts/windows_command_runner.cjs', import.meta.url)), Buffer.from(command).toString('base64')]
         : [process.execPath, '-e', program];
       const confined = await ctx.sandbox.confine(argv, { workspaceRoot, mode });
       const outcome = execute(confined.argv, workspaceRoot);
@@ -37,12 +49,15 @@ if (process.platform !== 'win32') {
         runnerFailure: classifyRunnerFailure(outcome.exitCode, outcome.stderr, confined.runnerFailureRules) };
     };
     const acls = () => [root, work, inside, outside].map(target => ({ target, ...execute(['icacls.exe', target]) }));
+    const exactLegacy = await run(work, 'workspace-write', "require('fs').writeFileSync(require('path').join('..','out'+'side.txt'),'changed')", 'cmd-shell');
+    report.exactLegacyCommand = { ...exactLegacy, actualWrite: (await fs.readFile(outside, 'utf8')) === 'changed' };
+    await fs.writeFile(outside, 'original');
     for (const phase of ['fresh-workspace', 'after-broader-workspace-grant']) {
       if (phase === 'after-broader-workspace-grant') {
         // 模拟较早把父目录作为工作区运行过的情形，授权范围仅限本次自建夹具。
         report.observations.push({ phase: 'broader-grant', result: await run(root, 'workspace-write', 'process.exitCode=0') });
       }
-      for (const mode of ['workspace-write', 'read-only']) for (const invocation of ['node-direct', 'cmd-shell']) {
+      for (const mode of ['workspace-write', 'read-only']) for (const invocation of ['node-direct', 'cmd-shell', 'node-shell-bridge']) {
         const before = acls();
         const readiness = await run(work, mode, "process.stdout.write('DYWORKER_PROBE_READY')", invocation);
         const results = [];

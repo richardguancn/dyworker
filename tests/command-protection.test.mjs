@@ -173,8 +173,8 @@ for (const scenario of ['passthrough-leak', 'runner-unavailable']) {
       const require = createRequire(import.meta.url);
       const childProcess = require('node:child_process');
       const originalSpawn = childProcess.spawnSync;
-      childProcess.spawnSync = (command, ...args) => command === 'icacls.exe'
-        ? { status: 0, signal: null, stdout: 'SIMULATED_ACL_METADATA', stderr: '' }
+      childProcess.spawnSync = (command, ...args) => command === 'icacls.exe' || command === 'whoami.exe'
+        ? { status: 0, signal: null, stdout: command === 'whoami.exe' ? 'S-1-5-21-12345' : 'SIMULATED_ACL_METADATA', stderr: '' }
         : originalSpawn(command, ...args);
       syncBuiltinESMExports();
       registerHooks({ load(url, context, next) {
@@ -188,7 +188,7 @@ for (const scenario of ['passthrough-leak', 'runner-unavailable']) {
     const report = JSON.parse(result.stdout);
     assert.equal(result.status, scenario === 'passthrough-leak' ? 1 : 2, result.stderr + result.stdout);
     assert.equal(report.conclusion, scenario === 'passthrough-leak' ? 'outside-or-read-only-write-observed' : 'probe-inconclusive');
-    assert.equal(report.observations.filter(item => item.results).length, 8);
+    assert.equal(report.observations.filter(item => item.results).length, 12);
     assert.equal(report.cleanupError, undefined);
     assert.deepEqual(await fs.readdir(root), ['diagnostic-fixture.mjs']);
   });
