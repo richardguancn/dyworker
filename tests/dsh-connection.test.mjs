@@ -143,6 +143,19 @@ test('真实运行环境关闭、异常退出和手动重连后，原父子引�
   await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot);
   await assertActualHistory(host.dshRuntime,'connection-a',root,rootAddress,oldRoot);
   assert.equal(root.binding,identities[0]);assert.equal(child.binding,identities[1]);assert.equal(requests,before);assert.equal(signalB.aborted,false);
+  rootSnapshot=root.binding.eventSource.getSnapshot();childSnapshot=child.binding.eventSource.getSnapshot();
+  generation=a.connection.generation.getSnapshot().id;
+  host.dshRuntime.sessions.get('connection-a').runtime.child.emit('error',Object.assign(new Error('模拟读取期间通讯断开'),{code:'EPIPE'}));
+  await until(()=>a.connection.generation.getSnapshot()?.id>generation);
+  await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot,()=>({
+    stage:'after-epipe',generation:a.connection.generation.getSnapshot()?.id,state:a.connection.state.getSnapshot(),
+    rootChanged:root.binding.eventSource.getSnapshot()!==rootSnapshot,childChanged:child.binding.eventSource.getSnapshot()!==childSnapshot,
+    controlError:a.errors.getSnapshot(),operations,
+  }));
+  await assertActualHistory(host.dshRuntime,'connection-a',root,rootAddress,oldRoot);
+  await assertActualHistory(host.dshRuntime,'connection-a',child,childAddress,oldChild);
+  assert.equal(a.errors.getSnapshot(),null,'通讯恢复后控制流不能遗留永久错误');
+  assert.equal(requests,before,'通讯恢复不能重新执行模型任务');assert.equal(signalB.aborted,false);
   const hooksEntered=deferred(),releaseHooks=deferred(),newRunEntered=deferred(),finishNewRun=deferred();
   const agentResolvers=host.agent.resolvers,previousHooks=agentResolvers.readHooks;
   agentResolvers.readHooks=async()=>{hooksEntered.resolve();await releaseHooks.promise;return [];};

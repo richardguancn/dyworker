@@ -86,12 +86,47 @@ test('官方进程启动后 IPC 中断会拒绝在途请求并停止，关闭时
   const { runtime } = await setup(t);
   await runtime.start();
   const pending = runtime.request('snapshot');
-  const rejected = assert.rejects(pending, /模拟通讯已关闭/);
+  const rejected = assert.rejects(pending, error => {
+    assert.equal(error.code, 'dyworker/history-carrier-lost', '管道断开必须能被历史读取层识别为可恢复的连接丢失');
+    assert.match(error.message, /模拟通讯已关闭/);
+    assert.equal(error.details.transportCode, 'EPIPE');
+    return true;
+  });
   runtime.child.emit('error', Object.assign(new Error('模拟通讯已关闭'), { code: 'EPIPE' }));
   await rejected; await runtime.stop();
   assert.equal(runtime.child.connected, false);
   assert.equal(runtime.pending.size, 0);
   await runtime.close();
+});
+
+test('请求发送时通讯同步关闭同样标记载体丢失，并清除请求及停止进程', async t => {
+  const { runtime } = await setup(t);
+  await runtime.start();
+  const send = runtime.child.send.bind(runtime.child);
+  runtime.child.send = () => {
+    runtime.child.send = send;
+    throw Object.assign(new Error('模拟发送期间通讯关闭'), { code: 'ERR_IPC_CHANNEL_CLOSED' });
+  };
+  await assert.rejects(runtime.request('snapshot'), error => {
+    assert.equal(error.code, 'dyworker/history-carrier-lost');
+    assert.equal(error.details.transportCode, 'ERR_IPC_CHANNEL_CLOSED');
+    assert.match(error.message, /模拟发送期间通讯关闭/);
+    return true;
+  });
+  assert.equal(runtime.pending.size, 0);
+  await runtime.stop();
+  assert.equal(runtime.child.connected, false);
+});
+
+test('非通讯错误保持原始原因，不被伪装成可恢复的连接丢失', async t => {
+  const { runtime } = await setup(t);
+  await runtime.start();
+  const original = Object.assign(new Error('模拟权限不足'), { code: 'EACCES' });
+  const pending = runtime.request('snapshot');
+  const rejected = assert.rejects(pending, error => error === original);
+  runtime.child.emit('error', original);
+  await rejected; await runtime.stop();
+  assert.equal(runtime.pending.size, 0);
 });
 
 test('官方任务动态增删工具：后续模型请求使用新的实际声明，移除工具不再提供',async t=>{
