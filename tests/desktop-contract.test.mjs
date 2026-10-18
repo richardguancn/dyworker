@@ -1677,10 +1677,17 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(manager, /reconcile/);
   assert.match(manager, /adapter\.sendTyping/);
 
-  // 4. 主进程接线:渠道任务引擎、全局忙碌守卫、决议共用入口、状态广播、生命周期
+  // 4. 主进程接线:渠道任务引擎、工作区维度的忙碌守卫、决议共用入口、状态广播、生命周期
   assert.match(main, /from "\.\/channels\/manager\.mts"/);
   assert.match(main, /async function runChannelTask/);
-  assert.match(main, /activeAgents\.size \|\| ctx\.scheduler\.running \|\| runningChannelTaskCount > 0/);
+  // 判忙只看同一工作区：不同工作区的桌面/定时任务不再挡住渠道消息
+  assert.match(main, /from "\.\/workspace-busy\.mts"/);
+  assert.match(main, /function workspaceBlockers\(workspacePath, ignoreSessionId = ""\)/);
+  assert.match(main, /if \(!blockers\.length\) break;/);
+  assert.ok(
+    !/activeAgents\.size \|\| ctx\.scheduler\.running \|\| runningChannelTaskCount > 0/.test(main),
+    "渠道任务不应再等整机空闲（任何工作区的任务都挡住它）",
+  );
   assert.match(main, /ctx\.inbox\.resolve\(/);
   // channels:get-status 已拆到 host/plugins/channels-ipc.mts（inject: ["channelManager"]）
   const channelsIpcSource = readSource(new URL("../electron/host/plugins/channels-ipc.mts", import.meta.url));

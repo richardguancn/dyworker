@@ -98,7 +98,8 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   assert.match(mainCode, /isSessionBusy: \(sessionId\) => isSessionBusy\(sessionId\)/);
   assert.match(mainCode, /const isSessionBusy = \(sessionId\) => activeAgents\.has\(String\(sessionId\)\) \|\| wakeRuns\.has\(String\(sessionId\)\)/);
   // 续跑登记占用 / 收尾释放并推进队列（唤醒续跑不走 executeAgentRun 的 finally）
-  assert.match(mainCode, /wakeRuns\.set\(wakeSessionId, \{ runId: wakeRunId, abort: wakeAbort \}\)/);
+  // 续跑占用同时登记工作区与类型，供渠道任务按「同一工作区」判忙
+  assert.match(mainCode, /wakeRuns\.set\(wakeSessionId, \{[\s\S]*?runId: wakeRunId, abort: wakeAbort[\s\S]*?workspacePath: String\(wake\?\.workspacePath/);
   assert.match(mainCode, /wakeRuns\.delete\(wakeSessionId\);[\s\S]*?drainSessionQueue\(wakeSessionId\)/);
   // agent:send 必须复用同一份忙判定（否则队列语义与主进程不一致）
   const agentIpcSource = readFileSync(new URL("../electron/host/plugins/agent-ipc.mts", import.meta.url), "utf8");

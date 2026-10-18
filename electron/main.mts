@@ -79,6 +79,7 @@ import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMar
 import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mts";
 import { importBrowserData, listImportableBrowsers } from "./browser-import.mts";
 import { SessionQueue } from "./session-queue.mts";
+import { findWorkspaceBlockers } from "./workspace-busy.mts";
 import { enforceDirTotalSize, halveFileIfOversized } from "./log-rotation.mts";
 import { DEFAULT_UPDATE_URL, createUpdaterController } from "./app-updater.mts";
 import { createBackgroundTasksManager } from "./background-tasks.mts";
@@ -2141,7 +2142,10 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
   // 占用判定同样覆盖唤醒续跑：续跑期间入队的消息只能排队，不能起并发 run
   if (isSessionBusy(sessionId)) return { ok: false, error: "这个任务还在执行，请先停止或等待完成" };
   const abortController = new AbortController();
-  const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController, sender };
+  // workspacePath 让渠道任务能按「同一工作区」判忙（见 workspaceBlockers），
+  // 不同工作区的任务不再互相阻塞。
+  const agentState = { cancelled: false, pending: new Map(), sessionId, runId, abortController, sender,
+    workspacePath: String(payload?.workspacePath || "") };
   // 统一轨迹事件流（trace-console）：本 run 内所有 trace 记录先攒在内存，
   // 运行中分批追加到 userData/traces/<sessionId>.jsonl（append-only，可回放）
   const traceDir = path.join(app.getPath("userData"), "traces");
@@ -2260,6 +2264,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     const settings = payload?.settings || {};
     assertDshModelSettings(payload?.runtime ?? ctx.sessions.get(sessionId)?.runtime, settings);
     const workspacePath = String(payload?.workspacePath || "").trim();
+    agentState.workspacePath = workspacePath;
     const conversation = Array.isArray(payload?.messages) ? payload.messages : [];
     const latestUserText = String([...conversation].reverse().find((message) => message?.role === "user")?.content || "");
     const explicitMemories = extractExplicitMemoryInstructions(latestUserText);
@@ -2806,7 +2811,11 @@ async function resumeWake(wake, options: any = {}) {
   // runId 一并下发给渲染端，让运行中的续跑也能被 ESC/停止按钮中止。
   const wakeRunId = crypto.randomUUID();
   const wakeAbort = new AbortController();
-  if (wakeSessionId) wakeRuns.set(wakeSessionId, { runId: wakeRunId, abort: wakeAbort });
+  // workspacePath 供渠道任务按工作区判忙；取不到时视为未知，不参与互斥
+  if (wakeSessionId) wakeRuns.set(wakeSessionId, {
+    runId: wakeRunId, abort: wakeAbort, kind: "续跑任务",
+    workspacePath: String(wake?.workspacePath || ctx.sessions.get(wakeSessionId)?.workspacePath || ""),
+  });
   try {
     // 状态广播放在 try 内：任何后续异常都必须走 finally 释放占用，否则这个会话会被永久锁死
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3096,7 +3105,8 @@ async function runScheduledTask(record, meta) {
   // 实时转发的运行标识 + 会话标题：与渠道运行同一套信封（用 scheduleRun 打标区分）
   const scheduleRunId = scheduleSessionId;
   const scheduleAbort = new AbortController();
-  entryRuns.set(scheduleSessionId,{runId:scheduleRunId,abort:scheduleAbort});
+  entryRuns.set(scheduleSessionId,{runId:scheduleRunId,abort:scheduleAbort,kind:"定时任务",
+    workspacePath:String(record.workspacePath || "")});
   const scheduleTitle = `计划：${String(record.name || "未命名").slice(0, 24)}`;
   const scheduleStartedAt = new Date().toISOString();
   const collector = createTranscriptCollector({runId:scheduleRunId});
@@ -3245,12 +3255,12 @@ async function runScheduledTask(record, meta) {
 
 
 // ---- IM 消息渠道(QQ 官方机器人 / 微信 ClawBot)----
-// IM 消息 → 渠道任务(与定时任务同构):串行队列 + 全局忙碌守卫,审批/提问同时进收件箱与 IM。
-// 渠道任务全局占用用计数而非布尔：多个聊天队列在全局空闲时可能先后放行，
-// 一个任务结束时不能把仍执行中的其他渠道任务误判为空闲（否则新消息会绕过守卫并发执行）。
+// IM 消息 → 渠道任务(与定时任务同构):串行队列 + 同一工作区忙碌守卫,审批/提问同时进收件箱与 IM。
+// 渠道任务占用用计数而非布尔：多个聊天队列可能先后放行，
+// 一个任务结束时不能把仍执行中的其他渠道任务误判为空闲。
 let runningChannelTaskCount = 0;
-// 渠道任务的按聊天中止:「停止」指令把 chatKey 放进 aborts,等待全局空闲的循环与 runAgent 的 isCancelled 都认它
-const channelTaskKeys = new Set(); // 等待全局空闲中 + 执行中的渠道任务 chatKey
+// 渠道任务的按聊天中止:「停止」指令把 chatKey 放进 aborts,等待工作区空闲的循环与 runAgent 的 isCancelled 都认它
+const channelTaskKeys = new Set(); // 等待工作区空闲中 + 执行中的渠道任务 chatKey
 const channelTaskAborts = new Set(); // 收到「停止」的 chatKey
 
 async function readChannelChats() {
@@ -3345,7 +3355,7 @@ ctx.plugin(channelsPlugin(() => createChannelManager({
   onWechatSessionExpired: clearWechatCredentials,
   defaultWorkspace: defaultChannelWorkspace,
   onDebug: (payload) => channelDebug("渠道入站", payload),
-  // 「停止」:中止该聊天执行中/等待全局空闲的任务,并把挂起的审批/提问按取消决议
+  // 「停止」:中止该聊天执行中/等待工作区空闲的任务,并把挂起的审批/提问按取消决议
   onStopChat: async ({ channel, key, pending }) => {
     if (pending?.itemId) {
       const via = CHANNEL_LABELS[channel] || channel;
@@ -3356,18 +3366,18 @@ ctx.plugin(channelsPlugin(() => createChannelManager({
     for (const run of entryRuns.values()) if (run.chatKey===key) run.abort.abort();
     return true;
   },
-  // 排队提示附带当前阻塞原因,让用户知道在等什么
-  queueWaitHint: () => {
-    const hint = activeAgents.size
-      ? "电脑端有任务正在执行"
-      : ctx.scheduler.running
-        ? "有定时/挂起任务正在执行"
-        : runningChannelTaskCount > 0
-          ? "上一个渠道任务还在执行（可能在等待审批）"
-          : "";
-    // 排队提示出现时记录全局状态：如果三个占用标志都为空却仍在排队，
-    // 说明队列本身没有前进，这是排查“排队后不执行”的关键证据。
+  // 排队提示附带当前阻塞原因,让用户知道在等什么。
+  // 只有同一工作区的任务才会阻塞渠道任务，别的工作区的桌面任务/定时任务不算。
+  queueWaitHint: ({ workspacePath = "" } = {} as any) => {
+    const blockers = workspaceBlockers(workspacePath);
+    const hint = blockers.length
+      ? `同一工作目录下的${blockers[0].kind}正在执行（可能在等待审批）`
+      : "";
+    // 排队提示出现时记录判忙依据：没有同工作区占用却仍在排队，说明队列本身没前进，
+    // 这是排查"排队后不执行"的关键证据。
     channelDebug("排队提示", {
+      workspacePath,
+      blockers: blockers.map((item) => item.kind),
       activeAgents: activeAgents.size,
       runningScheduledTask: ctx.scheduler.running,
       runningChannelTaskCount,
@@ -3566,9 +3576,29 @@ const CHANNEL_STREAM_EVENT_TYPES = new Set([
   "agent-finished",
 ]);
 
-// 渠道消息等待全局空闲的上限：桌面任务/定时任务/其他渠道任务长时间不结束时，
-// 排队消息不能无限堆积（否则用户只会看到“排队数+1”而没有任何任务被执行）。
+// 渠道消息等待同一工作区空闲的上限：同工作区的头部任务长时间不结束时，
+// 排在后面的消息不能无限堆积（否则用户只会看到“排队数+1”而没有任何任务被执行）。
 const CHANNEL_QUEUE_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+// 被同一工作区的任务挡住时，超过这么久就先回一条说明，避免用户无声干等
+const CHANNEL_WAIT_NOTICE_DELAY_MS = 5000;
+
+// 当前所有正在执行的任务（含各自占用的工作区）。三种占用分开登记过，这里汇总成
+// 判忙用的视图：桌面任务在 activeAgents、到点续跑在 wakeRuns、定时/渠道任务在 entryRuns。
+function runningTaskEntries() {
+  const list = [];
+  for (const [sessionId, state] of activeAgents) list.push({ sessionId, workspacePath: state?.workspacePath, kind: "电脑端任务" });
+  for (const [sessionId, run] of wakeRuns) list.push({ sessionId, workspacePath: run?.workspacePath, kind: run?.kind || "续跑任务" });
+  for (const [sessionId, run] of entryRuns) list.push({ sessionId, workspacePath: run?.workspacePath, kind: run?.kind || "另一个渠道任务" });
+  return list;
+}
+
+// 工作区维度的占用判定。不同工作区各写各的目录，互不影响；只有同一工作区的两个任务
+// 同时跑才可能互相覆盖文件，才需要互斥。
+// 早前渠道任务等的是「整机空闲」（任何桌面任务、定时任务、其他渠道任务都算占用），
+// 电脑端一有长任务，QQ/微信消息就干等满 10 分钟再被丢弃——这是"每次都超过 10 分钟"的成因。
+function workspaceBlockers(workspacePath, ignoreSessionId = "") {
+  return findWorkspaceBlockers(runningTaskEntries(), workspacePath, ignoreSessionId);
+}
 
 // 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
 async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord, isNewChat, reply: rawReply, replyMedia, sendTyping, registerPending, clearPending }) {
@@ -3589,23 +3619,38 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     messageId: String(chat?.messageId || ""),
     isNewChat,
   });
-  // 渠道消息不可丢弃:桌面交互任务/定时任务执行期间,排队等待全局空闲；
-  // 等待期间也要响应「停止」,否则会堵在守卫里无法中止
-  // 等待本身必须有上限：头部任务若长时间不结束（网络/模型/审批等），
+  // 渠道消息不可丢弃，但只等「同一工作区」的任务：不同工作区互不阻塞。
+  // 等待期间也要响应「停止」,否则会堵在守卫里无法中止。
+  // 等待本身保留上限：同工作区头部任务若长时间不结束（网络/模型/审批等），
   // 后面的消息不能无限排队，否则用户只会看到“排队数+1”而没有任何任务被执行。
+  // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
+  const storedWorkspace = typeof chatRecord.workspacePath === "string" ? chatRecord.workspacePath.trim() : "";
+  let workspacePath = storedWorkspace || await defaultChannelWorkspace();
+  const sessionId = chatRecord.sessionId;
   const waitStartedAt = Date.now();
-  while (!mcpShuttingDown && !channelTaskAborts.has(myKey) && (activeAgents.size || ctx.scheduler.running || runningChannelTaskCount > 0)) {
+  let waitNotified = false;
+  while (!mcpShuttingDown && !channelTaskAborts.has(myKey)) {
+    const blockers = workspaceBlockers(workspacePath, sessionId);
+    if (!blockers.length) break;
+    // 只有 position>1 才会收到「排队中」提示；被同一工作区的他人任务挡住时 position 是 1，
+    // 用户此前完全收不到反馈、只能干等到超时被取消，这里补一条一次性说明。
+    if (!waitNotified && Date.now() - waitStartedAt >= CHANNEL_WAIT_NOTICE_DELAY_MS) {
+      waitNotified = true;
+      await reply(`已收到，正在等同一工作目录下的${blockers[0].kind}结束，它结束后会自动开始，无需重发；回复「停止」可取消。`).catch(() => { });
+    }
     await new Promise<any>((resolve) => setTimeout(resolve, 2000));
     if (!mcpShuttingDown && !channelTaskAborts.has(myKey) && Date.now() - waitStartedAt > CHANNEL_QUEUE_WAIT_TIMEOUT_MS) {
       channelDebug("渠道任务等待超时已跳过", {
         chatKey: myKey,
         text: String(text || "").slice(0, 80),
+        workspacePath,
+        blockers: blockers.map((item) => item.kind),
         activeAgents: activeAgents.size,
         runningScheduledTask: ctx.scheduler.running,
         runningChannelTaskCount,
         waitMs: Date.now() - waitStartedAt,
       });
-      await reply("这条消息排队超过 10 分钟还没轮到（可能有更早的任务在长时间执行）。为避免一直阻塞后续消息，已取消这条，请重新发送。").catch(() => { });
+      await reply("这条消息等同一工作目录下的任务结束已超过 10 分钟，为避免一直阻塞后续消息，已取消这条。可以先停掉那个任务，或更换工作目录（回复「更换工作目录至…」）后重发。").catch(() => { });
       channelTaskKeys.delete(myKey);
       channelTaskAborts.delete(myKey);
       return;
@@ -3633,10 +3678,6 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     });
   }
   const channelLabel = CHANNEL_LABELS[channel] || channel;
-  const sessionId = chatRecord.sessionId;
-  // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
-  const storedWorkspace = typeof chatRecord.workspacePath === "string" ? chatRecord.workspacePath.trim() : "";
-  let workspacePath = storedWorkspace || await defaultChannelWorkspace();
   // 出站媒体登记（send_media / text_to_speech 工具写入，任务结束随最终回复发回）
   const pendingMedia = [];
   // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加。
@@ -3645,7 +3686,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
   let userMessage = null;
   let channelRuntime;
   const channelAbort = new AbortController();
-  entryRuns.set(sessionId,{runId:channelRunId,abort:channelAbort,chatKey:myKey});
+  entryRuns.set(sessionId,{runId:channelRunId,abort:channelAbort,chatKey:myKey,kind:"渠道任务",workspacePath});
   const sendUserMessage = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (isNewChat) {
@@ -3702,6 +3743,9 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           workspacePath = switchResult.path;
           chatRecord.workspacePath = workspacePath;
           chatRecord.updatedAt = new Date().toISOString();
+          // 本 run 的占用记录同步换工作区，否则后续渠道消息仍按旧目录判忙
+          const ownRun = entryRuns.get(sessionId);
+          if (ownRun) ownRun.workspacePath = workspacePath;
           const chats = await readChannelChats();
           if (chats[chatKey]) {
             chats[chatKey].workspacePath = workspacePath;

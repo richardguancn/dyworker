@@ -306,7 +306,8 @@ export function createChannelManager({
       position,
     });
     if (position > 1) {
-      const hint = String(queueWaitHint() || "").trim();
+      // 阻塞原因按「同一工作区」判断：别的工作区的桌面任务/定时任务不再挡住渠道消息
+      const hint = String(queueWaitHint({ chatKey: key, workspacePath: record?.workspacePath || "" }) || "").trim();
       await reply(`排队中,前面还有 ${position - 1} 个任务。当前任务结束后会自动继续执行,无需重新发送。${hint ? `（${hint}）` : ""}回复「停止」可清空队列。`).catch(() => { });
     }
   }

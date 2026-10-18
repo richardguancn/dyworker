@@ -12,7 +12,8 @@ export function createChildEntry(deps: any) {
     if (session?.runtime !== 'dsh' || !session.workspacePath) return reject('所属任务没有可用的 DSH 工作目录');
     if (deps.isSessionBusy(sessionId)) return reject('所属任务正在执行，请使用当前运行中的子任务发送入口');
     const abortController = new AbortController();
-    const state = {sessionId,runId,sender,abortController,cancelled:false,pending:new Map()};
+    // workspacePath：渠道任务按工作区判忙时也要能看到 DSH 子任务占着这个目录
+    const state = {sessionId,runId,sender,abortController,cancelled:false,pending:new Map(),workspacePath:session.workspacePath};
     deps.activeAgents.set(sessionId,state);
     let admitted = false;
     let respond: (value: any) => void;
