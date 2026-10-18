@@ -171,11 +171,12 @@ test('截图中的配置检查和混合危险脚本均送完整审核，不按�
     { command: scopeProbe, verdict: 'ask', marker: false },
   ];
   for (const [index, variant] of variants.entries()) {
-    // 审核输入保持截图原样的 POSIX 脚本；执行边界只看末尾的标记写入，按平台给出等价命令。
+    // 审核输入保持截图原样的 POSIX 脚本；执行边界只看标记写入，按平台给出等价命令。
+    // Windows 上标记放最前：cmd 逐行执行，后面的 POSIX heredoc（<<）解析失败不影响已完成的标记。
     const marker = IS_WINDOWS
       ? `node -e "require('fs').writeFileSync('ran-${index}','yes')"`
       : `python3 -c 'open("ran-${index}", "w").write("yes")'`;
-    const command = variant.command + `\n${marker}`;
+    const command = IS_WINDOWS ? `${marker}\n${variant.command}` : variant.command + `\n${marker}`;
     let asks = 0, reviews = 0, step = 0;
     const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
       conversation: [{ role: 'user', content: '检查当前项目配置的公开权限名，不要显示或上传任何密钥。' }],
