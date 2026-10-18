@@ -19,6 +19,7 @@ import { bundledCuratedRoot } from './curated-plugins.mts';
 import { formatSkillInstructions, skillContextSummary } from './skills.mts';
 import { localReview } from "./local-reviewer.mts";
 import { prepareCommandExecution } from "./command-execution.mts";
+import { createCommandDiagnostics } from "./command-protection.mts";
 import { approvalRoute, reviewOutcome, reviewTaskAction } from "./approval-policy.mts";
 import { buildReviewContext, delegatedReviewContext, isStatefulUiOperation, readReviewObservation, reviewContextFingerprint, reviewActionDetails, reviewToolDefinition, reviewActionFacts } from "./approval-context.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
@@ -720,10 +721,11 @@ constructor(root, options = {} as any) {
     let confined;
     try { confined = await prepareCommandExecution(command, { workspacePath: this.root,
       mode: execution.mode || 'workspace-write', signal: this.cancellationSignal }); }
-    catch (error: any) { return { ok: false, output: `执行保护暂时不可用，命令未执行：${error.message || error}` }; }
+    catch (error: any) { return { ok: false, errorCode: error.code || 'SANDBOX_UNAVAILABLE', output: `执行保护暂时不可用，命令未执行：${error.message || error}` }; }
     return new Promise<any>((resolve) => {
       const win32 = process.platform === "win32";
       const [program, ...args] = confined.argv;
+      const diagnostics = createCommandDiagnostics(confined);
       // detached：让 bash 自成进程组，终止时连子进程（如 docker、脚本）一起杀掉，
       // 否则只杀 bash 会留下孤儿进程继续占用资源
       const child = spawn(program, args, { cwd: this.root, detached: !win32 });
@@ -766,13 +768,20 @@ constructor(root, options = {} as any) {
         this.cancellationSignal.addEventListener("abort", onAbort, { once: true });
       }
       child.stdout.on("data", (chunk) => { stdout = clipped(stdout + chunk.toString(), COMMAND_OUTPUT_LIMIT); });
-      child.stderr.on("data", (chunk) => { stderr = clipped(stderr + chunk.toString(), COMMAND_OUTPUT_LIMIT); });
+      child.stderr.on("data", (chunk) => {
+        diagnostics.write(chunk);
+        stderr = clipped(stderr + chunk.toString(), COMMAND_OUTPUT_LIMIT);
+      });
       child.on("error", (error) => {
         finish({ ok: false, output: `命令无法启动：${error.message}` });
       });
       child.on("close", (code) => {
         const output = [stdout, stderr].filter(Boolean).join("\n") || "（命令没有输出）";
-        finish({ ok: code === 0, output: `退出码 ${code}\n${output}` });
+        const protection = diagnostics.finish(code);
+        const notice = protection.state === 'unavailable' ? `执行保护报告故障，不能确认命令已受保护地完成：${protection.detail}\n`
+          : protection.state === 'denied' ? '执行保护拒绝了本次文件操作。\n' : '';
+        finish({ ok: code === 0 && protection.state === 'ready', ...(protection.errorCode ? { errorCode: protection.errorCode } : {}),
+          protection: { enforcement: confined.enforcement, ...protection }, output: `${notice}退出码 ${code}\n${output}` });
       });
     });
   }

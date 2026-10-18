@@ -1,0 +1,46 @@
+name: Windows 命令写入保护诊断
+
+on:
+  push:
+    branches:
+      - codex/windows-command-protection
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-command-protection-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: 拉取当前诊断分支
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装固定依赖
+        run: npm ci
+      - name: 验证应用的启动前检查和结果处理
+        shell: pwsh
+        run: node --test tests/command-protection.test.mjs > windows-command-protection-tests.log
+      - name: 直接检查官方后端的真实写入与目录权限
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node scripts/diagnose-windows-command-protection.mjs > windows-command-protection-report.json
+      - name: 保存诊断结果（失败时仍保存）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-command-protection-${{ github.run_id }}
+          path: |
+            windows-command-protection-tests.log
+            windows-command-protection-report.json
+          if-no-files-found: warn
+          retention-days: 14
