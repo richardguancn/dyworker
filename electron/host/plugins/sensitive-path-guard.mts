@@ -1,5 +1,5 @@
 // 敏感路径是风险证据，不等于秘密已被读取或外发。
-// 文件工具会将内容直接交给模型，保留人工入口；命令可能只在进程内使用
+// 文件工具可能将内容直接交给模型，命令也可能只在进程内使用
 // 配置，必须将完整命令和风险证据交给审核助手判断。reviewable 不是放行，
 // 只在用户选择「替我审批」时允许自动审核；用户钩子和 block 仍优先。
 import { realpathSync } from "node:fs";
@@ -59,7 +59,7 @@ export function findSensitiveReference(args, name = "") {
     if (!label) continue;
     if (name === "run_command") {
       publicReference = { label, sample: text.slice(0, 200), reviewable: true };
-    } else return { label, sample: text.slice(0, 200) };
+    } else return { label, sample: text.slice(0, 200), reviewable: true };
   }
   return publicReference || (metadata?.facts.length ? { label: "受限元信息检查", sample: metadata.facts.join("；"), reviewable: true } : null);
 }

@@ -1,3 +1,4 @@
+import { prepareCommandExecution } from "./command-execution.mts";
 import { spawn } from "node:child_process";
 import path from "node:path";
 
@@ -30,7 +31,7 @@ constructor() {
   /**
    * 启动后台任务
    */
-  startTask({ command, cwd, sessionId, name }) {
+  async startTask({ command, cwd, sessionId, name, executionMode = 'workspace-write' }: any) {
     const rawCmd = String(command || "").trim();
     if (!rawCmd) {
       throw new Error("命令不能为空");
@@ -38,8 +39,8 @@ constructor() {
 
     const taskId = `bg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const win32 = process.platform === "win32";
-    const program = win32 ? "cmd.exe" : "/bin/bash";
-    const args = win32 ? ["/d", "/s", "/c", rawCmd] : ["-lc", rawCmd];
+    const confined = await prepareCommandExecution(rawCmd, { workspacePath: cwd || process.cwd(), mode: executionMode });
+    const [program, ...args] = confined.argv;
 
     const detectedPorts = new Set();
     const detectedUrls = new Set();

@@ -2848,8 +2848,9 @@ test("验收 2026-09-06 第四轮:选项取值本身是选项形状时不得跳�
   assert.equal(isLowRiskCommand("env -u -u git log --oneline -5"), true);
 });
 
-test("自动审核执行常见构建命令时不再额外调用审核助手", async () => {
-  const root = await makeWorkspace();
+test("构建命令结合任务审核后实际执行，无人工确认", async () => {
+  const root = await makeWorkspace({ 'package.json': JSON.stringify({ scripts: { build: 'node build.cjs' } }),
+    'build.cjs': 'require("node:fs").writeFileSync("built.txt", "done")' });
   const calls = [];
   const result = await runAgent({
     settings,
@@ -2859,11 +2860,13 @@ test("自动审核执行常见构建命令时不再额外调用审核助手", as
     requestApproval: async () => { throw new Error("常见构建命令不应转人工"); },
     fetchImpl: mockFetch([
       { role: "assistant", content: null, tool_calls: [toolCall("c1", "run_command", { command: "npm run build" })] },
+      { role: "assistant", content: '{"decision":"allow","reason":"任务内构建"}' },
       { role: "assistant", content: "构建检查已完成。" },
     ], calls),
   });
   assert.equal(result.status, "done");
-  assert.equal(calls.length, 2, "安全构建命令不应额外调用审核助手");
+  assert.equal(calls.length, 3, "主任务两次、完整审核一次");
+  assert.equal(await fs.readFile(path.join(root, "built.txt"), "utf8"), "done");
 });
 
 test("审核助手 reviewApproval:放行/拒绝/转人工三态与解析失败兜底", async () => {
@@ -2949,7 +2952,7 @@ test("reviewerCacheKey 保留完整空白、工具与内容参与键", () => {
   assert.equal(reviewerCacheKey("run_command", "   \n  "), "");
 });
 
-test("reviewApproval 本地小模型的允许建议须人工确认,异常时转人工", async () => {
+test("reviewApproval 本地小模型不能独立批准,能力不足和异常明确返回不可用", async () => {
   const calls = [];
   const localImpl = async (input) => {
     calls.push(input);
@@ -2963,7 +2966,8 @@ test("reviewApproval 本地小模型的允许建议须人工确认,异常时转�
     localReviewImpl: localImpl,
   });
   assert.equal(result.decision, "ask");
-  assert.match(result.reason, /允许建议需要人工确认/);
+  assert.match(result.reason, /不支持独立批准/);
+  assert.equal(result.unavailable, true);
   assert.doesNotMatch(result.reason, /本地模型放行/);
   assert.match(result.policyHash, /^[0-9a-f]{12}$/);
   assert.equal(calls.length, 1);

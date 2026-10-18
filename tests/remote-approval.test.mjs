@@ -48,7 +48,7 @@ test('在线审核完整读取超过旧上限的原话与命令，末尾限制�
   assert.equal(calls, 1); assert.equal(result.decision, 'deny');
 });
 
-test('保存说明只检查真正写入位置，读取私钥、修改授权公钥仍强制确认', async t => {
+test('保存说明只检查真正写入位置，秘密访问和安全配置变更完整送审', async t => {
   assert.equal(findSensitiveReference({ content: '检查 /root/.ssh/authorized_keys 的公钥指纹' }, 'save_memory'), null);
   assert.equal(findSensitiveReference({ path: '.dyworker/tmp/audit.sh', content: 'cat /root/.ssh/authorized_keys; cat /etc/shadow' }, 'write_file'), null);
   assert.equal(findSensitiveReference({ path: '/root/.ssh/authorized_keys' }, 'read_file'), null);
@@ -63,7 +63,7 @@ test('保存说明只检查真正写入位置，读取私钥、修改授权公�
   ]) {
     const hit = findSensitiveReference(args, name);
     assert.ok(hit, `${name} ${JSON.stringify(args)}`);
-    assert.equal(hit.reviewable === true, name === 'run_command', '命令交语义审核；文件读取与修改仍需人工确认');
+    assert.equal(hit.reviewable, true, '所有敏感引用携带风险证据进入审核；没有直接放行');
   }
   assert.equal(findSensitiveReference({ command: 'python3 ssh_run.py "cat /root/.ssh/authorized_keys /root/.ssh/id_ed25519"' }, 'run_command').reviewable, true);
   const root = await fixture(t);
@@ -247,7 +247,7 @@ test('批准含外部目录参数的命令不能变成任意读取该目录的�
 });
 
 for (const [label, create] of [['机器人', createBotApproval], ['DSH', createDshApproval]]) {
-  test(`${label}公共公钥引用交审核，私钥与用户强制确认不被绕过`, async t => {
+  test(`${label}公共公钥引用交审核，私钥命令按完整原文被审核拒绝，用户强制确认不被绕过`, async t => {
     const root = await fixture(t);
     let reviews = 0, asks = 0;
     const options = { workspace: new Workspace(root), workspacePath: root, settings, approvalMode: 'reviewer', nativeToolNames: ['run_command'],
@@ -256,17 +256,25 @@ for (const [label, create] of [['机器人', createBotApproval], ['DSH', createD
         const hit = findSensitiveReference(args, name);
         return hit ? { action: 'require_approval', reviewable: hit.reviewable === true, message: '核对文件用途' } : null;
       },
-      review: async () => { reviews++; return { decision: 'allow', reason: '检查公开公钥属于已授权任务' }; },
+      // 命令一律交完整语义审核：审核必须看到命令原文，读到私钥引用就拒绝，
+      // 而不是按「公钥文件名」豁免——同一条命令里的私钥读取藏不住。
+      review: async (input) => {
+        reviews++;
+        const command = JSON.stringify(input.action.details);
+        if (command.includes('id_ed25519')) return { decision: 'deny', reason: '命令要求读取私钥，超出核对公钥的授权范围' };
+        assert.match(command, /authorized_keys/, '审核必须收到完整命令');
+        return { decision: 'allow', reason: '检查公开公钥属于已授权任务' };
+      },
       requestApproval: async () => { asks++; return false; } };
     const invoke = (approve, command) => approve({ name: 'run_command', args: { command }, sessionId: 'one', signal: new AbortController().signal });
     const approve = create(options);
     assert.equal(await invoke(approve, 'python3 ssh_run.py "cat /root/.ssh/authorized_keys"'), true);
     assert.equal(reviews, 1); assert.equal(asks, 0);
     assert.equal(await invoke(approve, 'python3 ssh_run.py "cat /root/.ssh/id_ed25519"'), false);
-    assert.equal(reviews, 1); assert.equal(asks, 1);
+    assert.equal(reviews, 2); assert.equal(asks, 0);
     const strict = create({ ...options, hooks: [{ tool: 'run_command', action: 'require_approval', reviewable: true, message: '用户要求每次确认' }] });
     assert.equal(await invoke(strict, 'python3 ssh_run.py "cat /root/.ssh/authorized_keys"'), false);
-    assert.equal(reviews, 1); assert.equal(asks, 2);
+    assert.equal(reviews, 2); assert.equal(asks, 1);
   });
 
   test(`${label}连续批准长操作后仍提供完整用户限制和当前入口脚本`, async t => {

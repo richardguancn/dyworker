@@ -9,8 +9,8 @@ import type {} from "@deepseek-ai/cordis";
 export interface PreToolDecision {
   action?: "block" | "require_approval";
   message?: string;
-  // 策略插件可把需要核对用途的公共材料交审核助手。仍先进入 ask，不能直接放行；
-  // 用户/工作区钩子的强制确认不设置此标记，私钥访问也不设置。
+  // 风险证据交审核助手核对用途与数据流，不直接放行；
+  // 用户/工作区钩子的强制确认不设置此标记，模型不能覆盖这些规则。
   reviewable?: boolean;
 }
 

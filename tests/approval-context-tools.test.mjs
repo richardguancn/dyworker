@@ -44,7 +44,9 @@ test('日志中四条只输出配置键名和计数的操作可交审核，原�
   assert.equal(findSensitiveReference({ command: 'ls -la ~/.ssh/ 2>/dev/null | head' }, 'run_command').reviewable, true);
 });
 
-test('计数和键名不能掩盖配置值、私钥、秘密探测、重定向与脚本读取', () => {
+test('含敏感引用的所有操作连同完整原文交语义审核，风险提示不代替授权判断', () => {
+  // 命令不区分「只输出键名」与「输出配置值」：一律把完整命令原文和风险标签交给审核助手，
+  // 键名/计数写法无法掩盖同一条命令里的取值、私钥、探测、重定向或脚本读取。
   for (const command of [
     'cat .env', 'grep HOST .env', "grep -E '^[A-Za-z0-9_]+=' .env",
     "grep -oE '^.*' .env", "grep -oE '^PASSWORD=.*' .env", "grep -c '^PASSWORD=secret' .env",
@@ -53,7 +55,19 @@ test('计数和键名不能掩盖配置值、私钥、秘密探测、重定向�
     'ls -la ~/.ssh/; cat ~/.ssh/id_ed25519', 'python3 -c "print(open(\'.env\').read())"',
     'wc -c .env > .env', 'cat < .env', 'source .env', 'wc -c $(cat .env)',
     "python3 - <<'EOF'\nprint(open('.env').read())\nEOF", 'cat ~/.ssh/config',
-  ]) assert.notEqual(findSensitiveReference({ command }, 'run_command')?.reviewable, true, command);
+  ]) {
+    const hit = findSensitiveReference({ command }, 'run_command');
+    assert.equal(hit?.reviewable, true, command);
+    assert.ok(hit.label, command);
+    // 审核依据必须仍指向敏感文件本身：元信息剥离只去掉计数/键名前缀，
+    // 不能把取值、私钥、探测、重定向等真正有风险的引用从送审文本里抹掉
+    assert.match(hit.sample, /\.env|\.ssh/, `送审文本必须保留敏感引用：${command}`);
+  }
+  // 文件工具也需结合用户任务判断；敏感提示不是直接允许，也不强制逐次人工确认
+  for (const args of [{ path: '.env' }, { path: '~/.ssh/id_ed25519' }, { path: '.env.example' }]) {
+    assert.equal(findSensitiveReference(args, 'read_file')?.reviewable, true, JSON.stringify(args));
+  }
+  assert.equal(findSensitiveReference({ path: '.env', content: 'X=1' }, 'write_file')?.reviewable, true);
 });
 
 test('实际执行日志前四步，审核接收元信息依据，输出不含测试密码且不请求人工', async t => {

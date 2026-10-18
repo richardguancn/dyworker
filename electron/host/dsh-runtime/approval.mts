@@ -1,6 +1,7 @@
-import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, isReviewerProtectedPath, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts } from '../../agent.mts';
+import { reviewTaskAction } from '../../approval-policy.mts';
+import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
-import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition } from '../../approval-context.mts';
+import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition, reviewContextFingerprint } from '../../approval-context.mts';
 
 // 由宿主绑定会话、工作目录和权限模式。DSH 策略只能收紧此决定。
 export function createDshApproval(options: any) {
@@ -23,43 +24,45 @@ export function createDshApproval(options: any) {
       const publicName = name === 'ask_user_question' ? 'ask_user' : (options.nativeToolNames?.includes(name) || extraNames.includes(name))
         ? (options.nativeToolAliases?.[name] || name) : `dsh__${name}`;
       const currentMode = () => options.getApprovalMode?.() || options.approvalMode;
-      const evaluate = () => evaluateApproval({ name: publicName, args, approvalMode: currentMode(),
-        standingRules: options.standingRules || [], hookRequiresApproval: hook?.action === 'require_approval' });
-      const decision = evaluate();
+      const evaluate = () => { const updated = planTaskApproval({ name: publicName, args, approvalMode: currentMode(),
+        standingRules: options.standingRules || [], hookRequiresApproval: hook?.action === 'require_approval', hook, workspacePath: tool.workspacePath || options.workspacePath || '' });
+        return updated === 'execute' ? 'allow' : updated === 'deny' ? 'deny' : 'ask'; };
+      const route = planTaskApproval({ name: publicName, args, approvalMode: currentMode(), workspacePath: tool.workspacePath || options.workspacePath || '',
+        standingRules: options.standingRules || [], hook, hookRequiresApproval: hook?.action === 'require_approval' });
+      const decision = route === 'execute' ? 'allow' : route === 'deny' ? 'deny' : 'ask';
       if (decision === 'deny') { audit('denied', '当前任务不允许修改'); return false; }
       if (decision === 'allow') { audit('auto-allowed'); return true; }
       let reason = hook?.message || '';
-      if (!isReviewerProtectedPath(tool.workspacePath || options.workspacePath || '', args.path)
-        && isReviewerEligible({ name: publicName, args, approvalMode: currentMode(),
-        hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true })) {
+      if (route === 'review') {
         const reviewMode = currentMode();
         const sessionKey = tool.sessionId || options.sessionId || '';
         const observation = await readReviewObservation({ name: publicName, args, availableNames: extraNames,
           execute: options.onExtraTool, signal,
           check: (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...(options.hooks || [])], 'before_tool', reader, readArgs)
             || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
-        const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
+        const getContext = async () => withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
           prompt: options.prompt, goal: options.goal, workingContext: options.workingContext }), approvals.get(sessionKey) || []);
-        const entryScripts = await readReviewEntryScripts({ workspace: options.workspace || new Workspace(tool.workspacePath || options.workspacePath || ''),
+        const context = await getContext();
+        const readEntryScripts = () => readReviewEntryScripts({ workspace: options.workspace || new Workspace(tool.workspacePath || options.workspacePath || ''),
           name: publicName, args, signal,
           preparedFiles: (approvals.get(sessionKey) || []).filter(record => record.tool === 'write_file').map(record => record.args),
           check: (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...(options.hooks || [])], 'before_tool', reader, readArgs)
             || options.beforeToolExecute?.({ name: reader, args: readArgs }) });
-        const review = await (options.review || reviewApproval)({ settings: options.settings, fetchImpl: options.fetchImpl,
+        const entryScripts = await readEntryScripts();
+        const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
+          currentVersion: async () => reviewContextFingerprint(currentMode() + await getContext() + await readEntryScripts()),
+          review: options.review || reviewApproval, input: { settings: options.settings, fetchImpl: options.fetchImpl,
           signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
-          onUsage: options.onUsage });
+          onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal.throwIfAborted();
         if (review.unavailable) {
           audit('reviewer-unavailable', review.reason);
           throw new Error(reviewerUnavailableMessage(review.reason));
         }
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
-        if (currentMode() !== reviewMode) {
-          const updated = evaluate();
-          if (updated !== 'ask') { audit(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断'); return updated === 'allow'; }
-        } else if (review.decision === 'allow') { return true; }
-        else if (review.decision === 'deny') { return false; }
+        if (review.decision === 'allow') { return true; }
+        if (review.decision === 'deny') { tool.denialReason = `审核助手拒绝了这次操作：${review.reason}。不要通过改写命令或间接执行绕过拒绝。`; return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,

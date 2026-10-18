@@ -103,32 +103,33 @@ test('格式恢复也共享总时限，不因第二次请求重新等待', async
   assert.equal(result.decision, 'ask'); assert.match(result.reason, /审核等待超时/); assert.equal(calls, 2);
 });
 
-test('审核断线后直接显示人工入口，不再等待影响说明，也不执行未批准操作', async t => {
+test('审核断线后不弹人工卡、不执行未批准操作，工具收到服务故障说明', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-review-disconnect-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   let round = 0, reviews = 0, impacts = 0, asks = 0;
   const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
     conversation: [{ role: 'user', content: '生成 checked.txt。' }],
-    requestApproval: async action => {
-      asks++;
-      assert.match(action.details, /连接中断，自动重试后仍未恢复/);
-      assert.doesNotMatch(action.details, /terminated/);
-      assert.match(action.impact, /覆盖写入.*checked.txt/);
-      return false;
-    },
+    requestApproval: async () => { asks++; return false; },
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
       if (body.messages[0].content.includes('安全审核助手')) { reviews++; throw new TypeError('terminated'); }
       if (body.messages[0].content.includes('审批说明撰写助手')) { impacts++; return new Promise(() => {}); }
       if (round++ === 0) return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: null,
         tool_calls: [{ id: 'write', type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: 'printf checked > checked.txt' }) } }] } }] }) };
-      return response('操作未获允许，没有生成文件。');
+      // 模型要收到的是如实的服务故障说明：连接中断已重试过，且不能把传输层原始错误透出去
+      const transcript = JSON.stringify(body.messages);
+      assert.match(transcript, /审核服务暂时不可用/);
+      assert.match(transcript, /连接中断，自动重试后仍未恢复/);
+      assert.match(transcript, /不是用户拒绝/);
+      assert.doesNotMatch(transcript, /terminated/);
+      return response('审核服务故障，操作未执行。');
     } });
-  assert.equal(result.status, 'done'); assert.equal(asks, 1); assert.equal(reviews, 2); assert.equal(impacts, 0);
+  // 服务故障不是用户拒绝，也不能伪装成待人工确认：不弹人工卡、不重试影响说明、不执行
+  assert.equal(result.status, 'done'); assert.equal(asks, 0); assert.equal(reviews, 2); assert.equal(impacts, 0);
   await assert.rejects(fs.access(path.join(root, 'checked.txt')), { code: 'ENOENT' });
 });
 
-test('在真实临时项目执行版本查询，不请求审核或人工确认', async t => {
+test('在真实临时项目执行版本查询，完整审核后无人工确认', async t => {
   // 这条检查用的是截图里的原样命令（grep/head、~/.nvm 路径、$(…) 展开），
   // Windows 走 cmd.exe，跑不通这些 POSIX 语法；命令识别本身在上面一条用例里各平台都验。
   if (process.platform === 'win32') return t.skip('仅 POSIX 语义');
@@ -149,7 +150,7 @@ test('在真实临时项目执行版本查询，不请求审核或人工确认',
     requestApproval: async () => { asks++; return false; },
     fetchImpl: async (_url, options) => {
       const body = JSON.parse(options.body);
-      assert.ok(!body.messages[0].content.includes('安全审核助手'));
+      if (body.messages[0].content.includes('安全审核助手')) return response('{"decision":"allow","reason":"任务内的版本检查"}');
       if (round++ === 0) return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: null,
         tool_calls: [{ id: 'version', type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command }) } }] } }] }) };
       const output = body.messages.find(message => message.role === 'tool');

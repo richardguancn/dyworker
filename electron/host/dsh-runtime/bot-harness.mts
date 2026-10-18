@@ -1,3 +1,4 @@
+import { reviewTaskAction } from '../../approval-policy.mts';
 // 机器人（ds-bot）继承 DYWorker 桌面任务的工具能力。
 //
 // 设计约束：
@@ -11,12 +12,12 @@ import {
   Workspace, toolDefinitions, sliceLines, scanSensitiveInfo, checkOfficialDocument,
   exportWordDocument, exportExcelWorkbook, calculateWorkdays, currentDatetime,
   webSearch, govSearch, fetchPublicPage, runOcrFile,
-  builtinHooks, evaluateHooks, evaluateApproval, externalPathsForTool,
-  isReviewerEligible, isReviewerProtectedPath, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
+  builtinHooks, evaluateHooks, externalPathsForTool,
+  planTaskApproval, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
-import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition } from '../../approval-context.mts';
+import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition, reviewContextFingerprint } from '../../approval-context.mts';
 
 /** 机器人从桌面任务继承的工具名（与 toolDefinitions() 的描述/参数一一对应）。 */
 export const BOT_HARNESS_TOOL_NAMES = Object.freeze([
@@ -31,7 +32,7 @@ export const BOT_HARNESS_TOOL_NAMES = Object.freeze([
 const SKILL_TOOL_NAMES = new Set(['list_skills', 'load_skill', 'save_skill', 'update_skill']);
 const HISTORY_TOOL_NAMES = new Set(['search_history', 'read_history_context']);
 /** 工作区外删除不可逆：不交审核助手，直接人工确认（与桌面任务同一亮线规则）。 */
-const REVIEWER_EXEMPT = new Set(['delete_file']);
+
 
 function text(value: any) {
   if (typeof value === 'string') return value;
@@ -64,45 +65,43 @@ export function createBotApproval(options: any) {
         decision, detail: note, sessionId: tool.sessionId });
       if (hook?.action === 'block') { detail('blocked', hook.message); return false; }
       const standingRules = await resolved(options.standingRules);
-      const evaluate = () => evaluateApproval({ name, args, approvalMode: mode(),
+      const evaluate = () => { const updated = planTaskApproval({ name, args, approvalMode: mode(),
         hasExternalPaths: externalPaths.length > 0, hookRequiresApproval: hook?.action === 'require_approval',
-        standingRules });
-      const decision = evaluate();
+        standingRules, hook, workspacePath });
+        return updated === 'execute' ? 'allow' : updated === 'deny' ? 'deny' : 'ask'; };
+      const route = planTaskApproval({ name, args, approvalMode: mode(), workspacePath, standingRules,
+        hasExternalPaths: externalPaths.length > 0, hook, hookRequiresApproval: hook?.action === 'require_approval' });
+      const decision = route === 'execute' ? 'allow' : route === 'deny' ? 'deny' : 'ask';
       if (decision === 'deny') { detail('denied', '当前权限模式不允许此操作'); return false; }
-      if (decision === 'allow') { detail('auto-allowed'); return true; }
+      if (decision === 'allow') { tool.executionMode = mode() === 'full-access' ? 'danger-full-access' : 'workspace-write'; detail('auto-allowed'); return true; }
       let reason = hook?.message || '';
-      const reviewable = !REVIEWER_EXEMPT.has(name)
-        && !isReviewerProtectedPath(workspacePath, args.path)
-        && isReviewerEligible({ name, args, approvalMode: mode(), hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true,
-          forExternalPaths: externalPaths.length > 0 });
-      if (reviewable) {
+      if (route === 'review') {
         const reviewMode = mode();
         const observation = await readReviewObservation({ name, args, availableNames: await resolved(options.extraToolNames),
           execute: (reader: string, readArgs: any) => options.onExtraTool?.(reader, readArgs, tool), signal,
           check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
             || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
-        const context = withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
+        const getContext = async () => withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
           prompt: options.context }), approvals.get(tool.sessionId || '') || []);
-        const entryScripts = await readReviewEntryScripts({ workspace, name, args, signal,
+        const context = await getContext();
+        const readEntryScripts = () => readReviewEntryScripts({ workspace, name, args, signal,
           preparedFiles: (approvals.get(tool.sessionId || '') || []).filter(record => record.tool === 'write_file').map(record => record.args),
           check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
             || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
-        const review = await (options.review || reviewApproval)({ settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
+        const entryScripts = await readEntryScripts();
+        const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
+          currentVersion: async () => reviewContextFingerprint(mode() + await getContext() + await readEntryScripts()),
+          review: options.review || reviewApproval, input: { settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
           signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
-          context, onUsage: options.onUsage });
+          context, onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal?.throwIfAborted();
         if (review.unavailable) {
           detail('reviewer-unavailable', review.reason);
           throw new Error(reviewerUnavailableMessage(review.reason));
         }
-        if (mode() !== reviewMode) {
-          const updated = evaluate();
-          detail(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断');
-          return updated === 'allow';
-        }
-        if (review.decision === 'allow') { detail('reviewer-allowed', review.reason); return true; }
-        if (review.decision === 'deny') { detail('reviewer-denied', review.reason); return false; }
+        if (review.decision === 'allow') { tool.executionMode = review.execution === 'host' ? 'danger-full-access' : 'workspace-write'; detail('reviewer-allowed', review.reason); return true; }
+        if (review.decision === 'deny') { tool.denialReason = `审核助手拒绝了这次操作：${review.reason}。不要通过改写命令或间接执行绕过拒绝。`; detail('reviewer-denied', review.reason); return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const id = String(tool.callId || randomUUID());
@@ -119,7 +118,7 @@ export function createBotApproval(options: any) {
           signal?.addEventListener('abort', abort, { once: true });
           if (signal?.aborted) abort();
         })]);
-        if (allowed === true) { const key = tool.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
+        if (allowed === true) { tool.executionMode = 'danger-full-access'; const key = tool.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
         detail(allowed === true ? 'approved' : 'denied', allowed === null ? '按更新后的权限自动放行' : '');
         return allowed === true || allowed === null;
       } finally { signal?.removeEventListener?.('abort', abort); }
@@ -171,14 +170,14 @@ export function createBotHarnessTools(options: any) {
       const background = typeof hostCtx.get === 'function' ? hostCtx.get('backgroundTasksManager') : undefined;
       if ((args.background === true || isLikelyBackgroundCommand(args.command)) && typeof background?.startTask === 'function') {
         try {
-          const task = await background.startTask({ command: args.command, cwd: workspace.root, sessionId: String(exec?.agent?.id || '') });
+          const task = await background.startTask({ command: args.command, cwd: workspace.root, sessionId: String(exec?.agent?.id || ''), executionMode: exec?.executionMode || 'workspace-write' });
           return `后台服务已成功启动（任务 ID: ${task.id}，PID: ${task.pid || '未知'}）。`
             + (task.ports?.length ? `\n监听端口: ${task.ports.join(', ')}` : '')
             + (task.urls?.length ? `\n访问地址: ${task.urls.join(', ')}` : '')
             + '\n服务已在后台保持运行，可在工作台「后台任务」面板查看输出或关闭。';
         } catch (error: any) { return `后台服务启动失败: ${error?.message || error}`; }
       }
-      const result = await workspace.runCommand(args.command);
+      const result = await workspace.runCommand(args.command, { mode: exec?.executionMode || 'workspace-write' });
       return result.ok ? result.output : `失败：${result.output}`;
     },
     web_search: async args => webSearch(fetchImpl, args.query, Number(args.limit) || 10, await readSettings()),
@@ -225,9 +224,11 @@ export function createBotHarnessTools(options: any) {
     .map((tool: any) => [tool.name, tool]));
 
   const execute = async (name: string, args: any, exec: any) => {
-    const allowed = await approve({ name, args, sessionId: String(exec?.agent?.id || ''),
-      callId: exec?.callId, signal: exec?.signal, workspace, workspacePath });
-    if (!allowed) return `用户没有允许这次「${name}」操作，本次调用已取消。请改用其他方式，或先向用户说明为什么需要这个操作。`;
+    const invocation: any = { name, args, sessionId: String(exec?.agent?.id || ''),
+      callId: exec?.callId, signal: exec?.signal, workspace, workspacePath };
+    const allowed = await approve(invocation);
+    exec = { ...exec, executionMode: invocation.executionMode };
+    if (!allowed) return invocation.denialReason || `用户没有允许这次「${name}」操作，本次调用已取消。不要变通重试同一操作，请说明具体原因。`;
     if (!handlers[name] && !SKILL_TOOL_NAMES.has(name) && !HISTORY_TOOL_NAMES.has(name)) {
       if (typeof routeExtra !== 'function') throw new Error(`机器人没有继承工具：${name}`);
       return text(await routeExtra(name, args, { ...exec, sessionId: String(exec?.agent?.id || '') }));

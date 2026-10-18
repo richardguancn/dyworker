@@ -252,9 +252,11 @@ export class OfficialDshSession {
         if(!this.options.mods||!this.modCalls.delete(message.key))throw new Error('模组结果不属于当前 DSH 操作');value=await this.options.mods.finishTool(message.key,message.result);
       } else if (message.type === 'tool-approval') {
         // 身份及工作目录由父进程确定；插件不能要求换到另一会话或权限模式。
+        const invocation = { ...message.tool, denialReason: undefined, dshSessionId: message.tool.sessionId,
+          sessionId: input.sessionId, workspacePath: input.workspacePath, signal: controller.signal };
         value = this.ownsSession(message.tool?.sessionId) && typeof this.options.approve === 'function'
-          && await this.options.approve({ ...message.tool, dshSessionId: message.tool.sessionId,
-            sessionId: input.sessionId, workspacePath: input.workspacePath, signal: controller.signal }) === true;
+          && await this.options.approve(invocation) === true;
+        if (!value && invocation.denialReason) throw new Error(invocation.denialReason);
         if (value && input.extraTools.some((tool: any) => tool.name === message.tool.name))
           this.extraGrants.set(message.tool.callId, JSON.stringify([message.tool.sessionId, message.tool.name, message.tool.args]));
         if (value && message.tool.name === 'workflow') this.ptcGrants.set(message.tool.callId,
