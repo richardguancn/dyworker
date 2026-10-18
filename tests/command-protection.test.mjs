@@ -12,7 +12,7 @@ const full = () => ({ argv: [process.execPath, '-e', ''], enforcement: 'full',
   denialSignatures: ['access is denied', 'permission denied'],
   runnerFailureRules: [{ allowedExitCodes: [127], fatalSignatures: ['windows-acl-run:'], informationalLines: ['windows-acl-run: informational'] }] });
 
-test('不完整、未知或缺失的保护均拒绝，完全访问只能来自本次明确授权', () => {
+test('未知或缺失的保护拒绝，已识别的 Windows 部分保护保留范围标记，完全访问须明确授权', () => {
   for (const enforcement of ['partial', undefined, 'unknown', 'explicit-host-grant']) {
     assert.throws(() => requireCommandProtection({ ...full(), enforcement }), { code: 'SANDBOX_UNAVAILABLE' });
   }
@@ -63,7 +63,9 @@ test('输出超过显示上限、签名在超长行中或日志末尾时仍保�
     'windows-acl-run: token failed' + 'x'.repeat(200000)]) {
     const diagnostics = createCommandDiagnostics(full());
     for (let i = 0; i < stderr.length; i += 37) diagnostics.write(Buffer.from(stderr.slice(i, i + 37)));
-    assert.equal(diagnostics.finish(127).state, 'unavailable');
+    const result = diagnostics.finish(127);
+    assert.equal(result.state, 'unavailable');
+    assert.match(result.detail, /windows-acl-run: token failed/);
   }
 });
 
@@ -82,7 +84,7 @@ test('无退出码门槛及多条规则遵守相同约定，普通提示不能�
   }
 });
 
-test('实际前台和后台入口：partial 不启动程序，故障与拒绝被保留，正常退出仍成功', async t => {
+test('实际前台和后台入口：未知 partial 不启动程序，故障与拒绝被保留，正常退出仍成功', async t => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-protection-')));
   t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 3 }));
   const runner = path.join(root, 'check.mjs');

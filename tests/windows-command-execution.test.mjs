@@ -64,6 +64,7 @@ test('Windows 后台命令真实写入工作区并保留外部拒绝结果', { s
   const { work, outside } = await fixture(t);
   const manager = createBackgroundTasksManager(); t.after(() => manager.cleanupAll());
   const first = await manager.startTask({ cwd: work, command: `node -e "require('fs').writeFileSync('background.txt','actual');process.stdout.write('BACKGROUND_DONE')"` });
+  assert.equal(first.protection.enforcement, 'partial');
   const done = await settled(manager, first.id);
   assert.equal(done.status, 'stopped', JSON.stringify(done)); assert.equal(done.exitCode, 0);
   assert.equal(await fs.readFile(path.join(work, 'background.txt'), 'utf8'), 'actual');

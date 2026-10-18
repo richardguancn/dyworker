@@ -46,26 +46,32 @@ export function createCommandDiagnostics(confined: any) {
     ...rules.flatMap((rule: any) => [...rule.fatalSignatures, ...(rule.informationalLines || [])].map((s: string) => s.length)));
   let tail = '', linePrefix = '', lineLength = 0, lastCharacter = '';
   let denied = false, ended = false;
-  const pending = new Set<number>();
+  const pending = new Map<number, string>();
   const evidence = new Map<number, string>();
   const endLine = () => {
     if (lastCharacter === '\r') {
       if (linePrefix.length === lineLength) linePrefix = linePrefix.slice(0, -1);
       lineLength--;
     }
-    for (const index of pending) {
+    for (const [index, snippet] of pending) {
       const rule = rules[index];
       if ((rule.informationalLines || []).some((line: string) => lineLength === line.length && linePrefix.toLowerCase() === line.toLowerCase())) continue;
-      if (!evidence.has(index)) evidence.set(index, linePrefix);
+      if (!evidence.has(index)) evidence.set(index, containsSignature(linePrefix, rule.fatalSignatures)
+        ? linePrefix : snippet.replace(/\r?\n$/, ''));
     }
     tail = ''; linePrefix = ''; lineLength = 0; lastCharacter = ''; pending.clear();
   };
   const admit = (text: string) => {
     for (const part of text.split(/(?<=\n)/)) {
       const combined = tail + part;
+      for (const [index, snippet] of pending) pending.set(index, (snippet + part).slice(0, 2048));
       if (containsSignature(combined, signatures)) denied = true;
       for (let i = 0; i < rules.length; i++) {
-        if (containsSignature(combined, rules[i].fatalSignatures)) pending.add(i);
+        if (pending.has(i)) continue;
+        const lowered = combined.toLowerCase();
+        const offset = rules[i].fatalSignatures.map((signature: string) => lowered.indexOf(signature.toLowerCase()))
+          .find((index: number) => index >= 0);
+        if (offset !== undefined) pending.set(i, combined.slice(Math.max(0, offset - 64), offset + 1984));
       }
       const body = part.replace(/\n$/, '');
       lineLength += body.length;

@@ -65,7 +65,7 @@ constructor() {
       outputTail: confined.enforcement === 'partial' ? ['当前系统提供部分文件写入保护，存在后端已声明的范围限制。'] : [],
       childProcess: null,
       pid: undefined,
-      protection: null,
+      protection: { enforcement: confined.enforcement, state: 'ready' },
     };
 
     try {
