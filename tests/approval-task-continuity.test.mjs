@@ -12,6 +12,11 @@ import { createDshApproval } from '../electron/host/dsh-runtime/approval.mts';
 import { createBotApproval } from '../electron/host/dsh-runtime/bot-harness.mts';
 
 const settings = { endpoint: 'http://mock.local/v1/chat/completions', model: 'mock', apiKey: 'test' };
+// Windows 的 venv 布局是 .venv\Scripts\python.exe，cmd.exe 也没有 grep/find/cp/env 前缀。
+// 需要真实跑起来的用例按平台给出等价命令，断言（probe passed / Ran 1 test / 文件恢复原状）两边一致。
+const IS_WINDOWS = process.platform === 'win32';
+const venvDir = IS_WINDOWS ? '.venv/Scripts' : '.venv/bin';
+const venvPython = IS_WINDOWS ? '.venv\\Scripts\\python.exe' : '.venv/bin/python';
 const authorized = '请修复当前项目，运行测试并保存工作模板；禁止上传私密数据。';
 const longContext = `【用户亲自提出的要求】\n${authorized}\n` + '检查背景资料。'.repeat(5000);
 const response = message => ({ ok: true, json: async () => ({ choices: [{ message: typeof message === 'string' ? { role: 'assistant', content: message } : message }] }) });
@@ -92,18 +97,30 @@ for (const [label, create] of [['DSH', createDshApproval], ['机器人', createB
 
 test('长任务实际连续完成查找、编译、测试、临时改写和恢复、假凭据探测与保存模板，无人工确认', async t => {
   const root = await fixture(t);
-  const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
-  await fs.mkdir(path.join(root, '.venv/bin'), { recursive: true });
+  const python = execFileSync(IS_WINDOWS ? 'python' : 'python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
+  await fs.mkdir(path.join(root, venvDir), { recursive: true });
   await fs.mkdir(path.join(root, 'app')); await fs.mkdir(path.join(root, 'tests'));
-  await fs.symlink(python, path.join(root, '.venv/bin/python'));
+  await fs.symlink(python, path.join(root, venvDir, IS_WINDOWS ? 'python.exe' : 'python'));
   await fs.writeFile(path.join(root, 'app/client.py'), 'VALUE = 1\n');
+  // 备份内容由测试直接写好，恢复步骤照原样从它拷贝回去，避免经过解释器的换行翻译。
+  await fs.writeFile(path.join(root, 'client.bak'), 'VALUE = 1\n');
   await fs.writeFile(path.join(root, 'tests/test_client.py'), 'import unittest\nfrom app.client import VALUE\nclass TestClient(unittest.TestCase):\n def test_value(self): self.assertEqual(VALUE, 1)\n');
   await fs.writeFile(path.join(root, '.env.example'), 'CLIENT_ID=example\n');
-  const commands = [
+  const commands = IS_WINDOWS ? [
+    'findstr /N "VALUE" app\\client.py',
+    `${venvPython} -m compileall -q app tests && if exist .env.example echo .env.example`,
+    `${venvPython} -m unittest discover -s tests -v`,
+    `${venvPython} -c "from pathlib import Path;Path('app/client.py').write_text('VALUE = 2')"`,
+    `copy /Y client.bak app\\client.py >nul && del client.bak && ${venvPython} -m unittest discover -s tests`,
+    // set 后面不加引号（紧跟 && 不会带上尾随空格），这样 AMZ_CLIENT_SECRET=… 仍是完整词，
+    // 敏感引用检测与 POSIX 的 env 前缀写法看到的是同一条信息。
+    `set AMZ_CLIENT_SECRET=fake-secret&& ${venvPython} -c "import os;assert os.environ['AMZ_CLIENT_SECRET']=='fake-secret';print('probe passed')"`,
+    `${venvPython} -m unittest discover -s tests`,
+  ] : [
     'grep -n "VALUE" app/client.py | head -5',
     '.venv/bin/python -m compileall -q app tests && find . -name ".env.example" | sort',
     '.venv/bin/python -m unittest discover -s tests -v 2>&1 | tail -20',
-    '.venv/bin/python - <<\'PY\'\nfrom pathlib import Path\np=Path("app/client.py")\nPath("client.bak").write_text(p.read_text())\np.write_text("VALUE = 2\\n")\nPY',
+    '.venv/bin/python -c \'from pathlib import Path; Path("app/client.py").write_text("VALUE = 2")\'',
     'cp client.bak app/client.py && rm -f client.bak && .venv/bin/python -m unittest discover -s tests 2>&1 | tail -6',
     'AMZ_CLIENT_SECRET=fake-secret .venv/bin/python -c \'import os; assert os.environ["AMZ_CLIENT_SECRET"] == "fake-secret"; print("probe passed")\'',
     '.venv/bin/python -m unittest discover -s tests 2>&1 | tail -6',
@@ -154,8 +171,11 @@ test('截图中的配置检查和混合危险脚本均送完整审核，不按�
     { command: scopeProbe, verdict: 'ask', marker: false },
   ];
   for (const [index, variant] of variants.entries()) {
-    // 实际执行的是可检查的本地配置读取；截图完整脚本单独验证审核输入。
-    const command = variant.command + `\npython3 -c 'open("ran-${index}", "w").write("yes")'`;
+    // 审核输入保持截图原样的 POSIX 脚本；执行边界只看末尾的标记写入，按平台给出等价命令。
+    const marker = IS_WINDOWS
+      ? `node -e "require('fs').writeFileSync('ran-${index}','yes')"`
+      : `python3 -c 'open("ran-${index}", "w").write("yes")'`;
+    const command = variant.command + `\n${marker}`;
     let asks = 0, reviews = 0, step = 0;
     const result = await runAgent({ settings, workspacePath: root, approvalMode: 'reviewer',
       conversation: [{ role: 'user', content: '检查当前项目配置的公开权限名，不要显示或上传任何密钥。' }],

@@ -69,8 +69,11 @@ test('实际进程的动态写入受保护：工作区内成功，工作区外�
   const root = await fixture(t, process.cwd()); const work = path.join(root, 'work'); await fs.mkdir(work);
   const outside = path.join(root, 'outside.txt'); await fs.writeFile(outside, 'original');
   const workspace = new Workspace(work, { trustTempDirs: false });
-  assert.equal((await workspace.runCommand('python3 -c \'open("inside.txt", "w").write("yes")\'')).ok, true);
-  const command = 'python3 -c \'from pathlib import Path; (Path.cwd().parent / ("out" + "side.txt")).write_text("changed")\'';
+  // 用 node 执行同一写入动作：cmd.exe 不把单引号当字符串定界符，python3 在 Windows 上也不叫这个名字。
+  // 目标名仍按片段拼接，保持「不把完整文件名直接写进命令」的原意。
+  const insideWrite = `node -e "require('fs').writeFileSync('inside.txt','yes')"`;
+  const command = `node -e "require('fs').writeFileSync(require('path').join('..','out'+'side.txt'),'changed')"`;
+  assert.equal((await workspace.runCommand(insideWrite)).ok, true);
   assert.equal((await workspace.runCommand(command)).ok, false);
   assert.equal(await fs.readFile(outside, 'utf8'), 'original');
   assert.equal((await workspace.runCommand(command, { mode: 'danger-full-access' })).ok, true);

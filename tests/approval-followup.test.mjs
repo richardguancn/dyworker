@@ -114,8 +114,9 @@ test('真实任务的审核格式异常不会直接打扰用户，重新审核�
       if (body.messages[0].content.includes('安全审核助手')) {
         reviews++; return response(reviews === 1 ? '{"decision":"allow",' : '{"decision":"allow","reason":"符合明确要求"}');
       }
+      // 用 node 写入：printf 重定向在 Windows 的 cmd.exe 下不可用，node 两个平台行为一致。
       const message = step++ === 0 ? { role: 'assistant', content: null, tool_calls: [{ id: 'format-fix', type: 'function',
-        function: { name: 'run_command', arguments: JSON.stringify({ command: "printf checked > checked.txt" }) } }] }
+        function: { name: 'run_command', arguments: JSON.stringify({ command: "node -e \"require('fs').writeFileSync('checked.txt','checked')\"" }) } }] }
         : { role: 'assistant', content: '已生成验收文件。' };
       return { ok: true, json: async () => ({ choices: [{ message }] }) };
     } });

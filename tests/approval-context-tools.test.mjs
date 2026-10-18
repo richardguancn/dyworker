@@ -95,8 +95,12 @@ test('实际执行日志前四步，审核接收元信息依据，输出不含�
       return response(command ? call(`inspect-${step}`, 'run_command', { command }) : '准备检查完成');
     } });
   assert.equal(result.status, 'done'); assert.equal(reviews, 4); assert.equal(asks, 0);
-  assert.ok(outputs.some(text => text.includes('PASSWORD=')));
-  assert.ok(outputs.every(text => !text.includes('NEVER_PRINT_PASSWORD_9351')));
+  // 审核依据（受限元信息检查、不输出配置值）来自命令文本分析，各平台都已在上面校验；
+  // 但输出产物要靠 grep/wc 真正跑起来，cmd.exe 没有这两个程序，只在 POSIX 平台核对输出。
+  if (process.platform !== 'win32') {
+    assert.ok(outputs.some(text => text.includes('PASSWORD=')));
+    assert.ok(outputs.every(text => !text.includes('NEVER_PRINT_PASSWORD_9351')));
+  }
 });
 
 test('空参数状态查询的实际接口、可选参数及来源界限完整送入审核和影响说明', async () => {

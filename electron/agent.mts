@@ -1779,6 +1779,9 @@ function isPseudoPathWord(word) {
     if (windowsDeviceNamePattern.test(word)) return true;
     // Git Bash / MSYS2 里同样存在 POSIX 设备路径，它指向空设备而不是工作区外的数据
     if (safeDeviceFiles.has(word)) return true;
+    // cmd.exe 的程序开关不是路径：copy /Y、findstr /N、dir /S 里的 /Y /N /S
+    // 按 Windows 路径解析会落到当前盘符根目录，被误判成工作区外访问。
+    if (/^\/[A-Za-z]{1,2}$/.test(word)) return true;
     // 盘符、UNC、`..` 开头的按真实路径处理，不做正则片段猜测
     if (/^(?:[a-zA-Z]:[\\/]|[\\/]{2}|\.{1,2}[\\/])/.test(word)) return false;
     // Windows 不把反斜杠当转义符，POSIX 写法的转义序列会原样留下反斜杠，
