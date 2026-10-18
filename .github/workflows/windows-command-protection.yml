@@ -46,15 +46,20 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: npm run verify > output/windows-command-protection/windows-full-verification.log
+      - name: 单独复核实际连接关闭与恢复
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node --test tests/dsh-connection.test.mjs > output/windows-command-protection/windows-connection-recheck.log
       - name: 保存诊断结果（失败时仍保存）
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-command-protection-${{ github.run_id }}
+          name: windows-command-protection-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             output/windows-command-protection/windows-command-protection-tests.log
             output/windows-command-protection/windows-command-protection-report.json
             output/windows-command-protection/windows-command-execution-tests.log
             output/windows-command-protection/windows-full-verification.log
+            output/windows-command-protection/windows-connection-recheck.log
           if-no-files-found: warn
           retention-days: 14
