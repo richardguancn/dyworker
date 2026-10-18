@@ -18,6 +18,7 @@ import { adaptToolsForModel } from './tool-schema.mts';
 import { bundledCuratedRoot } from './curated-plugins.mts';
 import { formatSkillInstructions, skillContextSummary } from './skills.mts';
 import { localReview } from "./local-reviewer.mts";
+import { REVIEW_PAGE_POLICY, reviewAllContextPages } from "./approval-review-pages.mts";
 import { buildReviewContext, isStatefulUiOperation, readReviewObservation, reviewContextFingerprint, reviewActionDetails, reviewToolDefinition, reviewActionFacts } from "./approval-context.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
 import { selectWikiPages } from "./memory-wiki.mts";
@@ -1895,6 +1896,10 @@ function commandPathCandidates(command, workspace) {
         // 豁免 A：本段的 argv[0] 且位于可执行根目录下 —— 运行工具不是访问数据。
         // 只豁免已知根（如 /usr/bin、PATH、版本管理器、~/.local/bin）
         if (index === headIndex && isExecutableRooted(expanded)) continue;
+        // 虚拟环境的 python 常链接到工作区外的系统解释器。只在程序位置核对
+        // 真实落点；同一路径作为 cat/cp 等的数据参数时仍接受外部访问检查。
+        if (index === headIndex && /[\\/]/.test(expanded) && !/[$`]/.test(expanded)
+          && directories.every(directory => isKnownExecutableTarget(workspace.canonicalPath(path.resolve(directory, expanded))))) continue;
         // 豁免 B：解释器/脚本运行器直接执行的根目录脚本或技能脚本
         if (index > 0 && (scriptRunnerPrograms.has(basenameOf(words[index - 1])) || shellWrapperPrograms.has(basenameOf(words[index - 1])))) {
           if (isExecutableRooted(expanded)) continue;
@@ -1967,6 +1972,19 @@ const uniqValueFlags = new Set(["-f", "-s", "-w", "--skip-fields", "--skip-chars
 
 const interpreterPrograms = new Set(["python3", "python", "node", "deno", "perl", "ruby", "php"]);
 const scriptRunnerPrograms = new Set([...interpreterPrograms, "bun", "bunx", "tsx", "ts-node"]);
+let knownExecutableTargets: Set<string>;
+function isKnownExecutableTarget(target: string) {
+  if (isExecutableRooted(target)) return true;
+  // macOS 的系统 Python 入口还可能链接到 Frameworks，Homebrew 则链接到 Cellar。
+  // 只认可已知工具入口的真实目标，不把整个 Frameworks/Cellar 加入访问豁免目录。
+  if (!knownExecutableTargets) {
+    knownExecutableTargets = new Set();
+    for (const root of executableRoots) for (const program of scriptRunnerPrograms) {
+      try { knownExecutableTargets.add(realpathSync(path.join(root, program))); } catch {}
+    }
+  }
+  return knownExecutableTargets.has(target);
+}
 const shellWrapperPrograms = new Set(["sh", "bash", "zsh", "dash", "ash"]);
 const dangerousOnlyAsCommand = new Set(["eval", "exec", "source", "."]);
 
@@ -4083,7 +4101,8 @@ export function isReviewerProtectedPath(workspacePath: string, target: unknown) 
   const resolved = path.resolve(workspacePath, target);
   let canonical = resolved;
   try { canonical = realpathSync(resolved); } catch {}
-  return [REVIEWER_POLICY_PATH, ...['agent.mts', 'agent.mjs', 'approval-context.mts', 'approval-context.mjs'].map(file => path.join(moduleDir, file))]
+  return [REVIEWER_POLICY_PATH, ...['agent.mts', 'agent.mjs', 'approval-context.mts', 'approval-context.mjs',
+    'approval-review-pages.mts', 'approval-review-pages.mjs'].map(file => path.join(moduleDir, file))]
     .some(file => { try { return canonical === realpathSync(file); } catch { return canonical === file; } });
 }
 
@@ -4403,7 +4422,10 @@ export async function reviewApproval(options = {} as any) {
           ]);
         } catch (error) {
           return { decision: 'ask', reason: error instanceof Error ? error.message : String(error), unavailable: true };
-        } finally { clearTimeout(attemptTimer); attemptSignal.removeEventListener('abort', onAbort); }
+        } finally {
+          clearTimeout(attemptTimer); attemptSignal.removeEventListener('abort', onAbort);
+          attemptController.abort(new Error('本次审核已结束'));
+        }
       };
       const started = Date.now();
       const primary: any = await attempt(options, fallback ? Math.max(1, Math.floor(timeoutMs / 2)) : timeoutMs);
@@ -4437,10 +4459,14 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
   const { text: policy, hash: policyHash } = loadReviewerPolicy();
   const actionFacts = reviewActionFacts(action);
   // 用户原话、限制和当前操作均不截断。离线小模型保留较小预算，在线审核按完整
-  // 输入总量估算；历史批准已压缩成有界凭证，不会随着长任务无限增长。
+  // 输入总量估算。长上下文走共享分段审核；完整动作无法放入一页时仍不猜测。
   const localTextReview = settings?.reviewerBackend === "local" && !isStatefulUiOperation(action.kind);
   const reviewTokens = estimateTextTokens(`${policy}\n${context}\n${action.details || ""}\n${actionFacts}\n${action.observation?.text || ""}`);
-  if (localTextReview ? String(context || "").length > 14000 || String(action.details || "").length + actionFacts.length > 6000 : reviewTokens > 24000) {
+  const actionTokens = estimateTextTokens(`${policy}\n${action.details || ""}\n${actionFacts}\n${action.observation?.text || ""}`);
+  const overCapacity = localTextReview
+    ? String(context || "").length > 14000 || String(action.details || "").length + actionFacts.length > 6000
+    : actionTokens > 10000 && reviewTokens > 24000;
+  if (overCapacity) {
     return { decision: "ask", reason: "审核资料过长，无法完整核对用户要求和操作内容，请人工确认", policyHash };
   }
   if (isStatefulUiOperation(action.kind) && !action.observation?.available) {
@@ -4500,6 +4526,21 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
     }
   };
   try {
+    if (!localTextReview && reviewTokens > 24000) {
+      const result = await reviewAllContextPages({ context: String(context), signal,
+        review: async (page, index, count) => {
+          const pageText = `任务资料第 ${index + 1}/${count} 页（原文字符 ${page.start}–${page.end}，共 ${String(context).length} 字符）。页首延续原资料的来源标注：${page.source}；页内新标注按原文理解，事实不是授权。\n${page.text}\n\n完整待执行操作：\n工具：${String(action.kind || '')}\n详情：${String(action.details || '')}\n${actionFacts}\n最新界面事实：${String(action.observation?.text || '')}`;
+          const message = await requestReview([
+            { role: "system", content: policy + REVIEW_PAGE_POLICY },
+            { role: "user", content: action.observation?.images?.length
+              ? [{ type: "text", text: pageText }, ...action.observation.images.map(image => ({ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } }))]
+              : pageText },
+          ]);
+          return messageText(message);
+        },
+      });
+      return { ...result, policyHash };
+    }
     const message = await requestReview(request);
     const parsed = parseReviewerOutput(messageText(message));
     if (!parsed.invalidFormat) return { ...parsed.result, policyHash };
@@ -4523,10 +4564,10 @@ async function performApprovalReview({ settings, action = {}, context = "", fetc
 }
 
 // 任务内审核决策缓存键：同一工具对同一操作内容只问一次模型。
-// 详情文本把空白折叠成单空格，吸收 shell 命令换行/缩进带来的差异。
+// 完整字节参与键值；引号中的空白与脚本换行可能改变行为，不能归一化。
 export function reviewerCacheKey(kind = "", details = "") {
-  const normalized = String(details || "").replace(/\s+/g, " ").trim();
-  if (!normalized) return "";
+  const normalized = String(details || "");
+  if (!normalized.trim()) return "";
   return `${String(kind || "")}::${normalized}`;
 }
 
@@ -5473,9 +5514,9 @@ export async function runAgent({
   // 只在本轮任务内存活、不落盘。用户批准的工作区外路径同样只在本次任务内记在
   // Workspace 里（目录含其子路径），不进入这里的会话规则，也不会跨任务或落盘。
   const sessionRules = [];
-  // 审核助手状态：连续拒绝 3 次后熔断，后续审批直接转人工
-  // 审核决策缓存：同一操作（工具+规范化详情）本次任务内只问一次模型，放行结果直接复用
-  const reviewerState = { active: true, consecutiveDenials: 0, total: 0, decisions: new Map() };
+  // 拒绝只作用于当前操作；后续操作继续按当前任务审核，不能悄悄退回逐步人工确认。
+  // 审核决策缓存：同一操作（工具+完整详情）本次任务内只问一次模型，放行结果直接复用
+  const reviewerState = { total: 0, decisions: new Map() };
   // 审核模型来源标签：出现在调试日志与审计记录里，便于确认每条决策是哪个模型做出的
   const configuredReviewerModelLabel = settings?.reviewerBackend === "local"
     ? "本地内置 Qwen3-0.6B"
@@ -6491,7 +6532,7 @@ export async function runAgent({
               approvalMode: effectiveApprovalMode(),
               forExternalPaths: externalPaths.length > 0,
             }) && !deleteOutsideWorkspace && !touchesReviewerLogic;
-            if (reviewable && reviewerState.active) {
+            if (reviewable) {
               // 缓存命中：同一操作本次任务内已由审核助手放行过，跳过模型调用
               const reviewContext = reviewerContext() + relatedReviewToolEvidence(executedTools, displayArgs.command);
               const entryScripts = await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs,
@@ -6530,7 +6571,6 @@ export async function runAgent({
               if (effectiveApprovalMode() !== decisionInput.approvalMode) {
                 approved = await askApproval();
               } else if (review.decision === "allow") {
-                reviewerState.consecutiveDenials = 0;
                 approved = true;
                 approvalSource = "reviewer";
                 reviewerReason = review.reason;
@@ -6540,11 +6580,6 @@ export async function runAgent({
                 }
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：放行`, `${summary}\n${review.reason}`);
               } else if (review.decision === "deny") {
-                reviewerState.consecutiveDenials += 1;
-                if (reviewerState.consecutiveDenials >= 3) {
-                  reviewerState.active = false;
-                  debugLog("tool-result", "审核助手：熔断", "连续拒绝 3 次，后续审批直接转人工");
-                }
                 auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：拒绝`, `${summary}\n${review.reason}`);
                 return {
@@ -6555,7 +6590,6 @@ export async function runAgent({
                   },
                 };
               } else {
-                reviewerState.consecutiveDenials = 0;
                 auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
                 approved = await askApproval(review.reason);

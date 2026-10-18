@@ -14,7 +14,7 @@ const messageText = (message: any) => Array.isArray(message?.content)
 export function buildReviewContext({ conversation = [], prompt = "", goal = "", workingContext = "", projectInstructions = "", approvals = [], replies = [], recentTools = [] } = {} as any) {
   const users = conversation.filter((message: any) => message?.role === "user");
   // 授权、禁止和范围变化可能出现在任意一轮、任意位置，不按关键词筛选或截断。
-  // 完整资料超出审核预算时，由 reviewApproval 转人工，不能留下旧授权而丢掉新限制。
+  // 完整资料超出单次审核预算时，由 reviewApproval 分段核对，不能丢掉旧限制。
   const selected = users.length ? [users.at(-1), ...users.slice(0, -1)] : [];
   const requests = selected.map((message: any) => `${message === users.at(-1) ? "最新用户要求" : `较早的第 ${users.indexOf(message) + 1} 条用户要求`}：\n${messageText(message)}`).join("\n\n");
   const context = [

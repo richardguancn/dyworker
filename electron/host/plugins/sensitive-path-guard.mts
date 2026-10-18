@@ -47,7 +47,7 @@ function collectStrings(value, out = []) {
 
 // 返回首个命中的 { label, sample }，未命中返回 null
 export function findSensitiveReference(args, name = "") {
-  if (name === "save_memory") return null;
+  if (["save_memory", "save_skill", "update_skill"].includes(name)) return null;
   const values = FILE_TARGET_TOOLS.has(name) ? { path: args?.path, source: args?.source, target: args?.target } : args;
   const metadata = name === "run_command" ? sensitiveMetadataInspection(args?.command) : null;
   const texts = collectStrings(metadata?.facts.length ? { ...args, command: metadata.residual } : values);
@@ -72,6 +72,8 @@ export function findSensitiveReference(args, name = "") {
     // 其他秘密引用仍强制人工确认，不能被同一命令中的公钥引用掩盖。
     if (name === "run_command" && !sensitiveMatch(text.replace(PUBLIC_SSH_REFERENCE, "$1[公共 SSH 文件]"))) {
       publicReference = { label: "SSH 公共文件（需核对读写用途）", sample: text.slice(0, 200), reviewable: true };
+    } else if (name === "run_command" && !sensitiveMatch(text.replace(/(^|[\s"'=;|(&])(?:[^\s"'<>;|&()]*[\\/])?\.env\.example(?=$|[\s"'<>;|&()])/g, "$1[配置示例]"))) {
+      publicReference = { label: "配置示例引用（需核对实际访问与数据流）", sample: text.slice(0, 200), reviewable: true };
     } else return { label, sample: text.slice(0, 200) };
   }
   return publicReference || (metadata?.facts.length ? { label: "受限元信息检查", sample: metadata.facts.join("；"), reviewable: true } : null);

@@ -1654,7 +1654,7 @@ test("自动审核模式:钩子强制审批仍直接问用户,不经过审核助
   assert.equal(userApprovals, 1, "钩子强制审批仍应弹人工审批");
 });
 
-test("替我审批:审核助手连续拒绝 3 次后熔断,后续审批转人工", async () => {
+test("替我审批:连续拒绝只影响对应操作，后续仍由审核助手处理", async () => {
   const root = await makeWorkspace();
   let userApprovals = 0;
   const result = await runAgent({
@@ -1671,11 +1671,12 @@ test("替我审批:审核助手连续拒绝 3 次后熔断,后续审批转人工
       { role: "assistant", content: null, tool_calls: [toolCall("c3", "run_command", { command: "git push origin release" })] },
       { role: "assistant", content: '{"decision":"deny","reason":"拒绝三"}' },
       { role: "assistant", content: null, tool_calls: [toolCall("c4", "run_command", { command: "git push origin feature" })] },
+      { role: "assistant", content: '{"decision":"deny","reason":"拒绝四"}' },
       { role: "assistant", content: "四条都处理完了。" },
     ]),
   });
   assert.equal(result.status, "done");
-  assert.equal(userApprovals, 1, "熔断后第四条应转人工审批");
+  assert.equal(userApprovals, 0, "第四条仍应自动审核并拒绝，不退回人工");
 });
 
 test("工作区外路径会弹出单次授权，拒绝后不会读取", async () => {
@@ -2941,8 +2942,8 @@ test("审核助手可走独立本地小模型端点,密钥缺省回退主模型"
   assert.equal(seen[0].body.model, "mock-model");
 });
 
-test("reviewerCacheKey 归一化空白差异,工具与内容参与键", () => {
-  assert.equal(reviewerCacheKey("run_command", "curl -s  http://x\n  | head"), reviewerCacheKey("run_command", "curl -s http://x | head"));
+test("reviewerCacheKey 保留完整空白、工具与内容参与键", () => {
+  assert.notEqual(reviewerCacheKey("run_command", "curl -s  http://x\n  | head"), reviewerCacheKey("run_command", "curl -s http://x | head"));
   assert.notEqual(reviewerCacheKey("run_command", "ls /a"), reviewerCacheKey("run_command", "ls /b"));
   assert.notEqual(reviewerCacheKey("run_command", "ls /a"), reviewerCacheKey("write_file", "ls /a"));
   assert.equal(reviewerCacheKey("run_command", "   \n  "), "");

@@ -46,7 +46,6 @@ function text(value: any) {
  */
 export function createBotApproval(options: any) {
   let queue = Promise.resolve();
-  let denials = 0;
   const approvals = new Map<string, any[]>();
   const audit = (item: any) => options.audit?.(item);
   const resolved = async (value: any) => (typeof value === 'function' ? await value() : value) || [];
@@ -76,7 +75,7 @@ export function createBotApproval(options: any) {
         && !isReviewerProtectedPath(workspacePath, args.path)
         && isReviewerEligible({ name, args, approvalMode: mode(), hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true,
           forExternalPaths: externalPaths.length > 0 });
-      if (denials < 3 && reviewable) {
+      if (reviewable) {
         const reviewMode = mode();
         const observation = await readReviewObservation({ name, args, availableNames: await resolved(options.extraToolNames),
           execute: (reader: string, readArgs: any) => options.onExtraTool?.(reader, readArgs, tool), signal,
@@ -98,8 +97,8 @@ export function createBotApproval(options: any) {
           detail(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断');
           return updated === 'allow';
         }
-        if (review.decision === 'allow') { denials = 0; detail('reviewer-allowed', review.reason); return true; }
-        if (review.decision === 'deny') { denials++; detail('reviewer-denied', review.reason); return false; }
+        if (review.decision === 'allow') { detail('reviewer-allowed', review.reason); return true; }
+        if (review.decision === 'deny') { detail('reviewer-denied', review.reason); return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const id = String(tool.callId || randomUUID());

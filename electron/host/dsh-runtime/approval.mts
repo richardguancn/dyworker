@@ -5,7 +5,6 @@ import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewT
 // 由宿主绑定会话、工作目录和权限模式。DSH 策略只能收紧此决定。
 export function createDshApproval(options: any) {
   let queue = Promise.resolve();
-  let denials = 0;
   const approvals = new Map<string, any[]>();
   return (tool: any) => {
     const operation = queue.then(async () => {
@@ -30,7 +29,7 @@ export function createDshApproval(options: any) {
       if (decision === 'deny') { audit('denied', '当前任务不允许修改'); return false; }
       if (decision === 'allow') { audit('auto-allowed'); return true; }
       let reason = hook?.message || '';
-      if (denials < 3 && !isReviewerProtectedPath(tool.workspacePath || options.workspacePath || '', args.path)
+      if (!isReviewerProtectedPath(tool.workspacePath || options.workspacePath || '', args.path)
         && isReviewerEligible({ name: publicName, args, approvalMode: currentMode(),
         hookRequiresApproval: hook?.action === 'require_approval' && hook?.reviewable !== true })) {
         const reviewMode = currentMode();
@@ -55,8 +54,8 @@ export function createDshApproval(options: any) {
         if (currentMode() !== reviewMode) {
           const updated = evaluate();
           if (updated !== 'ask') { audit(updated === 'allow' ? 'auto-allowed' : 'denied', '按更新后的权限重新判断'); return updated === 'allow'; }
-        } else if (review.decision === 'allow') { denials = 0; return true; }
-        else if (review.decision === 'deny') { denials++; return false; }
+        } else if (review.decision === 'allow') { return true; }
+        else if (review.decision === 'deny') { return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,
