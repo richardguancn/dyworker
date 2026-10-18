@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - codex/windows-command-protection
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
