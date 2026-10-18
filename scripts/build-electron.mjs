@@ -43,7 +43,7 @@ if (tsc.status !== 0) {
 }
 
 // 产物自检：桥接文件或入口缺失时明确失败，不要产出一个「界面能开、保存全哑」的包。
-const required = [...staticAssets, "main.mjs", "linux-window-shadow.mjs", "scripts/linux_window_shadow.py", "assets/icon-light.png", "assets/icon-dark.png", "assets/dock-light.png", "assets/dock-dark.png", 'host/dsh-runtime/vendor/session-history.mjs'];
+const required = [...staticAssets, "main.mjs", "linux-window-shadow.mjs", "scripts/linux_window_shadow.py", "scripts/windows_command_runner.cjs", "assets/icon-light.png", "assets/icon-dark.png", "assets/dock-light.png", "assets/dock-dark.png", 'host/dsh-runtime/vendor/session-history.mjs'];
 const missing = required.filter((asset) => !existsSync(path.join(outDir, asset)));
 if (missing.length) {
   console.error(`[build-electron] 产物缺少：${missing.join("、")}；渲染端会失去 window.dyworker 桥接，拒绝交付。`);

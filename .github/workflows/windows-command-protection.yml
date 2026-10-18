@@ -1,0 +1,65 @@
+name: Windows 命令写入保护诊断
+
+on:
+  push:
+    branches:
+      - codex/windows-command-protection
+    paths-ignore:
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-command-protection-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: 拉取当前诊断分支
+        uses: actions/checkout@v4
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装固定依赖
+        run: npm ci
+      - name: 验证应用的启动前检查和结果处理
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/windows-command-protection | Out-Null
+          node --test tests/command-protection.test.mjs > output/windows-command-protection/windows-command-protection-tests.log
+      - name: 直接检查官方后端的真实写入与目录权限
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node scripts/diagnose-windows-command-protection.mjs > output/windows-command-protection/windows-command-protection-report.json
+      - name: 验证原有动态越界用例和 Windows 前后台真实执行
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node --test --test-concurrency=1 tests/approval-architecture.test.mjs tests/windows-command-execution.test.mjs > output/windows-command-protection/windows-command-execution-tests.log
+      - name: 完整构建和回归检查
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: npm run verify > output/windows-command-protection/windows-full-verification.log
+      - name: 单独复核实际连接关闭与恢复
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: node --test tests/dsh-connection.test.mjs > output/windows-command-protection/windows-connection-recheck.log
+      - name: 保存诊断结果（失败时仍保存）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-command-protection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/windows-command-protection/windows-command-protection-tests.log
+            output/windows-command-protection/windows-command-protection-report.json
+            output/windows-command-protection/windows-command-execution-tests.log
+            output/windows-command-protection/windows-full-verification.log
+            output/windows-command-protection/windows-connection-recheck.log
+          if-no-files-found: warn
+          retention-days: 14

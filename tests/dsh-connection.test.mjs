@@ -16,7 +16,7 @@ import {followSessionControl} from '../electron/host/dsh-runtime/session-control
 
 const config={backoffBaseMs:10,backoffMaxMs:30,generationReadyWarnMs:3000,generationReadyTimeoutMs:10000};
 const reply=message=>new Response(JSON.stringify({choices:[{message,finish_reason:message.tool_calls?'tool_calls':'stop'}]}),{headers:{'content-type':'application/json'}});
-async function until(check){const end=Date.now()+15000;while(!check()){if(Date.now()>end)throw new Error('等待实际连接恢复超时');await new Promise(resolve=>setTimeout(resolve,5));}}
+async function until(check,diagnostic){const end=Date.now()+15000;while(!check()){if(Date.now()>end)throw new Error('等待实际连接恢复超时'+(diagnostic?': '+JSON.stringify(diagnostic()):''));await new Promise(resolve=>setTimeout(resolve,5));}}
 function deferred(){return Promise.withResolvers();}
 const events=reference=>reference.binding.eventSource.getSnapshot().entries.filter(row=>row.type==='event').map(row=>row.event);
 async function assertActualHistory(service,rootId,reference,address,prefix){
@@ -83,11 +83,14 @@ test('真实运行环境关闭、异常退出和手动重连后，原父子引�
   const pendingB=host.agent.run({sessionId:'connection-b',settings,workspacePath:workspaceB,prompt:'另一任务保持运行',approvalMode:'full-access',fetchImpl:async(_url,init)=>{
     requests++;signalB=init.signal;enteredB.resolve();await releaseB.promise;return reply({role:'assistant',content:'另一任务实际完成'});
   }});await enteredB.promise;
-  const opened=[],operation=async input=>{
+  const opened=[],operations=[],operation=async input=>{
+    const trace={action:input.action,address:input.payload?.address,streamId:input.payload?.streamId,state:'pending'};
+    operations.push(trace);if(operations.length>100)operations.shift();
     try{const value=await host.dshRuntime.request(input.sessionId,input.action,input.payload);
       if(input.action==='history-control-open'||input.action==='history-open')opened.push({root:input.sessionId,...value});
+      trace.state='done';
       return {ok:true,value};
-    }catch(error){return {ok:false,error};}
+    }catch(error){trace.state='error';trace.code=error.code;trace.message=error.message;return {ok:false,error};}
   };
   const a=createSessionHistoryClient('connection-a',operation,()=>true,undefined,undefined,undefined,config),b=createSessionHistoryClient('connection-b',operation,()=>true,undefined,undefined,undefined,config);clients.push(a,b);
   await Promise.all([a.sessions.refresh(),b.sessions.refresh()]);
@@ -128,7 +131,11 @@ test('真实运行环境关闭、异常退出和手动重连后，原父子引�
   rootSnapshot=root.binding.eventSource.getSnapshot();childSnapshot=child.binding.eventSource.getSnapshot();
   host.dshRuntime.sessions.get('connection-a').runtime.child.kill('SIGKILL');
   await until(()=>a.connection.generation.getSnapshot()?.id>generation);
-  await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot);
+  await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot,()=>({
+    stage:'after-worker-kill',generation:a.connection.generation.getSnapshot()?.id,state:a.connection.state.getSnapshot(),
+    rootChanged:root.binding.eventSource.getSnapshot()!==rootSnapshot,childChanged:child.binding.eventSource.getSnapshot()!==childSnapshot,
+    rootEntries:events(root).length,childEntries:events(child).length,controlError:a.errors.getSnapshot(),operations,
+  }));
   await assertActualHistory(host.dshRuntime,'connection-a',child,childAddress,oldChild);
   rootSnapshot=root.binding.eventSource.getSnapshot();childSnapshot=child.binding.eventSource.getSnapshot();
   generation=a.connection.generation.getSnapshot().id;a.connection.reconnect();
@@ -136,6 +143,19 @@ test('真实运行环境关闭、异常退出和手动重连后，原父子引�
   await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot);
   await assertActualHistory(host.dshRuntime,'connection-a',root,rootAddress,oldRoot);
   assert.equal(root.binding,identities[0]);assert.equal(child.binding,identities[1]);assert.equal(requests,before);assert.equal(signalB.aborted,false);
+  rootSnapshot=root.binding.eventSource.getSnapshot();childSnapshot=child.binding.eventSource.getSnapshot();
+  generation=a.connection.generation.getSnapshot().id;
+  host.dshRuntime.sessions.get('connection-a').runtime.child.emit('error',Object.assign(new Error('模拟读取期间通讯断开'),{code:'EPIPE'}));
+  await until(()=>a.connection.generation.getSnapshot()?.id>generation);
+  await until(()=>root.binding.eventSource.getSnapshot()!==rootSnapshot&&child.binding.eventSource.getSnapshot()!==childSnapshot,()=>({
+    stage:'after-epipe',generation:a.connection.generation.getSnapshot()?.id,state:a.connection.state.getSnapshot(),
+    rootChanged:root.binding.eventSource.getSnapshot()!==rootSnapshot,childChanged:child.binding.eventSource.getSnapshot()!==childSnapshot,
+    controlError:a.errors.getSnapshot(),operations,
+  }));
+  await assertActualHistory(host.dshRuntime,'connection-a',root,rootAddress,oldRoot);
+  await assertActualHistory(host.dshRuntime,'connection-a',child,childAddress,oldChild);
+  assert.equal(a.errors.getSnapshot(),null,'通讯恢复后控制流不能遗留永久错误');
+  assert.equal(requests,before,'通讯恢复不能重新执行模型任务');assert.equal(signalB.aborted,false);
   const hooksEntered=deferred(),releaseHooks=deferred(),newRunEntered=deferred(),finishNewRun=deferred();
   const agentResolvers=host.agent.resolvers,previousHooks=agentResolvers.readHooks;
   agentResolvers.readHooks=async()=>{hooksEntered.resolve();await releaseHooks.promise;return [];};

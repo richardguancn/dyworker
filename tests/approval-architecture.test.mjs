@@ -74,6 +74,8 @@ test('实际进程的动态写入受保护：工作区内成功，工作区外�
   const insideWrite = `node -e "require('fs').writeFileSync('inside.txt','yes')"`;
   const command = `node -e "require('fs').writeFileSync(require('path').join('..','out'+'side.txt'),'changed')"`;
   assert.equal((await workspace.runCommand(insideWrite)).ok, true);
+  // 返回 0 不代表命令正文真正执行；Windows 的历史启动错误必须在这里被识别。
+  assert.equal(await fs.readFile(path.join(work, 'inside.txt'), 'utf8'), 'yes');
   assert.equal((await workspace.runCommand(command)).ok, false);
   assert.equal(await fs.readFile(outside, 'utf8'), 'original');
   assert.equal((await workspace.runCommand(command, { mode: 'danger-full-access' })).ok, true);

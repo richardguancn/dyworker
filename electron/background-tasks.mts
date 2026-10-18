@@ -1,4 +1,5 @@
 import { prepareCommandExecution } from "./command-execution.mts";
+import { createCommandDiagnostics } from "./command-protection.mts";
 import { spawn } from "node:child_process";
 import path from "node:path";
 
@@ -41,6 +42,7 @@ constructor() {
     const win32 = process.platform === "win32";
     const confined = await prepareCommandExecution(rawCmd, { workspacePath: cwd || process.cwd(), mode: executionMode });
     const [program, ...args] = confined.argv;
+    const diagnostics = createCommandDiagnostics(confined);
 
     const detectedPorts = new Set();
     const detectedUrls = new Set();
@@ -60,9 +62,10 @@ constructor() {
       exitCode: null,
       ports: [...detectedPorts],
       urls: [...detectedUrls],
-      outputTail: [],
+      outputTail: confined.enforcement === 'partial' ? ['当前系统提供部分文件写入保护，存在后端已声明的范围限制。'] : [],
       childProcess: null,
       pid: undefined,
+      protection: { enforcement: confined.enforcement, state: 'ready' },
     };
 
     try {
@@ -70,6 +73,7 @@ constructor() {
         cwd: taskEntry.cwd,
         detached: !win32, // Unix 上创建独立进程组，便于整组杀死
         stdio: ["ignore", "pipe", "pipe"],
+        ...(confined.env ? { env: { ...process.env, ...confined.env } } : {}),
       });
 
       taskEntry.childProcess = child;
@@ -97,7 +101,10 @@ constructor() {
       };
 
       child.stdout.on("data", (chunk) => appendOutput(chunk.toString()));
-      child.stderr.on("data", (chunk) => appendOutput(chunk.toString(), true));
+      child.stderr.on("data", (chunk) => {
+        diagnostics.write(chunk);
+        appendOutput(chunk.toString(), true);
+      });
 
       child.on("error", (err) => {
         taskEntry.status = "error";
@@ -107,7 +114,12 @@ constructor() {
       });
 
       child.on("close", (code) => {
-        taskEntry.status = code === 0 ? "stopped" : (taskEntry.status === "stopped" ? "stopped" : "error");
+        const protection = diagnostics.finish(code);
+        taskEntry.protection = { enforcement: confined.enforcement, ...protection };
+        taskEntry.status = taskEntry.status === 'error' || protection.state !== 'ready' ? 'error'
+          : (code === 0 || taskEntry.status === 'stopped' ? 'stopped' : 'error');
+        if (protection.state !== 'ready') appendOutput(protection.state === 'unavailable'
+          ? `执行保护报告故障，不能确认命令已受保护地完成：${protection.detail}` : '执行保护拒绝了本次文件操作。', true);
         taskEntry.exitCode = code;
         taskEntry.endTime = new Date().toISOString();
         this.emit("task-status", taskEntry);
@@ -320,6 +332,7 @@ constructor() {
       urls: t.urls || [],
       outputTail: t.outputTail || [],
       pid: t.pid,
+      ...(t.protection ? { protection: t.protection } : {}),
     };
   }
 }

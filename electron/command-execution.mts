@@ -1,4 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
+import { protectionUnavailable, requireCommandProtection } from './command-protection.mts';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 let sandbox: Promise<any> | undefined;
 async function provider() {
@@ -16,10 +19,26 @@ async function provider() {
 // 仅明确批准的本次 host 执行或用户选中的 full-access 可绕过；后端故障绝不裸跑。
 export async function prepareCommandExecution(command: string, { workspacePath, mode = 'workspace-write', signal }: any) {
   signal?.throwIfAborted();
-  const argv = process.platform === 'win32'
-    ? ['cmd.exe', '/d', '/s', '/c', String(command)] : ['/bin/bash', '-lc', String(command)];
-  if (mode === 'danger-full-access') return { argv, enforcement: 'explicit-host-grant' };
+  if (!['workspace-write', 'read-only', 'danger-full-access'].includes(mode)) {
+    throw protectionUnavailable('无法识别本次执行权限，命令未执行');
+  }
+  const windows = process.platform === 'win32';
+  const bridge = fileURLToPath(new URL('./scripts/windows_command_runner.cjs', import.meta.url))
+    .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  const argv = windows ? [process.execPath, bridge, Buffer.from(String(command), 'utf8').toString('base64'), process.env.ELECTRON_RUN_AS_NODE || '']
+    : ['/bin/bash', '-lc', String(command)];
+  const env = windows ? { ELECTRON_RUN_AS_NODE: '1' } : undefined;
+  const bridgeFailure = { allowedExitCodes: [127], fatalSignatures: ['dyworker-command-runner: '] };
+  if (mode === 'danger-full-access') return { argv, env, enforcement: 'explicit-host-grant',
+    ...(windows ? { denialSignatures: [], runnerFailureRules: [bridgeFailure] } : {}) };
   const ctx = await provider();
   signal?.throwIfAborted();
-  return ctx.sandbox.confine(argv, { mode: mode === 'read-only' ? 'read-only' : 'workspace-write', workspaceRoot: workspacePath }, signal);
+  const confined = await ctx.sandbox.confine(argv, { mode, workspaceRoot: workspacePath }, signal);
+  signal?.throwIfAborted();
+  // 仅识别当前固定官方 Windows runner；不是接受所有 partial，更不是退回 host。
+  const expectedRunner = windows ? fileURLToPath(import.meta.resolve('@deepseek-ai/dsh-sandbox-windows-acl/runner')) : '';
+  const nativeWindows = windows && confined.argv?.[0] === process.execPath
+    && path.normalize(confined.argv?.[1] || '') === path.normalize(expectedRunner);
+  requireCommandProtection(confined, mode, nativeWindows ? 'windows-acl' : undefined);
+  return { ...confined, env, runnerFailureRules: [...confined.runnerFailureRules, ...(windows ? [bridgeFailure] : [])] };
 }

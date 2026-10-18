@@ -9,6 +9,13 @@ import { PtcExecutor } from './ptc-executor.mts';
 import LocalAttachments from '@deepseek-ai/dsh-attachment-local';
 import { StreamedAttachmentUpload } from './streamed-upload.mts';
 
+function carrierFailure(error: any) {
+  if (!['EPIPE', 'ERR_IPC_CHANNEL_CLOSED', 'ERR_IPC_DISCONNECTED'].includes(error?.code)) return error;
+  return Object.assign(new Error(String(error.message || 'DSH 通讯已经断开'), { cause: error }), {
+    code: 'dyworker/history-carrier-lost', details: { transportCode: error.code },
+  });
+}
+
 // 一个进程只拥有一个根会话及其子任务；强制停止不影响别的会话。
 export class OfficialDshSession {
   readonly options: any;
@@ -84,9 +91,11 @@ export class OfficialDshSession {
     });
     // IPC 在 connected 检查后仍可能断开；启动后的 error 也必须有人接收。
     this.child.on('error', error => {
-      for (const wait of this.pending.values()) wait.reject(error);
+      // 管道断开属于载体丢失；保留原始原因，不能让历史流把它当成永久业务错误。
+      const failure = carrierFailure(error);
+      for (const wait of this.pending.values()) wait.reject(failure);
       this.pending.clear();
-      for (const controller of this.requests.values()) controller.abort(error);
+      for (const controller of this.requests.values()) controller.abort(failure);
       void this.stop().catch(() => {});
     });
     try {
@@ -326,7 +335,13 @@ export class OfficialDshSession {
       };
       const timer = setTimeout(() => void abort(), timeoutMs);
       this.pending.set(id, { resolve: (value: any) => { cleanup(); resolve(value); }, reject: (error: any) => { cleanup(); reject(error); } });
-      signal?.addEventListener('abort', abort, { once: true }); this.child.send({ type: 'request', id, action, payload });
+      signal?.addEventListener('abort', abort, { once: true });
+      try { this.child.send({ type: 'request', id, action, payload }); }
+      catch (error) {
+        cleanup();
+        const failure = carrierFailure(error); reject(failure);
+        if (failure !== error) void this.stop().catch(() => {});
+      }
     });
   }
   async cancel() {
