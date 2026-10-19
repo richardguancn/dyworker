@@ -11,6 +11,7 @@ import { createTraceBuffer, trimRecentText } from "../traceBuffer";
 import { goalElapsed, startGoal } from "../goal";
 import { displayWorkspace } from "../lib/text";
 import { makeSession, refreshPendingWakes } from "./sessionActions";
+import { bindSessionModel } from "../../electron/session-model.mts";
 import { closeImagePreview, navigateImagePreview } from "./messageActions";
 import { refreshGitInfo } from "./gitActions";
 import { syncAtBottom } from "./panelActions";
@@ -126,6 +127,8 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     if (!activeId) return;
     setPluginsPageOpen(false);
     setBotTeamPageOpen(false);
+    setModelMenuOpen(false);
+    setApprovalMenuOpen(false);
   }, [activeId]);
   // 视口宽度跟随窗口变化：面板宽度只在拖动时按当时窗口夹取，窗口之后缩小
   // （如从高分屏搬到低分屏/笔记本屏）时必须重新夹取，否则固定像素宽度会吞掉整个主区域
@@ -532,10 +535,11 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
       try {
         const state = await window.dyworker.getInitialState();
         if (cancelled) return;
+        setSettings(state.settings);
         const loaded = keepSingleUnstartedSession(state.sessions);
         const initialDraft = loaded.length ? null : makeSession(state.workspacePath);
         setNewTaskDraft(initialDraft);
-        setSessions(loaded.map(session => session.goal && !session.goalState
+        setSessions(loaded.map(session => bindSessionModel(session, state.settings)).map(session => session.goal && !session.goalState
           ? { ...session, ...startGoal(session.goal) }
           : session));
         // 种子保存基线：首次保存不需要把整档重发一遍
@@ -546,7 +550,6 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
         // 全局工作目录可能被上次的无目录会话清空，优先用当前会话保存的目录
         setWorkspacePath(loaded.find(session => session.id === restoredActiveId)?.workspacePath || state.workspacePath);
         setWorkspaceEntries(state.workspaceEntries);
-        setSettings(state.settings);
         setPinnedWorkspacePaths(state.pinnedWorkspacePaths || []);
         setPlatform(state.platform || "");
         setWindowMaximized(Boolean(state.windowMaximized));

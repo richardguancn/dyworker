@@ -12,6 +12,7 @@ import { applyReasoningStream } from "../reasoningStream";
 import { formatWakeTime } from "../wakeNote";
 import type { ChatMessage, SessionRecord } from "../types";
 import { useSettingsStore } from "./settingsStore";
+import { settingsForSession } from "../../electron/session-model.mts";
 import { useSessionStore } from "./sessionStore";
 
 export interface SessionStreamRuntimeDeps {
@@ -163,8 +164,8 @@ export function useSessionStreamRuntime(deps: SessionStreamRuntimeDeps) {
       } else if (event.type === "context-usage") {
         updateSession(sessionId, session => ({ ...session,
           contextTokens: event.total ?? event.used + event.completion, contextTokensExact: !event.estimated,
-          contextModel: useSettingsStore.getState().settings.model,
-          contextEndpoint: useSettingsStore.getState().settings.endpoint,
+          contextModel: settingsForSession(useSettingsStore.getState().settings, session).model,
+          contextEndpoint: settingsForSession(useSettingsStore.getState().settings, session).endpoint,
         }));
       } else if (event.type === "token-usage") {
         updateSession(sessionId, session => ({ ...session, tokenStats: {

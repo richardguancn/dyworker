@@ -4,6 +4,7 @@ import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
 import { formatChannelApproval } from "./channels/shared.mts";
 import { queuedGoalPayload, settledStoredGoal } from "./goal.mts";
+import { settingsForSession } from "./session-model.mts";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
@@ -2828,9 +2829,9 @@ async function resumeWake(wake, options: any = {}) {
         ...(manualWake ? { manual: true } : {}),
       });
     }
-    const settings = await readSettings();
+    const settings = settingsForSession(await readSettings(), await ctx.sessions.getAsync(wake.sessionId));
     if (!hasConfiguredModel(settings)) {
-      throw new Error("模型还没有配置，无法续跑挂起的任务");
+      throw new Error("此会话的模型配置不可用，请重新选择模型后继续");
     }
     const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
     const workingContext = await workingContextForSession(wake.sessionId);
@@ -3769,12 +3770,12 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       }
     }
     const settings = await readSettings();
-    // 渠道任务模型:默认跟随当前模型,可在渠道设置里固定为某个模型档案
+    // 已有会话保留自己的模型；新渠道会话使用渠道默认配置。
     const profileId = String(settings.channels?.modelProfileId || "");
     const profile = profileId ? (settings.profiles || []).find((item) => item.id === profileId) : null;
-    const taskSettings = profile
+    const taskSettings = settingsForSession(profile
       ? { ...settings, endpoint: profile.endpoint, model: profile.model, apiKey: profile.apiKey, reasoningEffort: profile.reasoningEffort || "" }
-      : settings;
+      : settings, await ctx.sessions.getAsync(sessionId));
     if (!hasConfiguredModel(taskSettings)) {
       throw new Error("模型还没有配置,请先在电脑端完成设置");
     }

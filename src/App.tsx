@@ -70,6 +70,7 @@ import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
 import { defaultSettings } from "./lib/settings";
+import { settingsForSession } from "../electron/session-model.mts";
 import { ArchivedPlan, PlanProgress } from "./PlanProgress";
 import { GoalBanner } from "./GoalBanner";
 import { AppLogo } from "./AppLogo";
@@ -1580,13 +1581,14 @@ export function App() {
     }
   };
 
-  const hasModel = hasConfiguredModel(settings);
+  const composerSettings = settingsForSession(settings, activeSession);
+  const hasModel = hasConfiguredModel(composerSettings);
   // 输入框的合并胶囊：模型名 · 当前思考档位（模型没有可调档位时只显示模型名）
   const composerReasoningConfig = hasModel
-    ? getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: settings.reasoningOverrides })
+    ? getModelReasoningConfig({ endpoint: composerSettings.endpoint, model: composerSettings.model, overrides: settings.reasoningOverrides })
     : null;
   const composerEffortValue = composerReasoningConfig?.efforts.length
-    ? selectedReasoningEffort(composerReasoningConfig, settings.reasoningEffort)
+    ? selectedReasoningEffort(composerReasoningConfig, composerSettings.reasoningEffort)
     : "";
   const composerEffortLabel = composerEffortValue
     ? composerReasoningConfig?.labels[composerEffortValue] || composerEffortValue
@@ -1598,16 +1600,16 @@ export function App() {
     // 优先用服务返回的本轮完整上下文用量，并随会话、模型和服务地址保存；
     // 还没有实测数据时用与代理侧一致的轻量估算，避免把附件字节数直接当成标记数。
     if (activeSession?.contextTokens != null
-      && activeSession.contextModel === settings.model
-      && activeSession.contextEndpoint === settings.endpoint) {
+      && activeSession.contextModel === composerSettings.model
+      && activeSession.contextEndpoint === composerSettings.endpoint) {
       return {
         used: activeSession.contextTokens,
-        limit: modelContextLimit(settings.model, settings.endpoint),
+        limit: modelContextLimit(composerSettings.model, composerSettings.endpoint),
         exact: Boolean(activeSession.contextTokensExact),
       };
     }
     const tokens = estimateSessionTokens(activeSession?.messages || [], activeSession?.workingContext || "");
-    return { used: tokens, limit: modelContextLimit(settings.model, settings.endpoint), exact: false };
+    return { used: tokens, limit: modelContextLimit(composerSettings.model, composerSettings.endpoint), exact: false };
   }, [
     activeSession?.messages,
     activeSession?.workingContext,
@@ -1615,8 +1617,8 @@ export function App() {
     activeSession?.contextTokensExact,
     activeSession?.contextModel,
     activeSession?.contextEndpoint,
-    settings.model,
-    settings.endpoint,
+    composerSettings.model,
+    composerSettings.endpoint,
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   // 例外一：挂起等待唤醒期间禁止发送（发送键变灰），必须先「立即继续」或「取消唤醒」
@@ -2186,7 +2188,7 @@ export function App() {
         contextUsage={contextUsage}
         modelMenuOpen={modelMenuOpen}
         setModelMenuOpen={setModelMenuOpen}
-        settings={settings}
+        settings={composerSettings}
         hasModel={hasModel}
         ensureComposerModels={ensureComposerModels}
         composerEffortLabel={composerEffortLabel}

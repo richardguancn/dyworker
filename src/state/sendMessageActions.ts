@@ -6,6 +6,7 @@
 // queueDebugLog / appendSessionTraces / playCompletionSound）经 sharedRefs 的回调 ref 调用。
 // 函数体、文案与行为均保持不变。
 import { formatAnnotationsForPrompt } from "../annotations";
+import { bindSessionModel, settingsForSession } from "../../electron/session-model.mts";
 import { patchDshAssistant, reconcileDshTurns } from "../dshTurns";
 import { activeGoal, changeGoalStatus, settleGoal, startGoal } from "../goal";
 import { appendBranchActivity, patchActivityTree } from "../lib/activity";
@@ -58,7 +59,9 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
   const { sessions, sleepingSessions, runningSessionIds, workspacePath, setSessions, setNewTaskDraft, setRunningSessionIds, setRunningStartedAt, setSleepingSessions, setPendingApprovals, setPendingQuestions, setLoopStates } = sessionState;
   const { composer, attachments, activeSkills, composerPastes, annotations, setComposer, setAttachments, setActiveSkills, setComposerPastes, setAnnotations, setMentionMenu, setExpandedPasteId, setAnnotationListOpen } = useComposerStore.getState();
   const { setNotice, setError, editingMessage, setEditingMessage, queuedRunIds } = useViewStore.getState();
-  const { settings, approvalMode } = useSettingsStore.getState();
+  const { settings: globalSettings, approvalMode } = useSettingsStore.getState();
+  const settings = settingsForSession(globalSettings, overrideSessionId
+    ? sessions.find(session => session.id === overrideSessionId) : selectActiveSession(sessionState));
   const activeSession = selectActiveSession(sessionState);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
   if (pluginSubmission) {
@@ -290,7 +293,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
     ? targetSession.messages[editingMessage.messageIndex + 1]
     : null;
   const updatedSession: SessionRecord = {
-    ...targetSession,
+    ...bindSessionModel(targetSession, settings),
     ...(goalDriven ? startGoal(content) : (resumeGoal || targetSession.goalState?.status === "blocked") ? { goalState: { ...changeGoalStatus(targetSession, "active").goalState!, id: crypto.randomUUID() } } : {}),
     ...(editingTarget ? { workingContext: undefined } : {}),
     title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : targetSession.title,

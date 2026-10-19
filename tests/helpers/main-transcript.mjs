@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import {reconcileDshMessages,patchDshAssistant} from '../../electron/host/dsh-runtime/presentation.mts';
 import {formatChannelApproval} from '../../electron/channels/shared.mts';
 import {findWorkspaceBlockers} from '../../electron/workspace-busy.mts';
+import {settingsForSession} from '../../electron/session-model.mts';
 // Exercise the actual shared main-process collector without initializing Electron or external channels.
 const main=await fs.readFile(new URL('../../electron/main.mts',import.meta.url),'utf8');
 const source=main.slice(main.indexOf('function createTranscriptCollector('),main.indexOf('async function runScheduledTask('));
@@ -27,7 +28,7 @@ function channelWorkspaceBlockers(deps,workspacePath,ignoreSessionId='') {
 }
 
 export function mainChannelEntry(deps) {
-  deps={formatChannelApproval,CHANNEL_WAIT_NOTICE_DELAY_MS:5000,...deps};
+  deps={formatChannelApproval,settingsForSession,CHANNEL_WAIT_NOTICE_DELAY_MS:5000,...deps};
   deps.workspaceBlockers=deps.workspaceBlockers||((workspacePath,ignoreSessionId)=>channelWorkspaceBlockers(deps,workspacePath,ignoreSessionId));
   const start=main.indexOf('async function runChannelTask(');
   const end=main.indexOf('\n// channels:get-status',start);
@@ -35,6 +36,7 @@ export function mainChannelEntry(deps) {
 }
 
 export function mainWakeEntry(deps) {
+  deps={settingsForSession,...deps};
   const start=main.indexOf('async function resumeWake(');
   const end=main.indexOf('\n// ----',start);
   return new Function(...Object.keys(deps),stripTypeScriptTypes(main.slice(start,end))+'\nreturn resumeWake;')(...Object.values(deps));

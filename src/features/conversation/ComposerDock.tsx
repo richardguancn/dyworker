@@ -16,7 +16,8 @@ import { ImageAttachmentThumb } from "../../ImageAttachment";
 import { PluginSlotView } from "../../PluginSlotView";
 import { formatWakeTime } from "../../wakeNote";
 import { clientHost } from "../../pluginRuntime/clientHostSingleton.ts";
-import { getModelReasoningConfig, reasoningModelKey, updateReasoningOverride } from "../../../electron/model-reasoning.ts";
+import { reasoningModelKey } from "../../../electron/model-reasoning.ts";
+import { saveComposerReasoning } from "../../state/settingsActions";
 import type { ConversationPaneProps } from "./ConversationPane";
 
 export type ComposerDockProps = Pick<ConversationPaneProps,
@@ -619,20 +620,9 @@ export function ComposerDock(props: ComposerDockProps) {
                       {hasModel && <>
                         <ReasoningControl key={reasoningModelKey(settings.endpoint, settings.model)}
                           endpoint={settings.endpoint} model={settings.model} effort={settings.reasoningEffort} overrides={settings.reasoningOverrides}
-                          onChange={reasoningEffort => void saveProviderSettings({
-                            ...settings, reasoningEffort,
-                            profiles: settings.profiles.map(profile => profile.endpoint === settings.endpoint && profile.model === settings.model
-                              ? { ...profile, reasoningEffort } : profile),
-                          }, "思考强度已更新")}
-                          onConfigure={async override => {
-                            const reasoningOverrides = updateReasoningOverride(settings.reasoningOverrides, settings.endpoint, settings.model, override);
-                            const config = getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: reasoningOverrides });
-                            const reasoningEffort = config.efforts.includes(settings.reasoningEffort) ? settings.reasoningEffort : "";
-                            return saveProviderSettings({ ...settings, reasoningOverrides, reasoningEffort,
-                              profiles: settings.profiles.map(profile => reasoningModelKey(profile.endpoint, profile.model) === reasoningModelKey(settings.endpoint, settings.model)
-                                ? { ...profile, reasoningEffort } : profile),
-                            }, override ? "思考档位已保存" : "已恢复自动识别思考档位");
-                          }} />
+                          onChange={reasoningEffort => void saveComposerReasoning(reasoningEffort)}
+                          onConfigure={override => saveComposerReasoning(settings.reasoningEffort, override)} />
+                        <p className="model-menu-hint">模型和思考强度仅用于当前会话，其他会话保持各自的选择。</p>
                         <p className="model-menu-hint">切换模型或思考强度会使已有的提示词缓存失效；介意额外的 token 消耗时，建议新建会话。</p>
                       </>}
                       <button

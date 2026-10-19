@@ -23,7 +23,7 @@ async function setup(t,fetchImpl,windowOpen=true,permissionCase=null) {
   assert.equal((await host.plugins.install({spec:'dsh-office-tools'})).ok,true);
   const envelopes=[],outbound=[],entryRuns=new Map(),wakeRuns=new Map(),channelTaskAborts=new Set();
   const ctx={sessions:host.sessions,scheduler:host.scheduler,inbox:host.inbox,agent:{run:options=>host.agent.run({...options,fetchImpl})}};
-  const settings={endpoint:'https://fixture.test/v1/chat/completions',model:'selected',apiKey:'test-only',approvalMode:permissionCase?.mode || 'full-access',channels:{runtime:permissionCase?.runtime || 'dsh'}};
+  const settings={endpoint:'https://fixture.test/v1/chat/completions',model:'selected',apiKey:'test-only',profiles:permissionCase?.profiles || [],approvalMode:permissionCase?.mode || 'full-access',channels:{runtime:permissionCase?.runtime || 'dsh'}};
   await host.settings.write({approvalMode:settings.approvalMode});
   const deps={ctx,crypto,entryRuns,wakeRuns,channelTaskAborts,channelTaskKeys:new Set(),activeAgents:new Map(),mcpShuttingDown:false,CHANNEL_QUEUE_WAIT_TIMEOUT_MS:10000,
     trackTaskStart:()=>{},trackTaskEnd:()=>{},channelDebug:()=>{},CHANNEL_LABELS:{qq:'QQ',wechat:'微信'},defaultChannelWorkspace:async()=>workspacePath,
@@ -39,6 +39,21 @@ async function setup(t,fetchImpl,windowOpen=true,permissionCase=null) {
     reply:async text=>{outbound.push(text);if(permissionCase && text.includes('⚠️ 需要审批')) await host.settings.write({approvalMode:'full-access'});},replyMedia:async()=>{throw new Error('Unexpected external media');},sendTyping:async()=>{},registerPending:()=>{},clearPending:()=>{}});
   return {host,workspacePath,envelopes,outbound,entryRuns,wakeRuns,runChannel,wake};
 }
+
+test('渠道和自动唤醒沿用会话选择，不被默认模型替换',async t=>{
+  const profile={id:'alternate',endpoint:'https://fixture.test/v1/chat/completions',model:'alternate-model',apiKey:'alternate-key'};
+  const models=[];
+  const {host,workspacePath,runChannel,wake}=await setup(t,async(_url,init)=>{
+    models.push(JSON.parse(init.body).model);return response('会话模型验证完成');
+  },false,{profiles:[profile]});
+  const modelSelection={profileId:profile.id,endpoint:profile.endpoint,model:profile.model,reasoningEffort:''};
+  await host.sessions.replace({id:'channel-root',runtime:'dsh',workspacePath,modelSelection,messages:[]});
+  await runChannel('渠道验证',false);
+  await host.sessions.replace({id:'wake-selected',runtime:'dsh',workspacePath,modelSelection,messages:[{role:'user',content:'继续验证'}]});
+  await wake({sessionId:'wake-selected',workspacePath,prompt:'继续验证',reason:'验证会话模型',createdAt:new Date().toISOString(),wakeAt:new Date().toISOString()});
+  assert.equal(models.length,2);
+  assert.deepEqual(models,[profile.model,profile.model]);
+});
 
 test('真实渠道入口使用 DSH，两轮按真实顺序落盘；下一次相同要求和回复仍各保存一次',async t=>{
   let entered,release,calls=0;const start=new Promise(r=>entered=r),gate=new Promise(r=>release=r);t.after(()=>release());

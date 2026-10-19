@@ -345,6 +345,7 @@ export interface ChatMessage {
 
 export interface SessionRecord {
   id: string;
+  modelSelection?: import('../electron/session-model.mts').SessionModelSelection;
   parentSessionId?: string;
   dshForkAtSeq?: number;
   runtime?: 'dyworker' | 'dsh';

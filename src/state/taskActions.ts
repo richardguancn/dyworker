@@ -156,7 +156,7 @@ export const forkSession = async (session: SessionRecord, messageIndex: number) 
         messageId: message.dshMessageId, ...(message.dshTurnId ? {turnId: message.dshTurnId} : {}),
       }});
       if (!reply?.ok || !reply.value?.nativeSession) throw new Error(reply?.error?.message || '复制任务失败');
-      const forked = reply.value.nativeSession as SessionRecord;
+      const forked = { ...reply.value.nativeSession, modelSelection: session.modelSelection } as SessionRecord;
       clientHost().acceptCreatedSession(forked);
       setSessions(current => [forked, ...current.filter(row => row.id !== forked.id)]);
       selectSessionRef.current(forked);
@@ -168,6 +168,7 @@ export const forkSession = async (session: SessionRecord, messageIndex: number) 
   const now = new Date().toISOString();
   const forked: SessionRecord = {
     id: crypto.randomUUID(),
+    modelSelection: session.modelSelection,
     title: `${session.title}（分支）`,
     workspacePath: session.workspacePath,
     ...(session.runtime ? { runtime: session.runtime } : {}),

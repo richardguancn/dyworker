@@ -12,6 +12,34 @@ import { useLayoutStore } from "./layoutStore";
 import { bootstrapFailedRef, composerModelsKeyRef, settingsSaveErrorRef } from "./sharedRefs";
 import { useSettingsStore } from "./settingsStore";
 import { useViewStore } from "./viewStore";
+import { selectActiveSession, useSessionStore } from "./sessionStore";
+import { updateSession } from "./sessionActions";
+import { modelSelection, settingsForSession } from "../../electron/session-model.mts";
+import { getModelReasoningConfig, updateReasoningOverride } from "../../electron/model-reasoning.ts";
+
+function composerSettings() {
+  return settingsForSession(useSettingsStore.getState().settings, selectActiveSession(useSessionStore.getState()));
+}
+
+function selectSessionModel(sessionId: string, settings: ProviderSettings, profileId?: string) {
+  updateSession(sessionId, session => ({ ...session, modelSelection: modelSelection(settings, profileId) }));
+  useViewStore.getState().setNotice('当前会话的模型已更新，下次回复使用');
+}
+
+export async function saveComposerReasoning(reasoningEffort: string, override?: Parameters<typeof updateReasoningOverride>[3] | null) {
+  const session = selectActiveSession(useSessionStore.getState());
+  if (!session) return false;
+  const settings = composerSettings();
+  if (override !== undefined) {
+    const globalSettings = useSettingsStore.getState().settings;
+    const reasoningOverrides = updateReasoningOverride(globalSettings.reasoningOverrides, settings.endpoint, settings.model, override);
+    const config = getModelReasoningConfig({ endpoint: settings.endpoint, model: settings.model, overrides: reasoningOverrides });
+    reasoningEffort = config.efforts.includes(reasoningEffort) ? reasoningEffort : '';
+    if (!await saveProviderSettings({ ...globalSettings, reasoningOverrides }, override ? '思考档位已保存' : '已恢复自动识别思考档位')) return false;
+  }
+  selectSessionModel(session.id, { ...settings, reasoningEffort }, session.modelSelection?.profileId);
+  return true;
+}
 
 export const saveProviderSettings = async (nextSettings: ProviderSettings, successMessage = "设置已保存") => {
   const { setSettings } = useSettingsStore.getState();
@@ -84,7 +112,7 @@ export const chooseIdentity = (identity: UserIdentity) => {
   return saveProviderSettings({ ...settings, identity }, "身份设置已保存");
 };
 
-export const selectApprovalMode = (nextMode: ApprovalMode) => {
+export const selectApprovalMode = async (nextMode: ApprovalMode) => {
   const { settings, setApprovalMode } = useSettingsStore.getState();
   const { setApprovalMenuOpen } = useLayoutStore.getState();
   const { setFullAccessDialogOpen } = useInboxStore.getState();
@@ -93,9 +121,9 @@ export const selectApprovalMode = (nextMode: ApprovalMode) => {
     setFullAccessDialogOpen(true);
     return;
   }
-  setApprovalMode(nextMode);
   setApprovalMenuOpen(false);
-  void saveProviderSettings({ ...settings, approvalMode: nextMode }, "审批模式已记住，下次启动继续生效");
+  const saved = await saveProviderSettings({ ...settings, approvalMode: nextMode }, "审批模式已更新，对后续操作立即生效");
+  if (saved) setApprovalMode(nextMode);
 };
 
 export const confirmFullAccess = async () => {
@@ -109,16 +137,16 @@ export const confirmFullAccess = async () => {
 };
 
 export const activateModelProfile = async (profile: ModelProfile) => {
-  const { settings } = useSettingsStore.getState();
+  const session = selectActiveSession(useSessionStore.getState());
+  if (!session) return;
   const { setModelMenuOpen } = useLayoutStore.getState();
-  const nextSettings = settingsWithProfile(settings, profile);
   setModelMenuOpen(false);
-  await saveProviderSettings(nextSettings, `已切换到 ${profile.name}`);
+  selectSessionModel(session.id, settingsWithProfile(composerSettings(), profile), profile.id);
 };
 
 // 模型菜单打开时拉一次「此密钥可用的模型」；同一 endpoint+key 只拉一次，换地址或密钥后重新拉
 export const ensureComposerModels = () => {
-  const { settings } = useSettingsStore.getState();
+  const settings = composerSettings();
   const { setComposerModels, setComposerModelsLoading } = useComposerStore.getState();
   const endpoint = settings.endpoint.trim();
   const key = `${endpoint}\n${settings.apiKey.trim()}`;
@@ -127,15 +155,17 @@ export const ensureComposerModels = () => {
   setComposerModels(null);
   setComposerModelsLoading(true);
   window.dyworker?.listModels({ endpoint, apiKey: settings.apiKey })
-    .then((result) => setComposerModels(result?.ok ? (result.models || []) : []))
-    .catch(() => setComposerModels([]))
-    .finally(() => setComposerModelsLoading(false));
+    .then((result) => { if (composerModelsKeyRef.current === key) setComposerModels(result?.ok ? (result.models || []) : []); })
+    .catch(() => { if (composerModelsKeyRef.current === key) setComposerModels([]); })
+    .finally(() => { if (composerModelsKeyRef.current === key) setComposerModelsLoading(false); });
 };
 
 // 在同一密钥下切换到另一个模型：已有对应配置就整个启用；没有就按当前密钥现做一套并保存，
 // 之后它会出现在「已保存的模型」列表里，可与其它厂商配置一样管理
 export const switchComposerModel = async (modelId: string) => {
-  const { settings } = useSettingsStore.getState();
+  const settings = composerSettings();
+  const session = selectActiveSession(useSessionStore.getState());
+  if (!session) return;
   const { setModelMenuOpen } = useLayoutStore.getState();
   const endpoint = settings.endpoint.trim();
   const model = modelId.trim();
@@ -143,7 +173,7 @@ export const switchComposerModel = async (modelId: string) => {
   setModelMenuOpen(false);
   const existing = (settings.profiles || []).find((item) => item.endpoint === endpoint && item.model === model);
   if (existing) {
-    await saveProviderSettings(settingsWithProfile(settings, existing), `已切换到 ${existing.name}`);
+    selectSessionModel(session.id, settingsWithProfile(settings, existing), existing.id);
     return;
   }
   let shortProvider = providerPresets.find((item) => item.id === matchProvider(endpoint))?.name.replace(/（.*?）/g, "") || "";
@@ -164,14 +194,15 @@ export const switchComposerModel = async (modelId: string) => {
     transcriptionEndpoint: settings.transcriptionEndpoint,
     transcriptionModel: settings.transcriptionModel,
   };
+  const globalSettings = useSettingsStore.getState().settings;
   const next = {
-    ...settings,
-    model,
-    reasoningEffort: "",
+    ...globalSettings,
     profiles: [
-      ...(settings.profiles || []).filter((item) => !(item.endpoint === endpoint && item.model === model)),
+      ...(globalSettings.profiles || []).filter((item) => !(item.endpoint === endpoint && item.model === model)),
       profile,
     ],
   };
-  await saveProviderSettings(next, `已切换到 ${profile.name}`);
+  if (await saveProviderSettings(next, `已保存 ${profile.name}`)) {
+    selectSessionModel(session.id, settingsWithProfile(settings, profile), profile.id);
+  }
 };

@@ -8,6 +8,8 @@ import type { PendingWakeRecord, SessionRecord } from "../types";
 import { useSessionStore } from "./sessionStore";
 import { useLayoutStore } from "./layoutStore";
 import { useViewStore } from "./viewStore";
+import { useSettingsStore } from "./settingsStore";
+import { modelSelection } from "../../electron/session-model.mts";
 import { sessionDraftsRef, sessionErrorTimersRef, sessionNoticeTimersRef, sessionRenameRequestsRef, sessionsRef, wakingSessionsRef } from "./sharedRefs";
 
 export const refreshPendingWakes = async () => {
@@ -143,6 +145,7 @@ export function makeSession(workspacePath = ""): SessionRecord {
   const createdAt = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
+    modelSelection: modelSelection(useSettingsStore.getState().settings),
     title: "新任务",
     workspacePath,
     createdAt,

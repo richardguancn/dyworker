@@ -1,4 +1,5 @@
 import { normalizeApprovalMode } from '../../settings.mts';
+import { settingsForSession } from '../../session-model.mts';
 
 /** 桌面用户显式开始的新执行。占用、审批、停止均沿用桌面任务，接收确认先于执行结束。 */
 export function createChildEntry(deps: any) {
@@ -27,7 +28,7 @@ export function createChildEntry(deps: any) {
     deps.trackStart?.();
     void (async () => {
       try {
-        const settings = await deps.readSettings();
+        const settings = settingsForSession(await deps.readSettings(), session);
         abortController.signal.throwIfAborted();
         const result = await deps.agent.run({runtime:'dsh',sessionId,runId,settings,
           workspacePath:session.workspacePath,approvalMode:normalizeApprovalMode(settings.approvalMode),
