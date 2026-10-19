@@ -23,6 +23,7 @@ import { createCommandDiagnostics } from "./command-protection.mts";
 import { approvalRoute, reviewOutcome, reviewTaskAction } from "./approval-policy.mts";
 import { buildReviewContext, delegatedReviewContext, isStatefulUiOperation, readReviewObservation, reviewContextFingerprint, reviewActionDetails, reviewToolDefinition, reviewActionFacts } from "./approval-context.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
+import { AgentLoopGuard } from "./agent-loop-guard.mts";
 import { selectWikiPages } from "./memory-wiki.mts";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mts";
 import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isKimiFormulaToolName, isGlmNativeVisionModel, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "./providers.mts";
@@ -55,8 +56,6 @@ export const READ_ONLY_TOOLS = Object.freeze(new Set([
 
 // 不设工具轮次上限（用户明确要求：一直跑到任务完成，对标 Codex/Kimi Work 的长程执行）。
 // 防失控只靠两道：下面的“连续重复操作检测”，以及用户可随时取消任务。
-// 同一批工具调用（名称+参数完全相同）连续出现这么多个轮次，判定为原地打转，提前暂停
-const REPEAT_ROUND_LIMIT = 3;
 // 单次模型请求的总时长上限（建连 + 流式读完的全程），只作防失控兜底。
 const MODEL_TIMEOUT_MS = 600_000;
 // 推理服务可能先发响应头，再排队、处理长上下文或静默思考数分钟。
@@ -5987,8 +5986,16 @@ export async function runAgent({
   let savedMemory = null;
   const savedMemories = [];
   let savedSkill = null;
-  let lastRoundSignature = "";
-  let repeatRounds = 0;
+  const loopGuard = new AgentLoopGuard();
+  const observeToolRound = (toolCalls, outcomes) => {
+    const decision = loopGuard.observe(toolCalls, outcomes);
+    if (decision === "warn") {
+      const detail = "连续三轮的操作及返回结果完全相同，目前没有观察到新进展。请先根据已有结果判断：若任务已完成，直接交付；若正在等待后台工作，请检查其运行状态或改用 sleep_until 间隔检查；若操作失败，请诊断原因并更换做法。不要只修改参数格式或旁白后原样重试。";
+      messages.push({ role: "system", content: detail });
+      debugLog("tool-result", "重复操作提醒：尚未观察到新进展", detail);
+    }
+    return decision;
+  };
   // 文件变更追踪（对照 Codex 的 +N/-M 变更摘要）：写入与局部编辑累计到 fileChanges
   const fileChanges = [];
   const recordFileChange = (changePath, added, removed, diff = "") => {
@@ -6308,28 +6315,22 @@ export async function runAgent({
         return withChanges({ status: "done", finalText, memory: savedMemory });
       }
 
-      // 连续多轮发起完全相同的工具调用（名称+参数一致）视为原地打转，提前暂停而不是干等到兜底上限
-      const roundSignature = toolCalls.map((call) => `${call?.function?.name || ""}(${String(call?.function?.arguments || "")})`).join("|");
-      if (roundSignature === lastRoundSignature) {
-        repeatRounds += 1;
-        if (repeatRounds >= REPEAT_ROUND_LIMIT) {
-          return withChanges({ status: "paused", finalText, reason: "检测到连续多轮重复同样的操作，助手可能陷入了循环，已自动暂停。请检查当前结果，补充说明或换个要求后再继续。" });
-        }
-      } else {
-        repeatRounds = 0;
-        lastRoundSignature = roundSignature;
-      }
-
       // 输出被长度上限截断：工具参数可能「合法但残缺」（对齐 Pi：stopReason=="length" 本批全部判失败）。
       // 不执行，逐条回填失败结果让模型缩小范围后重发，防止半截参数写坏文件。
       if (modelMessage.truncated) {
         debugLog("tool-result", "模型输出被长度上限截断", `已拦截 ${toolCalls.length} 个工具调用，未执行`);
+        const outcomes = [];
         for (const call of toolCalls) {
-          messages.push({
+          const message = {
             role: "tool",
             tool_call_id: call.id,
             content: "失败\n模型输出被长度上限截断，本次调用的参数可能不完整，未执行。请缩小本轮产出范围（每次少写一些、拆成更多步），然后重新发起该操作。",
-          });
+          };
+          messages.push(message);
+          outcomes.push({ message });
+        }
+        if (observeToolRound(toolCalls, outcomes) === "pause") {
+          return withChanges({ status: "paused", finalText, reason: "连续多轮输出都被长度上限截断，提醒调整后仍未恢复，已暂停。已保留工作记录，可继续处理。" });
         }
         continue;
       }
@@ -7171,6 +7172,7 @@ export async function runAgent({
           (error) => settle({ outcome: { message: { role: "tool", tool_call_id: toolCall.id, content: `失败\n工具执行异常：${String(error?.message || error)}` } } }),
         );
       });
+      const outcomes = [];
       if (toolCalls.length > 1 && toolCalls.every(parallelizable)) {
         // 纯只读轮次并行执行，加快资料收集
         const races = await Promise.all(toolCalls.map((call) => awaitToolCall(call, executeToolCall(call))));
@@ -7182,19 +7184,11 @@ export async function runAgent({
           });
           return withChanges({ status: "cancelled", finalText });
         }
-        const outcomes = races.map((race) => race.outcome);
+        outcomes.push(...races.map((race) => race.outcome));
         for (const outcome of outcomes) {
           if (outcome?.message) messages.push(outcome.message);
         }
-        if (outcomes.some((outcome) => outcome?.invalidateInterfaceImages)) {
-          replaceInterfaceImagesWithText(messages);
-        }
-        for (const outcome of outcomes) {
-          for (const supplemental of outcome?.supplementalMessages || []) messages.push(supplemental);
-        }
-        replaceInterfaceImagesWithText(messages, true);
       } else {
-        const outcomes = [];
         for (let idx = 0; idx < toolCalls.length; idx++) {
           const toolCall = toolCalls[idx];
           if (isCancelled() || cancellationSignal?.aborted) {
@@ -7254,13 +7248,19 @@ export async function runAgent({
           }
           outcomes.push(outcome);
         }
-        if (outcomes.some((outcome) => outcome?.invalidateInterfaceImages)) {
-          replaceInterfaceImagesWithText(messages);
-        }
-        for (const outcome of outcomes) {
-          for (const supplemental of outcome?.supplementalMessages || []) messages.push(supplemental);
-        }
-        replaceInterfaceImagesWithText(messages, true);
+      }
+      // 执行后再比较真实返回结果。相同检查得到新进度时不能判为循环。
+      // 在裁剪旧截图前记录画面，保证界面变化也能重置重复计数。
+      const loopDecision = observeToolRound(toolCalls, outcomes);
+      if (outcomes.some((outcome) => outcome?.invalidateInterfaceImages)) {
+        replaceInterfaceImagesWithText(messages);
+      }
+      for (const outcome of outcomes) {
+        for (const supplemental of outcome?.supplementalMessages || []) messages.push(supplemental);
+      }
+      replaceInterfaceImagesWithText(messages, true);
+      if (loopDecision === "pause") {
+        return withChanges({ status: "paused", finalText, reason: "连续多轮重复同样的操作，返回结果也没有变化；提醒调整后仍未取得新进展，已暂停。已保留工作记录，可继续处理。" });
       }
   }
 }

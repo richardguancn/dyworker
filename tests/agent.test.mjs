@@ -2073,16 +2073,98 @@ test("自动修改模式下动态命令也必须人工确认", async () => {
 
 test("连续重复同样的操作被判为打转并提前暂停", async () => {
   const root = await makeWorkspace();
+  const calls = [];
   const result = await runAgent({
     settings,
     workspacePath: root,
     conversation: [{ role: "user", content: "不停列目录" }],
     fetchImpl: mockFetch([
       { role: "assistant", content: null, tool_calls: [toolCall("c1", "list_files", {})] },
-    ]),
+    ], calls),
   });
   assert.equal(result.status, "paused");
   assert.match(result.reason, /重复同样的操作/);
+  assert.equal(calls.length, 4);
+  assert.ok(calls[3].messages.some((message) => message.role === "system" && /连续三轮的操作及返回结果完全相同/.test(message.content)), "暂停前应先给模型调整机会");
+  const executed = result.executedMessages;
+  assert.equal(executed.filter((message) => message.role === "tool").length, 4, "暂停时本轮调用也必须有配对结果");
+});
+
+test("相同读取持续获得新进度时，长任务不会被误判为循环", async () => {
+  const root = await makeWorkspace({ "progress.txt": "0" });
+  let round = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "等待生成结束并核对进度" }],
+    fetchImpl: async () => {
+      round += 1;
+      await fs.writeFile(path.join(root, "progress.txt"), String(round));
+      const message = round <= 12
+        ? { role: "assistant", content: null, tool_calls: [toolCall(`c${round}`, "read_file", { path: "progress.txt" })] }
+        : { role: "assistant", content: "生成结束。" };
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(round, 13);
+});
+
+test("收到重复提醒后可交付或挂起等待，不强迫用户重新说明", async () => {
+  for (const action of ["deliver", "sleep"]) {
+    const root = await makeWorkspace();
+    const calls = [];
+    const repeated = [1, 2, 3].map((round) => ({ role: "assistant", content: null, tool_calls: [toolCall(`c${round}`, "list_files", {})] }));
+    const result = await runAgent({
+      settings,
+      workspacePath: root,
+      conversation: [{ role: "user", content: "检查任务是否完成，需要时继续等待" }],
+      fetchImpl: mockFetch([...repeated, action === "deliver"
+        ? { role: "assistant", content: "检查结束，目录目前为空。" }
+        : { role: "assistant", content: "稍后再检查。", tool_calls: [toolCall("wake", "sleep_until", { minutes: 2, reason: "等待后台生成" })] }], calls),
+    });
+    assert.equal(result.status, action === "deliver" ? "done" : "sleeping");
+    assert.ok(calls[3].messages.some((message) => /连续三轮的操作及返回结果完全相同/.test(message.content)));
+  }
+});
+
+test("并行检查的任一结果更新时，重复计数重置", async () => {
+  const root = await makeWorkspace({ "progress.txt": "0", "config.txt": "fixed" });
+  let round = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "同时检查进度和配置" }],
+    fetchImpl: async () => {
+      round += 1;
+      // 中间两轮没有变化，第三轮得到新进度，不能累计成循环。
+      await fs.writeFile(path.join(root, "progress.txt"), String(Math.floor((round - 1) / 3)));
+      const message = round <= 12
+        ? { role: "assistant", content: null, tool_calls: [toolCall(`p${round}`, "read_file", { path: "progress.txt" }), toolCall(`s${round}`, "read_file", { path: "config.txt" })] }
+        : { role: "assistant", content: "检查结束。" };
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(round, 13);
+});
+
+test("反复截断且不调整的工具输出仍会暂停，并且不执行残缺参数", async () => {
+  const root = await makeWorkspace();
+  let executions = 0;
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "写入文件" }],
+    aroundToolCall: async () => { executions += 1; },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ finish_reason: "length", message: {
+      role: "assistant", content: null, tool_calls: [toolCall("c1", "write_file", { path: "never.txt", content: "残缺" })],
+    } }] }) }),
+  });
+  assert.equal(result.status, "paused");
+  assert.match(result.reason, /截断/);
+  assert.equal(executions, 0);
+  await assert.rejects(fs.stat(path.join(root, "never.txt")), { code: "ENOENT" });
 });
 
 test("不设轮次上限：操作各不相同的长任务一直跑到完成", async () => {
