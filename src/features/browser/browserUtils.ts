@@ -30,11 +30,8 @@ export type BrowserWebviewElement = HTMLElement & {
   getUserAgent?: () => string;
 };
 
-// 浏览器起始页的快捷链接（新标签页未打开网页时展示）
-export const BROWSER_START_LINKS = [
-  { name: "OA", url: "" },
-  { name: "综合服务平台", url: "" },
-];
+// 浏览器起始页的快捷链接（新标签页未打开网页时展示）；公开版不提供预设入口
+export const BROWSER_START_LINKS: Array<{ name: string; url: string }> = [];
 
 // 设备工具栏预设（设备模拟）
 export const BROWSER_DEVICE_PRESETS = [

@@ -432,11 +432,13 @@ export function ToolPanel(props: ToolPanelProps) {
                       <div className="browser-start-page" key={tab.id}>
                         <Globe size={40} />
                         <strong>开始浏览</strong>
-                        <div className="browser-start-links">
-                          {BROWSER_START_LINKS.map((link) => (
-                            <button key={link.url} onClick={() => void openBrowserUrl(link.url)}>{link.name}</button>
-                          ))}
-                        </div>
+                        {BROWSER_START_LINKS.length > 0 && (
+                          <div className="browser-start-links">
+                            {BROWSER_START_LINKS.map((link) => (
+                              <button key={link.name} onClick={() => void openBrowserUrl(link.url)}>{link.name}</button>
+                            ))}
+                          </div>
+                        )}
                         <span>在上方地址栏输入网址，或让助手用浏览器工具打开页面</span>
                       </div>
                     ) : null;
