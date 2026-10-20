@@ -24,6 +24,7 @@ import { approvalRoute, reviewOutcome, reviewTaskAction } from "./approval-polic
 import { buildReviewContext, delegatedReviewContext, isStatefulUiOperation, readReviewObservation, reviewContextFingerprint, reviewActionDetails, reviewToolDefinition, reviewActionFacts } from "./approval-context.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
 import { AgentLoopGuard } from "./agent-loop-guard.mts";
+import { createModelStreamParser } from './model-stream.mts';
 import { selectWikiPages } from "./memory-wiki.mts";
 import { classify, internetApprovalTools, internetReadTools, workspaceWriteTools } from "./risk.mts";
 import { KIMI_DEFAULT_DISABLED_TOOLS, KIMI_FORMULA_URIS, KIMI_WEB_SEARCH_DEFINITION, detectProvider, deepseekAnthropicBaseUrl, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isKimiFormulaToolName, isGlmNativeVisionModel, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "./providers.mts";
@@ -3706,7 +3707,6 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
   const reader = response.body.getReader();
   const idleWatch = watchStreamIdle(reader, idleTimeoutMs, signal);
   const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let reasoning = "";
   let terminalResponse = null;
@@ -3771,24 +3771,19 @@ async function readResponsesStream(response, { onText, onUsage, idleTimeoutMs = 
     applyEvent(event);
   };
 
+  const parser = createModelStreamParser(consumeBlock);
   try {
     while (!terminalResponse && !failure) {
       const { done, value } = await reader.read();
       if (done) break;
       idleWatch.reset();
-      buffer += decoder.decode(value, { stream: true });
-      let match;
-      while ((match = /\r?\n\r?\n/.exec(buffer))) {
-        consumeBlock(buffer.slice(0, match.index));
-        buffer = buffer.slice(match.index + match[0].length);
-      }
+      parser.feed(decoder.decode(value, { stream: true }));
     }
   } finally {
     idleWatch.dispose();
   }
   idleWatch.throwIfTripped();
-  buffer += decoder.decode();
-  if (buffer.trim()) consumeBlock(buffer);
+  parser.finish(decoder.decode());
 
   if (failure) throw new Error(`模型生成失败：${failure.message || JSON.stringify(failure)}`);
   if (terminalResponse) {
@@ -3972,7 +3967,6 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
   const reader = response.body.getReader();
   const idleWatch = watchStreamIdle(reader, idleTimeoutMs, signal);
   const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let reasoning = "";
   let usage = null;
@@ -4020,24 +4014,19 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
     }
   };
 
+  const parser = createModelStreamParser(consumeBlock);
   try {
     while (!completed) {
       const { done, value } = await reader.read();
       if (done) break;
       idleWatch.reset();
-      buffer += decoder.decode(value, { stream: true });
-      let boundary;
-      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
-        consumeBlock(buffer.slice(0, boundary.index));
-        buffer = buffer.slice(boundary.index + boundary[0].length);
-      }
+      parser.feed(decoder.decode(value, { stream: true }));
     }
   } finally {
     idleWatch.dispose();
   }
   idleWatch.throwIfTripped();
-  buffer += decoder.decode();
-  if (buffer.trim()) consumeBlock(buffer);
+  parser.finish(decoder.decode());
   // 接收完终止标记才允许执行工具，避免断流时执行半截参数或把半句正文当作完成。
   // 兼容只发 finish_reason 后关闭连接、没有 [DONE] 的服务。
   if (!completed && !finishReason) {
