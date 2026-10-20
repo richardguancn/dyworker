@@ -1,5 +1,5 @@
 import { reviewTaskAction } from '../../approval-policy.mts';
-import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts } from '../../agent.mts';
+import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewerUnavailableMessage, reviewerEvidenceMessage, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
 import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition, reviewContextFingerprint } from '../../approval-context.mts';
 
@@ -52,10 +52,14 @@ export function createDshApproval(options: any) {
         const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
           currentVersion: async () => reviewContextFingerprint(currentMode() + await getContext() + await readEntryScripts()),
           review: options.review || reviewApproval, input: { settings: options.settings, fetchImpl: options.fetchImpl,
-          signal, action: { kind: publicName, title: `DSH：${name}`, details: JSON.stringify(args) + entryScripts, observation,
+          signal, action: { kind: publicName, title: `DSH：${name}`, command: args.command, workspacePath: tool.workspacePath || options.workspacePath || '', details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
           onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal.throwIfAborted();
+        if (review.needsEvidence) {
+          audit('reviewer-needs-evidence', review.reason);
+          throw new Error(reviewerEvidenceMessage(review.reason));
+        }
         if (review.unavailable) {
           audit('reviewer-unavailable', review.reason);
           throw new Error(reviewerUnavailableMessage(review.reason));

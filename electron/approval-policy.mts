@@ -1,7 +1,7 @@
 // 共享权限路由：风险证据可以交审核，用户明确要求确认的规则不能被模型覆盖。
 export type ApprovalRoute = 'execute' | 'review' | 'confirm' | 'deny';
 export type ReviewOutcome = { decision: 'allow' | 'deny' | 'ask'; reason: string;
-  status?: 'allowed' | 'denied' | 'needs_authorization' | 'unavailable' | 'cancelled' | 'stale';
+  status?: 'allowed' | 'denied' | 'needs_authorization' | 'needs_evidence' | 'unavailable' | 'cancelled' | 'stale';
   unavailable?: boolean; policyHash?: string; [key: string]: any };
 
 export function approvalRoute({ decision, eligible, hook, protectedTarget = false, reviewRequired = false }: {
@@ -14,6 +14,7 @@ export function approvalRoute({ decision, eligible, hook, protectedTarget = fals
 }
 
 export function reviewOutcome(value: any): ReviewOutcome {
+  if (value?.needsEvidence) return { ...value, decision: 'ask', status: 'needs_evidence' };
   if (value?.unavailable || ['unavailable', 'stale', 'cancelled'].includes(value?.status)) {
     return { ...value, decision: 'ask', unavailable: true, status: value.status || 'unavailable', reason: String(value.reason || '审核服务未能完成检查') };
   }

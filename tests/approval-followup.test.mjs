@@ -126,9 +126,14 @@ test('真实任务的审核格式异常不会直接打扰用户，重新审核�
   assert.equal(await fs.readFile(path.join(root, 'checked.txt'), 'utf8'), 'checked');
 });
 
-test('npm 配置仍受凭据保护，名称只说明可能含令牌；按名称批量结束进程仍需人工判断', () => {
+test('npm 配置仍受凭据保护；批量停止先核实并缩小目标，不直接放行或强制人工', async () => {
   assert.equal(findSensitiveReference({ path: '/workspace/.npmrc' }).label, 'npm 配置（可能含令牌）');
+  const command = "pkill -f fake_kylin_web.py 2>/dev/null; sleep 1; python3 -m py_compile server/native_vnc.py";
   assert.equal(isReviewerEligible({ approvalMode: 'reviewer', name: 'run_command', args: {
-    command: "pkill -f fake_kylin_web.py 2>/dev/null; sleep 1; python3 -m py_compile server/native_vnc.py",
-  } }), false);
+    command,
+  } }), true);
+  const result = await reviewApproval({ settings, action: { kind: 'run_command', command, details: command },
+    fetchImpl: async () => assert.fail('批量目标查清并缩小前不得交模型直接放行') });
+  assert.equal(result.status, 'needs_evidence');
+  assert.match(result.reason, /具体进程编号/);
 });

@@ -13,7 +13,7 @@ import {
   exportWordDocument, exportExcelWorkbook, calculateWorkdays, currentDatetime,
   webSearch, govSearch, fetchPublicPage, runOcrFile,
   builtinHooks, evaluateHooks, externalPathsForTool,
-  planTaskApproval, reviewApproval, reviewerUnavailableMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
+  planTaskApproval, reviewApproval, reviewerUnavailableMessage, reviewerEvidenceMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
@@ -92,10 +92,14 @@ export function createBotApproval(options: any) {
         const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
           currentVersion: async () => reviewContextFingerprint(mode() + await getContext() + await readEntryScripts()),
           review: options.review || reviewApproval, input: { settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, details: JSON.stringify(args) + entryScripts, observation,
+          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, command: args.command, workspacePath, details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
           context, onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal?.throwIfAborted();
+        if (review.needsEvidence) {
+          detail('reviewer-needs-evidence', review.reason);
+          throw new Error(reviewerEvidenceMessage(review.reason));
+        }
         if (review.unavailable) {
           detail('reviewer-unavailable', review.reason);
           throw new Error(reviewerUnavailableMessage(review.reason));
