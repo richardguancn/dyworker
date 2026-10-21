@@ -1,3 +1,5 @@
+import { readUsageExtras } from '../../agent.mts';
+
 /** 从真实请求和官方事件投影现有轨迹格式，不补造首字计时或文件活动。 */
 export function createDshTrace(root: string, emit: any) {
   let seq = 0; let turn = 0;
@@ -22,7 +24,7 @@ export function createDshTrace(root: string, emit: any) {
     usage(owner: string, state: any, usage: any) {
       send(owner, { kind: 'token-usage', direction: 'out', target: 'model', title: 'token 用量', content: '',
         parentSeq: state.requestSeq, usage: { prompt: Number(usage.prompt_tokens) || 0,
-          completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated) } }, state);
+          completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated), ...readUsageExtras(usage) } }, state);
     },
     event(owner: string, event: any) {
       const data = event.data || {};

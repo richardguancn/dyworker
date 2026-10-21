@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DshPluginBridge } from '../dsh-runtime/bridge.mts';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { loadProjectInstructions, verifyTaskEvidence, toolDefinitions, pickDeliveryText } from '../../agent.mts';
+import { loadProjectInstructions, verifyTaskEvidence, toolDefinitions, pickDeliveryText, readUsageExtras } from '../../agent.mts';
 import { selectWikiPages } from '../../memory-wiki.mts';
 import { answerDshQuestions } from '../dsh-runtime/user-questions.mts';
 import { dshNativeSkills } from '../dsh-runtime/native-skills.mts';
@@ -217,7 +217,8 @@ export class DshRuntimeService extends Service {
       beforeToolExecute: ({ name, args }: any) => this.ctx.waterfall('tools/pre-execute', name, args, null, () => null),
       audit: (item: any) => options.resolvers.auditRecord({ ...item, sessionId, approvalMode: options.getApprovalMode?.() || options.approvalMode }),
       onUsage: (usage: any) => emit({ type: 'token-usage', model: usage.model || settings.model,
-        prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated) }),
+        prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0,
+        estimated: Boolean(usage.estimated), ...readUsageExtras(usage) }),
     });
     if (!entry) {
       const runtime = new OfficialDshSession({ profileDir: this.ctx.plugins.dir,
@@ -313,7 +314,7 @@ export class DshRuntimeService extends Service {
       onUsage: (usage: any) => {
         trace.usage(request.sessionId, traceRequest, usage);
         emit({ type: 'token-usage', model: usage.model || settings.model, prompt: Number(usage.prompt_tokens) || 0,
-          completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated) });
+          completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated), ...readUsageExtras(usage) });
         if (request.sessionId === sessionId && request.purpose !== 'compaction') emit({ type: 'context-usage',
           used: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, estimated: Boolean(usage.estimated) });
       },

@@ -72,6 +72,20 @@ test('冷启动并发记账不丢记录，合并读取并正确保存', async ()
   assert.equal(persisted.length, 20);
   assert.equal(persisted.reduce((sum, e) => sum + e.prompt + e.completion, 0), 2200);
 });
+
+test('持久用量保留缓存和思考明细，明确的零与没有回报分别记录', async () => {
+  const store = await storageHarness();
+  store.release();
+  await store.appendUsageStat({ model: 'model-a', prompt: 100, completion: 20, cacheRead: 80, cacheWrite: 0, reasoning: 7 });
+  await store.appendUsageStat({ model: 'model-b', prompt: 10, completion: 2 });
+  const persisted = await store.flush();
+  assert.equal(persisted[0].cacheRead, 80);
+  assert.equal(persisted[0].cacheWrite, 0);
+  assert.equal(persisted[0].reasoning, 7);
+  assert.equal(persisted[0].prompt + persisted[0].completion, 120, '明细不重复加到总数中');
+  assert.equal('cacheRead' in persisted[1], false);
+  assert.equal('reasoning' in persisted[1], false);
+});
 test('清空时尚未完成的读取不会把旧记录恢复', async () => {
   const store = await storageHarness([{ model: 'old', prompt: 100, completion: 10 }]);
   const read = store.readUsageStats();

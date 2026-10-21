@@ -16,6 +16,7 @@ import ProjectionCache from '@deepseek-ai/dsh-session-projection-cache';
 import FileSystem from '@deepseek-ai/dsh-fs-local';
 import TokenMeter from '@deepseek-ai/dsh-token-meter';
 import Compaction from '@deepseek-ai/dsh-compaction-basic';
+import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner';
 import Subagents from '@deepseek-ai/dsh-subagent';
 import * as SpawnSubagent from '@deepseek-ai/dsh-subagent-spawn-in-process';
 import * as ForkSubagent from '@deepseek-ai/dsh-subagent-fork-in-process';
@@ -55,6 +56,8 @@ export async function createOfficialDshContext({ dataDir, workspacePath, persist
     await ctx.plugin(StorageDomain, { backend: 'json' });
     await ctx.plugin(ProjectionCache, { writeEveryEvents: 200, writeIntervalMs: 5000 });
     await ctx.plugin(TokenMeter);
+    // 先无模型地缩短超长工具结果；原文保留在会话记录，仍超预算时才调用摘要模型。
+    await ctx.plugin(ToolResultPruner);
     await ctx.plugin(Compaction, { headroomTokens: Math.max(1, Math.min(8192, Math.floor(contextWindow / 8))), maxTokens: Math.max(1, Math.min(8192, Math.floor(contextWindow / 8))) });
     await ctx.plugin(AgentLoop, { agents: [] });
     await ctx.plugin(Subagents);

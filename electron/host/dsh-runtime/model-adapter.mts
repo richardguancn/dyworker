@@ -1,4 +1,4 @@
-import { requestModel, sanitizeEndpointUrl } from '../../agent.mts';
+import { requestModel, sanitizeEndpointUrl, readUsageExtras, summarizationSettings } from '../../agent.mts';
 import { fileHandleText, requestImageHandleText, offloadedImageText } from '@deepseek-ai/dsh-llm';
 
 async function admitProviderImage(part: any, attachments: any, signal?: AbortSignal) {
@@ -87,7 +87,9 @@ export async function* generateWithDyworker(settings: any, request: any, options
   let currentText = '';
   let currentReasoning = '';
 
-  const resultPromise = requestModel({ settings, messages, tools, signal: request.signal, fetchImpl: options.fetchImpl || fetch,
+  const resultPromise = requestModel({ settings: request.purpose === 'compaction' ? summarizationSettings(settings) : settings,
+    messages, tools, maxOutputTokens: request.maxTokens,
+    signal: request.signal, fetchImpl: options.fetchImpl || fetch,
     onText: (value: string) => {
       options.onText?.(value);
       if (textIndex === -1) {
@@ -184,8 +186,11 @@ export async function* generateWithDyworker(settings: any, request: any, options
     yield { type: 'block-end', index: callIndex, block: { type: 'tool-call', id: call.id, name: call.function?.name, arguments: args } };
   }
 
+  const usageExtras = readUsageExtras(usage);
   if (usage) yield { type: 'usage', usage: { inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens) || 0,
     outputTokens: Number(usage.completion_tokens ?? usage.output_tokens) || 0,
-    ...(Number.isFinite(usage.prompt_cache_hit_tokens) ? { cacheReadTokens: usage.prompt_cache_hit_tokens } : {}) } };
+    ...(usageExtras.cacheRead !== undefined ? { cacheReadTokens: usageExtras.cacheRead } : {}),
+    ...(usageExtras.cacheWrite !== undefined ? { cacheWriteTokens: usageExtras.cacheWrite } : {}),
+    ...(usageExtras.reasoning !== undefined ? { reasoningTokens: usageExtras.reasoning } : {}) } };
   yield { type: 'finish', reason: { kind: result.truncated ? 'max-tokens' : result.tool_calls?.length ? 'tool-calls' : 'stop' } };
 }

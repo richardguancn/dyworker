@@ -241,6 +241,9 @@ export interface UsageRecord {
   prompt: number;
   completion: number;
   estimated: boolean;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
 }
 
 // reviewer = 替我审批：低风险操作自动继续，越界操作由规则和审核助手判断，拿不准才转人工。

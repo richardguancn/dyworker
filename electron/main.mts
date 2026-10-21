@@ -1825,6 +1825,9 @@ async function appendUsageStat(event) {
     prompt: Math.max(0, Math.round(Number(event.prompt) || 0)),
     completion: Math.max(0, Math.round(Number(event.completion) || 0)),
     estimated: event.estimated === true,
+    ...Object.fromEntries(["cacheRead", "cacheWrite", "reasoning"]
+      .filter(key => event[key] != null && Number.isFinite(Number(event[key])) && Number(event[key]) >= 0)
+      .map(key => [key, Math.round(Number(event[key]))])),
   });
   if (items.length > USAGE_STATS_LIMIT) usageStatsCache = items.slice(-USAGE_STATS_LIMIT);
   scheduleUsageStatsWrite();

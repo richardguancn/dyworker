@@ -318,6 +318,41 @@ test('官方自动压缩按模型容量触发，下一轮使用摘要，占用�
   } finally { await cold.close(); }
 });
 
+test('超长工具结果先裁剪而不额外调用摘要模型，原文和裁剪结果重启后都可恢复', async t => {
+  const requests = [];
+  const original = `开头标记\n${'中间材料。'.repeat(40000)}\n结尾标记`;
+  const { runtime, options } = await setup(t, { model: 'selected[32K]',
+    extraTools: [{ name: 'long_result', description: '读取长资料', parameters: { type: 'object', properties: {} } }],
+    onExtraTool: async () => original,
+    async *generate(request) {
+      requests.push(request);
+      yield* requests.length === 1 ? tool('long_result', {}) : text('根据资料完成。');
+    } });
+  await runtime.start();
+  const result = await runtime.request('prompt', { text: '读取并使用资料' });
+  assert.equal(requests.length, 2, '只需要工具调用和最终回答，不需要第三次摘要请求');
+  assert.equal(requests.some(request => request.purpose === 'compaction'), false);
+  assert.ok(result.events.some(event => event.type === 'compaction/prune'));
+  const toolText = request => request.messages.filter(message => message.role === 'tool')
+    .flatMap(message => message.content).filter(block => block.type === 'text').map(block => block.text).join('\n');
+  const shortened = toolText(requests[1]);
+  assert.ok(shortened.length < 6000, '后续请求只发送短结果');
+  assert.match(shortened, /开头标记/);
+  assert.match(shortened, /结尾标记/);
+  assert.ok(result.events.some(event => event.type === 'tool/result'
+    && event.data.message.content.some(block => block.text === original)), '完整原文保留在会话记录');
+  await runtime.close();
+  const cold = new OfficialDshSession(options);
+  try {
+    await cold.start();
+    const snapshot = await cold.request('snapshot');
+    assert.ok(snapshot.events.some(event => event.type === 'tool/result'
+      && event.data.message.content.some(block => block.text === original)));
+    await cold.request('prompt', { text: '根据已有结果继续' });
+    assert.equal(toolText(requests.at(-1)), shortened, '恢复后的请求继续使用裁剪结果，不重新发送全文');
+  } finally { await cold.close(); }
+});
+
 test('DSH 模型桥沿用现有提供方，保留工具身份和真实用量，凭据只用于父进程请求', async () => {
   const sent = [];
   const settings = { endpoint: 'https://model.example.test/v1/chat/completions', model: 'selected', apiKey: 'parent-only-secret' };
