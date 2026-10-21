@@ -18044,28 +18044,27 @@ pre.trv-trace-inspector-body {
 .mcp-type-row button[aria-selected="true"] { background: var(--sidebar-active); color: var(--ink); }
 .mcp-editor-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 
-/* 当前轮计划独立成卡，与输入框留出间距；正文不再重复展示整张清单。 */
+/* 计划底边略压入输入框后方，保留上圆角，让两块背景自然衔接。 */
 .plan-progress {
   width: min(940px, 76%);
   min-width: 0;
-  margin-bottom: 10px;
-  padding: 8px 12px 10px;
+  margin-bottom: -12px;
+  padding: 10px 12px 16px;
   color: var(--muted);
   border: 1px solid var(--border);
+  border-bottom: 0;
   background: var(--queue-stack-surface, color-mix(in srgb, var(--sidebar-active) 55%, var(--surface)));
-  border-radius: 12px;
+  border-radius: 12px 12px 0 0;
   pointer-events: auto;
   font-size: calc(12px * var(--font-ui-scale, 1));
 }
+.plan-progress + .composer-card { position: relative; }
 .plan-progress-summary { display: flex; align-items: center; gap: 8px; min-height: 24px; }
 .plan-progress-summary > svg { flex-shrink: 0; }
 .plan-progress-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .plan-progress-count { color: var(--quiet); flex-shrink: 0; font-variant-numeric: tabular-nums; }
-.plan-progress-track { height: 2px; margin-top: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
-.plan-progress-fill { height: 100%; border-radius: inherit; background: var(--ink); transition: width 220ms ease; }
 .reference-layout .plan-progress { width: calc(var(--chat-width) - 24px); }
 @media (max-width: 1100px) { .plan-progress { width: 82%; } }
-@media (prefers-reduced-motion: reduce) { .plan-progress-fill { transition: none; } }
 
 .plan-progress { position: relative; }
 .plan-progress-toggle { display: block; list-style: none; cursor: pointer; border-radius: 6px; }

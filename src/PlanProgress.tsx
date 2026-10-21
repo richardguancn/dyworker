@@ -44,11 +44,6 @@ export function PlanProgress({ running, message }: { running: boolean; message?:
           <span className="plan-progress-count">{progress.completed}/{progress.total} 已完成</span>
           <ChevronDown className="plan-progress-chevron" size={13} aria-hidden="true" />
         </div>
-        <div className="plan-progress-track" role="progressbar" aria-label="工作计划"
-          aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.completed}
-          aria-valuetext={`${progress.completed}/${progress.total} 已完成：${progress.title}`}>
-          <div className="plan-progress-fill" style={{ width: `${progress.percent}%` }} />
-        </div>
       </summary>
       <div className="plan-progress-details">
         <strong>工作计划</strong>

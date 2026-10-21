@@ -312,7 +312,7 @@ html .reference-layout.platform-linux {
   .reference-layout .queue-card-actions { grid-column: 2; justify-self: end; }
 }
 
-/* 有计划时，进度接在排队消息下方，与输入框保持独立间距。 */
+/* 有计划时，进度接在排队消息下方，并紧贴输入框。 */
 .reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)):has(+ .plan-progress) { margin-bottom: 0; }
 .reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)):has(+ .plan-progress) .queue-card {
   padding-bottom: 4px;
@@ -320,11 +320,12 @@ html .reference-layout.platform-linux {
 }
 .reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) + .plan-progress {
   width: calc(var(--chat-width) - 24px);
-  margin-bottom: 10px;
-  padding: 8px 12px 10px;
+  margin-bottom: -12px;
+  padding: 10px 12px 16px;
   border: 1px solid var(--border);
   border-top: 0;
-  border-radius: 0 0 12px 12px;
+  border-bottom: 0;
+  border-radius: 0;
   background: var(--queue-stack-surface, color-mix(in srgb, var(--ink) 7%, var(--surface)));
 }
 .reference-layout .plan-progress-details { z-index: 3; }
