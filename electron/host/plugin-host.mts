@@ -208,10 +208,8 @@ export class PluginHostService extends Service {
    */
   builtinPlugins() {
     const root = this.builtinDir;
-    if (!root) {
-      console.warn("[plugins] 未配置内置插件目录");
-      return [];
-    }
+    // 内置目录是可选配置；未传入时不扫描，也不把正常的隔离测试报成警告。
+    if (!root) return [];
     const found = [];
     const readDir = (dir, prefix) => {
       let entries = [];
