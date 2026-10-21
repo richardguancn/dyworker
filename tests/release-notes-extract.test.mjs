@@ -18,3 +18,12 @@ test("找不到版本时返回空字符串", () => {
   assert.equal(extractReleaseNotes(sample, "9.9.9"), "");
   assert.equal(extractReleaseNotes("", "0.2.1"), "");
 });
+
+test("当前版本与锁定文件一致且有更新说明", () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
+  assert.equal(pkg.version, "3.0.1");
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages[""].version, pkg.version);
+  assert.match(extractReleaseNotes(sample, pkg.version), /ECharts/);
+});

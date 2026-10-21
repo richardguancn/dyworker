@@ -1,14 +1,22 @@
-// ECharts 按需装配：只注册报表常用图表（柱状/折线/饼图/散点/自定义）与组件（坐标轴/提示框/图例/标题/缩放/标线），
+// ECharts 按需装配：注册聊天报表支持的图表和组件，与 host/chart-guidance.mts 保持一致。
 // 由 InteractiveMessage 在消息里真的出现 echarts 代码块时才动态导入，不进首屏包。
 import * as echarts from "echarts/core";
-import { BarChart, CustomChart, LineChart, PieChart, ScatterChart } from "echarts/charts";
 import {
+  BarChart, CustomChart, FunnelChart, GaugeChart, HeatmapChart, LineChart,
+  PieChart, RadarChart, ScatterChart, SunburstChart, TreemapChart,
+} from "echarts/charts";
+import {
+  DatasetComponent,
   DataZoomComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
+  MarkAreaComponent,
+  MarkPointComponent,
+  RadarComponent,
   TitleComponent,
   TooltipComponent,
+  VisualMapComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -17,6 +25,12 @@ echarts.use([
   LineChart,
   PieChart,
   ScatterChart,
+  RadarChart,
+  FunnelChart,
+  GaugeChart,
+  HeatmapChart,
+  TreemapChart,
+  SunburstChart,
   CustomChart,
   GridComponent,
   TooltipComponent,
@@ -24,6 +38,11 @@ echarts.use([
   TitleComponent,
   DataZoomComponent,
   MarkLineComponent,
+  MarkAreaComponent,
+  MarkPointComponent,
+  RadarComponent,
+  VisualMapComponent,
+  DatasetComponent,
   CanvasRenderer,
 ]);
 

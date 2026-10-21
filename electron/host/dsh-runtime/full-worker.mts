@@ -20,6 +20,7 @@ import { createInputAdmission } from './input-admission.mts';
 import { createChildControl } from './child-control.mts';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import { communicationGuidance } from '../communication-guidance.mts';
+import { chartGuidance } from '../chart-guidance.mts';
 
 installFileHandleBridge();
 const send = (value: any) => process.send?.(value);
@@ -88,6 +89,7 @@ process.once('message', async (input: any) => {
       return ask('user-question', { sessionId: request.agent.id, questions: request.questions }, request.signal);
     }, { global: true });
     ctx.systemPrompt.section({ name: 'dyworker-communication', order: 100, text: communicationGuidance, interpolate: false });
+    ctx.systemPrompt.section({ name: 'dyworker-charts', order: 110, text: chartGuidance, interpolate: false });
     ctx.systemPrompt.context({ name: 'dyworker-task', order: 20, text: () => taskContext });
     const grants = new Map<any, string>();
     const questionTool = ctx.tools.get('ask_user_question');

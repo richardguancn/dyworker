@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>消息内置图表验证</title>
+<link rel="stylesheet" href="/src/styles.css">
+<style>body{display:block;padding:24px;overflow:auto}#host{width:760px;max-width:100%}nav{display:flex;gap:12px}#status{white-space:pre-wrap}</style>
+<nav><button id="theme">切换深浅色</button><button id="narrow">窄面板</button><button id="incomplete">未完成输出</button><button id="complete">完成输出</button></nav>
+<p id="status">加载中</p><div id="host"></div>
+<script type="module">
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { InteractiveMessage } from '/src/InteractiveMessage.tsx';
+import { bootstrapAppearance, updateDraft } from '/src/appearance/controller.ts';
+import { chartOptions as variants } from './chart-options.mjs';
+await bootstrapAppearance();
+const errors = [];
+window.addEventListener('error', e => errors.push(e.message));
+window.addEventListener('unhandledrejection', e => errors.push(String(e.reason)));
+const host = document.querySelector('#host'), root = createRoot(host);
+let dark = false;
+function render(incomplete = false) {
+  const content = variants.map(option => '```echarts\n' + (incomplete ? '{"series":[' : JSON.stringify(option)) + '\n```').join('\n\n');
+  root.render(React.createElement(InteractiveMessage, {content, streaming:true}));
+}
+document.querySelector('#theme').onclick = () => {dark=!dark;updateDraft(current=>({...current,theme:dark?'dark':'light'}));};
+document.querySelector('#narrow').onclick = () => {host.style.width=host.style.width==='340px'?'760px':'340px';};
+document.querySelector('#incomplete').onclick = () => render(true);
+document.querySelector('#complete').onclick = () => render();
+function report(){document.querySelector('#status').textContent=JSON.stringify({canvases:host.querySelectorAll('canvas').length,chartErrors:host.querySelectorAll('.echarts-error-overlay').length,errors});}
+new MutationObserver(report).observe(host,{childList:true,subtree:true});
+render();
+</script>

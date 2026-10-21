@@ -7,6 +7,7 @@ import { inspectProcessTargets, processEvidenceText, processSignalPrograms } fro
 import { isContainerHeaderReadCommand } from "./container-read-check.mts";
 import { workspaceFileGuidance } from './active-permissions.mts';
 import { communicationGuidance } from './host/communication-guidance.mts';
+import { chartGuidance } from './host/chart-guidance.mts';
 import { createHash } from "node:crypto";
 import { promises as fs, readFileSync, realpathSync, existsSync } from "node:fs";
 import net from "node:net";
@@ -2926,9 +2927,7 @@ function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", identity 
     + "  4. steps：{\"type\":\"steps\",\"title\":\"办理步骤\",\"current\":1,\"steps\":[{\"label\":\"准备材料\",\"description\":\"收集所需文件\"},{\"label\":\"提交审核\",\"description\":\"核对后提交\"}]}\n"
     + "- steps 的 current 表示当前进行到第几步，可省略或用 0，都会从第 1 步开始展示。\n"
     + "- title、label、description 等文字保持简短；choice 最多 8 项，bars 最多 12 项，steps 最多 10 步。可视化前后仍可写普通 Markdown 说明。\n"
-    + "- 应用本地内置了 ECharts，```echarts 代码块会在消息里直接渲染成真实图表：凡是数据图表（统计、对比、趋势、占比、分布等）一律优先用它，不要用 ASCII 字符画、生成图片或 mermaid 来凑数据图。代码块内容是能过 JSON.parse 的严格 JSON，即 ECharts option，无注释、无函数、无多余逗号。\n"
-    + "- 本地 ECharts 是按需装配的，只支持四种图表：柱状 series type 用 bar、折线用 line、占比用 pie、散点用 scatter，其他类型（雷达、漏斗、仪表盘等）渲染不出来，不要输出。可用组件：title.text 标题、xAxis:{\"type\":\"category\",\"data\":[...]} 类目轴、yAxis:{\"type\":\"value\"} 数值轴、series:[{\"type\":\"bar\",\"name\":\"名称\",\"data\":[数值]}] 系列，以及 tooltip、legend、dataZoom、markLine。\n"
-    + "- 深浅色主题和透明背景由应用自动处理，不要设置 backgroundColor，也不用自己配色。一个代码块只画一张图。流程图、时序图、关系图用 ```mermaid。语法没把握时改用 Markdown 表格，不要输出渲染不出来的半成品图表。\n"
+    + chartGuidance + "\n"
     + "- 用户明确要求显示本地图片时，先确认图片存在，再用绝对路径写成 Markdown 图片，例如 ![现场照片](</绝对路径/现场照片.png>)；路径放在尖括号内以兼容空格，Windows 路径使用 C:/目录/图片.png 这种正斜杠写法，网络共享路径使用 file://server/share/图片.png。不要只回复图片路径，也不要把图片写进代码块。支持 png、jpg、jpeg、gif、webp、bmp。用户没有要求显示时，不要擅自嵌入本地图片。",
   ];
   const goalLine = goal
