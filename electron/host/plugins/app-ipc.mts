@@ -6,12 +6,11 @@ export function appIpcPlugin(deps) {
     name: "ipc:app",
     inject: ["sessions"],
     apply(ctx) {
-      const { trustedHandle, readAllSessions, defaultSessions, readJson, dataFile, listWorkspace, readSettings, getMainWindow, platform } = deps;
+      const { trustedHandle, readAllSessions, readJson, dataFile, listWorkspace, readSettings, getMainWindow, platform } = deps;
 
 trustedHandle("app:initial-state", async () => {
-  // 全新安装时保留默认欢迎会话；已有存档（拆分文件或迁移数据）则原样返回
-  const loaded: any[] = (await readAllSessions()) || [];
-  const sessions = loaded.length ? loaded : defaultSessions();
+  // 无存档时由界面展示未发送的新任务，不生成欢迎对话占用任务列表。
+  const sessions: any[] = (await readAllSessions()) || [];
   const workspacePath = sessions.find((session) => session.workspacePath)?.workspacePath || "";
   const pinnedWorkspacePaths = await readJson(dataFile("workspace-pins.json"), []);
   return {

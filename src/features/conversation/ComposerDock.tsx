@@ -252,7 +252,7 @@ export function ComposerDock(props: ComposerDockProps) {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {editingMessage?.sessionId === activeSession?.id && (
+            {editingMessage && editingMessage.sessionId === activeSession?.id && (
               <div className="message-editing-banner" role="status">
                 <Pencil size={13} />
                 <span>正在编辑：{shortTitle(messageVisibleText(editingMessage.original))}</span>

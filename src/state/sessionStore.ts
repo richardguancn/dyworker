@@ -4,7 +4,6 @@
 import { create } from "zustand";
 import { updateField, type Updater } from "./updateField.ts";
 import type { ApprovalAction, GitBranchesInfo, GitDiffStats, PendingWakeRecord, QuestionRequest, SessionRecord, WorkspaceContext, WorkspaceEntry } from "../types";
-import { previewSessions, previewWorkspace } from "./previewData.ts";
 
 // 正在续跑的会话（到点自动唤醒或用户点的「立即继续」）：气泡说明与运行状态行都按它改写
 export type WakingSessionEntry = { wakeAt: string; manual?: boolean; marker: string; done: string };
@@ -87,13 +86,13 @@ export interface SessionState {
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
-  sessions: previewSessions,
+  sessions: [],
   setSessions: (value) => set((s) => updateField(s, "sessions", value)),
   newTaskDraft: null,
   setNewTaskDraft: (value) => set((s) => updateField(s, "newTaskDraft", value)),
-  activeId: previewSessions[0].id,
+  activeId: "",
   setActiveId: (value) => set((s) => updateField(s, "activeId", value)),
-  workspacePath: previewSessions[0].workspacePath,
+  workspacePath: "",
   setWorkspacePath: (value) => set((s) => updateField(s, "workspacePath", value)),
   workspaceContext: null,
   setWorkspaceContext: (value) => set((s) => updateField(s, "workspaceContext", value)),
@@ -117,13 +116,13 @@ export const useSessionStore = create<SessionState>((set) => ({
   setDiffStats: (value) => set((s) => updateField(s, "diffStats", value)),
   gitBusy: "",
   setGitBusy: (value) => set((s) => updateField(s, "gitBusy", value)),
-  workspaceEntries: previewWorkspace,
+  workspaceEntries: [],
   setWorkspaceEntries: (value) => set((s) => updateField(s, "workspaceEntries", value)),
   pinnedWorkspacePaths: [],
   setPinnedWorkspacePaths: (value) => set((s) => updateField(s, "pinnedWorkspacePaths", value)),
   query: "",
   setQuery: (value) => set((s) => updateField(s, "query", value)),
-  composerSessionId: previewSessions[0].id,
+  composerSessionId: "",
   setComposerSessionId: (value) => set((s) => updateField(s, "composerSessionId", value)),
   runningSessionIds: new Set(),
   setRunningSessionIds: (value) => set((s) => updateField(s, "runningSessionIds", value)),

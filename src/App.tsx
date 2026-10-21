@@ -64,7 +64,6 @@ import { useViewStore } from "./state/viewStore";
 import { useSessionIpcRuntime } from "./state/sessionIpcRuntime";
 import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
 import { useStartupRuntime } from "./state/startupRuntime";
-import { previewSessions } from "./state/previewData";
 import { Sidebar } from "./app/Sidebar";
 import { ShellChrome } from "./app/ShellLayout";
 import { ConversationPane } from "./features/conversation/ConversationPane";
@@ -1092,7 +1091,7 @@ export function App() {
     if (matched) {
       const start = detected?.span.start ?? position - matched.query.length - 1;
       const dismissed = dismissedPluginMention.current;
-      if (matched.kind === 'slash' && dismissed?.sessionId === activeSession?.id && dismissed.text === value
+      if (matched.kind === 'slash' && dismissed && dismissed.sessionId === activeSession?.id && dismissed.text === value
         && dismissed.start === start && dismissed.query === matched.query) {
         setMentionMenu(null); return;
       }
@@ -1586,7 +1585,7 @@ export function App() {
   const composerEffortLabel = composerEffortValue
     ? composerReasoningConfig?.labels[composerEffortValue] || composerEffortValue
     : "";
-  const identitySetupOpen = ready && settings.identity === null;
+  const identitySetupOpen = ready && !bootstrapFailedRef.current && settings.identity === null;
   const activeApprovalMode = composerApprovalModes.find((option) => option.value === approvalMode) || composerApprovalModes[1];
   const ActiveApprovalIcon = activeApprovalMode.icon;
   const contextUsage = useMemo(() => {
@@ -1616,7 +1615,8 @@ export function App() {
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   // 例外一：挂起等待唤醒期间禁止发送（发送键变灰），必须先「立即继续」或「取消唤醒」
   const canSend = Boolean(
-    (composer.trim() || attachments.length || activeSkills.length || composerPastes.length || annotations.length)
+    ready && !bootstrapFailedRef.current && activeSession
+    && (composer.trim() || attachments.length || activeSkills.length || composerPastes.length || annotations.length)
     && (!activeTaskRunning || Boolean(window.dyworker?.sendTask))
     && !activeSleeping
     && voiceState !== "transcribing",
@@ -2028,6 +2028,7 @@ export function App() {
       )}
 
       <ConversationPane
+        ready={ready}
         ConversationMessageRow={ConversationMessageRow}
         messageRowActions={messageRowActions}
         activeSession={activeSession}

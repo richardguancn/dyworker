@@ -57,6 +57,7 @@ interface MessageRowProps {
 }
 
 export interface ConversationPaneProps {
+  ready: boolean;
   ConversationMessageRow: ComponentType<MessageRowProps>;
   messageRowActions: MessageRowActions;
 
@@ -441,7 +442,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
                 <span className="empty-mark"><Sparkles size={44} strokeWidth={1.3} /></span>
-                <h1>我们要完成什么？</h1>
+                <h1>{!props.ready ? "正在加载…" : props.error && !activeSession ? "暂时无法打开对话" : "我们要完成什么？"}</h1>
               </div>
             ) : (
               activeSession.messages.map((message, index) => {

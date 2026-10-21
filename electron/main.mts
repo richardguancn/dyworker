@@ -2,6 +2,7 @@ import { forwardNativePanelShortcut } from "./panel-shortcuts.ts";
 import { createTraceWriter } from "./trace-writer.mts";
 import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
 import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
+import { isTrustedAppRendererUrl } from "./renderer-origin.mts";
 import { formatChannelApproval } from "./channels/shared.mts";
 import { queuedGoalPayload, settledStoredGoal } from "./goal.mts";
 import { settingsForSession } from "./session-model.mts";
@@ -223,14 +224,11 @@ function showRemoteMessageNotification(message, onClick) {
   }
 }
 function isTrustedRendererUrl(rawUrl) {
-  try {
-    const actual = new URL(String(rawUrl || ""));
-    const expected = new URL(rendererEntryUrl);
-    if (isDevelopment) return actual.origin === expected.origin;
-    return actual.protocol === "file:" && actual.pathname === expected.pathname;
-  } catch {
-    return false;
-  }
+  return isTrustedAppRendererUrl(
+    rawUrl,
+    pathToFileURL(path.join(here, "../client/index.html")).href,
+    isDevelopment ? rendererEntryUrl : undefined,
+  );
 }
 
 // 全部 IPC handler 的统一入口：校验调用方是主渲染进程（webview 客页面只能走
@@ -605,27 +603,6 @@ function channelDebug(event, payload = {} as any) {
       }
     });
   return channelDebugChain;
-}
-
-function defaultSessions() {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "welcome",
-      title: "把工作交给 DYWorker",
-      workspacePath: "",
-      createdAt: now,
-      updatedAt: now,
-      messages: [
-        {
-          role: "assistant",
-          createdAt: now,
-          content:
-            "## 欢迎使用 DYWorker\n\n这里是你的本地工作助手。选择一个工作文件夹，然后直接描述要完成的事情。\n\n- 浏览和整理项目文件\n- 根据材料生成报告\n- 记录连续任务和处理结果\n\n你的任务记录保存在本机。",
-        },
-      ],
-    },
-  ];
 }
 
 async function readSettings() {
@@ -2563,7 +2540,6 @@ const shellDeps = {
   readAllSessions,
   readSettings,
   listWorkspace,
-  defaultSessions,
   syncChannelSessionWorkspaces,
   channelMetaOf,
   platform: process.platform,

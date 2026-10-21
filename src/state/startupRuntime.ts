@@ -524,10 +524,10 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     let cancelled = false;
     const load = async () => {
       if (!window.dyworker) {
-        // 桌面壳里没有桥接 = preload 没加载成功：界面显示的是内置演示数据、
-        // 所有保存都是空操作，必须让用户看见，不能装作一切正常。
+        // 桌面壳里没有桥接时无法读取或保存真实记录，保持空白并明确提示。
         if (/Electron\//.test(navigator.userAgent)) {
-          setError("桌面桥接没有加载（preload 缺失）：当前界面是内置演示数据，设置和对话都无法保存。请重新构建并重启 DYWorker。");
+          bootstrapFailedRef.current = true;
+          setError("应用启动失败，无法读取或保存设置和对话。请重启 DYWorker 后重试。");
         }
         setReady(true);
         return;
@@ -717,7 +717,7 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
   }, [notice]);
 
   useEffect(() => {
-    if (!error) return;
+    if (!error || bootstrapFailedRef.current) return;
     const timeout = window.setTimeout(() => setError(""), 5000);
     return () => window.clearTimeout(timeout);
   }, [error]);
