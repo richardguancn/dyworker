@@ -1,5 +1,8 @@
 import type { MessageAnnotation } from "./types";
 
+export type AnnotationQuote = MessageAnnotation & { n: number };
+export type AnnotationMarker = AnnotationQuote & { top: number; left: number };
+
 const QUOTE_MAX_LENGTH = 2000;
 
 // 选区文本往往带换行/缩进等多余空白，落库与展示前先归一化

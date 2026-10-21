@@ -15,6 +15,8 @@ import { TraceConsole } from "../../TraceConsole";
 import { PluginSlotView } from "../../PluginSlotView";
 import type { ComposerHandle } from "../../pluginRuntime/dshDraftEditor.ts";
 import { ComposerDock } from "./ComposerDock";
+import { AnnotationMarkerBubble } from "../annotations/SelectionOverlays";
+import type { AnnotationMarker } from "../../annotations";
 import type { ApprovalAction, ApprovalMode, Attachment, ChatMessage, DebugLogEntry, InboxItem, MessageAnnotation, ModelProfile, PendingWakeRecord, ProviderSettings, QuestionRequest, SessionRecord, TraceEvent, WorkspaceContext } from "../../types";
 
 type WakingSessionEntry = { wakeAt: string; manual?: boolean; marker: string; done: string };
@@ -119,7 +121,7 @@ export interface ConversationPaneProps {
   activeSessionPendingInboxQuestion: InboxItem | null;
   setInboxItems: Dispatch<SetStateAction<InboxItem[]>>;
 
-  annotationMarkers: Array<{ id: string; n: number; top: number; left: number }>;
+  annotationMarkers: AnnotationMarker[];
 
   terminalMounted: boolean;
   terminalAvailable: boolean;
@@ -544,7 +546,7 @@ export function ConversationPane(props: ConversationPaneProps) {
           </div>
           {/* 注释编号小气泡：钉在引用文本起点上方，随内容滚动（定位用内容坐标） */}
           {annotationMarkers.map((marker) => (
-            <span key={marker.id} className="annotation-marker" style={{ top: marker.top, left: marker.left }}>{marker.n}</span>
+            <AnnotationMarkerBubble key={marker.id} marker={marker} />
           ))}
         </div>
 

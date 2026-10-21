@@ -237,7 +237,7 @@ export const updateAnnotationMarkers = () => {
   if (!viewport) return;
   const viewportRect = viewport.getBoundingClientRect();
   const column = viewport.querySelector(".conversation-column");
-  const nextMarkers = annotationQuotesRef.current.flatMap(({ id, n, quote }) => {
+  const nextMarkers = annotationQuotesRef.current.flatMap(({ id, n, quote, comment }) => {
     // React 可能替换文本节点，旧 Range 会退化到父元素；每次从当前正文重新找引用。
     const range = findQuoteRange(column, quote);
     if (!range) return [];
@@ -252,13 +252,16 @@ export const updateAnnotationMarkers = () => {
     return [{
       id,
       n,
+      quote,
+      comment,
       top: Math.max(2, rect.top - viewportRect.top - viewport.clientTop + viewport.scrollTop - 24),
       left: rect.left - viewportRect.left - viewport.clientLeft + viewport.scrollLeft,
     }];
   });
   setAnnotationMarkers(previous => previous.length === nextMarkers.length && previous.every((entry, index) => {
     const next = nextMarkers[index];
-    return entry.id === next.id && entry.n === next.n && entry.top === next.top && entry.left === next.left;
+    return entry.id === next.id && entry.n === next.n && entry.quote === next.quote && entry.comment === next.comment
+      && entry.top === next.top && entry.left === next.left;
   }) ? previous : nextMarkers);
 };
 

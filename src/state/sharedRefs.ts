@@ -8,6 +8,7 @@ import type { BrowserWebviewElement } from "../features/browser/browserUtils";
 import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
 import type { ComposerHandle } from "../pluginRuntime/dshDraftEditor.ts";
 import type { ComposerPasteBlock } from "./composerStore";
+import type { AnnotationQuote } from "../annotations";
 import type { ToolPanelTab } from "./layoutStore";
 import type { WakingSessionEntry } from "./sessionStore";
 import { previewSessions } from "./previewData";
@@ -49,7 +50,7 @@ export const mentionTokenPathsRef: { current: Map<string, string> } = { current:
 // @「标题」token → 实际选择的会话 id：同名会话时以用户点选的那个为准（与文件同构）
 export const sessionTokenIdsRef: { current: Map<string, string> } = { current: new Map() };
 // 注释定位标记的引用列表：从当前正文重新定位，不保留可能失效的 Range
-export const annotationQuotesRef: { current: Array<{ id: string; n: number; quote: string }> } = { current: [] };
+export const annotationQuotesRef: { current: AnnotationQuote[] } = { current: [] };
 // 插件候选菜单被主动关掉的记忆：文本/触发位一致时不再自动弹回（跨 actions 共享同一份）
 export const dismissedPluginMention: { current: { sessionId: string; text: string; start: number; query: string } | null } = { current: null };
 // 工作区文件扁平列表与 @// 候选项的渲染镜像：派生自 state，App 每次渲染刷新，actions 读取

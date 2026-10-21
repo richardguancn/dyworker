@@ -1,10 +1,105 @@
 import { LoaderCircle, MessageSquare, MessageSquarePlus, MessagesSquare, Mic, Trash2 } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { MessageAnnotation } from "../../types";
+import type { AnnotationMarker } from "../../annotations";
 
 // 注释列表弹层宽度（与 .annotation-list-popup 的 width 保持一致），fixed 定位时用于水平钳制
 const ANNOTATION_POPUP_WIDTH = 360;
+
+// 正文编号的内容预览移到 body，避免被会话滚动区域裁掉。
+export function AnnotationMarkerBubble({ marker }: { marker: AnnotationMarker }) {
+  const tooltipId = useId();
+  const markerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef(0);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const content = marker.comment.trim() || marker.quote;
+  const show = () => {
+    window.clearTimeout(closeTimerRef.current);
+    setOpen(true);
+  };
+  const hide = () => {
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setOpen(false), 150);
+  };
+
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), []);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    const reposition = () => {
+      const button = markerRef.current;
+      const tooltip = tooltipRef.current;
+      if (!button || !tooltip) return;
+      const rect = button.getBoundingClientRect();
+      const viewportRect = button.closest(".conversation-viewport")?.getBoundingClientRect();
+      const visibleTop = Math.max(0, viewportRect?.top ?? 0);
+      const visibleBottom = Math.min(window.innerHeight, viewportRect?.bottom ?? window.innerHeight);
+      if (rect.bottom <= visibleTop || rect.top >= visibleBottom) {
+        setOpen(false);
+        return;
+      }
+      const popup = tooltip.getBoundingClientRect();
+      const gap = 8;
+      setPosition({
+        left: Math.max(gap, Math.min(rect.left + rect.width / 2 - popup.width / 2, window.innerWidth - popup.width - gap)),
+        top: Math.max(gap, Math.min(
+          rect.top - popup.height - gap >= gap ? rect.top - popup.height - gap : rect.bottom + gap,
+          window.innerHeight - popup.height - gap,
+        )),
+      });
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        window.clearTimeout(closeTimerRef.current);
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("keydown", dismiss);
+    };
+  }, [open, content, marker.top, marker.left]);
+
+  return (
+    <>
+      <button
+        ref={markerRef}
+        type="button"
+        className="annotation-marker"
+        style={{ top: marker.top, left: marker.left }}
+        aria-label={`注释 ${marker.n}`}
+        aria-describedby={open ? tooltipId : undefined}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={show}
+      >{marker.n}</button>
+      {open && createPortal(
+        <div
+          ref={tooltipRef}
+          id={tooltipId}
+          role="tooltip"
+          className="annotation-marker-preview"
+          style={{ top: position?.top ?? 0, left: position?.left ?? 0, visibility: position ? "visible" : "hidden" }}
+          onMouseEnter={show}
+          onMouseLeave={hide}
+        >{content}</div>,
+        document.body,
+      )}
+    </>
+  );
+}
 
 // 在容器文本节点里定位引用文本的起点：把所有文本节点拼成一个归一化长串（记录每个字符
 // 对应的原始节点与偏移），做多级匹配后映射回 DOM。拼接匹配让跨元素边界的引用（加粗/链接

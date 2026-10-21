@@ -14469,24 +14469,51 @@ html[data-theme="dark"] .browser-import-picker-menu button.active {
   opacity: 1;
 }
 
-/* 注释编号小气泡：会话内容里引用文本起点上方，pointer-events 关闭避免挡住选区 */
+/* 注释编号小气泡：悬停或键盘聚焦时显示注释内容。 */
 .annotation-marker {
   position: absolute;
   z-index: 40;
   min-width: 20px;
   height: 20px;
   padding: 0 5px;
+  border: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 10px 10px 10px 3px;
   background: #2f8cff;
   color: #fff;
+  font-family: inherit;
   font-size: calc(12px * var(--font-ui-scale, 1));
   font-weight: 600;
   line-height: 1;
-  pointer-events: none;
+  cursor: pointer;
   box-shadow: 0 2px 6px rgba(47, 140, 255, 0.4);
+}
+
+.annotation-marker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.annotation-marker-preview {
+  position: fixed;
+  z-index: 2500;
+  box-sizing: border-box;
+  max-width: min(440px, calc(100vw - 16px));
+  padding: 8px 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14), 0 2px 4px rgba(0, 0, 0, 0.06);
+  font-family: inherit;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  font-weight: 560;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* 已发送消息气泡里的「x 条注释」chip */

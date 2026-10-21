@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import { updateField, type Updater } from "./updateField.ts";
 import type { Attachment, MessageAnnotation, SkillRecord } from "../types";
+import type { AnnotationMarker } from "../annotations";
 import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
 
 // 输入框长粘贴折叠块：超过阈值的大段粘贴文本不直接灌进输入框，
@@ -34,8 +35,8 @@ export interface ComposerState {
   annotationListOpen: boolean;
   setAnnotationListOpen: (value: Updater<boolean>) => void;
   // 注释定位标记：composer 待发送注释与已发送消息里的注释，都在引用文本起点上方放编号小气泡
-  annotationMarkers: Array<{ id: string; n: number; top: number; left: number }>;
-  setAnnotationMarkers: (value: Updater<Array<{ id: string; n: number; top: number; left: number }>>) => void;
+  annotationMarkers: AnnotationMarker[];
+  setAnnotationMarkers: (value: Updater<AnnotationMarker[]>) => void;
 
   // 侧边聊天预填：nonce 变化时把 text 填入侧边聊天草稿
   sideChatSeed: { text: string; nonce: number } | null;

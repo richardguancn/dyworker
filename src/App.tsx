@@ -189,7 +189,7 @@ import { SystemMessagesPanel } from "./SystemMessagesPanel";
 import { BrowserControlOverlay } from "./BrowserControlOverlay";
 import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
 import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
-import { formatAnnotationsForPrompt, normalizeQuote } from "./annotations";
+import { formatAnnotationsForPrompt, normalizeQuote, type AnnotationQuote } from "./annotations";
 import { isGlmNativeVisionModel, modelContextLimit, usesResponsesApi } from "./providers";
 import { ReasoningControl } from "./ReasoningControl";
 import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-runtime/model-settings.mts";
@@ -866,30 +866,23 @@ export function App() {
     };
   }, [selectionQuote]);
 
-  // 注释增删、切换会话或新消息落盘时更新引用列表
-  const activeMessageCount = activeSession?.messages.length ?? 0;
+  // 注释增删、编辑、切换会话或消息变化时更新引用列表
   useEffect(() => {
-    const quotes: Array<{ id: string; n: number; quote: string }> = [
-      ...annotations.map((annotation, index) => ({ id: annotation.id, n: index + 1, quote: annotation.quote })),
+    const quotes: AnnotationQuote[] = [
+      ...annotations.map((annotation, index) => ({ ...annotation, n: index + 1 })),
       ...(activeSession?.messages ?? []).flatMap((message, messageIndex) =>
         (message.annotations ?? []).map((annotation, index) => ({
           id: `${message.id ?? messageIndex}-${annotation.id}`,
           n: index + 1,
           quote: annotation.quote,
+          comment: annotation.comment,
         }))),
     ];
     annotationQuotesRef.current = quotes;
-    updateAnnotationMarkers();
-    // activeSession 由 sessions 派生，消息数变化已能覆盖注释落盘的时机
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, activeId, activeMessageCount]);
-  // 内容更新后重新定位引用（rAF 合帧）
-  useEffect(() => {
-    if (!annotationQuotesRef.current.length) return;
+    // 等正文完成布局后统一定位，避免同一轮消息更新重复测量。
     const frame = requestAnimationFrame(updateAnnotationMarkers);
     return () => cancelAnimationFrame(frame);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession?.messages]);
+  }, [annotations, activeId, activeSession?.messages]);
   useEffect(() => {
     let frame = 0;
     const schedule = () => {
