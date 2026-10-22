@@ -22,6 +22,8 @@ export function spawnPluginProcess(entry: string, { profileDir, packageDir, work
   if (workspacePath) reads.add(real(workspacePath));
   if (dataDir) reads.add(real(dataDir));
   const execArgv = ["--permission", ...[...reads].map(dir => `--allow-fs-read=${dir}`)];
+  // 此进程原本允许插件联网；新版 Node 需要显式保留该能力，旧版不能传此参数。
+  if (process.allowedNodeEnvironmentFlags.has("--allow-net")) execArgv.push("--allow-net");
   if (process.platform === "win32") {
     // 官方运行时包的 Windows 路径依赖 koffi 原生插件：dsh-fs-local 覆盖已有文件时
     // 用 ReplaceFileW 保留 ACL，windows-acl 沙箱也经 koffi 调系统 API。Node 权限模型

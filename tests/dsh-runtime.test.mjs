@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { PluginRouteRegistry } from '../electron/host/services/connection.mts';
 import { transactPluginProfile } from '../electron/host/plugin-transaction.mts';
@@ -140,6 +141,21 @@ test('检查进程不触及主进程全局状态，写入和启动子进程受�
   await fs.writeFile(path.join(local,'lib/index.mjs'),"export * from '../helper.mjs'");
   await fs.symlink(local,path.join(ctx.plugins.dir,'node_modules','dsh-local'),'dir');
   const localCheck=await ctx.plugins.compatibility({spec:'dsh-local'});assert.equal(localCheck.verdict,'runnable',JSON.stringify(localCheck));
+});
+
+test('受限插件进程保留联网能力，实际请求本机服务并返回结果', async t => {
+  const { ctx, execution } = await fixture(t);
+  const server = createServer((_request, response) => response.end('实际网络响应'));
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  await synthetic(ctx, 'dsh-network', `import {defineTool} from '@deepseek-ai/dsh-tools';
+    export const inject=['tools'];export function apply(ctx){ctx.tools.register(defineTool({
+      name:'request',description:'实际联网验收',parameters:{},
+      output:{schema:{type:'string'},render:()=>[]},
+      async execute(){return await (await fetch(${JSON.stringify(url)})).text();}
+    }));}`);
+  assert.equal(await call(ctx, 'plugin__dsh_network__request', {}, execution), '实际网络响应');
 });
 
 test('路由按宿主和拥有者清理，冲突拒绝，查询和请求头保留，在途取消等待收尾', async () => {

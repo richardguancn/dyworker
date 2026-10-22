@@ -34,6 +34,14 @@ test('官方程序执行器返回真实绑定结果，读写工作目录；私�
   assert.ok(denied.error, JSON.stringify(denied)); await assert.rejects(fs.access(outside), { code: 'ENOENT' });
   const child = await run('return (await import("node:child_process")).execSync("echo unexpected").toString();');
   assert.ok(child.error, JSON.stringify(child));
+  const readonly = await run('return await (await import("node:fs/promises")).readFile("actual.txt", "utf8");',
+    { sandboxPolicy: { mode: 'read-only', workspaceRoot: work } });
+  assert.equal(readonly.error, undefined, JSON.stringify(readonly));
+  assert.equal(readonly.value, '实际工作流文件');
+  const readonlyWrite = await run('await (await import("node:fs/promises")).writeFile("readonly.txt", "不应写入");',
+    { sandboxPolicy: { mode: 'read-only', workspaceRoot: work } });
+  assert.ok(readonlyWrite.error, JSON.stringify(readonlyWrite));
+  await assert.rejects(fs.access(path.join(work, 'readonly.txt')), { code: 'ENOENT' });
 });
 
 test('官方程序执行器超时和停止等待实际退出，另一个执行继续正常运行', async t => {

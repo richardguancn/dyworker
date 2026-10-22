@@ -26,7 +26,10 @@ export class PtcExecutor {
     class RestrictedSandbox extends LocalSandbox {
       async confine(argv: string[], policy: any, signal: AbortSignal) {
         if (await fs.realpath(argv[0]) !== executable) throw new Error('工作流只能使用应用提供的程序执行器');
-        const protectedArgv = [argv[0], '--permission', `--allow-fs-read=${modules}`, `--allow-fs-read=${workspace}`,
+        // Node 25+ 将继承的控制管道也纳入网络权限；旧版不识别此开关。
+        // 文件及进程限制仍由以下 Node 权限和官方本地沙箱共同执行。
+        const networkArgs = process.allowedNodeEnvironmentFlags.has('--allow-net') ? ['--allow-net'] : [];
+        const protectedArgv = [argv[0], '--permission', ...networkArgs, `--allow-fs-read=${modules}`, `--allow-fs-read=${workspace}`,
           ...(policy.mode === 'workspace-write' ? [`--allow-fs-write=${workspace}`] : []), ...argv.slice(1)];
         return super.confine(protectedArgv, policy, signal);
       }

@@ -21,8 +21,10 @@ export function apply(ctx,config){ctx.sessionProjections.register({key:'catalog-
  init:()=>0,apply:(value,event)=>event.type==='user/message'?value+1:value,
  wire:{viewSchema:z.number(),view:value=>value+(config.offset||0)}});}`;
 
-async function fixture(t){
+async function fixture(t,{isolatedTemp=false}={}){
  const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-cache-test-')));
+ // 清理验收只观察本次测试的临时目录，避免其他应用或并行测试的目录变化造成误报。
+ if(isolatedTemp)t.mock.method(os,'tmpdir',()=>dir);
  const host=await createHost({userDataDir:dir,mountPlugins:true});
  t.after(async()=>{await disposeHost(host);await fs.rm(dir,{recursive:true,force:true});});
  await fs.mkdir(path.join(host.plugins.dir,'node_modules'),{recursive:true});
@@ -111,7 +113,7 @@ test('真实会话设置覆盖保留，校验过程不会写回原设置',{timeo
 });
 
 test('目录进程拒绝工作目录写入和自动创建任务，失败也清理临时副本',{timeout:20000},async t=>{
- const {workspace,input,plugin}=await fixture(t);
+ const {workspace,input,plugin}=await fixture(t,{isolatedTemp:true});
  const before=(await fs.readdir(os.tmpdir())).filter(name=>name.startsWith('dyw-catalog-cache-')).sort();
  await plugin(`import fs from 'node:fs';export function apply(){fs.writeFileSync(${JSON.stringify(path.join(workspace,'forbidden.txt'))},'bad');}`);
  await assert.rejects(readPluginCatalogCache(input),/未在官方配置树中启动|Access|permission|Permission/);
@@ -122,7 +124,7 @@ test('目录进程拒绝工作目录写入和自动创建任务，失败也清�
 });
 
 test('取消不合作的真实插件加载会等待进程终止并删除副本',{timeout:10000},async t=>{
- const {input,plugin}=await fixture(t);await plugin('export function apply(){while(true){}}');
+ const {input,plugin}=await fixture(t,{isolatedTemp:true});await plugin('export function apply(){while(true){}}');
  const before=(await fs.readdir(os.tmpdir())).filter(name=>name.startsWith('dyw-catalog-cache-')).sort();
  const abort=new AbortController(),pending=readPluginCatalogCache({...input,signal:abort.signal});
  const rejected=assert.rejects(pending,/取消真实缓存进程/);
