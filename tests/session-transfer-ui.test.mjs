@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 // 任务/项目跨机迁移的入口契约：导出、导入两条链路从界面一路到主进程通道，
 // 任何一环被改掉（菜单项消失、preload 少方法、IPC 不走可信入口）都要在这里失败。
 import test from "node:test";
@@ -41,7 +42,7 @@ test("preload 暴露导出/导入桥接，且主进程通道走可信入口", ()
   assert.match(ipc, /trustedHandle\("sessions:import-package"/);
   assert.match(ipc, /showSaveDialog/, "导出要经原生保存对话框");
   assert.match(ipc, /showOpenDialog/, "导入要经原生打开对话框");
-  const main = read("../electron/main.mts");
+  const main = readModuleSource(new URL("../electron/main.mts", import.meta.url));
   assert.match(main, /ctx\.plugin\(transferIpcPlugin\(/, "主进程必须挂载迁移插件");
 });
 

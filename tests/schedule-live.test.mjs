@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 // 定时计划「立即执行」的可见性契约：
 // 以前一次运行只在结束（完成/挂起）时才用 sessions:prepend 把整段转录丢给渲染端，
 // 一个跑几十分钟的计划在这段时间里界面上什么都没有——用户点了「立即执行」只能干等。
@@ -29,7 +30,7 @@ test.after(async () => { await rm(tempDir, { recursive: true, force: true }).cat
 
 // 统一读成 LF，避免 Windows 检出 CRLF 时多行正则失效（同 desktop-contract/channel-stream）
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
-const main = readSource(new URL("../electron/main.mts", import.meta.url));
+const main = readModuleSource(new URL("../electron/main.mts", import.meta.url));
 // App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
 const app = readRendererSource();
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
@@ -150,7 +151,7 @@ test("源码契约:主进程起跑前建会话、运行期实时转发、收尾�
   assert.match(main, /const scheduleSessionId = crypto\.randomUUID\(\);[\s\S]*?sendScheduleRunStarted\(/);
   // 运行期实时转发：信封必须打 scheduleRun 标记，事件白名单与渠道共用
   assert.match(main, /scheduleRun:\s*true/);
-  assert.match(main, /if \(!CHANNEL_STREAM_EVENT_TYPES\.has\(agentEvent\?\.type\)\) return;/);
+  assert.match(main, /if \(!deps\.CHANNEL_STREAM_EVENT_TYPES\.has\(agentEvent\?\.type\)\) return;/);
   assert.match(main, /emit: \(agentEvent\) => \{[\s\S]*?collector\.handle\(agentEvent\);[\s\S]*?forwardRunEvent\(agentEvent\);/);
   // 收尾三条路径（完成/挂起/失败）都走同一个 finishSession，失败也要收口
   assert.match(main, /const finishSession = async \(messages\) => \{/);

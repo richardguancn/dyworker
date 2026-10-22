@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 // Cordis 架构成立性验收：判定「真的是 cordis 架构」而不是「import 了 cordis」。
 // 不看 import 语句，只看运行期语义——这些性质对手写的 getter/单例做不到：
 //   1) 宿主是容器：多个宿主并存且状态互不串（模块级单例必然串）
@@ -145,7 +146,7 @@ test("清理逆序发起，且 disposeHost 会 await 异步停机", async (t) =>
 test("不变量：运行期域由插件创建，main 不再持有模块级域对象", async () => {
   const { readFile } = await import("node:fs/promises");
   const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
-  const main = await read("../electron/main.mts");
+  const main = await readModuleSource(new URL("../electron/main.mts", import.meta.url));
 
   // 反面：这些模块级实例曾经是壳层手工创建、插件只包清理
   assert.doesNotMatch(main, /^let telemetryController = null;/m);
@@ -177,7 +178,7 @@ test("不变量：IPC 插件用 inject 声明依赖，不再手工塞领域函�
 test("不变量：tools/pre-execute 在生产装配里有真实消费者（不是空接缝）", async () => {
   const { readFile } = await import("node:fs/promises");
   const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
-  const main = await read("../electron/main.mts");
+  const main = await readModuleSource(new URL("../electron/main.mts", import.meta.url));
   const guard = await read("../electron/host/plugins/sensitive-path-guard.mts");
   // 壳层真的挂了这个策略插件
   assert.match(main, /ctx\.plugin\(sensitivePathGuardPlugin\(\)\)/);
@@ -189,7 +190,7 @@ test("不变量：tools/pre-execute 在生产装配里有真实消费者（不�
 
 test("不变量：每个已拆出的 IPC 插件都真的被壳层挂载", async () => {
   const { readFile, readdir } = await import("node:fs/promises");
-  const main = await readFile(new URL("../electron/main.mts", import.meta.url), "utf8");
+  const main = await readModuleSource(new URL("../electron/main.mts", import.meta.url));
   const dir = new URL("../electron/host/plugins/", import.meta.url);
   const files = (await readdir(dir)).filter((name) => name.endsWith("-ipc.mts"));
   assert.ok(files.length >= 5, `应已拆出多个 IPC 插件，实际 ${files.length}`);

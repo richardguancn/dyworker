@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 // 接线不变量：每个 IPC 插件从 deps 里解构的名字，都必须由 main.mts 的挂载点真正提供。
 //
 // 为什么必须有这条：拆 IPC 时漏给依赖不会报错，只在**运行期调用该 handler 时**抛
@@ -13,7 +14,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(root);
 test("IPC 插件的依赖缺口检查：解构的每个名字都必须由挂载点提供", () => {
-const main = fs.readFileSync("electron/main.mts", "utf8");
+const main = readModuleSource(new URL("../electron/main.mts", import.meta.url));
 
 // 用花括号配对取出一个 { ... } 块（从 openIndex 处的 '{' 开始）
 function blockAt(text, openIndex) {

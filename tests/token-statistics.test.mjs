@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -45,7 +46,7 @@ test('超限后的强制压缩与重试都计入用量', async t => {
   assert.equal(usageEvents(events).reduce((sum, e) => sum + e.prompt + e.completion, 0), 220);
 });
 async function storageHarness(seed = []) {
-  const source = await fs.readFile(new URL('../electron/main.mts', import.meta.url), 'utf8');
+  const source = await readModuleSource(new URL('../electron/main.mts', import.meta.url));
   const block = source.slice(source.indexOf('const USAGE_STATS_LIMIT ='), source.indexOf('// ---- 跨会话历史搜索 ----'));
   const clear = source.slice(source.indexOf('function clearUsageStats()'), source.indexOf('\nconst shellDeps ='));
   let reads = 0; let release;

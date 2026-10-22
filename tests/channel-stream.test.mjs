@@ -1,3 +1,4 @@
+import { readModuleSource, readStylesSource } from "./helpers/module-source.mjs";
 // 渠道会话防重复归约的单测：
 // 渠道任务运行期间主进程边跑边转发 agent:event（信封带 channelRun: true），渲染端维护
 // 流式占位气泡；收尾时再 sessions:append 最终消息（带同一 runId）。若不做归约，同一条
@@ -35,11 +36,11 @@ const {
 
 // 统一读成 LF，避免 Windows 检出 CRLF 时多行正则失效（同 desktop-contract）。
 const readSource = (url) => fs.readFileSync(url, "utf8").replace(/\r\n/g, "\n");
-const main = readSource(new URL("../electron/main.mts", import.meta.url));
+const main = readModuleSource(new URL("../electron/main.mts", import.meta.url));
 // App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
 const app = readRendererSource();
 const types = readSource(new URL("../src/types.ts", import.meta.url));
-const styles = readSource(new URL("../src/styles.css", import.meta.url));
+const styles = readStylesSource(new URL("../src/styles.css", import.meta.url));
 
 test("isChannelRunEnvelope:只有显式打标的渠道运行事件才消费", () => {
   assert.equal(isChannelRunEnvelope({ channelRun: true }), true);

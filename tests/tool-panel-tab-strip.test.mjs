@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 右侧面板标签条「标签多到放不下」的交互契约（用户实报，靠源码文本钉住）：
 //
 // 1) 标签条必须真的能横向滚动。Chromium 不会把鼠标竖向滚轮转成横向滚动，
@@ -16,7 +17,7 @@ import { readRendererSource } from "./helpers/renderer-source.mjs";
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 // App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
 const app = readRendererSource();
-const css = read("../src/styles.css");
+const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
 
 /** 取出某个选择器的规则体（源码文本层面，够用且不依赖 CSS 解析器） */
 function rule(selector) {

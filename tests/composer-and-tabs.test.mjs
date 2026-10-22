@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 会话区标签栏与输入框的三条版式/行为契约（用户实报，靠源码文本钉住）：
 //
 // 1) 回车发送后输入框必须清空。React 会把 onSelect 合成到 keydown/keyup 上，而这两个
@@ -15,7 +16,7 @@ import { readRendererSource } from "./helpers/renderer-source.mjs";
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 // App.tsx 已按域拆分，契约断言改为扫整个渲染层源码。
 const app = readRendererSource();
-const css = read("../src/styles.css");
+const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
 
 /** 取出某个选择器的规则体（源码文本层面，够用且不依赖 CSS 解析器） */
 function rule(selector) {

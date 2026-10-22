@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 轨迹视图（对齐 DSH 官方「轨迹」观感）的结构契约。
 //
 // 为什么用源码文本钉：这些是"看着就不对"的观感契约——工具栏只有三个开关、时间条是三道泳道、
@@ -10,7 +11,7 @@ import { readFileSync } from "node:fs";
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
 const view = read("../src/TraceView.tsx");
-const css = read("../src/styles.css");
+const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
 const model = read("../src/traceModel.ts");
 
 /** 取出某个选择器的规则体（源码文本层面，够用且不依赖 CSS 解析器） */

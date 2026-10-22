@@ -1,24 +1,13 @@
-import fs from 'node:fs/promises';
-import {stripTypeScriptTypes} from 'node:module';
-import crypto from 'node:crypto';
-import {reconcileDshMessages,patchDshAssistant} from '../../electron/host/dsh-runtime/presentation.mts';
-import {formatChannelApproval} from '../../electron/channels/shared.mts';
+import {createAutomationRuntime} from '../../electron/desktop/automation-runtime.mts';
+import {createChannelRuntime} from '../../electron/desktop/channel-runtime.mts';
 import {findWorkspaceBlockers} from '../../electron/workspace-busy.mts';
-import {settingsForSession} from '../../electron/session-model.mts';
-// Exercise the actual shared main-process collector without initializing Electron or external channels.
-const main=await fs.readFile(new URL('../../electron/main.mts',import.meta.url),'utf8');
-const source=main.slice(main.indexOf('function createTranscriptCollector('),main.indexOf('async function runScheduledTask('));
-export const createTranscriptCollector=new Function('reconcileDshMessages','patchDshAssistant','crypto',
-  stripTypeScriptTypes(source)+'\nreturn createTranscriptCollector;')(reconcileDshMessages,patchDshAssistant,crypto);
+// 直接调用拆出的真实实现，无须再截取桌面入口源码或初始化 Electron。
+export const {createTranscriptCollector}=createAutomationRuntime({});
 export function mainScheduledEntry(deps) {
-  const start=main.indexOf('async function runScheduledTask(');
-  const end=main.indexOf('\n// ----',start);
-  const scheduleSource=main.slice(start,end);
-  return new Function(...Object.keys(deps),stripTypeScriptTypes(scheduleSource)+'\nreturn runScheduledTask;')(...Object.values(deps));
+  return createAutomationRuntime(deps).runScheduledTask;
 }
 
-// runChannelTask 按「同一工作区」判忙：判定函数与提示延迟常量在 main.mts 里是模块级依赖，
-// 抽取函数体时一并注入，否则 eval 出的函数体找不到 workspaceBlockers。
+// runChannelTask 按「同一工作区」判忙，测试继续使用真实的占用判定。
 function channelWorkspaceBlockers(deps,workspacePath,ignoreSessionId='') {
   const entries=[];
   for (const [sessionId,state] of deps.activeAgents||new Map()) entries.push({sessionId,workspacePath:state?.workspacePath,kind:'电脑端任务'});
@@ -28,16 +17,11 @@ function channelWorkspaceBlockers(deps,workspacePath,ignoreSessionId='') {
 }
 
 export function mainChannelEntry(deps) {
-  deps={formatChannelApproval,settingsForSession,CHANNEL_WAIT_NOTICE_DELAY_MS:5000,...deps};
+  deps={runningChannelTaskCount:0,...deps};
   deps.workspaceBlockers=deps.workspaceBlockers||((workspacePath,ignoreSessionId)=>channelWorkspaceBlockers(deps,workspacePath,ignoreSessionId));
-  const start=main.indexOf('async function runChannelTask(');
-  const end=main.indexOf('\n// channels:get-status',start);
-  return new Function(...Object.keys(deps),stripTypeScriptTypes('let runningChannelTaskCount=0;\n'+main.slice(start,end))+'\nreturn runChannelTask;')(...Object.values(deps));
+  return createChannelRuntime(deps).runChannelTask;
 }
 
 export function mainWakeEntry(deps) {
-  deps={settingsForSession,...deps};
-  const start=main.indexOf('async function resumeWake(');
-  const end=main.indexOf('\n// ----',start);
-  return new Function(...Object.keys(deps),stripTypeScriptTypes(main.slice(start,end))+'\nreturn resumeWake;')(...Object.values(deps));
+  return createAutomationRuntime(deps).resumeWake;
 }

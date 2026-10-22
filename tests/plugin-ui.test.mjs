@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 插件 UI 接线契约：侧边栏入口位置、通道名两侧一致、面板真的接了桥。
 //
 // 渲染端是源码文本 + 人工验收；但"通道名两边不一致"这类问题只有真跑起来才会暴露
@@ -83,7 +84,7 @@ test("类型定义：桥接与结果类型都在 types.ts 里声明", () => {
 });
 
 test("样式：入口、插件页与添加弹窗的样式都已定义", () => {
-  const css = read("../src/styles.css");
+  const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
   for (const selector of [".sidebar-plugins-button", ".plugins-page", ".plugins-compat", ".plugin-card",
     ".plugin-row-error", ".plugin-switch", ".add-plugin-dialog", ".add-plugin-warning", ".add-plugin-submit", ".plugins-text-button", ".add-plugin-mirror-note", ".add-plugin-build-note", ".install-result", ".install-result-card", ".install-result-mark"]) {
     assert.ok(css.includes(selector), `缺少样式 ${selector}`);
@@ -91,7 +92,7 @@ test("样式：入口、插件页与添加弹窗的样式都已定义", () => {
 });
 
 test("样式覆盖：插件页用到的类名都在 styles.css 里定义（类名对不上是\"看着坏掉\"的常见原因）", () => {
-  const css = read("../src/styles.css");
+  const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
   const used = new Set();
 
   for (const source of [panel, dialog]) {
@@ -148,7 +149,7 @@ test("安装结果界面：成功给「已安装 + 立即启用」，不兼容�
 });
 
 test("深浅色：插件页/弹窗必须走主题变量，不得写死浅色，并覆盖系统深色", () => {
-  const css = read("../src/styles.css");
+  const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
   const start = css.indexOf("/* ==== 插件入口 / 插件页 / 添加弹窗 / 安装结果 ====");
   assert.ok(start > 0, "应能定位到插件样式段");
   const block = css.slice(start);

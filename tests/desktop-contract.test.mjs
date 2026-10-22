@@ -1,3 +1,4 @@
+import { readModuleSource, readStylesSource } from "./helpers/module-source.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
@@ -16,7 +17,7 @@ const appearanceCss = readSource(new URL("../src/appearance/appearance.css", imp
 const interactiveMessage = readSource(new URL("../src/InteractiveMessage.tsx", import.meta.url));
 const imageAttachment = readSource(new URL("../src/ImageAttachment.tsx", import.meta.url));
 const preload = readSource(new URL("../electron/preload.cjs", import.meta.url));
-const main = readSource(new URL("../electron/main.mts", import.meta.url));
+const main = readModuleSource(new URL("../electron/main.mts", import.meta.url));
 const hostContext = readSource(new URL("../electron/host/context.mts", import.meta.url));
 const hostAuditService = readSource(new URL("../electron/host/services/audit.mts", import.meta.url));
 const hostSettingsService = readSource(new URL("../electron/host/services/settings.mts", import.meta.url));
@@ -48,7 +49,7 @@ const browserControlIpcSource = readSource(new URL("../electron/host/plugins/bro
 const browserImportIpcSource = readSource(new URL("../electron/host/plugins/browser-import-ipc.mts", import.meta.url));
 const agentIpcSource = readSource(new URL("../electron/host/plugins/agent-ipc.mts", import.meta.url));
 const skillsServiceSource = readSource(new URL("../electron/host/services/skills.mts", import.meta.url));
-const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+const agent = readModuleSource(new URL("../electron/agent.mts", import.meta.url));
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
 const localstorageImport = readSource(new URL("../electron/localstorage-import.mts", import.meta.url));
@@ -61,7 +62,7 @@ const packageJson = readSource(new URL("../package.json", import.meta.url));
 const providers = readSource(new URL("../src/providers.ts", import.meta.url));
 const types = readSource(new URL("../src/types.ts", import.meta.url));
 const markdownLiveEditor = readSource(new URL("../src/markdownLiveEditor.ts", import.meta.url));
-const styles = readSource(new URL("../src/styles.css", import.meta.url));
+const styles = readStylesSource(new URL("../src/styles.css", import.meta.url));
 const fileBrowserCss = readSource(new URL("../src/fileBrowser.css", import.meta.url));
 const fileBrowserToolbar = readSource(new URL("../src/FileBrowserToolbar.tsx", import.meta.url));
 const fileTextEditor = readSource(new URL("../src/FileTextEditor.tsx", import.meta.url));
@@ -169,7 +170,7 @@ test("首次启动必须选择身份,并可在设置中重新选择", () => {
 });
 
 test("身份会切换代理的默认工作语境", () => {
-  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+  const agent = readModuleSource(new URL("../electron/agent.mts", import.meta.url));
   assert.match(agent, /settings\?\.identity/);
   assert.match(agent, /面向个人、企业、开发者和各类组织/);
   assert.match(agent, /governmentMode/);
@@ -466,7 +467,7 @@ test("文件面板为左右分栏，Markdown 即时渲染编辑（Codex 式）",
   assert.match(app, /import\("[^"]*markdownLiveEditor"\)/);
   assert.match(app, /plainSource=\{showSource\}/);
   assert.match(workspaceIpcSource, /trustedHandle\("workspace:read-markdown"/);
-  assert.match(main, /readWorkspaceMarkdown/);
+  assert.match(workspaceIpcSource, /return readWorkspaceMarkdown\(/);
   assert.match(styles, /\.file-split/);
   assert.match(styles, /\.markdown-live-editor/);
 });
@@ -1108,7 +1109,7 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /event\.preventDefault\(\)/);
   // 退出链路：先清空待决议收件箱、等宿主 dispose 完成，再关闭全部 MCP 客户端后退出
   assert.match(main, /await closeAllMcpClients\(\);\s*app\.quit\(\)/);
-  assert.match(main, /if \(mcpShuttingDown\) throw new Error/);
+  assert.match(main, /if \(deps\.mcpShuttingDown\) throw new Error/);
   // 合并取消信号：入口信号 + 全局退出信号在服务里汇合
   assert.match(main, /isCancelled: \(\) => agentState\.cancelled/);
   assert.match(hostAgentService, /this\.resolvers\.isShuttingDown\(\) \|\| options\.isCancelled\?\.\(\)/);
@@ -1146,7 +1147,7 @@ test("linux wayland sessions use X11 and show the window without waiting for ren
   assert.match(main, /"--ozone-platform=x11"/);
   assert.match(main, /DYWORKER_X11_RELAUNCH/);
   assert.match(main, /show: process\.platform === "linux"/);
-  assert.match(main, /if \(process\.platform !== "linux"\) mainWindow\.once\("ready-to-show"/);
+  assert.match(main, /if \(process\.platform !== "linux"\) deps\.mainWindow\.once\("ready-to-show"/);
 });
 
 test("desktop theme follows the macOS and Linux system appearance", () => {
@@ -1194,7 +1195,7 @@ test("外观自定义链路贯穿渲染端、preload 与主进程", () => {
   assert.match(main, /appearance:reset/);
   // 本机字体权限只放行主窗口，不向其他页面开放
   assert.match(main, /font-access/);
-  assert.match(main, /webContents === mainWindow\?\.webContents/);
+  assert.match(main, /webContents === deps\.mainWindow\?\.webContents/);
   // 浏览器预览缺少桥接时不谎报保存成功
   assert.match(appearanceController, /previewOnly/);
   // 透明度只作用于面板背景，不使用整体 opacity 变淡
@@ -1277,7 +1278,7 @@ test("linux 保留窗口诊断与空白重载", () => {
 });
 
 test("codex alignment surfaces are wired end to end", () => {
-  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+  const agent = readModuleSource(new URL("../electron/agent.mts", import.meta.url));
   // AGENTS.md 项目指令、edit_file 局部编辑、update_plan 计划、file-change 变更事件
   assert.match(agent, /loadProjectInstructions/);
   assert.match(agent, /AGENTS\.md/);
@@ -1500,7 +1501,7 @@ test("codex alignment surfaces are wired end to end", () => {
 });
 
 test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱/自我唤醒/留痕/审计)", () => {
-  const agent = readSource(new URL("../electron/agent.mts", import.meta.url));
+  const agent = readModuleSource(new URL("../electron/agent.mts", import.meta.url));
   const risk = readSource(new URL("../electron/risk.mts", import.meta.url));
   const auditSource = readSource(new URL("../electron/audit.mts", import.meta.url));
 
@@ -1708,7 +1709,7 @@ test("IM 消息渠道端到端接线(QQ 官方机器人 / 微信 ClawBot)", () =
   assert.match(workspaceCmd, /export function parseWorkspaceSwitch/);
   assert.match(workspaceCmd, /export async function resolveWorkspaceSwitch/);
   assert.match(workspaceCmd, /export function looksLikePathDirective/);
-  assert.match(main, /from "\.\/channels\/workspace\.mts"/);
+  assert.match(main, /from "\.\.\/channels\/workspace\.mts"/);
   assert.match(main, /parseWorkspaceSwitch\(text\)/);
   assert.match(main, /resolveWorkspaceSwitch\(workspaceTarget, workspacePath\)/);
   assert.match(main, /looksLikePathDirective\(workspaceTarget\)/);

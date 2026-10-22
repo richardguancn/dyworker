@@ -1,9 +1,10 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("../electron/main.mts", import.meta.url), "utf8");
+const source = readModuleSource(new URL("../electron/main.mts", import.meta.url));
 const handler = source.match(/ipcMain\.on\("window:set-ignore-mouse",[\s\S]*?\n\}\);/)[0];
 
 for (const maximized of [false, true]) {
@@ -46,6 +47,7 @@ for (const platform of ["linux", "darwin", "win32"]) {
   test(`窗口不使用系统标题栏，保留实色内容和桌面阴影：${platform}`, () => {
     const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
     const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
+      deps: { here: "/app/electron", appearanceState: { settings: { theme: "system" } }, windowIcons: { iconFor: () => null } },
       process: { platform },
       // 外观接入后窗口底色来自已保存外观，此处桩为默认浅色
       windowBackgroundFor: () => solidWindowBackground,

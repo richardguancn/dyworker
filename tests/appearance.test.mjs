@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -433,7 +434,7 @@ test("windowBackgroundFor：自定义色、默认底色与系统材质透出", (
 // ---- 第二轮验收回归：R1 ~ R4 ----
 
 test("R1: 主进程与渲染端契约在取消预览时返回已保存的系统材质 effective", async () => {
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
+  const mainSrc = await readModuleSource(path.join(process.cwd(), "electron/main.mts"));
   // 外观 IPC 已拆到 host/plugins/appearance-ipc.mts；bridge.getEffective() 就是壳层那份 appearanceEffective
   const pluginSrc = await fs.readFile(path.join(process.cwd(), "electron/host/plugins/appearance-ipc.mts"), "utf8");
   assert.match(pluginSrc, /appearance:cancel-preview[\s\S]*?effective:\s*bridge\.getEffective\(\)/);
@@ -451,7 +452,7 @@ test("R2: 应急恢复外观时立即清除旧预览防抖定时器并递增会�
 });
 
 test("R3: Linux 初始化保留全局应用菜单以保留应急恢复入口，仅隐藏窗口菜单栏", async () => {
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
+  const mainSrc = await readModuleSource(path.join(process.cwd(), "electron/main.mts"));
   assert.doesNotMatch(mainSrc, /createWindow[\s\S]*?Menu\.setApplicationMenu\(null\)/);
   assert.match(mainSrc, /mainWindow\.setMenuBarVisibility\(false\)/);
   assert.match(mainSrc, /mainWindow\.autoHideMenuBar = true/);
@@ -470,7 +471,7 @@ test("防残影保护：系统背景下未设置背景图时通配禁用页面�
   const css = await fs.readFile(path.join(process.cwd(), "src/appearance/appearance.css"), "utf8");
   assert.match(css, /html\[data-system-backdrop="true"\]:not\(\[data-has-bg-image="true"\]\)\s*\*[\s\S]*?backdrop-filter:\s*none\s*!important/);
   assert.doesNotMatch(css, /html\[data-glass\][\s\S]*?\.settings-nav/);
-  const mainSrc = await fs.readFile(path.join(process.cwd(), "electron/main.mts"), "utf8");
+  const mainSrc = await readModuleSource(path.join(process.cwd(), "electron/main.mts"));
   assert.match(mainSrc, /applyWindowAppearance[\s\S]*?mainWindow\.webContents\?\.invalidate\?\.\(\)/);
 });
 

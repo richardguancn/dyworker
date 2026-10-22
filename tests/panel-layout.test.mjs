@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 面板分隔线与弹窗层级：这两条都是"看着像坏掉"的版式契约，靠源码文本钉住。
 //
 // 1) 分隔线只是边界提示，太深会抢视线（用户口径：再浅一点）。
@@ -10,7 +11,7 @@ import { readFileSync } from "node:fs";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
-const css = read("../src/styles.css");
+const css = readStylesSource(new URL("../src/styles.css", import.meta.url));
 const dialog = read("../src/AddPluginDialog.tsx");
 
 /** 取出某个选择器的规则体（源码文本层面，够用且不依赖 CSS 解析器） */

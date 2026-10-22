@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -203,7 +204,7 @@ test("handleSessionTool:未知工具与异常输入都返回 ok:false 文本,不
 });
 
 test("main.mjs 接线契约:extraTools 含会话工具,路由优先于浏览器/MCP,渠道 fall through 可达", () => {
-  const source = readFileSync(path.join(here, "../electron/main.mts"), "utf8");
+  const source = readModuleSource(path.join(here, "../electron/main.mts"));
   // 工具定义注入 agentExtraTools(四处 runAgent 共用)
   assert.match(source, /function agentExtraTools\(mcpTools\) \{[\s\S]*?sessionToolDefinitions\(\)/);
   // createExtraToolRouter 的路由里会话工具先于 browser__/MCP 判定

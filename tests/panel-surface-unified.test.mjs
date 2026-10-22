@@ -1,3 +1,4 @@
+import { readStylesSource } from "./helpers/module-source.mjs";
 // 「左侧栏与正文区共用一个底色」的契约（用户实报：左右区域背景要统一）。
 //
 // 两侧底色其实来自不同变量（侧栏 --sidebar、正文 --surface），所以必须钉住三件事：
@@ -11,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { DARK_DEFAULTS, LIGHT_DEFAULTS, derivePalette } from "../src/appearance/tokens.ts";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-const styles = read("../src/styles.css");
+const styles = readStylesSource(new URL("../src/styles.css", import.meta.url));
 const layout = read("../src/layout.css");
 const appearance = read("../src/appearance/appearance.css");
 

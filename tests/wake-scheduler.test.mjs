@@ -1,3 +1,4 @@
+import { readModuleSource } from "./helpers/module-source.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -75,7 +76,7 @@ test("normalizeApprovalMode: 支持 auto 模式", () => {
 });
 
 test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠唤醒补偿、解耦守卫与强感知", async () => {
-  const mainCode = await fs.readFile(path.join(root, "electron/main.mts"), "utf8");
+  const mainCode = await readModuleSource(path.join(root, "electron/main.mts"));
 
   // 1. 动态近邻定时器
   // 近邻唤醒定时器已上收 ctx.scheduler
@@ -114,7 +115,7 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   assert.doesNotMatch(mainCode, /sourceApprovalMode/);
   // 计划任务同样跟随全局完全访问，不再固定为 reviewer / deny-changes
   assert.match(mainCode, /approvalMode: unattendedApprovalMode\(settings\.approvalMode, record\.allowWorkspaceWrites \? "reviewer" : "deny-changes"\)/);
-  assert.match(mainCode, /(unattendedApprovalMode|wakeApprovalMode)[^}]*\} from "\.\/settings\.mts"/);
+  assert.match(mainCode, /(unattendedApprovalMode|wakeApprovalMode)[^}]*\} from "\.\.\/settings\.mts"/);
 
   // 5. 审批等待期间释放 runningScheduledTask 锁（等待入口现为 ctx.inbox.awaitWithTimeout）
   assert.match(mainCode, /ctx\.scheduler\.running = false;[\s\S]*?ctx\.inbox\.awaitWithTimeout[\s\S]*?ctx\.scheduler\.running = true;/);
@@ -136,7 +137,7 @@ test("main.mjs 唤醒与调度端到端契约：动态近邻定时器、休眠�
   assert.ok(wakeStart > 0 && wakeEnd > wakeStart);
   const wakeCode = mainCode.slice(wakeStart, wakeEnd);
   const wakeNoticeIndex = wakeCode.indexOf('"sessions:append"');
-  const wakeRunIndex = wakeCode.indexOf("await ctx.agent.run(");
+  const wakeRunIndex = wakeCode.indexOf("await deps.ctx.agent.run(");
   assert.ok(wakeNoticeIndex > 0 && wakeRunIndex > 0 && wakeNoticeIndex < wakeRunIndex);
   assert.match(wakeCode, /messages:\[wakeUserMessage\]/);
   assert.match(wakeCode, /mergeDshTranscript\(wakeSessionBefore\.messages \|\| \[\],\[wakeUserMessage\]\)/);
