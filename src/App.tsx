@@ -1,205 +1,77 @@
-import { resolvePanelShortcut, type PanelShortcut } from "../electron/panel-shortcuts";
-import { createTraceBuffer, trimRecentText } from "./traceBuffer";
-import { createSessionSaveQueue } from "./sessionSaveQueue";
+import {
+ClipboardPaste,
+Copy,
+FolderOpen,
+Globe,
+ListTree,
+MessageSquarePlus,
+Scissors,
+SquarePen,
+SquarePlus,
+SquareTerminal
+} from "lucide-react";
+import { CSSProperties,KeyboardEvent,MouseEvent,useCallback,useEffect,useLayoutEffect,useMemo,useRef } from "react";
+import { hasConfiguredModel } from "../electron/host/dsh-runtime/model-settings.mts";
+import { getModelReasoningConfig,selectedReasoningEffort } from '../electron/model-reasoning.ts';
+import { resolvePanelShortcut,type PanelShortcut } from "../electron/panel-shortcuts";
+import { settingsForSession } from "../electron/session-model.mts";
+import { AppDialogs } from "./app/AppDialogs";
+import { ShellChrome } from "./app/ShellLayout";
+import { Sidebar } from "./app/Sidebar";
+import type { ChannelStreamRef,ChannelStreamRuns } from "./channelStream";
+import { estimateSessionTokens } from "./contextUsage";
+import { DshChildHistory } from './DshChildHistory';
+import { mergeCreatedDshTask } from './dshTurns';
+import { browserTabTitleOf } from "./features/browser/browserUtils";
+import { ConversationPane } from "./features/conversation/ConversationPane";
+import { FilesSplitPanel } from "./features/files/FilesSplitPanel";
+import { ConversationMessageRow } from "./features/message/ConversationMessageRow";
+import { composerApprovalModes } from "./features/plans/PlansPanel";
+import { ToolPanel } from "./features/toolpanel/ToolPanel";
+import { playCompletionSound } from "./lib/completionSound";
 import { formatMessageTime } from "./lib/format";
 import {
-  FILE_TOKEN_REGEX,
-  INLINE_TOKEN_REGEX,
-  SESSION_TOKEN_REGEX,
-  copyTextToClipboard,
-  displayWorkspace,
-  formatSessionReference,
-  indexConversation,
-  latestWorkingContext,
-  messageVisibleText,
-  pathDirname,
-  shortTitle,
-  skillTokensInText,
-  stripControlMarkers,
-  stripControlMarkersCached,
+FILE_TOKEN_REGEX,
+SESSION_TOKEN_REGEX,
+copyTextToClipboard,
+indexConversation,
+skillTokensInText
 } from "./lib/text";
-import { activityDisplayTitle, appendBranchActivity, patchActivityTree } from "./lib/activity";
-import { WORKSPACE_FILE_DRAG_TYPE, buildReviewTree, filterWorkspaceEntries, isMarkdownFile, isTextPreviewFile, parseReviewDiff, workspaceFileAttachment } from "./lib/files";
-import type { ReviewTreeDir } from "./lib/files";
-import { FilesSplitPanel } from "./features/files/FilesSplitPanel";
-import { GitReviewPanel } from "./features/review/GitReviewPanel";
-import { ReviewPanel } from "./features/review/ReviewPanels";
-import { BROWSER_DEVICE_PRESETS, BROWSER_MOBILE_UA, BROWSER_START_LINKS, browserPasswordFillScript, browserTabTitleOf, normalizeBrowserInput, type BrowserDownloadRecord, type BrowserWebviewElement } from "./features/browser/browserUtils";
-import { BrowserImportDialog, BrowserPasswordsDialog, BrowserSectionDialog } from "./features/browser/BrowserDialogs";
-import { SideChatPanel } from "./features/sessions/SideChatPanel";
-import { InboxDialog } from "./features/inbox/InboxDialog";
-import { ApprovalCard, ChangesSummary, MessagePasteBlocks, QuestionCard } from "./features/message/Cards";
-import { ImageLightbox } from "./features/message/ImageLightbox";
-import { AnnotationEditorCard, ContextMenuPopup, MessageAnnotationChip, SelectionQuoteBar, findQuoteRange, type ContextMenuItem } from "./features/annotations/SelectionOverlays";
-import { MemoryEditDialog } from "./features/memory/MemoryPanels";
-import { SkillDraftDialog, SkillEditDialog } from "./features/skills/SkillPanels";
-import { composerApprovalModes } from "./features/plans/PlansPanel";
-import { ContextRing } from "./features/usage/UsagePanels";
-import { AppUpdateAction, AppUpdateDialog, FullAccessDialog, IdentitySetupDialog } from "./features/settings/SettingsSubPanels";
-import { SettingsDialog } from "./features/settings/SettingsDialog";
-import type { SettingsTab } from "./features/settings/SettingsDialog";
-import { ConversationToolsIcon, ForkBranchIcon, PanelLeftIcon, PanelRightIcon } from "./app/icons";
-import { useLayoutStore } from "./state/layoutStore";
-import type { ToolPanelTab } from "./state/layoutStore";
-import { useSettingsStore } from "./state/settingsStore";
-import { useBrowserStore } from "./state/browserStore";
-import { useComposerStore } from "./state/composerStore";
-import { useSessionStore } from "./state/sessionStore";
-import { refreshPendingWakes, updateSession, patchWakingSleepNote, clearSessionNotice, clearSessionError, showSessionNotice, makeSession, deleteSession, resumeSleepingTask, cancelSleepingTask, unarchiveSession, togglePin, toggleWorkspacePin, openWorkspaceInFileManager, archiveSession, renameSession } from "./state/sessionActions";
-import { refreshGitInfo, toggleBranchMenu, openCommitPanel, switchBranch, createBranch, generateCommitMessage, runCommit, runPushOnly } from "./state/gitActions";
-import { updateToolPanelTab, focusToolPanelTab, openToolPanelTab, openFilePreview, choosePreviewFile, closeToolPanelTab } from "./state/toolPanelActions";
-import { resolveTokenFile, resolveTokenSession, openReferencedFile, insertFileToken, handleComposerDragOver, handleComposerDragLeave, handleComposerDrop, handleComposerPaste, openContextMenu, closeContextMenu, handleConversationMouseUp, addSelectionToComposer, sendSelectionToSideChat, updateAnnotationMarkers, handleMessageContextMenu, pasteComposerText, applyMention, chooseWorkspace, chooseAttachments } from "./state/composerActions";
-import { openImagePreview, closeImagePreview, navigateImagePreview, toggleVoiceInput, copyMessage, toggleSpeakMessage, togglePlayVoice, startMessageEdit, cancelMessageEdit, speakMessageKey } from "./state/messageActions";
-import { openBrowserTab, activateBrowserTabById, closeBrowserTabById, reportBrowserTabState, patchBrowserTab, readWebviewNavState, reportActiveBrowserContents, prepareGuestPage, bindBrowserWebview, browserWebviewRefFor, openBrowserUrl, activeBrowserWebview, openBrowserFind, runBrowserFind, closeBrowserFind, browserZoomPercent, changeBrowserZoom, resetBrowserZoom, captureBrowserScreenshot, openBrowserExternal, clearBrowserSessionHistory, dismissBrowserPasswordPrompt, saveBrowserPasswordPrompt, fillSavedPassword, printBrowserPage, applyBrowserDevice, rotateBrowserDevice, clearBrowserData } from "./state/browserActions";
-import { pluginPanelPreferences } from "./state/pluginPreferences";
-import { sendMessage, removeQueuedMessage, cancelQueuedMessage, runQueuedMessageNow } from "./state/sendMessageActions";
-import { createTask, forkSession, applyWorkspaceSelection, closeFilePanelTabs, prepareExtensionCreation, handleGoalAction, sessionPendingInboxCount, jumpToConversationTurn, clearWorkspace, exportSessionMarkdown, exportSessionPackage, exportProjectPackage, importSessionPackage, summarizeSessionToSkill, openAnnotationList, scheduleCloseAnnotationList, toggleTerminal } from "./state/taskActions";
-import { wakingSessionsRef, sessionNoticeTimersRef, sessionErrorTimersRef, sessionsRef, sessionDraftsRef, activeIdRef, activeToolPanelTabIdRef, browserResumeGuardRef, browserWebviewRefCallbacks, browserWebviewsRef, closeToolPanelTabRef, openFilePreviewRef, toolPanelTabSequenceRef, toolPanelTabsRef, textareaRef, viewportRef, mentionTokenPathsRef, sessionTokenIdsRef, annotationQuotesRef, dismissedPluginMention, workspaceFilesRef, mentionItemsRef, createTaskRef, selectSessionRef, conversationTurnRefs, recorderRef, microphoneStreamRef, voiceTargetRef, queuedRunsRef, agentUnsubscribeRefs, runningRunIdsRef, shouldScrollToBottomRef, attachmentsRef, handleGoalActionRef, refreshMemoriesRef, refreshSkillsRef, queueDebugLogRef, appendSessionTracesRef, playCompletionSoundRef, bootstrapFailedRef, settingsSaveErrorRef, composerModelsKeyRef, manualRunScheduleRef, pendingDebugLogsRef, recentDebugLogsRef, debugLogFlushTimerRef, tracePublishTimerRef, sessionSaveMountedRef, sessionSaveRetryRef, messageRowRefs, conversationSearchInputRef, searchMatchRangesRef, searchScrollKeyRef, appShellRef, panelGeometryRef, panelResizeRef, composerRef, composerPastesRef, annotationsRef, lastActiveIdRef, browserPanelCommandsRef } from "./state/sharedRefs";
-import { saveProviderSettings, checkAppUpdate, openAppUpdateDialog, downloadAppUpdate, installAppUpdate, chooseIdentity, selectApprovalMode, confirmFullAccess, activateModelProfile, ensureComposerModels, switchComposerModel } from "./state/settingsActions";
-import { saveSchedule, toggleSchedule, deleteSchedule, triggerSchedule } from "./state/scheduleActions";
-import { refreshMemories, refreshSkills, refreshImportedHistory, syncAtBottom, refreshWorkspace } from "./state/panelActions";
-import { useInboxStore } from "./state/inboxStore";
-import { usePanelStore } from "./state/panelStore";
-import { useViewStore } from "./state/viewStore";
-import { useSessionIpcRuntime } from "./state/sessionIpcRuntime";
-import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
-import { useStartupRuntime } from "./state/startupRuntime";
-import { Sidebar } from "./app/Sidebar";
-import { ShellChrome } from "./app/ShellLayout";
-import { ConversationPane } from "./features/conversation/ConversationPane";
-import { ToolPanel } from "./features/toolpanel/ToolPanel";
-import { defaultSettings } from "./lib/settings";
-import { settingsForSession } from "../electron/session-model.mts";
-import { ArchivedPlan, PlanProgress } from "./PlanProgress";
-import { GoalBanner } from "./GoalBanner";
-import { AppLogo } from "./AppLogo";
-import { goalElapsed, startGoal } from "./goal";
-import { FilePreviewPanel } from "./FilePreviewPanel";
-import { FileBrowserToolbar } from "./FileBrowserToolbar";
-import { FileTextEditor } from "./FileTextEditor";
-import { ExtensionCreationDialog } from './ExtensionCreationDialog';
-import { getModelReasoningConfig, reasoningModelKey, selectedReasoningEffort, updateReasoningOverride } from '../electron/model-reasoning.ts';
-import type { AuthoringKind } from '../electron/authoring-skills';
-import {
-  AlarmClock,
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
-  AtSign,
-  Slash,
-  BarChart3,
-  Bot,
-  Brain,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  ChevronUp,
-  ClipboardPaste,
-  Cookie,
-  Database,
-  Copy,
-  CornerUpLeft,
-  Download,
-  FileCode2,
-  FileDiff,
-  File,
-  FileImage,
-  FileText,
-  Folder,
-  FolderOpen,
-  GitBranch,
-  Globe,
-  ListTree,
-  Hand,
-  History,
-  House,
-  Info,
-  KeyRound,
-  Landmark,
-  ListTodo,
-  LoaderCircle,
-  MessageSquarePlus,
-  MessagesSquare,
-  MessageSquare,
-  MessageCircleQuestion,
-  Mic,
-  Minus,
-  Monitor,
-  Moon,
-  MoreHorizontal,
-  MoreVertical,
-  Package,
-  Palette,
-  PanelRight,
-  Paperclip,
-  Pencil,
-  Play,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  ScanText,
-  Search,
-  Settings,
-  Scissors,
-  ShieldAlert,
-  SquarePlus,
-  SquarePen,
-  SquareTerminal,
-  Sparkles,
-  Square,
-  Target,
-  Terminal,
-  Trash2,
-  GitCommitHorizontal,
-  Upload,
-  UserRound,
-  Volume2,
-  X,
-} from "lucide-react";
-import { CSSProperties, ClipboardEvent, createElement, DragEvent, FormEvent, KeyboardEvent, MouseEvent, ReactNode, memo, useCallback, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { applyReasoningStream } from "./reasoningStream";
-import { PluginIcon } from "./PluginIcon";
-import { ModsPanelView } from './ModsPluginsPage';
-import { PluginSlotView, onPluginPanelRequest } from "./PluginSlotView";
-import type { PluginPanelRequest } from "./PluginSlotView";
-import { availablePluginPanels, pluginPanelTab } from "./pluginPanelTabs";
-import type { PluginPanelTab } from "./pluginPanelTabs";
-import { clientHost, onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
+import { useStableHandlers } from "./lib/useStableHandlers";
+import { clientHost,onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
 import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
 import { detectTrigger } from './pluginRuntime/vendor/dsh-input-controller/index.js';
-import { DshChildHistory } from './DshChildHistory';
-import { reconcileDshTurns, patchDshAssistant, mergeCreatedDshTask } from './dshTurns';
-import { DshComposer } from './DshComposer';
-import type { ComposerHandle } from './pluginRuntime/dshDraftEditor.ts';
-import { loadEnabledClientHalves } from "./pluginRuntime/builtinPlugins.ts";
-import { copyImageToClipboard, ImageAttachmentThumb, ImageAttachmentView, rememberLocalImageData } from "./ImageAttachment";
-import { contextUsageSummary, estimateSessionTokens, formatTokenCount } from "./contextUsage";
-import { InteractiveMessage, MarkdownSnippet } from "./InteractiveMessage";
-import { TokenActivity } from "./TokenActivityPanel";
-import type { MarkdownLiveEditorHandle } from "./markdownLiveEditor";
-import { TraceConsole } from "./TraceConsole";
-import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
-import { SystemMessagesPanel } from "./SystemMessagesPanel";
-import { BrowserControlOverlay } from "./BrowserControlOverlay";
-import type { ChannelStreamRef, ChannelStreamRuns } from "./channelStream";
-import type { ActivityRecord, AgentResult, AppUpdateStatus, ApprovalAction, ApprovalMode, Attachment, BrowserControlState, BrowserImportKinds, BrowserImportSource, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, ChatMessage, DebugLogEntry, FileChange, GitBranchesInfo, GitDiffStats, GitReviewFile, GitReviewOverview, HookRule, ImportedHistoryEntry, InboxItem, MessageAnnotation, QuestionRequest, ReviewerLocalStatus, ScheduleRecord, SessionRecord,  SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord, StandingRule, TelemetrySettings, TelemetryStatus, TtsLocalStatus, TraceEvent, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow, WorkspaceContext, WorkspaceEntry } from "./types";
-import { formatAnnotationsForPrompt, normalizeQuote, type AnnotationQuote } from "./annotations";
-import { isGlmNativeVisionModel, modelContextLimit, usesResponsesApi } from "./providers";
-import { ReasoningControl } from "./ReasoningControl";
-import { hasConfiguredModel, isLocalModelEndpoint } from "../electron/host/dsh-runtime/model-settings.mts";
-import { recordTaskFailure } from './taskFailure.ts';
-import { assistantImageAttachments } from './assistantImages.ts';
-import { beginSession, discardSession } from "./appearance/controller";
-import { formatWakeTime, wakingNoteTexts } from "./wakeNote";
-import { contentEchoesProcessCommentary, messageWithDeliveryContent, processActivitiesWithCommentary } from "./processCommentary.ts";
-import { ClampedUserText, renderInlineTokens } from "./features/message/ClampedText";
-import { isVoiceAttachment, isVoiceMessage, VoiceMessageBubble } from "./features/message/VoiceMessage";
-import { ProcessTimeline, RunningStatusLabel } from "./features/message/ProcessTimeline";
+import { PluginSlotView } from "./PluginSlotView";
+import { modelContextLimit } from "./providers";
+import { useAnnotationRuntime } from "./state/annotationRuntime";
+import { activateBrowserTabById,activeBrowserWebview,applyBrowserDevice,browserWebviewRefFor,browserZoomPercent,captureBrowserScreenshot,changeBrowserZoom,closeBrowserFind,closeBrowserTabById,dismissBrowserPasswordPrompt,fillSavedPassword,openBrowserExternal,openBrowserFind,openBrowserTab,openBrowserUrl,patchBrowserTab,printBrowserPage,reportActiveBrowserContents,reportBrowserTabState,resetBrowserZoom,rotateBrowserDevice,runBrowserFind,saveBrowserPasswordPrompt } from "./state/browserActions";
+import { useBrowserStore } from "./state/browserStore";
+import { applyMention,chooseAttachments,chooseWorkspace,handleComposerDragLeave,handleComposerDragOver,handleComposerDrop,handleComposerPaste,handleConversationMouseUp,handleMessageContextMenu,insertFileToken,openContextMenu,openReferencedFile,pasteComposerText,resolveTokenFile,resolveTokenSession } from "./state/composerActions";
+import { useComposerStore } from "./state/composerStore";
+import { createBranch,generateCommitMessage,openCommitPanel,refreshGitInfo,runCommit,runPushOnly,switchBranch,toggleBranchMenu } from "./state/gitActions";
+import { useInboxStore } from "./state/inboxStore";
+import { useLayoutStore } from "./state/layoutStore";
+import { cancelMessageEdit,closeImagePreview,copyMessage,navigateImagePreview,openImagePreview,startMessageEdit,togglePlayVoice,toggleSpeakMessage,toggleVoiceInput } from "./state/messageActions";
+import { refreshImportedHistory,refreshMemories,refreshSkills,refreshWorkspace,syncAtBottom } from "./state/panelActions";
+import { usePanelStore } from "./state/panelStore";
+import { usePluginInputRuntime } from "./state/pluginInputRuntime";
+import { usePluginInputSubscriptions } from "./state/pluginInputSubscriptions";
+import { usePluginSessionRuntime } from "./state/pluginSessionRuntime";
+import { cancelQueuedMessage,removeQueuedMessage,runQueuedMessageNow,sendMessage } from "./state/sendMessageActions";
+import { archiveSession,cancelSleepingTask,clearSessionError,clearSessionNotice,deleteSession,openWorkspaceInFileManager,patchWakingSleepNote,refreshPendingWakes,renameSession,resumeSleepingTask,showSessionNotice,togglePin,toggleWorkspacePin,unarchiveSession,updateSession } from "./state/sessionActions";
+import { useSessionIpcRuntime } from "./state/sessionIpcRuntime";
+import { useSessionStore } from "./state/sessionStore";
+import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
+import { activateModelProfile,downloadAppUpdate,ensureComposerModels,saveProviderSettings,selectApprovalMode,switchComposerModel } from "./state/settingsActions";
+import { useSettingsStore } from "./state/settingsStore";
+import { activeIdRef,activeToolPanelTabIdRef,appShellRef,appendSessionTracesRef,bootstrapFailedRef,browserPanelCommandsRef,browserResumeGuardRef,conversationSearchInputRef,conversationTurnRefs,createTaskRef,debugLogFlushTimerRef,dismissedPluginMention,handleGoalActionRef,manualRunScheduleRef,mentionItemsRef,messageRowRefs,openFilePreviewRef,panelGeometryRef,panelResizeRef,pendingDebugLogsRef,queueDebugLogRef,recentDebugLogsRef,refreshMemoriesRef,refreshSkillsRef,runningRunIdsRef,selectSessionRef,sessionsRef,textareaRef,toolPanelTabsRef,tracePublishTimerRef,viewportRef,wakingSessionsRef,workspaceFilesRef } from "./state/sharedRefs";
+import { useStartupRuntime } from "./state/startupRuntime";
+import { clearWorkspace,closeFilePanelTabs,createTask,exportProjectPackage,exportSessionMarkdown,exportSessionPackage,forkSession,handleGoalAction,importSessionPackage,jumpToConversationTurn,openAnnotationList,scheduleCloseAnnotationList,sessionPendingInboxCount,summarizeSessionToSkill,toggleTerminal } from "./state/taskActions";
+import { choosePreviewFile,closeToolPanelTab,focusToolPanelTab,openFilePreview,openToolPanelTab } from "./state/toolPanelActions";
+import { useToolPanelOverflow } from "./state/toolPanelOverflow";
+import { useViewStore } from "./state/viewStore";
+import { createTraceBuffer,trimRecentText } from "./traceBuffer";
+import type { ChatMessage,DebugLogEntry,SessionRecord,SkillRecord,TraceEvent,WorkspaceEntry } from "./types";
 
 // 兼容既有引用（tests/fixtures/file-browser.tsx 等）从 App 引入文件面板
 export { FilesSplitPanel };
@@ -225,278 +97,6 @@ const builtinCommands = [
     prompt: "请分析当前工作区的目录结构和主要文件，总结这个工作区的用途、内容组织方式和处理时的注意事项，在工作区根目录创建 AGENTS.md，把这些长期约定写清楚，让以后的任务能自动遵循。如果已经有 AGENTS.md，先读取它，在原有基础上补充完善，保留仍然有效的约定。",
   },
 ];
-
-// 任务完成提示音：两声短促的上行音（E5 → B5），用 WebAudio 合成，不依赖音频资源文件。
-// 浏览器要求用户交互后才能出声，首次交互前的 AudioContext 处于 suspended，这里尝试 resume。
-let completionAudioContext: AudioContext | null = null;
-function playCompletionSound() {
-  try {
-    const AudioCtor = window.AudioContext
-      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtor) return;
-    completionAudioContext = completionAudioContext || new AudioCtor();
-    const ctx = completionAudioContext;
-    if (ctx.state === "suspended") void ctx.resume();
-    const now = ctx.currentTime;
-    [659.25, 987.77].forEach((frequency, index) => {
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = frequency;
-      const start = now + index * 0.13;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(0.16, start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.4);
-      oscillator.connect(gain).connect(ctx.destination);
-      oscillator.start(start);
-      oscillator.stop(start + 0.45);
-    });
-  } catch {
-    // 音频不可用时静默跳过，不影响任务结果
-  }
-}
-playCompletionSoundRef.current = playCompletionSound;
-
-// ===== Codex 风格右侧面板:文本文件判断 / 代码查看 / 审阅 diff =====
-
-// ===== 浏览器「导入 Cookie 和密码」对话框（对照 Codex 浏览器更多菜单） =====
-
-type MessageRowActions = { [Key in "openReferencedFile" | "openImagePreview" | "handleMessageContextMenu" | "togglePlayVoice" | "toggleActivityCollapse" | "copyMessage" | "startMessageEdit" | "toggleSpeakMessage" | "openMessageSession" | "forkSessionAt" | "openPluginReference" | "openReview" | "bindMessageRow"]: (...args: any[]) => any };
-
-// 回调始终读取最新的会话与设置，消息行的展示数据则全部通过 props 明确传入。
-function useStableHandlers<T extends Record<string, (...args: any[]) => any>>(handlers: T): T {
-  const latest = useRef(handlers);
-  useLayoutEffect(() => { latest.current = handlers; });
-  return useMemo(() => Object.fromEntries(Object.keys(handlers).map(key => [key,
-    (...args: any[]) => latest.current[key](...args),
-  ])) as T, []);
-}
-
-const ConversationMessageRow = memo(function ConversationMessageRow({
-  message, index, turnIndex, sessionId, workspacePath, isEditing, activeTaskRunning, isStreamingMessage,
-  playingVoicePath, voiceLoadingPath, speakingMessageKey, speakingLoadingKey, collapsedActivities, actions,
-}: {
-  message: ChatMessage; index: number; turnIndex: number; sessionId: string; workspacePath: string;
-  isEditing: boolean; activeTaskRunning: boolean; isStreamingMessage: boolean;
-  playingVoicePath: string | null; voiceLoadingPath: string | null; speakingMessageKey: string | null; speakingLoadingKey: string | null;
-  collapsedActivities: Set<string>; actions: MessageRowActions;
-}) {
-  message = messageWithDeliveryContent(message);
-  // 仍在输出中的助手消息（没有终态 taskStatus）不显示时间/复制行；
-  // 不能按最后一条下标判断——后面可能跟着排队占位消息
-  const hideAssistantActions = message.role === "assistant"
-    && activeTaskRunning
-    && !message.taskStatus
-    && isStreamingMessage;
-  // 未定稿（仍在流式输出）的助手消息：交给 InteractiveMessage 走增量 Markdown 路径
-  // （按块解析、已定稿的块 memo 冻结，见该组件 streaming 说明）。
-  // streamingAssistantIndex 在无运行任务时为 -1，下标不可能等于 -1，故天然安全
-
-  // 旧路径（非 DSH 回合）执行中：模型的话在过程流里实时出现，正文区只在收尾后
-  // 显示最终答复，避免同一段文字在过程流和正文区各出现一次。
-  // DSH 回合的正文本身就是逐条回复累积的会话输出，照旧显示。
-  const liveOutputInProcess = isStreamingMessage && !message.dshTurnId;
-  // 用户气泡：@文件 token 高亮 + 点击打开；/技能 token 内联随正文展示
-  const inlineTokenNames = message.role === "user"
-    ? new Set((message.attachments ?? []).filter((attachment) => attachment.inlineRef).map((attachment) => attachment.name))
-    : new Set<string>();
-  const messageSkillNames = message.role === "user"
-    ? new Set(message.skillsUsed ?? [])
-    : new Set<string>();
-  // 用户气泡：@「标题」会话 token 高亮，点击切到被引会话
-  const messageSessionTitles = message.role === "user"
-    ? new Set((message.sessionRefs ?? []).map((ref) => ref.title))
-    : new Set<string>();
-  // 旧消息兼容：正文里没有 /技能名 token 时才退回 chip 展示（新消息已内联融合）
-  const legacySkillChips = message.role === "user"
-    ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
-    : [];
-  // 纯图片消息：占位文字已去掉，气泡里没有文字/chip/粘贴块/注释/语音时整个气泡不渲染，只留图片
-  const bubbleHasContent = message.role === "user" && (
-    isVoiceMessage(message)
-    || Boolean(messageVisibleText(message).trim())
-    || legacySkillChips.length > 0
-    || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
-    || Boolean(message.pasteBlocks?.length)
-    || Boolean(message.annotations?.length)
-    || Boolean(message.dshAttachmentNames?.length)
-  );
-  // 只有长文块或注释入口时，由入口本身承载内容，不再套一层气泡。
-  const bubbleBare = message.role === "user"
-    && Boolean(message.annotations?.length || message.pasteBlocks?.length)
-    && !isVoiceMessage(message)
-    && !messageVisibleText(message).trim()
-    && !legacySkillChips.length
-    && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
-    && !message.dshAttachmentNames?.length;
-  const openMessageFile = (name: string) => {
-    const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
-    void actions.openReferencedFile(name, recorded?.path);
-  };
-  const assistantImages = message.role === 'assistant' ? assistantImageAttachments(message) : [];
-  const userImages: Attachment[] = message.role === 'user' ? [
-    ...(message.attachments?.filter(attachment=>attachment.isImage) || []),
-    ...(message.dshAttachments || []).flatMap((part,index)=>part.type === 'image' ? [{
-      name:part.name || message.dshAttachmentNames?.[index] || '图片附件',path:'',mimeType:part.mediaType,
-      size:Math.floor(part.data.length * 3 / 4),isImage:true,previewUrl:`data:${part.mediaType};base64,${part.data}`,
-    }] : []),
-  ] : [];
-  // 点击气泡里的会话引用：切到对应会话（会话可能已被删除，找不到就提示）
-  const openMessageSession = (title: string) => actions.openMessageSession(message, title);
-  return (
-  <div
-    className={`message-row ${message.role}`}
-    // key 用稳定的消息 id：此前拼 createdAt-index，任务收尾改写 createdAt 会让
-    // 流式期间建好的整棵子树（高亮代码、mermaid 图）整体卸载重建
-    // 旧版唤醒收尾曾给用户和助手写入同一个 id；按角色区分以兼容这些历史记录。
-    key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
-    ref={(node) => actions.bindMessageRow(node, index, turnIndex, message.role === "user")}
-  >
-    {message.role === "system" ? null : message.role === "user" ? (
-      <>
-        <div className="user-message-stack">
-          {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
-          {Boolean(userImages.length) && (
-            <div className="message-attachments">
-              {userImages.map((attachment,index) => (
-                attachment.path || attachment.previewUrl ? (
-                  <ImageAttachmentView
-                    key={`${message.createdAt}-${index}-${attachment.path || attachment.previewUrl}`}
-                    attachment={attachment}
-                    onPreview={(payload) => actions.openImagePreview(payload, userImages)}
-                  />
-                ) : (
-                  <span key={`${message.createdAt}-${attachment.path}`}>
-                    <FileImage size={13} />
-                    图片
-                  </span>
-                )
-              ))}
-            </div>
-          )}
-          {bubbleHasContent && (
-          <div
-            className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
-            onContextMenu={(event) => actions.handleMessageContextMenu(event, message)}
-          >
-          {!!message.dshAttachmentNames?.length && <span className="message-inline-refs" aria-label="已发送的插件附件">
-            {message.dshAttachmentNames.map((name,at)=><span className="ref-chip" key={at}><FileText size={13} /><span>{name}</span></span>)}
-          </span>}
-          {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
-            <span className="message-inline-refs">
-              {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
-              {legacySkillChips.map((name) => (
-                <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
-                  <Package size={13} />
-                  <span>{name}</span>
-                </span>
-              ))}
-              {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
-              {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)).map((attachment) => (
-                <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
-                  {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
-                  <span>{attachment.name}</span>
-                </span>
-              ))}
-            </span>
-          )}
-          {isVoiceMessage(message) ? (
-            <VoiceMessageBubble
-              message={message}
-              playingPath={playingVoicePath}
-              loadingPath={voiceLoadingPath}
-              onTogglePlay={actions.togglePlayVoice}
-              tokenNames={inlineTokenNames}
-              skillNames={messageSkillNames}
-              onFileToken={openMessageFile}
-            />
-          ) : (
-            <ClampedUserText
-              text={messageVisibleText(message)}
-              tokenNames={inlineTokenNames}
-              skillNames={messageSkillNames}
-              onFileToken={openMessageFile}
-              sessionTitles={messageSessionTitles}
-              onSessionToken={openMessageSession}
-              pluginReferences={message.pluginReferences}
-              onPluginReference={ref => actions.openPluginReference(sessionId, ref)}
-            />
-          )}
-          {Boolean(message.pasteBlocks?.length) && <MessagePasteBlocks blocks={message.pasteBlocks!} />}
-          {Boolean(message.annotations?.length) && <MessageAnnotationChip annotations={message.annotations!} />}
-          </div>
-          )}
-          <div className="message-actions user" aria-label="用户消息操作">
-            <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
-              <Copy size={16} />
-            </button>
-            {!activeTaskRunning && (
-              <button type="button" onClick={() => actions.startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
-                <Pencil size={16} />
-              </button>
-            )}
-          </div>
-        </div>
-      </>
-    ) : (
-      <div className="assistant-message" onContextMenu={(event) => actions.handleMessageContextMenu(event, message)}>
-          <ProcessTimeline
-          message={message}
-          messageIndex={index}
-          isStreaming={activeTaskRunning && !message.taskStatus && isStreamingMessage}
-          collapsedActivities={collapsedActivities}
-          onToggleCollapse={actions.toggleActivityCollapse}
-        />
-        {message.content && !liveOutputInProcess && (
-          <InteractiveMessage
-            content={stripControlMarkersCached(message.content)}
-            streaming={isStreamingMessage}
-          />
-        )}
-        {assistantImages.length > 0 && <div className="message-attachments" aria-label="助手返回的图片">
-          {assistantImages.map((attachment, imageIndex) => <ImageAttachmentView key={imageIndex}
-            attachment={attachment} onPreview={payload => actions.openImagePreview(payload, assistantImages)} />)}
-        </div>}
-        {/* 改动文件卡片固定放在最后（对标 Codex：过程折叠条 → 结论 → 修改的文件） */}
-        {Boolean(message.changes?.length) && (
-          <ChangesSummary
-            changes={message.changes!}
-            workspacePath={workspacePath}
-            onOpenReview={actions.openReview}
-          />
-        )}
-        {!hideAssistantActions && (
-          <div className="message-actions assistant" aria-label="助手消息操作">
-            {Boolean(messageVisibleText(message).trim()) && (
-              <button
-                type="button"
-                onClick={() => void actions.toggleSpeakMessage(message)}
-                aria-label={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
-                title={speakingMessageKey === speakMessageKey(message) || speakingLoadingKey === speakMessageKey(message) ? "停止朗读" : "朗读回复"}
-              >
-                {speakingLoadingKey === speakMessageKey(message)
-                  ? <LoaderCircle className="spin" size={16} />
-                  : speakingMessageKey === speakMessageKey(message)
-                    ? <Square size={16} />
-                    : <Volume2 size={16} />}
-              </button>
-            )}
-            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
-              <Copy size={16} />
-            </button>
-            <button type="button" onClick={() => actions.forkSessionAt(sessionId, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
-              <ForkBranchIcon size={16} />
-            </button>
-            <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-            <span className="ai-disclaimer">由AI生成，请注意甄别</span>
-          </div>
-        )}
-      </div>
-    )}
-  </div>
-  );
-});
 
 export function App() {
   // 布局 / 外壳 / 设置类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
@@ -846,63 +446,8 @@ export function App() {
     return titles;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composer, sessions]);
+  useAnnotationRuntime({ activeSession });
 
-  // 选区浮动条的关闭时机：选区塌陷（重新选择/点空白）、Esc、视口滚动
-  useEffect(() => {
-    if (!selectionQuote) return;
-    const onSelectionChange = () => {
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !selection.toString().trim()) setSelectionQuote(null);
-    };
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setSelectionQuote(null);
-    };
-    document.addEventListener("selectionchange", onSelectionChange);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("selectionchange", onSelectionChange);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [selectionQuote]);
-
-  // 注释增删、编辑、切换会话或消息变化时更新引用列表
-  useEffect(() => {
-    const quotes: AnnotationQuote[] = [
-      ...annotations.map((annotation, index) => ({ ...annotation, n: index + 1 })),
-      ...(activeSession?.messages ?? []).flatMap((message, messageIndex) =>
-        (message.annotations ?? []).map((annotation, index) => ({
-          id: `${message.id ?? messageIndex}-${annotation.id}`,
-          n: index + 1,
-          quote: annotation.quote,
-          comment: annotation.comment,
-        }))),
-    ];
-    annotationQuotesRef.current = quotes;
-    // 等正文完成布局后统一定位，避免同一轮消息更新重复测量。
-    const frame = requestAnimationFrame(updateAnnotationMarkers);
-    return () => cancelAnimationFrame(frame);
-  }, [annotations, activeId, activeSession?.messages]);
-  useEffect(() => {
-    let frame = 0;
-    const schedule = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(updateAnnotationMarkers);
-    };
-    const viewport = viewportRef.current;
-    const observer = new ResizeObserver(schedule);
-    if (viewport) observer.observe(viewport);
-    const column = viewport?.querySelector(".conversation-column");
-    if (column) observer.observe(column);
-    viewport?.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      viewport?.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
 
   // 输入框右键：复制 / 剪切 / 粘贴
   const handleComposerContextMenu = (event: MouseEvent<HTMLElement>) => {
@@ -954,58 +499,8 @@ export function App() {
       },
     ]);
   };
+  usePluginInputSubscriptions({ activeSession, syncComposerDerivedState: (value, caret) => syncComposerDerivedState(value, caret) });
 
-  useEffect(() => clientHost().subscribeInputSources(() => setPluginInputRevision(value => value + 1)), []);
-  useEffect(() => clientHost().subscribe(() => setPluginInputRevision(value => value + 1)), []);
-  useEffect(() => { if (mentionMenu?.programmatic) textareaRef.current?.focus(); }, [mentionMenu?.programmatic, activeSession?.id]);
-  useEffect(() => {
-    if (!mentionMenu?.programmatic || activeSession?.runtime !== 'dsh') return;
-    const dismiss = (event: globalThis.PointerEvent) => {
-      if (event.target instanceof Element && event.target.closest('.mention-menu, .composer-input-wrap, .add-menu-wrap')) return;
-      clientHost().dismissInputMenu(activeSession.id); setMentionMenu(null);
-    };
-    document.addEventListener('pointerdown', dismiss, true);
-    return () => document.removeEventListener('pointerdown', dismiss, true);
-  }, [mentionMenu?.programmatic, activeSession?.id, activeSession?.runtime]);
-  useEffect(() => {
-    const id = activeSession?.id; if (!id || activeSession.runtime !== 'dsh') return;
-    const read = (changedId: string) => {
-      if (changedId !== id) return;
-      const menu = clientHost().inputMenuSnapshot(id);
-      if (menu?.launched && menu.state.hit && clientHost().inputReady(id)) {
-        const hit = menu.state.hit;
-        setPluginInputCandidates(menu.candidates);
-        setMentionMenu(previous => previous?.programmatic && previous.kind === (hit.trigger === '/' ? 'slash' : 'at')
-          && previous.query === hit.query && previous.start === hit.span.start && previous.end === hit.span.end ? previous
-          : { kind: hit.trigger === '/' ? 'slash' : 'at', query: hit.query, start: hit.span.start, end: hit.span.end, programmatic: true });
-        setMentionIndex(0);
-      } else setMentionMenu(previous => previous?.programmatic ? null : previous);
-    };
-    const off = clientHost().subscribeInputMenus(read); read(id); return off;
-  }, [activeSession?.id, activeSession?.runtime]);
-  useEffect(() => {
-    const controller = new AbortController();
-    if (mentionMenu?.programmatic) return () => controller.abort();
-    setPluginInputCandidates([]);
-    if (mentionMenu && activeSession?.runtime === 'dsh') {
-      void clientHost().inputCandidates(activeSession.id, mentionMenu.query, mentionMenu.start, composer, controller.signal,
-        mentionMenu.kind === 'slash' ? '/' : '@', mentionMenu.end)
-        .then(items => { if (!controller.signal.aborted) setPluginInputCandidates(items); })
-        .catch(error => { if (!controller.signal.aborted) setError(`插件命令读取失败：${String(error?.message || error)}`); });
-    }
-    return () => controller.abort();
-  }, [mentionMenu, activeSession?.id, activeSession?.runtime, composer, pluginInputRevision]);
-  useEffect(() => {
-    if (activeSession?.id) clientHost().setInputDraft(activeSession.id, composer);
-  }, [activeSession?.id, composer]);
-  useEffect(() => clientHost().subscribeInputConsumer((sessionId, text, edit) => {
-    if (activeSession?.id !== sessionId) return false;
-    setComposer(text);
-    if (edit?.continue) { dismissedPluginMention.current = null; syncComposerDerivedState(text, edit.caret); }
-    else setMentionMenu(null);
-    window.setTimeout(() => { textareaRef.current?.focus(); if (edit) textareaRef.current?.setSelectionRange(edit.caret, edit.caret); }, 0);
-    return true;
-  }), [activeSession?.id]);
 
   const mentionItems = useMemo((): { id: string; title: string; detail: string; pluginInput?: RegisteredInputCandidate; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string; session?: SessionRecord }[] => {
     if (!mentionMenu) return [];
@@ -1189,102 +684,8 @@ export function App() {
 
   // 加载已导入的浏览记录（地址栏联想）；导入成功后由对话框回调刷新
   useEffect(refreshImportedHistory, []);
+  const { openPluginPanel } = usePluginSessionRuntime({ activeSession });
 
-  // 内置插件（随应用分发、默认启用）的客户端半边开机自动加载——内置就该开机即用，
-  // 不需要用户去插件页点"加载界面半边"。失败只记录，不影响启动。
-  useEffect(() => {
-    let cancelled = false;
-    void loadEnabledClientHalves().then((results) => {
-      if (cancelled) return;
-      const failed = results.filter((result) => !result.ok);
-      if (failed.length) console.warn("[plugin] 内置插件客户端半边加载失败：", failed);
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  // 客户端宿主取会话的数据来源：插件用 ctx.sessions.binding(id) 拿它渲染轨迹等视图
-  useEffect(() => {
-    clientHost().dshSettings.setSession(activeSession?.runtime === 'dsh' ? activeSession.id : '');
-    clientHost().setSessionProvider((sessionId) =>
-      sessions.find(session => String(session.id) === String(sessionId)));
-    clientHost().setCollections(() => ({ items: sessions, current: activeSession }), () => ({
-      items: [...new Set(sessions.map(session => session.workspacePath).filter(Boolean))].map(path => ({ id: path, path,
-        title: String(path).split(/[\\/]/).filter(Boolean).at(-1) || String(path),
-        sessionIds: sessions.filter(session => session.workspacePath === path).map(session => session.id) })),
-      current: workspacePath ? { id: workspacePath, path: workspacePath } : null,
-      archivedSessionIds: sessions.filter(session => session.archived).map(session => session.id),
-    }));
-  }, [activeSession, sessions, workspacePath]);
-
-  useEffect(() => {
-    const host=clientHost();
-    void host.selectMainSession(activeSession?.runtime==='dsh'?activeSession.id:'').catch(error=>{
-      console.warn('[plugin] 当前任务界面读取失败：',error);
-    });
-    return ()=>{void host.selectMainSession('').catch(()=>{});};
-  }, [activeSession?.id, activeSession?.runtime]);
-
-  // 异步登记只同步可用页面；关闭选择独立保存，不能被宿主刷新覆盖。
-  useEffect(() => {
-    const host = clientHost();
-    const sync = () => {
-      const contributions = host.contributionsFor("sidebar.right.pane.tab").filter(contribution =>
-        activeSession?.runtime !== 'dsh' || contribution.pluginId !== 'dyworker-context');
-      const available = availablePluginPanels(contributions);
-      setPluginPanelChoices(available);
-      setToolPanelTabs(current => pluginPanelPreferences.reconcile(current, available));
-    };
-    sync();
-    return host.subscribe(sync);
-  }, [ready, activeId, activeSession?.runtime, pluginPanelPreferences]);
-
-  useEffect(() => {
-    const host = clientHost();
-    const sync = () => {
-      const pages = host.contributionsFor("workspace.page");
-      const qwenpaw = pages.some(item => item.pluginId === "qwenpaw" && item.meta.key === "qwenpaw");
-      const available = qwenpaw || pages.some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
-      setBotTeamProvider(qwenpaw ? "qwenpaw" : "ds-bot");
-      setBotTeamAvailable(available);
-      if (!available) setBotTeamPageOpen(false);
-    };
-    sync();
-    return host.subscribe(sync);
-  }, []);
-
-  // 插件贡献的会话区视图：注册进 conversation.view 插槽的，每个成为会话区的一个标签页
-  useEffect(() => {
-    const host = clientHost();
-    const sync = () => {
-      setPluginConversationViews(host.contributionsFor("conversation.view").filter(contribution =>
-        activeSession?.runtime !== 'dsh' || contribution.pluginId !== 'dyworker-context').map((contribution) => ({
-        key: String(contribution.meta.key ?? contribution.meta.id ?? ""),
-        label: typeof contribution.meta.label === "function"
-          ? String((contribution.meta.label as () => unknown)())
-          : String(contribution.meta.label ?? contribution.meta.id ?? "插件视图"),
-      })).filter((view) => view.key));
-    };
-    sync();
-    return host.subscribe(sync);
-  }, [activeSession?.runtime]);
-
-  // 切会话（含新建任务）时回到对话标签，避免停在上一个会话的插件视图上
-  useEffect(() => { setConversationView("chat"); }, [activeId]);
-
-
-  const openPluginPanel = useCallback((request: PluginPanelRequest) => {
-    const panel = pluginPanelTab(request.pluginId, request.key, request.label);
-    if (!pluginPanelPreferences.open(panel, request.open !== false)) return;
-    if (request.open !== false) setRightPanelOpen(true);
-    setToolPanelTabs(current => [...current.filter(tab => tab.kind !== "plugin"
-      || tab.pluginKey !== panel.pluginKey || (tab.pluginId || "") !== panel.pluginId), panel]);
-    if (request.open !== false) {
-      setActiveToolPanelTabId(panel.id);
-      setToolPanelMenuOpen(false);
-    }
-  }, [pluginPanelPreferences]);
-
-  useEffect(() => onPluginPanelRequest(openPluginPanel), [openPluginPanel]);
 
   const pendingFilePreviews = useRef(new Map<string, Array<{ path: string; workspacePath: string }>>());
   useEffect(() => window.dyworker?.onFilePanelRequest?.(request => {
@@ -1304,82 +705,8 @@ export function App() {
       for (const request of pending) openFilePreviewRef.current(request.path, request.workspacePath);
     }
   }, [activeId, ready]);
+  const { scrollToolPanelTabStrip } = useToolPanelOverflow({ toolPanelTabStripRef, pristineMenuPage, appliedToolPanelWidth });
 
-  // 标签条两侧是否还有被藏起来的标签：滚动按钮与渐隐遮罩按这个状态出现。
-  // 标签不多时保持原来的样子（整条空白区仍是窗口拖拽区）。
-  const syncToolPanelTabOverflow = useCallback(() => {
-    const strip = toolPanelTabStripRef.current;
-    if (!strip) return;
-    const maxScrollLeft = strip.scrollWidth - strip.clientWidth;
-    const next = {
-      start: strip.scrollLeft > 1,
-      end: maxScrollLeft - strip.scrollLeft > 1,
-    };
-    setToolPanelTabOverflow((current) => (
-      current.start === next.start && current.end === next.end ? current : next
-    ));
-  }, []);
-
-  useEffect(() => {
-    const strip = toolPanelTabStripRef.current;
-    if (!strip) return;
-    syncToolPanelTabOverflow();
-    const observer = new ResizeObserver(() => syncToolPanelTabOverflow());
-    observer.observe(strip);
-    strip.addEventListener("scroll", syncToolPanelTabOverflow, { passive: true });
-    return () => {
-      observer.disconnect();
-      strip.removeEventListener("scroll", syncToolPanelTabOverflow);
-    };
-  }, [syncToolPanelTabOverflow, rightPanelOpen, pristineMenuPage, toolPanelTabs.length]);
-
-  // 标签多起来之后要能滚：Chromium 不会把鼠标竖向滚轮转成横向滚动，
-  // 这里把滚轮位移交给标签条，滚到头就放行（外层其它滚动区不受影响）。
-  useEffect(() => {
-    const strip = toolPanelTabStripRef.current;
-    if (!strip) return;
-    const onWheel = (event: WheelEvent) => {
-      if (event.ctrlKey || event.metaKey) return;
-      const maxScrollLeft = strip.scrollWidth - strip.clientWidth;
-      if (maxScrollLeft <= 0) return;
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? strip.clientWidth : 1;
-      const delta = (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) * unit;
-      if (!delta) return;
-      const next = Math.max(0, Math.min(maxScrollLeft, strip.scrollLeft + delta));
-      if (next === strip.scrollLeft) return;
-      strip.scrollLeft = next;
-      event.preventDefault();
-    };
-    strip.addEventListener("wheel", onWheel, { passive: false });
-    return () => strip.removeEventListener("wheel", onWheel);
-  }, [rightPanelOpen, pristineMenuPage, toolPanelTabs.length]);
-
-  // 标签条整体重排（新增/关闭标签、面板宽度变化、面板展开收起）后重新判断溢出
-  useEffect(() => {
-    syncToolPanelTabOverflow();
-  }, [syncToolPanelTabOverflow, toolPanelTabs, appliedToolPanelWidth]);
-
-  // 当前标签必须可见：切标签、开新标签、拖宽面板后都把它带进视野
-  useEffect(() => {
-    const strip = toolPanelTabStripRef.current;
-    const tab = strip?.querySelector<HTMLElement>(`[data-tool-panel-tab-id="${activeToolPanelTabId}"]`);
-    if (strip && tab) {
-      const stripRect = strip.getBoundingClientRect();
-      const tabRect = tab.getBoundingClientRect();
-      if (tabRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - tabRect.left;
-      else if (tabRect.right > stripRect.right) strip.scrollLeft += tabRect.right - stripRect.right;
-      syncToolPanelTabOverflow();
-    }
-  }, [activeToolPanelTabId, rightPanelOpen, appliedToolPanelWidth, syncToolPanelTabOverflow]);
-
-  const scrollToolPanelTabStrip = (direction: -1 | 1) => {
-    const strip = toolPanelTabStripRef.current;
-    if (!strip) return;
-    const step = Math.max(180, Math.round(strip.clientWidth * 0.7));
-    strip.scrollBy({ left: direction * step, behavior: "smooth" });
-  };
-
-  closeToolPanelTabRef.current = closeToolPanelTab;
   browserPanelCommandsRef.current = {
     open: (url: string, tabId?: string) => {
       const target = tabId
@@ -1432,65 +759,8 @@ export function App() {
   }, []);
 
   handleGoalActionRef.current = handleGoalAction;
+  usePluginInputRuntime();
 
-  useEffect(() => {
-    clientHost().setNativeAttachmentProvider(owner => {
-      const selected = attachmentsRef.current;
-      if (activeIdRef.current !== owner || !selected.length) return undefined;
-      const current = () => activeIdRef.current === owner && attachmentsRef.current === selected;
-      return {count:selected.length,names:selected.map(file=>file.name),current,
-        async serialize(signal) {
-          signal.throwIfAborted();
-          if (!current()) throw new Error('附件或会话已经变化，输入已保留');
-          if (!window.dyworker?.serializeCommandAttachments || selected.some(file => !file.commandGrantId))
-            throw new Error('附件需要重新选择后才能发送');
-          const result = await window.dyworker.serializeCommandAttachments({sessionId:owner,grantIds:selected.map(file=>file.commandGrantId!)});
-          signal.throwIfAborted();
-          if (!current()) throw new Error('附件或会话已经变化，输入已保留');
-          if (!result.ok || !result.attachments) throw new Error(result.error || '附件保存失败');
-          return result.attachments;
-        },
-        consume() { if (current()) setAttachments([]); },
-      };
-    });
-    const offQueue = clientHost().subscribeInputQueue(change => {
-      updateSession(change.sessionId, session => ({...session,messages:change.action.kind === 'remove'
-        ? session.messages.filter(message => message.id !== change.itemId)
-        : change.action.kind === 'edit' ? session.messages.map(message => message.id === change.itemId
-          ? {...message,content:change.action.content.map((part:any) => part.text).join('\n'),dshAttachments:undefined,dshAttachmentNames:undefined,
-            displayContent:undefined,pluginReferences:undefined} : message) : session.messages}));
-    });
-    clientHost().setInputSubmit(async input => {
-      if (runningSessionIds.has(input.sessionId)) {
-        input.signal.throwIfAborted();
-        const requestId = crypto.randomUUID();
-        const response = await window.dyworker?.dshOperation({sessionId:input.sessionId,action:'input-admit',payload:{
-          requestId,mode:input.mode,content:[...(input.text ? [{type:'text',text:input.text}] : []),...input.attachments],
-        }});
-        if (!response?.ok) {
-          if (response?.error?.code !== 'dyworker/input-unavailable') throw new Error(response?.error?.message || '插件输入未发送');
-          // 原任务刚结束时，按应用正常入口取得下一轮授权；空闲状态下即时补充也是新一轮。
-        } else {
-          const accepted = response.value;
-          if (accepted?.accepted !== true || typeof accepted.messageId !== 'string') throw new Error('任务没有返回已接收消息的确认');
-          updateSession(input.sessionId, session => {
-            if (session.messages.some(message => message.id === accepted.messageId)) return session;
-            const message: ChatMessage = {id:accepted.messageId,role:'user',content:input.text,createdAt:new Date().toISOString(),
-              ...(input.attachmentNames?.length ? {dshAttachmentNames:[...input.attachmentNames]} : {}),
-              ...(input.presentation?.references.length ? {displayContent:input.presentation.text,pluginReferences:input.presentation.references} : {}),
-              ...(input.attachments.length ? {dshAttachments:[...input.attachments] as ChatMessage['dshAttachments']} : {})};
-            const messages = [...session.messages,message];
-            return {...session,messages,updatedAt:message.createdAt};
-          });
-          await clientHost().refreshInputInbox(input.sessionId);
-          return {kind:'success'};
-        }
-      }
-      await sendMessage(input.text, input.sessionId, undefined, input);
-      return {kind:'success'};
-    });
-    return () => {offQueue();clientHost().setInputSubmit(undefined);clientHost().setNativeAttachmentProvider(undefined);};
-  });
 
   // 浏览器 Computer Use 控制：响应“继续交给助手”广播，真正恢复任务执行 (F4 / 补充要求 4)
   useEffect(() => {
@@ -2287,272 +1557,8 @@ export function App() {
         shortcutLabel={shortcutLabel}
       />
 
-      {browserSection && (
-        <BrowserSectionDialog title={{ history: "历史记录", downloads: "下载记录", clear: "清除浏览数据" }[browserSection]} onClose={() => { if (!browserClearing) setBrowserSection(null); }}>
-{browserSection === "downloads" && (<div className="browser-more-downloads" role="group" aria-label="下载">
-                        <div className="browser-more-history-head">
-                          <span className="browser-more-label">下载</span>
-                          {browserActiveDownloadCount > 0 && <span className="browser-more-history-url">{browserActiveDownloadCount} 个进行中</span>}
-                        </div>
-                        {browserDownloads.length ? (
-                          <div className="browser-more-history-list">
-                            {browserDownloads.map((entry) => {
-                              const percent = entry.total > 0 ? Math.min(100, Math.round((entry.received / entry.total) * 100)) : 0;
-                              return (
-                                <div className="browser-download-row" key={entry.id}>
-                                  <span className="browser-more-history-title" title={entry.path || entry.filename}>{entry.filename}</span>
-                                  <span className="browser-more-history-url">
-                                    {entry.state === "completed" ? "已完成"
-                                      : entry.state === "cancelled" ? "已取消"
-                                      : entry.state === "interrupted" ? "已中断"
-                                      : entry.total > 0 ? `${percent}%` : "下载中…"}
-                                  </span>
-                                  <span className="browser-download-actions">
-                                    {entry.state === "completed" && entry.path && (
-                                      <>
-                                        <button  onClick={() => void window.dyworker?.openPath?.(entry.path)}>打开</button>
-                                        <button  onClick={() => void window.dyworker?.revealInFolder?.(entry.path)}>所在文件夹</button>
-                                      </>
-                                    )}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <p className="browser-more-history-empty">本次运行还没有下载</p>
-                        )}
-                      </div>)}
-{browserSection === "history" && (<div className="browser-more-history" role="group" aria-label="本次浏览历史">
-                        <div className="browser-more-history-head">
-                          <span className="browser-more-label">本次浏览历史</span>
-                          {browserSessionHistory.length > 0 && (
-                            <button  aria-label="清空历史" title="清空历史" onClick={clearBrowserSessionHistory}>清空</button>
-                          )}
-                        </div>
-                        {browserSessionHistory.length ? (
-                          <div className="browser-more-history-list">
-                            {browserSessionHistory.map((entry) => (
-                              <button
-                                key={`${entry.at}-${entry.url}`}
 
-                                title={entry.url}
-                                onClick={() => { setBrowserSection(null); void openBrowserUrl(entry.url); }}
-                              >
-                                <span className="browser-more-history-title">{entry.title || entry.url}</span>
-                                <span className="browser-more-history-url">{entry.url}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="browser-more-history-empty">还没有浏览记录</p>
-                        )}
-                      </div>)}
-{browserSection === "clear" && (<div className="browser-more-clear" role="group" aria-label="清除浏览数据">
-                        <span className="browser-more-label">清除浏览数据（内置浏览器）</span>
-                        {([["cookies", "Cookie 和登录状态"], ["cache", "缓存的图片和文件"], ["siteData", "站点数据和网站设置"]] as const).map(([kind, label]) => (
-                          <label className="browser-clear-kind" key={kind}>
-                            <input
-                              type="checkbox"
-                              checked={browserClearKinds[kind]}
-                              onChange={(event) => setBrowserClearKinds((current) => ({ ...current, [kind]: event.target.checked }))}
-                            />
-                            {label}
-                          </label>
-                        ))}
-                        <button  className="browser-clear-button" disabled={browserClearing || !Object.values(browserClearKinds).some(Boolean)} onClick={() => void clearBrowserData()}>清除所选数据</button>
-                      </div>)}
-        </BrowserSectionDialog>
-      )}
-
-      {importDialogOpen && (
-        <BrowserImportDialog
-          onClose={() => setImportDialogOpen(false)}
-          onDone={(message) => {
-            setNotice(message);
-            refreshImportedHistory();
-            // 已打开的页面仍带着旧（未登录）状态，导入后刷新一次让新 Cookie 生效
-            for (const webview of browserWebviewsRef.current.values()) webview.reload?.();
-          }}
-          onError={(message) => setError(message)}
-        />
-      )}
-
-      {browserPasswordsOpen && (
-        <BrowserPasswordsDialog
-          activeOrigin={(() => {
-            try {
-              return new URL(activeToolPanelTab?.kind === "browser" ? activeToolPanelTab.url || "" : "").origin;
-            } catch {
-              return "";
-            }
-          })()}
-          onFill={() => void fillSavedPassword()}
-          onClose={() => setBrowserPasswordsOpen(false)}
-        />
-      )}
-
-      {skillDraft && (
-        <SkillDraftDialog
-          initial={skillDraft}
-          onClose={() => setSkillDraft(null)}
-          onSaved={(item) => {
-            setSkillDraft(null);
-            void refreshSkills();
-            setNotice(`工作模板「${item?.name || ""}」已保存`);
-          }}
-        />
-      )}
-
-      {creationKind && <ExtensionCreationDialog kind={creationKind} workspacePath={composerWorkspacePath}
-        onClose={() => setCreationKind(null)} onPrepare={prepareExtensionCreation} />}
-
-      {skillEdit && (
-        <SkillEditDialog
-          skill={skillEdit}
-          onClose={() => setSkillEdit(null)}
-          onSaved={() => {
-            setSkillEdit(null);
-            void refreshSkills();
-            setNotice("工作模板已更新");
-          }}
-        />
-      )}
-
-      {memoryEdit && (
-        <MemoryEditDialog
-          row={memoryEdit}
-          onClose={() => setMemoryEdit(null)}
-          onSaved={() => {
-            setMemoryEdit(null);
-            void refreshMemories();
-            setNotice("记忆已更新");
-          }}
-        />
-      )}
-
-      {settingsOpen && (
-        <SettingsDialog
-          onCreatePlugin={() => setCreationKind("plugin")}
-          sessionId={activeSession?.id}
-          sidebarWidth={appliedSidebarWidth}
-          value={settings}
-          onClose={() => setSettingsOpen(false)}
-          onSave={saveProviderSettings}
-          saveErrorRef={settingsSaveErrorRef}
-          memories={memories}
-          onDeleteMemory={(id) => {
-            setMemories((current) => current.map((page) => ({ ...page, rows: page.rows.filter((row) => row.id !== id) })));
-            void window.dyworker?.deleteMemory(id);
-          }}
-          onEditMemory={(row) => setMemoryEdit(row)}
-          onLintMemories={() => {
-            if (!window.dyworker?.lintMemories) return;
-            setMemoriesLinting(true);
-            setMemoriesLintMessage("");
-            void window.dyworker.lintMemories()
-              .then(async (result) => {
-                setMemoriesLintMessage(result?.ok ? "整理完成：重复与矛盾的记忆已合并修订。" : `整理失败：${result?.error || "未知原因"}`);
-                if (window.dyworker?.listMemories) setMemories(await window.dyworker.listMemories());
-              })
-              .catch((error) => setMemoriesLintMessage(`整理失败：${String(error)}`))
-              .finally(() => setMemoriesLinting(false));
-          }}
-          memoriesLinting={memoriesLinting}
-          memoriesLintMessage={memoriesLintMessage}
-          skills={skills}
-          onToggleSkill={(id, enabled) => {
-            setSkills((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
-            setMentionSkills((current) => current.map((item) => item.id === id ? { ...item, enabled } : item));
-            void window.dyworker?.setSkillEnabled(id, enabled, workspacePath);
-          }}
-          onDeleteSkill={(id) => {
-            setSkills((current) => current.filter((item) => item.id !== id));
-            setMentionSkills((current) => current.filter((item) => item.id !== id));
-            void window.dyworker?.deleteSkill(id);
-          }}
-          onEditSkill={(skill) => setSkillEdit(skill)}
-          onRefreshSkills={() => void refreshSkills(true)}
-          onOpenSkill={(skill) => {
-            if (skill.path) void window.dyworker?.openPath(skill.path);
-          }}
-          onCreateSkill={() => setCreationKind('skill')}
-          schedules={schedules}
-          workspaceReady={Boolean(workspacePath)}
-          currentWorkspacePath={workspacePath}
-          approvalMode={approvalMode}
-          onSaveSchedule={saveSchedule}
-          onToggleSchedule={toggleSchedule}
-          onDeleteSchedule={deleteSchedule}
-          onTriggerSchedule={triggerSchedule}
-          onOpenScheduleSession={(sessionId) => {
-            const target = sessions.find((session) => session.id === sessionId);
-            if (!target) {
-              setNotice("找不到该运行记录关联的会话，可能已被删除。");
-              return;
-            }
-            setActiveId(sessionId);
-            setSettingsOpen(false);
-          }}
-          usageRecords={usageStats}
-          onClearUsage={() => {
-            setUsageStats([]);
-            void window.dyworker?.clearUsageStats();
-          }}
-          tab={settingsTab}
-          onTabChange={setSettingsTab}
-          planSeed={planSeed}
-          appUpdate={appUpdate}
-          onCheckUpdate={openAppUpdateDialog}
-        />
-      )}
-      {appUpdateDialogOpen && (
-        <AppUpdateDialog
-          status={appUpdate}
-          onClose={() => setAppUpdateDialogOpen(false)}
-          onCheck={() => void checkAppUpdate()}
-          onDownload={downloadAppUpdate}
-          onInstall={installAppUpdate}
-        />
-      )}
-      {fullAccessDialogOpen && (
-        <FullAccessDialog
-          onClose={() => setFullAccessDialogOpen(false)}
-          onConfirm={confirmFullAccess}
-        />
-      )}
-      {identitySetupOpen && <IdentitySetupDialog onChoose={chooseIdentity} />}
-      {contextMenu && <ContextMenuPopup menu={contextMenu} onClose={closeContextMenu} />}
-      {selectionQuote && (
-        <SelectionQuoteBar
-          quote={selectionQuote}
-          onAddToComposer={addSelectionToComposer}
-          onSendToSideChat={sendSelectionToSideChat}
-          onClose={() => setSelectionQuote(null)}
-        />
-      )}
-      {annotationEditor && (
-        <AnnotationEditorCard
-          editor={annotationEditor}
-          annotation={annotations.find((item) => item.id === annotationEditor.id) ?? null}
-          voiceState={voiceState}
-          onVoiceStart={() => {
-            voiceTargetRef.current = (text: string) => {
-              setAnnotations((current) => current.map((item) => item.id === annotationEditor.id ? { ...item, comment: item.comment ? `${item.comment}\n${text}` : text } : item));
-            };
-            void toggleVoiceInput();
-          }}
-          onClose={() => setAnnotationEditor(null)}
-          onSave={(comment) => {
-            setAnnotations((current) => current.map((item) => item.id === annotationEditor.id ? { ...item, comment } : item));
-            setAnnotationEditor(null);
-          }}
-          onDelete={() => {
-            setAnnotations((current) => current.filter((item) => item.id !== annotationEditor.id));
-            setAnnotationEditor(null);
-          }}
-        />
-      )}
+      <AppDialogs browserActiveDownloadCount={browserActiveDownloadCount} activeToolPanelTab={activeToolPanelTab} composerWorkspacePath={composerWorkspacePath} activeSession={activeSession} appliedSidebarWidth={appliedSidebarWidth} identitySetupOpen={identitySetupOpen} />
     </div>
     </>
   );
