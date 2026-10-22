@@ -1,95 +1,85 @@
-import { forwardNativePanelShortcut } from "./panel-shortcuts.ts";
-import { createTraceWriter } from "./trace-writer.mts";
-import {reconcileDshMessages,patchDshAssistant,mergeDshTranscript} from './host/dsh-runtime/presentation.mts';
-import { filePreviewToolDefinitions, requestFilePreview } from "./file-preview.mts";
-import { isTrustedAppRendererUrl } from "./renderer-origin.mts";
-import { formatChannelApproval } from "./channels/shared.mts";
-import { queuedGoalPayload, settledStoredGoal } from "./goal.mts";
-import { settingsForSession } from "./session-model.mts";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell } from "electron";
+import { app,BrowserWindow,clipboard,dialog,ipcMain,nativeImage,nativeTheme,Notification,powerMonitor,powerSaveBlocker,protocol,safeStorage,session,shell } from "electron";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, promises as fs } from "node:fs";
+import { appendFileSync,existsSync,promises as fs,readFileSync,statSync,writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { createHost, disposeHost } from "./host/context.mts";
-import { assertDshModelSettings, hasConfiguredModel } from "./host/dsh-runtime/model-settings.mts";
-import { createChildEntry } from './host/dsh-runtime/child-entry.mts';
-import { pluginToolResult } from "./host/services/tools.mts";
+import { fileURLToPath,pathToFileURL } from "node:url";
+import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls } from "./agent.mts";
+import { createUpdaterController,DEFAULT_UPDATE_URL } from "./app-updater.mts";
+import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } from "./appearance-platform.mts";
+import { collectOrphanAssets,commitStagedImage,defaultAppearance,normalizeAppearance,readAppearance,removeAppearanceImage,saveAppearance } from "./appearance.mts";
+import { createBackgroundTasksManager } from "./background-tasks.mts";
+import { BrowserAgent,browserToolDefinitions } from "./browser.mts";
+import { CHANNEL_LABELS,createChannelManager } from "./channels/manager.mts";
+import { parseApprovalReply } from "./channels/qq-bot.mts";
+import { saveClipboardImage } from "./clipboard-image.mts";
+import { providerMessageContent, describeAttachment, attachmentType } from "./desktop/attachments.mts";
+import { transcribeAudio, buildWavFromPcm, transcribeQqVoice } from "./desktop/audio.mts";
+import { createAutomationRuntime } from "./desktop/automation-runtime.mts";
+import { createBrowserRuntime } from "./desktop/browser-runtime.mts";
+import { createChannelRuntime } from "./desktop/channel-runtime.mts";
+import { createMcpRuntime } from "./desktop/mcp-runtime.mts";
+import { createWindowRuntime } from "./desktop/window-runtime.mts";
+import { filePreviewToolDefinitions,requestFilePreview } from "./file-preview.mts";
+import { gitCommitDiff } from "./git.mts";
+import { queuedGoalPayload,settledStoredGoal } from "./goal.mts";
 import { snapshotCriticalFiles } from "./host/boot-backup.mts";
-import { UNATTENDED_PENDING_TIMEOUT_MS } from "./host/services/inbox.mts";
-import { channelsPlugin, telemetryPlugin, remoteMessagesPlugin, backgroundTasksPlugin } from "./host/services/runtime-domains.mts";
-import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
-import { sensitivePathGuardPlugin } from "./host/plugins/sensitive-path-guard.mts";
-import { inboxIpcPlugin } from "./host/plugins/inbox-ipc.mts";
-import { schedulesIpcPlugin } from "./host/plugins/schedules-ipc.mts";
-import { gitIpcPlugin } from "./host/plugins/git-ipc.mts";
-import { tracesIpcPlugin } from "./host/plugins/traces-ipc.mts";
-import { usageHooksIpcPlugin } from "./host/plugins/usage-hooks-ipc.mts";
-import { auditIpcPlugin } from "./host/plugins/audit-ipc.mts";
-import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
-import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
-import { windowIpcPlugin } from "./host/plugins/window-ipc.mts";
-import { attachmentsIpcPlugin } from "./host/plugins/attachments-ipc.mts";
-import { clipboardIpcPlugin } from "./host/plugins/clipboard-ipc.mts";
-import { workspaceIpcPlugin } from "./host/plugins/workspace-ipc.mts";
-import { appUpdateIpcPlugin } from "./host/plugins/app-update-ipc.mts";
-import { localModelsIpcPlugin } from "./host/plugins/local-models-ipc.mts";
-import { speechIpcPlugin } from "./host/plugins/speech-ipc.mts";
-import { settingsIpcPlugin } from "./host/plugins/settings-ipc.mts";
-import { sessionsIpcPlugin } from "./host/plugins/sessions-ipc.mts";
-import { transferIpcPlugin } from "./host/plugins/transfer-ipc.mts";
+import { createHost,disposeHost } from "./host/context.mts";
+import { createChildEntry } from './host/dsh-runtime/child-entry.mts';
+import { assertDshModelSettings,hasConfiguredModel } from "./host/dsh-runtime/model-settings.mts";
+import { agentIpcPlugin } from "./host/plugins/agent-ipc.mts";
 import { appIpcPlugin } from "./host/plugins/app-ipc.mts";
+import { appUpdateIpcPlugin } from "./host/plugins/app-update-ipc.mts";
 import { appearanceIpcPlugin } from "./host/plugins/appearance-ipc.mts";
-import { createDockIconController, createWindowIconController } from "./theme-icons.mts";
-import { browserIpcPlugin } from "./host/plugins/browser-ipc.mts";
+import { attachmentsIpcPlugin } from "./host/plugins/attachments-ipc.mts";
+import { auditIpcPlugin } from "./host/plugins/audit-ipc.mts";
+import { backgroundTasksIpcPlugin } from "./host/plugins/background-tasks-ipc.mts";
 import { browserControlIpcPlugin } from "./host/plugins/browser-control-ipc.mts";
 import { browserImportIpcPlugin } from "./host/plugins/browser-import-ipc.mts";
-import { agentIpcPlugin } from "./host/plugins/agent-ipc.mts";
-import { chatIpcPlugin } from "./host/plugins/chat-ipc.mts";
-import { backgroundTasksIpcPlugin } from "./host/plugins/background-tasks-ipc.mts";
+import { browserIpcPlugin } from "./host/plugins/browser-ipc.mts";
 import { channelsIpcPlugin } from "./host/plugins/channels-ipc.mts";
-import { skillsIpcPlugin } from "./host/plugins/skills-ipc.mts";
+import { chatIpcPlugin } from "./host/plugins/chat-ipc.mts";
+import { clipboardIpcPlugin } from "./host/plugins/clipboard-ipc.mts";
+import { gitIpcPlugin } from "./host/plugins/git-ipc.mts";
+import { inboxIpcPlugin } from "./host/plugins/inbox-ipc.mts";
+import { localModelsIpcPlugin } from "./host/plugins/local-models-ipc.mts";
 import { memoriesIpcPlugin } from "./host/plugins/memories-ipc.mts";
+import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
+import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
+import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
+import { schedulesIpcPlugin } from "./host/plugins/schedules-ipc.mts";
+import { sensitivePathGuardPlugin } from "./host/plugins/sensitive-path-guard.mts";
+import { sessionsIpcPlugin } from "./host/plugins/sessions-ipc.mts";
+import { settingsIpcPlugin } from "./host/plugins/settings-ipc.mts";
+import { skillsIpcPlugin } from "./host/plugins/skills-ipc.mts";
+import { speechIpcPlugin } from "./host/plugins/speech-ipc.mts";
 import { telemetryIpcPlugin } from "./host/plugins/telemetry-ipc.mts";
-import { bareModelName, builtinHooks, isResponsesEndpoint, isSafeBrowserUrl, listServerModels, normalizeModelEndpoint, parseModelJson, probeServerContextLimit, requestModel, sanitizeToolCalls } from "./agent.mts";
-import { BrowserAgent, browserToolDefinitions } from "./browser.mts";
-import { BrowserControlManager } from "./browser-control.mts";
-import { CHANNEL_LABELS, createChannelManager } from "./channels/manager.mts";
-import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, verifyChannelMediaPath } from "./channels/media-tools.mts";
-import { parseApprovalReply } from "./channels/qq-bot.mts";
-import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "./channels/workspace.mts";
-import { COMPUTER_USE_INSTALL_TIMEOUT_MS, COMPUTER_USE_SERVER_ID, discoverComputerUseServer } from "./computer-use.mts";
-import { applyBuiltinMemoryOverrides, buildMemoryRecord, extractExplicitMemoryInstructions, isBuiltinMemoryId, normalizeMemoryItem, normalizeMemories } from "./memory.mts";
-import { applyConsolidation, buildConsolidationMessages, ensureWiki, integrateItems, listWikiPages, parseConsolidationResult, readWikiPages, removeWikiMemory, serializeMemoryRow, updateWikiMemory } from "./memory-wiki.mts";
-import { McpClient } from "./mcp.mts";
-import { HttpMcpClient } from "./mcp-http.mts";
-import { resolveMcpServer } from "./mcp-config.mts";
-import { importMcpBundle } from "./mcp-bundle.mts";
-import { countUndecryptableSecrets, decryptChannelSecret, encryptChannelSecret, normalizeApprovalMode, normalizePreventSleep, normalizeTranscriptionEngine, normalizeTtsEngine, unattendedApprovalMode, wakeApprovalMode } from "./settings.mts";
-import { discoverFileSkills, mergeSkillRecords } from "./skills.mts";
-import { SESSION_TOOL_NAMES, handleSessionTool, handleSideChatTool, sessionToolDefinitions, sideChatToolDefinitions } from "./session-tools.mts";
-import { installSkillFromLibrary, searchSkillLibraries } from "./skill-libraries.mts";
-import { localImagePathFromSource, registerLocalImageIpc } from "./local-image.mts";
-import { saveClipboardImage } from "./clipboard-image.mts";
+import { tracesIpcPlugin } from "./host/plugins/traces-ipc.mts";
+import { transferIpcPlugin } from "./host/plugins/transfer-ipc.mts";
+import { usageHooksIpcPlugin } from "./host/plugins/usage-hooks-ipc.mts";
+import { windowIpcPlugin } from "./host/plugins/window-ipc.mts";
+import { workspaceIpcPlugin } from "./host/plugins/workspace-ipc.mts";
+import { backgroundTasksPlugin,channelsPlugin,remoteMessagesPlugin,telemetryPlugin } from "./host/services/runtime-domains.mts";
+import { pluginToolResult } from "./host/services/tools.mts";
 import { importLegacyData } from "./legacy-data.mts";
-import { configureLocalReviewer, downloadLocalReviewerModel, localReviewerModelStatus, resetLocalReviewerEngine } from "./local-reviewer.mts";
-import { configureLocalAsr, downloadLocalAsrModel, downloadLocalAsrRuntime, localAsrAllModelsStatus, localAsrModelStatus, localAsrRuntimeStatus } from "./local-asr.mts";
-import { stopLocalAsrServer, stripAsrText, transcribeWithLocalAsr } from "./local-asr-server.mts";
-import { configureLocalTts, downloadLocalTtsModel, localTtsAllModelsStatus, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId } from "./local-tts.mts";
-import { synthesizeWithLocalTts } from "./local-tts-engine.mts";
-import { getWorkspaceContext, listWorkspace, readWorkspaceFile, readWorkspaceMarkdown, writeWorkspaceFile } from "./workspace.mts";
-import { gitCheckout, gitCommit, gitCommitDiff, gitCreateBranch, gitDiffStats, gitDiscard, gitFileDiff, gitPush, gitReviewOverview, gitStage, listGitBranches } from "./git.mts";
-import { importBrowserData, listImportableBrowsers } from "./browser-import.mts";
-import { SessionQueue } from "./session-queue.mts";
-import { findWorkspaceBlockers } from "./workspace-busy.mts";
-import { enforceDirTotalSize, halveFileIfOversized } from "./log-rotation.mts";
-import { DEFAULT_UPDATE_URL, createUpdaterController } from "./app-updater.mts";
-import { createBackgroundTasksManager } from "./background-tasks.mts";
-import { collectOrphanAssets, commitStagedImage, defaultAppearance, discardStagedImage, importAppearanceImage, normalizeAppearance, readAppearance, readAppearanceImage, removeAppearanceImage, saveAppearance } from "./appearance.mts";
-import { applyWindowBackdrop, getAppearanceCapabilities, windowBackgroundFor } from "./appearance-platform.mts";
-import { attachLinuxWindowShadow } from "./linux-window-shadow.mts";
-import { createTelemetryController } from "./telemetry.mts";
+import { stopLocalAsrServer } from "./local-asr-server.mts";
+import { configureLocalAsr } from "./local-asr.mts";
+import { localImagePathFromSource,registerLocalImageIpc } from "./local-image.mts";
+import { configureLocalReviewer,resetLocalReviewerEngine } from "./local-reviewer.mts";
+import { configureLocalTts,normalizeTtsModelId } from "./local-tts.mts";
+import { enforceDirTotalSize,halveFileIfOversized } from "./log-rotation.mts";
+import { importMcpBundle } from "./mcp-bundle.mts";
+import { extractExplicitMemoryInstructions } from "./memory.mts";
 import { createRemoteMessagesManager } from "./remote-messages.mts";
+import { isTrustedAppRendererUrl } from "./renderer-origin.mts";
+import { SessionQueue } from "./session-queue.mts";
+import { handleSessionTool,SESSION_TOOL_NAMES,sessionToolDefinitions } from "./session-tools.mts";
+import { countUndecryptableSecrets,decryptChannelSecret,encryptChannelSecret,normalizeApprovalMode,normalizePreventSleep } from "./settings.mts";
+import { installSkillFromLibrary,searchSkillLibraries } from "./skill-libraries.mts";
+import { createTelemetryController } from "./telemetry.mts";
+import { createDockIconController,createWindowIconController } from "./theme-icons.mts";
+import { createTraceWriter } from "./trace-writer.mts";
+import { findWorkspaceBlockers } from "./workspace-busy.mts";
+import { listWorkspace } from "./workspace.mts";
 
 // Older UKUI Wayland compositors do not expose the surface and text-input
 // protocols required by current Electron releases, so the window never maps.
@@ -163,29 +153,6 @@ const rendererEntryUrl = isDevelopment
   ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
   : pathToFileURL(path.join(here, "../client/index.html")).href;
 let mainWindow;
-// 内置浏览器的 webview 登记：每个浏览器标签页常驻一个 webview，
-// agent 的 browser__* 工具只作用于渲染进程上报的「当前显示」那个（无上报时回退最后创建的）
-const embeddedBrowserContentsById = new Map();
-let activeEmbeddedBrowserContentsId = 0;
-let activeEmbeddedBrowserOwnerSessionId = "";
-let embeddedBrowserContents = null;
-// 渲染进程未上报（旧版本/预览环境）时的回退目标
-let fallbackEmbeddedBrowserContentsId = 0;
-// 面板里的浏览器标签页清单（渲染进程上报）：助手的 browser__tabs 工具据此列出、
-// 切换、关闭标签页。面板标签属于某个会话，只有它是当前激活会话时才对外开放。
-type BrowserPanelTabState = {
-  id: string;
-  title: string;
-  url: string;
-  active: boolean;
-  webContentsId: number;
-};
-const browserPanelTabState: { ownerSessionId: string; tabs: BrowserPanelTabState[] } = { ownerSessionId: "", tabs: [] };
-// 网页自己 window.open 出来的新标签页上限（助手主动开页不受限）：防止页面刷出大量标签页
-const BROWSER_PANEL_TAB_LIMIT = 12;
-// 面板状态由渲染进程持有，主进程只发指令 + 等它上报：这是等待上报变化的粒度
-const BROWSER_PANEL_STEP_MS = 50;
-const BROWSER_PANEL_TIMEOUT_MS = 5000;
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
@@ -656,344 +623,24 @@ async function migrateLegacyDataOnFirstRun() {
   });
 }
 
-const textExtensions = new Set([
-  ".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".html", ".ini", ".java", ".js", ".json",
-  ".jsx", ".log", ".md", ".mjs", ".py", ".rs", ".sh", ".sql", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
-]);
-const mimeTypes = new Map([
-  [".bmp", "image/bmp"], [".gif", "image/gif"], [".jpeg", "image/jpeg"], [".jpg", "image/jpeg"],
-  [".png", "image/png"], [".webp", "image/webp"], [".csv", "text/csv"], [".html", "text/html"],
-  [".json", "application/json"], [".md", "text/markdown"], [".txt", "text/plain"], [".xml", "application/xml"],
-  [".silk", "audio/silk"], [".wav", "audio/wav"], [".mp3", "audio/mpeg"], [".m4a", "audio/mp4"],
-  [".aac", "audio/aac"], [".ogg", "audio/ogg"], [".opus", "audio/opus"], [".amr", "audio/amr"],
-]);
 
-function attachmentType(filePath) {
-  const extension = path.extname(filePath).toLowerCase();
-  return mimeTypes.get(extension) || (textExtensions.has(extension) ? "text/plain" : "application/octet-stream");
-}
+const windowRuntime = createWindowRuntime({
+  get here() { return here; },
+  get appearanceState() { return appearanceState; },
+  set appearanceState(value) { appearanceState = value; },
+  resolvedAppearanceTheme,
+  get windowIcons() { return windowIcons; },
+  get mainWindow() { return mainWindow; },
+  set mainWindow(value) { mainWindow = value; },
+  applyWindowAppearance,
+  performAppearanceReset,
+  get ctx() { return ctx; },
+  isTrustedRendererUrl,
+  get isDevelopment() { return isDevelopment; },
+  get rendererEntryUrl() { return rendererEntryUrl; },
+});
+const { installApplicationMenu, createWindow } = windowRuntime;
 
-async function describeAttachment(filePath) {
-  const stat = await fs.stat(filePath);
-  const mimeType = attachmentType(filePath);
-  const isImage = mimeType.startsWith("image/");
-  const extension = path.extname(filePath).toLowerCase();
-  const isVoice = mimeType.startsWith("audio/") || extension === ".silk";
-  // 不再内嵌缩略图：previewUrl 会随会话存档落盘，大图会让存档体积翻倍；
-  // 渲染层统一走 local-image:read 按原尺寸读取，气泡/预览/复制共用同一份原图。
-  return {
-    name: path.basename(filePath),
-    path: filePath,
-    size: stat.size,
-    mimeType,
-    isImage,
-    isVoice,
-  };
-}
-
-async function providerMessageContent(message) {
-  let text = String(message?.content || "").trim();
-  const imageBlocks = [];
-  // assistant 消息里的图片附件大多是展示/出站媒体（如渠道回复附带的截图），
-  // 不是需要回传给模型的输入；DeepSeek 视觉模型也拒绝 assistant 消息携带图片（400）。
-  // 因此对 assistant 角色只保留文本，不把图片展开成 image 块，避免模型输入被服务端拒绝。
-  if (message?.role === "assistant") return text || "请处理已选择的附件。";
-  if (Array.isArray(message?.dshAttachments) && message.dshAttachments.length) {
-    const parts = message.dshAttachments.map(part => {
-      if (part?.type === 'file' && typeof part.receiptId === 'string' && part.receiptId) return {type:'dsh-file-receipt', receiptId:part.receiptId};
-      if (part?.type === 'image' && ['image/png','image/jpeg','image/webp','image/gif'].includes(part.mediaType)
-        && typeof part.data === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(part.data))
-        return {type:'image_url', image_url:{url:`data:${part.mediaType};base64,${part.data}`}, ...(part.name ? {name:part.name}: {})};
-      throw new Error('DSH 浏览器附件格式无效');
-    });
-    return [...(text ? [{type:'text',text}]:[]), ...parts];
-  }
-  for (const attachment of Array.isArray(message?.attachments) ? message.attachments : []) {
-    const filePath = String(attachment?.path || "");
-    if (!filePath) continue;
-    try {
-      const stat = await fs.stat(filePath);
-      const mimeType = attachmentType(filePath);
-      if (mimeType.startsWith("image/")) {
-        if (stat.size > 12 * 1024 * 1024) {
-          text += `\n\n[图片 ${path.basename(filePath)} 超过 12 MB，未发送]`;
-          continue;
-        }
-        const encoded = (await fs.readFile(filePath)).toString("base64");
-        imageBlocks.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${encoded}` } });
-      } else if (textExtensions.has(path.extname(filePath).toLowerCase())) {
-        if (stat.size > 2 * 1024 * 1024) {
-          text += `\n\n[文本附件 ${path.basename(filePath)} 超过 2 MB，未展开]`;
-          continue;
-        }
-        const content = await fs.readFile(filePath, "utf8");
-        text += `\n\n--- 附件：${path.basename(filePath)} ---\n${content}`;
-      } else {
-        text += `\n\n[已选择附件 ${path.basename(filePath)}；当前通用模型接口仅直接读取文本和图片]`;
-      }
-    } catch (error: any) {
-      text += `\n\n[附件 ${path.basename(filePath)} 读取失败：${error instanceof Error ? error.message : String(error)}]`;
-    }
-  }
-  if (!imageBlocks.length) return text || "请处理已选择的附件。";
-  return [{ type: "text", text: text || "请查看这些图片。" }, ...imageBlocks];
-}
-
-function transcriptionEndpoint(settings) {
-  if (settings?.transcriptionEndpoint) return String(settings.transcriptionEndpoint).trim();
-  const endpoint = String(settings?.endpoint || "").trim();
-  if (!endpoint) return "";
-  try {
-    const url = new URL(endpoint);
-    // 只有 Chat Completions 端点能可靠推导出同级语音转写地址；
-    // Responses 端点（如 DeepSeek /responses）没有对应转写服务，返回空让用户显式配置。
-    if (!/\/chat\/completions\/?$/.test(url.pathname)) return "";
-    url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, "/audio/transcriptions");
-    return url.toString();
-  } catch {
-    return "";
-  }
-}
-
-function createWindow() {
-  const preloadPath = path.join(here, "preload.cjs");
-  // 桥接文件缺失时绝不能静默启动：渲染端会失去 window.dyworker，而界面里
-  // 全是 window.dyworker?.xxx(...)，于是每个操作都变成空操作——点「保存设置」
-  // 照样提示已保存，磁盘上却什么都没写（MCP 保存不了的真实原因）。
-  if (!existsSync(preloadPath)) {
-    console.error(`[dyworker] 缺少 preload：${preloadPath}；界面能打开但无法读写配置，请重新构建（npm run build:electron）。`);
-    dialog.showErrorBox(
-      "安装包不完整",
-      `缺少 ${preloadPath}\n\n界面仍会打开，但设置与对话都无法保存。请重新构建或重新安装 DYWorker。`,
-    );
-  }
-  const windowOptions = {
-    width: 1184,
-    height: 736,
-    minWidth: 980,
-    minHeight: 660,
-    backgroundColor: process.platform === "linux" ? "#00000000" : windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme()),
-    transparent: process.platform === "linux",
-    show: process.platform === "linux",
-    title: "DYWorker",
-    ...(process.platform === "linux" ? { icon: windowIcons.iconFor(resolvedAppearanceTheme()) } : {}),
-    // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
-    // Linux 仅四角透明，由页面平滑裁切；阴影仍交给合成器绘制。
-    frame: false,
-    // mac 原生红绿灯位于独立的 44px 窗口工具栏，聊天侧栏品牌行不再占用窗口控件空间。
-    // 16px 原生按钮在该行垂直居中；工具栏仍支持拖动窗口。
-    ...(process.platform === "darwin" ? { titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 14 } } : {}),
-    hasShadow: true,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webviewTag: true,
-    },
-  };
-
-  mainWindow = new BrowserWindow(windowOptions as any);
-  attachLinuxWindowShadow(mainWindow, {
-    scaleFactor: screen.getDisplayMatching(mainWindow.getBounds()).scaleFactor,
-  });
-  applyWindowAppearance();
-  // preload 加载失败（文件缺失、语法错误、沙箱限制）以前只在 Linux 记录，
-  // mac 上完全没有日志，现象就是「界面正常、保存全无效」。改为全平台记录。
-  mainWindow.webContents.on("preload-error", (_event, failedPath, error) => {
-    console.log(
-      `[dyworker] preload 加载失败：${failedPath}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
-  if (process.platform === "linux") {
-    // Linux 下默认隐藏顶部菜单栏以保持界面纯净，但保留应用菜单及全局恢复入口
-    mainWindow.setMenuBarVisibility(false);
-    mainWindow.autoHideMenuBar = true;
-  }
-  // 注册按键级应急恢复外观监听（CmdOrCtrl+Alt+R），独立于菜单显示状态，界面字号过大时仍可触发
-  mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (forwardNativePanelShortcut(event, input, process.platform,
-      action => mainWindow?.webContents.send("panel:shortcut", action))) return;
-    const isCmdOrCtrl = process.platform === "darwin" ? input.meta : input.control;
-    if (isCmdOrCtrl && input.alt && input.key?.toLowerCase() === "r" && input.type === "keyDown") {
-      // 阻止同一按键继续触发菜单 accelerator；长按也只恢复一次。
-      event.preventDefault();
-      if (input.isAutoRepeat) return;
-      void performAppearanceReset().then((snapshot) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("appearance:reset", snapshot);
-        }
-      });
-    }
-  });
-  // 最大化/还原时确保窗口始终接收鼠标输入。
-  mainWindow.on("maximize", () => {
-    mainWindow?.setIgnoreMouseEvents(false);
-    mainWindow?.webContents.send("window:maximized-changed", true);
-  });
-  mainWindow.on("unmaximize", () => {
-    mainWindow?.setIgnoreMouseEvents(false);
-    mainWindow?.webContents.send("window:maximized-changed", false);
-  });
-  mainWindow.on("enter-full-screen", () => mainWindow?.webContents.send("window:maximized-changed", true));
-  mainWindow.on("leave-full-screen", () => mainWindow?.webContents.send("window:maximized-changed", mainWindow.isMaximized()));
-  // 使用统计的窗口状态信号：后台/最小化/失焦立即封口当前使用区间。
-  // 关闭窗口（macOS 进程仍在）同样视为不可计时状态。
-  const noteTelemetryWindowState = () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    ctx.telemetryController?.noteWindowState({
-      visible: mainWindow.isVisible(),
-      minimized: mainWindow.isMinimized(),
-      focused: mainWindow.isFocused(),
-    });
-  };
-  for (const stateEvent of ["focus", "blur", "show", "hide", "minimize", "restore", "close"]) {
-    mainWindow.on(stateEvent, noteTelemetryWindowState);
-  }
-  // Linux 下无边框窗口首次显示后主动申请键盘焦点，避免点击窗口后按键仍
-  // 被送到上一个窗口（X11/XWayland 无边框窗口的常见问题）。
-  if (process.platform === "linux") {
-    // Linux 下记录窗口几何、显示器和渲染器状态，便于真机排查“进程在但
-    // 界面不显示”。正常环境这些日志不影响窗口与阴影。
-    const logWindowGeometry = (label) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      try {
-        const bounds = mainWindow.getBounds();
-        const display = screen.getDisplayMatching(bounds);
-        console.log(
-          `[dyworker] linux window ${label}: bounds=${JSON.stringify(bounds)} ` +
-            `display=${JSON.stringify(display.bounds)} scale=${display.scaleFactor} ` +
-            `visible=${mainWindow.isVisible()} minimized=${mainWindow.isMinimized()} ` +
-            `maximized=${mainWindow.isMaximized()}`,
-        );
-      } catch (error: any) {
-        console.log(`[dyworker] linux window geometry failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    };
-    setTimeout(() => logWindowGeometry("created"), 500);
-    mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (isMainFrame) {
-        console.log(
-          `[dyworker] linux renderer load failed: ${errorCode} ${errorDescription} (${validatedURL})`,
-        );
-      }
-    });
-    mainWindow.webContents.on("render-process-gone", (_event, details) => {
-      console.log(
-        `[dyworker] linux renderer gone: reason=${details?.reason || "unknown"} ` +
-          `exitCode=${details?.exitCode ?? "unknown"}`,
-      );
-    });
-    mainWindow.webContents.on("console-message", (details, level, message, line, sourceId) => {
-      const severity = details?.params?.level ?? ["verbose", "info", "warning", "error"][level] ?? String(level);
-      if (severity === "error" || level === 3) {
-        console.log(
-          `[dyworker] linux renderer error: ${details?.params?.message ?? message} ` +
-            `(${details?.params?.sourceId ?? sourceId}:${details?.params?.lineNumber ?? line})`,
-        );
-      }
-    });
-    mainWindow.on("show", () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.focus();
-      mainWindow.webContents.focus();
-    });
-  }
-  // 加载后检查界面是否挂载；空白时重载一次，保留诊断日志。
-  if (process.platform === "linux") {
-    let rendererReloaded = false;
-    const inspectRendererContent = async () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return null;
-      try {
-        return await mainWindow.webContents.executeJavaScript(`(() => {
-          const root = document.getElementById("root");
-          return {
-            readyState: document.readyState,
-            rootChildren: root ? root.children.length : -1,
-            bodyTextLength: document.body ? (document.body.innerText || "").length : -1,
-            hasBridge: Boolean(window.dyworker),
-            hasFocus: document.hasFocus(),
-            shadowClass: document.documentElement.classList.contains("window-shadow"),
-          };
-        })()`);
-      } catch (error: any) {
-        return { checkError: error instanceof Error ? error.message : String(error) };
-      }
-    };
-    const ensureRendererContent = async () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      const report = await inspectRendererContent();
-      console.log(`[dyworker] linux renderer content: ${JSON.stringify(report)}`);
-      if (!report || report.checkError || report.rootChildren > 0 || report.bodyTextLength > 0) return;
-      if (!rendererReloaded) {
-        rendererReloaded = true;
-        console.log("[dyworker] linux renderer is blank; reloading once");
-        mainWindow.webContents.reload();
-        return;
-      }
-      console.log("[dyworker] linux renderer still blank after reload");
-    };
-    mainWindow.webContents.on("did-finish-load", () => {
-      setTimeout(() => void ensureRendererContent(), 2000);
-    });
-  }
-  mainWindow.once("closed", () => {
-    mainWindow = undefined;
-  });
-  // 主窗口权限：media 沿用现有放行；本机字体枚举仅放行主窗口自身，内嵌网页不开放
-  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) =>
-    permission === "media" ||
-    ((permission === "font-access" || permission === "local-fonts") && webContents === mainWindow?.webContents));
-  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(
-      permission === "media" ||
-      ((permission === "font-access" || permission === "local-fonts") && webContents === mainWindow?.webContents),
-    );
-  });
-  if (process.platform !== "linux") mainWindow.once("ready-to-show", () => mainWindow.show());
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    // 只把 http/https 交给系统浏览器，其余协议（file:、smb:、自定义协议等）一律拒绝，防止协议处理器滥用
-    try {
-      const target = new URL(url);
-      if (target.protocol === "http:" || target.protocol === "https:") void shell.openExternal(target.toString());
-    } catch {
-      // Ignore malformed open targets.
-    }
-    return { action: "deny" };
-  });
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isTrustedRendererUrl(url)) return;
-    event.preventDefault();
-    try {
-      const target = new URL(url);
-      if (target.protocol === "http:" || target.protocol === "https:") void shell.openExternal(url);
-    } catch {
-      // Ignore malformed navigation targets.
-    }
-  });
-
-  // 产物布局：main.mjs 在 dist/electron/，渲染产物在 dist/client/（package.json
-  // build.files），故相对 here 是 ../client；写成 ../dist/client 会解析到
-  // dist/dist/client 导致打包后窗口空白。
-  const localHtmlPath = path.join(here, "../client/index.html");
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else if (isDevelopment && !existsSync(localHtmlPath)) {
-    mainWindow.loadURL(rendererEntryUrl);
-  } else {
-    mainWindow.loadFile(localHtmlPath);
-  }
-
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (isMainFrame) {
-      console.log(`[dyworker] renderer load failed: ${errorCode} ${errorDescription} (${validatedURL})`);
-      if (validatedURL.startsWith("http://127.0.0.1:5173") && existsSync(localHtmlPath)) {
-        console.log("[dyworker] dev server unreachable, falling back to local built html");
-        mainWindow?.loadFile(localHtmlPath);
-      }
-    }
-  });
-}
 
 // 右侧浏览器标签页使用 webview 内嵌网页；远程页面始终关闭 Node 能力。
 // 协议白名单校验（http/https、禁 userinfo）；localhost/内网地址按产品决策放行
@@ -1007,330 +654,14 @@ app.on("will-attach-webview" as any, (event: any, webPreferences: any, params: a
   webPreferences.sandbox = true;
   if (params.src && params.src !== "about:blank" && !isSafeBrowserUrl(params.src).ok) event.preventDefault();
 });
-
-app.on("web-contents-created", (_event, contents) => {
-  if (contents.getType() !== "webview") return;
-  embeddedBrowserContentsById.set(contents.id, contents);
-  embeddedBrowserContents = contents;
-  fallbackEmbeddedBrowserContentsId = contents.id;
-  contents.once("destroyed", () => {
-    embeddedBrowserContentsById.delete(contents.id);
-    if (activeEmbeddedBrowserContentsId === contents.id) activeEmbeddedBrowserContentsId = 0;
-    if (embeddedBrowserContents === contents) {
-      embeddedBrowserContents = null;
-      fallbackEmbeddedBrowserContentsId = 0;
-    }
-  });
-  contents.on("will-navigate", (event, url) => {
-    if (!isSafeBrowserUrl(url).ok) event.preventDefault();
-  });
-  // 网页自己开的新窗口（target=_blank、window.open）：在面板里开一个新标签页，
-  // 而不是像过去那样静默丢弃——用户点了没反应的链接就是这么来的。
-  // 三种情况仍然拒绝：非 http/https、这个页面正被助手自动操作（新页面会把自动化
-  // 打断成人工确认）、标签页已经到上限（防止页面刷出大量标签页）。
-  contents.setWindowOpenHandler(({ url }) => {
-    try {
-      const target = new URL(url);
-      const automating = browserControlManager.getStatus().status === "running"
-        && browserControlManager.session?.webContentsId === contents.id;
-      if (
-        (target.protocol === "http:" || target.protocol === "https:")
-        && contents.id === activeEmbeddedBrowserContentsId
-        && !automating
-        && activeEmbeddedBrowserOwnerSessionId
-        && browserPanelTabState.tabs.length < BROWSER_PANEL_TAB_LIMIT
-      ) {
-        sendBrowserPanelCommand(mainWindow?.webContents, {
-          action: "open",
-          url: target.toString(),
-          ownerSessionId: activeEmbeddedBrowserOwnerSessionId,
-        });
-      }
-    } catch {
-      // 非法地址照旧拒绝
-    }
-    return { action: "deny" };
-  });
-  // 键盘输入拦截屏障（补充要求 6）：助手自动操作期间，拦截落入网页的原生按键并触发用户接管
-  contents.on("before-input-event", (event, input) => {
-    if (
-      browserControlManager.getStatus().status === "running" &&
-      browserControlManager.session?.webContentsId === contents.id
-    ) {
-      if (input.type === "keyDown" && !input.isAutoRepeat) {
-        event.preventDefault();
-        browserControlManager.takeover({ reason: "检测到用户键盘按键，已由你接管" });
-      }
-      return;
-    }
-    // 网页拥有焦点时按键不会冒泡到主界面，统一转发应用面板快捷键。
-    forwardNativePanelShortcut(event, input, process.platform,
-      action => mainWindow?.webContents.send("panel:shortcut", action));
-  });
-  // 下载进度跟踪：保存位置仍由 BrowserAgent 决定（工作区“下载”目录），
-  // 这里只观察并广播给面板展示。持久分区所有 webview 共享，只挂一次。
-  if (!(contents.session as any).__dyworkerDownloadTracker) {
-    (contents.session as any).__dyworkerDownloadTracker = true;
-    contents.session.on("will-download", (_event, item) => {
-      const record = {
-        id: `${item.getStartTime()}-${item.getFilename()}`,
-        filename: item.getFilename() || "download",
-        path: "",
-        received: 0,
-        total: item.getTotalBytes(),
-        state: "progressing",
-        startedAt: Date.now(),
-      };
-      const send = () => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("browser:download-progress", record);
-      };
-      item.on("updated", (_e, state) => {
-        record.received = item.getReceivedBytes();
-        record.total = item.getTotalBytes();
-        record.state = state === "interrupted" ? "interrupted" : "progressing";
-        record.path = item.getSavePath() || "";
-        send();
-      });
-      item.once("done", (_e, state) => {
-        record.received = item.getTotalBytes();
-        record.state = state === "completed" ? "completed" : state === "interrupted" ? "interrupted" : "cancelled";
-        record.path = item.getSavePath() || "";
-        send();
-      });
-      send();
-    });
-  }
+const browserRuntime = createBrowserRuntime({
+  get mainWindow() { return mainWindow; },
+  set mainWindow(value) { mainWindow = value; },
+  get ctx() { return ctx; },
+  isTrustedRendererUrl,
 });
+const { waitForEmbeddedBrowser, browserControlManager, requestCloseEmbeddedBrowser, activeEmbeddedBrowserContents, browserPanelTabsFor, activateBrowserPanelTab, closeBrowserPanelTab, embeddedBrowserContentsById } = browserRuntime;
 
-// 当前显示的内置浏览器页面：优先渲染进程上报的激活 webview。
-// forOwnerSessionId：调用方（某会话的任务）要求的归属；激活 webview 已上报归属
-// 且归属他人时返回 null，防止 A 会话的后台任务拿到 B 会话正在看的页面（穿透）。
-function activeEmbeddedBrowserContents({ forOwnerSessionId } = {} as any) {
-  const contents = embeddedBrowserContentsById.get(activeEmbeddedBrowserContentsId)
-    || embeddedBrowserContentsById.get(fallbackEmbeddedBrowserContentsId)
-    || null;
-  if (!contents || contents.isDestroyed?.()) return null;
-  const owner = String(forOwnerSessionId || "");
-  if (owner && activeEmbeddedBrowserOwnerSessionId && activeEmbeddedBrowserOwnerSessionId !== owner) {
-    return null;
-  }
-  return contents;
-}
-
-// 面板里的浏览器标签页清单按会话隔离：只有上报者就是调用方会话时才可见，
-// 用户切到别的会话后，后台任务看不到（也管不到）别人面板里的标签页。
-function browserPanelTabsFor(ownerSessionId) {
-  const owner = String(ownerSessionId || "");
-  if (!owner || owner !== browserPanelTabState.ownerSessionId) return [];
-  return browserPanelTabState.tabs;
-}
-
-// 面板状态由渲染进程持有，主进程只发指令；发完等它上报到位，不自己推断结果
-async function waitForBrowserPanelState(predicate, { timeoutMs = BROWSER_PANEL_TIMEOUT_MS } = {} as any) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const value = predicate();
-    if (value) return value;
-    if (Date.now() >= deadline) return null;
-    await new Promise((resolve) => setTimeout(resolve, BROWSER_PANEL_STEP_MS));
-  }
-}
-
-function sendBrowserPanelCommand(renderer, payload) {
-  if (!renderer || renderer.isDestroyed?.()) return false;
-  try {
-    renderer.send("browser:panel-request", payload);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// 助手指定的标签页切换：切过去，并把它对应的 webview 交给调用方重新接管控制
-function activateBrowserPanelTab(renderer, tabId, { ownerSessionId = "" } = {} as any) {
-  const target = browserPanelTabsFor(ownerSessionId).find((tab) => tab.id === tabId);
-  if (!target) return Promise.resolve({ ok: false, result: `找不到标签页 ${tabId}，请先用 browser__tabs list 查看当前标签页` });
-  if (!sendBrowserPanelCommand(renderer, { action: "activate", tabId, ownerSessionId: String(ownerSessionId || "") })) {
-    return Promise.resolve({ ok: false, result: "当前任务窗口不可用，无法切换标签页" });
-  }
-  return waitForBrowserPanelState(() => {
-    const current = browserPanelTabsFor(ownerSessionId).find((tab) => tab.id === tabId);
-    if (!current) return { closed: true };
-    return current.active ? { tab: current } : null;
-  }).then(async (shown) => {
-    if (!shown) return { ok: false, result: "切换标签页超时" };
-    if (shown.closed) return { ok: false, result: `标签页 ${tabId} 已关闭` };
-    const { tab } = shown;
-    // 空白标签页还没有 webview：切过去即可，等它打开网页后再接管
-    if (!tab.webContentsId) return { ok: true, tab, contents: null };
-    const contents = await waitForBrowserPanelState(() => {
-      if (activeEmbeddedBrowserContentsId !== tab.webContentsId) return null;
-      const candidate = embeddedBrowserContentsById.get(tab.webContentsId);
-      return candidate && !candidate.isDestroyed?.() ? candidate : null;
-    });
-    if (!contents) return { ok: false, result: "切换标签页超时" };
-    return { ok: true, tab, contents };
-  });
-}
-
-// 助手指定的标签页关闭：关掉并等面板上报确认
-function closeBrowserPanelTab(renderer, tabId, { ownerSessionId = "" } = {} as any) {
-  const target = browserPanelTabsFor(ownerSessionId).find((tab) => tab.id === tabId);
-  if (!target) return Promise.resolve({ ok: false, result: `找不到标签页 ${tabId}，请先用 browser__tabs list 查看当前标签页` });
-  if (!sendBrowserPanelCommand(renderer, { action: "close-tab", tabId, ownerSessionId: String(ownerSessionId || "") })) {
-    return Promise.resolve({ ok: false, result: "当前任务窗口不可用，无法关闭标签页" });
-  }
-  return waitForBrowserPanelState(() => !browserPanelTabsFor(ownerSessionId).some((tab) => tab.id === tabId))
-    .then((closed) => (closed ? { ok: true } : { ok: false, result: "关闭标签页超时" }));
-}
-
-const browserControlManager = new BrowserControlManager({
-  onStateChange: (state) => {
-    try {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("browser-control:state", state);
-      }
-    } catch {
-      // 忽略主窗口销毁期间广播失败
-    }
-    // 电脑操控进行期间保守暂停人工计时，避免把自动输入算成人工
-    ctx.telemetryController?.setAutomationActive(
-      state?.status === "running" || state?.status === "acquiring",
-    );
-  },
-});
-
-function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId = "" } = {} as any) {
-  return new Promise<any>((resolve) => {
-    const startedAt = Date.now();
-    let previousUrl = "";
-    try {
-      const active = activeEmbeddedBrowserContents({ forOwnerSessionId: ownerSessionId });
-      if (active && !active.isDestroyed?.()) {
-        previousUrl = active.getURL?.() || "";
-      }
-    } catch {
-      // 忽略已销毁对象取 URL 异常
-    }
-    let observedContents = null;
-    let timer = null;
-    let settled = false;
-
-    // 打开请求可能携带取消凭据：预占被接管、停止、过期或被新请求接替后，
-    // 旧请求严禁再发起导航或确认成功 (C2_expired_open_stays_revoked)
-    const stillValid = () => (typeof validate === "function" ? validate() : true);
-
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (observedContents) {
-        try {
-          observedContents.removeListener("did-stop-loading", onStop);
-          observedContents.removeListener("did-fail-load", onFail);
-          observedContents.removeListener("destroyed", onDestroyed);
-        } catch {
-          // 忽略
-        }
-      }
-      resolve(result);
-    };
-    const onStop = () => {
-      const contents = observedContents;
-      if (!contents || contents.isDestroyed()) return;
-      if (!stillValid()) {
-        finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
-        return;
-      }
-      let currentUrl = "";
-      try {
-        currentUrl = contents.getURL();
-      } catch {
-        return;
-      }
-      if (!currentUrl || currentUrl === "about:blank" || currentUrl === previousUrl) return;
-      finish({ ok: true, contents });
-    };
-    const onFail = (_event, errorCode, errorDescription) => {
-      finish({ ok: false, result: `网页加载失败：${errorDescription || errorCode}` });
-    };
-    const onDestroyed = () => {
-      observedContents = null;
-      poll();
-    };
-    const poll = () => {
-      if (settled) return;
-      if (!stillValid()) {
-        finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
-        return;
-      }
-      if (!sender || sender.isDestroyed()) {
-        finish({ ok: false, result: "当前任务窗口已关闭" });
-        return;
-      }
-      if (Date.now() - startedAt > 20000) {
-        finish({ ok: false, result: "右侧浏览器面板加载超时" });
-        return;
-      }
-      // 面板激活页已归属其他会话（用户切走了）：本会话的打开请求立即失败，
-      // 不能把网页打在别的会话正在看的面板上，也不再空等 20 秒
-      const owner = String(ownerSessionId || "");
-      if (owner && activeEmbeddedBrowserOwnerSessionId && activeEmbeddedBrowserOwnerSessionId !== owner) {
-        finish({ ok: false, result: "当前浏览器面板正显示其他会话的页面，已取消本次打开" });
-        return;
-      }
-      const contents = activeEmbeddedBrowserContents({ forOwnerSessionId: owner });
-      if (contents && !contents.isDestroyed()) {
-        if (observedContents !== contents) {
-          observedContents = contents;
-          try {
-            contents.once("did-stop-loading", onStop);
-            contents.once("did-fail-load", onFail);
-            contents.once("destroyed", onDestroyed);
-          } catch {
-            // 忽略
-          }
-        }
-        let currentUrl = "";
-        let loading = false;
-        try {
-          currentUrl = contents.getURL();
-          loading = contents.isLoading();
-        } catch {
-          return;
-        }
-        if (currentUrl === url && !loading) {
-          finish({ ok: true, contents });
-          return;
-        }
-      }
-      timer = setTimeout(poll, 50);
-    };
-
-    // 实际发起导航前最后一次核验取消凭据：已撤销的请求不得触发页面跳转 (C2)
-    if (!stillValid()) {
-      finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
-      return;
-    }
-
-    try {
-      sender.send("browser:panel-request", { action: "open", url, tabId, ownerSessionId: String(ownerSessionId || "") });
-    } catch (error: any) {
-      finish({ ok: false, result: `无法打开右侧浏览器面板：${error instanceof Error ? error.message : String(error)}` });
-      return;
-    }
-    poll();
-  });
-}
-
-function requestCloseEmbeddedBrowser(sender, ownerSessionId = "") {
-  try {
-    if (!sender || sender.isDestroyed()) return;
-    sender.send("browser:panel-request", { action: "close", ownerSessionId: String(ownerSessionId || "") });
-  } catch {
-    // 忽略
-  }
-}
 
 registerLocalImageIpc(ipcMain, {
   isTrustedSender: (event) => isTrustedRendererUrl(event.senderFrame?.url),
@@ -1441,49 +772,6 @@ async function generateCommitMessage(workspacePath) {
 // 轨迹事件流（trace-console）：会话级 append-only jsonl，分页读取供轨迹视图回放
 const safeTraceSessionId = (sessionId) => String(sessionId || "").replace(/[^a-zA-Z0-9_-]/g, "") || "session";
 
-// 渲染进程上报当前显示的内置浏览器 webview（及其所属激活会话）：
-// agent 的 browser__* 工具只作用于可见页面
-ipcMain.on("browser:active-contents", (event, webContentsId, ownerSessionId) => {
-  if (!isTrustedRendererUrl(event.senderFrame?.url)) return;
-  const id = Number(webContentsId) || 0;
-  // 只接受登记过的 webview，防止渲染进程指向任意页面
-  if (id && !embeddedBrowserContentsById.has(id)) return;
-  const previousId = activeEmbeddedBrowserContentsId;
-  activeEmbeddedBrowserContentsId = id;
-  activeEmbeddedBrowserOwnerSessionId = id ? String(ownerSessionId || "") : "";
-
-  // 若当前正在自动操作且显示的标签页被切走（换了页面，或页面还在但已归属
-  // 其他会话），主动暂停控制，避免后台任务继续操作别的会话正在看的页面
-  const runningOwner = browserControlManager.session?.ownerSessionId;
-  const ownerChangedToOther = Boolean(
-    activeEmbeddedBrowserOwnerSessionId &&
-    runningOwner &&
-    activeEmbeddedBrowserOwnerSessionId !== runningOwner
-  );
-  if (browserControlManager.getStatus().status === "running" && (ownerChangedToOther || (previousId && id !== previousId))) {
-    browserControlManager.pause({ reason: "页面已切换，操作已暂停" });
-  }
-});
-
-// 渲染进程上报面板里的浏览器标签页清单（助手 browser__tabs 工具的数据来源）。
-// webview 只认登记表里的 id：渲染进程即使乱报 id，也指向不了别的页面。
-ipcMain.on("browser:tab-state", (event, payload) => {
-  if (!isTrustedRendererUrl(event.senderFrame?.url)) return;
-  const tabs = Array.isArray(payload?.tabs) ? payload.tabs : [];
-  browserPanelTabState.ownerSessionId = String(payload?.ownerSessionId || "");
-  browserPanelTabState.tabs = tabs
-    .filter((tab) => tab && typeof tab.id === "string" && tab.id)
-    .map((tab) => ({
-      id: String(tab.id),
-      title: String(tab.title || ""),
-      url: String(tab.url || ""),
-      active: Boolean(tab.active),
-      webContentsId: embeddedBrowserContentsById.has(Number(tab.webContentsId))
-        ? Number(tab.webContentsId)
-        : 0,
-    }));
-});
-
 // 浏览器 Computer Use 控制 IPC
 
 // 在系统默认浏览器打开（仅 http/https，复用内置浏览器的地址白名单）
@@ -1581,128 +869,6 @@ async function performAppearanceReset() {
   const result = await saveAppearance(appearanceFile, defaults, appearanceState.revision);
   if (result.ok) await applySavedAppearanceResult(result, previousImageId);
   return result.ok ? appearanceSnapshot() : { ok: false, error: result.error, settings: appearanceState.settings, revision: appearanceState.revision };
-}
-
-
-// 应用菜单「恢复默认外观」应急入口：设置被不合适字号挤压时仍可恢复
-function installApplicationMenu() {
-  const template = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
-    { role: "editMenu" },
-    { role: "viewMenu" },
-    {
-      label: "外观",
-      submenu: [
-        {
-          label: "恢复默认外观",
-          accelerator: "CmdOrCtrl+Alt+R",
-          click: () => {
-            void performAppearanceReset().then((snapshot) => {
-              if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("appearance:reset", snapshot);
-            });
-          },
-        },
-      ],
-    },
-    { role: "windowMenu" },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template as any));
-}
-
-// 凭证预检（auth check）：设置页保存 API Key 后立即验证可用性，避免运行任务时才发现配错。
-// 发一个最小 chat 请求：200 = 通过；401/403 = 密钥无效；404 = 地址或模型名不对；其余按状态码归类。
-
-// 模型列表拉取：同一服务地址 + 密钥下 GET /models，列出该账号可用的全部模型，
-// 设置页「获取可用模型」按钮调用，用于在同一 Key 下直接切换模型。
-
-
-
-// 语音转写：本地引擎（Qwen3-ASR-0.6B + llama-server）或 OpenAI 兼容 /audio/transcriptions；
-// 桌面录音与 QQ 语音（silk 解码后）共用
-async function transcribeAudio(audioBytes, mimeType, settings) {
-  const audio = Uint8Array.from(audioBytes || []);
-  if (!audio.length) throw new Error("没有收到录音内容");
-  if (normalizeTranscriptionEngine(settings?.transcriptionEngine) === "local") {
-    // 模型目录与所选模型已在 readSettings 里按最新设置应用；引擎路径变更同样即时生效
-    const text = await transcribeWithLocalAsr({
-      wav: audio,
-      customServerPath: String(settings?.llamaServerPath || "").trim(),
-      modelId: String(settings?.asrModel || "").trim(),
-    });
-    return { text };
-  }
-  const endpoint = transcriptionEndpoint(settings);
-  if (!endpoint || !settings.apiKey) throw new Error("请先在设置中配置语音转写地址和 API 密钥");
-  if (audio.byteLength > 25 * 1024 * 1024) throw new Error("录音超过 25 MB，请缩短后重试");
-  const type = String(mimeType || "audio/webm");
-  const extension = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : type.includes("wav") ? "wav" : "webm";
-  const body = new FormData();
-  body.append("file", new Blob([audio], { type }), `dyworker-recording.${extension}`);
-  body.append("model", String(settings.transcriptionModel || "whisper-1"));
-  // 转写服务偶发挂起时不能把渠道任务永久卡住（否则该聊天后续消息只排队不执行）。
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
-  let response;
-  try {
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${settings.apiKey}` },
-      body,
-      signal: controller.signal,
-    });
-  } catch (error: any) {
-    if (error?.name === "AbortError" || error?.name === "TimeoutError") {
-      throw new Error("语音转写服务连接超时（60 秒无响应），请稍后重试");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 1000);
-    throw new Error(`语音转写失败（${response.status}）：${detail}`);
-  }
-  const result = await parseModelJson(response, "语音转写服务", endpoint);
-  const text = result?.text || result?.data?.text;
-  if (typeof text !== "string" || !text.trim()) throw new Error("语音服务没有返回文字");
-  return { text: text.trim() };
-}
-
-// QQ 语音附件是 silk 编码：silk → PCM → 补 WAV 头 → 走现有转写服务
-async function transcribeQqVoice(filePath, settings) {
-  const { decode } = await import("silk-wasm");
-  const silk = await fs.readFile(filePath);
-  const pcm = await decode(silk, 24000);
-  const duration = pcm.duration ? Math.round(pcm.duration / 1000) : Math.max(1, Math.round(pcm.data.byteLength / (24000 * 2)));
-  const wav = buildWavFromPcm(Buffer.from(pcm.data), 24000);
-  const result = await transcribeAudio(wav, "audio/wav", settings);
-  const rawText = result?.text || "";
-  const text = stripAsrText(rawText);
-  return { text, duration };
-}
-
-// PCM(s16le) + 采样率 → 标准 WAV（44 字节头），供转写服务读取
-function buildWavFromPcm(pcm, sampleRate) {
-  const channels = 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * channels * bitsPerSample / 8;
-  const blockAlign = channels * bitsPerSample / 8;
-  const dataSize = pcm.byteLength;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + dataSize, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(channels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(dataSize, 40);
-  return Buffer.concat([header, pcm]);
 }
 
 
@@ -1856,145 +1022,16 @@ async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4
     .map((message, i) => `第 ${start + i} 条 [${message.role}]：${historyMessageText(message).slice(0, 500)}`)
     .join("\n\n");
 }
+const mcpRuntime = createMcpRuntime({
+  get mcpShuttingDown() { return mcpShuttingDown; },
+  set mcpShuttingDown(value) { mcpShuttingDown = value; },
+});
+const { callMcpTool, closeAllMcpClients } = mcpRuntime;
 
-// ---- MCP 工具服务器（stdio） ----
-
-const mcpClients = new Map();
-const mcpClientConnections = new Map();
-const builtInComputerUseServer = discoverComputerUseServer();
-
-function mcpServersOf(settings) {
-  const list = Array.isArray(settings?.mcpServers) ? settings.mcpServers : [];
-  const configured = list.filter((server) =>
-    server
-    && server.enabled !== false
-    && String(server.transport === "http" ? server.url : server.command || "").trim()
-    && String(server.id || "") !== COMPUTER_USE_SERVER_ID);
-  return builtInComputerUseServer ? [builtInComputerUseServer, ...configured] : configured;
+function mcpExtraTools(...args: Parameters<typeof mcpRuntime.mcpExtraTools>) {
+  return mcpRuntime.mcpExtraTools(...args);
 }
 
-function mcpServerArgs(server) {
-  if (Array.isArray(server.args)) return server.args.map(String);
-  return String(server.args || "").split(" ").filter(Boolean);
-}
-
-async function getMcpClient(server) {
-  if (mcpShuttingDown) throw new Error("应用正在退出，已停止新建本机操作连接");
-  const key = JSON.stringify(server);
-  const existing = mcpClients.get(key);
-  if (existing?.process || existing?.connected) return existing;
-  const pendingConnection = mcpClientConnections.get(key);
-  if (pendingConnection) return pendingConnection;
-  const connection = Promise.resolve().then(async () => {
-    // Register the pending connection before awaiting cleanup, so simultaneous tasks share it.
-    for (const [oldKey, client] of mcpClients) {
-      const old = JSON.parse(oldKey);
-      if (oldKey !== key && old.id === server.id && !client.pending?.size && !client.activeRequests) {
-        mcpClients.delete(oldKey);
-        await client.close();
-      }
-    }
-    const resolved = resolveMcpServer({...server, args: mcpServerArgs(server)});
-    const client = server.transport === "http" ? new HttpMcpClient(resolved) : new McpClient(resolved);
-    try {
-      await client.connect();
-      if (mcpShuttingDown) {
-        await client.close();
-        throw new Error("应用正在退出，已停止新建本机操作连接");
-      }
-      mcpClients.set(key, client);
-      return client;
-    } catch (error: any) {
-      await client.close();
-      throw error;
-    }
-  });
-  mcpClientConnections.set(key, connection);
-  try {
-    return await connection;
-  } finally {
-    if (mcpClientConnections.get(key) === connection) mcpClientConnections.delete(key);
-  }
-}
-
-// MCP 的 inputSchema 是通用 JSON Schema，可能带 $schema 声明或空的 required 数组，
-// 严格校验的 OpenAI 兼容服务（vLLM/LM Studio 等）会拒绝，这里统一清洗成标准工具参数格式
-function sanitizeMcpInputSchema(schema) {
-  if (!schema || typeof schema !== "object") return { type: "object", properties: {} };
-  const { $schema, ...rest } = schema;
-  const cleaned = { ...rest };
-  if (cleaned.type !== "object") cleaned.type = "object";
-  if (!cleaned.properties || typeof cleaned.properties !== "object") cleaned.properties = {};
-  if (Array.isArray(cleaned.required) && !cleaned.required.length) delete cleaned.required;
-  return cleaned;
-}
-
-async function mcpExtraTools(settings) {
-  const extra = [];
-  for (const server of mcpServersOf(settings)) {
-    try {
-      const client = await getMcpClient(server);
-      for (const tool of client.tools) {
-        extra.push({
-          type: "function",
-          function: {
-            name: `mcp__${server.id || server.name}__${tool.name}`,
-            description: server.id === COMPUTER_USE_SERVER_ID
-              ? `【本机应用操作】${tool.description || tool.name}`
-              : `【MCP:${server.name}】${tool.description || tool.name}`,
-            parameters: sanitizeMcpInputSchema(tool.inputSchema),
-          },
-        });
-      }
-    } catch (error: any) {
-      // 单个服务器连不上不影响其他工具；但必须留日志，否则用户配了 MCP 后
-      // 界面上毫无反馈（工具列表里既没有它、也没有任何报错），只能靠猜。
-      console.warn(
-        `[mcp] 服务器「${server.name || server.command}」连接失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  return extra;
-}
-
-async function callMcpTool(settings, fullName, args, { signal } = {} as any) {
-  const rest = fullName.slice(5);
-  for (const server of mcpServersOf(settings)) {
-    const prefix = `${server.id || server.name}__`;
-    if (!rest.startsWith(prefix)) continue;
-    const client = await getMcpClient(server);
-    try {
-      const toolName = rest.slice(prefix.length);
-      const result = await client.callTool(toolName, args, {
-        requestTimeoutMs: server.id === COMPUTER_USE_SERVER_ID && toolName === "install_dependencies"
-          ? COMPUTER_USE_INSTALL_TIMEOUT_MS
-          : undefined,
-        signal,
-      });
-      return { ok: !result.isError, result: result.text, images: result.images };
-    } catch (error: any) {
-      if (!client.process && !client.connected) mcpClients.delete(JSON.stringify(server));
-      if (signal?.aborted) return { ok: false, result: "任务已停止" };
-      if (server.id === COMPUTER_USE_SERVER_ID) {
-        const guidance = process.platform === "linux"
-          ? "请确认当前使用 X11 桌面会话，并已安装 xdotool、wmctrl、python3-pyatspi 和 ImageMagick。"
-          : "请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用；可先让助手调用 check_permissions 查看权限状态。";
-        return {
-          ok: false,
-          result: `本机应用操作没有获得系统响应。${guidance}然后重试。原始原因：${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-      throw error;
-    }
-  }
-  return { ok: false, result: `没有找到 MCP 工具：${fullName}` };
-}
-
-async function closeAllMcpClients() {
-  const clients = [...mcpClients.values()];
-  mcpClients.clear();
-  await Promise.allSettled(clients.map((client) => client.close()));
-}
 
 // ---- 浏览器协作（可见窗口，操作可审计） ----
 
@@ -2778,459 +1815,34 @@ async function workingContextForSession(sessionId) {
     ?.workingContext;
   return String(session.workingContext ?? messageContext ?? "").trim();
 }
+const automationRuntime = createAutomationRuntime({
+  get ctx() { return ctx; },
+  trackTaskStart,
+  get wakeRuns() { return wakeRuns; },
+  get mainWindow() { return mainWindow; },
+  set mainWindow(value) { mainWindow = value; },
+  readSettings,
+  visibleConversationForSession,
+  workingContextForSession,
+  get CHANNEL_STREAM_EVENT_TYPES() { return CHANNEL_STREAM_EVENT_TYPES; },
+  persistSessionAppend,
+  trackTaskEnd,
+  drainSessionQueue,
+  broadcastSchedulesChanged,
+  get entryRuns() { return entryRuns; },
+  sendScheduleRunStarted,
+  persistSessionRecord,
+});
+const { createTranscriptCollector } = automationRuntime;
 
-// options.manual：「立即继续」按钮触发的手动续跑（不是到点自动唤醒）。
-// 渲染端要据此说"已按你的要求立即继续"，而不是谎称"已到点自动唤醒"。
-async function resumeWake(wake, options: any = {}) {
-  const wakeSessionId = String(wake?.sessionId || "");
-  const manualWake = Boolean(options.manual);
-  ctx.scheduler.running = true;
-  trackTaskStart();
-  // 登记占用：唤醒续跑与前台任务共用同一条"会话忙"判定，这段无人值守执行期间
-  // 渲染端发来的消息才会被排队而不是并发起第二个 run。
-  // runId 一并下发给渲染端，让运行中的续跑也能被 ESC/停止按钮中止。
-  const wakeRunId = crypto.randomUUID();
-  const wakeAbort = new AbortController();
-  // workspacePath 供渠道任务按工作区判忙；取不到时视为未知，不参与互斥
-  if (wakeSessionId) wakeRuns.set(wakeSessionId, {
-    runId: wakeRunId, abort: wakeAbort, kind: "续跑任务",
-    workspacePath: String(wake?.workspacePath || ctx.sessions.get(wakeSessionId)?.workspacePath || ""),
-  });
-  try {
-    // 状态广播放在 try 内：任何后续异常都必须走 finally 释放占用，否则这个会话会被永久锁死
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("wake:status", {
-        sessionId: wake.sessionId,
-        status: "running",
-        runId: wakeRunId,
-        wakeAt: wake.wakeAt,
-        reason: wake.reason,
-        ...(manualWake ? { manual: true } : {}),
-      });
-    }
-    const settings = settingsForSession(await readSettings(), await ctx.sessions.getAsync(wake.sessionId));
-    if (!hasConfiguredModel(settings)) {
-      throw new Error("此会话的模型配置不可用，请重新选择模型后继续");
-    }
-    const prior = await visibleConversationForSession(wake.sessionId, wake.prompt, wake.finalText);
-    const workingContext = await workingContextForSession(wake.sessionId);
-    const wakeGoal = queuedGoalPayload({}, ctx.sessions.get(wake.sessionId) || {});
-    const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
-      + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
-    const collector = createTranscriptCollector({runId:wakeRunId});
-    // 先发唤醒消息再开跑（与定时任务、渠道任务同一口径）：续跑开始前就把"谁在什么时候
-    // 因为什么把任务唤醒"写进会话并推给界面。等收尾才和回答一起补上去的话，模型跑多久，
-    // 用户在聊天里就有多久看不到这次唤醒的来由，中途崩溃/被关掉还会连同记录一起丢。
-    const wakeSessionBefore = await ctx.sessions.getAsync(wake.sessionId);
-    // DSH 会话的唤醒提示就是 DSH 轮次正文（不带「（到点自动唤醒）」前缀），归档也按轮次回写；
-    // 两处口径要一致，否则开跑前上屏的这条会在收尾归并时被改写一次。
-    const wakeUserMessage = {
-      id:`${wakeRunId}:user`,runId:wakeRunId,role:"user",
-      content:wakeSessionBefore?.runtime === "dsh" ? wakeText : `（到点自动唤醒）${wakeText}`,
-      createdAt:new Date().toISOString(),
-    };
-    if (wakeSessionBefore) {
-      await ctx.sessions.replace({...wakeSessionBefore,messages:mergeDshTranscript(wakeSessionBefore.messages || [],[wakeUserMessage]),updatedAt:new Date().toISOString()});
-    } else {
-      // 会话存档缺失（历史被清理过）时也要留痕：不建的话这次续跑整段都无处落地
-      await ctx.sessions.upsert({id:wake.sessionId,workspacePath:wake.workspacePath,
-        createdAt:wakeUserMessage.createdAt,updatedAt:wakeUserMessage.createdAt,messages:[wakeUserMessage]});
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("sessions:append", {
-        runId:wakeRunId,sessionId: wake.sessionId,
-        workspacePath: wake.workspacePath,
-        messages:[wakeUserMessage],
-      });
-    }
-    // 到点续跑的生效审批模式：interactive 提升为 auto；reviewer（替我审批）保持 reviewer，
-    // 让审核助手继续逐条把关——工作区内的低风险操作（含带 rm/ffmpeg 的复合命令）由助手放行，
-    // 只在越界、外发、破坏性或助手判不准时才转人工收件箱。降级成 auto 会让工作区内的 ask
-    // 不经审核助手直接弹人工审批卡，无人值守反而更打扰（2026-10-02 到点续跑弹卡即此原因）。
-    // full-access / deny-changes / auto 保持原模式，全局「完全访问权限」同样生效。
-    // 折算规则见 settings.mts 的 wakeApprovalMode / unattendedApprovalMode（有单测钉住）。
-    const approvalMode = wakeApprovalMode(settings.approvalMode, wake.approvalMode);
-    const result = await ctx.agent.run({
-      runId:wakeRunId,
-      settings,
-      workspacePath: wake.workspacePath,
-      sessionId: wake.sessionId,
-      scheduleId: wake.scheduleId,
-      approvalMode,
-      // 唤醒记录仍登记原模式（下次续跑再评估提升）
-      wakeApprovalMode: wake.approvalMode,
-      prompt: wake.prompt,
-      workingContext,
-      goal: wakeGoal.goal,
-      ...(wakeGoal.goal ? { loop: { enabled: true, iteration: 1, maximum: 10 } } : {}),
-      conversation: [...prior, { role: "user", content: wakeText }],
-      // 续跑中止信号：渲染端「停止」/ESC 能真正打断无人值守续跑
-      signal: wakeAbort.signal,
-      isCancelled: () => wakeAbort.signal.aborted,
-      // 续跑无人值守：审批与提问进收件箱挂起等待；等待期间暂时释放 ctx.scheduler.running 锁，避免系统调度死锁 2 小时
-      requestApproval: async (action, approvalSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "approval",
-          sessionId: wake.sessionId,
-          scheduleId: wake.scheduleId,
-          tool: action.kind,
-          title: `续跑任务申请：${action.title || action.kind}`,
-          details: action.details,
-          impact: action.impact,
-        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, wakeAbort.signal]) : wakeAbort.signal});
-        ctx.scheduler.running = false;
-        try {
-          const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
-          return Boolean(resolution?.ok);
-        } finally {
-          ctx.scheduler.running = true;
-        }
-      },
-      requestUserInput: (request, questionSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "question",
-          sessionId: wake.sessionId,
-          scheduleId: wake.scheduleId,
-          question: request.question,
-          options: request.options,
-          title: "续跑任务提问",
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
-        }, { signal: questionSignal ? AbortSignal.any([questionSignal,wakeAbort.signal]) : wakeAbort.signal });
-        ctx.scheduler.running = false;
-        try {
-          return ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
-        } finally {
-          ctx.scheduler.running = true;
-        }
-      },
-      emit: (agentEvent) => {
-        collector.handle(agentEvent);
-        if (mainWindow && !mainWindow.isDestroyed() && CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type))
-          mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:agentEvent});
-      },
-      afterWakeRegister: async (wakeResult) => {
-        if (wake.scheduleId) await ctx.scheduler.markSleeping(wake.scheduleId, wakeResult.wake, wake.sessionId);
-      },
-    });
-    if (result.status !== "sleeping" && wake.scheduleId) {
-      await ctx.scheduler.markFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId, result.status);
-    }
-    const wakeContent = result.status === "sleeping" && result.wake
-      ? `${result.finalText || ""}\n\n已再次挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim()
-      : undefined;
-    const wakeMessages = collector.buildMessages(`（到点自动唤醒）${wakeText}`, result, wakeContent);
-    const savedWake=await ctx.sessions.getAsync(wake.sessionId);
-    const settledWake = settledStoredGoal(savedWake, wakeGoal, result);
-    if (savedWake) await ctx.sessions.replace({...settledWake,messages:mergeDshTranscript(savedWake.messages || [],wakeMessages),updatedAt:new Date().toISOString()});
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      // 唤醒消息已在开跑前上屏（见上面的 sessions:append），收尾只补助手消息，
-      // 让同一轮用户消息只有一条；DSH 转录按轮次整段下发时不拆。
-      const wakeTranscript = wakeMessages.some(message=>message.dshTurnId)
-        ? wakeMessages : wakeMessages.filter(message=>message.role!=="user");
-      mainWindow.webContents.send("sessions:append", {
-        runId:wakeRunId,sessionId: wake.sessionId,
-        workspacePath: wake.workspacePath,
-        messages: wakeTranscript,
-        goalState: settledWake?.goalState,
-      });
-      mainWindow.webContents.send('agent:event',{sessionId:wake.sessionId,runId:wakeRunId,wakeRun:true,event:{type:'agent-finished',result}});
-    } else {
-      // 窗口未运行：续跑转录追加落盘（按消息内容去重）
-      if (!savedWake) await persistSessionAppend(wake.sessionId, wakeMessages);
-    }
-  } catch (error: any) {
-    const errorReason = error instanceof Error ? error.message : String(error);
-    console.error(`[wakes] 续跑任务异常 (${wake.sessionId}):`, errorReason);
-    if (wake.scheduleId) {
-      await ctx.scheduler.markFinished(wake.scheduleId, false, errorReason, wake.sessionId);
-    }
-    const failureMessages = [
-      {
-        role: "assistant",
-        content: `（到点自动唤醒失败）系统尝试唤醒任务时发生异常：${errorReason}`,
-        createdAt: new Date().toISOString(),
-        taskStatus: "error",
-      },
-    ];
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("sessions:append", {
-        sessionId: wake.sessionId,
-        workspacePath: wake.workspacePath,
-        messages: failureMessages,
-      });
-    } else {
-      await persistSessionAppend(wake.sessionId, failureMessages);
-    }
-  } finally {
-    trackTaskEnd();
-    ctx.scheduler.running = false;
-    // idle 必须带上本次续跑的 runId（渲染端按键比对清除可停止的 runId），
-    // 且要在 drainSessionQueue 之前发出：出队消息的 queue-start 会写入新的 runId
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("wake:status", {
-        sessionId: wake.sessionId,
-        status: "idle",
-        runId: wakeRunId,
-      });
-    }
-    if (wakeSessionId) {
-      wakeRuns.delete(wakeSessionId);
-      // 续跑期间用户在输入框发的消息已在队列里：这里与 executeAgentRun 同一出口推进，
-      // 否则它们会一直卡在队列中（唤醒续跑不走 executeAgentRun 的 finally）
-      try {
-        drainSessionQueue(wakeSessionId);
-      } catch (drainError: any) {
-        console.warn("[wakes] 续跑收尾推进队列失败:", drainError);
-      }
-    }
-  }
+function resumeWake(...args: Parameters<typeof automationRuntime.resumeWake>) {
+  return automationRuntime.resumeWake(...args);
 }
 
-
-
-
-// ---- 定时任务完整留痕：镜像渲染端 App.tsx 的 agent 事件归约，headless 运行也产出完整过程 ----
-// （活动流、文件变更、计划、用时），不再只存最终一句话。
-function createTranscriptCollector(options: any = {}) {
-  const runId = options.runId || crypto.randomUUID();
-  const userId = options.userMessage?.id || `${runId}:user`;
-  const assistantId = `${runId}:assistant`;
-  let turns: any[] = [];
-  let messages: any[] = [];
-  let activeTurn: string | undefined;
-  const patch = (update) => { messages = patchDshAssistant(messages,{assistantId,runId,turnId:activeTurn},update); };
-  const activities = [];
-  let changes = null;
-  let plan = null;
-  // 推理模型的思考流：事件带的是本次请求内的累积文本，保留最后一次即可
-  let reasoning = null;
-  const startedAt = Date.now();
-  return {
-    handle(agentEvent) {
-      if (!agentEvent || typeof agentEvent !== "object") return;
-      if (agentEvent.type === 'dsh-conversation') {
-        turns = agentEvent.turns;
-        activeTurn = turns.at(-1)?.user.id;
-        if (!messages.length) messages = [
-          {...options.userMessage,id:userId,role:'user',content:turns[0]?.user.text || '',createdAt:new Date(startedAt).toISOString(),runId},
-          {id:assistantId,role:'assistant',content:'',createdAt:new Date(startedAt).toISOString(),runId,activities:[]},
-        ];
-        messages = reconcileDshMessages(messages,turns,{userId,assistantId,runId,live:true});
-      } else if (agentEvent.type === "activity" && agentEvent.activity) {
-        activities.push({ ...agentEvent.activity });
-        patch(message=>({...message,activities:[...(message.activities || []),{...agentEvent.activity}]}));
-      } else if (agentEvent.type === "activity-update") {
-        // 定时任务、唤醒与渠道共用这份存档；不能只保存思考/工具详情，
-        // 否则中途正文与思考耗时在收尾替换实时消息时会丢失。
-        const update = {
-          status: agentEvent.status,
-          ...(agentEvent.detail !== undefined ? { detail: agentEvent.detail } : {}),
-          ...(agentEvent.durationMs !== undefined ? { durationMs: agentEvent.durationMs } : {}),
-          ...(agentEvent.commentary !== undefined ? { commentary: agentEvent.commentary } : {}),
-        };
-        const activity = activities.find((item) => item.id === agentEvent.id);
-        if (activity) Object.assign(activity, update);
-        messages = messages.map(message=>({...message,activities:message.activities?.map(item=>item.id===agentEvent.id ? {...item,...update} : item)}));
-      } else if (agentEvent.type === "file-change") {
-        patch(message=>({...message,changes:agentEvent.changes}));
-        changes = agentEvent.changes;
-      } else if (agentEvent.type === "plan-update") {
-        patch(message=>({...message,plan:agentEvent.steps}));
-        plan = agentEvent.steps;
-      } else if (agentEvent.type === "assistant-reasoning") {
-        reasoning = String(agentEvent.text || "");
-      }
-    },
-    // 供渠道任务收尾事件读取当前的文件变更与计划快照（只读，不改内部状态）
-    changes: () => changes,
-    plan: () => plan,
-    // 注意：assistantContent 必须是「可选」而不是给默认值 ""。三处收尾调用只传
-    // 2 个参数（定时任务 finished、渠道纯文本收尾、唤醒未再次挂起时传 undefined），
-    // 依赖 `assistantContent ?? fallback` 回退到 result.finalText；默认成 "" 会让
-    // `"" ?? fallback` 仍是空串，落盘/回传的助手正文变空。
-    buildMessages(userText, result, assistantContent?: string) {
-      const finalPlan = plan;
-      const base = [
-        { ...options.userMessage, id:userId, runId, role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
-        {
-          id:assistantId, runId, role: "assistant",
-          content: assistantContent ?? (result.finalText || result.reason || "（没有产出内容）"),
-          createdAt: new Date().toISOString(),
-          activities: activities.map((item) => ({ ...item })),
-          durationMs: Date.now() - startedAt,
-          taskStatus: result?.status,
-          ...(reasoning ? { reasoning } : {}),
-          ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
-          ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
-          ...(Array.isArray(result?.executedMessages) && result.executedMessages.length ? { executedMessages: result.executedMessages } : {}),
-          ...(result?.workingContext ? { workingContext: result.workingContext } : {}),
-        },
-      ];
-      const finalTurns = result.dshTurns || turns;
-      if (!finalTurns.length) return base;
-      if (!messages.length) messages = base;
-      else patch(message=>({...message,...base[1],id:message.id,
-        activities:message.activities || [],reasoning:message.reasoning || base[1].reasoning}));
-      return reconcileDshMessages(messages,finalTurns,{userId,assistantId,runId,finalContent:assistantContent});
-    },
-  };
+function runScheduledTask(...args: Parameters<typeof automationRuntime.runScheduledTask>) {
+  return automationRuntime.runScheduledTask(...args);
 }
 
-async function runScheduledTask(record, meta) {
-  ctx.scheduler.running = true;
-  trackTaskStart();
-  broadcastSchedulesChanged();
-  // 本次执行的会话 id：收件箱条目、审计记录与最终留痕会话共用同一个
-  const scheduleSessionId = crypto.randomUUID();
-  // 实时转发的运行标识 + 会话标题：与渠道运行同一套信封（用 scheduleRun 打标区分）
-  const scheduleRunId = scheduleSessionId;
-  const scheduleAbort = new AbortController();
-  entryRuns.set(scheduleSessionId,{runId:scheduleRunId,abort:scheduleAbort,kind:"定时任务",
-    workspacePath:String(record.workspacePath || "")});
-  const scheduleTitle = `计划：${String(record.name || "未命名").slice(0, 24)}`;
-  const scheduleStartedAt = new Date().toISOString();
-  const collector = createTranscriptCollector({runId:scheduleRunId});
-  // 起跑前先建会话：界面立刻能看到"这次运行",后续事件边跑边填,不用等任务结束
-  sendScheduleRunStarted({
-    sessionId: scheduleSessionId,
-    runId: scheduleRunId,
-    scheduleId: String(record.id || ""),
-    runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
-    title: scheduleTitle,
-    workspacePath: record.workspacePath,
-    prompt: record.prompt,
-    startedAt: scheduleStartedAt,
-    manual: Boolean(meta?.manual),
-  });
-  // 运行期把关键 agent 事件实时转发（白名单与渠道运行共用；trace/token-usage 只进本地留痕）。
-  // 定义在 try 之外：catch 路径也要用它发收尾事件，若只在 try 内定义，
-  // 早于定义行抛出的异常会让 catch 再抛 ReferenceError、吞掉真实错误。
-  const forwardRunEvent = (agentEvent) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (!CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type)) return;
-    mainWindow.webContents.send("agent:event", {
-      sessionId: scheduleSessionId,
-      runId: scheduleRunId,
-      scheduleRun: true,
-      event: agentEvent,
-    });
-  };
-  // 收尾：把权威转录交给渲染端（原位归并进运行开始时建的会话）或直接落盘。
-  // 运行开始/结束是两条路径：起跑下发 schedules:run-started 建会话，收尾用 sessions:prepend
-  // 下发完整转录（渲染端按会话 id 归并，不会出现两条同 id 会话）。
-  const finishSession = async (messages) => {
-    const session = {
-      id: scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
-      title: scheduleTitle,
-      workspacePath: record.workspacePath,
-      createdAt: scheduleStartedAt,
-      updatedAt: new Date().toISOString(),
-      messages,
-    };
-    const priorSession=await ctx.sessions.getAsync(scheduleSessionId);
-    session.messages=mergeDshTranscript(priorSession?.messages || [],session.messages);
-    await persistSessionRecord(session);
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("sessions:prepend", session);
-  };
-  try {
-    const settings = await readSettings();
-    if (!hasConfiguredModel(settings)) {
-      throw new Error("模型还没有配置，无法执行定时任务");
-    }
-    await ctx.sessions.upsert({id:scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
-      title:scheduleTitle,workspacePath:record.workspacePath,createdAt:scheduleStartedAt,updatedAt:scheduleStartedAt,
-      messages:[{id:`${scheduleRunId}:user`,runId:scheduleRunId,role:'user',content:record.prompt,createdAt:scheduleStartedAt}]});
-    const result = await ctx.agent.run({
-      runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',runId:scheduleRunId,
-      signal:scheduleAbort.signal,isCancelled:()=>scheduleAbort.signal.aborted,
-      settings,
-      workspacePath: record.workspacePath,
-      sessionId: scheduleSessionId,
-      scheduleId: record.id,
-      // 计划任务自身只有"是否允许写工作区"（reviewer / deny-changes）；
-      // 用户全局选了「完全访问权限」时同样生效，否则会出现界面显示完全访问、
-      // 计划任务却逐条弹审批卡的口径分裂（渠道任务一直按全局模式运行）。
-      approvalMode: unattendedApprovalMode(settings.approvalMode, record.allowWorkspaceWrites ? "reviewer" : "deny-changes"),
-      prompt: record.prompt,
-      conversation: [{ role: "user", content: record.prompt }],
-      // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
-      requestApproval: async (action, approvalSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "approval",
-          sessionId: scheduleSessionId,
-          scheduleId: record.id,
-          tool: action.kind,
-          title: `定时任务「${record.name || "未命名"}」申请：${action.title || action.kind}`,
-          details: action.details,
-          impact: action.impact,
-        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, scheduleAbort.signal]) : scheduleAbort.signal});
-        ctx.scheduler.running = false;
-        try {
-          const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消", UNATTENDED_PENDING_TIMEOUT_MS);
-          return Boolean(resolution?.ok);
-        } finally {
-          ctx.scheduler.running = true;
-        }
-      },
-      requestUserInput: (request, questionSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "question",
-          sessionId: scheduleSessionId,
-          scheduleId: record.id,
-          question: request.question,
-          options: request.options,
-          title: `定时任务「${record.name || "未命名"}」提问`,
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
-        }, { signal: questionSignal ? AbortSignal.any([questionSignal,scheduleAbort.signal]) : scheduleAbort.signal });
-        ctx.scheduler.running = false;
-        try {
-          return ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续", UNATTENDED_PENDING_TIMEOUT_MS);
-        } finally {
-          ctx.scheduler.running = true;
-        }
-      },
-      emit: (agentEvent) => {
-        collector.handle(agentEvent);
-        // 留痕与实时转发各走各的：collector 收全量（含 trace），界面只收影响 UI 白名单事件
-        forwardRunEvent(agentEvent);
-      },
-      afterWakeRegister: async (wakeResult) => {
-        await ctx.scheduler.markSleeping(record.id, wakeResult.wake, scheduleSessionId);
-      },
-    });
-    if (result.status === "sleeping" && result.wake) {
-      // 主动挂起：登记唤醒与 sleeping 标记已在服务内完成，这里只做留痕
-      const sleepingMessages = collector.buildMessages(
-        record.prompt,
-        result,
-        `${result.finalText || ""}\n\n已主动挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim(),
-      );
-      await finishSession(sleepingMessages);
-      return;
-    }
-    await ctx.scheduler.markFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId, result.status);
-    await finishSession(collector.buildMessages(record.prompt, result));
-  } catch (error: any) {
-    const message = error instanceof Error ? error.message : String(error);
-    await ctx.scheduler.markFinished(record.id, false, message, scheduleSessionId);
-    // 失败也要收口：运行开始时已经建过会话并标了"运行中"，不收尾的话界面上的气泡
-    // 会永远停在执行中，用户看不到失败原因（以前失败路径连会话都不落）
-    try {
-      await finishSession(collector.buildMessages(
-        record.prompt,
-        { status: "error", finalText: `计划执行失败：${message}`, reason: message },
-      ));
-    } catch (finishError: any) {
-      console.log(`[schedules] 失败收尾落盘失败：${finishError?.message || finishError}`);
-    }
-  } finally {
-    entryRuns.delete(scheduleSessionId);
-    trackTaskEnd();
-    ctx.scheduler.running = false;
-    drainSessionQueue(scheduleSessionId);
-    broadcastSchedulesChanged();
-  }
-}
 
 
 
@@ -3240,8 +1852,8 @@ async function runScheduledTask(record, meta) {
 // 一个任务结束时不能把仍执行中的其他渠道任务误判为空闲。
 let runningChannelTaskCount = 0;
 // 渠道任务的按聊天中止:「停止」指令把 chatKey 放进 aborts,等待工作区空闲的循环与 runAgent 的 isCancelled 都认它
-const channelTaskKeys = new Set(); // 等待工作区空闲中 + 执行中的渠道任务 chatKey
-const channelTaskAborts = new Set(); // 收到「停止」的 chatKey
+const channelTaskKeys = new Set<string>(); // 等待工作区空闲中 + 执行中的渠道任务 chatKey
+const channelTaskAborts = new Set<string>(); // 收到「停止」的 chatKey
 
 async function readChannelChats() {
   const stored = await readJson(dataFile("channel-chats.json"), {});
@@ -3386,155 +1998,39 @@ async function reconcileChannels() {
     wechat: { ...(settings.channels?.wechat || {}), ...wechatCredentials },
   });
 }
+const channelRuntime = createChannelRuntime({
+  describeAttachment,
+  readSettings,
+  readChannelChats,
+  writeJson,
+  dataFile,
+  channelDebug,
+  get channelTaskKeys() { return channelTaskKeys; },
+  defaultChannelWorkspace,
+  get mcpShuttingDown() { return mcpShuttingDown; },
+  set mcpShuttingDown(value) { mcpShuttingDown = value; },
+  get channelTaskAborts() { return channelTaskAborts; },
+  workspaceBlockers,
+  get activeAgents() { return activeAgents; },
+  get ctx() { return ctx; },
+  get runningChannelTaskCount() { return runningChannelTaskCount; },
+  set runningChannelTaskCount(value) { runningChannelTaskCount = value; },
+  trackTaskStart,
+  get entryRuns() { return entryRuns; },
+  get mainWindow() { return mainWindow; },
+  set mainWindow(value) { mainWindow = value; },
+  get CHANNEL_STREAM_EVENT_TYPES() { return CHANNEL_STREAM_EVENT_TYPES; },
+  transcribeQqVoice,
+  visibleConversationForSession,
+  createExtraToolRouter,
+  createTranscriptCollector,
+  workingContextForSession,
+  providerMessageContent,
+  trackTaskEnd,
+  drainSessionQueue,
+});
+const { runChannelTask } = channelRuntime;
 
-// 入站媒体 → 桌面会话 Attachment[]：有落盘文件的走 describeAttachment（拿缩略图/元数据），
-// 没落盘（如仅转写的语音）构造最小描述，保证桌面消息能渲染附件区
-async function buildChannelAttachments(media) {
-  const result = [];
-  for (const item of Array.isArray(media) ? media : []) {
-    if (!item || typeof item !== "object") continue;
-    const ext = item.filePath ? path.extname(item.filePath).toLowerCase() : "";
-    const isVoice = item.kind === "voice" || ext === ".silk" || (item.mimeType && item.mimeType.startsWith("audio/"));
-    const fallback = {
-      name: item.fileName || (item.kind === "voice" ? "语音" : "附件"),
-      path: item.filePath || "",
-      size: Number(item.size) || 0,
-      mimeType: item.mimeType || (isVoice ? "audio/silk" : "application/octet-stream"),
-      isImage: item.kind === "image",
-      isVoice: Boolean(isVoice),
-      ...(item.duration ? { duration: Number(item.duration) } : {}),
-    };
-    if (!item.filePath) {
-      result.push(fallback);
-      continue;
-    }
-    try {
-      const desc = await describeAttachment(item.filePath);
-      result.push({
-        ...desc,
-        isVoice: Boolean(isVoice || desc.isVoice),
-        ...(item.duration ? { duration: Number(item.duration) } : {}),
-      });
-    } catch {
-      result.push(fallback);
-    }
-  }
-  return result;
-}
-
-// send_media 工具处理器：校验工作区路径、白名单扩展名与 50 MB 上限，登记到 pendingMedia
-// （决策记录第 9 节：出站媒体不额外加审批，但严格限工作区、白名单与大小）
-async function handleChannelSendMedia(args, { workspacePath, pendingMedia }) {
-  const rawPath = String(args?.path || "").trim();
-  const resolved = await verifyChannelMediaPath(workspacePath, rawPath);
-  if (!resolved.ok) return { ok: false, result: resolved.error };
-  const stat = await fs.stat(resolved.path).catch(() => null);
-  if (!stat || !stat.isFile()) return { ok: false, result: `文件不存在：${rawPath}` };
-  const extension = path.extname(resolved.path).toLowerCase();
-  if (!CHANNEL_MEDIA_EXTENSIONS.has(extension)) {
-    return { ok: false, result: `不支持发送 ${extension || "无扩展名"} 文件，只能发图片或常见文档` };
-  }
-  if (stat.size > MAX_MEDIA_BYTES) return { ok: false, result: "文件超过 50 MB，不能发送" };
-  const name = path.basename(resolved.path);
-  pendingMedia.push({
-    kind: mediaKindForExtension(extension),
-    filePath: resolved.path,
-    fileName: name,
-    ...(String(args?.caption || "").trim() ? { caption: String(args.caption).trim() } : {}),
-  });
-  return { ok: true, result: `已登记发送：${name}` };
-}
-
-// text_to_speech 工具处理器：TTS 合成（本地 Qwen3-TTS 或 OpenAI 兼容 /audio/speech）→ silk 编码 → 登记到 pendingMedia
-async function handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings }) {
-  const text = String(args?.text || "").trim();
-  const rawPath = String(args?.path || "").trim();
-  if (!text) return { ok: false, result: "text_to_speech 缺少 text 参数" };
-  if (!rawPath) return { ok: false, result: "text_to_speech 缺少保存路径（工作区相对路径，.silk 结尾）" };
-  const resolved = await verifyChannelMediaPath(workspacePath, rawPath, { mustExist: false });
-  if (!resolved.ok) return { ok: false, result: resolved.error };
-  if (path.extname(resolved.path).toLowerCase() !== ".silk") {
-    return { ok: false, result: "语音文件必须以 .silk 结尾（平台要求 silk 格式）" };
-  }
-  // 引擎与本地模型路径以磁盘最新设置为准（改路径保存后立即生效）
-  const saved = await readSettings();
-  let wav;
-  if (normalizeTtsEngine(settings?.ttsEngine || saved.ttsEngine) === "local") {
-    try {
-      const { wav: localWav } = await synthesizeWithLocalTts({
-        text: text.slice(0, 2000),
-        voicePath: String(saved.ttsVoicePath || "").trim(),
-      });
-      wav = Buffer.from(localWav);
-    } catch (error: any) {
-      return { ok: false, result: error instanceof Error ? error.message : String(error) };
-    }
-  } else {
-    const ttsEndpoint = String(settings?.ttsEndpoint || "").trim();
-    if (!ttsEndpoint) {
-      return { ok: false, result: "语音合成服务还没有配置：请在电脑端设置中填写合成服务地址" };
-    }
-    const apiKey = String(settings?.ttsApiKey || settings?.apiKey || "").trim();
-    const ttsUrl = ttsEndpoint.endsWith("/audio/speech")
-      ? ttsEndpoint
-      : `${ttsEndpoint.replace(/\/+$/, "")}/audio/speech`;
-    let response;
-    try {
-      response = await fetch(ttsUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
-        body: JSON.stringify({
-          model: String(settings?.ttsModel || "tts-1"),
-          input: text.slice(0, 2000),
-          voice: "alloy",
-          response_format: "wav",
-        }),
-      });
-    } catch (error: any) {
-      return { ok: false, result: `语音合成服务连接失败：${error instanceof Error ? error.message : String(error)}` };
-    }
-    if (!response.ok) return { ok: false, result: `语音合成失败（${response.status}），请检查服务配置` };
-    wav = Buffer.from(await response.arrayBuffer());
-  }
-  const { encode, isWav } = await import("silk-wasm");
-  if (!isWav(wav)) {
-    return { ok: false, result: "语音合成服务没有返回 WAV 音频，请确认服务支持 response_format=wav" };
-  }
-  try {
-    const silk = await encode(wav, 0);
-    await fs.mkdir(path.dirname(resolved.path), { recursive: true });
-    await fs.writeFile(resolved.path, Buffer.from(silk.data));
-  } catch (error: any) {
-    return { ok: false, result: `语音编码失败：${error instanceof Error ? error.message : String(error)}` };
-  }
-  const name = path.basename(resolved.path);
-  pendingMedia.push({ kind: "voice", filePath: resolved.path, fileName: name });
-  return { ok: true, result: `已合成语音并登记发送：${name}` };
-}
-
-// switch_workspace 工具处理器：模型在用户明确要求切换工作目录时调用，
-// 与「更换工作目录至…」指令同口径（用户点名的目录直接切换，无需再单独审批），
-// 落盘到 channel-chats.json 并同步内存记录，后续消息都在新目录里操作。
-async function handleChannelSwitchWorkspace(args, { chatRecord, chatKey, workspacePath, userText }) {
-  const rawPath = String(args?.path || "").trim();
-  if (!rawPath) return { ok: false, result: "缺少目标目录路径" };
-  if (!isWorkspaceSwitchRequest(userText)) {
-    return { ok: false, result: "用户没有要求切换工作目录，不能自行更换" };
-  }
-  const resolved = await resolveWorkspaceSwitch(rawPath, workspacePath);
-  if (!resolved.ok) return { ok: false, result: resolved.error };
-  const nextPath = resolved.path;
-  chatRecord.workspacePath = nextPath;
-  chatRecord.updatedAt = new Date().toISOString();
-  const chats = await readChannelChats();
-  if (chats[chatKey]) {
-    chats[chatKey].workspacePath = nextPath;
-    chats[chatKey].updatedAt = chatRecord.updatedAt;
-    await writeJson(dataFile("channel-chats.json"), chats);
-  }
-  channelDebug("渠道切换工作区(工具)", { chatKey, path: nextPath });
-  return { ok: true, path: nextPath, result: `工作目录已切换为：${nextPath}。之后的任务都会在这个目录里操作。` };
-}
 
 // 渠道任务实时透传给渲染端的事件白名单：只转发会改变 UI 的轻量事件
 // （活动流、正文流式、思考流、计划、循环状态、文件变更、审批/提问、上下文用量、任务开始/结束）。
@@ -3556,12 +2052,6 @@ const CHANNEL_STREAM_EVENT_TYPES = new Set([
   "agent-finished",
 ]);
 
-// 渠道消息等待同一工作区空闲的上限：同工作区的头部任务长时间不结束时，
-// 排在后面的消息不能无限堆积（否则用户只会看到“排队数+1”而没有任何任务被执行）。
-const CHANNEL_QUEUE_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
-// 被同一工作区的任务挡住时，超过这么久就先回一条说明，避免用户无声干等
-const CHANNEL_WAIT_NOTICE_DELAY_MS = 5000;
-
 // 当前所有正在执行的任务（含各自占用的工作区）。三种占用分开登记过，这里汇总成
 // 判忙用的视图：桌面任务在 activeAgents、到点续跑在 wakeRuns、定时/渠道任务在 entryRuns。
 function runningTaskEntries() {
@@ -3578,427 +2068,6 @@ function runningTaskEntries() {
 // 电脑端一有长任务，QQ/微信消息就干等满 10 分钟再被丢弃——这是"每次都超过 10 分钟"的成因。
 function workspaceBlockers(workspacePath, ignoreSessionId = "") {
   return findWorkspaceBlockers(runningTaskEntries(), workspacePath, ignoreSessionId);
-}
-
-// 一条 IM 消息驱动的完整任务(范本:runScheduledTask)
-async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord, isNewChat, reply: rawReply, replyMedia, sendTyping, registerPending, clearPending }) {
-  const myKey = String(chatKey || `${channel}:${chat?.chatId || ""}`);
-  // 记录每次出站回复的实际内容：确认“回复内容=用户消息”是模型回显还是显示问题
-  const reply = async (replyText) => {
-    channelDebug("渠道回复", {
-      chatKey: myKey,
-      text: String(replyText || "").slice(0, 200),
-    });
-    return rawReply(replyText);
-  };
-  channelTaskKeys.add(myKey);
-  const taskStartedAt = Date.now();
-  channelDebug("渠道任务启动", {
-    chatKey: myKey,
-    text: String(text || "").slice(0, 80),
-    messageId: String(chat?.messageId || ""),
-    isNewChat,
-  });
-  // 渠道消息不可丢弃，但只等「同一工作区」的任务：不同工作区互不阻塞。
-  // 等待期间也要响应「停止」,否则会堵在守卫里无法中止。
-  // 等待本身保留上限：同工作区头部任务若长时间不结束（网络/模型/审批等），
-  // 后面的消息不能无限排队，否则用户只会看到“排队数+1”而没有任何任务被执行。
-  // 双保险:manager 侧已修复历史脏数据,这里对非字符串值再做兜底重新推导
-  const storedWorkspace = typeof chatRecord.workspacePath === "string" ? chatRecord.workspacePath.trim() : "";
-  let workspacePath = storedWorkspace || await defaultChannelWorkspace();
-  const sessionId = chatRecord.sessionId;
-  const waitStartedAt = Date.now();
-  let waitNotified = false;
-  while (!mcpShuttingDown && !channelTaskAborts.has(myKey)) {
-    const blockers = workspaceBlockers(workspacePath, sessionId);
-    if (!blockers.length) break;
-    // 只有 position>1 才会收到「排队中」提示；被同一工作区的他人任务挡住时 position 是 1，
-    // 用户此前完全收不到反馈、只能干等到超时被取消，这里补一条一次性说明。
-    if (!waitNotified && Date.now() - waitStartedAt >= CHANNEL_WAIT_NOTICE_DELAY_MS) {
-      waitNotified = true;
-      await reply(`已收到，正在等同一工作目录下的${blockers[0].kind}结束，它结束后会自动开始，无需重发；回复「停止」可取消。`).catch(() => { });
-    }
-    await new Promise<any>((resolve) => setTimeout(resolve, 2000));
-    if (!mcpShuttingDown && !channelTaskAborts.has(myKey) && Date.now() - waitStartedAt > CHANNEL_QUEUE_WAIT_TIMEOUT_MS) {
-      channelDebug("渠道任务等待超时已跳过", {
-        chatKey: myKey,
-        text: String(text || "").slice(0, 80),
-        workspacePath,
-        blockers: blockers.map((item) => item.kind),
-        activeAgents: activeAgents.size,
-        runningScheduledTask: ctx.scheduler.running,
-        runningChannelTaskCount,
-        waitMs: Date.now() - waitStartedAt,
-      });
-      await reply("这条消息等同一工作目录下的任务结束已超过 10 分钟，为避免一直阻塞后续消息，已取消这条。可以先停掉那个任务，或更换工作目录（回复「更换工作目录至…」）后重发。").catch(() => { });
-      channelTaskKeys.delete(myKey);
-      channelTaskAborts.delete(myKey);
-      return;
-    }
-  }
-  if (mcpShuttingDown || channelTaskAborts.has(myKey)) {
-    channelDebug("渠道任务未执行已退出", { chatKey: myKey, text: String(text || "").slice(0, 80) });
-    channelTaskKeys.delete(myKey);
-    channelTaskAborts.delete(myKey);
-    return;
-  }
-  runningChannelTaskCount += 1;
-  trackTaskStart();
-  // 本次渠道任务的运行 id：实时转发的 agent:event 信封与收尾 sessions:append 都带它，
-  // 渲染端据此区分渠道运行与桌面运行（防重复气泡），并把收尾消息替换进流式占位气泡。
-  const channelRunId = crypto.randomUUID();
-  if (Date.now() - taskStartedAt > 2000) {
-    channelDebug("渠道任务开始执行", {
-      chatKey: myKey,
-      text: String(text || "").slice(0, 80),
-      waitedMs: Date.now() - taskStartedAt,
-      activeAgents: activeAgents.size,
-      runningScheduledTask: ctx.scheduler.running,
-      runningChannelTaskCount,
-    });
-  }
-  const channelLabel = CHANNEL_LABELS[channel] || channel;
-  // 出站媒体登记（send_media / text_to_speech 工具写入，任务结束随最终回复发回）
-  const pendingMedia = [];
-  // 会话立即出现在列表里(先发用户消息,失败也留痕),助手结果随后追加。
-  // userMessage 构造需要等待附件信息，放在 try 内完成（语音转写也改变文本内容）。
-  let userText = "";
-  let userMessage = null;
-  let channelRuntime;
-  const channelAbort = new AbortController();
-  entryRuns.set(sessionId,{runId:channelRunId,abort:channelAbort,chatKey:myKey,kind:"渠道任务",workspacePath});
-  const sendUserMessage = () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (isNewChat) {
-      mainWindow.webContents.send("sessions:prepend", {
-        id: sessionId,
-        title: String(chatRecord.title || `${channelLabel}消息`).slice(0, 40),
-        workspacePath,
-        channel,runtime:channelRuntime,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messages: [userMessage],
-      });
-    } else {
-      mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, messages: [userMessage] });
-    }
-  };
-  // 完成/挂起时只追加助手消息(buildMessages 的 [user, assistant] 里 user 已经上过屏)。
-  // 带 runId：渲染端若已有本 run 的流式占位气泡则原位替换，而不是追加第二条。
-  const sendAssistantMessages = async (messages) => {
-    const saved=await ctx.sessions.getAsync(sessionId) || {id:sessionId,channel,title:String(chatRecord.title || `${channelLabel}消息`).slice(0,40),workspacePath,
-      createdAt:new Date().toISOString(),messages:userMessage ? [userMessage] : []};
-    await ctx.sessions.replace({...saved,workspacePath,runtime:channelRuntime || saved.runtime || 'dyworker',
-      messages:mergeDshTranscript(saved.messages || [],messages),updatedAt:new Date().toISOString()});
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const transcript = messages.some(message=>message.dshTurnId) ? messages : messages.filter(message=>message.role!=='user');
-    mainWindow.webContents.send("sessions:append", { sessionId, workspacePath, channel, runId: channelRunId, messages:transcript });
-  };
-  // 渠道任务实时透传：把运行中的关键 agent 事件（活动/正文/计划/循环状态）转发到渲染端，
-  // 让渠道会话像桌面任务一样边跑边显示，而不是等全部结束才一次性 append。
-  // 只挑影响 UI 的轻量事件；trace/token-usage 等仍只进本地留痕。事件体再包一层 sessionId/runId，
-  // 与桌面端 onAgentEvent 的负载形状一致，渲染端可用同一套归约逻辑处理。
-  // channelRun: true 是渠道运行的标记：桌面端在同一渠道会话里发起的任务也发 agent:event，
-  // 没有这个标记渲染端无法区分，会把同一条回复渲染成两个气泡。
-  // 定义在 try 之外：catch 路径也要用它发收尾事件，若只在 try 内定义，
-  // 早于定义行抛出的异常会让 catch 再抛 ReferenceError、吞掉真实错误。
-  const forwardChannelEvent = (agentEvent) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (!CHANNEL_STREAM_EVENT_TYPES.has(agentEvent?.type)) return;
-    mainWindow.webContents.send("agent:event", { sessionId, runId: channelRunId, channelRun: true, event: agentEvent });
-  };
-  try {
-    // 整条消息是「更换工作目录至…」时直接切换该聊天的操作目录，不经过模型。
-    // 目录本身由用户点名的指令确认，等同在电脑端选择工作文件夹，无需再单独审批。
-    const workspaceTarget = parseWorkspaceSwitch(text);
-    if (workspaceTarget) {
-      const switchResult = await resolveWorkspaceSwitch(workspaceTarget, workspacePath);
-      // 明显是路径指令（成功解析，或带分隔符/盘符但目录不存在）才在这里直接答复；
-      // 单 token 又不存在时更像任务正文里的说法，交给模型按普通消息处理。
-      if (switchResult.ok || looksLikePathDirective(workspaceTarget)) {
-        const switchText = switchResult.ok
-          ? `工作目录已更换为：${switchResult.path}。之后的任务都会在这个目录里操作。`
-          : switchResult.error;
-        if (switchResult.ok) {
-          workspacePath = switchResult.path;
-          chatRecord.workspacePath = workspacePath;
-          chatRecord.updatedAt = new Date().toISOString();
-          // 本 run 的占用记录同步换工作区，否则后续渠道消息仍按旧目录判忙
-          const ownRun = entryRuns.get(sessionId);
-          if (ownRun) ownRun.workspacePath = workspacePath;
-          const chats = await readChannelChats();
-          if (chats[chatKey]) {
-            chats[chatKey].workspacePath = workspacePath;
-            chats[chatKey].updatedAt = chatRecord.updatedAt;
-            await writeJson(dataFile("channel-chats.json"), chats);
-          }
-        }
-        const attachments = await buildChannelAttachments(media);
-        userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${text}`;
-        userMessage = {
-          role: "user",
-          content: userText,
-          createdAt: new Date().toISOString(),
-          ...(attachments.length ? { attachments } : {}),
-        };
-        const switchMessage = { role: "assistant", content: switchText, createdAt: new Date().toISOString() };
-        sendUserMessage();
-        await sendAssistantMessages([switchMessage]);
-        await reply(switchText).catch(() => { });
-        return;
-      }
-    }
-    const settings = await readSettings();
-    // 已有会话保留自己的模型；新渠道会话使用渠道默认配置。
-    const profileId = String(settings.channels?.modelProfileId || "");
-    const profile = profileId ? (settings.profiles || []).find((item) => item.id === profileId) : null;
-    const taskSettings = settingsForSession(profile
-      ? { ...settings, endpoint: profile.endpoint, model: profile.model, apiKey: profile.apiKey, reasoningEffort: profile.reasoningEffort || "" }
-      : settings, await ctx.sessions.getAsync(sessionId));
-    if (!hasConfiguredModel(taskSettings)) {
-      throw new Error("模型还没有配置,请先在电脑端完成设置");
-    }
-    if (!workspacePath) {
-      throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
-    }
-    // QQ / 微信 语音附件是 silk/音频：解码 → WAV → 现有转写服务；失败/未配置时按占位文案进任务并提示
-    let effectiveText = text;
-    const voiceItem = (Array.isArray(media) ? media : []).find((item) => item?.kind === "voice" && item?.filePath);
-    if (voiceItem) {
-      if (channel === "qq" || !text || text === "[语音]") {
-        try {
-          const { text: transcribed, duration } = await transcribeQqVoice(voiceItem.filePath, taskSettings);
-          if (transcribed) effectiveText = `[语音转写] ${transcribed}`;
-          if (duration) voiceItem.duration = duration;
-        } catch {
-          if (channel === "qq") {
-            await reply("收到语音，但语音识别服务还没有配置好。").catch(() => { });
-          }
-        }
-      }
-    }
-    const prior = await visibleConversationForSession(sessionId, "", "");
-    const storedSession = await ctx.sessions.getAsync(sessionId);
-    channelRuntime = settings.channels?.runtime || storedSession?.runtime || 'dyworker';
-    // 入站媒体 → 桌面附件（缩略图/文件名）；模型可见内容由 providerMessageContent 展开
-    const attachments = await buildChannelAttachments(media);
-    userText = `[来自${channelLabel}${chat.userName ? ` ${chat.userName}` : ""}] ${effectiveText}`;
-    userMessage = {
-      id:`${channelRunId}:user`,runId:channelRunId,
-      role: "user",
-      content: userText,
-      createdAt: new Date().toISOString(),
-      ...(attachments.length ? { attachments } : {}),
-    };
-    const now=new Date().toISOString();
-    await ctx.sessions.replace({...storedSession,id:sessionId,runtime:channelRuntime,channel,
-      title:storedSession?.title || String(chatRecord.title || `${channelLabel}消息`).slice(0,40),workspacePath,
-      createdAt:storedSession?.createdAt || now,updatedAt:now,messages:[...(storedSession?.messages || []),userMessage]});
-    sendUserMessage();
-    // 渠道任务与桌面会话保持统一的审批权限（使用全局设置/桌面当前选择的审批模式）
-    const approvalMode = normalizeApprovalMode(settings?.approvalMode);
-    let routerExecution: any = { sessionId, runId: channelRunId };
-    let baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
-    // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
-    const routeExtraTool = async (name, args) => {
-      if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
-      if (name === "text_to_speech") return handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings: taskSettings });
-      if (name === "switch_workspace") {
-        const result = await handleChannelSwitchWorkspace(args, { chatRecord, chatKey: myKey, workspacePath, userText: text });
-        if (result.ok) {
-          // 后续工具与本次任务收尾都用新目录；浏览器/MCP 路由也切到新工作区
-          workspacePath = result.path;
-          await baseRouter.dispose();
-          baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
-          routeExtraTool.dispose = () => baseRouter.dispose();
-        }
-        return result;
-      }
-      return baseRouter(name, args);
-    };
-    routeExtraTool.dispose = () => baseRouter.dispose();
-    routeExtraTool.setExecutionContext = (execution: any) => {
-      routerExecution = { ...execution, sessionId, runId: channelRunId };
-      baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
-    };
-    const collector = createTranscriptCollector({runId:channelRunId,userMessage});
-    const workingContext = await workingContextForSession(sessionId);
-    // 模型可见内容：文本 + 图片块（复用桌面端 providerMessageContent）
-    const contentForModel = await providerMessageContent({ content: userText, attachments });
-    // 用「正在输入」状态提示处理中，不再以文字消息形式打扰
-    await sendTyping().catch(() => { });
-    forwardChannelEvent({type:"queue-start",count:0});
-    const result = await ctx.agent.run({
-      runtime:channelRuntime,runId:channelRunId,signal:channelAbort.signal,
-      settings: taskSettings,
-      // getter 形式：switch_workspace 中途切换后，记忆落盘/唤醒登记跟随最新目录
-      workspacePath: () => workspacePath,
-      sessionId,
-      approvalMode,
-      prompt: text,
-      workingContext,
-      conversation: [...prior, { role: "user", content: contentForModel }],
-      auditExtras: { channel },
-      extraTools: channelMediaToolDefinitions(),
-      onExtraTool: routeExtraTool,
-      isCancelled: () => channelTaskAborts.has(myKey) || channelAbort.signal.aborted,
-      // 审批:收件箱(桌面可决议)+ IM 卡片(回复 允许/拒绝 决议),两侧共用 resolveInboxInternal
-      // 等待有 10 分钟上限：超时按拒绝处理，避免渠道队列头部永久悬死
-      requestApproval: async (action, approvalSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "approval",
-          sessionId,
-          tool: action.kind,
-          title: `${channelLabel}消息申请：${action.title || action.kind}`,
-          details: action.details,
-          impact: action.impact,
-        }, {signal: approvalSignal ? AbortSignal.any([approvalSignal, channelAbort.signal]) : channelAbort.signal});
-        registerPending({ itemId: pending.itemId, kind: "approval" });
-        await reply(formatChannelApproval(action)).catch(() => { });
-        const resolution = await ctx.inbox.awaitWithTimeout(pending, "审批等待超时，已自动取消");
-        clearPending();
-        if (resolution?.timedOut) {
-          await reply("审批等待超时，已自动取消这次操作。").catch(() => { });
-        } else if (resolution?.reason && String(resolution.reason).includes("权限已更新")) {
-          // 审批权限被调宽后这张卡已按新权限撤回并继续执行；不告知的话用户会继续去回
-          // 一张已经作废的审批卡，然后被「请先回复 1」拦住。
-          await reply("审批权限已更新，这次操作不用再确认了，任务继续。").catch(() => { });
-        }
-        return Boolean(resolution?.ok);
-      },
-      requestUserInput: async (request, questionSignal?: AbortSignal) => {
-        const pending = ctx.inbox.create({
-          kind: "question",
-          sessionId,
-          question: request.question,
-          options: request.options,
-          title: `${channelLabel}消息提问`,
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
-        }, { signal: questionSignal ? AbortSignal.any([questionSignal,channelAbort.signal]) : channelAbort.signal });
-        registerPending({ itemId: pending.itemId, kind: "question", options: request.options || [] });
-        const optionsText = (request.options || []).map((option, index) => `${index + 1}. ${option}${request.optionDescriptions?.[index] ? `：${request.optionDescriptions[index]}` : ''}`).join("\n");
-        await reply(`❓ ${request.question}${request.detail ? `\n\n${request.detail}` : ''}${optionsText ? `\n\n${optionsText}\n${request.multiSelect ? '多项选择请打开桌面的任务提问卡；也可以在这里直接补充文字回答。' : '回复序号或直接回答。'}` : ""}\n10 分钟未回复将按已有信息继续。`.trim()).catch(() => { });
-        const resolution = await ctx.inbox.awaitWithTimeout(pending, "提问等待超时，按已有信息继续");
-        clearPending();
-        return resolution;
-      },
-      emit: (agentEvent) => {
-        collector.handle(agentEvent);
-        forwardChannelEvent(agentEvent);
-      },
-    });
-    if (channelTaskAborts.has(myKey) || result.status === "cancelled") {
-      // 「停止」指令已经回复过,这里只把半截结果留痕到桌面会话,不再发 IM 最终结果。
-      // 半截正文保留在留痕里（与桌面端"已按你的要求停止"同口径），用户不至于丢失已生成的内容。
-      const partial = String(result.finalText || "").trim();
-      const stopNote = channelTaskAborts.has(myKey) ? "（用户通过渠道消息停止了任务）" : "已按你的要求停止。";
-      const cancelledContent = partial ? `${partial}\n\n${stopNote}` : stopNote;
-      await sendAssistantMessages(collector.buildMessages(userText, { ...result, status: "cancelled" }, cancelledContent));
-      // 收尾事件：渲染端据此清掉运行标记（正常完成路径在 reply 之后同样会发）
-      forwardChannelEvent({
-        type: "agent-finished",
-        result: { ...result, status: "cancelled", finalText: result.finalText || "", durationMs: Date.now() - taskStartedAt },
-      });
-      return;
-    }
-    if (result.status === "sleeping" && result.wake) {
-      // 主动挂起:沿用 self-wake 机制,到点由 checkDueWakes 续跑(审批走收件箱)
-      await ctx.scheduler.registerWake({
-        sessionId,
-        workspacePath,
-        approvalMode,
-        wake: result.wake,
-        prompt: text,
-        finalText: result.finalText,
-      });
-      const note = `已主动挂起,将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动继续(原因:${result.wake.reason})。`;
-      await reply(note).catch(() => { });
-      await sendAssistantMessages(collector.buildMessages(userText, result, `${result.finalText || ""}\n\n${note}`.trim()));
-      // 挂起同样是本轮收尾：渲染端清掉运行标记,到点续跑由调度路径另行起会话
-      forwardChannelEvent({
-        type: "agent-finished",
-        result: { ...result, status: "sleeping", finalText: result.finalText || "", wake: result.wake, durationMs: Date.now() - taskStartedAt },
-      });
-      return;
-    }
-    const finalText = result.finalText || result.reason || "没有产出结果";
-    if (pendingMedia.length) {
-      // 出站媒体：finalText 作为第一条 text part，随后每个媒体一条 media part；
-      // 发送失败逐条降级为文字说明（决策记录第 9 节：与文本回复同权责）
-      const parts = [
-        { type: "text", text: finalText },
-        ...pendingMedia.map((item) => ({
-          type: "media",
-          kind: item.kind,
-          filePath: item.filePath,
-          fileName: item.fileName,
-          ...(item.caption ? { caption: item.caption } : {}),
-        })),
-      ];
-      let sendFailed = false;
-      let sendFailureNote = "";
-      try {
-        await replyMedia(parts);
-      } catch (error: any) {
-        sendFailed = true;
-        const reason = error instanceof Error ? error.message : String(error);
-        // 与任务级错误提示同口径：去掉原始 JSON/堆栈，截断后只留简明原因
-        const friendly = (reason.replace(/\s*[{[].*$/s, "") || reason).slice(0, 160);
-        sendFailureNote = `（发送失败：${friendly}）`;
-        for (const part of parts) {
-          if (part.type !== "media") continue;
-          await reply(`[已生成 ${(part as any).fileName || "文件"}，但发送失败：${friendly}]`).catch(() => { });
-        }
-      }
-      const sentNote = sendFailed ? sendFailureNote : `（已发送 ${pendingMedia.length} 个文件）`;
-      // 出站媒体同步进桌面会话：和入站一样走 Attachment 描述，让图片/文件在对话里可见
-      const outboundAttachments = await buildChannelAttachments(pendingMedia);
-      const built = collector.buildMessages(userText, result, `${finalText}${sentNote}`);
-      if (outboundAttachments.length) (built.at(-1) as any).attachments = outboundAttachments;
-      await sendAssistantMessages(built);
-    } else {
-      await reply(finalText).catch(() => { });
-      await sendAssistantMessages(collector.buildMessages(userText, result));
-    }
-    // 通知渲染端本轮渠道任务已结束：渲染端据此给流式气泡打上最终状态、清掉运行标记。
-    // 结果体带 plan/changes/durationMs，渲染端用它把已实时展示的 assistant 消息收口为最终形态。
-    forwardChannelEvent({
-      type: "agent-finished",
-      result: {
-        ...result, status: result.status,
-        reason: result.reason,
-        finalText: result.finalText,
-        wake: result.wake,
-        changes: collector.changes?.(),
-        plan: collector.plan?.(),
-        durationMs: Date.now() - taskStartedAt,
-      },
-    });
-  } catch (error: any) {
-    const message = error instanceof Error ? error.message : String(error);
-    // IM 侧给简明原因(截掉原始 JSON/堆栈),完整信息留在桌面会话里
-    const friendly = (message.replace(/\s*[{[].*$/s, "") || message).slice(0, 200);
-    await reply(`出错了:${friendly}`).catch(() => { });
-    await sendAssistantMessages([{ role: "assistant", content: `出错了:${message}`, createdAt: new Date().toISOString() }]);
-    forwardChannelEvent({
-      type: "agent-finished",
-      result: { status: "error", reason: message, durationMs: Date.now() - taskStartedAt },
-    });
-  } finally {
-    clearPending();
-    trackTaskEnd();
-    entryRuns.delete(sessionId);
-    drainSessionQueue(sessionId);
-    runningChannelTaskCount = Math.max(0, runningChannelTaskCount - 1);
-    channelTaskKeys.delete(myKey);
-    channelTaskAborts.delete(myKey);
-    channelDebug("渠道任务结束", {
-      chatKey: myKey,
-      text: String(text || "").slice(0, 80),
-      durationMs: Date.now() - taskStartedAt,
-      runningChannelTaskCount,
-    });
-  }
 }
 
 // channels:get-status 已拆到 host/plugins/channels-ipc.mts（inject: ["channelManager"]）
