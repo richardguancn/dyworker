@@ -1,0 +1,391 @@
+/* 消息渠道面板 */
+.channel-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  color: var(--muted);
+}
+
+.channel-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b6b3a8;
+  flex: none;
+}
+
+.channel-status.connecting .channel-status-dot,
+.channel-status.awaiting-scan .channel-status-dot {
+  background: #d99a2b;
+}
+
+.channel-status.online .channel-status-dot {
+  background: #3f9d63;
+}
+
+.channel-status.error {
+  color: #b4453a;
+}
+
+.channel-status.error .channel-status-dot {
+  background: #b4453a;
+}
+
+.channel-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.channel-qr img {
+  width: 180px;
+  height: 180px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+/* 渠道会话徽标与渠道模型选择 */
+.session-channel-badge {
+  flex: none;
+  font-size: calc(10px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: #fff;
+  background: #4d7cfe;
+}
+
+.session-channel-badge.wechat {
+  background: #3f9d63;
+}
+
+.channel-model-select {
+  max-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+/* ===== Codex 风格:文件筛选 / 代码查看 / 审阅面板 ===== */
+
+.tool-file-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 12px 8px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted);
+}
+
+.tool-file-filter input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.code-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.code-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.code-breadcrumb {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.code-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 目录段优先收缩成省略号，文件名始终完整可见（对照 VS Code 面包屑） */
+.code-breadcrumb-item > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-breadcrumb-item:last-child {
+  flex-shrink: 0;
+}
+
+.code-breadcrumb-sep {
+  margin: 0 6px;
+  color: var(--quiet);
+}
+
+.code-breadcrumb-current {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.code-open-external {
+  flex: none;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+/* 文件预览头部空间窄：操作按钮收成无边框文本按钮（对照 VS Code），
+   主操作「打开」保留描边强调；不影响其他面板共用的 .code-open-external */
+.code-panel-header .code-open-external {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.code-panel-header .code-open-external.primary {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+}
+
+.code-panel-header .code-open-external:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.code-open-external:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+}
+
+.code-open-external:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+
+/* 审阅面板 */
+.review-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.review-panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.review-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.review-round {
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 600;
+}
+
+.review-totals b,
+.tool-summary-side b {
+  color: #7fa400;
+  font-weight: 600;
+}
+
+.review-totals em,
+.tool-summary-side em {
+  color: #c25e5e;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.review-file-list {
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.review-file-row {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
+.review-file-row.active {
+  background: var(--sidebar-active);
+}
+
+.review-file-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-file-main:hover {
+  background: var(--sidebar-hover);
+}
+
+.review-file-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-diff {
+  flex: 1;
+  padding: 6px 0 30px;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+}
+
+.review-diff-row {
+  display: flex;
+  align-items: baseline;
+  white-space: pre;
+}
+
+.review-diff-row.add {
+  background: rgba(127, 164, 0, 0.12);
+}
+
+.review-diff-row.del {
+  background: rgba(230, 107, 98, 0.12);
+}
+
+.review-diff-no {
+  flex: none;
+  width: 44px;
+  padding-right: 8px;
+  color: var(--quiet);
+  text-align: right;
+  user-select: none;
+}
+
+.review-diff-text {
+  flex: 1;
+  min-width: 0;
+  padding-right: 14px;
+  overflow-x: auto;
+  font-family: inherit;
+}
+
+.review-diff-row.add .review-diff-text { color: #4f6600; }
+.review-diff-row.del .review-diff-text { color: #a84640; }
+
+.review-diff-gap {
+  margin: 6px 10px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  user-select: none;
+}
+
+/* 设置 > 应用更新:检查更新入口 */
+.settings-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  margin-bottom: 18px;
+}
+
+.settings-update-status {
+  color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.settings-update-check {
+  flex: none;
+  padding: 5px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.settings-update-check:hover {
+  background: var(--sidebar-hover);
+}
+
+/* 设置页保存结果提示：整页界面保存后不关闭，结果就地显示在按钮左侧 */
+.settings-save-status {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  color: var(--muted);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.settings-save-status.error {
+  color: #91463e;
+}
+
+html[data-theme="dark"] .settings-save-status.error {
+  color: #f0a098;
+}
+

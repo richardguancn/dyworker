@@ -1,0 +1,352 @@
+/* Codex 风格双栏设置：左侧分组导航 + 搜索，右侧分区内容 */
+.settings-v2 {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  width: min(880px, 100%);
+  height: min(640px, calc(100vh - 48px));
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+  background: #f3f3ef;
+  overflow-y: auto;
+}
+
+.settings-nav-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  margin-bottom: 10px;
+  padding: 0 8px;
+  border: 1px solid #d6d6d0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
+}
+
+.settings-nav-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  box-shadow: none;
+}
+
+.settings-nav-group {
+  padding: 10px 8px 4px;
+  color: #999c94;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 650;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #565a52;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: rgba(72, 74, 68, 0.07);
+}
+
+.settings-nav-item.active {
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+  color: #262923;
+  font-weight: 590;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.profile-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.profile-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-row .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.profile-section-hint {
+  margin: -2px 0 9px;
+  color: var(--muted);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+}
+
+.hooks-panel .dialog-section-title:first-child {
+  margin-top: 0;
+}
+
+.hook-rule-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  margin-bottom: 6px;
+}
+
+.hook-rule-action {
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.hook-rule-action.block {
+  background: #fbeaea;
+  color: #a83c32;
+}
+
+.hook-rule-action.require_approval {
+  background: #fdf3e3;
+  color: #9a6a1f;
+}
+
+.hook-rule-action.allow {
+  background: #eef5e2;
+  color: #5d7016;
+}
+
+.approval-rule-hint {
+  margin: 8px 14px 0;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+  color: var(--muted, #76766d);
+}
+
+.approval-card .approval-rule-hint:last-child {
+  margin-bottom: 12px;
+}
+
+.approval-rule-hint.error {
+  color: #a83c32;
+}
+
+.hook-rule-title {
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 560;
+  color: #34372f;
+  word-break: break-all;
+}
+
+.hook-rule-row small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.dialog-header {
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.dialog-header h2 {
+  margin: 2px 0 0;
+  color: #343732;
+  font-size: calc(21px * var(--font-ui-scale, 1));
+}
+
+.dialog-kicker {
+  color: #93968e;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.settings-dialog label {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+  color: #636760;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 570;
+}
+
+.settings-dialog .settings-content input:not([type="checkbox"]) {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #dcded7;
+  border-radius: 10px;
+  outline: 0;
+  padding: 0 12px;
+  color: #383b36;
+  background: white;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.settings-dialog select {
+  width: 100%;
+  height: 42px;
+  border: 1px solid #dcded7;
+  border-radius: 10px;
+  outline: 0;
+  padding: 0 10px;
+  color: #383b36;
+  background: white;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.settings-dialog select:focus {
+  border-color: #aeb2a9;
+  box-shadow: 0 0 0 3px rgba(108, 112, 104, 0.08);
+}
+
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.mcp-server-name {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.mcp-server-name strong {
+  color: #3f433c;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.mcp-server-name small {
+  overflow: hidden;
+  color: #92958e;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-add-form {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.mcp-add-form .button-secondary {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 编辑态：表单上方给一条明确提示，边框强调"这几个框正在改已有那条" */
+.mcp-add-form.editing {
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.mcp-edit-hint {
+  margin: 0;
+  color: #92958e;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.mcp-edit-cancel {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.settings-dialog .settings-content input:not([type="checkbox"]):focus {
+  border-color: #aeb2a9;
+  box-shadow: 0 0 0 3px rgba(108, 112, 104, 0.08);
+}
+
+/* 设置页的通用 input 规则不能套到这个内层输入框上，否则会出现双边框和溢出。 */
+.settings-dialog .settings-content .skill-search-field input {
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.settings-dialog .settings-content .skill-search-field input:focus,
+.settings-dialog .settings-content .skill-search-field input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.dialog-note {
+  margin: 8px 0 20px;
+  color: #999c95;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.settings-dialog label.dialog-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #5b5e56;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.settings-dialog label.dialog-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #454842;
+}
+

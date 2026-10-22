@@ -1,0 +1,100 @@
+/* ===== 深色模式：面板内胶囊/选中态/输入框改用白色微叠加 =====
+   半透明/玻璃模式下，面板底色本身已是低透明度深色（--surface 系 rgba）；
+   内部控件若沿用 --card / --sidebar-active 这类深色填充，两层叠加后成为
+   近乎纯黑的色块（侧栏选中项、分支胶囊、筛选框等）。深色主题统一改用与
+   --sidebar-hover 同一语言的「白色微叠加」：普通深色观感不变，半透明下
+   不再叠黑。浅色主题的浅色叠加天然协调，不在此列。 */
+
+html[data-theme="dark"] .session-item.active,
+html[data-theme="dark"] .session-item-wrap.active .session-item {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .sidebar-tabs button.active {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .session-rename-input {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+html[data-theme="dark"] .branch-button {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .tool-file-filter {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+html[data-theme="dark"] .review-file-row.active,
+html[data-theme="dark"] .review-tree-row.file.active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+html[data-theme="dark"] .side-chat-composer {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 禁用态发送按钮：深色下不再用近实色深灰（半透明下成黑点），改白色微叠加 */
+html[data-theme="dark"] .send-button:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(231, 233, 226, 0.45);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .bt-scope-btn.active {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .bt-card-command {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* 预水合闪现态（data-theme 未设置 + 系统深色）保持同一观感 */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .session-item.active,
+  html:not([data-theme]) .session-item-wrap.active .session-item {
+    background: rgba(255, 255, 255, 0.075);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: none;
+  }
+
+  html:not([data-theme]) .sidebar-tabs button.active {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: none;
+  }
+
+  html:not([data-theme]) .session-rename-input {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  html:not([data-theme]) .branch-button {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  html:not([data-theme]) .tool-file-filter {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+  html:not([data-theme]) .review-file-row.active,
+  html:not([data-theme]) .review-tree-row.file.active {
+    background: rgba(255, 255, 255, 0.07);
+  }
+
+  html:not([data-theme]) .side-chat-composer {
+    background: rgba(255, 255, 255, 0.055);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  html:not([data-theme]) .send-button:disabled {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(231, 233, 226, 0.45);
+    box-shadow: none;
+  }
+}
+

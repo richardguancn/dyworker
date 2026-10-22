@@ -1,0 +1,599 @@
+:root {
+  --font-ui-scale: 1;
+  --font-content-scale: 1;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-ui, "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, ui-sans-serif, sans-serif);
+  color: #242622;
+  background: #f7f7f4;
+  color-scheme: light dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --sidebar-width: 300px;
+  --tool-panel-width: 320px;
+  --topbar-height: 54px;
+  --conversation-tabs-height: 34px;
+  --titlebar-height: 48px;
+  --surface: #f8f6ee;
+  /* 左侧栏与正文区共用一个底色，不做深浅区分（用户实报：左右区域背景要统一） */
+  --sidebar: #f8f6ee;
+  --sidebar-hover: rgba(72, 74, 68, 0.05);
+  --sidebar-active: #efecdf;
+  --card: #fffdf7;
+  --border: rgba(64, 66, 60, 0.11);
+  --border-strong: rgba(64, 66, 60, 0.2);
+  --muted: #74776e;
+  --quiet: #a2a59b;
+  --bubble: #efeee9;
+  --accent: #2f6fed;
+  --ink: #262823;
+  --sleep-primary-ink: #fbfbfa;
+  --shadow-xs: 0 1px 2px rgba(34, 35, 31, 0.05);
+  --shadow-sm: 0 1px 2px rgba(34, 35, 31, 0.05), 0 2px 6px rgba(34, 35, 31, 0.05);
+  --shadow-md: 0 2px 6px rgba(34, 35, 31, 0.05), 0 12px 32px rgba(34, 35, 31, 0.09);
+  --shadow-lg: 0 4px 14px rgba(34, 35, 31, 0.07), 0 24px 56px rgba(34, 35, 31, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  /* hidden 仍允许 focus/scrollIntoView 改变滚动位置，导致整页左移。
+     窗口外框不负责滚动；消息、设置和标签栏保留各自的滚动区域。 */
+  overflow: clip;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(47, 111, 237, 0.36);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--tool-panel-width);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+  background: var(--surface);
+  transition: grid-template-columns 180ms ease;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  bottom: 0;
+  /* 命中区域保持 8px，但视觉只画一条很淡的细灰线（对照 Codex 拖动条），不要整条蓝色高亮 */
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  transform: translateX(0);
+}
+
+/* 分隔线只是"提示边界"，不该抢视线：静止时几乎看不见，悬停/拖动时才略微加深。
+   弹窗层必须压在它上面——弹窗若被关进带 z-index 的祖先（如 .plugins-page），
+   fixed 定位会被那个层叠上下文压到这里之下，表现为竖线切穿弹窗（见 AddPluginDialog 的 portal）。 */
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: rgba(128, 132, 124, 0.16);
+  transition: background 0.15s ease, width 0.15s ease;
+}
+
+.panel-resize-handle:hover::after,
+body.resizing-panels .panel-resize-handle::after {
+  width: 2px;
+  background: rgba(128, 132, 124, 0.38);
+}
+
+.panel-resize-left {
+  left: calc(var(--sidebar-width) - 4px);
+}
+
+.panel-resize-right {
+  right: calc(var(--tool-panel-width) - 4px);
+}
+
+body.resizing-panels,
+body.resizing-panels * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resizing-panels .app-shell {
+  transition: none;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) var(--tool-panel-width);
+}
+
+.app-shell.right-panel-collapsed {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0;
+}
+
+.app-shell.sidebar-collapsed.right-panel-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.sidebar {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(180deg, #f8f5eb 0%, var(--sidebar) 150px);
+  border-right: 1px solid rgba(80, 82, 77, 0.1);
+  transition: opacity 120ms ease;
+}
+
+.sidebar-collapsed .sidebar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.native-controls-space {
+  display: none;
+  height: 54px;
+  flex: 0 0 auto;
+  -webkit-app-region: drag;
+}
+
+/* mac:不单独留红绿灯占位条,让品牌行与右侧顶栏同高对齐,红绿灯内嵌进品牌行左侧 */
+.platform-darwin .native-controls-space {
+  display: none;
+}
+
+/* mac 红绿灯内嵌在第一行左侧（trafficLightPosition x=14，整组约 60px 宽），
+   品牌行与收起侧栏后的顶栏都留出避让空间，避免可点按钮被灯盖住 */
+.platform-darwin .sidebar-brand-row {
+  padding-left: 84px;
+}
+
+.platform-darwin.sidebar-collapsed .topbar {
+  padding-left: 84px;
+}
+
+.sidebar-brand-row,
+.sidebar-footer,
+.topbar,
+.topbar-left,
+.topbar-right,
+.composer-toolbar,
+.composer-actions,
+.dialog-header,
+.dialog-actions,
+.brand-button,
+.connection-pill,
+.workspace-heading,
+.workspace-toggle,
+.profile-button,
+.new-task-button,
+.composer-mode,
+.button-primary,
+.button-secondary {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-brand-row {
+  height: var(--topbar-height);
+  flex: 0 0 auto;
+  padding: 0 13px 0 18px;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(83, 85, 80, 0.1);
+  -webkit-app-region: drag;
+}
+
+.sidebar-brand-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  min-width: 0;
+}
+
+/* mac 第一行左侧被原生红绿灯占据，搜索与收起成组靠右；
+   Windows/Linux 该行左侧无系统控件，保持搜索在左、收起在右 */
+.platform-darwin .sidebar-brand-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sidebar-brand-row .icon-button {
+  -webkit-app-region: no-drag;
+}
+
+.brand-button,
+.profile-button,
+.workspace-heading,
+.workspace-toggle,
+.new-task-button,
+.session-item,
+.tree-row,
+.composer-mode,
+.connection-pill,
+.bare-button,
+.empty-workspace {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.brand-button {
+  gap: 5px;
+  padding: 6px 5px;
+  font-weight: 680;
+  font-size: calc(19px * var(--font-ui-scale, 1));
+  letter-spacing: -0.025em;
+  cursor: default;
+  -webkit-app-region: drag;
+}
+
+.icon-button,
+.send-button,
+.jump-bottom,
+.tree-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: transparent;
+  color: #676a63;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.icon-button:hover,
+.tree-refresh:hover {
+  background: rgba(100, 102, 95, 0.1);
+  color: #2c2e2a;
+}
+
+.icon-button.subtle {
+  color: #858880;
+}
+
+.new-task-button {
+  height: 38px;
+  margin: 5px 12px 10px;
+  padding: 0 12px;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow-xs);
+  color: #3f433c;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  text-align: left;
+  transition: box-shadow 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.new-task-button:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-0.5px);
+}
+
+.new-task-button:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-xs);
+}
+
+.sidebar-search-wrap {
+  height: 35px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 14px 6px;
+  padding: 0 9px;
+  border: 1px solid #d6d6d0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--muted);
+}
+
+.sidebar-search-wrap input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #31332f;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.bare-button {
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+  color: var(--muted);
+}
+
+.sidebar-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #c8c9c2 transparent;
+}
+
+.sidebar-section {
+  padding: 8px 11px;
+}
+
+.section-caption {
+  display: block;
+  padding: 0 10px 7px;
+  color: #999c94;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 600;
+}
+
+/* 小节标题行：折叠按钮 + 右侧动作（项目区放「导入任务或项目」） */
+.recent-section-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+}
+
+.recent-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #999c94;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.recent-section-toggle:hover {
+  background: var(--sidebar-hover);
+  color: #6d7069;
+}
+
+.section-caption-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 7px;
+}
+
+.section-caption-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #999c94;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.section-caption-button:hover {
+  background: var(--sidebar-hover);
+  color: #6d7069;
+}
+
+.session-list {
+  display: grid;
+  gap: 2px;
+}
+
+.workspace-session-list {
+  display: grid;
+  gap: 3px;
+}
+
+.workspace-session-group {
+  position: relative;
+  min-width: 0;
+}
+
+.workspace-session-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-session-heading {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #747870;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.workspace-session-actions .icon-button {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+}
+
+.workspace-session-group:hover .workspace-session-actions,
+.workspace-session-group:focus-within .workspace-session-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.workspace-pin-indicator {
+  flex: 0 0 auto;
+  color: #83877e;
+}
+
+.workspace-menu {
+  top: 34px;
+  right: 2px;
+  min-width: 190px;
+}
+
+.workspace-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.workspace-menu button svg {
+  flex: 0 0 auto;
+  color: #7b8077;
+}
+
+.workspace-session-heading:hover,
+.workspace-session-group.expanded .workspace-session-heading:hover {
+  background: var(--sidebar-hover);
+  color: #393d36;
+}
+
+.workspace-session-heading > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-session-items {
+  margin: 2px 0 6px 21px;
+  padding-left: 0;
+}
+
+.workspace-sessions-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--quiet);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-sessions-toggle:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.session-item-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.session-item-wrap .session-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-item-wrap.active .session-item {
+  border-color: transparent;
+  background: var(--sidebar-active);
+  box-shadow: none;
+  color: #262923;
+  font-weight: 590;
+}
+
+.session-menu-button {
+  flex: 0 0 auto;
+  opacity: 0;
+}
+
+.session-item-wrap:hover .session-menu-button {
+  opacity: 1;
+}
+
+.session-menu {
+  position: absolute;
+  z-index: 40;
+  top: 32px;
+  right: 0;
+  min-width: 96px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+}
+

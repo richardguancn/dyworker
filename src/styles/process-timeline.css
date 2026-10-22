@@ -1,0 +1,445 @@
+/* ==========================================================================
+   Codex / Antigravity 风格过程折叠与全景时间线 (Process Timeline)
+   ========================================================================== */
+
+.process-collapse-container {
+  margin: 0 0 8px;
+  width: 100%;
+}
+
+/* 执行中：过程行直接平铺在正文位置，没有折叠条，也没有左侧竖线，
+   与结论正文同一起始边（对标 Codex 执行中的过程排版） */
+.process-collapse-container.expanded-inline {
+  margin: 0 0 10px;
+}
+
+/* 顶部方案 A 极简单行折叠条 (对标 Codex 图 1: "用时 18m 1s >") */
+.process-collapse-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted, #969b92);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  font-weight: 450;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+.process-collapse-trigger:hover {
+  color: var(--text, #3a3e37);
+}
+
+.process-trigger-label {
+  letter-spacing: -0.01em;
+}
+
+.process-trigger-icon {
+  flex: 0 0 auto;
+  opacity: 0.75;
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.process-collapse-trigger:hover .process-trigger-icon {
+  opacity: 1;
+}
+
+/* 展开后的过程时间线容器 (对标 Codex 图 2、图 3) */
+.process-timeline-content {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0 10px;
+  padding: 0;
+}
+
+.process-collapse-container.expanded-inline .process-timeline-content {
+  margin: 0;
+}
+
+.process-thinking-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+/* 1. 深度思考项 (对标 Antigravity 图 4: "> Thought for 8s") */
+.process-thought-item {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.process-thought-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-left: -6px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #888d85);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  line-height: 1.45;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.process-thought-header:hover {
+  background: rgba(140, 145, 136, 0.1);
+  color: var(--text, #3a3e37);
+}
+
+.process-thought-item.streaming .process-thought-header {
+  color: #0284c7;
+  background: transparent;
+}
+
+.process-thought-icon {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.process-thought-title {
+  font-weight: 450;
+}
+
+.process-thought-body {
+  margin-top: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0 0 0 21px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.process-thought-text {
+  font-family: inherit;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  color: var(--text-muted, #767b72);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 2. 阶段性推导与意图说明段落 (对标 Codex 图 2 文本段落) */
+.process-commentary-item {
+  color: var(--ink, #262823);
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+  margin: 0;
+}
+
+.process-commentary-item p {
+  margin: 0 0 4px;
+}
+
+.process-commentary-item p:last-child {
+  margin-bottom: 0;
+}
+
+/* 3. 子智能体完成卡片 (对标 Codex 图 2: "💥 Review standards和Review spec已完成") */
+.process-subagent-item {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.process-subagent-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-left: -6px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #7d827a);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  font-weight: 450;
+  line-height: 1.45;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+/* 子任务仍在执行时保留一点暖色提示，其余与普通过程行一致 */
+.process-subagent-item.running .process-subagent-header {
+  color: #c2410c;
+}
+
+.process-subagent-header:hover:not(:disabled) {
+  background: rgba(140, 145, 136, 0.1);
+  color: var(--text, #3a3e37);
+}
+
+.process-subagent-item.running .process-subagent-header:hover:not(:disabled) {
+  color: #9a3412;
+}
+
+.process-subagent-badge {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 子任务标题过长时在行内折行，不撑破正文列 */
+.process-subagent-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.process-subagent-count {
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  opacity: 0.8;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.process-subagent-detail,
+.process-subagent-children {
+  margin-top: 4px;
+  padding-left: 8px;
+}
+
+/* 子任务原始输出保留换行，但长行必须在记录内折行，不能撑宽整个对话视口。 */
+.process-subagent-detail pre {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 4. 紧凑工具调用行 (对标 Codex 图 2、图 3: "✎ 编辑了文件") */
+.process-action-item {
+  /* 整行铺满正文列宽：行内是 flex 行，标题按需收缩。父级若用 fit-content，
+     行内标题的收缩会与父级的内在宽度互相依赖，正常长度的标题也被压出省略号 */
+  width: 100%;
+  max-width: 100%;
+}
+
+.process-action-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-left: -6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #7d827a);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  line-height: 1.45;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.process-action-header:disabled {
+  cursor: default;
+}
+
+.process-action-header:hover:not(:disabled) {
+  background: rgba(140, 145, 136, 0.1);
+  color: var(--text, #333730);
+}
+
+.process-action-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: inherit;
+}
+
+.process-action-item.running .process-action-icon {
+  color: #0284c7;
+}
+
+.process-action-item.error .process-action-icon {
+  color: #dc2626;
+}
+
+.process-action-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.process-action-detail {
+  margin: 4px 0 4px 22px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(140, 145, 136, 0.16);
+  border-radius: 4px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: var(--text-muted, #73786f);
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .process-collapse-trigger {
+    color: #8a8f87;
+  }
+
+  html:not([data-theme]) .process-collapse-trigger:hover {
+    color: #e2e5de;
+  }
+
+  html:not([data-theme]) .process-thought-header {
+    color: #90958c;
+  }
+
+  html:not([data-theme]) .process-thought-header:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e5de;
+  }
+
+  html:not([data-theme]) .process-thought-text {
+    color: #90958c;
+  }
+
+  html:not([data-theme]) .process-commentary-item {
+    color: var(--ink, #f2f2f2);
+  }
+
+  html:not([data-theme]) .process-subagent-item.completed .process-subagent-header {
+    color: #8a8f87;
+  }
+
+  html:not([data-theme]) .process-subagent-item.running .process-subagent-header {
+    color: #fbbf24;
+  }
+
+  html:not([data-theme]) .process-thought-item.streaming .process-thought-header {
+    color: #38bdf8;
+  }
+
+  html:not([data-theme]) .process-action-item.running .process-action-icon {
+    color: #38bdf8;
+  }
+
+  html:not([data-theme]) .process-action-header {
+    color: #8a8f87;
+  }
+
+  html:not([data-theme]) .process-action-header:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e2e5de;
+  }
+
+  html:not([data-theme]) .process-action-detail {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(160, 165, 156, 0.2);
+    color: #8a8f87;
+  }
+
+  /* 非正文：子代理展开后的活动行跟随同档弱化（单列声明，避免牵连同组的按钮/弹窗文字） */
+  html:not([data-theme]) .activity-row-main,
+  html:not([data-theme]) .activity-detail,
+  html:not([data-theme]) .activity-status-command,
+  html:not([data-theme]) .activity-row.command .activity-status-command {
+    color: #8a8f87;
+  }
+
+  html:not([data-theme]) .activity-row.command .activity-title {
+    color: #83887f;
+  }
+
+  html:not([data-theme]) .activity-row-main > svg {
+    color: #969b92;
+  }
+}
+
+/* 显式深色主题（用户选择或系统解析结果） */
+
+  html[data-theme="dark"] .process-collapse-trigger {
+    color: #8a8f87;
+  }
+
+  html[data-theme="dark"] .process-collapse-trigger:hover {
+    color: #e2e5de;
+  }
+
+  html[data-theme="dark"] .process-thought-header {
+    color: #90958c;
+  }
+
+  html[data-theme="dark"] .process-thought-header:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e5de;
+  }
+
+  html[data-theme="dark"] .process-thought-text {
+    color: #90958c;
+  }
+
+  html[data-theme="dark"] .process-commentary-item {
+    color: var(--ink, #f2f2f2);
+  }
+
+  html[data-theme="dark"] .process-subagent-item.completed .process-subagent-header {
+    color: #8a8f87;
+  }
+
+  html[data-theme="dark"] .process-subagent-item.running .process-subagent-header {
+    color: #fbbf24;
+  }
+
+  html[data-theme="dark"] .process-thought-item.streaming .process-thought-header {
+    color: #38bdf8;
+  }
+
+  html[data-theme="dark"] .process-action-item.running .process-action-icon {
+    color: #38bdf8;
+  }
+
+  html[data-theme="dark"] .process-action-header {
+    color: #8a8f87;
+  }
+
+  html[data-theme="dark"] .process-action-header:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: #e2e5de;
+  }
+
+  html[data-theme="dark"] .process-action-detail {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(160, 165, 156, 0.2);
+    color: #8a8f87;
+  }
+
+  /* 非正文：子代理展开后的活动行跟随同档弱化（单列声明，避免牵连同组的按钮/弹窗文字） */
+  html[data-theme="dark"] .activity-row-main,
+  html[data-theme="dark"] .activity-detail,
+  html[data-theme="dark"] .activity-status-command,
+  html[data-theme="dark"] .activity-row.command .activity-status-command {
+    color: #8a8f87;
+  }
+
+  html[data-theme="dark"] .activity-row.command .activity-title {
+    color: #83887f;
+  }
+
+  html[data-theme="dark"] .activity-row-main > svg {
+    color: #969b92;
+  }
+

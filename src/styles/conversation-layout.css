@@ -1,0 +1,609 @@
+/* Markdown 预览标签页：像浏览器页面一样阅读 */
+.markdown-preview-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.markdown-preview-panel .markdown-file-preview-content {
+  flex: 1;
+  padding: 22px 26px 40px;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  line-height: 1.75;
+}
+
+.markdown-preview-panel .message-content {
+  max-width: 720px;
+}
+
+
+.markdown-file-preview-content h1 {
+  font-size: calc(20px * var(--font-ui-scale, 1));
+}
+
+.markdown-file-preview-content h2 {
+  font-size: calc(16px * var(--font-ui-scale, 1));
+}
+
+.markdown-file-preview-content pre {
+  padding: 11px 12px;
+  border-radius: 9px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.markdown-file-preview-content table {
+  display: block;
+  overflow-x: auto;
+}
+
+.error-text {
+  color: #a24d45;
+}
+
+.topbar {
+  position: absolute;
+  z-index: 10;
+  inset: 0 0 auto 0;
+  height: var(--topbar-height);
+  justify-content: space-between;
+  padding: 0 18px 0 18px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.1);
+  background: rgba(247, 247, 244, 0.82);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-app-region: drag;
+}
+
+.topbar-left,
+.topbar-right {
+  min-width: 0;
+  gap: 10px;
+}
+
+.topbar-right {
+  align-self: stretch;
+  gap: 6px;
+}
+
+/* 会话内搜索条：悬浮在对话区右上角（顶栏 + 会话视图标签栏 下方，别压在标签栏上） */
+.conversation-search {
+  position: absolute;
+  z-index: 30;
+  top: calc(var(--topbar-height) + var(--conversation-tabs-height) + 10px);
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--quiet);
+  box-shadow: var(--shadow-sm, 0 4px 14px rgba(0, 0, 0, 0.08));
+}
+
+.conversation-search input {
+  width: 210px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-family: inherit;
+}
+
+.conversation-search input::placeholder {
+  color: var(--quiet);
+}
+
+.conversation-search-count {
+  min-width: 54px;
+  text-align: center;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  color: var(--quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+/* CSS Custom Highlight：会话内搜索命中的文本高亮（当前项更醒目） */
+::highlight(conversation-search) {
+  background-color: rgba(250, 204, 21, 0.45);
+}
+
+::highlight(conversation-search-current) {
+  background-color: #f59e0b;
+  color: #1f2937;
+}
+
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: 2px;
+}
+
+.window-controls button {
+  width: 46px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: #60645c;
+  background: transparent;
+  cursor: pointer;
+}
+
+.window-controls button:hover {
+  color: #252822;
+  background: rgba(62, 65, 59, 0.08);
+}
+
+.window-controls .window-close:hover {
+  color: #fff;
+  background: #c42b1c;
+}
+
+/* 单独的全宽标题栏：右上角为任务菜单与窗口按钮，对齐 Codex 桌面版布局 */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  padding-left: 18px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.1);
+  background: rgba(247, 247, 244, 0.92);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-left,
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.titlebar-right {
+  align-self: stretch;
+  gap: 6px;
+}
+
+.titlebar-brand {
+  font-size: calc(19px * var(--font-ui-scale, 1));
+  font-weight: 680;
+  letter-spacing: -0.025em;
+  color: #242622;
+  white-space: nowrap;
+}
+
+.sidebar,
+.main-panel,
+.tool-panel {
+  grid-row: 2;
+}
+
+.panel-resize-handle {
+  top: var(--titlebar-height);
+}
+
+.sidebar-brand-row .brand-button {
+  display: none;
+}
+
+/* Linux：内容区显式排除拖拽区域，避免自绘标题栏的拖拽层吞掉输入框点击 */
+.platform-linux .sidebar,
+.platform-linux .main-panel,
+.platform-linux .tool-panel {
+  -webkit-app-region: no-drag;
+}
+
+.platform-linux input,
+.platform-linux textarea {
+  -webkit-app-region: no-drag;
+}
+
+.no-drag,
+.no-drag * {
+  -webkit-app-region: no-drag;
+}
+
+.topbar-left strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #4c5049;
+  font-size: calc(14.5px * var(--font-ui-scale, 1));
+  font-weight: 610;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-toggle {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-toggle {
+  display: inline-flex;
+}
+
+.connection-pill {
+  height: 32px;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: #5d6158;
+  background: var(--card);
+  box-shadow: var(--shadow-xs);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-weight: 540;
+  transition: box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.connection-pill:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid #a6a9a2;
+  border-radius: 50%;
+}
+
+.status-dot.online {
+  border-color: #1e9e63;
+  background: #1e9e63;
+  box-shadow: 0 0 0 3px rgba(30, 158, 99, 0.16);
+}
+
+.conversation-viewport {
+  position: absolute;
+  /* 消息区从标签栏下方开始：标签栏是绝对定位浮层，视口若只让开到 topbar，
+     第一条消息会顶到标签栏上（用户报「第一条消息跟上面没空隙」）。
+     与标签栏之间的留白交给 .conversation-column 的 padding-top。 */
+  inset: calc(var(--topbar-height) + var(--conversation-tabs-height)) 0 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c9cac4 transparent;
+  /* 本视口的滚动由贴底跟随显式管理（App.tsx），Chromium 的滚动锚定会在
+     stick 滚动后同帧补偿回退（实测恒差 62px 冻结），并在回底落点上叠加
+     凭空过冲，必须关闭 */
+  overflow-anchor: none;
+}
+
+.conversation-column {
+  width: min(940px, 76%);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 26px 0 calc(var(--composer-height, 172px) + 14px);
+}
+
+.message-row {
+  position: relative;
+  width: 100%;
+  margin: 0 0 29px;
+  /* 视口外跳过渲染（长会话数千 DOM 节点的廉价虚拟化）；
+     auto 记住上次渲染高度，回滚时不跳滚动条 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+}
+
+.message-row.system {
+  margin-bottom: 34px;
+}
+
+/* Chromium 合成器对 content-visibility 子树有绘制偏移 bug，
+   表现为切换会话后整个界面左移（左侧文字被窗口裁掉、右侧露出背景层）、再切换又恢复。
+   Linux 与 macOS 均已实测复现，这两个平台关闭该虚拟化；Windows 暂未复现，保留优化 */
+.platform-linux .message-row,
+.platform-darwin .message-row {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
+.tool-summary {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  color: #757971;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.tool-summary-header,
+.tool-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tool-summary-header {
+  min-height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e5e5df;
+  color: #646861;
+}
+
+/* 改动卡片（对照 Codex「已编辑 N 个文件 / 查看更改 ↗」） */
+.tool-summary-header.changes-card {
+  gap: 9px;
+  padding: 8px 14px;
+  border-bottom: 0;
+  color: var(--ink, #3c3f38);
+}
+
+.changes-card > svg {
+  flex: none;
+  color: #8a8f85;
+}
+
+.changes-card-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.changes-review-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7a7f74;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.changes-review-link:hover {
+  color: var(--accent);
+}
+
+.changes-card-totals {
+  flex: none;
+  padding-right: 2px;
+}
+
+/* 「再显示 xx 个文件 / 收起」行（对照 Codex） */
+.changes-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  padding: 7px 14px;
+  border: 0;
+  border-top: 1px solid #e5e5df;
+  background: transparent;
+  color: #7a7f74;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.changes-more:hover {
+  color: var(--accent);
+  background: rgba(69, 71, 66, 0.05);
+}
+
+.tool-summary-header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-summary-header strong {
+  font-weight: 580;
+}
+
+.tool-file-row {
+  min-height: 38px;
+  padding: 0 15px;
+}
+
+.tool-file-row b {
+  color: #7fa400;
+  font-weight: 590;
+}
+
+.tool-file-row em {
+  margin-left: 5px;
+  color: #e66b62;
+  font-style: normal;
+}
+
+.tool-file-block + .tool-file-block {
+  border-top: 1px solid rgba(224, 225, 219, 0.7);
+}
+
+.tool-file-row {
+  gap: 4px;
+}
+
+.tool-file-row .tool-file-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
+.tool-file-row .tool-file-main:not(:disabled) {
+  cursor: pointer;
+}
+
+.tool-file-row .tool-file-main > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-file-row.clickable:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Codex /diff 风格的差异视图 */
+.diff-view {
+  overflow-x: auto;
+  margin: 0;
+  padding: 8px 0 10px;
+  border-top: 1px solid rgba(224, 225, 219, 0.7);
+  background: #fafaf7;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.diff-view span {
+  display: block;
+  padding: 0 14px;
+}
+
+.diff-view .diff-add {
+  background: rgba(127, 164, 0, 0.1);
+  color: #5d7a00;
+}
+
+.diff-view .diff-del {
+  background: rgba(230, 107, 98, 0.1);
+  color: #c0524a;
+}
+
+.diff-view .diff-hunk {
+  color: #8a93a6;
+}
+
+.diff-view .diff-file {
+  color: #6d7069;
+  font-weight: 600;
+}
+
+.tool-summary-header.clickable {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #e5e5df;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tool-summary-header.clickable:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.tool-summary-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tool-summary-side b {
+  color: #7fa400;
+  font-weight: 590;
+}
+
+.tool-summary-side em {
+  color: #e66b62;
+  font-style: normal;
+}
+
+/* Kimi Work / Codex 风格的任务计划清单 */
+.plan-card {
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  color: #757971;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e5e5df;
+  color: #646861;
+}
+
+.plan-card-header strong {
+  font-weight: 580;
+}
+
+.plan-card-header span {
+  margin-left: auto;
+  color: #999c94;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.plan-card-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 6px;
+  border-radius: 7px;
+  color: #6d7069;
+}
+
+.plan-step.in_progress {
+  color: #2f332c;
+  font-weight: 560;
+}
+
+.plan-step.completed {
+  color: #a3a69d;
+  text-decoration: line-through;
+  text-decoration-color: rgba(163, 166, 157, 0.55);
+}
+
+.plan-step-icon {
+  width: 15px;
+  flex: 0 0 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8b8e87;
+}
+
+.plan-step.completed .plan-step-icon {
+  color: #7fa400;
+}
+
+.message-row.user {
+  display: flex;
+  justify-content: flex-end;
+}
+

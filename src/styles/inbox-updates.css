@@ -1,0 +1,603 @@
+/* ---- ask_user 提问卡片与审批收件箱 ---- */
+
+.question-card {
+  border-color: #c9d8ee;
+  background: #f2f6fd;
+}
+
+.question-card .approval-card-header {
+  color: #41619b;
+}
+
+.question-text {
+  margin: 0 14px 10px;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+  color: #3d4c68;
+}
+
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+
+.question-options button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.question-option-description {
+  display: block;
+  max-width: 320px;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.question-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+
+.question-input-row input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(65, 97, 155, 0.3);
+  border-radius: 9px;
+  background: #fff;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  outline: none;
+}
+
+.question-input-row input:focus {
+  border-color: rgba(65, 97, 155, 0.6);
+}
+
+.inbox-button {
+  position: relative;
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #c0492f;
+  color: #fff;
+  font-size: calc(10px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-update-button {
+  position: relative;
+}
+
+.app-update-button.ready {
+  color: var(--accent);
+}
+
+/* 下载中：按钮本身变成圆环进度，环内显示百分比 */
+.app-update-button.downloading {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.app-update-button.downloading:hover {
+  background: rgba(100, 102, 95, 0.1);
+}
+
+.app-update-ring {
+  display: block;
+}
+
+.app-update-ring-track {
+  stroke: var(--border);
+}
+
+.app-update-ring-bar {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 160ms ease;
+}
+
+.app-update-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(8.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* 更新内容（release notes）展示 */
+.app-update-notes {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(100, 102, 95, 0.05);
+  overflow: hidden;
+}
+
+.app-update-notes-title {
+  padding: 8px 12px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-update-notes-body {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.7;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.app-update-dialog {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+
+.app-update-dialog .dialog-header {
+  margin-bottom: 12px;
+}
+
+.app-update-dialog h2 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: calc(21px * var(--font-ui-scale, 1));
+}
+
+.app-update-version,
+.app-update-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+  /* 错误信息常带无空格的长 URL/路径，必须允许任意位置断行，否则会撑出对话框 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.app-update-copy {
+  margin-top: 10px;
+}
+
+.app-update-copy.error-text {
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.app-update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.app-update-progress-track {
+  flex: 1;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.app-update-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.app-update-actions {
+  margin-top: 22px;
+}
+
+.app-update-latest-link {
+  margin-right: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.app-update-latest-link:hover {
+  text-decoration: underline;
+}
+
+.inbox-dialog {
+  width: min(680px, 94vw);
+  height: min(72vh, 640px);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.inbox-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 10px;
+}
+
+.inbox-search {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted, #76766d);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.inbox-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: inherit;
+  outline: none;
+}
+
+.inbox-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0 12px 8px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: var(--muted, #76766d);
+}
+
+.inbox-dialog-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 18px 18px;
+}
+
+.inbox-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card, #fff);
+  margin-bottom: 10px;
+  padding-bottom: 2px;
+  overflow: hidden;
+}
+
+.inbox-item.settled {
+  opacity: 0.75;
+}
+
+.inbox-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.inbox-item-head small {
+  margin-left: auto;
+  color: var(--muted, #76766d);
+  white-space: nowrap;
+}
+
+.inbox-kind {
+  flex: none;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fdf3e3;
+  color: #9a6a1f;
+}
+
+.inbox-kind.question {
+  background: #e6eefb;
+  color: #41619b;
+}
+
+.inbox-kind.expired {
+  background: #eee;
+  color: #8a8d86;
+}
+
+.inbox-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 560;
+}
+
+.inbox-resolution {
+  display: block;
+  padding: 0 12px 8px;
+  color: var(--muted, #76766d);
+}
+
+/* 收件箱「任务待办 / 系统消息」页签 */
+.inbox-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.inbox-tab {
+  border: 0;
+  border-radius: 7px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--muted, #76766d);
+  font: inherit;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.inbox-tab.active {
+  background: var(--card, #fff);
+  color: inherit;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* 系统消息中心 */
+.system-message-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-message-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #e2574c;
+}
+
+.system-message-chevron {
+  flex: none;
+  color: var(--muted, #76766d);
+  transition: transform 0.15s ease;
+}
+
+.system-message-chevron.open {
+  transform: rotate(90deg);
+}
+
+.system-message-body {
+  min-width: 0;
+  padding: 0 12px 10px;
+}
+
+.system-message-text {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.08);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: inherit;
+}
+
+.system-message-text > :last-child {
+  margin-bottom: 0;
+}
+
+.system-message-text a {
+  color: var(--accent, #41619b);
+  text-decoration: underline;
+}
+
+.system-message-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.system-message-table table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.system-message-note {
+  margin: 0 0 8px;
+  color: var(--muted, #76766d);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.system-message-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.system-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: var(--muted, #76766d);
+}
+
+.inbox-kind.version {
+  background: #e8f4ea;
+  color: #3f7a4c;
+}
+
+.inbox-kind.maintenance {
+  background: #e6eefb;
+  color: #41619b;
+}
+
+/* 设置：使用统计与运营消息 */
+.telemetry-settings label {
+  display: block;
+}
+
+.approval-mode-wrap {
+  position: relative;
+}
+
+.approval-mode-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0 7px;
+  background: transparent;
+  color: #777b73;
+  font: inherit;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.approval-mode-button:hover,
+.approval-mode-button.active {
+  background: #f0f0eb;
+}
+
+.approval-mode-button.warning {
+  color: #c55d28;
+}
+
+.approval-mode-menu {
+  position: absolute;
+  z-index: 36;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(390px, calc(100vw - var(--sidebar-width) - 64px));
+  min-width: 330px;
+  padding: 7px;
+  border: 1px solid #d9dad4;
+  border-radius: 15px;
+  background: #fafaf7;
+  box-shadow: 0 14px 34px rgba(36, 38, 33, 0.16);
+}
+
+.approval-mode-menu-title {
+  padding: 5px 10px 8px;
+  color: #92958e;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.approval-mode-menu button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  gap: 9px;
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #5e625b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.approval-mode-menu button:hover,
+.approval-mode-menu button.selected {
+  background: #efefeb;
+}
+
+.approval-mode-menu button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.approval-mode-menu strong {
+  color: #3f433c;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 620;
+}
+
+.approval-mode-menu small {
+  color: #858981;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  line-height: 1.35;
+}
+
+.approval-mode-menu button.warning,
+.approval-mode-menu button.warning strong,
+.approval-mode-menu button.warning small {
+  color: #d26027;
+}
+
+.approval-mode-menu button.warning:hover,
+.approval-mode-menu button.warning.selected {
+  background: #f6ede7;
+}
+
+.approval-mode-check {
+  justify-self: end;
+}
+
+.send-button.stop {
+  background: #b94b42;
+}
+
+.send-button.stop:hover:not(:disabled) {
+  background: #a83f37;
+}
+

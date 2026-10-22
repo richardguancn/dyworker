@@ -1,0 +1,409 @@
+/* ---- Codex 风格右侧面板重构：+ 下拉菜单 / Git 审阅分栏 / 文件分栏 / 浏览器更多菜单 / 导入对话框 ---- */
+
+/* + 按钮的下拉菜单（对照 Codex 新标签页菜单）；+ 按钮本身在右侧 actions 里，
+   菜单锚定整个标签条（.tool-panel-tabs，position:relative）而不是按钮 */
+.tool-panel-add-menu {
+  top: calc(100% - 2px);
+  right: 8px;
+  min-width: 210px;
+  /* 锚定 .tool-panel-tabs（panel 全宽），窄面板下也不允许超出面板边界 */
+  max-width: calc(100% - 16px);
+  padding: 6px;
+}
+
+.tool-panel-add-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  border-radius: 8px;
+}
+
+.tool-panel-add-menu button > span:nth-of-type(1) {
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-panel-add-menu button.active {
+  color: #343831;
+  background: rgba(72, 74, 68, 0.065);
+}
+
+/* 首页菜单页：更大的列表项（对照 Codex 右侧面板首页） */
+.tool-panel-menu-page .tool-panel-menu button {
+  min-height: 50px;
+  font-size: calc(14.5px * var(--font-ui-scale, 1));
+}
+
+/* ---- Git 审阅分栏（对照 Codex 审阅页） ---- */
+.tool-panel-scroll:has(> .review-panel),
+.tool-panel-scroll:has(> .tool-file-browser.file-split-panel) {
+  padding: 0;
+}
+
+.tool-panel-scroll:has(> .review-panel) .review-panel {
+  height: 100%;
+}
+
+.git-review {
+  height: 100%;
+  overflow: hidden;
+}
+
+.git-review .review-header {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+/* 基线选择器并入头部第一行（对照 Codex「上一轮 ⌄ +1,004 -63」） */
+.git-review .review-base-row {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.review-header-spacer {
+  flex: 1;
+}
+
+.review-base-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.review-base-select:hover,
+.review-base-select.active {
+  background: var(--sidebar-hover);
+}
+
+.review-base-select span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-base-arrow {
+  color: var(--quiet);
+}
+
+.review-base-menu {
+  top: calc(100% + 6px);
+  right: auto;
+  left: 0;
+  min-width: 240px;
+}
+
+.review-base-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+}
+
+.review-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.review-diff-pane {
+  flex: 1.15;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.review-diff-filebar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-diff-filebar:hover {
+  background: var(--sidebar-hover);
+}
+
+.review-diff-filebar > svg:first-child {
+  flex: none;
+  color: var(--quiet);
+}
+
+.review-file-section.collapsed .review-diff-filebar {
+  border-bottom-color: transparent;
+}
+
+.review-diff-filepath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-files-pane {
+  flex: 1;
+  min-width: 190px;
+  max-width: 48%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 10px 8px 24px;
+}
+
+.review-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.review-tree-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-tree-row.dir {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.review-tree-row:hover {
+  background: var(--sidebar-hover);
+}
+
+.review-tree-row.file.active {
+  background: var(--sidebar-active);
+}
+
+.review-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-status-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: calc(10px * var(--font-ui-scale, 1));
+  font-weight: 700;
+}
+
+.review-status-badge.status-m {
+  color: #8a6d1a;
+  background: rgba(190, 150, 30, 0.15);
+}
+
+.review-status-badge.status-u,
+.review-status-badge.status-a {
+  color: #4f7a00;
+  background: rgba(127, 164, 0, 0.15);
+}
+
+.review-status-badge.status-d {
+  color: #b1574e;
+  background: rgba(200, 90, 80, 0.15);
+}
+
+/* 堆叠 diff：每个文件一个区块，文件头条吸顶（对照 Codex 左栏） */
+.review-file-section {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-file-section.active .review-diff-filebar {
+  color: var(--accent);
+}
+
+/* 文件类型彩色小方块（对照 Codex 的 JS/TS/{ } 图标）：品牌色文字 + 同色淡底 */
+.file-type-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3.5px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+}
+
+.file-type-icon-fallback {
+  flex: none;
+  color: #8a8f85;
+}
+
+/* 状态图标徽标（对照 Codex：新增绿 ⊕ / 修改橙 / 删除红） */
+.review-status-icon {
+  flex: none;
+}
+
+.review-status-icon.status-m {
+  color: #c9822e;
+}
+
+.review-status-icon.status-u,
+.review-status-icon.status-a {
+  color: #5a9e16;
+}
+
+.review-status-icon.status-d {
+  color: #c2544a;
+}
+
+/* 空态在分栏里居中，避免整页大留白 */
+.file-split-preview .browser-empty-state,
+.review-diff-pane .browser-empty-state,
+.git-review > .browser-empty-state,
+.review-panel > .browser-empty-state {
+  justify-content: center;
+  padding: 60px 22px;
+}
+
+/* ---- 侧边聊天（对照 Codex：临时聊天页） ---- */
+.side-chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.side-chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-chat-empty {
+  justify-content: center;
+  height: 100%;
+  padding: 0 22px;
+}
+
+.side-chat-message {
+  display: flex;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.65;
+}
+
+.side-chat-message.user {
+  justify-content: flex-end;
+}
+
+.side-chat-bubble {
+  max-width: 88%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(69, 71, 66, 0.09);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.side-chat-message.assistant {
+  color: var(--ink);
+}
+
+.side-chat-message.assistant > svg.spin {
+  color: var(--quiet);
+}
+
+.side-chat-composer {
+  flex: none;
+  margin: 8px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.side-chat-composer textarea {
+  display: block;
+  width: 100%;
+  padding: 11px 13px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  resize: none;
+  outline: none;
+}
+
+.side-chat-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.side-chat-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-chat-send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.side-chat-send:disabled {
+  background: rgba(69, 71, 66, 0.16);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: default;
+}
+

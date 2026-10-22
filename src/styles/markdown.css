@@ -1,0 +1,331 @@
+/* 流式未定稿正文：与定稿走同一套 Markdown 排版，只是按块增量解析
+   （见 InteractiveMessage 的 streaming 说明）。这里只留一个稳定的路径标记，
+   样式与 .markdown-content 一致，定稿瞬间不跳版。 */
+.streaming-markdown {
+  overflow-wrap: anywhere;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  margin: 24px 0 10px;
+  color: #40443e;
+  letter-spacing: -0.018em;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child,
+.markdown-content p:first-child {
+  margin-top: 0;
+}
+
+.markdown-content h1 { font-size: calc(21px * var(--font-ui-scale, 1)); }
+.markdown-content h2 { font-size: calc(17px * var(--font-ui-scale, 1)); }
+.markdown-content h3 { font-size: calc(15px * var(--font-ui-scale, 1)); }
+
+.markdown-content p {
+  margin: 0 0 14px;
+}
+
+.markdown-local-image {
+  display: block;
+  width: fit-content;
+  max-width: min(100%, 760px);
+  margin: 12px 0 18px;
+  overflow: hidden;
+  border: 1px solid #dedfd9;
+  border-radius: 12px;
+  background: #f3f4f0;
+}
+
+.markdown-local-image > img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.markdown-local-image-status {
+  display: block;
+  min-width: 220px;
+  padding: 18px 20px;
+  color: #777b74;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  text-align: center;
+}
+
+.markdown-local-image.error .markdown-local-image-status {
+  color: #a24d45;
+}
+
+.markdown-local-image-caption {
+  display: block;
+  padding: 7px 10px;
+  border-top: 1px solid #dedfd9;
+  color: #70746d;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.45;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 10px 0 17px;
+  padding-left: 25px;
+}
+
+.markdown-content li {
+  margin: 6px 0;
+  padding-left: 3px;
+}
+
+.markdown-content blockquote {
+  margin: 17px 0;
+  padding-left: 15px;
+  border-left: 3px solid #d2d4cd;
+  color: #70746d;
+}
+
+.markdown-content code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #ebece7;
+  color: #454a43;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+
+.markdown-content pre {
+  overflow-x: auto;
+  margin: 16px 0;
+  padding: 15px 17px;
+  border: 1px solid #e0e1db;
+  border-radius: 12px;
+  background: #edeee9;
+}
+
+/* mermaid 图表：居中展示 SVG，流式未完成时给出轻量占位 */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.echarts-diagram {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0;
+}
+
+.echarts-canvas {
+  width: 100%;
+  max-width: 680px;
+  height: 320px;
+  align-self: center;
+}
+
+.echarts-error-overlay {
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.echarts-error-overlay p {
+  margin: 0;
+  color: #a2611c;
+}
+
+.echarts-error-overlay .echarts-error-detail {
+  margin-top: 2px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-diagram.mermaid-pending {
+  color: #96998e;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  padding: 6px 0;
+}
+
+.mermaid-error {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.mermaid-error p {
+  margin: 0;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: #a2611c;
+}
+
+.mermaid-error-source {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: #656961;
+}
+
+/* 代码块一键复制 */
+.code-block-wrap {
+  position: relative;
+}
+
+.code-block-wrap .code-copy-button {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid rgba(102, 105, 98, 0.2);
+  border-radius: 7px;
+  color: #6d7168;
+  background: rgba(255, 255, 253, 0.88);
+  box-shadow: 0 1px 3px rgba(34, 35, 31, 0.08);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.code-block-wrap:hover .code-copy-button,
+.code-block-wrap .code-copy-button:focus-visible,
+.code-block-wrap .code-copy-button.copied {
+  opacity: 1;
+}
+
+.code-block-wrap .code-copy-button:hover {
+  color: #3f433c;
+  background: #fff;
+}
+
+.code-block-wrap .code-copy-button.copied {
+  color: #4d7c2a;
+}
+
+.markdown-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* 消息代码块语法高亮记号配色（highlight.js，贴合暖色主题） */
+.markdown-content pre .hljs-keyword,
+.markdown-content pre .hljs-selector-tag,
+.markdown-content pre .hljs-built_in { color: #a05a1f; }
+.markdown-content pre .hljs-string,
+.markdown-content pre .hljs-attr,
+.markdown-content pre .hljs-template-string { color: #6a7a12; }
+.markdown-content pre .hljs-comment,
+.markdown-content pre .hljs-quote { color: #96998e; font-style: italic; }
+.markdown-content pre .hljs-number,
+.markdown-content pre .hljs-literal { color: #b0512e; }
+.markdown-content pre .hljs-title,
+.markdown-content pre .hljs-title.function_,
+.markdown-content pre .hljs-name { color: #2f6fed; }
+.markdown-content pre .hljs-title.class_,
+.markdown-content pre .hljs-type { color: #7a5aa8; }
+.markdown-content pre .hljs-variable,
+.markdown-content pre .hljs-template-variable { color: #8a4a6b; }
+.markdown-content pre .hljs-meta,
+.markdown-content pre .hljs-selector-class,
+.markdown-content pre .hljs-selector-id { color: #a05a1f; }
+.markdown-content pre .hljs-regexp { color: #b0512e; }
+.markdown-content pre .hljs-symbol,
+.markdown-content pre .hljs-link { color: #2f6fed; }
+.markdown-content pre .hljs-deletion { color: #c0524a; }
+.markdown-content pre .hljs-addition { color: #5d7a00; }
+.markdown-content pre .hljs-emphasis { font-style: italic; }
+.markdown-content pre .hljs-strong { font-weight: 700; }
+
+.markdown-content table {
+  width: 100%;
+  margin: 17px 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid #dedfd9;
+  border-radius: 10px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 9px 12px;
+  border-right: 1px solid #e2e3dd;
+  border-bottom: 1px solid #e2e3dd;
+  text-align: left;
+}
+
+.markdown-content tr:last-child td { border-bottom: 0; }
+.markdown-content th:last-child,
+.markdown-content td:last-child { border-right: 0; }
+.markdown-content th { background: var(--table-head, #eeefea); }
+
+/* 长消息折叠（Codex 风格“显示更多/收起”） */
+.user-bubble {
+  overflow-wrap: anywhere;
+}
+
+.user-message-text.clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.show-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0 2px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #7d8178;
+  background: transparent;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.show-more-toggle:hover {
+  color: #3f433c;
+  background: rgba(72, 74, 68, 0.08);
+}
+
+.markdown-content p,
+.markdown-content li,
+.markdown-content blockquote,
+.markdown-content a,
+.conversation-turn-preview span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-content pre {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.plan-step {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-content > .markdown-content + .interactive-block,
+.message-content > .interactive-block + .markdown-content,
+.message-content > .interactive-block + .interactive-block {
+  margin-top: 18px;
+}
+

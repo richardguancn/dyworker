@@ -1,0 +1,206 @@
+/* ---- 代理工具活动列表（Codex 风格：无卡片边框，竖向导线连接标题，行式平铺） ---- */
+
+.activity-list {
+  margin: 0 0 8px 7px;
+  padding: 2px 0 3px 12px;
+  border-left: 1px solid var(--border);
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  line-height: 1.45;
+}
+
+.activity-list.command-list {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.activity-row-main {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  color: #767b72;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.activity-row-main:disabled {
+  cursor: default;
+}
+
+.activity-row-main:not(:disabled):hover {
+  background: rgba(116, 120, 110, 0.08);
+}
+
+.activity-status {
+  display: inline-flex;
+  width: 16px;
+  height: 18px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: #7fa400;
+}
+
+.activity-status-command {
+  color: #959a92;
+}
+
+.activity-row-main > svg {
+  flex: 0 0 auto;
+  color: #9ea39a;
+  stroke-width: 1.8;
+}
+
+.activity-row.running .activity-status {
+  color: #8a8e85;
+}
+
+.activity-row.error .activity-status {
+  color: #c15a51;
+}
+
+.activity-title {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-row.command .activity-title {
+  color: #979b94;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  letter-spacing: -0.006em;
+}
+
+.activity-list.command-list .activity-row-main {
+  padding-left: 0;
+}
+
+.activity-row.command .activity-row-main > svg:last-child {
+  display: none;
+}
+
+.activity-row.command .activity-status-command {
+  color: #959a92;
+}
+
+.activity-row.command.error .activity-status-command {
+  color: #c15a51;
+}
+
+.activity-detail {
+  margin: 0 0 4px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 2px 14px 8px 38px;
+  color: #858b81;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.activity-row.command .activity-detail {
+  padding-left: 33px;
+}
+
+/* 子代理（dispatch_agent）嵌套活动时间线：缩进 + 左侧引导线 */
+.activity-children {
+  margin: 0 0 4px 18px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+/* 子活动计数徽标（折叠态显示在标题后） */
+.activity-child-count {
+  flex: none;
+  color: #9a9d94;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+/* ---- 操作确认卡片 ---- */
+
+.approval-card {
+  max-width: min(680px, 100%);
+  border: 1px solid #e3d9b8;
+  border-radius: 14px;
+  background: #fbf7ea;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  color: #7a6a3f;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.approval-card-header strong {
+  font-weight: 590;
+}
+
+.approval-card-header span {
+  color: #96895f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-details {
+  margin: 0 14px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(150, 137, 95, 0.25);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #6d6450;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 审批卡的「操作影响」说明：模型生成的 Markdown 要点，渲染在原始详情下方 */
+.approval-impact {
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(150, 137, 95, 0.18);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.35);
+  color: #6d6450;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+}
+
+.approval-impact > strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.approval-impact .markdown-content ul {
+  margin: 2px 0;
+  padding-left: 18px;
+}
+
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+

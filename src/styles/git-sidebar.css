@@ -1,0 +1,410 @@
+/* ---- 分支管理下拉与提交推送面板（Codex 风格） ---- */
+.branch-menu-wrap {
+  position: relative;
+  display: flex;
+}
+
+.branch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: #565a52;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.branch-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-button:hover,
+.branch-button.active {
+  background: var(--sidebar-hover, rgba(72, 74, 68, 0.08));
+  color: #242622;
+}
+
+.branch-menu,
+.commit-panel {
+  position: absolute;
+  z-index: 46;
+  top: 34px;
+  right: 0;
+  width: 300px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+}
+
+.branch-menu-action {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #35382f;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  text-align: left;
+}
+
+.branch-menu-action:hover {
+  background: var(--sidebar-hover, rgba(72, 74, 68, 0.06));
+}
+
+.branch-menu-action .tool-panel-count {
+  margin-left: auto;
+}
+
+.branch-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #9a9c90;
+}
+
+.branch-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #35382f;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.branch-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.branch-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #35382f;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  text-align: left;
+}
+
+.branch-item:hover {
+  background: var(--sidebar-hover, rgba(72, 74, 68, 0.06));
+}
+
+.branch-item.current {
+  color: #242622;
+  font-weight: 550;
+}
+
+.branch-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-item-meta {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: #9a9c90;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  font-weight: 400;
+}
+
+.branch-item > svg:last-child {
+  flex: 0 0 auto;
+  color: #7fa400;
+}
+
+.branch-empty {
+  padding: 14px 10px;
+  color: #9a9c90;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  text-align: center;
+}
+
+.branch-create-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  background: transparent;
+  color: #565a52;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.branch-create-toggle:hover {
+  background: var(--sidebar-hover, rgba(72, 74, 68, 0.06));
+}
+
+.branch-create {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.branch-create input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: transparent;
+  color: #35382f;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.branch-create input:focus {
+  border-color: rgba(127, 164, 0, 0.55);
+}
+
+.branch-create button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #7fa400;
+  color: #fff;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.branch-create button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.commit-panel {
+  width: 340px;
+  padding: 12px;
+}
+
+.commit-panel-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #35382f;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.commit-message-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  outline: none;
+  background: transparent;
+  color: #35382f;
+  font-family: inherit;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.commit-message-input:focus {
+  border-color: rgba(127, 164, 0, 0.55);
+}
+
+/* AI 生成提交信息的独立按钮（提交信息输入框下方） */
+.commit-ai-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: 8px 0 0;
+}
+
+.commit-ai-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: #5f7a00;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.commit-ai-row button:hover:not(:disabled) {
+  background: rgba(127, 164, 0, 0.1);
+}
+
+.commit-ai-row button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.commit-include-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 2px;
+  color: #35382f;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.commit-include-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.commit-include-label input {
+  accent-color: #7fa400;
+}
+
+.commit-diff-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+
+.commit-diff-stats .diff-added {
+  color: #7fa400;
+}
+
+.commit-diff-stats .diff-removed {
+  color: #c25e5e;
+}
+
+.commit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.commit-actions button {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: #35382f;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.commit-actions .commit-primary {
+  flex: 1.5;
+}
+
+.commit-actions button:hover:not(:disabled) {
+  background: var(--sidebar-hover, rgba(72, 74, 68, 0.06));
+}
+
+.commit-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.commit-actions .commit-primary {
+  border-color: rgba(127, 164, 0, 0.55);
+  background: rgba(127, 164, 0, 0.1);
+  color: #5f7a00;
+  font-weight: 550;
+}
+
+.commit-actions kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: calc(10.5px * var(--font-ui-scale, 1));
+  opacity: 0.75;
+}
+
+
+.session-menu button {
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #565a52;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-menu button:hover {
+  background: rgba(72, 74, 68, 0.07);
+}
+
+.session-menu button.danger {
+  color: #b1574e;
+}
+
+.session-rename-input {
+  flex: 1;
+  height: 33px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  outline: 0;
+  padding: 0 10px;
+  background: var(--card);
+  color: #2c2f29;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+}
+
+.session-item {
+  width: 100%;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: #5f635c;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  transition: background 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.session-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

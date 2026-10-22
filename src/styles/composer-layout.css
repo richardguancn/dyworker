@@ -1,0 +1,475 @@
+/* 待发送、计划和输入框按正常文档流排列，避免中间出现计划时相互遮挡。 */
+.composer-pending {
+  position: relative;
+  width: min(940px, 76%);
+  min-width: 0;
+  container: pending / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  pointer-events: auto;
+}
+
+/* 排队消息卡片：任务运行期间发出的消息收在这里，等当前任务结束后依次执行 */
+.queue-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--border, #e5e5df);
+  border-radius: 16px;
+  background: var(--card, #fff);
+}
+
+.queue-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 6px;
+  color: var(--quiet, #8a8f85);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.queue-card-title {
+  color: var(--muted, #646861);
+  font-weight: 600;
+}
+
+.queue-card-hint {
+  margin-left: auto;
+  text-align: right;
+  line-height: 1.5;
+}
+
+.queue-card-count { font-variant-numeric: tabular-nums; }
+
+.queue-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 5px 6px;
+  border-radius: 9px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.queue-card-row:hover {
+  background: rgba(69, 71, 66, 0.05);
+}
+
+.queue-card-icon {
+  flex: none;
+  color: var(--quiet, #8a8f85);
+}
+
+.queue-card-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-card-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.queue-card-steer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted, #646861);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.queue-card-steer:hover {
+  background: rgba(69, 71, 66, 0.08);
+  color: var(--ink);
+}
+
+/* 主动挂起（等待自动唤醒）：输入框禁用期间的唯一出口卡片，同样紧贴在输入框上方 */
+.sleep-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e5e5df);
+  border-radius: 14px;
+  background: var(--card, #fffdf7);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.sleep-card-icon {
+  flex: none;
+  color: var(--muted, #646861);
+}
+
+.sleep-card-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sleep-card-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sleep-card-button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong, #e5e5df);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.sleep-card-button:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.sleep-card-button.primary {
+  border-color: transparent;
+  background: var(--ink);
+  color: var(--sleep-primary-ink);
+}
+
+.sleep-card-button.primary:hover {
+  background: color-mix(in srgb, var(--ink) 90%, var(--sleep-primary-ink));
+}
+
+.sleep-card-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.queue-card-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.queue-card-menu {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 4px);
+  left: auto;
+  min-width: 200px;
+}
+
+.composer-context {
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  padding: 0 4px 5px;
+  color: #62665e;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+}
+
+.composer-context-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.composer-context-item svg {
+  color: #73786f;
+}
+
+.composer-card textarea {
+  width: 100%;
+  min-height: 48px;
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: 1px 5px;
+  color: #3e413c;
+  background: transparent;
+  font-size: calc(14.25px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+}
+
+.composer-card textarea::placeholder {
+  color: #b0b2ab;
+}
+
+.composer-toolbar {
+  min-width: 0;
+  min-height: 38px;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.composer-actions {
+  min-width: 0;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* 引用 chip 与输入文字同一流式行：chip 在前，文本框占剩余宽度（Codex 风格） */
+.attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 2px 2px;
+  padding-bottom: 2px;
+}
+
+.attachment-strip .composer-input-wrap {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+/* 输入框内联引用：镜像层垫在 textarea 之下，给 @文件 token 画高亮底色。
+   镜像层的字体/行高/内边距必须与 .composer-card textarea 完全一致才能对齐 */
+.composer-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.composer-input-wrap textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.composer-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 1px 5px;
+  color: transparent;
+  font-size: calc(14.25px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* @文件 token 的内联高亮（输入框镜像层与消息气泡共用） */
+.composer-mirror .file-token,
+.user-message-text .file-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .file-token {
+  background: rgba(47, 111, 237, 0.16);
+  box-shadow: 0 0 0 1px rgba(47, 111, 237, 0.22);
+}
+
+.user-message-text .file-token {
+  color: #2f6fed;
+  background: rgba(47, 111, 237, 0.1);
+}
+
+/* /技能名 token 的内联高亮：与 @文件 同一套内联融合呈现，不独占一行 */
+.composer-mirror .skill-token,
+.user-message-text .skill-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .skill-token {
+  background: rgba(124, 82, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(124, 82, 255, 0.22);
+}
+
+.user-message-text .skill-token {
+  color: #7c52ff;
+  background: rgba(124, 82, 255, 0.1);
+}
+
+/* @「会话标题」token 的内联高亮：绿色区分于文件（蓝）与技能（紫） */
+.composer-mirror .session-token,
+.user-message-text .session-token {
+  border-radius: 5px;
+  padding: 0 1px;
+}
+
+.composer-mirror .session-token {
+  background: rgba(13, 148, 101, 0.16);
+  box-shadow: 0 0 0 1px rgba(13, 148, 101, 0.24);
+}
+
+.user-message-text .session-token {
+  color: #0c8a61;
+  background: rgba(13, 148, 101, 0.1);
+}
+
+/* 气泡里的会话 token 可点击跳转 */
+.user-message-text .session-token.clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.user-message-text .session-token.clickable:hover {
+  background: rgba(13, 148, 101, 0.2);
+}
+
+/* 气泡里的 @文件 token 可点击打开 */
+.user-message-text .file-token.clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.user-message-text .file-token.clickable:hover {
+  background: rgba(47, 111, 237, 0.2);
+}
+
+/* 输入框长粘贴折叠块：大段粘贴文本折叠成条，点击展开预览 */
+.composer-paste-folds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 2px 6px;
+}
+
+.paste-fold {
+  border: 1px solid #dedfd9;
+  border-radius: 10px;
+  background: #f2f2ee;
+  overflow: hidden;
+}
+
+.paste-fold-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px 5px 10px;
+  color: #656961;
+}
+
+.paste-fold-toggle {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: #656961;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paste-fold-toggle:hover {
+  color: #2f6fed;
+}
+
+.paste-fold-remove {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #656961;
+  cursor: pointer;
+}
+
+.paste-fold-remove:hover {
+  color: #c0392b;
+  background: rgba(192, 57, 43, 0.1);
+}
+
+.paste-fold-preview {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid #dedfd9;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #3d413b;
+  background: #fafaf7;
+}
+
+.attachment-chip {
+  min-width: 0;
+  max-width: 260px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 9px;
+  border: 1px solid #dedfd9;
+  border-radius: 10px;
+  color: #656961;
+  background: #f2f2ee;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.attachment-chip.image-attachment-chip {
+  position: relative;
+  width: 88px;
+  min-width: 88px;
+  max-width: 88px;
+  height: 64px;
+  flex: 0 0 88px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #ecece7;
+}
+
+.image-attachment-chip .attachment-preview-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.attachment-chip.image-attachment-chip > button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(24, 25, 23, 0.62);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(4px);
+}
+
+.attachment-chip.image-attachment-chip > button:hover {
+  color: #fff;
+  background: rgba(24, 25, 23, 0.82);
+}
+

@@ -1,0 +1,307 @@
+/* ==== 插件入口 / 插件页 / 添加弹窗 / 安装结果 ====
+   深浅色：全部走主题变量（--surface/--card/--border/--ink/--muted/--quiet/--shadow-*），
+   这些变量由 appearance 控制器在 data-theme 切换时统一改写，因此无需逐个写深色选择器。
+   只有"状态色"（成功/警告/错误/信息）需要在这里补一份深色取值。 */
+
+:root {
+  --pl-ok-bg: #eef7ee;      --pl-ok-fg: #2f5c2f;      --pl-ok-border: #cfe4cf;
+  --pl-warn-bg: #fdf6e6;    --pl-warn-fg: #7a5a1c;    --pl-warn-border: #ecdcb4;
+  --pl-bad-bg: #fdeeee;     --pl-bad-fg: #8a3b3b;     --pl-bad-border: #e9c9c9;
+  --pl-info-bg: #eef3fc;    --pl-info-fg: #3f5677;    --pl-info-border: #d8e2f5;
+  --pl-tile-mix: 85%;
+  --pl-switch-off: #d8dad4;
+}
+
+html[data-theme="dark"] {
+  --pl-ok-bg: #1d2a1d;      --pl-ok-fg: #9fd6a4;      --pl-ok-border: #2f4630;
+  --pl-warn-bg: #2c2617;    --pl-warn-fg: #e3c37e;    --pl-warn-border: #4a3d1f;
+  --pl-bad-bg: #2e1f1f;     --pl-bad-fg: #eba1a1;     --pl-bad-border: #4d2f2f;
+  --pl-info-bg: #1c2430;    --pl-info-fg: #a7c2e8;    --pl-info-border: #2c3c52;
+  --pl-tile-mix: 26%;
+  --pl-switch-off: #4a4d47;
+}
+
+/* 未受控主题（html 上没有 data-theme）时跟随系统 */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    --pl-ok-bg: #1d2a1d;    --pl-ok-fg: #9fd6a4;      --pl-ok-border: #2f4630;
+    --pl-warn-bg: #2c2617;  --pl-warn-fg: #e3c37e;    --pl-warn-border: #4a3d1f;
+    --pl-bad-bg: #2e1f1f;   --pl-bad-fg: #eba1a1;     --pl-bad-border: #4d2f2f;
+    --pl-info-bg: #1c2430;  --pl-info-fg: #a7c2e8;    --pl-info-border: #2c3c52;
+    --pl-tile-mix: 26%;
+    --pl-switch-off: #4a4d47;
+  }
+}
+
+/* ---- 侧边栏入口 ---- */
+.sidebar-plugins-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  margin: 0 12px 10px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.sidebar-plugins-button:hover { background: var(--card); }
+
+.sidebar-plugins-button.active {
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ---- 插件页 ---- */
+.main-panel.plugins-page-open { position: relative; }
+
+/* 打开时必须把顶栏/对话区/输入框一起隐藏，否则它们会浮在页面上方 */
+.main-panel.plugins-page-open > *:not(.plugins-page) { display: none; }
+
+.plugins-page {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 30px 18px;
+  overflow-y: auto;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.plugins-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+/* macOS/Windows 隐藏系统标题栏时，插件页标题和顶部类型栏承担窗口拖动。 */
+.app-shell:not(.platform-linux) .plugins-page-header,
+.app-shell:not(.platform-linux) .plugin-detail-header,
+.app-shell:not(.platform-linux) .plugins-formats > .plugins-navigation {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* 标题里的操作控件仍接收点击，不能被窗口拖动区域覆盖。 */
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea),
+.app-shell:not(.platform-linux) :is(.plugins-page-header, .plugin-detail-header, .plugins-formats > .plugins-navigation) :is(button, a, input, select, textarea) * {
+  -webkit-app-region: no-drag;
+}
+.plugins-page-heading h1 { margin: 0; font-size: calc(21px * var(--font-ui-scale, 1)); font-weight: 700; }
+.curated-plugins { display: flex; flex-direction: column; gap: 20px; }
+.curated-plugins .plugin-switch { align-self: flex-start; margin-top: 4px; flex-shrink: 0; }
+.curated-plugins details { margin-top: 10px; font-size: 13px; line-height: 1.65; }
+.curated-plugins summary { cursor: pointer; }
+.curated-plugins details ul { padding-left: 20px; max-height: 340px; overflow-y: auto; }
+.curated-plugins details li { margin: 12px 0; overflow-wrap: anywhere; }
+.curated-plugins details li p { margin: 3px 0; color: var(--muted); }
+.plugins-page-heading p { margin: 4px 0 0; color: var(--muted); font-size: calc(12.5px * var(--font-ui-scale, 1)); }
+.plugins-page-actions { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.skill-management-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.extension-creation-overlay { z-index: 140; }
+.extension-creation-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow-y: auto; padding: 24px; border-radius: 16px; background: var(--card); color: var(--ink); box-shadow: 0 24px 80px #0003; }
+.extension-creation-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.extension-creation-heading h3 { margin: 0; }
+.extension-creation-folder { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; }
+.extension-creation-folder strong { display: block; font-size: 13px; }
+.extension-creation-folder small { display: block; margin-top: 6px; max-width: 340px; overflow-wrap: anywhere; color: var(--muted); }
+@media (max-width: 780px) { .plugins-page-header { flex-wrap: wrap; } .plugins-page-actions { flex-wrap: wrap; } }
+
+/* 主按钮：用 ink/card 反色，深浅色自动成立（浅色=深底浅字，深色=浅底深字） */
+.plugins-add-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plugins-add-button:hover { opacity: 0.88; }
+
+/* 页内按钮一律不换行：中文在窄 flex 项里会逐字换行，把按钮挤成竖排 */
+.plugins-page button { white-space: nowrap; flex: 0 0 auto; }
+
+.plugins-group { display: flex; flex-direction: column; }
+/* ── DSH 设计令牌桥接 ────────────────────────────────────────────────
+   DSH 的插件界面（如内置的轨迹视图）用 --dsw-alias-* / --dsw-font-* 这套设计变量，
+   它们由 DSH 自己的主题层提供，我们没有。不桥接的话插件的 <style> 是注入了、
+   但每条规则的值都取不到——界面上表现为"样式全没了"（只剩裸 DOM 布局）。
+   这里把它们映射到我们**自己的**主题变量：浅色/深色跟随我们的主题，无需再维护两套配色。
+   未逐一精确对应的语义色用同色系近似值，不追求与 DSH 像素级一致。 */
+:root {
+  /* 背景层次 */
+  --dsw-alias-bg-base: var(--surface);
+  --dsw-alias-bg-layer-1: var(--card);
+  --dsw-alias-bg-layer-2: var(--surface);
+  --dsw-alias-bg-module-platform: var(--sidebar);
+  --dsw-specific-sidebar-fill: var(--sidebar);
+  /* 文字层次 */
+  --dsw-alias-label-primary: var(--ink);
+  --dsw-alias-label-secondary: var(--muted);
+  --dsw-alias-label-tertiary: var(--quiet);
+  --dsw-alias-label-caption: var(--quiet);
+  --dsw-alias-label-dimmed: var(--quiet);
+  /* 边框 */
+  --dsw-alias-border-l1: var(--border);
+  --dsw-alias-border-l2: var(--border);
+  --dsw-alias-border-l3: var(--border-strong);
+  /* 交互态 */
+  --dsw-alias-interactive-bg-hover: var(--sidebar-hover);
+  --dsw-alias-interactive-bg-active: var(--sidebar-active);
+  /* 品牌 / 语义色 */
+  --dsw-alias-brand-primary-new-colorprimary-new-color: var(--accent);
+  --dsw-alias-state-business-primary: var(--accent);
+  --dsw-alias-state-business-tertiary: color-mix(in srgb, var(--accent) 18%, transparent);
+  --dsw-alias-state-error-primary: #d4380d;
+  --dsw-alias-state-error-secondary: #cf1322;
+  --dsw-alias-state-success-primary: #389e0d;
+  --dsw-alias-state-success-tertiary: rgba(56, 158, 13, 0.18);
+  --dsw-alias-state-warn-label: #d46b08;
+  --dsw-alias-state-warn-tertiary: rgba(212, 107, 8, 0.18);
+  --dsw-static-blue-500: var(--accent);
+  --dsw-radius-sm: 6px;
+  --dsw-alias-tooltip-bg: #303134;
+  --dsw-static-neutral-bluish-00: #ffffff;
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 原样上下文图表使用的语义色；缺失时柱形和选中标记会透明。 */
+  --color-blue-500: #3b82f6;
+  --color-green-500: #22c55e;
+  --color-amber-500: #f59e0b;
+  --color-indigo-500: #6366f1;
+  --color-neutral-500: #737373;
+  --color-orange-500: #f97316;
+  --color-pink-500: #ec4899;
+  --color-purple-500: #a855f7;
+  --color-red-500: #ef4444;
+  --color-slate-400: #94a3b8;
+  --color-teal-500: #14b8a6;
+  --color-violet-500: #8b5cf6;
+  /* Markdown 细节 */
+  --dsw-alias-markdown-citation: var(--muted);
+  --dsw-alias-markdown-code-block: var(--bubble);
+  /* 滚动条 */
+  --dsw-alias-scrollbar-bg-l2: var(--border);
+  --dsw-alias-scrollbar-hover-l2: var(--border-strong);
+  /* 字体与阴影 */
+  /* 字体令牌必须是**完整的 font 简写**：插件写的是 font: var(--dsw-font-xxs-12)，
+     只给一个尺寸会把字体族一起重置掉。尺寸里带上外观的字号缩放，
+     这样插件的字体会跟着「外观」里的字号设置走（`--font-content-scale` 是我们正文用的那个）。 */
+  --dsw-font-family: var(--font-ui, "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --dsw-font-scale: var(--font-content-scale, 1);
+  --dsw-font-xs-13: calc(13px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xs-strong-13: 600 calc(13px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xxs-12: calc(12px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-font-xxxs-11: calc(11px * var(--dsw-font-scale))/1.5 var(--dsw-font-family);
+  --dsw-shadow-lv2: var(--shadow-md);
+}
+
+/* 插件市场：搜索 + 分类 + 条目（办公 / 政务精选） */
+.plugins-market-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 10px;
+}
+.plugins-market-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+}
+/* 搜索框由外壳提供唯一边框，内层不继承设置页文字输入框的外观。 */
+html .settings-page .settings-content label.plugins-market-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-weight: 400;
+}
+.plugins-market-search input,
+html .settings-page .settings-dialog .settings-content .plugins-market-search input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  outline: none;
+}
+html .settings-page .settings-dialog .settings-content .plugins-market-search input:focus {
+  border: 0;
+  box-shadow: none;
+}
+.plugins-market-search:focus-within {
+  border-color: var(--accent);
+}
+.plugins-market-search > svg { flex: none; }
+.plugins-market-categories {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* 市场说明：一句话的次要信息，靠右，不再占一整段 */
+.plugins-market-meta {
+  margin-left: auto;
+  color: var(--quiet);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: help;
+  border-bottom: 1px dotted var(--border-strong);
+}
+.plugin-category-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-category-chip:hover { color: var(--text); }
+.plugin-category-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.plugin-market-tag {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--quiet);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+.plugin-card.market .plugin-card-body { gap: 6px; }
+.plugin-tag.ok {
+  color: var(--ok, #16a34a);
+  border-color: color-mix(in srgb, var(--ok, #16a34a) 40%, transparent);
+}
+

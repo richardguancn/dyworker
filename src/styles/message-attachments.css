@@ -1,0 +1,485 @@
+/* 推理模型的思考过程：流式期间展开，完成后折叠 */
+.reasoning-block {
+  margin: 6px 0;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  color: var(--quiet);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+}
+
+.reasoning-block summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  user-select: none;
+}
+
+.reasoning-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 6px;
+  height: 220px;
+  overflow-y: auto;
+  /* 滚动到底/顶时不把滚动传导给外层会话流 */
+  overscroll-behavior: contain;
+}
+
+.message-actions.assistant {
+  justify-content: flex-start;
+}
+
+/* 助手消息底部的 AI 生成声明：推到操作行最右端 */
+.message-actions.assistant .ai-disclaimer {
+  margin-left: auto;
+  color: #999d95;
+}
+
+.message-actions.user {
+  justify-content: flex-end;
+  padding-right: 4px;
+}
+
+.message-actions time {
+  color: #999d95;
+  font-variant-numeric: tabular-nums;
+}
+
+.message-actions button {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.message-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.message-actions button:hover:not(:disabled) {
+  color: #747a70;
+  background: rgba(72, 74, 68, 0.08);
+}
+
+.message-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.message-editing-banner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  margin: 0 1px 9px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: #73786d;
+  background: #f0f2ec;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.message-editing-banner span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-editing-banner button {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 5px;
+  color: #7f847a;
+  background: transparent;
+  cursor: pointer;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.message-editing-banner button:hover {
+  color: #454943;
+  background: rgba(72, 74, 68, 0.08);
+}
+
+.message-editing-banner button.danger,
+.message-editing-banner button.danger:hover {
+  color: #b5453b;
+  background: #fdece9;
+}
+
+.user-bubble > span {
+  display: block;
+}
+
+/* 有引用 chip 时，chip 与正文同一行内联排列（Codex 风格） */
+.user-bubble > .message-inline-refs {
+  display: inline;
+}
+
+.user-bubble > .message-inline-refs + span {
+  display: inline;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  /* 图片在消息文本上方，与文本保持间距 */
+  margin: 0 0 8px;
+}
+
+.message-attachments > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 4px 8px;
+  border: 1px solid rgba(102, 105, 98, 0.14);
+  border-radius: 8px;
+  color: #71756e;
+  background: rgba(255, 255, 255, 0.38);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-image {
+  /* 固定正方形缩略图（微信风格）：图片独立于气泡展示在上方，多图整齐排列 */
+  width: 90px;
+  height: 90px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgba(102, 105, 98, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.message-attachment-image .attachment-preview-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 图片附件：加载/失败占位与复制按钮 */
+.message-attachment-image {
+  position: relative;
+}
+
+.attachment-image-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 10px 14px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: var(--muted, #76766d);
+}
+
+.attachment-image-status.error {
+  color: #b3541e;
+}
+
+.attachment-image-status.compact {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.attachment-thumb-wrap {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.attachment-image-copy {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  color: #fff;
+  background: rgba(24, 25, 23, 0.62);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.message-attachment-image:hover .attachment-image-copy,
+.attachment-image-copy:focus-visible {
+  opacity: 1;
+}
+
+.message-attachment-image.clickable,
+.image-attachment-chip .attachment-preview-image.clickable {
+  cursor: zoom-in;
+}
+
+.message-attachment-image.clickable:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+
+/* 图片点击放大预览浮层：优先原始尺寸，超出视口等比缩小 */
+.image-lightbox {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  background: rgba(24, 25, 22, 0.68);
+  backdrop-filter: blur(6px);
+}
+
+.image-lightbox-viewport {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  overflow: hidden;
+}
+
+.image-lightbox img {
+  display: block;
+  max-width: 80%;
+  max-height: 80%;
+  flex: none;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+}
+
+.image-lightbox-toolbar {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.image-lightbox-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: #f2f3ee;
+  background: rgba(24, 25, 22, 0.55);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.image-lightbox-copy:hover {
+  background: rgba(24, 25, 22, 0.8);
+}
+
+.image-lightbox-close {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  color: #f2f3ee;
+  background: rgba(24, 25, 22, 0.55);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.image-lightbox-close:hover {
+  background: rgba(24, 25, 22, 0.8);
+}
+
+/* 多图预览：左右切换箭头悬浮在视口两侧中点 */
+.image-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  color: #f2f3ee;
+  background: rgba(24, 25, 22, 0.55);
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.image-lightbox-nav:hover {
+  background: rgba(24, 25, 22, 0.85);
+  transform: translateY(-50%) scale(1.06);
+}
+
+.image-lightbox-nav.prev { left: 22px; }
+.image-lightbox-nav.next { right: 22px; }
+
+.image-lightbox-counter {
+  align-self: center;
+  padding: 0 4px;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: rgba(242, 243, 238, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Codex 风格的引用 chip：浅绿图标 + 名称，内联在消息文字流中 */
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  margin: 0 6px 3px 0;
+  padding: 2px 8px;
+  border: 1px solid rgba(127, 164, 0, 0.24);
+  border-radius: 7px;
+  color: #6f9600;
+  background: rgba(127, 164, 0, 0.08);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 560;
+  line-height: 1.5;
+  vertical-align: -4px;
+}
+
+.ref-chip svg {
+  flex: none;
+}
+
+.ref-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 已发送消息里的折叠长粘贴块：收起时只显示字数按钮，展开显示原文 */
+.message-paste-blocks {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.message-paste-block {
+  display: grid;
+}
+
+.message-paste-toggle {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  width: fit-content;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-paste-toggle:hover {
+  background: var(--sidebar-hover);
+}
+
+.message-paste-toggle > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.message-paste-content {
+  max-height: 280px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(112, 114, 107, 0.08);
+  color: inherit;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+}
+
+/* 输入框里的引用 chip 与消息里的同款绿色 */
+.attachment-chip.ref-attachment-chip {
+  border-color: rgba(127, 164, 0, 0.24);
+  color: #6f9600;
+  background: rgba(127, 164, 0, 0.08);
+  font-weight: 560;
+}
+
+.attachment-chip.ref-attachment-chip > button:hover {
+  color: #56741f;
+  background: rgba(127, 164, 0, 0.14);
+}
+
+.assistant-message {
+  color: #4b5049;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  line-height: 1.72;
+}
+
+.activity-divider {
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  margin: 0 0 9px;
+  padding: 0;
+  border: 0;
+  color: #9a9d96;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  line-height: 1.4;
+  letter-spacing: -0.008em;
+}
+
+.activity-divider .activity-summary-icon {
+  flex: 0 0 auto;
+  color: #92978e;
+  stroke-width: 1.8;
+}
+
+.activity-divider .activity-summary-label {
+  white-space: nowrap;
+}
+
+.activity-divider > svg:not(.activity-summary-icon) {
+  flex: 0 0 auto;
+  color: #858a82;
+  stroke-width: 1.8;
+}
+

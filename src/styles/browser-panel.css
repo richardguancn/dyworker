@@ -1,0 +1,624 @@
+/* 菜单页:作为右侧面板的内容展示(对照 Codex),不再是下拉浮层 */
+.tool-panel-menu-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+  padding: 24px 14px;
+}
+
+.tool-panel-menu {
+  width: 100%;
+  padding: 7px;
+}
+
+.tool-panel-menu button {
+  width: 100%;
+  min-height: 45px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #73776f;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tool-panel-menu button:hover,
+.tool-panel-menu button.active {
+  background: rgba(72, 74, 68, 0.065);
+  color: #343831;
+}
+
+.tool-panel-menu button > span:nth-of-type(1) {
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-panel-scroll.browser-scroll {
+  padding: 0;
+}
+
+.browser-panel {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.browser-content {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  padding-bottom: 64px;
+  box-sizing: border-box;
+}
+
+.browser-webview {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  border: 0;
+  background: #fff;
+}
+
+/* 浏览器 Computer Use 宿主控制浮层：底部严格预留 64px */
+.browser-control-overlay-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 11px;
+}
+
+.browser-control-glow-border {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid transparent;
+  transition: all 0.25s ease-in-out;
+}
+
+.browser-control-glow-border.running,
+.browser-control-glow-border.acquiring {
+  border-color: rgba(16, 185, 129, 0.7);
+  box-shadow: inset 0 0 14px rgba(16, 185, 129, 0.2);
+}
+
+.browser-control-glow-border.human_control {
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: inset 0 0 14px rgba(245, 158, 11, 0.2);
+}
+
+.browser-control-glow-border.paused {
+  border-color: rgba(156, 163, 175, 0.5);
+}
+
+.browser-control-input-barrier {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.01);
+  z-index: 10;
+}
+
+.browser-control-capsule {
+  position: relative;
+  z-index: 20;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 92%;
+  min-height: 42px;
+  padding: 6px 14px;
+  border-radius: 24px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  background: var(--bg-card, #ffffff);
+  color: var(--text-primary, #1e293b);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(12px);
+  user-select: none;
+  animation: capsuleFadeIn 0.2s ease-out;
+}
+
+@keyframes capsuleFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 脉冲点：波纹用伪元素 transform+opacity（合成器动画）实现。
+   原实现动画 box-shadow —— 每帧重绘，浏览器受控期间持续占 CPU/GPU */
+.browser-control-pulse-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.browser-control-pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.7);
+  animation: pulseDotRipple 1.8s infinite ease-out;
+  will-change: transform, opacity;
+}
+
+@keyframes pulseDotRipple {
+  0% { transform: scale(1); opacity: 0.7; }
+  70% { transform: scale(3); opacity: 0; }
+  100% { transform: scale(3); opacity: 0; }
+}
+
+.browser-control-user-badge {
+  color: #f59e0b;
+  display: flex;
+  align-items: center;
+}
+
+.browser-control-pause-badge,
+.browser-control-check-badge {
+  font-weight: 600;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  color: #64748b;
+}
+
+.browser-control-check-badge {
+  color: #10b981;
+}
+
+.browser-control-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.browser-control-title {
+  font-weight: 600;
+}
+
+.browser-control-separator {
+  color: #94a3b8;
+}
+
+.browser-control-timer {
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: #64748b;
+}
+
+.browser-control-action-text {
+  color: #64748b;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-control-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.browser-control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.browser-control-btn.btn-takeover {
+  background: var(--accent-color, #10b981);
+  color: #ffffff;
+}
+
+.browser-control-btn.btn-takeover:hover {
+  filter: brightness(1.08);
+}
+
+.browser-control-btn.btn-resume {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.browser-control-btn.btn-resume:hover {
+  background: #1d4ed8;
+}
+
+.browser-control-btn.btn-stop {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary, #475569);
+}
+
+.browser-control-btn.btn-stop:hover {
+  background: rgba(0, 0, 0, 0.09);
+  color: var(--text-primary, #0f172a);
+}
+
+/* 窄面板适配 */
+@container (max-width: 420px) {
+  .browser-control-action-text {
+    display: none;
+  }
+}
+
+
+.browser-tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--topbar-height);
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.08);
+}
+
+.browser-tabs-actions {
+  position: absolute;
+  top: 11px;
+  right: 10px;
+  gap: 2px;
+}
+
+.browser-tab {
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-radius: 12px;
+  background: rgba(72, 74, 68, 0.055);
+  color: #6d7169;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.browser-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.browser-tab-close,
+.browser-new-tab,
+.browser-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #9a9d95;
+  cursor: pointer;
+}
+
+.browser-tab-close {
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+}
+
+.browser-tab-close:hover,
+.browser-new-tab:hover,
+.browser-toolbar-button:hover {
+  background: rgba(72, 74, 68, 0.07);
+  color: #4e534b;
+}
+
+.browser-new-tab {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+}
+
+.browser-toolbar {
+  min-height: 45px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.08);
+}
+
+.browser-toolbar-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+}
+
+.browser-back-icon {
+  transform: rotate(180deg);
+}
+
+.browser-url-input {
+  min-width: 0;
+  flex: 1;
+  height: 29px;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(72, 74, 68, 0.045);
+  color: #656960;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.browser-url-wrap {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  margin-left: 5px;
+}
+
+.browser-url-wrap .browser-url-input {
+  width: 100%;
+  padding-right: 34px;
+}
+
+.browser-url-submit,
+.browser-toolbar-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: #9a9e96;
+  cursor: pointer;
+}
+
+.browser-url-submit {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 26px;
+  height: 29px;
+}
+
+.browser-toolbar-more {
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  border-radius: 8px;
+}
+
+.browser-url-submit:hover,
+.browser-toolbar-more:hover {
+  color: #555a52;
+  background: rgba(72, 74, 68, 0.07);
+}
+
+.browser-url-input:focus {
+  border-color: var(--border-strong);
+  background: var(--card);
+}
+
+.browser-empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-direction: column;
+  gap: 10px;
+  padding: clamp(260px, calc(75.6vh - 100px), 660px) 22px 100px;
+  color: #a1a49c;
+  text-align: center;
+}
+
+.browser-empty-state svg {
+  width: 46px;
+  height: 46px;
+  margin-bottom: 10px;
+  color: #aeb2aa;
+}
+
+.browser-empty-state strong {
+  color: #737870;
+  font-size: calc(18px * var(--font-ui-scale, 1));
+  font-weight: 610;
+}
+
+.browser-empty-state span {
+  color: #9ea29a;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.tool-panel-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 14px 28px;
+  scrollbar-width: thin;
+  scrollbar-color: #c9cac4 transparent;
+}
+
+.tool-panel-actions {
+  display: grid;
+  gap: 4px;
+  padding: min(30vh, 260px) 0 14px;
+}
+
+.tool-panel-action {
+  min-height: 45px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #72766e;
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  text-align: left;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.tool-panel-action:hover,
+.tool-panel-action.active {
+  background: rgba(72, 74, 68, 0.065);
+  color: #333730;
+}
+
+.tool-panel-action:active {
+  transform: translateY(0.5px);
+}
+
+.tool-panel-action > span:nth-of-type(1) {
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-panel-shortcut {
+  flex: 0 0 auto;
+  color: #aaaea5;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  letter-spacing: 0.02em;
+}
+
+.tool-panel-count {
+  min-width: 19px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #c86456;
+  color: #fff;
+  font-size: calc(10px * var(--font-ui-scale, 1));
+  font-weight: 650;
+}
+
+.tool-file-browser {
+  margin-top: 9px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(69, 71, 66, 0.1);
+}
+
+.tool-file-browser-header,
+.tool-file-browser-title {
+  display: flex;
+  align-items: center;
+}
+
+.tool-panel-content-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #686c64;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 620;
+}
+
+.tool-file-browser-header {
+  justify-content: space-between;
+  min-height: 30px;
+}
+
+.tool-file-browser-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b8e87;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  cursor: pointer;
+}
+
+.tool-file-browser-back:hover {
+  background: var(--sidebar-hover);
+  color: #5b5f57;
+}
+
+.tool-file-browser-back-icon {
+  transform: rotate(180deg);
+}
+
+.tool-file-browser-title {
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 7px 4px;
+  color: #656960;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 590;
+}
+
+.tool-file-browser-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-file-preview {
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.markdown-file-preview-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 7px 12px;
+  border-bottom: 1px solid rgba(69, 71, 66, 0.1);
+  color: #656960;
+}
+
+.markdown-file-preview-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 620;
+}
+
+.markdown-file-preview-content {
+  padding: 16px 7px 28px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.65;
+}
+

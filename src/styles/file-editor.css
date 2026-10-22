@@ -1,0 +1,421 @@
+/* ---- 文件浏览分栏（对照 Codex 文件页） ---- */
+/* 分栏文件面板直接顶到标签栏：基类的 margin-top/border-top 会在标签栏下方
+   形成一条空白带，还让高度 100% 的内容溢出出外层滚动条 */
+.tool-file-browser.file-split-panel {
+  height: 100%;
+  margin-top: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+.file-split {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.file-split-preview {
+  flex: 1.1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+.file-split-preview-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Codex 式即时渲染编辑（CodeMirror）：整篇为 markdown 源码，
+   光标停在行首时该行显示原始源码，其余行隐藏语法标记按渲染样式展示 */
+.markdown-live-editor {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 18px 0;
+  display: flex;
+  flex-direction: column;
+  cursor: text;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.65;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-live-editor .cm-editor {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.markdown-live-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.markdown-live-editor .cm-scroller {
+  overflow-y: auto;
+  font-family: inherit;
+  line-height: inherit;
+  padding-bottom: 140px;
+}
+
+.markdown-live-editor .cm-content {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+}
+
+.markdown-live-editor .cm-line {
+  padding: 3px 0;
+}
+
+.markdown-live-editor .cm-placeholder {
+  color: var(--quiet);
+}
+
+/* 隐藏语法标记后的渲染样式（对齐消息里的 markdown 观感） */
+.markdown-live-editor .cm-md-strong {
+  font-weight: 700;
+}
+
+.markdown-live-editor .cm-md-em {
+  font-style: italic;
+}
+
+.markdown-live-editor .cm-md-strike {
+  text-decoration: line-through;
+}
+
+.markdown-live-editor .cm-md-inlinecode {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #ebece7;
+  color: #454a43;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+
+.markdown-live-editor .cm-md-link {
+  color: var(--accent);
+}
+
+.markdown-live-editor .cm-md-image-alt {
+  color: #70746d;
+}
+
+.markdown-live-editor .cm-md-image-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid #dedfd9;
+  border-radius: 6px;
+  background: #f3f4f0;
+  color: #70746d;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-bullet,
+.markdown-live-editor .cm-md-listmark,
+.markdown-live-editor .cm-md-task {
+  color: var(--quiet);
+}
+
+.markdown-live-editor .cm-md-task.checked {
+  color: #4d7c2a;
+}
+
+/* 标题/引用/列表/代码块/表格的整行样式 */
+.markdown-live-editor .cm-md-h1,
+.markdown-live-editor .cm-md-h2,
+.markdown-live-editor .cm-md-h3 {
+  color: #40443e;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+.markdown-live-editor .cm-md-h1 {
+  padding-top: 16px;
+  padding-bottom: 3px;
+  font-size: calc(21px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-h2 {
+  padding-top: 14px;
+  padding-bottom: 2px;
+  font-size: calc(17px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-h3 {
+  padding-top: 12px;
+  font-size: calc(15px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-h4,
+.markdown-live-editor .cm-md-h5,
+.markdown-live-editor .cm-md-h6 {
+  padding-top: 10px;
+  font-weight: 600;
+}
+
+.markdown-live-editor .cm-md-list {
+  padding-left: 6px;
+}
+
+.markdown-live-editor .cm-md-quote {
+  border-left: 3px solid #d2d4cd;
+  padding-left: 12px;
+  color: #70746d;
+}
+
+.markdown-live-editor .cm-md-codeblock {
+  padding-left: 12px;
+  padding-right: 12px;
+  background: #edeee9;
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-table {
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+/* 渲染态表格（光标不在表格内时整块替换为真实表格） */
+.markdown-live-editor .cm-md-table-widget {
+  margin: 6px 0;
+  overflow-x: auto;
+  cursor: text;
+}
+
+.markdown-live-editor .cm-md-table-widget table {
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.markdown-live-editor .cm-md-table-widget th,
+.markdown-live-editor .cm-md-table-widget td {
+  border: 1px solid #d2d4cd;
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.markdown-live-editor .cm-md-table-widget th {
+  background: #edeee9;
+  font-weight: 600;
+}
+
+.markdown-live-editor .cm-md-rule {
+  display: inline-block;
+  width: 100%;
+  vertical-align: middle;
+  border-top: 1px solid #d2d4cd;
+}
+
+/* 纯源码模式（「查看源代码」）：关闭装饰，等宽编辑 */
+.markdown-live-editor.plain-source .cm-content {
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+/* 纯源码模式保留基础行距即可，去掉渲染态的行内边距 */
+.markdown-live-editor.plain-source .cm-line {
+  padding: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) .markdown-live-editor .cm-md-inlinecode {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cdd1c8;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-h1,
+html:not([data-theme]) .markdown-live-editor .cm-md-h2,
+html:not([data-theme]) .markdown-live-editor .cm-md-h3 {
+    color: #e1e3dc;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-quote {
+    border-left-color: rgba(255, 255, 255, 0.14);
+    color: #b3b7ad;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-codeblock {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-image-alt {
+    color: #b3b7ad;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-image-chip {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #b3b7ad;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-task.checked {
+    color: #8fba7e;
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-rule {
+    border-top-color: rgba(255, 255, 255, 0.14);
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-table-widget th,
+html:not([data-theme]) .markdown-live-editor .cm-md-table-widget td {
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+
+  html:not([data-theme]) .markdown-live-editor .cm-md-table-widget th {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+/* 显式深色主题（用户选择或系统解析结果） */
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-inlinecode {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cdd1c8;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-h1,
+html[data-theme="dark"] .markdown-live-editor .cm-md-h2,
+html[data-theme="dark"] .markdown-live-editor .cm-md-h3 {
+    color: #e1e3dc;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-quote {
+    border-left-color: rgba(255, 255, 255, 0.14);
+    color: #b3b7ad;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-codeblock {
+    background: rgba(255, 255, 255, 0.055);
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-image-alt {
+    color: #b3b7ad;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-image-chip {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #b3b7ad;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-task.checked {
+    color: #8fba7e;
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-rule {
+    border-top-color: rgba(255, 255, 255, 0.14);
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-table-widget th,
+html[data-theme="dark"] .markdown-live-editor .cm-md-table-widget td {
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+
+  html[data-theme="dark"] .markdown-live-editor .cm-md-table-widget th {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+
+.file-split-tree {
+  flex: 1;
+  min-width: 210px;
+  max-width: 48%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 10px 8px 24px;
+}
+
+/* 拖拽调宽后固定为像素宽度，覆盖默认的弹性占比限制 */
+.file-split-tree.pinned {
+  min-width: 0;
+  max-width: none;
+}
+
+/* 预览区与文件树之间的拖拽分隔条：命中区 7px，视觉只画一条细线 */
+.file-split-resizer {
+  flex: 0 0 7px;
+  margin: 0 -3px;
+  position: relative;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.file-split-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: transparent;
+}
+
+.file-split-resizer:hover::after,
+body.resizing-panels .file-split-resizer::after {
+  background: rgba(128, 132, 124, 0.45);
+}
+
+/* 隐藏文件树后预览区不再保留右侧分隔边框 */
+.file-split.tree-hidden .file-split-preview {
+  border-right: none;
+}
+
+.file-tree-toggle {
+  flex: none;
+}
+
+.file-split-tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 6px 8px;
+}
+
+.file-split-tree-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.file-split-tree-path span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

@@ -1,0 +1,247 @@
+/* ---- / 与 @ 唤起菜单 ---- */
+
+.composer-card {
+  position: relative;
+}
+
+.mention-menu {
+  position: absolute;
+  z-index: 32;
+  bottom: calc(100% + 8px);
+  left: 10px;
+  width: min(420px, calc(100% - 20px));
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+}
+
+.mention-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #565a52;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mention-menu button.active {
+  background: rgba(72, 74, 68, 0.07);
+}
+
+.mention-menu button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.mention-menu strong {
+  color: #3f433c;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 590;
+}
+
+.mention-menu small {
+  overflow: hidden;
+  color: #92958e;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-empty {
+  margin: 8px 10px;
+  color: #969a91;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+/* ---- 滚动条质感 ---- */
+
+.sidebar-scroll,
+.conversation-viewport,
+.activity-detail,
+.approval-details,
+.settings-dialog {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 98, 91, 0.28) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar,
+.conversation-viewport::-webkit-scrollbar,
+.activity-detail::-webkit-scrollbar,
+.approval-details::-webkit-scrollbar,
+.settings-dialog::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.conversation-viewport::-webkit-scrollbar-thumb,
+.activity-detail::-webkit-scrollbar-thumb,
+.approval-details::-webkit-scrollbar-thumb,
+.settings-dialog::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: rgba(96, 98, 91, 0.24);
+  background-clip: padding-box;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover,
+.conversation-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(96, 98, 91, 0.38);
+  background-clip: padding-box;
+}
+
+/* Token 活动图（用量统计面板顶部）：标题行 + 视图切换 + ECharts 画布 */
+.token-activity {
+  margin: 2px 0 14px;
+}
+
+.token-activity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.token-activity-title {
+  font-size: calc(15px * var(--font-ui-scale, 1));
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.token-activity-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.token-activity-tabs button {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  border-radius: 7px;
+  color: var(--muted, #76766d);
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.token-activity-tabs button:hover {
+  color: var(--ink);
+}
+
+.token-activity-tabs button.active {
+  color: var(--ink);
+  font-weight: 650;
+  background: var(--sidebar-active);
+}
+
+.token-activity-chart {
+  width: 100%;
+}
+
+.token-activity-head { flex-wrap: wrap; }
+.token-activity-caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  line-height: 1.6;
+}
+.token-activity-legend { display: inline-flex; align-items: center; gap: 6px; }
+.token-activity-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.token-activity-legend i + i { margin-left: 8px; }
+
+.usage-table {
+  width: 100%;
+  margin: 12px 0 4px;
+  border-collapse: collapse;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.usage-table th,
+.usage-table td {
+  padding: 7px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.usage-table th {
+  font-weight: 600;
+  color: var(--muted, #76766d);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child {
+  text-align: left;
+}
+
+.usage-table .usage-model {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Goal strip shares the composer's edge, with neutral colors in both themes. */
+.goal-banner {
+  width: min(916px, calc(76% - 24px));
+  flex: none;
+  margin-bottom: -17px;
+  padding: 7px 10px 23px;
+  border: 1px solid var(--border);
+  border-radius: 21px 21px 0 0;
+  background: var(--surface);
+  color: var(--muted);
+  pointer-events: auto;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+}
+.goal-banner-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.goal-banner-icon { flex: none; color: var(--quiet); }
+.goal-banner-summary {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0;
+  border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.goal-banner-label { flex: none; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.goal-banner-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.goal-banner-time { flex: none; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.goal-banner-actions { display: flex; flex: none; gap: 2px; margin-left: auto; }
+.goal-banner-actions button, .goal-banner-done {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 28px; height: 28px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--muted); cursor: pointer; font: inherit;
+}
+.goal-banner button:hover { background: var(--sidebar-hover); color: var(--ink); }
+.goal-banner button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.goal-banner button:disabled { opacity: .45; cursor: default; }
+.goal-banner-details { margin: 8px 2px 2px 24px; border-top: 1px solid var(--border); padding-top: 8px; }
+.goal-banner-details p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25vh; overflow-y: auto; color: var(--ink); }
+.goal-banner-details .goal-banner-reason { color: var(--muted); }
+.goal-banner-detail-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.goal-banner-done { flex: none; padding: 0 7px; }
+@media (max-width: 1120px) {
+  .goal-banner { width: calc(82% - 24px); }
+}
+@media (max-width: 700px) {
+  .goal-banner { width: calc(82% - 24px); font-size: 12px; }
+  .goal-banner-row { gap: 5px; }
+  .goal-banner-summary { flex: 1; flex-wrap: wrap; gap: 0; }
+  .goal-banner-label, .goal-banner-text { width: 100%; }
+  .goal-banner-time { font-size: 11px; }
+  .goal-banner-detail-footer { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+
