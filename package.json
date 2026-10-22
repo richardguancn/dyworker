@@ -230,6 +230,7 @@
       "artifactName": "dyworker-${version}-windows-${arch}-setup.${ext}"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false
