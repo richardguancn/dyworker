@@ -18046,6 +18046,7 @@ pre.trv-trace-inspector-body {
 
 /* 计划底边略压入输入框后方，保留上圆角，让两块背景自然衔接。 */
 .plan-progress {
+  --plan-progress-radius: 12px 12px 0 0;
   width: min(940px, 76%);
   min-width: 0;
   margin-bottom: -12px;
@@ -18054,20 +18055,27 @@ pre.trv-trace-inspector-body {
   border: 1px solid var(--border);
   border-bottom: 0;
   background: var(--queue-stack-surface, color-mix(in srgb, var(--sidebar-active) 55%, var(--surface)));
-  border-radius: 12px 12px 0 0;
+  border-radius: var(--plan-progress-radius);
   pointer-events: auto;
   font-size: calc(12px * var(--font-ui-scale, 1));
 }
 .plan-progress + .composer-card { position: relative; }
-.plan-progress-summary { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.plan-progress-meter { display: flex; flex: none; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.plan-progress-ring { display: block; flex: none; }
+.plan-progress-ring-track { stroke: color-mix(in srgb, var(--muted) 22%, transparent); }
+.plan-progress-ring-value { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 320ms ease; }
+.plan-progress-ring-check { stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+.plan-progress-ring-active { fill: var(--accent); animation: plan-progress-breathe 2.4s ease-in-out infinite; }
+@keyframes plan-progress-breathe { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+.plan-progress-summary { position: relative; display: flex; align-items: center; gap: 8px; min-height: 24px; }
 .plan-progress-summary > svg { flex-shrink: 0; }
 .plan-progress-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.plan-progress-count { color: var(--quiet); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.plan-progress-count { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .reference-layout .plan-progress { width: calc(var(--chat-width) - 24px); }
 @media (max-width: 1100px) { .plan-progress { width: 82%; } }
 
 .plan-progress { position: relative; }
-.plan-progress-toggle { display: block; list-style: none; cursor: pointer; border-radius: 6px; }
+.plan-progress-toggle { display: block; list-style: none; cursor: pointer; border-radius: var(--plan-progress-radius); }
 .plan-progress-toggle::-webkit-details-marker { display: none; }
 .plan-progress-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .plan-progress-toggle:hover { color: var(--ink); }
@@ -18096,7 +18104,10 @@ pre.trv-trace-inspector-body {
 .plan-progress-step.completed { color: var(--muted); }
 .plan-progress-step.completed > span { text-decoration: line-through; }
 .plan-progress-step.in_progress { font-weight: 560; }
-@media (prefers-reduced-motion: reduce) { .plan-progress-chevron { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-progress-chevron, .plan-progress-ring-value { transition: none; }
+  .plan-progress-ring-active { animation: none; }
+}
 
 .process-plan { margin: 4px 0 16px; color: var(--ink); font-size: calc(12px * var(--font-ui-scale, 1)); }
 .process-plan-heading { display: flex; align-items: center; gap: 8px; color: var(--muted); }

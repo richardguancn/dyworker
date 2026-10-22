@@ -318,7 +318,18 @@ html .reference-layout.platform-linux {
   padding-bottom: 4px;
   border-bottom: 0;
 }
+.reference-layout .composer-pending:has(.queue-card):has(+ .plan-progress) .queue-card-head {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 8px 4px 2px;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
+.reference-layout .composer-pending:has(.queue-card):has(+ .plan-progress) .queue-card-hint { display: none; }
 .reference-layout .composer-pending:has(.queue-card):not(:has(.sleep-card)) + .plan-progress {
+  --plan-progress-radius: 0;
   width: calc(var(--chat-width) - 24px);
   margin-bottom: -12px;
   padding: 10px 12px 16px;
@@ -329,6 +340,17 @@ html .reference-layout.platform-linux {
   background: var(--queue-stack-surface, color-mix(in srgb, var(--ink) 7%, var(--surface)));
 }
 .reference-layout .plan-progress-details { z-index: 3; }
+/* 与待发消息共用背景时，清单向内展开，避免浮层盖住队列。 */
+.reference-layout .composer-pending:has(.queue-card) + .plan-progress .plan-progress-details {
+  position: static;
+  max-height: min(240px, 30vh);
+  margin-top: 8px;
+  padding: 8px 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
 
 .reference-layout .goal-banner { width: var(--chat-width); }
 .reference-layout .composer-toolbar { flex-wrap: wrap; gap: 6px 12px; min-height: 34px; }
