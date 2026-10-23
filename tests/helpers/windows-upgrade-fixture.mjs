@@ -52,8 +52,8 @@ export async function createWindowsUpgradeFixture(root, compiler, { longPaths = 
     await fs.mkdir(path.join(prepackaged, 'resources'), { recursive: true });
     await fs.copyFile(dummy, path.join(prepackaged, 'DYWorker.exe'));
     await fs.writeFile(path.join(prepackaged, 'resources/version.txt'), version);
-    if (longPaths) {
-      const nested = path.join(prepackaged, 'resources', ...Array(5).fill('nested-dependency-with-a-long-package-name'));
+    if (longPaths && ['fixed', 'baseline'].includes(name)) {
+      const nested = path.join(prepackaged, 'resources', ...Array(3).fill('nested-dependency-with-a-long-package-name'));
       await fs.mkdir(nested, { recursive: true });
       await fs.writeFile(path.join(nested, 'must-install.txt'), version);
     }

@@ -305,7 +305,7 @@ test('Windows 跨盘覆盖升级：C 盘临时目录与 D 盘安装目录之间�
 test('Windows 手动安装：D 盘旧版覆盖升级包含长路径时不能弹出无法关闭提示', { skip: process.platform !== 'win32', timeout: 180_000 }, async t => {
   const root = await fixture(t);
   const metadata = await createWindowsUpgradeFixture(root, await compiler(), { longPaths: true });
-  const installed = path.join(process.cwd(), 'output', path.basename(root), 'DYWorker');
+  const installed = path.join(process.cwd(), 'output', path.basename(root), 'custom install location with a longer directory name', 'DYWorker');
   fixtureCleanups.get(t).push(async () => {
     const exe = path.join(installed, 'Uninstall DYWorker.exe');
     spawnSync(exe, ['/S', `_?=${installed}`], { ...nsisCommandLine(exe), timeout: 30_000 });
@@ -326,8 +326,10 @@ test('Windows 手动安装：D 盘旧版覆盖升级包含长路径时不能弹�
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const report = JSON.parse(result.stdout.trim());
+  console.log('Interactive installation report:', JSON.stringify(report));
   assert.deepEqual(report.dialogs, [], JSON.stringify(report));
   assert.equal(report.exitCode, 0, JSON.stringify(report));
-  const nested = path.join(installed, 'resources', ...Array(5).fill('nested-dependency-with-a-long-package-name'), 'must-install.txt');
+  const nested = path.join(installed, 'resources', ...Array(3).fill('nested-dependency-with-a-long-package-name'), 'must-install.txt');
+  assert.ok(nested.length > 260, `用例需要覆盖超出旧 Windows 路径上限的文件：${nested.length}`);
   assert.equal(await fs.readFile(nested, 'utf8'), '0.3.3');
 });
