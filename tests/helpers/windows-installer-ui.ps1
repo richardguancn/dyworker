@@ -31,7 +31,7 @@ try {
       $children = [InstallerWindows]::Children($window)
       $text = ([InstallerWindows]::Text($window)) + "`n" + (($children | ForEach-Object { [InstallerWindows]::Text($_) }) -join "`n")
       if ($screens.Count -eq 0 -or $screens[$screens.Count-1] -ne $text) { $screens.Add($text) }
-      if ($text -match 'cannot be closed|could not be closed|Please close it|无法关闭|无法替换|无法移除|无法准备|无法确定') {
+      if ($text -match 'cannot be closed|could not be closed|Please close it|无法关闭|无法替换|无法移除|无法准备|无法确定|无法写入|无法完整解压') {
         $errors.Add($text)
         foreach ($child in $children) {
           if ([InstallerWindows]::GetDlgCtrlID($child) -eq 2) { [void][InstallerWindows]::PostMessage($child, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero) }

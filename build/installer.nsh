@@ -4,6 +4,7 @@
 ; Native APIs also work when PowerShell profiles/policies/CIM are unavailable.
 !define DYW_NSIS_DIR "${__FILEDIR__}"
 !include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
+!include "${DYW_NSIS_DIR}\nsis-files.nsh"
 
 !macro dywProcessTrace MESSAGE
   !ifdef DYW_PROCESS_TRACE
@@ -167,6 +168,7 @@
   !ifndef BUILD_UNINSTALLER
     !ifdef UNINSTALLER_OUT_FILE
       !insertmacro dywUpgradeHeader
+      !insertmacro dywFileHeader
     !endif
   !endif
 !macroend
@@ -177,6 +179,12 @@
   ; process check actually running (electron-builder skips it in the UAC child).
   !ifndef BUILD_UNINSTALLER
     !ifdef UNINSTALLER_OUT_FILE
+      !ifmacrodef extractUsing7za
+        !ifndef DYW_FILE_HOOK_DEFINED
+          !define DYW_FILE_HOOK_DEFINED
+          !include "${DYW_NSIS_DIR}\nsis-files.nsh"
+        !endif
+      !endif
       !ifmacrodef uninstallOldVersion
         !ifndef DYW_UPGRADE_HOOK_DEFINED
           !define DYW_UPGRADE_HOOK_DEFINED
