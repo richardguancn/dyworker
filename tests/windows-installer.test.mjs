@@ -159,13 +159,14 @@ test('Windows 真卸载程序使用相同的进程判断', { skip: process.platf
   assert.equal(run(writer, installed).status, 0);
   const uninstaller = path.join(root, 'uninstaller.exe');
   const other = await dummy(t, `${installed}-other`);
-  await dummy(t, installed);
+  const app = await dummy(t, installed);
   const result = spawnSync(uninstaller, ['/S', `_?=${installed}`], { timeout: 20_000, encoding: 'utf8' });
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(process.kill(other.pid, 0), true);
   const query = await compile(t, root, { query: true });
   assert.equal(run(query, installed).status, 0);
+  assert.throws(() => process.kill(app.pid, 0), { code: 'ESRCH' });
 });
 
 test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件占用恢复及数据保留', { skip: process.platform !== 'win32', timeout: 300_000 }, async t => {
@@ -203,12 +204,24 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   await fs.writeFile(data, 'user history');
   fixtureCleanups.get(t).push(() => fs.rm(userData, { recursive: true, force: true }));
 
-  const baseline = invoke('baseline');
-  assert.equal(baseline.error, undefined);
-  assert.notEqual(baseline.status, 0, '旧安装流程应被旧卸载程序拦住');
-  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
   const legacyCalled = path.join(installed, 'legacy-uninstaller-called.txt');
+  // The upstream error dialog has no silent-mode default and can wait forever.
+  // Observe that it reached the broken old uninstaller, then stop ONLY this
+  // fixture process tree, rather than depending on a human to dismiss its UI.
+  const baseline = spawn(path.join(root, metadata.installers.baseline), ['/S', '/currentuser', `/D=${installed}`], { stdio: 'ignore' });
+  childProcesses.get(t).push(baseline);
+  const baselineDeadline = Date.now() + 20_000;
+  while (Date.now() < baselineDeadline) {
+    if (await fs.stat(legacyCalled).catch(() => null)) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   assert.equal(await fs.readFile(legacyCalled, 'utf8'), 'legacy uninstaller ran');
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
+  if (baseline.exitCode === null && baseline.signalCode === null) {
+    const stopped = once(baseline, 'exit');
+    spawnSync('taskkill.exe', ['/PID', String(baseline.pid), '/T', '/F'], { timeout: 10_000 });
+    await stopped;
+  }
   await fs.rm(legacyCalled);
 
   const lock = spawn(path.join(root, 'lock.exe'), ['/S', `/D=${installed}`], { stdio: 'ignore' });

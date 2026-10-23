@@ -5,6 +5,16 @@
 !define DYW_NSIS_DIR "${__FILEDIR__}"
 !include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
 
+!macro dywNormalizePath PATH
+  ; TEMP and the process image may use different spellings of the same path
+  ; (for example RUNNER~1 versus runneradmin). Compare expanded paths.
+  System::Call 'kernel32::GetLongPathNameW(w "${PATH}", w .r1, i ${NSIS_MAX_STRLEN}) i.r0'
+  ${If} $0 > 0
+  ${AndIf} $0 < ${NSIS_MAX_STRLEN}
+    StrCpy ${PATH} $1
+  ${EndIf}
+!macroend
+
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
     !define DYW_PROCESS_PREFIX "un."
@@ -30,6 +40,7 @@
   Function ${DYW_PROCESS_PREFIX}dywInspectProcesses
     StrCpy $dywResult 0
     GetFullPathName $dywExpectedPath "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    !insertmacro dywNormalizePath $dywExpectedPath
     System::Call 'kernel32::GetCurrentProcessId() i.s'
     Pop $dywSelfPid
     System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p.s'
@@ -79,7 +90,9 @@
             ${OrIf} $1 == 0
               StrCpy $dywResult 2
             ${EndIf}
-          ${ElseIf} $dywPath == $dywExpectedPath
+          ${Else}
+            !insertmacro dywNormalizePath $dywPath
+            ${If} $dywPath == $dywExpectedPath
             ${If} $dywResult != 2
               StrCpy $dywResult 1
             ${EndIf}
@@ -107,10 +120,13 @@
                 System::Call 'kernel32::QueryFullProcessImageNameW(p $dywProcess, i 0, w .r1, *i ${NSIS_MAX_STRLEN}) i.r0'
                 StrCpy $dywPath $1
                 ${If} $0 != 0
-                ${AndIf} $dywPath == $dywExpectedPath
-                  System::Call 'kernel32::TerminateProcess(p $dywProcess, i 0)'
+                  !insertmacro dywNormalizePath $dywPath
+                  ${If} $dywPath == $dywExpectedPath
+                    System::Call 'kernel32::TerminateProcess(p $dywProcess, i 0)'
+                  ${EndIf}
                 ${EndIf}
               ${EndIf}
+            ${EndIf}
             ${EndIf}
           ${EndIf}
           ${If} $dywProcess != 0
