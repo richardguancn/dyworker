@@ -188,8 +188,12 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
     spawnSync(exe, ['/S', `_?=${installed}`], { timeout: 30_000 });
     // A failed assertion may leave the deliberately broken legacy uninstaller.
     // Remove only this fixture's two unique per-user registration keys.
-    for (const key of [`Software\\${metadata.guid}`, `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${metadata.guid}`]) {
-      spawnSync('reg.exe', ['delete', `HKCU\\${key}`, '/f', '/reg:64'], { timeout: 10_000 });
+    const keys = [
+      path.win32.join('HKCU', 'Software', metadata.guid),
+      path.win32.join('HKCU', 'Software', 'Microsoft', 'Windows', 'CurrentVersion', 'Uninstall', metadata.guid),
+    ];
+    for (const key of keys) {
+      spawnSync('reg.exe', ['delete', key, '/f', '/reg:64'], { timeout: 10_000 });
     }
   });
   assert.equal(invoke('old').status, 0);
@@ -223,6 +227,8 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   assert.ok(diagnostic.includes(path.join(installed, 'resources/version.txt')), diagnostic);
   assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
   assert.equal(await fs.readFile(data, 'utf8'), 'user history');
+  await fs.access(path.join(installed, 'DYWorker.exe'));
+  await fs.access(path.join(installed, 'Uninstall DYWorker.exe'));
   await assert.rejects(fs.access(legacyCalled), { code: 'ENOENT' });
   const exited = once(lock, 'exit'); lock.kill(); await exited;
 

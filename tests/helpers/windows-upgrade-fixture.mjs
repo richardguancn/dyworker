@@ -57,7 +57,7 @@ export async function createWindowsUpgradeFixture(root, compiler) {
     }));
     const outDir = path.join(projectDir, 'out');
     await build({
-      projectDir, prepackaged, targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64),
+      projectDir, prepackaged, publish: 'never', targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64),
       config: {
         extends: null, appId, productName: 'DYWorker', electronVersion: '41.0.0',
         directories: { output: outDir },
