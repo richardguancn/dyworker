@@ -85,7 +85,7 @@ export async function createWindowsUpgradeFixture(root, compiler) {
     OutFile "${quote(path.join(root, 'lock.exe'))}"
     Section
       StrCpy $3 "$INSTDIR\\resources\\version.txt"
-      System::Call 'kernel32::CreateFileW(w r3, i 0x80000000, i 0, p 0, i 3, i 0, p 0) p.r0 ?e'
+      System::Call 'kernel32::CreateFileW(w r3, i 0x80000000, i 3, p 0, i 3, i 0, p 0) p.r0 ?e'
       Pop $1
       FileOpen $2 "$EXEDIR\\lock-diagnostic.txt" w
       FileWriteUTF16LE $2 "INSTDIR=$INSTDIR HANDLE=$0 ERROR=$1"
