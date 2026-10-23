@@ -3,7 +3,7 @@
 ; exact installed Electron executable (including its renderer/Node children).
 ; Native APIs also work when PowerShell profiles/policies/CIM are unavailable.
 !define DYW_NSIS_DIR "${__FILEDIR__}"
-!include "${DYW_NSIS_DIR}/nsis-upgrade.nsh"
+!include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
 
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
@@ -146,7 +146,7 @@
       !ifmacrodef uninstallOldVersion
         !ifndef DYW_UPGRADE_HOOK_DEFINED
           !define DYW_UPGRADE_HOOK_DEFINED
-          !include "${DYW_NSIS_DIR}/nsis-upgrade.nsh"
+          !include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
         !endif
       !endif
     !endif

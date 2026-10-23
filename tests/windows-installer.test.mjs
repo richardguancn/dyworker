@@ -52,7 +52,7 @@ async function compile(t, root, { uninstall = false, query = false } = {}) {
     ${uninstall ? '!define BUILD_UNINSTALLER' : ''}
     !include "${escapeNsis(include)}"
     !insertmacro customHeader
-    LoadLanguageFile "\u0024{NSISDIR}/Contrib/Language files/English.nlf"
+    LoadLanguageFile "\u0024{NSISDIR}\\Contrib\\Language files\\English.nlf"
     ${query ? '' : `
       LangString appRunning 1033 "Running"
       LangString appClosing 1033 "Closing"
