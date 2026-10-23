@@ -2,6 +2,30 @@
 ; setup/uninstall/elevation helpers can live in that directory too. Inspect the
 ; exact installed Electron executable (including its renderer/Node children).
 ; Native APIs also work when PowerShell profiles/policies/CIM are unavailable.
+!define DYW_NSIS_DIR "${__FILEDIR__}"
+!include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
+!include "${DYW_NSIS_DIR}\nsis-files.nsh"
+
+!macro dywProcessTrace MESSAGE
+  !ifdef DYW_PROCESS_TRACE
+    FileOpen $dywTraceFile "$EXEDIR\process-trace.txt" a
+    FileSeek $dywTraceFile 0 END
+    FileWriteUTF16LE $dywTraceFile "${MESSAGE}$\r$\n"
+    FileClose $dywTraceFile
+  !endif
+!macroend
+
+!macro dywNormalizePath PATH
+  ; TEMP and the process image may use different spellings of the same path
+  ; (for example RUNNER~1 versus runneradmin). Compare expanded paths.
+  StrCpy $1 "${PATH}"
+  System::Call 'kernel32::GetLongPathNameW(w r1, w .r1, i ${NSIS_MAX_STRLEN}) i.r0'
+  ${If} $0 > 0
+  ${AndIf} $0 < ${NSIS_MAX_STRLEN}
+    StrCpy ${PATH} $1
+  ${EndIf}
+!macroend
+
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
     !define DYW_PROCESS_PREFIX "un."
@@ -21,12 +45,17 @@
   Var dywWindow
   Var dywWindowPid
   Var dywExpectedPath
+  !ifdef DYW_PROCESS_TRACE
+    Var dywTraceFile
+  !endif
 
   ; dywMode: 0=query, 1=request window close, 2=terminate remaining processes.
   ; dywResult: 0=absent, 1=running, 2=cannot inspect safely.
   Function ${DYW_PROCESS_PREFIX}dywInspectProcesses
     StrCpy $dywResult 0
     GetFullPathName $dywExpectedPath "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+    !insertmacro dywNormalizePath $dywExpectedPath
+    !insertmacro dywProcessTrace "EXPECTED=$dywExpectedPath"
     System::Call 'kernel32::GetCurrentProcessId() i.s'
     Pop $dywSelfPid
     System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p.s'
@@ -57,6 +86,7 @@
       StrCpy $dywName $1
       ${If} $dywName == "${APP_EXECUTABLE_FILENAME}"
       ${AndIf} $dywPid != $dywSelfPid
+        !insertmacro dywProcessTrace "PID=$dywPid NAME=$dywName"
         ; QUERY_LIMITED_INFORMATION works across x86/x64 and needs no elevation.
         System::Call 'kernel32::OpenProcess(i 0x1000, i 0, i $dywPid) p.r0 ?e'
         Pop $1
@@ -69,6 +99,7 @@
         ${Else}
           System::Call 'kernel32::QueryFullProcessImageNameW(p $dywProcess, i 0, w .r1, *i ${NSIS_MAX_STRLEN}) i.r0'
           StrCpy $dywPath $1
+          !insertmacro dywProcessTrace "QUERY=$0 PATH=$dywPath"
           ${If} $0 == 0
             ; A process can disappear between the snapshot and the path query.
             System::Call 'kernel32::GetExitCodeProcess(p $dywProcess, *i .r0) i.r1'
@@ -76,7 +107,10 @@
             ${OrIf} $1 == 0
               StrCpy $dywResult 2
             ${EndIf}
-          ${ElseIf} $dywPath == $dywExpectedPath
+          ${Else}
+            !insertmacro dywNormalizePath $dywPath
+            !insertmacro dywProcessTrace "NORMALIZED=$dywPath"
+            ${If} $dywPath == $dywExpectedPath
             ${If} $dywResult != 2
               StrCpy $dywResult 1
             ${EndIf}
@@ -104,10 +138,13 @@
                 System::Call 'kernel32::QueryFullProcessImageNameW(p $dywProcess, i 0, w .r1, *i ${NSIS_MAX_STRLEN}) i.r0'
                 StrCpy $dywPath $1
                 ${If} $0 != 0
-                ${AndIf} $dywPath == $dywExpectedPath
-                  System::Call 'kernel32::TerminateProcess(p $dywProcess, i 0)'
+                  !insertmacro dywNormalizePath $dywPath
+                  ${If} $dywPath == $dywExpectedPath
+                    System::Call 'kernel32::TerminateProcess(p $dywProcess, i 0)'
+                  ${EndIf}
                 ${EndIf}
               ${EndIf}
+            ${EndIf}
             ${EndIf}
           ${EndIf}
           ${If} $dywProcess != 0
@@ -125,10 +162,37 @@
     ${Loop}
     System::Free $dywEntry
     System::Call 'kernel32::CloseHandle(p $dywSnapshot)'
+    !insertmacro dywProcessTrace "RESULT=$dywResult"
   FunctionEnd
+
+  !ifdef UNINSTALLER_OUT_FILE
+    !ifndef BUILD_UNINSTALLER
+      !insertmacro dywUpgradeHeader
+    !endif
+    !insertmacro dywFileHeader "${DYW_PROCESS_PREFIX}"
+  !endif
 !macroend
 
 !macro customCheckAppRunning
+  ; This macro is expanded after installUtil.nsh, including in the elevated
+  ; installer. Hook the upgrade call at compile time; do not depend on this
+  ; process check actually running (electron-builder skips it in the UAC child).
+  !ifndef BUILD_UNINSTALLER
+    !ifdef UNINSTALLER_OUT_FILE
+      !ifmacrodef extractUsing7za
+        !ifndef DYW_FILE_HOOK_DEFINED
+          !define DYW_FILE_HOOK_DEFINED
+          !include "${DYW_NSIS_DIR}\nsis-files.nsh"
+        !endif
+      !endif
+      !ifmacrodef uninstallOldVersion
+        !ifndef DYW_UPGRADE_HOOK_DEFINED
+          !define DYW_UPGRADE_HOOK_DEFINED
+          !include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
+        !endif
+      !endif
+    !endif
+  !endif
   Var /GLOBAL dywAttempts
   Push $0
   Push $1
