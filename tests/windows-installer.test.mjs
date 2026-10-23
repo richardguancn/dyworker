@@ -97,8 +97,11 @@ test('Windows 安装和卸载均能编译应用关闭检查', async t => {
   }
 });
 
+// NSIS requires /D= and _?= to be an unquoted final command-line tail, including
+// when it contains spaces. libuv's normal argv quoting changes their meaning.
+const nsisCommandLine = exe => ({ windowsVerbatimArguments: true, argv0: `"${exe}"` });
 function run(exe, directory, extra = []) {
-  return spawnSync(exe, ['/S', ...extra, `/D=${directory}`], { timeout: 20_000, encoding: 'utf8' });
+  return spawnSync(exe, ['/S', ...extra, `/D=${directory}`], { ...nsisCommandLine(exe), timeout: 20_000, encoding: 'utf8' });
 }
 
 async function dummy(t, directory, filename = 'DYWorker.exe') {
@@ -164,7 +167,7 @@ test('Windows 真卸载程序使用相同的进程判断', { skip: process.platf
   const uninstaller = path.join(root, 'uninstaller.exe');
   const other = await dummy(t, `${installed}-other`);
   const app = await dummy(t, installed);
-  const result = spawnSync(uninstaller, ['/S', `_?=${installed}`], { timeout: 20_000, encoding: 'utf8' });
+  const result = spawnSync(uninstaller, ['/S', `_?=${installed}`], { ...nsisCommandLine(uninstaller), timeout: 20_000, encoding: 'utf8' });
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(process.kill(other.pid, 0), true);
@@ -190,7 +193,7 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   // Unique app ID and disabled shortcuts keep the real DYWorker install intact.
   fixtureCleanups.get(t).push(() => {
     const exe = path.join(installed, 'Uninstall DYWorker.exe');
-    spawnSync(exe, ['/S', `_?=${installed}`], { timeout: 30_000 });
+    spawnSync(exe, ['/S', `_?=${installed}`], { ...nsisCommandLine(exe), timeout: 30_000 });
     // A failed assertion may leave the deliberately broken legacy uninstaller.
     // Remove only this fixture's two unique per-user registration keys.
     const keys = [
@@ -212,7 +215,8 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   // The upstream error dialog has no silent-mode default and can wait forever.
   // Observe that it reached the broken old uninstaller, then stop ONLY this
   // fixture process tree, rather than depending on a human to dismiss its UI.
-  const baseline = spawn(path.join(root, metadata.installers.baseline), ['/S', '/currentuser', `/D=${installed}`], { stdio: 'ignore' });
+  const baselineExe = path.join(root, metadata.installers.baseline);
+  const baseline = spawn(baselineExe, ['/S', '/currentuser', `/D=${installed}`], { ...nsisCommandLine(baselineExe), stdio: 'ignore' });
   childProcesses.get(t).push(baseline);
   const baselineDeadline = Date.now() + 20_000;
   while (Date.now() < baselineDeadline) {
@@ -228,7 +232,8 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   }
   await fs.rm(legacyCalled);
 
-  const lock = spawn(path.join(root, 'lock.exe'), ['/S', `/D=${installed}`], { stdio: 'ignore' });
+  const lockExe = path.join(root, 'lock.exe');
+  const lock = spawn(lockExe, ['/S', `/D=${installed}`], { ...nsisCommandLine(lockExe), stdio: 'ignore' });
   childProcesses.get(t).push(lock);
   const ready = path.join(installed, 'lock-ready.txt');
   const deadline = Date.now() + 10_000;
