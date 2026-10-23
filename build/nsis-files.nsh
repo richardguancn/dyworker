@@ -16,7 +16,9 @@
   Var dywCopyError
   Var dywCopyCode
   Var dywCopySkip
-  Var dywBackupRoot
+  !if "${PREFIX}" == "un."
+    Var dywBackupRoot
+  !endif
 
   Function ${PREFIX}dywExtendedPath
     Exch $0
