@@ -5,10 +5,19 @@
 !define DYW_NSIS_DIR "${__FILEDIR__}"
 !include "${DYW_NSIS_DIR}\nsis-upgrade.nsh"
 
+!macro dywProcessTrace MESSAGE
+  !ifdef DYW_PROCESS_TRACE
+    FileOpen $dywTraceFile "$EXEDIR\process-trace.txt" a
+    FileWriteUTF16LE $dywTraceFile "${MESSAGE}$\r$\n"
+    FileClose $dywTraceFile
+  !endif
+!macroend
+
 !macro dywNormalizePath PATH
   ; TEMP and the process image may use different spellings of the same path
   ; (for example RUNNER~1 versus runneradmin). Compare expanded paths.
-  System::Call 'kernel32::GetLongPathNameW(w "${PATH}", w .r1, i ${NSIS_MAX_STRLEN}) i.r0'
+  StrCpy $1 "${PATH}"
+  System::Call 'kernel32::GetLongPathNameW(w r1, w .r1, i ${NSIS_MAX_STRLEN}) i.r0'
   ${If} $0 > 0
   ${AndIf} $0 < ${NSIS_MAX_STRLEN}
     StrCpy ${PATH} $1
@@ -34,6 +43,9 @@
   Var dywWindow
   Var dywWindowPid
   Var dywExpectedPath
+  !ifdef DYW_PROCESS_TRACE
+    Var dywTraceFile
+  !endif
 
   ; dywMode: 0=query, 1=request window close, 2=terminate remaining processes.
   ; dywResult: 0=absent, 1=running, 2=cannot inspect safely.
@@ -41,6 +53,7 @@
     StrCpy $dywResult 0
     GetFullPathName $dywExpectedPath "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     !insertmacro dywNormalizePath $dywExpectedPath
+    !insertmacro dywProcessTrace "EXPECTED=$dywExpectedPath"
     System::Call 'kernel32::GetCurrentProcessId() i.s'
     Pop $dywSelfPid
     System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p.s'
@@ -71,6 +84,7 @@
       StrCpy $dywName $1
       ${If} $dywName == "${APP_EXECUTABLE_FILENAME}"
       ${AndIf} $dywPid != $dywSelfPid
+        !insertmacro dywProcessTrace "PID=$dywPid NAME=$dywName"
         ; QUERY_LIMITED_INFORMATION works across x86/x64 and needs no elevation.
         System::Call 'kernel32::OpenProcess(i 0x1000, i 0, i $dywPid) p.r0 ?e'
         Pop $1
@@ -83,6 +97,7 @@
         ${Else}
           System::Call 'kernel32::QueryFullProcessImageNameW(p $dywProcess, i 0, w .r1, *i ${NSIS_MAX_STRLEN}) i.r0'
           StrCpy $dywPath $1
+          !insertmacro dywProcessTrace "QUERY=$0 PATH=$dywPath"
           ${If} $0 == 0
             ; A process can disappear between the snapshot and the path query.
             System::Call 'kernel32::GetExitCodeProcess(p $dywProcess, *i .r0) i.r1'
@@ -92,6 +107,7 @@
             ${EndIf}
           ${Else}
             !insertmacro dywNormalizePath $dywPath
+            !insertmacro dywProcessTrace "NORMALIZED=$dywPath"
             ${If} $dywPath == $dywExpectedPath
             ${If} $dywResult != 2
               StrCpy $dywResult 1
@@ -144,6 +160,7 @@
     ${Loop}
     System::Free $dywEntry
     System::Call 'kernel32::CloseHandle(p $dywSnapshot)'
+    !insertmacro dywProcessTrace "RESULT=$dywResult"
   FunctionEnd
 
   !ifndef BUILD_UNINSTALLER

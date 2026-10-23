@@ -49,6 +49,7 @@ async function compile(t, root, { uninstall = false, query = false } = {}) {
     !include "LogicLib.nsh"
     !define APP_EXECUTABLE_FILENAME "DYWorker.exe"
     !define isUpdated '1 == 1'
+    ${query ? '!define DYW_PROCESS_TRACE' : ''}
     ${uninstall ? '!define BUILD_UNINSTALLER' : ''}
     !include "${escapeNsis(include)}"
     !insertmacro customHeader
@@ -123,12 +124,15 @@ test('Windows 真进程：空闲、同目录安装助手、其他安装位置不
   await fs.mkdir(installed, { recursive: true });
   const query = await compile(t, root, { query: true });
   const check = await compile(t, root);
-  const assertRun = (exe, expected) => {
+  const assertRun = async (exe, expected) => {
+    const traceFile = path.join(path.dirname(exe), 'process-trace.txt');
+    await fs.rm(traceFile, { force: true });
     const result = run(exe, installed);
     assert.equal(result.error, undefined);
-    assert.equal(result.status, expected, result.stdout + result.stderr);
+    const trace = result.status === expected ? '' : await fs.readFile(traceFile, 'utf16le').catch(() => 'no trace');
+    assert.equal(result.status, expected, result.stdout + result.stderr + trace);
   };
-  assertRun(query, 0);
+  await assertRun(query, 0);
   const setup = await dummy(t, installed, 'dyworker-setup.exe');
   const oldUninstaller = await dummy(t, installed, 'Uninstall DYWorker.exe');
   const elevation = await dummy(t, path.join(installed, 'resources'), 'elevate.exe');
@@ -136,17 +140,17 @@ test('Windows 真进程：空闲、同目录安装助手、其他安装位置不
   // Run setup itself from INSTDIR, the original directory-wide false positive.
   const localCheck = path.join(installed, 'install-check.exe');
   await fs.copyFile(check, localCheck);
-  assertRun(query, 0);
-  assertRun(localCheck, 0);
+  await assertRun(query, 0);
+  await assertRun(localCheck, 0);
   for (const child of [setup, oldUninstaller, elevation, other]) assert.equal(process.kill(child.pid, 0), true);
 
   const app = await dummy(t, installed);
-  assertRun(query, 1);
+  await assertRun(query, 1);
   // Same executable also hosts Electron's renderer and Node child processes.
   const helper = await launch(t, path.join(installed, 'DYWorker.exe'));
-  assertRun(localCheck, 0);
+  await assertRun(localCheck, 0);
   // spawnSync blocks JS exit events: verify absence through a fresh native scan.
-  assertRun(query, 0);
+  await assertRun(query, 0);
   for (const child of [setup, oldUninstaller, elevation, other]) assert.equal(process.kill(child.pid, 0), true);
   for (const child of [app, helper]) assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' });
 });
@@ -232,7 +236,8 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
     if (await fs.stat(ready).catch(() => null)) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  assert.equal(await fs.readFile(ready, 'utf8'), 'ready');
+  const lockDiagnostic = await fs.readFile(path.join(root, 'lock-diagnostic.txt'), 'utf16le').catch(() => 'no lock diagnostic');
+  assert.equal(await fs.readFile(ready, 'utf8').catch(() => ''), 'ready', lockDiagnostic);
   const blocked = invoke('fixed');
   assert.equal(blocked.error, undefined);
   assert.notEqual(blocked.status, 0, '真实文件占用时不能假装升级成功');
