@@ -2,6 +2,9 @@
 ; setup/uninstall/elevation helpers can live in that directory too. Inspect the
 ; exact installed Electron executable (including its renderer/Node children).
 ; Native APIs also work when PowerShell profiles/policies/CIM are unavailable.
+!define DYW_NSIS_DIR "${__FILEDIR__}"
+!include "${DYW_NSIS_DIR}/nsis-upgrade.nsh"
+
 !macro customHeader
   !ifdef BUILD_UNINSTALLER
     !define DYW_PROCESS_PREFIX "un."
@@ -126,9 +129,28 @@
     System::Free $dywEntry
     System::Call 'kernel32::CloseHandle(p $dywSnapshot)'
   FunctionEnd
+
+  !ifndef BUILD_UNINSTALLER
+    !ifdef UNINSTALLER_OUT_FILE
+      !insertmacro dywUpgradeHeader
+    !endif
+  !endif
 !macroend
 
 !macro customCheckAppRunning
+  ; This macro is expanded after installUtil.nsh, including in the elevated
+  ; installer. Hook the upgrade call at compile time; do not depend on this
+  ; process check actually running (electron-builder skips it in the UAC child).
+  !ifndef BUILD_UNINSTALLER
+    !ifdef UNINSTALLER_OUT_FILE
+      !ifmacrodef uninstallOldVersion
+        !ifndef DYW_UPGRADE_HOOK_DEFINED
+          !define DYW_UPGRADE_HOOK_DEFINED
+          !include "${DYW_NSIS_DIR}/nsis-upgrade.nsh"
+        !endif
+      !endif
+    !endif
+  !endif
   Var /GLOBAL dywAttempts
   Push $0
   Push $1

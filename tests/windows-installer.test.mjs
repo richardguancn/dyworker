@@ -6,12 +6,14 @@ import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { createWindowsUpgradeFixture } from './helpers/windows-upgrade-fixture.mjs';
 
 const packageJson = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const include = fileURLToPath(new URL(`../${packageJson.build.nsis.include}`, import.meta.url));
 const escapeNsis = value => value.replaceAll('$', '$$').replaceAll('"', '$\\"');
 let compilerPromise;
 const childProcesses = new WeakMap();
+const fixtureCleanups = new WeakMap();
 function compiler() {
   return compilerPromise ||= (async () => {
     // Windows CI uses the same downloaded compiler as the release packager.
@@ -72,12 +74,14 @@ async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-installer-'));
   const children = [];
   childProcesses.set(t, children);
+  fixtureCleanups.set(t, []);
   t.after(async () => {
     for (const child of children) {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = once(child, 'exit'); child.kill(); await exited;
       }
     }
+    for (const cleanup of fixtureCleanups.get(t)) await cleanup();
     await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
   return root;
@@ -162,4 +166,70 @@ test('Windows 真卸载程序使用相同的进程判断', { skip: process.platf
   assert.equal(process.kill(other.pid, 0), true);
   const query = await compile(t, root, { query: true });
   assert.equal(run(query, installed).status, 0);
+});
+
+test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件占用恢复及数据保留', { skip: process.platform !== 'win32', timeout: 300_000 }, async t => {
+  const root = await fixture(t);
+  let metadata;
+  if (process.env.DYW_PREBUILT_INSTALLER_FIXTURE) {
+    const source = process.env.DYW_PREBUILT_INSTALLER_FIXTURE;
+    metadata = JSON.parse(await fs.readFile(path.join(source, 'fixture.json'), 'utf8'));
+    for (const file of [...Object.values(metadata.installers), 'lock.exe']) {
+      await fs.copyFile(path.join(source, file), path.join(root, file));
+    }
+  } else {
+    metadata = await createWindowsUpgradeFixture(root, await compiler());
+  }
+  const installed = path.join(root, "张三's 应用", 'DYWorker');
+  const invoke = name => run(path.join(root, metadata.installers[name]), installed, ['/currentuser']);
+  // Unique app ID and disabled shortcuts keep the real DYWorker install intact.
+  fixtureCleanups.get(t).push(() => {
+    const exe = path.join(installed, 'Uninstall DYWorker.exe');
+    spawnSync(exe, ['/S', `_?=${installed}`], { timeout: 30_000 });
+    // A failed assertion may leave the deliberately broken legacy uninstaller.
+    // Remove only this fixture's two unique per-user registration keys.
+    for (const key of [`Software\\${metadata.guid}`, `Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${metadata.guid}`]) {
+      spawnSync('reg.exe', ['delete', `HKCU\\${key}`, '/f', '/reg:64'], { timeout: 10_000 });
+    }
+  });
+  assert.equal(invoke('old').status, 0);
+  const userData = path.join(process.env.APPDATA, metadata.packageName);
+  await fs.mkdir(userData, { recursive: true });
+  const data = path.join(userData, 'must-keep.txt');
+  await fs.writeFile(data, 'user history');
+  fixtureCleanups.get(t).push(() => fs.rm(userData, { recursive: true, force: true }));
+
+  const baseline = invoke('baseline');
+  assert.equal(baseline.error, undefined);
+  assert.notEqual(baseline.status, 0, '旧安装流程应被旧卸载程序拦住');
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
+  const legacyCalled = path.join(installed, 'legacy-uninstaller-called.txt');
+  assert.equal(await fs.readFile(legacyCalled, 'utf8'), 'legacy uninstaller ran');
+  await fs.rm(legacyCalled);
+
+  const lock = spawn(path.join(root, 'lock.exe'), ['/S', `/D=${installed}`], { stdio: 'ignore' });
+  childProcesses.get(t).push(lock);
+  const ready = path.join(installed, 'lock-ready.txt');
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await fs.stat(ready).catch(() => null)) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(await fs.readFile(ready, 'utf8'), 'ready');
+  const blocked = invoke('fixed');
+  assert.equal(blocked.error, undefined);
+  assert.notEqual(blocked.status, 0, '真实文件占用时不能假装升级成功');
+  const diagnostic = await fs.readFile(path.join(os.tmpdir(), 'DYWorker-upgrade-error.txt'), 'utf16le');
+  assert.ok(diagnostic.includes(path.join(installed, 'resources/version.txt')), diagnostic);
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
+  assert.equal(await fs.readFile(data, 'utf8'), 'user history');
+  await assert.rejects(fs.access(legacyCalled), { code: 'ENOENT' });
+  const exited = once(lock, 'exit'); lock.kill(); await exited;
+
+  const upgraded = invoke('fixed');
+  assert.equal(upgraded.error, undefined);
+  assert.equal(upgraded.status, 0, upgraded.stdout + upgraded.stderr);
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
+  assert.equal(await fs.readFile(data, 'utf8'), 'user history');
+  await assert.rejects(fs.access(legacyCalled), { code: 'ENOENT' });
 });
