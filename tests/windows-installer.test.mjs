@@ -257,7 +257,8 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
 
   const upgraded = invoke('fixed');
   assert.equal(upgraded.error, undefined);
-  assert.equal(upgraded.status, 0, upgraded.stdout + upgraded.stderr);
+  const upgradeError = upgraded.status === 0 ? '' : await fs.readFile(path.join(os.tmpdir(), 'DYWorker-upgrade-error.txt'), 'utf16le').catch(() => 'No native uninstall error file');
+  assert.equal(upgraded.status, 0, upgraded.stdout + upgraded.stderr + upgradeError);
   assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
   assert.equal(await fs.readFile(data, 'utf8'), 'user history');
   await assert.rejects(fs.access(legacyCalled), { code: 'ENOENT' });
