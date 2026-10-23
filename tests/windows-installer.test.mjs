@@ -262,4 +262,16 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
   assert.equal(await fs.readFile(data, 'utf8'), 'user history');
   await assert.rejects(fs.access(legacyCalled), { code: 'ENOENT' });
+
+  // Also exercise the no-previous-install branch of the new upgrade wrapper.
+  // Uninstall keeps user data, and installing again must preserve that data.
+  const uninstaller = path.join(installed, 'Uninstall DYWorker.exe');
+  const removed = spawnSync(uninstaller, ['/S', `_?=${installed}`], { ...nsisCommandLine(uninstaller), timeout: 30_000, encoding: 'utf8' });
+  assert.equal(removed.error, undefined);
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  const fresh = invoke('fixed');
+  assert.equal(fresh.error, undefined);
+  assert.equal(fresh.status, 0, fresh.stdout + fresh.stderr);
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
+  assert.equal(await fs.readFile(data, 'utf8'), 'user history');
 });

@@ -8,6 +8,7 @@
 !macro dywProcessTrace MESSAGE
   !ifdef DYW_PROCESS_TRACE
     FileOpen $dywTraceFile "$EXEDIR\process-trace.txt" a
+    FileSeek $dywTraceFile 0 END
     FileWriteUTF16LE $dywTraceFile "${MESSAGE}$\r$\n"
     FileClose $dywTraceFile
   !endif
