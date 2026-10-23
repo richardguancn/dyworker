@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Installer, [Parameter(Mandatory=$true)][string]$InstallDirectory)
+param([Parameter(Mandatory=$true)][string]$Installer, [Parameter(Mandatory=$true)][string]$InstallDirectory, [int]$TimeoutSeconds=90)
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System;
@@ -15,13 +15,14 @@ public static class InstallerWindows {
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
   [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr window);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
   public static string Text(IntPtr window) { var text=new StringBuilder(4096); GetWindowText(window,text,text.Capacity); return text.ToString(); }
   public static IntPtr[] Top(int process) { var found=new List<IntPtr>(); EnumWindows((window,_)=>{ uint owner; GetWindowThreadProcessId(window,out owner); if(owner==process && IsWindowVisible(window))found.Add(window); return true; },IntPtr.Zero); return found.ToArray(); }
   public static IntPtr[] Children(IntPtr parent) { var found=new List<IntPtr>(); EnumChildWindows(parent,(window,_)=>{ if(IsWindowVisible(window))found.Add(window); return true; },IntPtr.Zero); return found.ToArray(); }
 }
 '@
 $process = Start-Process -FilePath $Installer -ArgumentList "/currentuser /D=$InstallDirectory" -PassThru
-$deadline = [DateTime]::UtcNow.AddSeconds(90)
+$deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 $screens = [System.Collections.Generic.List[string]]::new()
 $errors = [System.Collections.Generic.List[string]]::new()
 $lastClick = [DateTime]::MinValue
@@ -39,6 +40,11 @@ try {
       } elseif (([DateTime]::UtcNow - $lastClick).TotalMilliseconds -gt 600) {
         foreach ($child in $children) {
           if ([InstallerWindows]::GetDlgCtrlID($child) -eq 1 -and [InstallerWindows]::IsWindowEnabled($child) -and [InstallerWindows]::Text($child) -match 'Next|Install|Finish|Close|下一步|安装|完成') {
+            foreach ($option in $children) {
+              if ([InstallerWindows]::Text($option) -match 'Run DYWorker|运行.*DYWorker|启动.*DYWorker') {
+                [void][InstallerWindows]::SendMessage($option, 0xF1, [IntPtr]::Zero, [IntPtr]::Zero)
+              }
+            }
             [void][InstallerWindows]::PostMessage($child, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
             $lastClick = [DateTime]::UtcNow
             break

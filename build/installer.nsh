@@ -165,11 +165,11 @@
     !insertmacro dywProcessTrace "RESULT=$dywResult"
   FunctionEnd
 
-  !ifndef BUILD_UNINSTALLER
-    !ifdef UNINSTALLER_OUT_FILE
+  !ifdef UNINSTALLER_OUT_FILE
+    !ifndef BUILD_UNINSTALLER
       !insertmacro dywUpgradeHeader
-      !insertmacro dywFileHeader
     !endif
+    !insertmacro dywFileHeader "${DYW_PROCESS_PREFIX}"
   !endif
 !macroend
 

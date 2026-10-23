@@ -329,7 +329,7 @@ test('Windows 手动安装：D 盘旧版覆盖升级包含长路径时不能弹�
   console.log('Interactive installation report:', JSON.stringify(report));
   assert.deepEqual(report.dialogs, [], JSON.stringify(report));
   assert.equal(report.exitCode, 0, JSON.stringify(report));
-  const nested = path.join(installed, 'resources', ...Array(3).fill('nested-dependency-with-a-long-package-name'), 'must-install.txt');
+  const nested = path.join(installed, 'resources', ...Array(5).fill('nested-dependency-with-a-long-package-name'), 'must-install.txt');
   assert.ok(nested.length > 260, `用例需要覆盖超出旧 Windows 路径上限的文件：${nested.length}`);
   assert.equal(await fs.readFile(nested, 'utf8'), '0.3.3');
 });

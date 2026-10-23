@@ -140,28 +140,73 @@
 !ifndef DYW_REMOVE_FILES_DEFINED
   !define DYW_REMOVE_FILES_DEFINED
   !macro customRemoveFiles
-    ; Preserve upstream atomic removal and rollback, but expose the actual
-    ; busy file instead of turning every failed rename into "app not closed".
+    ; Keep the rollback directory on the installation volume. Moving old files
+    ; is then atomic, fast, and does not depend on free space on the TEMP drive.
+    ; Use extended paths for both moves and restores, including deeply nested
+    ; files installed by the long-path-safe extraction/copy code.
     ${If} ${isUpdated}
-      CreateDirectory "$PLUGINSDIR\old-install"
+      StrCpy $dywCopyDisplay $INSTDIR
+      Push $INSTDIR
+      Call un.dywExtendedPath
+      Pop $dywCopySource
+      System::Call 'kernel32::GetCurrentProcessId() i.r0'
+      StrCpy $dywCopySkip ".dyworker-upgrade-$0"
+      StrCpy $dywBackupRoot "$INSTDIR\$dywCopySkip"
+      Push $dywBackupRoot
+      Call un.dywExtendedPath
+      Pop $dywCopyDestination
+      ${If} ${FileExists} "$dywCopyDestination\*"
+        FileOpen $R1 "$TEMP\DYWorker-upgrade-error.txt" w
+        FileWriteUTF16LE $R1 "升级备份目录已存在，请保留其中的文件并重新运行安装程序：$dywBackupRoot"
+        FileClose $R1
+        SetErrorLevel 33
+        Quit
+      ${EndIf}
+      ClearErrors
+      CreateDirectory $dywCopyDestination
+      ${If} ${Errors}
+        FileOpen $R1 "$TEMP\DYWorker-upgrade-error.txt" w
+        FileWriteUTF16LE $R1 "无法在安装位置准备升级备份：$dywBackupRoot。旧版安装未改动，请检查写入权限和磁盘空间。"
+        FileClose $R1
+        SetErrorLevel 33
+        Quit
+      ${EndIf}
+      StrCpy $dywCopyError ""
+      StrCpy $dywCopyCode 0
       Push ""
-      Call un.atomicRMDir
+      Call un.dywCopyTree
       Pop $R0
-      ${If} $R0 != 0
-        StrCpy $R2 $R0
+      ${If} $dywCopyError != ""
+        StrCpy $R2 $dywCopyError
+        StrCpy $R3 $dywCopyCode
+        StrCpy $dywCopySource $dywCopyDestination
+        Push $INSTDIR
+        Call un.dywExtendedPath
+        Pop $dywCopyDestination
+        StrCpy $dywCopySkip ""
+        StrCpy $dywCopyError ""
         Push ""
-        Call un.restoreFiles
+        Call un.dywCopyTree
         Pop $R0
         FileOpen $R1 "$TEMP\DYWorker-upgrade-error.txt" w
-        FileWriteUTF16LE $R1 "无法替换被占用或无权修改的文件：$R2"
+        ${If} $dywCopyError == ""
+          FileWriteUTF16LE $R1 "无法替换文件：$R2（系统错误：$R3）。旧版文件已恢复。"
+          RMDir /r $dywCopySource
+          SetErrorLevel 32
+        ${Else}
+          FileWriteUTF16LE $R1 "无法替换文件：$R2（系统错误：$R3）。部分旧文件未能恢复，备份保留在：$dywBackupRoot。恢复失败位置：$dywCopyError"
+          SetErrorLevel 33
+        ${EndIf}
         FileClose $R1
-        SetErrorLevel 32
         Quit
       ${EndIf}
     ${EndIf}
     SetOutPath $TEMP
     ; Match upstream: once atomic removal succeeded, all old files have moved.
     ; An empty root directory held by another process can be reused by setup.
-    RMDir /r $INSTDIR
+    Push $INSTDIR
+    Call un.dywExtendedPath
+    Pop $R0
+    RMDir /r $R0
   !macroend
 !endif

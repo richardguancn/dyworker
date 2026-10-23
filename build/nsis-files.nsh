@@ -3,14 +3,22 @@
 ; which cannot close. CopyFileW with extended paths supports nested packages
 ; and gives a real Win32 result for each file; no failed copy is ignored.
 !ifndef DYW_FILE_HOOK_DEFINED
-!macro dywFileHeader
+!ifndef BUILD_UNINSTALLER
+  !ifdef UNINSTALLER_OUT_FILE
+    !system 'node "${DYW_NSIS_DIR}/../scripts/prepare-windows-installer-tools.mjs" "${PROJECT_DIR}/output/.build-cache/nsis-tools.nsh"' = 0
+    !include "${PROJECT_DIR}\output\.build-cache\nsis-tools.nsh"
+  !endif
+!endif
+!macro dywFileHeader PREFIX
   Var dywCopySource
   Var dywCopyDestination
   Var dywCopyDisplay
   Var dywCopyError
   Var dywCopyCode
+  Var dywCopySkip
+  Var dywBackupRoot
 
-  Function dywExtendedPath
+  Function ${PREFIX}dywExtendedPath
     Exch $0
     Push $1
     StrCpy $1 $0 4
@@ -27,7 +35,7 @@
     Exch $0
   FunctionEnd
 
-  Function dywCopyTree
+  Function ${PREFIX}dywCopyTree
     Exch $0
     Push $1
     Push $2
@@ -53,6 +61,10 @@
     ${DoWhile} $2 != ""
       ${If} $2 != "."
       ${AndIf} $2 != ".."
+        ${If} $0 == ""
+        ${AndIf} $2 == $dywCopySkip
+          Goto dyw_copy_next
+        ${EndIf}
         StrCpy $3 "$dywCopySource$0\$2"
         System::Call 'kernel32::GetFileAttributesW(w r3) i.r4'
         ${If} $4 == -1
@@ -64,18 +76,22 @@
           ${If} $5 != 0
             ; Do not follow a reparse point out of the extracted package.
             StrCpy $dywCopyError "$3"
-            StrCpy $dywCopyCode 4390
+            StrCpy $dywCopyCode 50
           ${Else}
             IntOp $5 $4 & 0x10
             ${If} $5 != 0
               Push "$0\$2"
-              Call dywCopyTree
+              Call ${PREFIX}dywCopyTree
               Pop $7
             ${Else}
               StrCpy $4 "$dywCopyDestination$0\$2"
               StrCpy $7 0
               ${Do}
-                System::Call 'kernel32::CopyFileW(w r3, w r4, i 0) i.r5 ?e'
+                !if "${PREFIX}" == "un."
+                  System::Call 'kernel32::MoveFileW(w r3, w r4) i.r5 ?e'
+                !else
+                  System::Call 'kernel32::CopyFileW(w r3, w r4, i 0) i.r5 ?e'
+                !endif
                 Pop $6
                 ${If} $5 != 0
                   ${ExitDo}
@@ -95,6 +111,7 @@
       ${If} $dywCopyError != ""
         ${ExitDo}
       ${EndIf}
+      dyw_copy_next:
       FindNext $1 $2
     ${Loop}
     FindClose $1
@@ -113,18 +130,24 @@
 !else
   !macroundef extractUsing7za
   !macro extractUsing7za FILE
-    Push $OUTDIR
-    SetOutPath "$PLUGINSDIR\7z-out"
-    ClearErrors
-    Nsis7z::Extract "${FILE}"
-    Pop $dywCopyDisplay
-    ${If} ${Errors}
-      SetOutPath $dywCopyDisplay
-      MessageBox MB_OK|MB_ICONSTOP "无法完整解压 DYWorker 安装文件。安装未完成，请检查临时目录和磁盘空间。" /SD IDOK
+    StrCpy $dywCopyDisplay $OUTDIR
+    ; The old Nsis7z plugin silently drops files if the temporary output path
+    ; plus the archive entry exceeds MAX_PATH. Use the matching modern decoder
+    ; and check its exit status before copying anything into the install.
+    File "/oname=$PLUGINSDIR\dyw-7za.exe" "${DYW_WINDOWS_7ZA}"
+    nsExec::ExecToStack /TIMEOUT=300000 '"$PLUGINSDIR\dyw-7za.exe" x -y -bd -bb0 "-o$PLUGINSDIR\7z-out" "${FILE}"'
+    Pop $R0
+    Pop $R1
+    ${If} $R0 != 0
+      FileOpen $R2 "$TEMP\DYWorker-install-error.txt" w
+      FileWriteUTF16LE $R2 "解压安装文件失败，返回值：$R0$\r$\n$R1"
+      FileClose $R2
+      MessageBox MB_OK|MB_ICONSTOP "无法完整解压 DYWorker 安装文件（$R0）。安装未完成。详情已保存到：$\r$\n$TEMP\DYWorker-install-error.txt" /SD IDOK
       SetErrorLevel 3
       Quit
     ${EndIf}
-    SetOutPath $dywCopyDisplay
+    File "/oname=$PLUGINSDIR\7z-out\resources\7zip-LICENSE.txt" "${DYW_7ZIP_LICENSE}"
+    File "/oname=$PLUGINSDIR\7z-out\resources\7zip-COPYING.txt" "${DYW_7ZIP_COPYING}"
     Push "$PLUGINSDIR\7z-out"
     Call dywExtendedPath
     Pop $dywCopySource
@@ -134,6 +157,7 @@
     dyw_copy_retry:
       StrCpy $dywCopyError ""
       StrCpy $dywCopyCode 0
+      StrCpy $dywCopySkip ""
       Push ""
       Call dywCopyTree
       Pop $R0
