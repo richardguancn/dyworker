@@ -88,6 +88,9 @@
         StrCpy $dywUpgradeArguments "$dywUpgradeArguments --updated"
       ${EndIf}
 
+      ; The parent installer must not hold its working directory inside the
+      ; installation while the child removes that directory on Windows.
+      SetOutPath $TEMP
       InitPluginsDir
       ClearErrors
       File "/oname=$PLUGINSDIR\dyw-upgrade-uninstaller.exe" "${UNINSTALLER_OUT_FILE}"
@@ -157,14 +160,8 @@
       ${EndIf}
     ${EndIf}
     SetOutPath $TEMP
-    ClearErrors
+    ; Match upstream: once atomic removal succeeded, all old files have moved.
+    ; An empty root directory held by another process can be reused by setup.
     RMDir /r $INSTDIR
-    ${If} ${Errors}
-      FileOpen $R1 "$TEMP\DYWorker-upgrade-error.txt" w
-      FileWriteUTF16LE $R1 "无法清理被占用或无权修改的安装目录：$INSTDIR"
-      FileClose $R1
-      SetErrorLevel 32
-      Quit
-    ${EndIf}
   !macroend
 !endif
