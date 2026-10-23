@@ -12,7 +12,7 @@ permissions:
 jobs:
   upgrade:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: 拉取测试代码
         uses: actions/checkout@v4
@@ -39,3 +39,52 @@ jobs:
           path: output/windows-installer-upgrade/tests.log
           if-no-files-found: warn
           retention-days: 7
+      - name: 构建并检查 Windows 0.3.2 安装包
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm run package:windows:x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 实际安装并核对版本与程序完整性
+        shell: pwsh
+        run: |
+          @'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { existsSync, mkdtempSync } from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          const installer = path.resolve('output/electron/dyworker-0.3.2-windows-x64-setup.exe');
+          assert.ok(existsSync(installer), '缺少 0.3.2 安装包');
+          const installDir = path.join(mkdtempSync(path.join(os.tmpdir(), 'dyworker-package-')), 'DYWorker App');
+          const install = spawnSync(installer, ['/S', '/currentuser', `/D=${installDir}`], {
+            windowsVerbatimArguments: true, argv0: `"${installer}"`, timeout: 240000, encoding: 'utf8',
+          });
+          assert.ifError(install.error);
+          assert.equal(install.status, 0, `安装失败：${install.stdout}\n${install.stderr}`);
+          const exe = path.join(installDir, 'DYWorker.exe');
+          assert.ok(existsSync(exe), '安装后缺少主程序');
+          const archive = path.join(installDir, 'resources', 'app.asar');
+          const probe = spawnSync(exe, ['-e', `const fs=require('node:fs'); const p=${JSON.stringify(archive)}; const pkg=require(p+'/package.json'); if(pkg.version!=='0.3.2')throw Error(pkg.version); if(!fs.existsSync(p+'/'+pkg.main))throw Error('missing main'); console.log('Windows installer verified: '+pkg.version+' '+process.platform+' '+process.arch);`], {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 30000, encoding: 'utf8',
+          });
+          assert.ifError(probe.error);
+          assert.equal(probe.status, 0, `程序检查失败：${probe.stdout}\n${probe.stderr}`);
+          assert.match(probe.stdout, /Windows installer verified: 0\.3\.2 win32 x64/);
+          console.log(probe.stdout.trim());
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = 'output/electron/dyworker-0.3.2-windows-x64-setup.exe'
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          "$hash  dyworker-0.3.2-windows-x64-setup.exe" | Set-Content "$installer.sha256" -Encoding ascii
+      - name: 提供 Windows 安装包下载
+        uses: actions/upload-artifact@v4
+        with:
+          name: dyworker-0.3.2-windows-x64-upgrade-fix
+          path: |
+            output/electron/dyworker-0.3.2-windows-x64-setup.exe
+            output/electron/dyworker-0.3.2-windows-x64-setup.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
