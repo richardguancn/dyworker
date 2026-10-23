@@ -7,7 +7,7 @@ import { build, Platform, Arch } from 'electron-builder';
 
 const quote = value => value.replaceAll('$', '$$').replaceAll('"', '$\\"');
 
-export async function createWindowsUpgradeFixture(root, compiler) {
+export async function createWindowsUpgradeFixture(root, compiler, { longPaths = false } = {}) {
   const id = randomUUID();
   const packageName = `dyw-upgrade-test-${id}`;
   const appId = `com.dyworker.installer-test.${id}`;
@@ -44,13 +44,19 @@ export async function createWindowsUpgradeFixture(root, compiler) {
   const current = fileURLToPath(new URL('../../build/installer.nsh', import.meta.url));
   const installers = {};
   for (const [name, version, include] of [
-    ['old', '0.3.1', legacy], ['baseline', '0.3.2', baseline], ['fixed', '0.3.3', current],
+    ['old', '0.3.1', legacy], ['stock', '0.3.1', undefined],
+    ['baseline', '0.3.2', baseline], ['fixed', '0.3.3', current],
   ]) {
     const projectDir = path.join(root, name);
     const prepackaged = path.join(projectDir, 'app');
     await fs.mkdir(path.join(prepackaged, 'resources'), { recursive: true });
     await fs.copyFile(dummy, path.join(prepackaged, 'DYWorker.exe'));
     await fs.writeFile(path.join(prepackaged, 'resources/version.txt'), version);
+    if (longPaths) {
+      const nested = path.join(prepackaged, 'resources', ...Array(5).fill('nested-dependency-with-a-long-package-name'));
+      await fs.mkdir(nested, { recursive: true });
+      await fs.writeFile(path.join(nested, 'must-install.txt'), version);
+    }
     await fs.writeFile(path.join(projectDir, 'package.json'), JSON.stringify({
       name: packageName, version, description: 'Isolated installer upgrade test',
       author: 'DYWorker Tests', main: 'unused.cjs',

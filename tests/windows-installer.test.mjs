@@ -275,3 +275,59 @@ test('Windows 覆盖升级：复现旧卸载失败，验证新版接管、文件
   assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
   assert.equal(await fs.readFile(data, 'utf8'), 'user history');
 });
+
+test('Windows 跨盘覆盖升级：C 盘临时目录与 D 盘安装目录之间可以升级 0.3.1', { skip: process.platform !== 'win32', timeout: 180_000 }, async t => {
+  const temporaryDrive = path.parse(os.tmpdir()).root.toLowerCase();
+  const installDrive = path.parse(process.cwd()).root.toLowerCase();
+  assert.notEqual(temporaryDrive, installDrive, '此用例需要将仓库与系统临时目录放在不同盘');
+  const root = await fixture(t);
+  const metadata = await createWindowsUpgradeFixture(root, await compiler());
+  const installed = path.join(process.cwd(), 'output', path.basename(root), 'DYWorker');
+  const invoke = name => run(path.join(root, metadata.installers[name]), installed, ['/currentuser']);
+  fixtureCleanups.get(t).push(async () => {
+    const exe = path.join(installed, 'Uninstall DYWorker.exe');
+    spawnSync(exe, ['/S', `_?=${installed}`], { ...nsisCommandLine(exe), timeout: 30_000 });
+    for (const key of [
+      path.win32.join('HKCU', 'Software', metadata.guid),
+      path.win32.join('HKCU', 'Software', 'Microsoft', 'Windows', 'CurrentVersion', 'Uninstall', metadata.guid),
+    ]) spawnSync('reg.exe', ['delete', key, '/f', '/reg:64'], { timeout: 10_000 });
+    await fs.rm(path.dirname(installed), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+  assert.equal(invoke('stock').status, 0);
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.1');
+  const upgraded = invoke('fixed');
+  const diagnostic = await fs.readFile(path.join(os.tmpdir(), 'DYWorker-upgrade-error.txt'), 'utf16le').catch(() => '没有错误文件');
+  assert.equal(upgraded.error, undefined);
+  assert.equal(upgraded.status, 0, `临时目录=${os.tmpdir()} 安装目录=${installed}\n${diagnostic}`);
+  assert.equal(await fs.readFile(path.join(installed, 'resources/version.txt'), 'utf8'), '0.3.3');
+});
+
+test('Windows 手动安装：D 盘旧版覆盖升级包含长路径时不能弹出无法关闭提示', { skip: process.platform !== 'win32', timeout: 180_000 }, async t => {
+  const root = await fixture(t);
+  const metadata = await createWindowsUpgradeFixture(root, await compiler(), { longPaths: true });
+  const installed = path.join(process.cwd(), 'output', path.basename(root), 'DYWorker');
+  fixtureCleanups.get(t).push(async () => {
+    const exe = path.join(installed, 'Uninstall DYWorker.exe');
+    spawnSync(exe, ['/S', `_?=${installed}`], { ...nsisCommandLine(exe), timeout: 30_000 });
+    for (const key of [
+      path.win32.join('HKCU', 'Software', metadata.guid),
+      path.win32.join('HKCU', 'Software', 'Microsoft', 'Windows', 'CurrentVersion', 'Uninstall', metadata.guid),
+    ]) spawnSync('reg.exe', ['delete', key, '/f', '/reg:64'], { timeout: 10_000 });
+    await fs.rm(path.dirname(installed), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+  const old = run(path.join(root, metadata.installers.stock), installed, ['/currentuser']);
+  assert.equal(old.error, undefined);
+  assert.equal(old.status, 0);
+  const script = fileURLToPath(new URL('./helpers/windows-installer-ui.ps1', import.meta.url));
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
+    '-Installer', path.join(root, metadata.installers.fixed), '-InstallDirectory', installed], {
+    timeout: 110_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const report = JSON.parse(result.stdout.trim());
+  assert.deepEqual(report.dialogs, [], JSON.stringify(report));
+  assert.equal(report.exitCode, 0, JSON.stringify(report));
+  const nested = path.join(installed, 'resources', ...Array(5).fill('nested-dependency-with-a-long-package-name'), 'must-install.txt');
+  assert.equal(await fs.readFile(nested, 'utf8'), '0.3.3');
+});
