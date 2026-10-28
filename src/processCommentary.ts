@@ -1,10 +1,24 @@
 import type { ActivityRecord, ChatMessage } from "./types";
 import { resolveAssistantDelivery } from "../electron/assistant-delivery.ts";
+import { taskResultText } from "../electron/task-result.mts";
 
 const deliveryMessageCache = new WeakMap<ChatMessage, ChatMessage>();
 
 /** 兼容旧聊天：恢复被收尾记录挤进过程的答复，不改写原始存档。 */
 export function messageWithDeliveryContent(message: ChatMessage): ChatMessage {
+  if (message.role === "assistant" && message.taskStatus === "error") {
+    const cached = deliveryMessageCache.get(message);
+    if (cached) return cached;
+    // 老存档没有单独的原因字段，只能采用主活动流最后一次模型请求的错误，
+    // 不能拿前面已恢复的工具失败或子任务失败当作整个任务的停止原因。
+    const last = message.activities?.filter(activity => !activity.branch).at(-1);
+    const reason = message.taskReason || (last?.kind === "thinking" && last.status === "error" ? last.detail : undefined);
+    const content = taskResultText({ status: "error", finalText: message.content, reason });
+    const restored = content === message.content ? message : { ...message, content };
+    deliveryMessageCache.set(message, restored);
+    deliveryMessageCache.set(restored, restored);
+    return restored;
+  }
   if (message.role !== "assistant" || message.dshTurnId || !message.executedMessages?.length
     || !["done", "unverified"].includes(message.taskStatus || "")) return message;
   const cached = deliveryMessageCache.get(message);

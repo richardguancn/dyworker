@@ -343,6 +343,7 @@ export interface ChatMessage {
   changes?: FileChange[];  plan?: PlanStep[];
   durationMs?: number;
   taskStatus?: AgentResult["status"] | "queued";
+  taskReason?: string;
   workingContext?: string;
   executedMessages?: AgentResult["executedMessages"];
 }

@@ -25,6 +25,7 @@ import { selectActiveSession, useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { activeIdRef, agentUnsubscribeRefs, appendSessionTracesRef, attachmentsRef, createTaskRef, handleGoalActionRef, mentionTokenPathsRef, playCompletionSoundRef, queueDebugLogRef, queuedRunsRef, refreshMemoriesRef, refreshSkillsRef, runningRunIdsRef, sessionTokenIdsRef, sessionsRef, shouldScrollToBottomRef, textareaRef } from "./sharedRefs";
 import { useViewStore } from "./viewStore";
+import { taskResultText } from "../../electron/task-result.mts";
 
 export const markQueued = (sessionId: string, runId: string) => {
   const { setQueuedRunIds } = useViewStore.getState();
@@ -358,7 +359,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
           } else if (result.status === "cancelled") {
             content = content ? `${content}\n\n已按你的要求停止。` : "已按你的要求停止。";
           } else if (result.status === "error") {
-            content = [content,result.reason].filter(Boolean).join("\n\n") || "任务执行出错";
+            content = taskResultText(result, content);
           }
           const plan = result.plan?.length ? result.plan : current.plan;
           return {
@@ -370,6 +371,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
             plan,
             durationMs: Date.now() - taskStartedAt,
             taskStatus: result.status,
+            taskReason: result.reason,
             ...(Array.isArray(result.executedMessages) && result.executedMessages.length
               ? { executedMessages: result.executedMessages }
               : {}),

@@ -14,6 +14,7 @@ import type { ChatMessage, SessionRecord } from "../types";
 import { useSettingsStore } from "./settingsStore";
 import { settingsForSession } from "../../electron/session-model.mts";
 import { useSessionStore } from "./sessionStore";
+import { taskResultText } from "../../electron/task-result.mts";
 
 export interface SessionStreamRuntimeDeps {
   channelStreamIdsRef: RefObject<Map<string, string>>;
@@ -198,13 +199,14 @@ export function useSessionStreamRuntime(deps: SessionStreamRuntimeDeps) {
           const plan = result.plan?.length ? result.plan : current.plan;
           return {
             ...current,
-            content: result.finalText || current.content,
+            content: taskResultText(result, current.content, ""),
             // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
             createdAt: new Date().toISOString(),
             changes: result.changes?.length ? result.changes : current.changes,
             plan,
             durationMs: (result as { durationMs?: number }).durationMs,
             taskStatus: result.status,
+            taskReason: result.reason,
           };
         });
         if (result.dshTurns?.length && channelStreamIds.has(sessionId)) {

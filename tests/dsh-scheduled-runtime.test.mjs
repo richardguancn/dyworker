@@ -75,3 +75,25 @@ test('未选择 DSH 的旧计划仍按原有方式执行并保存两条记录',a
   assert.equal(root.runtime,'dyworker');assert.equal(saved.runtime,'dyworker');assert.deepEqual(saved.messages.map(m=>m.content),['旧计划原始要求','旧计划实际回复']);
   assert.ok(saved.messages.every(m=>!m.dshMessageId));assert.equal((await host.scheduler.list())[0].lastStatus,'success');
 });
+
+test('定时任务已有进度后模型异常，窗口消息和重读存档都明确显示停止原因',async t=>{
+  let calls=0;
+  // 计划摘要最多保留 500 字，长进度不能把真正的停止原因挤掉。
+  const progress='渲染已生成 30.6 MB 文件。现在核验音频与画面。'+'已保留生成结果。'.repeat(60);
+  const {host,workspacePath,execute,envelopes,entryRuns}=await setup(t,async()=>++calls===1
+    ? new Response(JSON.stringify({choices:[{message:{role:'assistant',content:progress,
+      tool_calls:[{id:'time',type:'function',function:{name:'get_datetime',arguments:'{}'}}]}}]}),{headers:{'content-type':'application/json'}})
+    : new Response('{"error":{"message":"bad image input"}}',{headers:{'content-type':'text/event-stream'}}),true);
+  await host.scheduler.save({name:'失败收尾验收',workspacePath,prompt:'检查结果',allowWorkspaceWrites:true,recurrence:'once',nextRun:'2030-01-01T00:00:00Z'});
+  const [plan]=await host.scheduler.list();await execute(plan,{manual:true});
+  const root=envelopes.find(e=>e.type==='started').payload;
+  await host.sessions.flush();
+  const saved=await host.sessions.getAsync(root.sessionId),assistant=saved.messages.at(-1);
+  assert.equal(calls,2);assert.equal(assistant.taskStatus,'error');assert.ok(assistant.content.startsWith(progress));
+  assert.match(assistant.content,/任务未完成，已停止/);assert.match(assistant.content,/模型服务返回了异常格式/);
+  assert.match(assistant.taskReason,/异常格式/);
+  assert.deepEqual(envelopes.find(e=>e.type==='sessions:prepend').payload.messages,saved.messages);
+  const finished=(await host.scheduler.list())[0];assert.equal(finished.lastStatus,'failed');
+  assert.match(finished.lastSummary,/任务未完成，已停止/);assert.match(finished.history.at(-1).summary,/异常格式/);
+  assert.equal(entryRuns.size,0);
+});

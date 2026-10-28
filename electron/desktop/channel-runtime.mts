@@ -10,6 +10,7 @@ import { mergeDshTranscript } from '../host/dsh-runtime/presentation.mts';
 import { synthesizeWithLocalTts } from "../local-tts-engine.mts";
 import { settingsForSession } from "../session-model.mts";
 import { normalizeApprovalMode,normalizeTtsEngine } from "../settings.mts";
+import { taskResultText } from "../task-result.mts";
 
 export function createChannelRuntime(deps: {
   describeAttachment: (...args: any[]) => Promise<any>;
@@ -538,7 +539,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       });
       return;
     }
-    const finalText = result.finalText || result.reason || "没有产出结果";
+    const finalText = taskResultText(result, "", "没有产出结果");
     if (pendingMedia.length) {
       // 出站媒体：finalText 作为第一条 text part，随后每个媒体一条 media part；
       // 发送失败逐条降级为文字说明（决策记录第 9 节：与文本回复同权责）

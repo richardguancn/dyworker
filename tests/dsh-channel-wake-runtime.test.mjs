@@ -14,6 +14,30 @@ import {channelMediaToolDefinitions} from '../electron/channels/media-tools.mts'
 import {queuedGoalPayload,settledStoredGoal} from '../electron/goal.mts';
 const require=createRequire(import.meta.url);
 const response=text=>new Response(JSON.stringify({choices:[{message:{role:'assistant',content:text},finish_reason:'stop'}]}),{headers:{'content-type':'application/json'}});
+
+test('渠道与自动续跑已有进度后报错，发送内容和窗口存档都说明未完成及原因',async t=>{
+  let calls=0;
+  const progress='视频介绍共 277 字符。现在核验成片规格。';
+  const {host,workspacePath,runChannel,wake,envelopes,outbound,wakeRuns,entryRuns}=await setup(t,async()=>++calls%2===1
+    ?new Response(JSON.stringify({choices:[{message:{role:'assistant',content:progress,
+      tool_calls:[{id:`time-${calls}`,type:'function',function:{name:'get_datetime',arguments:'{}'}}]}}]}),{headers:{'content-type':'application/json'}})
+    :new Response('{"error":{"message":"bad image input"}}',{headers:{'content-type':'text/event-stream'}}),true,{runtime:'dyworker'});
+  await runChannel('检查视频');
+  const channel=await host.sessions.getAsync('channel-root');
+  assert.equal(channel.messages.at(-1).taskStatus,'error');
+  assert.ok(channel.messages.at(-1).content.startsWith(progress));
+  assert.match(outbound.at(-1),/任务未完成，已停止/);assert.match(outbound.at(-1),/模型服务返回了异常格式/);
+  assert.equal(outbound.at(-1),channel.messages.at(-1).content);
+  await host.sessions.replace({id:'wake-error',runtime:'dyworker',workspacePath,messages:[{role:'user',content:'检查视频'}]});
+  await wake({sessionId:'wake-error',workspacePath,prompt:'检查视频',reason:'失败收尾验收',createdAt:new Date().toISOString(),wakeAt:new Date().toISOString()});
+  await host.sessions.flush();
+  const saved=await host.sessions.getAsync('wake-error');
+  assert.equal(saved.messages.at(-1).taskStatus,'error');
+  assert.ok(saved.messages.at(-1).content.startsWith(progress));
+  assert.match(saved.messages.at(-1).content,/任务未完成，已停止/);assert.match(saved.messages.at(-1).content,/模型服务返回了异常格式/);
+  assert.deepEqual(envelopes.filter(e=>e.type==='sessions:append'&&e.payload.sessionId==='wake-error').at(-1).payload.messages,[saved.messages.at(-1)]);
+  assert.equal(calls,4);assert.equal(wakeRuns.size,0);assert.equal(entryRuns.size,0);
+});
 async function setup(t,fetchImpl,windowOpen=true,permissionCase=null) {
   const dir=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-channel-wake-'))), workspacePath=path.join(dir,'work');await fs.mkdir(workspacePath);
   const router=()=>Object.assign(async()=>{throw new Error('Unexpected external tool');},{dispose:async()=>{}});

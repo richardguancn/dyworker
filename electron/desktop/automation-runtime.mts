@@ -5,6 +5,7 @@ import { mergeDshTranscript,patchDshAssistant,reconcileDshMessages } from '../ho
 import { UNATTENDED_PENDING_TIMEOUT_MS } from "../host/services/inbox.mts";
 import { settingsForSession } from "../session-model.mts";
 import { unattendedApprovalMode,wakeApprovalMode } from "../settings.mts";
+import { taskResultText } from "../task-result.mts";
 
 export function createAutomationRuntime(deps: {
   ctx: any;
@@ -160,7 +161,8 @@ async function resumeWake(wake, options: any = {}) {
       },
     });
     if (result.status !== "sleeping" && wake.scheduleId) {
-      await deps.ctx.scheduler.markFinished(wake.scheduleId, result.status === "done", result.finalText || result.reason || "没有产出结果", wake.sessionId, result.status);
+      await deps.ctx.scheduler.markFinished(wake.scheduleId, result.status === "done",
+        taskResultText({ ...result, finalText: result.status === "error" ? "" : result.finalText }, "", "没有产出结果"), wake.sessionId, result.status);
     }
     const wakeContent = result.status === "sleeping" && result.wake
       ? `${result.finalText || ""}\n\n已再次挂起，将于 ${new Date(result.wake.wakeAt).toLocaleString("zh-CN")} 自动唤醒继续（原因：${result.wake.reason}）。`.trim()
@@ -297,15 +299,19 @@ function createTranscriptCollector(options: any = {}) {
     // `"" ?? fallback` 仍是空串，落盘/回传的助手正文变空。
     buildMessages(userText, result, assistantContent?: string) {
       const finalPlan = plan;
+      const content = result.status === "error"
+        ? taskResultText({ ...result, finalText: assistantContent ?? result.finalText })
+        : assistantContent ?? taskResultText(result);
       const base = [
         { ...options.userMessage, id:userId, runId, role: "user", content: userText, createdAt: new Date(startedAt).toISOString() },
         {
           id:assistantId, runId, role: "assistant",
-          content: assistantContent ?? (result.finalText || result.reason || "（没有产出内容）"),
+          content,
           createdAt: new Date().toISOString(),
           activities: activities.map((item) => ({ ...item })),
           durationMs: Date.now() - startedAt,
           taskStatus: result?.status,
+          ...(result.reason ? { taskReason: result.reason } : {}),
           ...(reasoning ? { reasoning } : {}),
           ...(changes?.length ? { changes: changes.map((item) => ({ ...item })) } : {}),
           ...(finalPlan?.length ? { plan: finalPlan.map((item) => ({ ...item })) } : {}),
@@ -318,7 +324,8 @@ function createTranscriptCollector(options: any = {}) {
       if (!messages.length) messages = base;
       else patch(message=>({...message,...base[1],id:message.id,
         activities:message.activities || [],reasoning:message.reasoning || base[1].reasoning}));
-      return reconcileDshMessages(messages,finalTurns,{userId,assistantId,runId,finalContent:assistantContent});
+      return reconcileDshMessages(messages,finalTurns,{userId,assistantId,runId,
+        finalContent:result.status === "error" ? content : assistantContent});
     },
   };
 }
@@ -455,7 +462,8 @@ async function runScheduledTask(record, meta) {
       await finishSession(sleepingMessages);
       return;
     }
-    await deps.ctx.scheduler.markFinished(record.id, result.status === "done", result.finalText || result.reason || "没有产出结果", scheduleSessionId, result.status);
+    await deps.ctx.scheduler.markFinished(record.id, result.status === "done",
+      taskResultText({ ...result, finalText: result.status === "error" ? "" : result.finalText }, "", "没有产出结果"), scheduleSessionId, result.status);
     await finishSession(collector.buildMessages(record.prompt, result));
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error);

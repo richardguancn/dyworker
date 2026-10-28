@@ -184,11 +184,17 @@ test("旧聊天完整候选答复恢复到正文，过程仅保留实际进度�
   assert.equal(messageWithDeliveryContent(restored).content, restored.content);
 });
 
-test("运行、停止、失败、挂起与独立会话投影不恢复交付正文", () => {
-  for (const status of [undefined, "cancelled", "error", "paused", "sleeping"]) {
+test("运行、停止、挂起与独立会话投影不恢复交付正文，失败只补充停止提示", () => {
+  for (const status of [undefined, "cancelled", "paused", "sleeping"]) {
     const message = { ...completedMessage(), taskStatus: status };
     assert.equal(messageWithDeliveryContent(message), message);
   }
+  const failed = { ...completedMessage(), taskStatus: "error" };
+  const restored = messageWithDeliveryContent(failed);
+  assert.ok(restored.content.startsWith(failed.content));
+  assert.match(restored.content, /任务未完成，已停止/);
+  assert.doesNotMatch(restored.content, /## 候选清单/);
+  assert.equal(restored.activities, failed.activities);
   const message = { ...completedMessage(), dshTurnId: "turn" };
   assert.equal(messageWithDeliveryContent(message), message);
 });
