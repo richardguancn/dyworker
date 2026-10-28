@@ -134,8 +134,8 @@ test('截图场景：安装任务中的状态检查不被空参数或较早清�
       const body = JSON.parse(options.body);
       if (body.messages[0].content.includes('安全审核助手')) {
         reviews++;
-        assert.match(body.messages[0].content, /状态查询|查询已有状态/);
-        assert.match(body.messages[0].content, /不能升级成用户禁止/);
+        assert.match(body.messages[0].content, /空参数查询/);
+        assert.match(body.messages[0].content, /清理建议不能升级为用户禁止/);
         assert.match(body.messages.at(-1).content, /without starting analysis/);
         assert.match(body.messages.at(-1).content, /不是新授权/);
         return response(allow);

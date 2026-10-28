@@ -159,15 +159,15 @@ async function captureWindowRegion(position, size) {
 
 const appProperty = {
   type: "string",
-  description: "应用名称、应用路径或 bundle 标识，例如 WPS Office、/Applications/WPS Office.app、com.kingsoft.wpsoffice.mac",
+  description: "应用名、路径或 bundle ID",
 };
 const windowIdProperty = {
   type: "string",
-  description: "get_app_state 返回的窗口编号；同一应用有多个窗口时必须提供",
+  description: "get_app_state 返回的窗口编号",
 };
 const windowTitleProperty = {
   type: "string",
-  description: "get_app_state 返回的完整窗口标题；用于防止窗口关闭或顺序变化后操作错窗口",
+  description: "get_app_state 返回的窗口标题",
 };
 
 function appTargetProperties(properties = {} as any) {
@@ -200,50 +200,50 @@ function tool(name, description, properties, required, readOnly = false, annotat
 
 export function desktopToolDefinitions() {
   return [
-    tool("check_permissions", "检查 macOS 本机操作所需权限（辅助功能、屏幕录制、自动化访问）是否就绪，并给出开启指引。", {}, [], true),
-    tool("list_apps", "列出当前正在运行的桌面应用（名称、路径与 bundle 标识）。", {}, [], true),
-    tool("launch_app", "从系统应用菜单启动指定应用。启动会改变桌面状态，需要用户授权。", {
+    tool("check_permissions", "检查 macOS 辅助功能、屏幕录制与自动化权限。", {}, [], true),
+    tool("list_apps", "列出正在运行的桌面应用。", {}, [], true),
+    tool("launch_app", "启动指定桌面应用。", {
       app: appProperty,
     }, ["app"]),
-    tool("get_app_state", "读取已运行应用的当前窗口、可访问控件与目标窗口截图。每轮操作应用前必须先调用；应用未运行时先调用 launch_app。", appTargetProperties(), ["app"], true),
-    tool("click", "按控件编号或目标窗口截图内坐标点击。截图左上角为 (0,0)。", appTargetProperties({
-      element_index: { type: "string", description: "get_app_state 返回的控件编号，例如 e12" },
-      x: { type: "number", description: "目标窗口截图内 X 坐标" },
-      y: { type: "number", description: "目标窗口截图内 Y 坐标" },
-      mouse_button: { type: "string", enum: ["left", "right", "middle"], description: "鼠标按键，默认 left" },
-      click_count: { type: "integer", minimum: 1, maximum: 3, description: "点击次数，默认 1" },
+    tool("get_app_state", "读取运行中应用的窗口、控件与截图（操作应用前必调）。", appTargetProperties(), ["app"], true),
+    tool("click", "按控件编号或截图内坐标点击。", appTargetProperties({
+      element_index: { type: "string", description: "控件编号（如 e12）" },
+      x: { type: "number", description: "截图内 X 坐标" },
+      y: { type: "number", description: "截图内 Y 坐标" },
+      mouse_button: { type: "string", enum: ["left", "right", "middle"], description: "默认 left" },
+      click_count: { type: "integer", minimum: 1, maximum: 3, description: "默认 1" },
     }), stableTargetRequired()),
-    tool("perform_secondary_action", "执行控件公开的次级动作，例如展开、显示菜单或增加数值。", appTargetProperties({
+    tool("perform_secondary_action", "执行控件次级动作（如展开、显示菜单）。", appTargetProperties({
       element_index: { type: "string", description: "控件编号" },
-      action: { type: "string", description: "get_app_state 中显示的动作名称" },
+      action: { type: "string", description: "动作名" },
     }), stableTargetRequired(["element_index", "action"])),
-    tool("set_value", "设置输入框、可编辑文字或数值控件的值。", appTargetProperties({
+    tool("set_value", "设置输入框或数值控件的值。", appTargetProperties({
       element_index: { type: "string", description: "控件编号" },
-      value: { type: "string", description: "要设置的值" },
+      value: { type: "string", description: "目标值" },
     }), stableTargetRequired(["element_index", "value"])),
-    tool("select_text", "选择可编辑控件中的文字，或把光标放到文字前后。无法精确选中时回退为全选或行首/行尾。", appTargetProperties({
-      element_index: { type: "string", description: "文字控件编号" },
-      text: { type: "string", description: "要选择的原文（用于确认目标控件）" },
-      prefix: { type: "string", description: "可选的前置文字" },
-      suffix: { type: "string", description: "可选的后置文字" },
-      selection: { type: "string", enum: ["text", "cursor_before", "cursor_after"], description: "选择方式，默认 text" },
+    tool("select_text", "选择可编辑控件中的文字或定位光标。", appTargetProperties({
+      element_index: { type: "string", description: "控件编号" },
+      text: { type: "string", description: "目标原文" },
+      prefix: { type: "string", description: "前置文字" },
+      suffix: { type: "string", description: "后置文字" },
+      selection: { type: "string", enum: ["text", "cursor_before", "cursor_after"], description: "默认 text" },
     }), stableTargetRequired(["element_index", "text"])),
-    tool("scroll", "在指定控件位置向上、下、左或右滚动。", appTargetProperties({
-      element_index: { type: "string", description: "滚动区域或附近控件编号" },
+    tool("scroll", "在指定控件位置滚动。", appTargetProperties({
+      element_index: { type: "string", description: "控件编号" },
       direction: { type: "string", enum: ["up", "down", "left", "right", "u", "d", "l", "r"] },
-      pages: { type: "number", minimum: 0.1, maximum: 10, description: "滚动页数，默认 1" },
+      pages: { type: "number", minimum: 0.1, maximum: 10, description: "页数，默认 1" },
     }), stableTargetRequired(["element_index", "direction"])),
-    tool("drag", "按目标窗口截图内坐标从一个位置拖动到另一个位置。截图左上角为 (0,0)。", appTargetProperties({
+    tool("drag", "在窗口截图内按坐标拖拽。", appTargetProperties({
       from_x: { type: "number" },
       from_y: { type: "number" },
       to_x: { type: "number" },
       to_y: { type: "number" },
     }), stableTargetRequired(["from_x", "from_y", "to_x", "to_y"])),
-    tool("press_key", "向指定应用发送一个按键或组合键，例如 Return、ctrl+s、super+c、alt+F4。", appTargetProperties({
-      key: { type: "string", description: "按键格式：单个字符、Return/Tab/方向键/F1-F20，或用 + 连接修饰键" },
+    tool("press_key", "发送按键或组合键（如 Return、super+c）。", appTargetProperties({
+      key: { type: "string", description: "按键或 + 组合键" },
     }), stableTargetRequired(["key"])),
-    tool("type_text", "向指定应用输入原样文字；换行会模拟回车。", appTargetProperties({
-      text: { type: "string", description: "要输入的文字" },
+    tool("type_text", "向指定应用输入文字。", appTargetProperties({
+      text: { type: "string", description: "输入文字" },
     }), stableTargetRequired(["text"])),
   ];
 }

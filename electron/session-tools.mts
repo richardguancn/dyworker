@@ -198,27 +198,27 @@ export function sessionToolDefinitions() {
   return [
     tool(
       "list_sessions",
-      "列出本机的历史会话（含 QQ/微信渠道发起的会话），按最近更新排序。用于回答「之前那个会话/任务的进度或结果」这类问题：每条会话带最近任务状态（done/error/cancelled 等）。可用 query 按标题或正文过滤，返回的 id 可用于 read_session 查看详情。",
+      "列出本机历史会话（按最近更新排序，含状态与 id）。",
       {
-        query: stringArg("可选：过滤词，匹配会话标题或消息正文"),
-        limit: stringArg("可选：最多返回几条，默认 15"),
+        query: stringArg("可选：标题或正文过滤词"),
+        limit: stringArg("可选：返回条数，默认 15"),
       },
     ),
     tool(
       "search_sessions",
-      "在所有历史会话的消息正文里按关键词搜索，返回命中片段（含所属会话、角色与时间）。用于「引用某个会话的上下文」「之前说过 XX 是什么」这类跨会话检索。",
+      "在所有历史会话正文中按关键词搜索命中片段。",
       {
-        keyword: stringArg("要搜索的关键词"),
-        limit: stringArg("可选：最多返回几条命中，默认 20"),
+        keyword: stringArg("搜索关键词"),
+        limit: stringArg("可选：返回条数，默认 20"),
       },
       ["keyword"],
     ),
     tool(
       "read_session",
-      "读取某个会话的最近对话正文（用户与助手的完整消息，按时间顺序），用于把历史会话的结论或上下文引入当前任务。先用 list_sessions / search_sessions 拿到会话 id。",
+      "读取指定历史会话（sessionId）的最近对话消息。",
       {
         sessionId: stringArg("目标会话 id"),
-        lastN: stringArg("可选：读最近几条消息，默认 20"),
+        lastN: stringArg("可选：最近消息条数，默认 20"),
       },
       ["sessionId"],
     ),

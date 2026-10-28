@@ -149,22 +149,8 @@ export async function runAgent({
   } else {
     messages.push({ role: "system", content: "你是主代理派发的子代理。用户消息是一个完整自足的子任务描述：专注完成它并直接交付结果，不要询问澄清，不要再派发新的子代理（你也没有这个工具）。" });
   }
-  // 个人记忆知识库：按当前任务选取最相关的 wiki 页面整页注入（页面内部已合并/去重）。
-  const allMemoryPages = memoryPages.length ? memoryPages : memoriesAsPagesFallback(memories);
-  const relevantMemoryPages = selectWikiPages(allMemoryPages, {
-    workspacePath,
-    query: messageText({ content: latestQuery }),
-    limit: 3,
-  });
-  // 本会话记忆页（pages/session.md）绑定当前会话，必须注入，不参与相关性竞争
-  const sessionMemoryPage = allMemoryPages.find((page) => page?.relPath === "pages/session.md");
-  if (sessionMemoryPage && !relevantMemoryPages.includes(sessionMemoryPage)) relevantMemoryPages.unshift(sessionMemoryPage);
-  if (relevantMemoryPages.length) {
-    const sections = relevantMemoryPages
-      .map((page) => `## ${page.title}\n${clipped(page.content, 2600)}`)
-      .join("\n\n");
-    messages.push({ role: "system", content: `与当前任务可能相关的长期记忆（个人知识库页面）如下。它们只作为背景，若与用户当前要求冲突，以当前要求为准：\n\n${sections}` });
-  }
+  // 前缀缓存：AGENTS.md 与技能目录在会话内保持不变，放在随查询变化的记忆页之前，
+  // 让本地/云端端点的 KV 前缀缓存覆盖尽可能长的静态部分。
   const projectInstructions = await loadProjectInstructions(workspacePath);
   if (projectInstructions) {
     messages.push({ role: "system", content: `工作区根目录的 AGENTS.md 给出了这个工作区的长期约定，执行本任务时应遵循；若与用户当前要求冲突，以用户当前要求为准：\n${projectInstructions}` });
@@ -175,6 +161,27 @@ export async function runAgent({
   if (enabledSkills.length) {
     const lines = skillContextSummary(enabledSkills);
     messages.push({ role: "system", content: `以下工作模板可在需要时使用。任务与某个模板相关时，先用 load_skill 读取其完整执行要求再照做；若与用户当前要求冲突，以当前要求为准：\n${lines}` });
+  }
+  // 个人记忆知识库：按当前任务选取最相关的 wiki 页面整页注入（页面内部已合并/去重）。
+  // 查询词合并会话首条与最新用户消息：同一会话追问时选中的页面更稳定，减少前缀抖动。
+  const allMemoryPages = memoryPages.length ? memoryPages : memoriesAsPagesFallback(memories);
+  const firstQuery = conversation.find((message) => message.role === "user")?.content || "";
+  const memoryQuery = firstQuery === latestQuery
+    ? messageText({ content: latestQuery })
+    : `${messageText({ content: firstQuery })}\n${messageText({ content: latestQuery })}`;
+  const relevantMemoryPages = selectWikiPages(allMemoryPages, {
+    workspacePath,
+    query: memoryQuery,
+    limit: 3,
+  });
+  // 本会话记忆页（pages/session.md）绑定当前会话，必须注入，不参与相关性竞争
+  const sessionMemoryPage = allMemoryPages.find((page) => page?.relPath === "pages/session.md");
+  if (sessionMemoryPage && !relevantMemoryPages.includes(sessionMemoryPage)) relevantMemoryPages.unshift(sessionMemoryPage);
+  if (relevantMemoryPages.length) {
+    const sections = relevantMemoryPages
+      .map((page) => `## ${page.title}\n${clipped(page.content, 2600)}`)
+      .join("\n\n");
+    messages.push({ role: "system", content: `与当前任务可能相关的长期记忆（个人知识库页面）如下。它们只作为背景，若与用户当前要求冲突，以当前要求为准：\n\n${sections}` });
   }
   const lastUserIndex = conversation.reduce((index, message, currentIndex) => message?.role === "user" ? currentIndex : index, -1);
   const textModelWithoutVision = isTextModelWithoutVisionService(settings);

@@ -742,58 +742,58 @@ export function browserToolDefinitions() {
   return [
     tool(
       "browser__open",
-      "在当前任务窗口右侧的浏览器面板中打开网页：默认新开一个标签页，不覆盖已经打开的页面（当前标签页还是空白页时先用它；同一网址已开着则直接切过去）。传 tabId 时在该标签页里打开。支持 localhost 与内网地址。操作真实可见，打开后自动返回页面结构和截图。处于用户接管状态时禁止调用。",
+      "在右侧浏览器面板中打开网页（默认新开标签页或复用空白页/同网址页；传 tabId 则在指定标签页打开），自动返回页面结构与截图。",
       {
         url: stringArg("HTTP/HTTPS 网址"),
-        tabId: stringArg("可选：在指定标签页里打开（ID 来自 browser__tabs list）")
+        tabId: stringArg("可选：指定标签页 ID（来自 browser__tabs list）")
       },
       ["url"]
     ),
     tool(
       "browser__observe",
-      "观察当前网页，返回包含【观察编号】的最新的可操作元素列表（带 ref 编号）、页面标题、网址和页面截图。进行任何操作前或页面跳转后必须调用此工具获取最新观察编号。",
+      "观察当前网页，返回最新观察编号（observationId）、可操作元素列表（带 ref 编号）、标题、网址和截图。操作前或页面变化后必调。",
       {
-        mode: { type: "string", enum: ["auto", "text", "visual"], description: "观察模式：auto（默认）、text（仅文字）、visual（带视觉）" },
-        captureScreenshot: { type: "boolean", description: "是否截取屏幕画面，默认 true" }
+        mode: { type: "string", enum: ["auto", "text", "visual"], description: "模式：auto（默认）/ text / visual" },
+        captureScreenshot: { type: "boolean", description: "是否截图，默认 true" }
       },
       []
     ),
     tool(
       "browser__act",
-      "在当前受控网页上执行原子交互动作（点击、双击、悬停、键入、快捷键、滚动、下拉选择、拖拽等）。必须提供有效的 observationId 与唯一的 actionId 防止并发与重复操作。",
+      "在受控网页上执行交互动作（点击、双击、悬停、输入、按键、滚动、选择、拖拽）。须传最新 observationId 与唯一 actionId。",
       {
-        observationId: stringArg("当前观察的编号（来自最新 browser__observe 返回的【观察编号】，必填，严禁伪造或使用过期编号）"),
-        actionId: stringArg("动作的唯一标识符（必填，用于排重与幂等控制，防止并发或重试误触）"),
+        observationId: stringArg("最新 browser__observe 返回的观察编号"),
+        actionId: stringArg("动作唯一标识（防重）"),
         action: {
           type: "object",
-          description: "交互动作对象",
+          description: "交互动作",
           properties: {
             type: {
               type: "string",
               enum: ["click", "double_click", "hover", "type", "keypress", "scroll", "select", "drag"],
               description: "动作类型"
             },
-            ref: { type: "integer", description: "目标元素编号（来自观察列表）" },
+            ref: { type: "integer", description: "目标元素 ref 编号" },
             point: {
               type: "object",
-              description: "相对于截图画面的像素坐标 { x, y }，用于画布或复杂自定义控件（无截图时自动禁用）",
+              description: "截图内像素坐标 { x, y }",
               properties: { x: { type: "number" }, y: { type: "number" } }
             },
-            text: stringArg("type 动作时要填写的文字内容（支持普通 input 与 contenteditable 富文本）"),
-            mode: { type: "string", enum: ["replace", "append"], description: "输入模式：replace（覆盖，默认）或 append（追加）" },
-            key: stringArg("keypress 动作时的按键名，如 Enter, Backspace, Tab, Escape, ArrowDown"),
-            deltaX: { type: "number", description: "scroll 动作时的水平滚动距离" },
-            deltaY: { type: "number", description: "scroll 动作时的垂直滚动距离" },
-            value: stringArg("select 动作时的目标选项 value"),
-            label: stringArg("select 动作时的目标选项可见文本"),
+            text: stringArg("type 填写的文字"),
+            mode: { type: "string", enum: ["replace", "append"], description: "输入模式，默认 replace" },
+            key: stringArg("keypress 按键名（如 Enter, Tab, Escape）"),
+            deltaX: { type: "number", description: "水平滚动距离" },
+            deltaY: { type: "number", description: "垂直滚动距离" },
+            value: stringArg("select 目标选项 value"),
+            label: stringArg("select 目标选项文本"),
             from: {
               type: "object",
-              description: "drag 动作的起点坐标",
+              description: "drag 起点坐标",
               properties: { x: { type: "number" }, y: { type: "number" } }
             },
             to: {
               type: "object",
-              description: "drag 动作的终点坐标",
+              description: "drag 终点坐标",
               properties: { x: { type: "number" }, y: { type: "number" } }
             }
           },
@@ -804,36 +804,36 @@ export function browserToolDefinitions() {
     ),
     tool(
       "browser__wait",
-      "等待页面达到特定条件（如网址包含特定字符、页面出现特定文字或元素就绪），超时后安全返回并刷新观察。",
+      "等待页面满足条件（网址包含、文字出现或元素就绪）后刷新观察。",
       {
-        type: { type: "string", enum: ["url_contains", "text_present", "element_present"], description: "等待条件类型" },
-        value: stringArg("url_contains 或 text_present 的目标文本"),
-        selector: stringArg("element_present 的 CSS 选择器"),
-        timeoutMs: { type: "integer", description: "最大超时时间（毫秒），默认 15000" }
+        type: { type: "string", enum: ["url_contains", "text_present", "element_present"], description: "条件类型" },
+        value: stringArg("目标文本"),
+        selector: stringArg("CSS 选择器"),
+        timeoutMs: { type: "integer", description: "超时毫秒，默认 15000" }
       },
       ["type"]
     ),
     tool(
       "browser__read",
-      "读取当前网页的正文完整文字内容（用于阅读文章、通知、文档正文、业务表格，自动过滤敏感密码）。",
+      "读取当前网页正文完整文字。",
       {},
       []
     ),
     tool(
       "browser__handoff",
-      "当遇到人机验证码（CAPTCHA）、双因子短信验证、扫码登录或需要用户决断的业务操作时，主动交还控制权让用户在右侧网页手动处理。",
+      "遇到验证码、扫码登录或需用户决断时，交还控制权由用户手动处理。",
       {
-        reason: stringArg("交还控制权的具体原因说明，例如：检测到登录滑块验证码，请用户协助完成")
+        reason: stringArg("交还原因说明")
       },
       ["reason"]
     ),
     tool(
       "browser__tabs",
-      "管理右侧浏览器的标签页：list 列出全部标签页（含 ID、标题、网址、当前显示与助手受控页），open 新开标签页打开网址，activate 切换到指定标签页继续操作（要传 list 里的 tabId），close 关闭指定标签页（要传 tabId；不传 tabId 则关闭整个浏览器面板）。",
+      "管理浏览器标签页：list 列出全部，open 新开，activate 切换受控标签页（需 tabId），close 关闭指定标签页（不传 tabId 则关闭面板）。",
       {
-        action: { type: "string", enum: ["list", "open", "activate", "close"], description: "标签页操作动作" },
-        url: stringArg("open 动作时的目标网址"),
-        tabId: stringArg("指定操作的目标标签页 ID")
+        action: { type: "string", enum: ["list", "open", "activate", "close"], description: "操作动作" },
+        url: stringArg("open 时的网址"),
+        tabId: stringArg("目标标签页 ID")
       },
       ["action"]
     ),
@@ -841,15 +841,10 @@ export function browserToolDefinitions() {
       "browser__downloads",
       "查询当前任务触发的下载文件列表与路径。",
       {
-        query: stringArg("可选：按文件名过滤关键字")
+        query: stringArg("可选：文件名过滤词")
       },
       []
     ),
-    // 兼容历史老工具
-    tool("browser__snapshot", "列出当前网页的可交互元素及编号（建议使用 browser__observe 替代）。", {}, []),
-    tool("browser__click", "点击网页中的一个元素（建议使用 browser__act 替代）。", { ref: { type: "integer", description: "元素编号" }, actionId: stringArg("动作标识") }, ["ref"]),
-    tool("browser__type", "在网页输入框中填写文字（建议使用 browser__act 替代）。", { ref: { type: "integer", description: "输入框编号" }, text: stringArg("要填写的文字"), actionId: stringArg("动作标识") }, ["ref", "text"]),
-    tool("browser__screenshot", "截取当前网页画面保存到工作区留存证据。", { path: stringArg("相对工作区的保存路径，以 .png 结尾") }, []),
-    tool("browser__close", "关闭右侧浏览器面板，结束浏览器协作。", {}, []),
+    tool("browser__screenshot", "将当前网页截图保存到工作区文件。", { path: stringArg("相对工作区的 .png 保存路径") }, []),
   ];
 }

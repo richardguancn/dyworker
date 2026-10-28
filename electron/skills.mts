@@ -191,6 +191,6 @@ export function skillContextSummary(skills) {
     if (skill.pluginId && (!plugins.has(skill.pluginId) || skill.pluginEntry)) plugins.set(skill.pluginId, skill);
   }
   const selected = [...enabled.filter(skill => !skill.pluginId).slice(0, 20), ...plugins.values()];
-  const lines = selected.map(skill => `- 【${skill.name}】（编号 ${skill.id || '无'}）：${String(skill.description || '').slice(0, 120)}`).join('\n');
-  return lines + (enabled.length > selected.length ? '\n还有其他工作方法可用；用 list_skills 查看完整列表，选择与当前任务相关的方法。' : '');
+  const lines = selected.map(skill => `- 【${skill.name}】（编号 ${skill.id || '无'}）：${String(skill.description || '').replace(/\s+/g, ' ').trim().slice(0, 56)}`).join('\n');
+  return lines + (enabled.length > selected.length ? '\n更多模板用 list_skills 查看。' : '');
 }
