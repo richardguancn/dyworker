@@ -160,3 +160,12 @@ test('自动任务遇到异常格式直接报错，不重复发起同一请求',
     assert.equal(requests, 1);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+
+test('完整校验错误只暴露允许的字段位置和类型，不泄露输入', () => {
+  const parser = createModelStreamParser(() => {});
+  const error = JSON.stringify({ detail: [{ type: 'string_type', loc: ['body', 'input', 7, 'content'], input: '秘密内容' }] });
+  assert.throws(() => parser.feed(error), e => /body → input → 7 → content/.test(e.message) && /string_type/.test(e.message) && !e.message.includes('秘密内容'));
+  const unsafe = createModelStreamParser(() => {});
+  assert.throws(() => unsafe.feed(JSON.stringify({detail:[{type:'string_type',loc:['秘密内容']}]})), e => !e.message.includes('秘密内容'));
+});

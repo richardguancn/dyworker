@@ -352,7 +352,6 @@ html .reference-layout.platform-linux {
   box-shadow: none;
 }
 
-.reference-layout .goal-banner { width: var(--chat-width); }
 .reference-layout .composer-toolbar { flex-wrap: wrap; gap: 6px 12px; min-height: 34px; }
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
 .reference-layout .composer-send-actions { margin-left: auto; flex: 1 1 0; justify-content: flex-end; }

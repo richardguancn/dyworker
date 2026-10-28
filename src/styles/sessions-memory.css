@@ -98,6 +98,8 @@
 
 .skills-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 12px;
 }
 
@@ -234,6 +236,8 @@
 }
 
 .skill-list {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 8px;
 }
 
@@ -460,6 +464,12 @@
   gap: 2px;
 }
 
+.skill-management-head > .skill-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .skill-management-head strong {
   color: #3f433c;
   font-size: calc(12.5px * var(--font-ui-scale, 1));
@@ -648,6 +658,8 @@
 
 .skill-item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 7px;
 }
 
@@ -699,6 +711,7 @@
   min-width: 0;
   flex: 1;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px;
 }
 

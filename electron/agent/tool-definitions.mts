@@ -211,7 +211,7 @@ export function toolDefinitions() {
     functionTool("finish_task", "目标与检查均完成后正式结束任务并指定唯一正式回答来源（answer_source）。调用前确保结论已完整写在回复正文或 summary 中。",
       {
         answer_source: { type: "string", enum: ["current_reply", "previous_reply", "summary"], description: "正式回答来源：current_reply 本轮正文 / previous_reply 前一轮完整正文 / summary 本参数 summary" },
-        summary: stringProperty("交付结论或说明（若正文未写完整结论，必须在此写全结论与依据）"),
+        summary: stringProperty("交付结论或说明（若作为正式回复，写全结论与依据；多项结果、验证和后续事项按主题分段或用列表，列表前留空行）"),
         evidence: stringProperty("已执行的验证检查说明"),
         goalAchieved: { type: "boolean", description: "长期目标已达成时设为 true" }
       },

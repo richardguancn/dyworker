@@ -116,8 +116,6 @@ export function ComposerDock(props: ComposerDockProps) {
               </button>
             </div>
           )}
-          {activeSession?.goal && activeSession.goalState?.status !== 'complete' && <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
-            session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} />}
           {/* 排队消息在输入框后方叠放；挂起提示仍独立展示。 */}
           {(activeSleeping || (activeTaskRunning && activeQueuedMessages.length > 0)) && (
             <div className="composer-pending" aria-label="待发送列表">
@@ -245,7 +243,9 @@ export function ComposerDock(props: ComposerDockProps) {
             </div>
             {workspaceContext?.branch && <span className="composer-context-item composer-project-branch"><GitBranch size={15} /><span>{workspaceContext.branch}</span></span>}
           </div>}
-          <PlanProgress running={activeTaskRunning} message={activeSession?.messages[streamingAssistantIndex]} />
+          <PlanProgress running={activeTaskRunning} message={activeSession?.messages[streamingAssistantIndex]}
+            goal={activeSession?.goal && activeSession.goalState?.status !== 'complete' ? <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
+              session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} /> : null} />
           <div
             className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
             onDragOver={handleComposerDragOver}

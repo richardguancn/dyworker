@@ -184,11 +184,11 @@
 
 /* 计划底边略压入输入框后方，保留上圆角，让两块背景自然衔接。 */
 .plan-progress {
-  --plan-progress-radius: 12px 12px 0 0;
+  --plan-progress-radius: 16px 16px 0 0;
   width: min(940px, 76%);
   min-width: 0;
   margin-bottom: -12px;
-  padding: 10px 12px 16px;
+  padding: 10px 14px 20px;
   color: var(--muted);
   border: 1px solid var(--border);
   border-bottom: 0;
@@ -198,7 +198,7 @@
   font-size: calc(12px * var(--font-ui-scale, 1));
 }
 .plan-progress + .composer-card { position: relative; }
-.plan-progress-meter { display: flex; flex: none; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.plan-progress-meter { display: flex; flex: none; align-items: center; gap: 5px; padding: 0; }
 .plan-progress-ring { display: block; flex: none; }
 .plan-progress-ring-track { stroke: color-mix(in srgb, var(--muted) 22%, transparent); }
 .plan-progress-ring-value { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 320ms ease; }
@@ -207,7 +207,7 @@
 @keyframes plan-progress-breathe { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
 .plan-progress-summary { position: relative; display: flex; align-items: center; gap: 8px; min-height: 24px; }
 .plan-progress-summary > svg { flex-shrink: 0; }
-.plan-progress-title { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.plan-progress-title { color: var(--ink); min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .plan-progress-count { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .reference-layout .plan-progress { width: calc(var(--chat-width) - 24px); }
 @media (max-width: 1100px) { .plan-progress { width: 82%; } }
@@ -218,22 +218,16 @@
 .plan-progress-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .plan-progress-toggle:hover { color: var(--ink); }
 .plan-progress-chevron { transition: transform 160ms ease; }
-.plan-progress[open] .plan-progress-chevron { transform: rotate(180deg); }
+.plan-progress-plan[open] .plan-progress-chevron { transform: rotate(180deg); }
 .plan-progress-details {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: 100%;
-  max-height: min(280px, 40vh);
+  max-height: min(240px, 30vh);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--card);
-  box-shadow: var(--shadow-md);
+  margin: 8px 0 0 22px;
+  padding: 0 0 2px;
   color: var(--ink);
 }
+.plan-progress-details .plan-progress-steps { margin-top: 0; }
 .plan-progress-details > strong { font-weight: 560; }
 .plan-progress-steps { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
 .plan-progress-step { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; }
