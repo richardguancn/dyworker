@@ -210,6 +210,7 @@ export interface TraceEvent {
     messages?: number;
     tools?: number;
     toolsTokens?: number;
+    toolGroups?: Array<{ name: string; tools: string[] }>;
     systemTokens?: number;
     promptTokens?: number;
   };

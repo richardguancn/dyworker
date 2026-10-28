@@ -860,6 +860,7 @@ function ContextTrend({ requests }: { requests: any[] }) {
               return <LegendRow key={category.key} label={category.label} color={category.color} value={`≈${formatTokens(value)}`} percent={values[active].total ? formatPercent(value / values[active].total) : ""} />;
             })}
           </div>
+          {values[active].request ? <ToolInventory request={values[active].request} /> : null}
           {pinned !== null ? <button type="button" className="dyw-ctx-chip" onClick={() => setPinned(null)}>取消固定</button> : null}
         </div>
       ) : null}
@@ -869,6 +870,18 @@ function ContextTrend({ requests }: { requests: any[] }) {
       </p>
     </div>
   );
+}
+
+function ToolInventory({ request }: { request: any }) {
+  const groups = request?.context?.toolGroups;
+  if (!Array.isArray(groups)) return <p className="dyw-ctx-note">这次请求没有记录工具明细。</p>;
+  return <details className="dyw-ctx-tool-inventory">
+    <summary>本次请求发送了 {groups.reduce((sum: number, group: any) => sum + (Array.isArray(group.tools) ? group.tools.length : 0), 0)} 个工具 · 查看明细</summary>
+    {groups.map((group: any) => <details key={group.name}>
+      <summary>{group.name} · {group.tools.length} 个</summary>
+      <p className="dyw-ctx-note">{group.tools.join('、')}</p>
+    </details>)}
+  </details>;
 }
 
 // ── 插件信息卡 ────────────────────────────────────────────────────
@@ -929,6 +942,11 @@ export function ContextView(props: ContextViewProps) {
         <CurrentContext detail={detail} />
         <PluginInfoCard plugin={detail.plugin} />
       </div>
+
+      <section className="dyw-ctx-card">
+        <h4>最近一次请求的工具</h4>
+        {agentRequests.length ? <ToolInventory request={agentRequests.at(-1)} /> : <p className="dyw-ctx-note">还没有请求记录。</p>}
+      </section>
 
       <section className="dyw-ctx-card">
         <h4>上下文浏览器 <em className="dyw-ctx-note">当前 / 比前步 / 比前轮</em></h4>

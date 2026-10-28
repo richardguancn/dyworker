@@ -1,3 +1,4 @@
+import { toolInventory } from "./agent/tool-inventory.mts";
 import { prepareMcpDiscovery, discoverMcpTools } from "./host/mcp-discovery.mts";
 // DYWorker 本地代理循环，保留原有公共入口。
 import path from "node:path";
@@ -697,6 +698,7 @@ export async function runAgent({
       const requestContext = {
         messages: messages.length,
         tools: effectiveTools.length,
+        toolGroups: toolInventory(effectiveTools),
         toolsTokens: estimateTextTokens(JSON.stringify(effectiveTools.map((tool) => ({
           name: tool?.function?.name,
           description: tool?.function?.description,

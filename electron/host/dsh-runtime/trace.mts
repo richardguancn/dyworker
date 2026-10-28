@@ -1,4 +1,5 @@
-import { readUsageExtras } from '../../agent.mts';
+import { readUsageExtras, estimateTextTokens, estimateMessagesTokens } from '../../agent.mts';
+import { toolInventory } from '../../agent/tool-inventory.mts';
 
 /** 从真实请求和官方事件投影现有轨迹格式，不补造首字计时或文件活动。 */
 export function createDshTrace(root: string, emit: any) {
@@ -14,7 +15,14 @@ export function createDshTrace(root: string, emit: any) {
     request(owner: string, payload: any) {
       const state = { turn: ++turn, step: 0, requestSeq: 0 }; owners.set(owner, state);
       state.requestSeq = send(owner, { kind: 'model-request', direction: 'in', target: 'model',
-        title: 'DSH 模型请求', content: JSON.stringify(payload) });
+        title: 'DSH 模型请求', content: JSON.stringify(payload), context: {
+          messages: Array.isArray(payload.messages) ? payload.messages.length : 0,
+          tools: Array.isArray(payload.tools) ? payload.tools.length : 0,
+          toolGroups: toolInventory(Array.isArray(payload.tools) ? payload.tools : []),
+          toolsTokens: estimateTextTokens(JSON.stringify(Array.isArray(payload.tools) ? payload.tools.map((item: any) => item.function || item) : [])),
+          systemTokens: estimateMessagesTokens((payload.messages || []).filter((message: any) => message.role === 'system')),
+          promptTokens: estimateMessagesTokens(payload.messages || []),
+        } });
       return { ...state };
     },
     response(owner: string, state: any, message: any) {
