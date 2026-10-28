@@ -1088,6 +1088,7 @@ export interface DyworkerBridge {
   onBrowserControlState?(callback: (state: BrowserControlState) => void): () => void;
   /** 浏览器 Computer Use：监听控制恢复广播（用于自动触发续跑任务） */
   onBrowserControlResumed?(callback: (payload: { ownerSessionId?: string; runId?: string; tabId?: string }) => void): () => void;
+  mcpStats(): Promise<Array<{ id: string; enabled: boolean; count?: number; tokens?: number }>>;
   importMcpBundle(): Promise<{ canceled?: boolean; ok?: boolean; error?: string; server?: McpServerConfig }>;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
   // ---- 外观自定义（独立于模型设置存储；浏览器预览环境无此桥接，调用方需按 undefined 降级） ----

@@ -44,3 +44,20 @@ test('流式 HTTP 实际连接、认证标头、分页、工具调用和取消',
  const server=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;if(req.method==='GET'){res.writeHead(405).end();return;}const msg=JSON.parse(body);requests.push({msg,headers:req.headers});if(msg.id==null){res.writeHead(202).end();return;}let result;if(msg.method==='initialize'){result={protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'HTTP fixture',version:'1'}};}else if(msg.method==='tools/list'){result=msg.params.cursor?{tools:[{name:'second',inputSchema:{type:'object'}}]}:{tools:[{name:'echo',inputSchema:{type:'object'}}],nextCursor:'next'};}else if(msg.params.name==='slow'){return;}else result={content:[{type:'text',text:msg.params.arguments.value}]};res.writeHead(200,{'Content-Type':'application/json',...(msg.method==='initialize'?{'Mcp-Session-Id':'session-test'}:{})});res.end(JSON.stringify({jsonrpc:'2.0',id:msg.id,result}));});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});const config=resolveMcpServer({transport:'http',url:`http://127.0.0.1:${server.address().port}/mcp`,bearerTokenEnvVar:'TOKEN',envHeaders:{'X-Test':'TOKEN'}},{TOKEN:'sample'});const client=new HttpMcpClient(config);t.after(()=>client.close());await client.connect();assert.deepEqual(client.tools.map(tool=>tool.name),['echo','second']);const result=await client.callTool('echo',{value:'actual response'});assert.equal(result.text,'actual response');assert.equal(requests[0].headers.authorization,'Bearer sample');assert.equal(requests[0].headers['x-test'],'sample');assert.equal(requests.at(-1).headers['mcp-session-id'],'session-test');const controller=new AbortController();const pending=client.callTool('slow',{}, {signal:controller.signal});controller.abort();await assert.rejects(pending);await client.close();assert.equal(client.connected,false);
 });
+
+test('停用服务不加载工具，启用后按实际连接统计，再次停用即不再暴露', async t => {
+ const {createMcpRuntime} = await import('../dist/electron/desktop/mcp-runtime.mjs');
+ const {dir} = await bundle(t);
+ const file = path.join(dir, 'fixture.mjs'); await fs.writeFile(file, fixture);
+ const runtime = createMcpRuntime({mcpShuttingDown:false}); t.after(() => runtime.closeAllMcpClients());
+ const server = {id:'fixture-stats', name:'测试服务', command:process.execPath, args:[file], enabled:false};
+ const settings = {mcpServers:[server]};
+ assert.equal((await runtime.mcpExtraTools(settings)).some(tool => tool.function.name.startsWith('mcp__fixture-stats__')), false);
+ assert.equal(runtime.cachedMcpStats(settings)[0].enabled, false);
+ server.enabled = true;
+ assert.equal((await runtime.mcpExtraTools(settings)).filter(tool => tool.function.name.startsWith('mcp__fixture-stats__')).length, 1);
+ const stats = runtime.cachedMcpStats(settings)[0]; assert.equal(stats.count, 1); assert.ok(stats.tokens > 0);
+ server.enabled = false;
+ assert.equal((await runtime.mcpExtraTools(settings)).some(tool => tool.function.name.startsWith('mcp__fixture-stats__')), false);
+ assert.equal(runtime.cachedMcpStats(settings)[0].enabled, false);
+});

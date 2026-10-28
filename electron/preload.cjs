@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("browser-control:resumed", listener);
     return () => ipcRenderer.removeListener("browser-control:resumed", listener);
   },
+  mcpStats: () => ipcRenderer.invoke("settings:mcp-stats"),
   importMcpBundle: () => ipcRenderer.invoke("settings:import-mcp-bundle"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   // ---- 外观自定义：独立存储， trustedHandle 在主进程校验来源 ----

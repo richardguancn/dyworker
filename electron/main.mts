@@ -1602,6 +1602,7 @@ const shellDeps = {
     queueCount:(id)=>sessionQueue.count(id),drainSessionQueue,trackStart:trackTaskStart,trackEnd:trackTaskEnd,
     emit:(sender,envelope)=>{try {if(sender&&!sender.isDestroyed())sender.send('agent:event',envelope);}catch {}}}),
   // 设置保存要联动的域（睡眠拦截/审核模型/语音/渠道/运营）
+  mcpStats: async () => mcpRuntime.cachedMcpStats(await readSettings()),
   importMcpBundle: async () => {
     const result = await dialog.showOpenDialog(mainWindow, {properties: ['openFile'], filters: [{name: 'MCP Bundle', extensions: ['mcpb']}]});
     if (result.canceled) return {canceled: true};

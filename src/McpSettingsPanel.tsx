@@ -18,6 +18,8 @@ function ListFields({ title, value, onChange, addLabel }: { title: string; value
   </div>)}<button type="button" className="mcp-add-row" onClick={() => onChange([...value, ""])}><Plus size={14}/>{addLabel}</button></div>;
 }
 export function McpSettingsPanel({ value, onSave }: { value: ProviderSettings; onSave: (v: ProviderSettings, message?: string) => Promise<boolean> }) {
+  const [stats, setStats] = useState<Array<{ id: string; count?: number; tokens?: number }>>([]);
+  useEffect(() => { void window.dyworker?.mcpStats?.().then(setStats).catch(() => {}); }, [value.mcpServers]);
   const [draft, setDraft] = useState<McpServerConfig | null>(null);
   const [pairs, setPairs] = useState<{env: Pair[]; headers: Pair[]; envHeaders: Pair[]}>({env: [], headers: [], envHeaders: []});
   const [busy, setBusy] = useState(false);
@@ -92,7 +94,7 @@ export function McpSettingsPanel({ value, onSave }: { value: ProviderSettings; o
       <p className="dialog-note">连接本地或网络上的工具服务。</p>
       {value.mcpServers.length === 0 && <p className="dialog-note">还没有添加 MCP。</p>}
       {value.mcpServers.map(server => <div className="mcp-server-row" key={server.id}>
-        <span className="mcp-server-name"><strong>{server.name}</strong><small>{server.configUnavailable ? '暂时无法读取已保存的连接设置' : server.bundle ? `.mcpb · ${server.bundle.manifest.version}` : server.transport === 'http' ? server.url : [server.command, ...server.args].join(' ')}</small></span>
+        <span className="mcp-server-name"><strong>{server.name}</strong><small>{server.enabled ? (() => { const stat = stats.find(item => item.id === server.id); return stat?.count !== undefined ? `${stat.count} 个工具 · 完整定义约 ${stat.tokens?.toLocaleString()} token` : "工具数量尚未记录，运行任务后可查看"; })() : "已停用，不会发送工具定义"}</small><small>{server.configUnavailable ? '暂时无法读取已保存的连接设置' : server.bundle ? `.mcpb · ${server.bundle.manifest.version}` : server.transport === 'http' ? server.url : [server.command, ...server.args].join(' ')}</small></span>
         <button type="button" className="icon-button subtle" disabled={busy || server.configUnavailable} aria-label={`编辑 ${server.name}`} onClick={() => edit(server)}><Pencil size={15}/></button>
         <button type="button" className="icon-button subtle" disabled={busy} aria-label={`删除 ${server.name}`} onClick={() => void persist(value.mcpServers.filter(row => row.id !== server.id), `已删除「${server.name}」`)}><Trash2 size={15}/></button>
         <label className="skill-switch"><input aria-label={`启用 ${server.name}`} disabled={busy} type="checkbox" checked={server.enabled} onChange={e => void persist(value.mcpServers.map(row => row.id === server.id ? {...row, enabled: e.target.checked} : row), e.target.checked ? '已启用' : '已停用')}/></label>

@@ -3,6 +3,7 @@ import { COMPUTER_USE_INSTALL_TIMEOUT_MS,COMPUTER_USE_SERVER_ID,discoverComputer
 import { resolveMcpServer } from "../mcp-config.mts";
 import { HttpMcpClient } from "../mcp-http.mts";
 import { McpClient } from "../mcp.mts";
+import { estimateTextTokens } from "../agent/messages.mts";
 
 export function createMcpRuntime(deps: {
   mcpShuttingDown: boolean;
@@ -142,10 +143,21 @@ async function callMcpTool(settings, fullName, args, { signal } = {} as any) {
   return { ok: false, result: `没有找到 MCP 工具：${fullName}` };
 }
 
+function cachedMcpStats(settings) {
+  return (Array.isArray(settings?.mcpServers) ? settings.mcpServers : []).map(server => {
+    if (server.enabled === false) return { id: server.id, enabled: false };
+    const client = mcpClients.get(JSON.stringify(server));
+    if (!client || (!client.process && !client.connected)) return { id: server.id, enabled: true };
+    const definitions = client.tools.map(tool => ({ name: `mcp__${server.id || server.name}__${tool.name}`,
+      description: `【MCP:${server.name}】${tool.description || tool.name}`, parameters: sanitizeMcpInputSchema(tool.inputSchema) }));
+    return { id: server.id, enabled: true, count: definitions.length, tokens: estimateTextTokens(JSON.stringify(definitions)) };
+  });
+}
+
 async function closeAllMcpClients() {
   const clients = [...mcpClients.values()];
   mcpClients.clear();
   await Promise.allSettled(clients.map((client) => client.close()));
 }
-  return { mcpExtraTools, callMcpTool, closeAllMcpClients };
+  return { mcpExtraTools, callMcpTool, closeAllMcpClients, cachedMcpStats };
 }

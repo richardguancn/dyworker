@@ -9,6 +9,8 @@ export function settingsIpcPlugin(deps) {
     apply(ctx) {
       const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, reconcileChannels, applyTelemetrySettings } = deps;
 
+      trustedHandle("settings:mcp-stats", async () => deps.mcpStats());
+
       trustedHandle("settings:import-mcp-bundle", async () => {
         try { return await deps.importMcpBundle(); }
         catch (error: any) { return {ok: false, error: error.message || String(error)}; }
