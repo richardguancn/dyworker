@@ -205,7 +205,7 @@ export class SchedulerService extends Service {
     item.nextRun = this.now().toISOString();
     await this.writeScheduleList(items);
     // 只等调度决策落盘，不等任务跑完（IPC 不能挂到任务结束）。
-    // 返回值带回"这一轮到底有没有立刻派发"：忙碌守卫（桌面任务执行中/已有后台任务在跑）
+    // 返回值带回"这一轮到底有没有立刻派发"：调度器正在处理其他计划时
     // 会把这次点击推迟到下一个 tick，界面据此说"已排队"而不是谎报"已开始执行"。
     const due = await this.checkDueSchedules({ awaitRun: false, manual: true });
     return { ok: true, started: Boolean(due) };
@@ -454,7 +454,7 @@ export class SchedulerService extends Service {
   async checkDueSchedules(options: { awaitRun?: boolean; manual?: boolean } = {}) {
     const awaitRun = options.awaitRun !== false;
     const manual = options.manual === true;
-    if (this.hooks.isShuttingDown() || this.running || this.hooks.isSystemBusy() || this.scheduling) return null;
+    if (this.hooks.isShuttingDown() || this.running || this.scheduling) return null;
     const now = this.now();
     let due = null;
     // 重入保护只覆盖「读 → 挑 due → 写回 running」这段窗口，不跨 runScheduledTask：
@@ -507,8 +507,8 @@ export class SchedulerService extends Service {
   async start() {
     await this.recoverInterrupted();
     if (this.hooks.isShuttingDown()) return;
-    // 同一 tick 先看到点的主动唤醒（self-wake）再到期的定时计划；两者共用忙碌守卫，串行执行
-    const tick = () => void this.checkDueWakes().then(() => this.checkDueSchedules());
+    // 唤醒检查可能等待任务完成，定时计划检查须独立启动。
+    const tick = () => { void this.checkDueWakes(); void this.checkDueSchedules(); };
     this.schedulerTimer = setInterval(tick, 10_000);
     this.bootTimer = setTimeout(tick, 1500);
     // 等近邻唤醒定时器真正挂上再返回，调用方拿到的状态是确定的

@@ -2218,7 +2218,8 @@ app.whenReady().then(async () => {
   // 平台事件：睡眠恢复/解锁后立即补跑一次到期检查（electron 边界留在壳层）
   if (typeof powerMonitor?.on === "function") {
     const catchUp = () => {
-      void ctx.scheduler.checkDueWakes().then(() => ctx.scheduler.checkDueSchedules());
+      void ctx.scheduler.checkDueWakes();
+      void ctx.scheduler.checkDueSchedules();
       void ctx.scheduler.scheduleNextWakeCheck();
     };
     powerMonitor.on("resume", catchUp);

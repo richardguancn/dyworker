@@ -129,16 +129,14 @@ test("立即执行：空闲时立刻派发，返回值 started=true 且带 manua
   ctx.dispose?.();
 });
 
-test("立即执行：忙碌守卫拦下时不谎报已开始，started=false 且额度留给下一个 tick", async (t) => {
-  const { scheduler, calls, plan } = await makeScheduler(t, { hooks: { isSystemBusy: () => true } });
+test("立即执行：其他任务运行时仍立即开始", async (t) => {
+  const { ctx, scheduler, calls, plan } = await makeScheduler(t, { hooks: { isSystemBusy: () => true } });
   const result = await scheduler.triggerNow(plan.id);
-  assert.equal(result.ok, true, "点按本身不报错");
-  assert.equal(result.started, false, "被忙碌守卫推迟：界面必须说已排队");
-  assert.equal(calls.scheduled.length, 0, "这一轮不派发");
-  const [after] = await scheduler.list();
-  // nextRun 已拨到现在：忙碌结束后下一个 tick 仍会把它跑起来，不会丢
-  assert.equal(after.nextRun, "2026-10-02T10:00:00.000Z");
-  assert.equal(after.lastStatus, "", "没派发就不该落 running");
+  assert.equal(result.ok, true);
+  assert.equal(result.started, true);
+  assert.equal(calls.scheduled.length, 1);
+  assert.equal((await scheduler.list())[0].lastStatus, "running");
+  ctx.dispose?.();
 });
 
 // ---- 源码契约 ----

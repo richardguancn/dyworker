@@ -228,7 +228,7 @@ test("registerWake：按会话去重、字段归一化、落盘保留策略", as
   }
 });
 
-test("checkDueSchedules：忙碌时跳过；到期则先落 running 再交给壳层执行", async (t) => {
+test("checkDueSchedules：其他任务运行时仍触发；同一计划不重复执行", async (t) => {
   const dir = await makeTmpDir(t);
   const now = new Date("2026-09-30T10:00:00.000Z");
   await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
@@ -238,11 +238,6 @@ test("checkDueSchedules：忙碌时跳过；到期则先落 running 再交给壳
   let busy = true;
   const { ctx, scheduler, calls } = await makeScheduler(t, { dir, now: () => now, hooks: { isSystemBusy: () => busy } });
   try {
-    await scheduler.checkDueSchedules();
-    assert.deepEqual(calls.scheduled, [], "忙碌时不应触发");
-    assert.equal((await scheduler.list())[0].lastStatus, "", "跳过时不应改状态");
-
-    busy = false;
     await scheduler.checkDueSchedules();
     assert.deepEqual(calls.scheduled, ["due-1"], "到期应交由壳层执行");
     assert.equal((await scheduler.list())[0].lastStatus, "running", "执行前先落 running（防重入）");
