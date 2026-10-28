@@ -6582,3 +6582,29 @@ test("完整交付经过保存记忆和工作模板后仍进入最终正文", as
     });
   }
 });
+
+test('大型 MCP 工具集按需发现，原工具调用仍经过审批', async () => {
+  const root = await makeWorkspace();
+  const requests = [], approvals = [], executions = [];
+  const tools = Array.from({length: 30}, (_, i) => ({type: 'function', function: {
+    name: `mcp__demo__tool_${i}`, description: `【MCP:示例服务】示例工具 ${i}`,
+    parameters: {type: 'object', properties: {value: {type: 'string'}}, required: ['value']},
+  }}));
+  const result = await runAgent({settings, workspacePath: root, conversation: [{role:'user', content:'使用示例工具'}],
+    extraTools: tools, approvalMode: 'interactive',
+    requestApproval: async action => { approvals.push(action); return true; },
+    onExtraTool: async (name, args) => { executions.push({name, args}); return {ok:true, result:'完成'}; },
+    fetchImpl: mockFetch([
+      {role:'assistant', content:null, tool_calls:[toolCall('find', 'discover_mcp_tools', {query:'tool_17'})]},
+      {role:'assistant', content:null, tool_calls:[toolCall('execute', 'mcp__demo__tool_17', {value:'实际输入'})]},
+      {role:'assistant', content:'完成'},
+    ], requests),
+  });
+  assert.equal(result.status, 'done');
+  assert.ok(requests[0].tools.some(item => item.function.name === 'discover_mcp_tools'));
+  assert.ok(!requests[0].tools.some(item => item.function.name === 'mcp__demo__tool_17'));
+  assert.ok(requests[1].tools.some(item => item.function.name === 'mcp__demo__tool_17'));
+  assert.equal(requests[1].tools.filter(item => item.function.name.startsWith('mcp__demo__')).length, 1);
+  assert.deepEqual(executions, [{name:'mcp__demo__tool_17', args:{value:'实际输入'}}]);
+  assert.equal(approvals.length, 1);
+});

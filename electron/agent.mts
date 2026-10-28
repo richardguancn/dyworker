@@ -1,3 +1,4 @@
+import { prepareMcpDiscovery, discoverMcpTools } from "./host/mcp-discovery.mts";
 // DYWorker 本地代理循环，保留原有公共入口。
 import path from "node:path";
 import { AgentLoopGuard } from "./agent-loop-guard.mts";
@@ -511,7 +512,8 @@ export async function runAgent({
   };
 
   // 子代理不派发 dispatch_agent，防止无限递归；审批串行化，避免并行子任务同时弹多个确认
-  const availableTools = toolDefinitionsWith(extraTools)
+  const mcpDiscovery = prepareMcpDiscovery(extraTools);
+  const availableTools = toolDefinitionsWith(mcpDiscovery.initial)
     .filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
   // Kimi 开放平台原生工具（v1：12 个 Formula + 可选内置 $web_search）：
   // 仅当 endpoint 命中 api.moonshot.cn / api.moonshot.ai 且原生工具总开关未关时启用。
@@ -547,7 +549,7 @@ export async function runAgent({
         ...(formula.definitions || []),
         // 内置 $web_search（builtin_function）由开关控制，v1 默认关闭（官方提示该功能正在升级）
         ...(settings.enableWebSearchBuiltin === true ? [KIMI_WEB_SEARCH_DEFINITION] : []),
-        ...extraTools,
+        ...mcpDiscovery.initial,
       ].filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
     } catch (error: any) {
       // 定义拉取失败（网络/限流等）：降级为不带公式工具继续，本地工具集保持原样
@@ -1554,6 +1556,18 @@ export async function runAgent({
             }
             case "export_word_document": {
               result = await exportWordDocument(workspace, args.path, args.title, args.content);
+              break;
+            }
+            case "discover_mcp_tools": {
+              const found = discoverMcpTools(mcpDiscovery.deferred, args.query, args.offset);
+              for (const tool of found.tools) {
+                const toolName = tool.function.name;
+                if (!effectiveTools.some(item => item?.function?.name === toolName)) effectiveTools.push(tool);
+                toolSchemas.set(toolName, tool.function.parameters);
+              }
+              result = found.tools.length
+                ? `已加载 ${found.tools.length} 个工具（共 ${found.total} 个匹配，从 ${found.offset} 开始）：\n${found.tools.map(tool => `${tool.function.name}：${tool.function.description}`).join("\n")}\n${found.offset + found.tools.length < found.total ? `还有更多结果，可用 offset=${found.offset + found.tools.length} 继续。` : ""}下一次请求即可直接调用这些工具。`
+                : `没有找到匹配工具（共 ${found.total} 个）。请换关键词或使用空关键词分页查看。`;
               break;
             }
             case "dispatch_agent": {

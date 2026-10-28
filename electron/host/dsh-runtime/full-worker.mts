@@ -21,6 +21,7 @@ import { createChildControl } from './child-control.mts';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import { communicationGuidance } from '../communication-guidance.mts';
 import { chartGuidance } from '../chart-guidance.mts';
+import { prepareMcpDiscovery, discoverMcpTools } from '../../host/mcp-discovery.mts';
 
 installFileHandleBridge();
 const send = (value: any) => process.send?.(value);
@@ -137,8 +138,11 @@ process.once('message', async (input: any) => {
       const signature = grants.get(exec.token); grants.delete(exec.token);
       return signature === fingerprint(exec) ? undefined : 'DYWorker 未允许此操作';
     });
-    for (const tool of input.extraTools || []) {
-      ctx.tools.register({ name: tool.name, description: tool.description || tool.name,
+    const mcpDiscovery = prepareMcpDiscovery((input.extraTools || []).map((tool: any) => ({type: 'function', function: tool})));
+    const loadedMcp = new Map<string, () => void>();
+    const resetMcp = () => { for (const dispose of loadedMcp.values()) dispose(); loadedMcp.clear(); };
+    const registerExtraTool = (tool: any) => {
+      return ctx.tools.register({ name: tool.name, description: tool.description || tool.name,
         parameters: tool.parameters || { type: 'object', properties: {} },
         execute: async (args: any, exec: any) => {
           if (input.fixedExtraTools?.includes(tool.name) && ['sleep_until', 'finish_task'].includes(tool.name)) {
@@ -154,7 +158,23 @@ process.once('message', async (input: any) => {
         output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
           render: (_args: any, value: any) => [{ type: 'text', text: value.text }] },
       });
-      if (input.fixedExtraTools?.includes(tool.name)) fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));
+    };
+    for (const wrapped of mcpDiscovery.initial) {
+      const tool = wrapped.function;
+      if (tool.name === 'discover_mcp_tools') {
+        ctx.tools.register({ ...tool, execute: async (args: any) => {
+          const found = discoverMcpTools(mcpDiscovery.deferred, args.query, args.offset);
+          for (const entry of found.tools) if (!loadedMcp.has(entry.function.name))
+            loadedMcp.set(entry.function.name, registerExtraTool(entry.function));
+          return { text: found.tools.length
+            ? `已加载 ${found.tools.length} 个工具（共 ${found.total} 个匹配，从 ${found.offset} 开始）：\n${found.tools.map((entry: any) => `${entry.function.name}：${entry.function.description}`).join('\n')}\n${found.offset + found.tools.length < found.total ? `还有更多结果，可用 offset=${found.offset + found.tools.length} 继续。` : ''}下一次请求即可直接调用这些工具。`
+            : `没有找到匹配工具（共 ${found.total} 个）。请换关键词或使用空关键词分页查看。` };
+        }, output: { schema: {type:'object', properties:{text:{type:'string'}}, required:['text'], additionalProperties:false},
+          render: (_args: any, value: any) => [{type:'text', text:value.text}] } });
+      } else {
+        registerExtraTool(tool);
+        if (input.fixedExtraTools?.includes(tool.name)) fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));
+      }
     }
     await mountDshProfile(ctx, input);
     const contextUsage = (session: any) => {
@@ -209,6 +229,7 @@ process.once('message', async (input: any) => {
         else if (call.action === 'start-child') {
           // 只有宿主的新授权运行调用此内部入口，公开只读操作不会转发它。
           if (busy || inputOpen) throw new Error('此 DSH 会话已有运行中的任务');
+          resetMcp();
           inputLifetime = new AbortController(); inputOpen = true; childOnly = true;
           // 原子任务描述保留创建时的模型；新执行显式选择当前模型，并由官方组件记录切换说明。
           releaseChildModel = installModelSelection(ctx, {current:{provider:'dyworker',model:input.model || 'selected'},assembled:undefined});
@@ -304,6 +325,7 @@ process.once('message', async (input: any) => {
           busy = true;
           try {
             if (call.action === 'prompt') {
+              resetMcp();
               inputLifetime = new AbortController(); inputOpen = true;
               agent.followup(createUserMessage({ content: call.payload.content || [{ type: 'text', text: String(call.payload.text) }], source: { kind: 'user' } }));
               // 任务入口保留模型及审批生命周期，直到所属后台工作和其完成通知也收尾。
