@@ -11,6 +11,20 @@ import {
 
 const offlineFetchText = async () => { throw new Error("测试环境不访问网络"); };
 
+test('商店版仅提示通过商店更新，不初始化外部更新器或发出网络请求', async () => {
+  const unexpected = () => { throw new Error('商店版不能触发外部更新'); };
+  const controller = createUpdaterController({
+    isMacStore: true, isPackaged: true, currentVersion: '0.3.2',
+    getWindow: () => null, fetchText: unexpected,
+    updater: { setFeedURL: unexpected, on: unexpected, checkForUpdates: unexpected, downloadUpdate: unexpected, quitAndInstall: unexpected },
+  });
+  assert.match(controller.getStatus().error, /Mac App Store/);
+  assert.equal((await controller.check()).state, 'unavailable');
+  assert.equal((await controller.download()).ok, false);
+  assert.equal(controller.install().ok, false);
+  assert.equal(controller.configure().ok, false);
+});
+
 test("更新地址解析为 GitHub 仓库和版本标签配置", () => {
   assert.deepEqual(parseGithubUpdateUrl("https://github.com/example/dyworker-updates/"), {
     provider: "github",

@@ -35,7 +35,10 @@ export function spawnPluginProcess(entry: string, { profileDir, packageDir, work
   if (dataDir) execArgv.push(`--allow-fs-write=${real(dataDir)}`);
   return fork(entryFile, [], {
     execArgv, cwd: real(profileDir), stdio: ["ignore", "ignore", "pipe", "ipc"],
-    env: { ELECTRON_RUN_AS_NODE: "1", NODE_NO_WARNINGS: "1", SystemRoot: process.env.SystemRoot || "" },
+    env: {
+      ELECTRON_RUN_AS_NODE: "1", NODE_NO_WARNINGS: "1", SystemRoot: process.env.SystemRoot || "",
+      ...(process.mas ? { NARB_DISABLE_NATIVE_CACHE: '1' } : {}),
+    },
   });
 }
 export async function terminatePluginProcess(child: any): Promise<void> {

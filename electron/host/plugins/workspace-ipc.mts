@@ -11,15 +11,17 @@ export function workspaceIpcPlugin(deps) {
   return {
     name: "ipc:workspace",
     apply(ctx) {
-      const { trustedHandle, dataFile, readJson, writeJson, dialog, shell, app, getMainWindow, isTrustedRendererUrl } = deps;
+      const { trustedHandle, dataFile, readJson, writeJson, dialog, shell, app, getMainWindow, isTrustedRendererUrl, macStoreFileAccess } = deps;
 
       trustedHandle("workspace:choose", async () => {
         const result = await dialog.showOpenDialog(getMainWindow(), {
           title: "选择工作文件夹",
           properties: ["openDirectory", "createDirectory"],
+          ...(macStoreFileAccess?.enabled ? { securityScopedBookmarks: true } : {}),
         });
         if (result.canceled || !result.filePaths[0]) return { canceled: true };
         const selectedPath = result.filePaths[0];
+        await macStoreFileAccess?.remember(selectedPath, result.bookmarks?.[0]);
         return { canceled: false, path: selectedPath, entries: await listWorkspace(selectedPath) };
       });
 

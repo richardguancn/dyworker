@@ -163,7 +163,21 @@ export function createUpdaterController({
   platform = process.platform,
   arch = process.arch,
   fetchText = fetchTextDefault,
+  isMacStore = process.mas === true,
 }) {
+  if (isMacStore) {
+    const error = '此版本通过 Mac App Store 更新，请在 App Store 中检查更新。';
+    const unavailable = () => ({ ok: false, state: 'unavailable', error });
+    return {
+      getStatus: () => ({ state: 'unavailable', currentVersion: versionText(currentVersion), error }),
+      check: async () => unavailable(),
+      download: async () => unavailable(),
+      install: unavailable,
+      configure: unavailable,
+      getUpdateUrl: () => '',
+      publish: () => ({ state: 'unavailable', currentVersion: versionText(currentVersion), error }),
+    };
+  }
   let status: any = {
     state: isPackaged ? "idle" : "unavailable",
     currentVersion: versionText(currentVersion),

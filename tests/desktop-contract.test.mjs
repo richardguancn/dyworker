@@ -1107,8 +1107,8 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /closeAllMcpClients/);
   assert.match(main, /app\.on\("before-quit"/);
   assert.match(main, /event\.preventDefault\(\)/);
-  // 退出链路：先清空待决议收件箱、等宿主 dispose 完成，再关闭全部 MCP 客户端后退出
-  assert.match(main, /await closeAllMcpClients\(\);\s*app\.quit\(\)/);
+  // 先关闭宿主和 MCP 客户端，再释放商店版文件授权，最后退出。
+  assert.match(main, /await closeAllMcpClients\(\);\s*await macStoreFileAccess\.dispose\(\);\s*app\.quit\(\)/);
   assert.match(main, /if \(deps\.mcpShuttingDown\) throw new Error/);
   // 合并取消信号：入口信号 + 全局退出信号在服务里汇合
   assert.match(main, /isCancelled: \(\) => agentState\.cancelled/);

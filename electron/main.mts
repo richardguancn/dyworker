@@ -1,3 +1,4 @@
+import './mac-store-bootstrap.mts';
 import { app,BrowserWindow,clipboard,dialog,ipcMain,nativeImage,nativeTheme,Notification,powerMonitor,powerSaveBlocker,protocol,safeStorage,session,shell } from "electron";
 import { spawn } from "node:child_process";
 import { appendFileSync,existsSync,promises as fs,readFileSync,statSync,writeFileSync } from "node:fs";
@@ -5,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
 import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls } from "./agent.mts";
 import { createUpdaterController,DEFAULT_UPDATE_URL } from "./app-updater.mts";
+import { createMacStoreFileAccess } from "./mac-store-file-access.mts";
 import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } from "./appearance-platform.mts";
 import { collectOrphanAssets,commitStagedImage,defaultAppearance,normalizeAppearance,readAppearance,removeAppearanceImage,saveAppearance } from "./appearance.mts";
 import { createBackgroundTasksManager } from "./background-tasks.mts";
@@ -262,6 +264,13 @@ function dataFile(name) {
   return path.join(app.getPath("userData"), name);
 }
 
+const macStoreFileAccess = createMacStoreFileAccess({
+  enabled: process.mas === true,
+  startAccess: (bookmark) => app.startAccessingSecurityScopedResource(bookmark),
+  load: () => readJson(dataFile('mac-workspace-bookmarks.json'), {}),
+  save: (records) => writeJson(dataFile('mac-workspace-bookmarks.json'), records),
+});
+
 // Cordis 宿主：主进程核心服务（审计/设置/会话存档/代理）统一挂入插件生命周期。
 // safeStorage 与领域解析器在此注入；顶层 await 等待根 fiber 激活，
 // 之后的模块级常量（sessionArchive/auditLog）即可同步访问服务。
@@ -363,6 +372,7 @@ function readAllSessions() {
 // 更新，不影响应用正常打开。
 let electronUpdaterPromise = null;
 function loadElectronUpdater() {
+  if (process.mas) return Promise.resolve(null);
   electronUpdaterPromise ??= import("electron-updater")
     .then((module) => module.autoUpdater || module.default?.autoUpdater || null)
     .catch((error) => {
@@ -533,7 +543,7 @@ async function readJson(file, fallback) {
 // 追加 usage-stats.json 时共用同一个 .tmp，导致 rename 互相踩踏（ENOENT 未捕获异常）
 const jsonWriteChains = new Map();
 // 含密钥/凭据的落盘文件收紧到仅属主可读写（safeStorage 不可用时的明文回退也受保护）
-const SENSITIVE_JSON_FILES = new Set(["settings.json", "imported-passwords.json", "channel-credentials.json"]);
+const SENSITIVE_JSON_FILES = new Set(["settings.json", "imported-passwords.json", "channel-credentials.json", "mac-workspace-bookmarks.json"]);
 async function writeJson(file, value) {
   const previous = jsonWriteChains.get(file) || Promise.resolve();
   const next = previous.catch(() => {}).then(async () => {
@@ -1544,6 +1554,7 @@ function clearUsageStats() {
 }
 
 const shellDeps = {
+  macStoreFileAccess,
   dataFile,
   readJson,
   writeJson,
@@ -2089,6 +2100,8 @@ ipcMain.on("window:set-ignore-mouse", (event, _ignore) => {
 });
 
 app.whenReady().then(async () => {
+  const failedBookmarks = await macStoreFileAccess.restore();
+  if (failedBookmarks.length) console.warn(`[dyworker] ${failedBookmarks.length} 个工作区需要重新选择以恢复文件授权`);
   // 插件客户端 bundle 协议：dyworker-plugin://client/<条目id>/<序号>
   protocol.handle("dyworker-plugin", async (request) => {
     const notFound = (message) => new Response(`// ${message}\n`, {
@@ -2193,7 +2206,7 @@ app.whenReady().then(async () => {
   // 启动 8 秒后、之后每 6 小时静默自动检查一次新版本（不改 checking 状态，只在发现新版本时推送）
   void loadElectronUpdater().then((updater) => {
     initializeAppUpdater(storedSettings.updateUrl, updater);
-    if (app.isPackaged) {
+    if (app.isPackaged && !process.mas) {
       const silentCheck = () => void appUpdater?.check({ silent: true });
       appUpdateTimer = setTimeout(silentCheck, 8_000);
       appUpdateInterval = setInterval(silentCheck, 6 * 60 * 60 * 1000);
@@ -2275,6 +2288,7 @@ app.on("before-quit", (event) => {
         }),
       ]);
       await closeAllMcpClients();
+      await macStoreFileAccess.dispose();
       app.quit();
     });
 });
