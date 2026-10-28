@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync,existsSync,promises as fs,readFileSync,statSync,writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
-import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls } from "./agent.mts";
+import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls,summarizationSettings } from "./agent.mts";
 import { createUpdaterController,DEFAULT_UPDATE_URL } from "./app-updater.mts";
 import { createMacStoreFileAccess } from "./mac-store-file-access.mts";
 import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } from "./appearance-platform.mts";
@@ -731,7 +731,8 @@ async function generateCommitMessage(workspacePath) {
   const timer = setTimeout(() => controller.abort(), 180_000);
   try {
     const message = await requestModel({
-      settings,
+      // 辅助请求：能关闭思考就关闭，减少占用模型时间
+      settings: summarizationSettings(settings),
       tools: false,
       fetchImpl: fetch,
       signal: controller.signal,
@@ -1126,6 +1127,14 @@ async function queuedPayloadFromSession({ sessionId, runId, payload }) {
   return freshPayload;
 }
 
+// 本机或内网地址的模型端点（Ollama、LM Studio、vLLM 等自建服务）。
+function isLocalModelEndpoint(endpoint) {
+  let host = "";
+  try { host = new URL(String(endpoint || "")).hostname.replace(/^\[|\]$/g, ""); } catch { return false; }
+  return host === "localhost" || host === "::1" || host.endsWith(".local")
+    || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+}
+
 // 会话首条消息触发、用当前主模型生成简短会话标题：与主任务并发执行，
 // 不阻塞任务启动；失败静默（渲染端已有用户输入截断的兜底标题）。
 async function generateSessionTitle(userText, settings) {
@@ -1133,7 +1142,8 @@ async function generateSessionTitle(userText, settings) {
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
     const message = await requestModel({
-      settings,
+      // 标题是辅助请求：能关闭思考就关闭，减少占用模型时间
+      settings: summarizationSettings(settings),
       tools: false,
       fetchImpl: fetch,
       signal: controller.signal,
@@ -1326,11 +1336,13 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     // 渲染端只在用户未手动重命名过时采用，否则保留 shortTitle 的兜底标题
     const isFirstUserMessage = conversation.filter((message) => message?.role === "user").length === 1
       && !conversation.some((message) => message?.role === "assistant");
-    if (isFirstUserMessage && latestUserText.trim()) {
-      void generateSessionTitle(latestUserText, settings).then((title) => {
-        if (title) emitToSession(sender, sessionId, runId, { type: "session-title", title });
-      });
-    }
+    // 本地/内网端点通常单槽位推理：标题请求与主请求并发会排队并冲刷前缀缓存，
+    // 因此本地端点改为主任务结束后再生成标题；云端端点仍并发生成。
+    const requestTitle = () => void generateSessionTitle(latestUserText, settings).then((title) => {
+      if (title) emitToSession(sender, sessionId, runId, { type: "session-title", title });
+    });
+    const deferTitle = isFirstUserMessage && latestUserText.trim() && isLocalModelEndpoint(settings?.endpoint);
+    if (isFirstUserMessage && latestUserText.trim() && !deferTitle) requestTitle();
 
     const loop = payload?.loop?.enabled
       ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
@@ -1430,6 +1442,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       signal: abortController.signal,
       onCancelled: () => ctx.scheduler.cancelForSession(sessionId),
     });
+    if (deferTitle) requestTitle();
     // Save the goal outcome before draining queued messages, even if the renderer is closed.
     const storedGoalSession = ctx.sessions.get(sessionId);
     const settled = settledStoredGoal(storedGoalSession, payload, finalResult);
