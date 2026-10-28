@@ -233,7 +233,7 @@ test("当前界面读取失败时，旧截图和窗口标题不能代替当前�
   let step = 0, reads = 0, clicks = 0, reviews = 0;
   const approvals = [];
   const messages = [call("old-view", state, target), call("attempt", click, target), { role: "assistant", content: "未执行点击。" }];
-  await runAgent({ settings, workspacePath: root, approvalMode: "reviewer", extraTools: tools,
+  const result = await runAgent({ settings, workspacePath: root, approvalMode: "reviewer", extraTools: tools,
     conversation: [{ role: "user", content: "帮我完成连接" }],
     onExtraTool: async name => name === state ? (++reads === 1 ? { ok: true, result: "旧界面：允许连接", images: [image] } : { ok: false, result: "窗口已关闭" }) : (++clicks, { ok: true, result: "点击" }),
     requestApproval: async action => { approvals.push(action); return false; },
@@ -242,8 +242,9 @@ test("当前界面读取失败时，旧截图和窗口标题不能代替当前�
       if (body.messages[0].content.includes("审批说明撰写助手")) return reply({ role: "assistant", content: "- 未确认当前按钮" });
       return reply(messages[step++]);
     } });
-  assert.equal(clicks, 0); assert.equal(reviews, 0); assert.equal(approvals.length, 1);
-  assert.match(approvals[0].details, /缺少能确认操作目标的最新界面.*窗口已关闭/);
+  assert.equal(clicks, 0); assert.equal(reviews, 0); assert.equal(approvals.length, 0);
+  assert.ok(result.executedMessages.some(message => message.role === 'tool'
+    && /缺少能确认操作目标的最新界面.*窗口已关闭/.test(message.content)));
 });
 
 test("强制确认、严格确认、只读限制不被语义审核覆盖", () => {

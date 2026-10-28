@@ -14,14 +14,16 @@ export function approvalRoute({ decision, eligible, hook, protectedTarget = fals
 }
 
 export function reviewOutcome(value: any): ReviewOutcome {
-  if (value?.needsEvidence) return { ...value, decision: 'ask', status: 'needs_evidence' };
   if (value?.unavailable || ['unavailable', 'stale', 'cancelled'].includes(value?.status)) {
-    return { ...value, decision: 'ask', unavailable: true, status: value.status || 'unavailable', reason: String(value.reason || '审核服务未能完成检查') };
+    const { needsEvidence, ...failure } = value;
+    return { ...failure, decision: 'ask', unavailable: true, status: value.status || 'unavailable', reason: String(value.reason || '审核服务未能完成检查') };
   }
   if (!value || !['allow', 'deny', 'ask'].includes(value.decision) || typeof value.reason !== 'string') {
     return { decision: 'ask', status: 'unavailable', unavailable: true, reason: '审核结果无法读取，本次操作未执行' };
   }
-  return { ...value, status: value.decision === 'allow' ? 'allowed' : value.decision === 'deny' ? 'denied' : 'needs_authorization' };
+  if (value.decision === 'ask' && value.needsEvidence === true) return { ...value, status: 'needs_evidence' };
+  const { needsEvidence, ...decision } = value;
+  return { ...decision, status: value.decision === 'allow' ? 'allowed' : value.decision === 'deny' ? 'denied' : 'needs_authorization' };
 }
 
 // 各入口共用服务故障、撤回、迟到结果处理。身份版本同时包含当前授权、事实及模式。

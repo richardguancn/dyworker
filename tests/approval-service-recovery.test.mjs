@@ -83,6 +83,17 @@ test('专用审核超时后切换，迟到的允许不能覆盖复核拒绝', as
   assert.equal(result.decision, 'deny');
 });
 
+test('专用审核响应较慢时仍等待结果，不提前切换', async () => {
+  let calls = 0;
+  const result = await reviewApproval({ settings, fetchImpl: async () => {
+    calls++;
+    await new Promise(resolve => setTimeout(resolve, 16_000));
+    return response(allow);
+  } });
+  assert.equal(result.decision, 'allow');
+  assert.equal(calls, 1);
+});
+
 test('明确询问、拒绝、格式问题不能换模型寻求允许；同一服务也不重复切换', async () => {
   for (const content of ['{"decision":"ask","reason":"需要用户确认范围"}', '{"decision":"deny","reason":"用户禁止"}', 'invalid']) {
     const urls = [];

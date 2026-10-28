@@ -1,5 +1,7 @@
 import { toolInventory } from "./agent/tool-inventory.mts";
 import { prepareMcpDiscovery, discoverMcpTools } from "./host/mcp-discovery.mts";
+import { INLINE_APPROVAL_KEY, inlineApprovalTools, takeInlineApproval } from "./agent/inline-approval.mts";
+import { inspectProcessTargets } from "./process-review.mts";
 // DYWorker 本地代理循环，保留原有公共入口。
 import path from "node:path";
 import { AgentLoopGuard } from "./agent-loop-guard.mts";
@@ -146,6 +148,9 @@ export async function runAgent({
     : buildReviewContext({ conversation, goal, workingContext: priorWorkingContext,
       projectInstructions, approvals: userApprovals, replies: userReplies, recentTools: reviewToolEvidence });
   const messages: any[] = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity) }];
+  const inlineReviewEnabled = approvalMode === 'reviewer' && settings?.reviewerBackend === 'main';
+  const inlinePolicy = inlineReviewEnabled ? loadReviewerPolicy() : null;
+  if (inlinePolicy) messages.push({ role: 'system', content: `工具调用同时给出审核意见。按以下规则结合用户要求和实际参数判断；缺少事实或授权时用 ask，不要猜测。该意见不是用户授权，系统仍会执行独立的权限边界检查。\n\n${inlinePolicy.text}\n\n以上规则中关于输出独立 JSON 的要求不适用：继续正常使用工具，对每个工具调用在参数 __dyworker_approval 中填写 decision（allow、deny、ask）和具体 reason。` });
   if (depth === 0) {
     messages[0].content += "对相互独立、可并行的子任务（如多主题调研、多文件分析），可以用 dispatch_agent 派发子代理并行处理；子代理看不到当前对话，任务描述必须完整自足并说明期望的产出形式；每次派发都要给一个 8-14 字的主题 title（说明这个子代理在做什么），过程流里只显示主题、不显示任务描述；有先后顺序依赖的步骤不要派发。子代理的写入、命令等操作仍会按当前审批设置处理。";
   } else {
@@ -754,6 +759,8 @@ export async function runAgent({
       }
       let transport = "json";
       let modelMessage;
+      const inlineAuthorizationVersion = inlineReviewEnabled
+        ? reviewContextFingerprint(`${getApprovalMode?.() || approvalMode}\n${reviewerContext()}`, inlinePolicy?.hash || '') : '';
       // 端点不回 usage 时退化为本地估算（estimated: true），统计与上下文环都保持可用
       let usageSeen = false;
       const requestCurrentModelOnce = () => withModelTimeout((signal) => requestModel({
@@ -767,7 +774,7 @@ export async function runAgent({
           statusRetryLimit,
           statusRetryBaseDelayMs,
           idleTimeoutMs: modelIdleTimeoutMs,
-          tools: effectiveTools,
+          tools: inlineReviewEnabled ? inlineApprovalTools(effectiveTools) : effectiveTools,
           onTransport: (mode) => { transport = mode; },
           onRetry: ({ status, attempt, limit, delayMs }) => {
             const info = `模型服务返回 ${status}，${Math.ceil(delayMs / 1000)} 秒后自动重试（${attempt}/${limit}）`;
@@ -959,6 +966,7 @@ export async function runAgent({
       const executeCoreToolCall = async (toolCall) => {
         const name = String(toolCall?.function?.name || "");
         const args = parseArguments(toolCall);
+        const inlineApproval = inlineReviewEnabled && !toolSchemas.get(name)?.properties?.[INLINE_APPROVAL_KEY] ? takeInlineApproval(args) : null;
         // Kimi 公式工具 / 内置 $web_search 的联网审批映射：kimi 的 web_search 复用本地 web_search、
         // fetch 复用本地 fetch_web_page 的联网审批与审计口径；其余公式工具无本地副作用直接执行
         const kimiFormulaUri = kimiOpen && kimiFormulaNameToUri.has(name) ? kimiFormulaNameToUri.get(name) : "";
@@ -1079,18 +1087,18 @@ export async function runAgent({
           if (decision === "ask") {
             const details = approvalDetails(approvalToolName, displayArgs);
             const suggestedRule = suggestStandingRule(approvalToolName, displayArgs) || undefined;
-            // 审核助手使用的详情按初评结果生成；人工审批卡的详情在出队时按最新授权状态重算
-            const detailText = externalApprovalDetails(name, externalPaths, details);
+            // 卡片可以预览，但影响说明也必须读取完整参数，不能把预览截断误当成事实缺失。
+            const impactDetails = externalApprovalDetails(name, externalPaths, reviewActionDetails(approvalToolName, displayArgs));
             const askApproval = async (escalationReason = "") => {
               // 影响说明在审批排队期间并发生成，出队时多半已就绪；
               // 生成失败或 20 秒超时静默回退为无说明，绝不阻塞审批卡本身
               // 审核服务已故障时不再向它索取说明，立即用静态摘要显示确认卡。
-              const impactPromise = isImpactSummaryEligible(approvalToolName)
+              const impactPromise = !inlineReviewEnabled && isImpactSummaryEligible(approvalToolName)
                 && !/审核助手不可用|本地审核模型不可用|审核等待超时/.test(escalationReason)
                 ? Promise.race([
                     withModelTimeout((signal) => summarizeApprovalImpact({
                       settings, fetchImpl, signal,
-                      action: { kind: approvalToolName, title: summary, details: detailText,
+                      action: { kind: approvalToolName, title: summary, details: impactDetails,
                         toolDefinition: reviewToolDefinition(effectiveTools, name), accessCheck: hookVerdict?.message },
                       context: reviewerContext(),
                     })).catch(() => ""),
@@ -1150,7 +1158,33 @@ export async function runAgent({
               return userDecision;
             };
             const reviewable = route === 'review';
-            if (reviewable) {
+            let runSeparateReview = reviewable;
+            if (reviewable && inlineReviewEnabled && effectiveApprovalMode() === 'reviewer') {
+              // 同次意见缺少当前事实时，交给独立审核补充事实后判断。
+              const entryScripts = await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs,
+                preparedFiles: executedTools.filter(item => item.name === 'write_file' && item.status === 'success').map(item => item.args),
+                check: async (reader, readArgs) => evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], 'before_tool', reader, readArgs)
+                  || await beforeToolExecute?.({ name: reader, args: readArgs }), signal: cancellationSignal });
+              const processTargets = name === 'run_command' ? await inspectProcessTargets(String(args.command || ''), workspace.root, cancellationSignal) : null;
+              const missingFacts = Boolean(entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName)
+                || inlinePolicy?.hash !== loadReviewerPolicy().hash
+                || inlineAuthorizationVersion !== reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewerContext()}`, inlinePolicy?.hash || ''));
+              if (inlineApproval?.decision === 'deny') {
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: 'reviewer-denied', detail: inlineApproval.reason });
+                return { message: { role: 'tool', tool_call_id: toolCall.id, content: `失败\n本次操作未执行：${inlineApproval.reason}` } };
+              }
+              if (!missingFacts && inlineApproval?.decision === 'allow') {
+                approved = true;
+                approvalSource = 'reviewer';
+                reviewerReason = inlineApproval.reason;
+                reviewerPolicyHash = inlinePolicy?.hash || '';
+                runSeparateReview = false;
+              } else if (!missingFacts && inlineApproval?.decision === 'ask') {
+                approved = await askApproval(inlineApproval.reason);
+                runSeparateReview = false;
+              }
+            }
+            if (runSeparateReview) {
               // 每次核对当前授权、实际事实与入口脚本，不复用较早允许。
               const reviewContext = reviewerContext() + relatedReviewToolEvidence(executedTools, displayArgs.command);
               const entryScripts = await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs,
@@ -1217,7 +1251,7 @@ export async function runAgent({
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
                 approved = await askApproval(review.reason);
               }
-            } else {
+            } else if (!reviewable) {
               approved = await askApproval();
             }
             // 允许执行后记住本次任务的同类操作；外部路径与不可规则化操作保持逐次确认

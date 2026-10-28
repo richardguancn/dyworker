@@ -674,6 +674,7 @@ export interface ProviderSettings {
   reviewerApiKey: string;
   // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义端点
   reviewerBackend: "main" | "local" | "custom";
+  reviewerProbability?: boolean;
   // 内置本地审核模型的保存目录；留空存到应用数据目录 models/reviewer
   reviewerModelDir: string;
   searxngEndpoint: string;

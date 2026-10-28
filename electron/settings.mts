@@ -337,6 +337,7 @@ export function deserializeSettings(stored, secretStorage) {
     reviewerModel: String(source.reviewerModel || ""),
     reviewerApiKey: decryptSecret(source.reviewerApiKey, source.reviewerApiKeyEncrypted === true, secretStorage),
     reviewerBackend: normalizeReviewerBackend(source.reviewerBackend, source),
+    reviewerProbability: source.reviewerProbability !== false,
     // 审核模型保存目录（local 模式用）；留空存到应用数据目录
     reviewerModelDir: String(source.reviewerModelDir || ""),
     searxngEndpoint: String(source.searxngEndpoint || ""),
@@ -397,6 +398,7 @@ export function serializeSettings(settings, secretStorage) {
     reviewerModel: String(settings?.reviewerModel || "").trim(),
     reviewerApiKey: String(settings?.reviewerApiKey || "").trim(),
     reviewerBackend: normalizeReviewerBackend(settings?.reviewerBackend, settings || {}),
+    reviewerProbability: settings?.reviewerProbability !== false,
     reviewerModelDir: String(settings?.reviewerModelDir || "").trim(),
     searxngEndpoint: String(settings?.searxngEndpoint || "").trim(),
     bochaApiKey: String(settings?.bochaApiKey || "").trim(),
@@ -445,6 +447,7 @@ export function serializeSettings(settings, secretStorage) {
     reviewerApiKey: reviewerSecret.value,
     reviewerApiKeyEncrypted: reviewerSecret.encrypted,
     reviewerBackend: normalized.reviewerBackend,
+    reviewerProbability: normalized.reviewerProbability,
     reviewerModelDir: normalized.reviewerModelDir,
     searxngEndpoint: normalized.searxngEndpoint,
     bochaApiKey: normalized.bochaApiKey,
