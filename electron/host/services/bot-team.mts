@@ -18,7 +18,7 @@ const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const BOT_DELEGATED_TOOL_NAMES = new Set(['list_sessions', 'search_sessions', 'read_session']);
 // 上游能力库依赖独立的技能服务、MCP 加载器及审批页面；本适配继续使用应用自己的工具入口。
 const BOT_UNAVAILABLE_TOOL_NAMES = new Set(['request_secret', 'list_secrets', 'list_capabilities',
-  'save_capability', 'delete_capability', 'attach_capability', 'detach_capability']);
+  'save_capability', 'delete_capability', 'attach_capability', 'detach_capability', 'show_view']);
 
 // The application and the official runtime have separate Cordis tools/storage
 // contracts. Resolve runtime exports without merging their declaration worlds.
@@ -49,6 +49,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
   // 机器人自己的运行环境里没有应用服务（技能、记忆、审批审计、插件工具都在宿主上下文里）。
   const hostCtx: any = host || ctx;
   const handles = new Map<string, any>(), opening = new Map<string, Promise<any>>();
+  const deliveries = new Set<Promise<any>>();
   const selections = new Map<string, any>();
   const errors = new Map<string, string>();
   const selectionFile = path.join(dataDir, 'model-selections.json');
@@ -60,7 +61,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
     await fs.writeFile(temporary, JSON.stringify(savedSelections), 'utf8'); await fs.rename(temporary, selectionFile);
   });
   const workspace = { id: 'ds-bot-team', path: workspacePath, name: '机器人团队' };
-  let closed = false, profiles: any[] = [], adapterKey = '', registration: any;
+  let closed = false, profiles: any[] = [], adapterKey = '', registration: any, botFiber: any;
   const lifetime = new AbortController();
   const history = new SessionHistoryController(ctx, observation => observation[Symbol.dispose]());
   const resolvers = hostCtx.agent?.resolvers || {};
@@ -150,6 +151,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
           tools: request.tools?.filter((tool: any) => !BOT_UNAVAILABLE_TOOL_NAMES.has(tool.name)),
           system: `${request.system || ''}\n\nDYWorker 团队面板当前不提供凭据卡片、独立浏览器面板或 GitHub 连接。不得声称已经显示这些界面或请求用户把密码和密钥贴进聊天。`
             + '上游独立能力库管理尚未接入；工作模板、插件与 MCP 工具使用 DYWorker 已配置的入口，不要声称创建了上游能力库或显示其设置页面。'
+            + '上游 show_view 交互卡片尚未接入；用聊天正文说明结果，需要用户选择时使用 ask_user。'
             + '你可以使用工作文件夹里的文件、命令与联网工具；需要用户确认的操作会在面板弹出确认卡，被拒绝时不要绕过，也不要重复尝试同一操作。',
           signal: AbortSignal.any([request.signal, lifetime.signal]) }, { attachments: ctx.attachments }) };
     }
@@ -242,6 +244,18 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
         await authorize(request.address.sessionId ?? request.address.childSessionId);
         return history.page(request, signal);
       },
+      inspect: async (sessionId: string, signal = lifetime.signal) => {
+        signal.throwIfAborted();
+        await authorize(sessionId);
+        const live = ctx.sessions.get(sessionId);
+        if (live) return { header: live.header, events: live.snapshotEvents() };
+        const observation = await ctx.sessionQuery.observeSession(sessionId);
+        try {
+          signal.throwIfAborted();
+          return { header: (await ctx.sessionPersistence.stat(sessionId))?.header,
+            events: [...observation.events] };
+        } finally { observation[Symbol.dispose](); }
+      },
       projections: async ({ sessionId }: any) => {
         await authorize(sessionId);
         const session = ctx.sessions.get(sessionId);
@@ -275,7 +289,17 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
       output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
         render: (_args: any, value: any) => [{ type: 'text', text: String(value?.text ?? '') }] } });
     await syncModels();
-    await ctx.plugin(await import(entryUrl), { home: path.join(dataDir, 'bot'), workspace: workspacePath,
+    const upstream = await import(entryUrl);
+    botFiber = await ctx.plugin({ ...upstream, apply(scope: any, config: any) {
+      const runtime = upstream.createRuntime(scope, config);
+      const deliver = runtime.deliver;
+      runtime.deliver = (...args: any[]) => {
+        const pending = deliver(...args);
+        deliveries.add(pending);
+        void pending.then(() => deliveries.delete(pending), () => deliveries.delete(pending));
+        return pending;
+      };
+    } }, { home: path.join(dataDir, 'bot'), workspace: workspacePath,
       mainName: '总管', mainRole: '团队协调', browser: false, updateCheck: false, github: false });
     await ctx.fiber.await();
   } catch (error) { lifetime.abort(); await ctx.fiber.dispose(); throw error; }
@@ -342,6 +366,9 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
     async dispose() {
       if (closed) return;
       closed = true; lifetime.abort(new Error('机器人团队已停用'));
+      // 先停止上游的恢复计时器和事件监听，再关闭它们仍可能写入的会话。
+      await botFiber?.dispose();
+      while (deliveries.size) await Promise.allSettled([...deliveries]);
       for (const entry of approvals.values()) entry.settle(false);
       await Promise.allSettled([...routers.values()].map(route => route.dispose?.()));
       routers.clear();

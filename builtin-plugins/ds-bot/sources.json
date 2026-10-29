@@ -1,40 +1,88 @@
 {
-  "repository": "https://github.com/Fei2411/DeepSeek-Bot",
-  "commit": "5c2726279d3bcabaad6aea403c46c88fcf9ba8d8",
-  "version": "0.1.4",
+  "repository": "https://github.com/Fei2411/DS-Bot",
+  "commit": "4a7b55069ad300eae8be42a74f31bc170b40ead7",
+  "version": "0.2.3",
   "license": "Apache-2.0",
   "files": {
     "upstream/README.md": {
       "source": "ds-bot/README.md",
-      "sha256": "73ecbfc82513873545c8bd69fa498c240e059ee196cf24876a8b1870d5f35e65"
+      "sha256": "32606bdf6e3cd5466f103725122735aeeb5c547e259f0f78173743e36d69dd55"
     },
     "upstream/index.js": {
       "source": "ds-bot/index.js",
-      "sha256": "5a8cd26026bde533e2b540322352a0c27fe2ed20da61a579e8c157d5be006d29"
+      "sha256": "703de38dd5d8248be008186d2c105c5493d2627e9d6f10515bf9a1fb20b81608"
     },
     "upstream/package.json": {
       "source": "ds-bot/package.json",
-      "sha256": "95a867b1b05e81e58e516536c92ec8e4e9bb9497a47f4062f7d0800e0aa166b0"
+      "sha256": "a7535557002e799acb69578eee18eb09952dfbdcfcfbe479975a43050169dbef"
     },
     "upstream/src/host/agents.js": {
       "source": "ds-bot/src/host/agents.js",
-      "sha256": "162860ce1d9d2950203b036f9e5df37c49af5acd5043b2a6e5bd2dff8a9dcbff"
+      "sha256": "abfd34f15f8cfd8bb1b6a38b497d4249ac256afaefdd4860fa2a29dc128c7380"
     },
     "upstream/src/host/approvals.js": {
       "source": "ds-bot/src/host/approvals.js",
       "sha256": "1067d1161bf9a61c8cf922942a5374f61c6104a8b79c393ef438758f97d5e838"
     },
+    "upstream/src/host/avatar-library.js": {
+      "source": "ds-bot/src/host/avatar-library.js",
+      "sha256": "134e7e1f21e327b495c94775d72a5a977b98505bcf6178fe61532d4458fc3724"
+    },
+    "upstream/src/host/avatar.js": {
+      "source": "ds-bot/src/host/avatar.js",
+      "sha256": "fb3090994cc98e42222996a5a9e519447a18932b856d061a1d4c34cc64f5e141"
+    },
+    "upstream/src/host/browser/gate.js": {
+      "source": "ds-bot/src/host/browser/gate.js",
+      "sha256": "029955c6507fe5cc72aac0bf535c9b010a4b7df68d791793ded1cf4e04f2e04e"
+    },
+    "upstream/src/host/browser/loop.js": {
+      "source": "ds-bot/src/host/browser/loop.js",
+      "sha256": "c2598b25497f17d67b57b1b6c36eb26f09ec6d4c8646513c8926c2e3f0ccbe2a"
+    },
+    "upstream/src/host/browser/mount.js": {
+      "source": "ds-bot/src/host/browser/mount.js",
+      "sha256": "5235c7697ae7a97f8d9152700e8a663288b45509bcc4000db09502f3698d3b3f"
+    },
+    "upstream/src/host/browser/refs.js": {
+      "source": "ds-bot/src/host/browser/refs.js",
+      "sha256": "5e15e36eb13170b7c9291974cdc393009a92205ca8bf1425dccb2d076410b729"
+    },
+    "upstream/src/host/browser/script.js": {
+      "source": "ds-bot/src/host/browser/script.js",
+      "sha256": "d2a0b3b6a8c02eb756c140853c05a514f40c05e7ca5d66c37ae34b13047100ce"
+    },
+    "upstream/src/host/browser/session-model.js": {
+      "source": "ds-bot/src/host/browser/session-model.js",
+      "sha256": "4ea5c71b7af6f08408ad7b66f66550ba5aafc5788beaca4bb1a010d3c6bd6e34"
+    },
+    "upstream/src/host/browser/session.js": {
+      "source": "ds-bot/src/host/browser/session.js",
+      "sha256": "e4b6d0a4c1a5d9cd2be2cd30edf6a01f61729a0238733e153db73395f7cb427f"
+    },
+    "upstream/src/host/browser/task.js": {
+      "source": "ds-bot/src/host/browser/task.js",
+      "sha256": "d5c6bf1663001fe211ba76d66fe46f510f649c4c146b42c6f6b7d2b127476697"
+    },
+    "upstream/src/host/browser-plugins.js": {
+      "source": "ds-bot/src/host/browser-plugins.js",
+      "sha256": "ed74513820e4eb82a73a13a8b1a72ef079e7928f41e7c67aea536f312a478e5b"
+    },
     "upstream/src/host/browser.js": {
       "source": "ds-bot/src/host/browser.js",
-      "sha256": "a918f3869b8472fc7394de1255e370a762083e58f3cade58217adee9a8193134"
+      "sha256": "d6619386927428850359bbf08747e1aedd138a60bab305f5be3a75e8efa5419f"
+    },
+    "upstream/src/host/btw.js": {
+      "source": "ds-bot/src/host/btw.js",
+      "sha256": "c34936716465a0672d008c26f035702949495847cb2a323edd5d04187d7f841b"
     },
     "upstream/src/host/capabilities.js": {
       "source": "ds-bot/src/host/capabilities.js",
-      "sha256": "609e148afabe0fefc376e1e54f5a8d477542806dcfb7ab6569938e1326a6d111"
+      "sha256": "966174e15008baca711119d22cbdd2a6d2a3161327fd453f1b9d84a8082eecb4"
     },
     "upstream/src/host/channel.js": {
       "source": "ds-bot/src/host/channel.js",
-      "sha256": "0f128dabb0ec40c703809c2486918818658b496c0498350563cc26ed286369ba"
+      "sha256": "2429a1037f5569e56adcda886705b65e9f67eb2b562c8bbaec2406f5bf066553"
     },
     "upstream/src/host/chat-index.js": {
       "source": "ds-bot/src/host/chat-index.js",
@@ -46,79 +94,119 @@
     },
     "upstream/src/host/constants.js": {
       "source": "ds-bot/src/host/constants.js",
-      "sha256": "8e5db3394ae487eadfd1fee66203dd31cd11e978b7c02fefbe61e6ddb6ebbbdf"
+      "sha256": "7f4956154d44fb2c3286ccdb48c0cf0b82173c93248858f97482b4843f5bf43d"
     },
     "upstream/src/host/delivery.js": {
       "source": "ds-bot/src/host/delivery.js",
-      "sha256": "4fac45b346fe52509e68055de52652aff5d3d2947f3ba96c4d2a8179a4f367e9"
+      "sha256": "b828c7c3950d82130416a1efbb4e21d053cffb2be5ba695fa0083c7fb3c4488d"
     },
     "upstream/src/host/diagnostics.js": {
       "source": "ds-bot/src/host/diagnostics.js",
-      "sha256": "406c6261fee2f98ce3b755631111017e32fe81b62c8205faee9d1eeb0b40fee8"
+      "sha256": "5cd07367dfde624ce7bb7e5c2f794b870c1d91a11c7ac2920128e548a241d2c4"
     },
     "upstream/src/host/dsh-update.js": {
       "source": "ds-bot/src/host/dsh-update.js",
-      "sha256": "e3a993290242546f15b3a352bb95f878a83ad4a642bf802445f5f7db4888065d"
+      "sha256": "d7c87158fe375aa3b791b81236f38db6efe4235fe925d49026778a6aabf54062"
+    },
+    "upstream/src/host/feed.js": {
+      "source": "ds-bot/src/host/feed.js",
+      "sha256": "7af9fecea98b21858c288bed17e4ecbe5289247ec79ddaa2b7071d84be496f6b"
+    },
+    "upstream/src/host/files.js": {
+      "source": "ds-bot/src/host/files.js",
+      "sha256": "52073d4d121100f58e1686da2765a616278c5cf93eb62806d0c9f81a1fcee6af"
+    },
+    "upstream/src/host/folders.js": {
+      "source": "ds-bot/src/host/folders.js",
+      "sha256": "d95c61e60de0441fd3fca7b8ce8275a98b292510f9c357998fe888d6c6b037db"
     },
     "upstream/src/host/groups.js": {
       "source": "ds-bot/src/host/groups.js",
-      "sha256": "d5978e64a8de83492c7d5dc8419417e1ccc791c37e4c8c5931721231896cd792"
+      "sha256": "c140094a252dd45491310ce9d9df878e6810fd013d20189f8067fb5f74bee404"
+    },
+    "upstream/src/host/handoffs.js": {
+      "source": "ds-bot/src/host/handoffs.js",
+      "sha256": "d60fb5137be4b64e308fa933a8c1c2063d2e737c8ba6306e8884e4044ac8828a"
     },
     "upstream/src/host/home-lock.js": {
       "source": "ds-bot/src/host/home-lock.js",
-      "sha256": "cd85126464e8e81cbdf8f902d445003c84624920cb5a19303c0ab5092ec19ca8"
+      "sha256": "dc8fda9d62ba17e4fd2116a79af8af6a7f701593380694150f82c492056ab4b0"
     },
     "upstream/src/host/images.js": {
       "source": "ds-bot/src/host/images.js",
-      "sha256": "7673081dde0575a649f2c6a0aaac6dd41b4b31b1f65371f2145953205e19d26d"
+      "sha256": "898f9e83f268477c3b47179c0ca8460aad072ebb086a87c21fc1c7ed3b504e29"
+    },
+    "upstream/src/host/links.js": {
+      "source": "ds-bot/src/host/links.js",
+      "sha256": "01fca4728c87728a3815e435d4f9445fe45f808b7a5e5c6ba2f92772bf38411e"
+    },
+    "upstream/src/host/memory-pending.js": {
+      "source": "ds-bot/src/host/memory-pending.js",
+      "sha256": "6fc08524bceae6d9c85811244c1236b228cfe32ad2c9ac7cbca2e08cd143cdc7"
     },
     "upstream/src/host/memory.js": {
       "source": "ds-bot/src/host/memory.js",
-      "sha256": "1d10e6b7e7560282c8a0e355b806e69b80cf8f094530d9805ec7bec6a7333926"
+      "sha256": "67f3003196b7734949599e69aff3b90d5e14172ed535e160d831dc0e2f574b7f"
     },
     "upstream/src/host/models.js": {
       "source": "ds-bot/src/host/models.js",
-      "sha256": "1dbbd6b3b2d7116f93b4e76d05a8c7ac182a14f2c1ef09e56e34f56a9dfc525d"
+      "sha256": "367d334d01288c885bfcbf0d33f9dd068f0f1975a809acdcddb6ed1a662d22a5"
     },
     "upstream/src/host/parts.js": {
       "source": "ds-bot/src/host/parts.js",
-      "sha256": "d46c1e5d32c164267f359bd2c8039bf30e85cd3f3082c1872a3186e79695bade"
+      "sha256": "dc348783a4542a8dab6200b63a507a5e6f74c364d2144fde41ee6a676a8e6313"
     },
     "upstream/src/host/permissions.js": {
       "source": "ds-bot/src/host/permissions.js",
-      "sha256": "829f2d2d639ec8652759824cf7a05f70ed62453009a86be9f31ecd1075f0ce8e"
+      "sha256": "3c33fdb09b8d7aa2c0695408f11eac012a8c3d45c20628451298228fdac78bf1"
     },
     "upstream/src/host/prompt.js": {
       "source": "ds-bot/src/host/prompt.js",
-      "sha256": "0bf39cad16c9017663eb6dcc12a6628d5c8e14ff287f5dfc4b8ca1729040a204"
+      "sha256": "6e793a09edf398136746024b4fec1f44eaa7ba8c303515b4157f652a65dc4622"
+    },
+    "upstream/src/host/providers.js": {
+      "source": "ds-bot/src/host/providers.js",
+      "sha256": "cc8601058d617a63ebc0573b98bc41d44d7743d55d864a23ec52256ea3ed2d33"
+    },
+    "upstream/src/host/requests.js": {
+      "source": "ds-bot/src/host/requests.js",
+      "sha256": "492d785294aa3b08db336fcb508b1224dbf39365ba685b8beb42ce11a225cd95"
     },
     "upstream/src/host/resume.js": {
       "source": "ds-bot/src/host/resume.js",
-      "sha256": "8ea747813c102df1d7d6b2544241a3b2e9b5d552d6f826108d7da5d023477149"
+      "sha256": "1378c4fd5803551aeb8a6be3f06407a00b33bdecc8d0ab3ff81f8926596e73a2"
     },
     "upstream/src/host/roster.js": {
       "source": "ds-bot/src/host/roster.js",
-      "sha256": "42875e3d29f0e79792f5f2c6c2757aca71a3e10f06d03924ee7400e4d65a15b4"
+      "sha256": "855e08353c1dc821051e15f3f0c87e1dda58397c5a4432286ddfe490e1a7ace2"
     },
     "upstream/src/host/schedules.js": {
       "source": "ds-bot/src/host/schedules.js",
-      "sha256": "e9cd85636acb8a4a7f55ad2b00cb4573effe08b339a3077ff8dcc4dc8c527a7a"
+      "sha256": "35dcd8f46f133863b2724235bd7a82f47366e1520f3886acc01f2691fcde9e8f"
     },
     "upstream/src/host/secrets.js": {
       "source": "ds-bot/src/host/secrets.js",
-      "sha256": "0e3a387f1fc533521e8087a4a42730632732c9c78ba7035d361fb12f4fe481a9"
+      "sha256": "cfb5eeb8d777eae640cf0863ce51935cda8e874d8e2f790a60c54249a73841b5"
+    },
+    "upstream/src/host/side.js": {
+      "source": "ds-bot/src/host/side.js",
+      "sha256": "44d99fde9abbbc4664b35353392a4c88d21eab1642c3799c2756dad40b4e8d6e"
     },
     "upstream/src/host/steward.js": {
       "source": "ds-bot/src/host/steward.js",
-      "sha256": "13d92b92415e1b4031077efdab7236e3c8e33d92386acbae13eb1ae821b62696"
+      "sha256": "d57861b743d0293e21f1b29b5d5c28bb79b69fe0fed22e9e2fc1faf71bbf5155"
     },
     "upstream/src/host/store.js": {
       "source": "ds-bot/src/host/store.js",
-      "sha256": "e7f9a6d967ce4a34c122aae91e741c769431aa73e5f908d9297278940df4d6f0"
+      "sha256": "c62883fb2eb461ed7d5a03c98125f6601e6322cb57715810ec7ada7e10a3a90d"
     },
     "upstream/src/host/text.js": {
       "source": "ds-bot/src/host/text.js",
-      "sha256": "dea9361865bc027c1c1fb97e9740ea928bed77872fe8224f0ae802709411f713"
+      "sha256": "2bb5f204061f12f1a648ccce62855f6a67ac0e72a1b3876a9a26937497ae4b6c"
+    },
+    "upstream/src/host/thinking.js": {
+      "source": "ds-bot/src/host/thinking.js",
+      "sha256": "6c6d36e327eff448450cf1729612c51d8f4c8cadb288e864375d1edcd0988da4"
     },
     "upstream/src/host/time-context.js": {
       "source": "ds-bot/src/host/time-context.js",
@@ -126,23 +214,31 @@
     },
     "upstream/src/host/tools.js": {
       "source": "ds-bot/src/host/tools.js",
-      "sha256": "f60b15ba0f20d5038f4764ea5b8d064e9a2f2d780d9279eaee8a6fe5d776eb1e"
+      "sha256": "f7f74219b4c84fcc65860b3de363e410ab7f49f27cbdc10a0bff1d3b514c3ff0"
     },
     "upstream/src/host/turns.js": {
       "source": "ds-bot/src/host/turns.js",
-      "sha256": "66a73814a758bdf1ab3a82947bf3a90dc53f73c30666fe615d2584b085477446"
+      "sha256": "51bdfae5370a89f14cdb2e3d5935e02cdeb1aa41ef6ef8105dd8d45fc2189f99"
     },
     "upstream/src/host/update.js": {
       "source": "ds-bot/src/host/update.js",
-      "sha256": "63f0c453808e2cd51033e8ca872daa7c074bf7411b81f66732a98a9eb9b6eb0e"
+      "sha256": "83e080c8820bf9f1d49d43ebc605e77988e4eab78135a8c8dcd4581585a4f7a3"
     },
     "upstream/src/host/usage.js": {
       "source": "ds-bot/src/host/usage.js",
-      "sha256": "3c18c81cb2d1395ad242987f615849e6fdddaedb3004f8a1e31b8599816b4936"
+      "sha256": "c09bcb2d2ee24c8779fe30e6fb4838c511fd2673c2297c10f1e758579eb56117"
+    },
+    "upstream/src/shared/formula.js": {
+      "source": "ds-bot/src/shared/formula.js",
+      "sha256": "2fda97b3a9f146eee4c80d7fb5abeb476c47d00153032c680a8c9d1b1903a749"
     },
     "upstream/src/shared/mentions.js": {
       "source": "ds-bot/src/shared/mentions.js",
-      "sha256": "974d5ecd0eac86444b5c18fa7902c121b1052d628f0c2b4765f305c2bc03a9e1"
+      "sha256": "a011d792da173dcf86f3a480ea8b9f8411528bf0b9a99db36a37e6b0e0aeecec"
+    },
+    "upstream/src/shared/views.js": {
+      "source": "ds-bot/src/shared/views.js",
+      "sha256": "83e6a0ec08938bf4ed9874466e831a2d84b7116848daa83671c5434f7ce64609"
     }
   }
 }

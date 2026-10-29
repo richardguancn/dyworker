@@ -16,7 +16,7 @@ const LOG_MAX_BYTES = 1 << 20
 const STACK_LINES = 8
 const TEXT_MAX = 2000
 export const REPORT_ENTRIES = 20
-export const ISSUES_URL = 'https://github.com/Fei2411/DeepSeek-Bot/issues/new'
+export const ISSUES_URL = 'https://github.com/Fei2411/DS-Bot/issues/new'
 
 const quote = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -118,6 +118,14 @@ export function install(rt) {
   let fresh = []
   let writing = Promise.resolve()
   let fileFailed = false
+  let stopped = false
+
+  // The log is written in the background. A stop waits for what is queued and writes
+  // nothing after it, so nothing changes in `home` once the plugin has stopped.
+  ctx.effect(() => () => {
+    stopped = true
+    return writing
+  }, 'ds-bot: diagnostics log')
 
   const clean = text => cleanText(text, { redact: rt.redactSecrets })
 
@@ -135,7 +143,7 @@ export function install(rt) {
   let cleared = 0
 
   const append = (entry) => {
-    if (!toFile) return
+    if (!toFile || stopped) return
     writing = writing.then(async () => {
       await mkdir(dirname(logPath), { recursive: true })
       const size = await stat(logPath).then(info => info.size, () => 0)
@@ -240,7 +248,7 @@ export function install(rt) {
   async function clear() {
     cleared = Date.now()
     fresh = []
-    if (!toFile) return
+    if (!toFile || stopped) return
     writing = writing.then(() => writeFile(logPath, '', 'utf8')).catch(() => {})
     await writing
   }

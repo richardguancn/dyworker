@@ -20,10 +20,27 @@ export const OCR_RETRY_MS = 120_000
 export const OCR_CACHE_MAX = 500
 export const MAX_AVATAR_IMAGE = 160_000
 export const ROUTE = '/api/bot'
-export const MAX_HOPS = 6
 export const MAX_EXCHANGES = 600
+// state.json is written whole on every save, so a long message between Bots or a long
+// group line keeps only its start there. The rest stays where it already is (a message
+// in the Session it was delivered to) or in a file of its own (a group line).
+export const TEXT_KEPT = 2000
+// Of one group line, a member reads this much: in its prompt, and with read_group_chat.
+export const GROUP_LINE_READ = 20_000
+// The Bot exchange dialog shows at most this much of one message.
+export const TEXT_SHOW_MAX = 200_000
+// A message a Bot sends past this goes as a DSH file, which the recipient reads with its
+// file tools; the message keeps its first LONG_HEAD characters.
+export const MESSAGE_INLINE_MAX = GROUP_LINE_READ
+export const LONG_HEAD = 1000
+// DSH's read tool shows this much of one line (dsh-tool-fs `readMaxLineLength`, default).
+export const READ_LINE_MAX = 2000
 export const ROOM_REPLY_TIMEOUT_MS = 240_000
+// Lines a member writes less than this apart while it works reach its group together.
+export const ROOM_STEP_GAP_MS = 30_000
 export const SOURCE_KIND = 'bot'
+// The fixed reply that opens a fresh conversation part; it is never shown or sent on.
+export const HANDOFF_ACK = 'Noted. I have my handoff note and carry on from here.'
 // An answer from a question card, in the shape DSH's own late question replies use.
 export const REPLY_KIND = 'user-question-reply'
 // DSH's snapshot of a referenced conversation, logged right after the user's message
@@ -45,18 +62,13 @@ export const AGENT_SESSION_TITLE_MAX = 80
 // Every tool this plugin registers for Bots. `read_browser` only exists in the
 // Desktop profile, so a restriction filters this list down to registered names.
 export const TEAM_TOOLS = [
-  'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'list_models',
-  'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user',
+  'list_bots', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'list_bot_models',
+  'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'show_view',
   'request_secret', 'list_secrets', 'group_relay', 'read_own_chat',
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
   'list_capabilities', 'save_capability', 'delete_capability',
   'attach_capability', 'detach_capability',
 ]
-// Rounds Bots may start in one group by posting, before the user speaks there again.
-export const ROOM_BOT_ROUNDS = 3
-// Answers a group gives to what members post after the round moved on (their finished
-// work, mostly), before the user speaks there again.
-export const ROOM_LATE_ROUNDS = 10
 // A member still at work this long after its first tool call lets the round go on; it
 // posts its reply when the work is done.
 export const ROOM_WORK_GRACE_MS = 15_000
@@ -71,3 +83,5 @@ export const OWN_CHAT_SEARCH = 20
 export const HISTORY_PAGE = 200
 export const HISTORY_PAGES_MAX = 50
 export const HISTORY_TIMEOUT_MS = 20_000
+// Shown when an aside stops at the route's own output limit. The partial answer stays.
+export const ASIDE_LIMIT = 'Answer cut off at the output limit.'

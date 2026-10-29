@@ -405,8 +405,13 @@ export function install(rt) {
       for (const room of Object.values(state.rooms)) {
         for (const segments of Object.values(room.segments ?? {})) for (const segment of segments) if (segment.endedAt < longAgo) ended.add(segment.sessionId)
       }
+      // A listing row's projections are hints, not cursors. Only a 'sequenced'
+      // block shares the Session log's sequence space; a 'cached' block carries
+      // the persisted cache's own watermark, so it must not cut a page. The
+      // Session's exact cursor is read below when no hint is usable.
+      const listedCursor = item => (item.projections?.kind === 'sequenced' ? item.projections.asOfSeq : undefined)
       const targets = new Map()
-      for (const item of listed) if (item.blank !== true) targets.set(item.sessionId, item.projections?.asOfSeq)
+      for (const item of listed) if (item.blank !== true) targets.set(item.sessionId, listedCursor(item))
       for (const sessionId of owners.keys()) if (!targets.has(sessionId)) targets.set(sessionId, undefined)
       const addresses = new Map(listed.map(item => [item.sessionId, addressOf(item)]))
       await eachLimited([...targets], SCAN_PARALLEL, async ([sessionId, asOfSeq]) => {
@@ -449,7 +454,7 @@ export function install(rt) {
       }
       if (key.startsWith('agent:')) {
         const id = key.slice('agent:'.length)
-        const agent = state.agents?.[id]
+        const agent = rt.own(state.agents, id)
         return { key, kind: 'agent', id, name: agent?.name ?? name, ...(agent ? {} : { deleted: true }) }
       }
       const bot = rt.botOf(key)
@@ -523,6 +528,9 @@ export function install(rt) {
     const tag = from !== null && typeof from === 'object' ? tags.get(from) : undefined
     if (tag !== undefined) tagUsage(to, tag)
   }
+  // DS Bot's own requests name the Session they serve, as some routes require, so
+  // `sessionId` alone does not make a request that Session's own round; the tag does.
+  const ownRequest = options => tags.has(options?.messages)
   // Owner and group use are journaled with the call itself: a Bot or room that
   // is deleted before the first scan still leaves its calls under its own name.
   const journaled = new Map()
@@ -590,5 +598,5 @@ export function install(rt) {
     })()
   })
 
-  Object.assign(rt, { usageView, tagUsage, carryUsageTag })
+  Object.assign(rt, { usageView, tagUsage, carryUsageTag, ownRequest })
 }

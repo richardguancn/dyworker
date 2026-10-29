@@ -69,7 +69,7 @@ function selectorOf(when) {
 }
 
 export function install(rt) {
-  const { ctx, state } = rt
+  const { ctx } = rt
   let service = null
 
   const attach = (sub) => {
@@ -88,7 +88,7 @@ export function install(rt) {
     if (rt.roomOf(sessionId) !== undefined) return { roomId: sessionId }
     return rt.groupOwners.get(sessionId) ?? rt.pastOwners.get(sessionId)
   }
-  const known = owner => owner !== undefined && (owner.botId === undefined ? state.rooms[owner.roomId] !== undefined : state.bots[owner.botId] !== undefined)
+  const known = owner => owner !== undefined && (owner.botId === undefined ? rt.roomOf(owner.roomId) !== undefined : rt.botOf(owner.botId) !== undefined)
 
   async function schedulesView() {
     if (service === null) return { available: false, tasks: [] }
@@ -105,8 +105,8 @@ export function install(rt) {
     schedules: () => schedulesView(),
     async 'schedule-create'(body) {
       if (service === null) throw invalid('Automation tasks are off in DSH')
-      const bot = state.bots[body.target]
-      const room = state.rooms[body.target]
+      const bot = rt.botOf(body.target)
+      const room = rt.roomOf(body.target)
       if (bot === undefined && room === undefined) throw invalid('No such Bot or group chat')
       const title = String(body.title ?? '').trim()
       const prompt = String(body.prompt ?? '').trim()
@@ -128,21 +128,18 @@ export function install(rt) {
   // the fresh Session before the old one goes, so a failure leaves it where it was.
   async function moveSchedules(fromId, toId) {
     if (service === null) return
-    let records
-    try {
-      records = await service.list({ sessionId: fromId })
-    } catch (error) {
-      rt.warn('ds-bot: tasks of %s not moved: %s', fromId, error?.message ?? error)
-      return
-    }
+    const records = await service.list({ sessionId: fromId })
     for (const record of records) {
       const request = requestOf(record)
       if (request === null || (request.at !== undefined && Date.parse(request.at) <= Date.now())) continue
+      // A failed read or copy must prevent stopActivity from deleting an unmoved
+      // task. Equal requests can be separate tasks; copy each source record.
+      await service.create(toId, request)
       try {
-        await service.create(toId, request)
         await service.delete({ sessionId: fromId, id: record.id })
       } catch (error) {
-        rt.warn('ds-bot: task %s stayed with the earlier part: %s', record.title, error?.message ?? error)
+        // The copy is safe; archiving the earlier part will remove its old task.
+        rt.warn('ds-bot: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
       }
     }
   }

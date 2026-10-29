@@ -1,11 +1,11 @@
 {
   "name": "ds-bot",
-  "version": "0.1.4",
+  "version": "0.2.3",
   "type": "module",
   "private": true,
   "main": "index.js",
   "description": "创建长期使用的机器人，设置角色和模型，通过群聊协作并管理记忆。",
-  "homepage": "https://github.com/Fei2411/DeepSeek-Bot",
+  "homepage": "https://github.com/Fei2411/DS-Bot",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js"

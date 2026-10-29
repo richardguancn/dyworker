@@ -2,10 +2,11 @@
 // reaches a model that cannot read them, each image becomes text from a vision model.
 // Texts are kept per attachment, so later requests repeat the same words and the
 // prompt cache still hits.
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import { OCR_CACHE_MAX, OCR_PROMPT, OCR_RETRY_MS, OCR_TIMEOUT_MS } from './constants.js'
+import { replaceFile } from './files.js'
 import { splitRef } from './text.js'
 
 export function offloadTargets(session, beforeSeq) {
@@ -82,7 +83,7 @@ export function install(rt) {
       await mkdir(home, { recursive: true })
       const temp = `${ocrPath}.${process.pid}.tmp`
       await writeFile(temp, snapshot, 'utf8')
-      await rename(temp, ocrPath)
+      await replaceFile(temp, ocrPath)
     }).catch(error => rt.warn('ds-bot: OCR cache write failed: %s', error))
   }
 
@@ -91,10 +92,10 @@ export function install(rt) {
     const route = await ocrRoute()
     if (route === undefined) throw new Error('no vision model is available')
     const assembler = new BlockAssembler()
-    // No sessionId: this call is not a Session request, so the hook below lets it through.
     for await (const chunk of ctx.llm.stream({
       provider: route.provider,
       model: route.model,
+      sessionId,
       messages: rt.tagUsage([{ role: 'user', content: [{ type: 'image', attachment }, { type: 'text', text: OCR_PROMPT }] }], { sessionId, kind: 'image' }),
       maxTokens: 8192,
       signal: AbortSignal.timeout(OCR_TIMEOUT_MS),
@@ -176,7 +177,7 @@ export function install(rt) {
   }
 
   ctx.on('llm/stream', (options, next) => {
-    if (options.sessionId === undefined || !(options.messages ?? []).some(liveImages)) return next()
+    if (options.sessionId === undefined || rt.ownRequest(options) || !(options.messages ?? []).some(liveImages)) return next()
     return (async function* imagesAsTextOrPass() {
       await rt.load()
       if (rt.roomOf(options.sessionId) !== undefined || await readsImages(options.provider, options.model)) {

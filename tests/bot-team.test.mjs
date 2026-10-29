@@ -7,6 +7,20 @@ import { fileURLToPath } from 'node:url';
 import { createBotTeam, botModelProfiles } from '../electron/host/services/bot-team.mts';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { conversationMessages } from '../builtin-plugins/ds-bot/src/messages.ts';
+import { createHash } from 'node:crypto';
+
+test('内置机器人版本和全部上游文件与记录一致', async () => {
+  const root = new URL('../builtin-plugins/ds-bot/', import.meta.url);
+  const sources = JSON.parse(await fs.readFile(new URL('sources.json', root), 'utf8'));
+  const manifest = JSON.parse(await fs.readFile(new URL('package.json', root), 'utf8'));
+  const upstream = JSON.parse(await fs.readFile(new URL('upstream/package.json', root), 'utf8'));
+  assert.equal(manifest.version, sources.version);
+  assert.equal(upstream.version, sources.version);
+  for (const [file, recorded] of Object.entries(sources.files)) {
+    const bytes = await fs.readFile(new URL(file, root));
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), recorded.sha256, file);
+  }
+});
 
 const entryUrl = new URL('../builtin-plugins/ds-bot/upstream/index.js', import.meta.url).href;
 const builtinPluginsDir = fileURLToPath(new URL('../builtin-plugins/', import.meta.url));
@@ -108,6 +122,9 @@ test('原插件真实运行：模型选择、机器人对话、提问回答、�
   await team.dispose(); team = await createBotTeam(options);
   const restored = await call(team, 'state'); assert.equal(restored.mainBotId, chief.id);
   assert.ok(restored.rooms.some(item => item.id === room.id)); assert.equal(requests.length, first);
+  const inspected = await team.ctx.sessionController.inspect(chief.id);
+  assert.ok(inspected.events.some(event => JSON.stringify(event.data).includes('请确认第二模型')));
+  await assert.rejects(team.ctx.sessionController.inspect('../../outside'), /不属于/);
   assert.ok((await call(team, 'memory-view', { botId: chief.id })).entries.some(entry => entry.text === '回答用简体中文'));
   await call(team, 'send', { sessionId: chief.id, text: '重启后继续' }); await settle(team);
   assert.match(JSON.stringify(await call(team, 'dyworker-history', { sessionId: chief.id })), /模型test-two答复：重启后继续/);
@@ -159,7 +176,7 @@ test('长对话切换到后续部分：读取当前回复、显示运行状态�
   const history = await call(team, 'dyworker-history', { sessionId: chief.id });
   assert.ok(history.events.some(event => event.sessionId === fresh.sessionId && JSON.stringify(event.data).includes('当前部分的回复')));
   assert.ok(tools.some(tool => tool.name === 'read_file'), '继续提供 DYWorker 的文件工具');
-  assert.ok(!tools.some(tool => ['save_capability', 'attach_capability', 'request_secret'].includes(tool.name)), '不向模型提供没有对应服务或操作页面的工具');
+  assert.ok(!tools.some(tool => ['save_capability', 'attach_capability', 'request_secret', 'show_view'].includes(tool.name)), '不向模型提供没有对应服务或操作页面的工具');
   await call(team, 'send', { sessionId: chief.id, text: '当前部分长回复' }); await started;
   assert.equal((await call(team, 'dyworker-history', { sessionId: chief.id })).running, true);
   await call(team, 'dyworker-stop', { sessionId: chief.id }); await settle(team);
@@ -168,6 +185,8 @@ test('长对话切换到后续部分：读取当前回复、显示运行状态�
 });
 
 test('更新后的机器人在重启后继续被中断的工作', { timeout: 15000 }, async t => {
+  const warnings = [];
+  t.mock.method(console, 'error', (...args) => warnings.push(args.join(' ')));
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-resume-'));
   let markStarted, resumed = 0;
   const started = new Promise(resolve => { markStarted = resolve; });
@@ -202,6 +221,9 @@ test('更新后的机器人在重启后继续被中断的工作', { timeout: 150
   await settle(team);
   assert.equal(resumed, 1, '只恢复一次尚未完成的工作');
   assert.match(JSON.stringify(await call(team, 'dyworker-history', { sessionId: chief.id })), /重启后已经继续完成/);
+  await team.dispose();
+  assert.doesNotMatch(warnings.join('\n'), /SessionHandleClosedError|flush on a closed handle/,
+    '恢复后的消息保存完成前不能关闭会话');
 });
 
 test('模型失败可见、重新发送恢复；停止群聊会同时取消成员请求', { timeout: 20000 }, async t => {
