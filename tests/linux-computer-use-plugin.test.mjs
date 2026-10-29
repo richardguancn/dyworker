@@ -9,8 +9,7 @@ test('Linux 电脑操作按任务隔离进程，停用和取消会关闭连接',
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-linux-cu-'));
   const bin = path.join(dir, 'bin', 'arm64'); await fs.mkdir(bin, { recursive: true });
   const executable = path.join(bin, 'computer-use-linux');
-  await fs.writeFile(executable, `#!/usr/bin/env node
-const readline = require('node:readline');
+  await fs.writeFile(executable, `const readline = require('node:readline');
 const rl = readline.createInterface({input:process.stdin});
 rl.on('line', line => {
  const msg=JSON.parse(line); if(!msg.id)return;
@@ -21,9 +20,17 @@ rl.on('line', line => {
  if(msg.method==='tools/call')return reply({content:[{type:'text',text:String(process.pid)},{type:'image',mimeType:'image/png',data:'aGVsbG8='}]});
 });
 `);
-  await fs.chmod(executable, 0o755);
   const host = await createHost({ userDataDir: path.join(dir, 'data') });
   t.after(async () => { await host.linuxComputerUse.closeAll(); await disposeHost(host); await fs.rm(dir, { recursive: true, force: true }); });
+  // 测试程序用 Node 显式启动，避免 Windows 把没有 .exe 后缀的脚本当作程序执行。
+  // 保留真实客户端的参数、环境、通信和退出流程；生产环境仍直接启动 Linux 程序。
+  const newClient = host.linuxComputerUse.newClient.bind(host.linuxComputerUse);
+  t.mock.method(host.linuxComputerUse, 'newClient', () => {
+    const client = newClient();
+    client.args = [client.command, ...client.args];
+    client.command = process.execPath;
+    return client;
+  });
   const cleanups = [];
   const scope = { tools: host.tools, effect(fn) { const cleanup = fn(); if (typeof cleanup === 'function') cleanups.push(cleanup); } };
   await host.linuxComputerUse.mount(scope, path.join(dir, 'bin'), 'linux', 'arm64');
@@ -43,5 +50,18 @@ rl.on('line', line => {
   assert.equal(host.linuxComputerUse.clients.has(JSON.stringify(['one', 'run1'])), false);
   for (const cleanup of cleanups.reverse()) await cleanup();
   assert.equal(host.tools.owns(prefix + 'get_app_state'), false);
+  assert.equal(host.linuxComputerUse.clients.size, 0);
+});
+
+test('Windows 和 macOS 不会启动 Linux 电脑操作程序', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-linux-cu-platform-'));
+  const host = await createHost({ userDataDir: dir });
+  t.after(async () => { await disposeHost(host); await fs.rm(dir, { recursive: true, force: true }); });
+  const clients = t.mock.method(host.linuxComputerUse, 'newClient', () => { throw new Error('不应启动 Linux 程序'); });
+  for (const platform of ['win32', 'darwin']) {
+    await assert.rejects(host.linuxComputerUse.mount({}, dir, platform, 'x64'), /此插件仅支持 Linux/);
+  }
+  assert.equal(clients.mock.callCount(), 0);
+  assert.equal(host.linuxComputerUse.active, false);
   assert.equal(host.linuxComputerUse.clients.size, 0);
 });
