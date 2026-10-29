@@ -18,6 +18,7 @@ test('知识库插件真实导入、检索、分类、停用和重启恢复', as
   await fs.symlink(pluginDir, path.join(builtins, 'dyworker-knowledge-base'), 'dir');
   let host = await createHost({ userDataDir: path.join(dir, 'data'), builtinPluginsDir: builtins, mountPlugins: true });
   t.after(async () => { if (host) await disposeHost(host); await fs.rm(dir, { recursive: true, force: true }); });
+  assert.equal((await host.plugins.setEnabled('dyworker-knowledge-base', true)).ok, true);
   const execution = { sessionId: 's1', runId: 'r1', workspacePath: workspace, source: 'agent' };
   const call = (name, args) => host.tools.execute(toolPrefix + name, args, execution);
   const route = async (url, body) => {

@@ -80,6 +80,7 @@ test('机器人继承桌面任务工具并真实执行：文件、命令、审�
     memoriesFromAgentResult: () => [], appendUsageStat: () => {}, appendMemory: async () => {},
   };
   const host = await createHost({ userDataDir: dir, mountPlugins: true, builtinPluginsDir, agentResolvers: resolvers });
+  assert.equal((await host.plugins.setEnabled('ds-bot', true)).ok, true);
   const toolNames = [];
   const scripted = async function* (profile, request) {
     // 记录模型实际看到的工具面（取最完整的一次请求）。

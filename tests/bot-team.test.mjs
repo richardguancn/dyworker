@@ -42,6 +42,7 @@ async function settle(team) {
 test('内置机器人插件无需安装：宿主识别、启停，未配置模型时不调用模型', async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-bot-host-'));
   const host = await createHost({ userDataDir: dir, mountPlugins: true, builtinPluginsDir });
+  assert.equal((await host.plugins.setEnabled('ds-bot', true)).ok, true);
   t.after(async () => { await disposeHost(host); await fs.rm(dir, { recursive: true, force: true }); });
   const entry = host.plugins.entries().find(row => row.name === 'ds-bot');
   assert.ok(entry?.builtin); assert.equal(entry.disabled, false);

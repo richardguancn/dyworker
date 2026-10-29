@@ -43,7 +43,11 @@ test('内置插件启停、技能单独停用和并发保存都能在重启后�
   try {
     const list = await host.skills.listCurated();
     assert.equal(list.length, 8);
-    assert.equal(list.filter(plugin => plugin.enabled).length, 8);
+    assert.equal(list.filter(plugin => plugin.enabled).length, 0);
+    assert.ok((await host.skills.read()).filter(skill => skill.pluginId).every(skill => !skill.enabled));
+    const disabledSkill = (await host.skills.read()).find(skill => skill.name === 'data-analytics:index');
+    assert.equal((await host.skills.setEnabled({ id: disabledSkill.id, enabled: true })).ok, false);
+    for (const plugin of list) assert.equal((await host.skills.setCuratedEnabled(plugin.id, true)).ok, true);
     for (const id of ['plugin-creator', 'plugin-management']) {
       assert.equal((await host.skills.setCuratedEnabled(id, false)).ok, true);
       assert.ok((await host.skills.read()).filter(skill => skill.pluginId === id).every(skill => !skill.enabled));
@@ -64,6 +68,7 @@ test('内置插件启停、技能单独停用和并发保存都能在重启后�
     await disposeHost(host);
     host = await createHost({ userDataDir: dir });
     assert.ok((await host.skills.listCurated()).filter(plugin => ['sales', 'data-analytics'].includes(plugin.id)).every(plugin => !plugin.enabled));
+    assert.equal((await host.skills.listCurated()).find(plugin => plugin.id === 'openai-templates').enabled, true);
     for (const id of ['plugin-creator', 'plugin-management']) {
       assert.equal((await host.skills.listCurated()).find(plugin => plugin.id === id).enabled, false);
       assert.equal((await host.skills.setCuratedEnabled(id, true)).ok, true);

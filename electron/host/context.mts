@@ -31,7 +31,7 @@ import { SchedulerService } from "./services/scheduler.mts";
 import path from "node:path";
 
 export interface HostOptions {
-  /** 内置插件目录（随应用分发，默认启用，可在插件页停用） */
+  /** 内置插件目录（随应用分发，可在插件页启停） */
   builtinPluginsDir?: string;
   userDataDir: string;
   // 用户主目录（文件技能 SKILL.md 的发现范围），由壳层注入

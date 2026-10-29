@@ -204,7 +204,7 @@ export class PluginHostService extends Service {
 
   /**
    * 扫描内置插件：每个子目录（或 @scope/name 两级）只要有 package.json 且声明了
-   * dsh/dyworker 插件字段，就算一个内置插件。它们**默认启用**，用户可在插件页停用。
+   * dsh/dyworker 插件字段，就算一个内置插件。默认停用；清单显式声明默认启用的平台除外，用户可在插件页启停。
    */
   builtinPlugins() {
     const root = this.builtinDir;
@@ -221,12 +221,12 @@ export class PluginHostService extends Service {
         const full = path.join(dir, name);
         if (prefix) {
           const manifest = this.readBuiltinManifest(full);
-          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) && !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform)) });
+          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) ? !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform) : manifest.dyworker?.defaultEnabled !== true) });
           continue;
         }
         if (name.startsWith("@")) { readDir(full, name); continue; }
         const manifest = this.readBuiltinManifest(full);
-        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) && !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform)) });
+        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) ? !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform) : manifest.dyworker?.defaultEnabled !== true) });
       }
     };
     readDir(root, "");
@@ -291,7 +291,7 @@ export class PluginHostService extends Service {
     const overlay = Object.entries(this.overrides).map(([id, patch]) => ({ id, ...(patch as any) }));
     const layers = [...this.bundles.map((bundle) => bundle.patches)];
     if (overlay.length) layers.push(overlay);
-    // 内置插件：清单里已有的条目**打上内置标记**，清单里没有的补一行（默认启用）。
+    // 内置插件：清单里已有的条目**打上内置标记**，清单里没有的按包声明的默认状态补一行。
     // 注意不能简单地"跳过已有的"——用户装过同名插件时清单里已经有它，那样就永远打不上标记。
     const builtins = this.builtinPlugins();
     const builtinNames = new Set(builtins.map((entry) => entry.name));

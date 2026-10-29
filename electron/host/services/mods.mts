@@ -47,7 +47,7 @@ export class ModsService extends Service{
       try{await fs.rename(target,backup);hadPrior=true;}catch(error:any){if(error.code!=='ENOENT')throw error;}
       try{await fs.rename(stage,target);}catch(error){if(hadPrior)await fs.rename(backup,target);throw error;}
       const row={id:mod.manifest.name,name:catalog?.name||mod.manifest.name,version:mod.manifest.version,description:catalog?.summary||String(mod.manifest.description||''),
-        disabled:false,config:options,catalogId:catalog?.id||null,source:catalog?.source||source,license:catalog?.license||'未核对',events:mod.events,methods:mod.methods};
+        disabled:this.rows.find(item=>item.id===mod.manifest.name)?.disabled ?? true,config:options,catalogId:catalog?.id||null,source:catalog?.source||source,license:catalog?.license||'未核对',events:mod.events,methods:mod.methods};
       const priorRows=this.rows.map(item=>({...item}));const old=this.rows.findIndex(item=>item.id===row.id);if(old<0)this.rows.push(row);else this.rows[old]=row;
       try{await this.save();}catch(error){this.rows=priorRows;await fs.rm(target,{recursive:true,force:true});if(hadPrior)await fs.rename(backup,target);throw error;}
       if(hadPrior)await fs.rm(backup,{recursive:true,force:true});return {ok:true};

@@ -981,7 +981,7 @@ test("会话读取是同步语义：DSH 插件按同步方式用 sessions.get(id
   assert.equal(typeof ctx.sessions.getAsync, "function", "需要异步语义时用 getAsync");
 });
 
-test("内置插件：目录扫描、默认启用、并在条目上打内置标记", async (t) => {
+test("内置插件：目录扫描、默认停用、并在条目上打内置标记", async (t) => {
   const { createHost, disposeHost } = await import("../electron/host/context.mts");
   const { dshClientModuleNames } = await import("../electron/host/plugin-install.mts");
 
@@ -1018,8 +1018,10 @@ test("内置插件：目录扫描、默认启用、并在条目上打内置标�
     const entry = ctx.plugins.entries().find((item) => item.name === "@acme/builtin-demo");
     assert.ok(entry, "内置插件应出现在条目里");
     assert.equal(entry.builtin, true, "要打上内置标记（界面据此显示「内置」）");
-    assert.equal(entry.disabled, false, "内置插件默认启用");
-    assert.equal(entry.active, true, `内置插件应已激活：${entry.error || ""}`);
+    assert.equal(entry.disabled, true, "内置插件默认停用");
+    assert.equal(entry.active, false);
+    assert.equal((await ctx.plugins.setEnabled(entry.id, true)).ok, true);
+    assert.equal(ctx.plugins.entries().find(item => item.id === entry.id).active, true, "手动启用后应已激活");
 
     // 客户端半边从内置目录解析（它不在 npm 管理的插件目录里）
     const info = await ctx.plugins.clientBundles("@acme/builtin-demo");

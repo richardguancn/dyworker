@@ -152,8 +152,8 @@ export class SkillsService extends Service {
       this.readPluginOverrides(),
     ]);
     const bundled = plugins.flatMap(plugin => plugin.skills.map(skill => ({ ...skill,
-      enabled: plugin.local && pluginOverrides[plugin.id] !== false && overrides[skill.id] !== false,
-      availabilityReason: !plugin.local ? '需要的在线服务尚未接通' : pluginOverrides[plugin.id] === false ? '请先在插件页启用此插件' : '',
+      enabled: plugin.local && pluginOverrides[plugin.id] === true && overrides[skill.id] !== false,
+      availabilityReason: !plugin.local ? '需要的在线服务尚未接通' : pluginOverrides[plugin.id] !== true ? '请先在插件页启用此插件' : '',
     })));
     // 插件总开关优先于单个技能开关；不能让旧的 true 覆盖总停用或尚未接通的服务。
     return mergeSkillRecords(storedSkills, [...fileSkills, ...bundled], overrides).map(skill => {
@@ -170,7 +170,7 @@ export class SkillsService extends Service {
   async listCurated(workspacePath = '') {
     const [plugins, overrides, skills] = await Promise.all([this.curated, this.readPluginOverrides(), this.read(workspacePath)]);
     return plugins.map(({ skills: originals, ...plugin }) => ({ ...plugin,
-      enabled: plugin.local && overrides[plugin.id] !== false,
+      enabled: plugin.local && overrides[plugin.id] === true,
       skills: originals.map(original => {
         const skill = skills.find(item => item.id === original.id);
         return { id: original.id, name: original.name, description: original.description,
