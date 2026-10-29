@@ -29,12 +29,13 @@ export function createDockIconController({ platform, directory, nativeImage, get
   };
 }
 
-// Linux 窗口图标与桌面启动器图标由不同入口管理；这里只更新运行中的窗口。
+// Windows/Linux 窗口图标与启动器、固定快捷方式由不同入口管理。
+// 运行中的窗口沿用 dockIcon 保存的独立选择，不随界面主题切换。
 export function createWindowIconController({ platform, directory, nativeImage, warn = console.warn }) {
   const images = new Map();
   const applied = new WeakMap();
-  const iconFor = (theme) => {
-    const name = theme === "dark" ? "dark" : "light";
+  const iconFor = (choice) => {
+    const name = choice === "light" ? "light" : "dark";
     if (!images.has(name)) {
       const image = nativeImage.createFromPath(path.join(directory, `icon-${name}.png`));
       if (image.isEmpty()) {
@@ -47,9 +48,9 @@ export function createWindowIconController({ platform, directory, nativeImage, w
   };
   return {
     iconFor,
-    apply(window, theme) {
-      if (platform !== "linux" || !window || window.isDestroyed()) return false;
-      const name = theme === "dark" ? "dark" : "light";
+    apply(window, choice) {
+      if (!["linux", "win32"].includes(platform) || !window || window.isDestroyed()) return false;
+      const name = choice === "light" ? "light" : "dark";
       if (applied.get(window) === name) return true;
       try {
         const icon = iconFor(name);

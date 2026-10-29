@@ -44,7 +44,7 @@ function createWindow() {
     transparent: process.platform === "linux",
     show: process.platform === "linux",
     title: "DYWorker",
-    ...(process.platform === "linux" ? { icon: deps.windowIcons.iconFor(resolvedAppearanceTheme()) } : {}),
+    ...(["linux", "win32"].includes(process.platform) ? { icon: deps.windowIcons.iconFor(deps.appearanceState.settings.dockIcon) } : {}),
     // Linux/Windows 使用应用工具栏，macOS 的原生红绿灯由 hidden 标题栏保留。
     // Linux 仅四角透明，由页面平滑裁切；阴影仍交给合成器绘制。
     frame: false,

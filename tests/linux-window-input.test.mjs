@@ -47,7 +47,7 @@ for (const platform of ["linux", "darwin", "win32"]) {
   test(`窗口不使用系统标题栏，保留实色内容和桌面阴影：${platform}`, () => {
     const optionsSource = source.match(/const windowOptions = \{[\s\S]*?\n  \};/)[0];
     const options = vm.runInNewContext(`${optionsSource}; windowOptions`, {
-      deps: { here: "/app/electron", appearanceState: { settings: { theme: "system" } }, windowIcons: { iconFor: () => null } },
+      deps: { here: "/app/electron", appearanceState: { settings: { theme: "system", dockIcon: "dark" } }, windowIcons: { iconFor: choice => `icon-${choice}` } },
       process: { platform },
       // 外观接入后窗口底色来自已保存外观，此处桩为默认浅色
       windowBackgroundFor: () => solidWindowBackground,
@@ -60,6 +60,7 @@ for (const platform of ["linux", "darwin", "win32"]) {
       // preload 路径在 createWindow 里先算出来（缺失时要弹窗报错），此处桩为同一路径
       preloadPath: "/app/electron/preload.cjs",
     });
+    assert.equal(options.icon, platform === "darwin" ? undefined : "icon-dark");
     assert.equal(options.frame, false);
     assert.equal(options.hasShadow, true);
     if (platform === "linux") {

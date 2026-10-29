@@ -136,6 +136,10 @@ macOS 打包时，图片、字体、语言包和文档等资源由外层应用�
 
 产物统一位于 `output/electron/`。
 
+Windows 和 Linux 安装包的应用图标由 `package.json` 中的 `build.win.icon`、`build.linux.icon` 分别指定，默认都使用 `build/icon.png`；Windows 打包时会自动转换成所需的图标格式。更换默认图案时，替换这张方形 PNG 后重新打包。
+
+在「设置 → 外观」中，macOS 可选择 Dock 图标，Windows 和 Linux 可选择运行窗口的深色或浅色图标，支持预览、取消和保存；图标选择独立于界面主题，保存后重启仍保留。启动器和固定快捷方式的图标由安装包提供，不随窗口图标选择改变。
+
 - **Windows**：推荐在 Windows 10/11 的 PowerShell 中执行 `npm ci && npm run package:windows:x64`。未签名的安装程序可能触发 SmartScreen 提示，正式公开发布时建议配置 Windows 代码签名证书后再打包（证书和密码不要写入仓库）。
 - **macOS**：`npm run package:mac` 使用当前 Mac 的处理器架构生成 `.dmg` 和 `.zip`。正式发布并自动更新时需要使用有效的 Apple 签名。
 - **Linux ARM64 / 麒麟 V10**：`npm run package:linux:arm64` 生成 `.AppImage` 和 `.deb` 安装包。桌面操控建议使用 X11 会话；Wayland 下应用会提示切换。首次使用时可在应用中执行"检查并安装本机操控环境"，按提示安装缺少的系统组件。

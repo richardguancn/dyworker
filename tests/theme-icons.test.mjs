@@ -18,8 +18,8 @@ function fixture(platform = "linux", empty = false) {
   return { icons, window, reads, changes, warnings };
 }
 
-test("Linux 窗口从浅色切到深色，取消预览后恢复浅色图标", () => {
-  const f = fixture();
+for (const platform of ["linux", "win32"]) test(`${platform} 窗口从浅色切到深色，取消预览后恢复浅色图标`, () => {
+  const f = fixture(platform);
   for (const theme of ["light", "dark", "light"]) assert.equal(f.icons.apply(f.window, theme), true);
   assert.deepEqual(f.changes, ["light", "dark", "light"].map(theme => path.join("/icons", `icon-${theme}.png`)));
   assert.equal(f.reads.length, 2, "恢复时复用已读取的图标");
@@ -35,8 +35,8 @@ test("同一窗口重复应用主题不刷新图标，新窗口仍得到图标",
   assert.equal(f.reads.length, 1);
 });
 
-test("其他平台与已销毁窗口不调用 Linux 窗口图标入口", () => {
-  for (const platform of ["darwin", "win32"]) {
+test("其他平台与已销毁窗口不调用 Windows/Linux 窗口图标入口", () => {
+  for (const platform of ["darwin", "freebsd"]) {
     const f = fixture(platform);
     assert.equal(f.icons.apply(f.window, "dark"), false);
     assert.equal(f.changes.length, 0);
@@ -64,23 +64,23 @@ test("图标丢失或桌面拒绝更新时保留原图标，并允许后续重�
   assert.equal(f.changes.length, 1);
 });
 
-test("主题通知晚于预览请求时保留预览图标，取消后清除预览", async () => {
-  const f = fixture();
-  const saved = { ...defaultAppearance(), theme: "light" };
+for (const platform of ["linux", "win32"]) test(`${platform} 图标选择独立于主题，晚到的主题通知不撤销预览，取消后恢复`, async () => {
+  const f = fixture(platform);
+  const saved = { ...defaultAppearance(), theme: "dark", dockIcon: "light" };
   let preview = null;
   let effective = {};
   const handlers = new Map();
   f.window.setBackgroundColor = () => {};
-  const update = () => f.icons.apply(f.window, (preview ?? saved).theme);
+  const update = () => f.icons.apply(f.window, (preview ?? saved).dockIcon);
   const nativeTheme = {
     set themeSource(value) { queueMicrotask(update); },
   };
   const bridge = {
-    capabilities: { platform: "linux" },
+    capabilities: { platform },
     resolveNormalizedSettings: raw => raw,
     setWindowIconPreview: value => { preview = value; },
     resolvedTheme: settings => settings.theme,
-    applyWindowIcon: settings => f.icons.apply(f.window, settings.theme),
+    applyWindowIcon: settings => f.icons.apply(f.window, settings.dockIcon),
     setEffective: value => { effective = value; },
     getEffective: () => effective,
     syncThemeSource: () => { nativeTheme.themeSource = saved.theme; },
@@ -92,7 +92,7 @@ test("主题通知晚于预览请求时保留预览图标，取消后清除预�
     bridge, nativeTheme, getMainWindow: () => f.window,
   }).apply({});
   update();
-  await handlers.get("appearance:preview")(null, { ...saved, theme: "dark" });
+  await handlers.get("appearance:preview")(null, { ...saved, dockIcon: "dark" });
   assert.equal(preview.theme, "dark");
   assert.equal(f.changes.at(-1), path.join("/icons", "icon-dark.png"));
   await handlers.get("appearance:cancel-preview")(null, {});

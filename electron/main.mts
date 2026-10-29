@@ -249,7 +249,7 @@ function applyWindowAppearance() {
   appearanceEffective = applyWindowBackdrop(mainWindow, appearanceState.settings, appearanceCapabilities);
   const isBackdropActive = appearanceEffective.applied === "vibrancy" || appearanceEffective.applied === "background-material";
   mainWindow.setBackgroundColor(process.platform === "linux" ? "#00000000" : windowBackgroundFor(appearanceState.settings, resolvedAppearanceTheme(), isBackdropActive));
-  windowIcons.apply(mainWindow, resolvedAppearanceTheme(windowIconPreviewSettings ?? appearanceState.settings));
+  windowIcons.apply(mainWindow, (windowIconPreviewSettings ?? appearanceState.settings).dockIcon);
   dockIcons.apply((windowIconPreviewSettings ?? appearanceState.settings).dockIcon);
   mainWindow.webContents?.invalidate?.();
 }
@@ -1669,7 +1669,7 @@ const appearanceBridge = {
   snapshot: () => appearanceSnapshot(),
   syncThemeSource: () => syncNativeThemeSource(),
   applyWindow: () => applyWindowAppearance(),
-  applyWindowIcon: (settings) => windowIcons.apply(mainWindow, resolvedAppearanceTheme(settings)),
+  applyWindowIcon: (settings) => windowIcons.apply(mainWindow, settings.dockIcon),
   applyDockIcon: (settings) => dockIcons.apply(settings.dockIcon),
   setWindowIconPreview: (settings) => { windowIconPreviewSettings = settings; },
   resolvedTheme: (settings) => resolvedAppearanceTheme(settings),
