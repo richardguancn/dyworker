@@ -1,0 +1,49 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHost, disposeHost } from '../electron/host/context.mts';
+
+test('知识库实时检索记忆，保留项目和会话范围并反映修改删除', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-kb-memory-'));
+  const builtins = path.join(dir, 'builtins'), workspaceA = path.join(dir, 'a'), workspaceB = path.join(dir, 'b');
+  await fs.mkdir(builtins); await fs.mkdir(workspaceA); await fs.mkdir(workspaceB);
+  await fs.symlink(fileURLToPath(new URL('../builtin-plugins/dyworker-knowledge-base/', import.meta.url)), path.join(builtins, 'dyworker-knowledge-base'), 'dir');
+  let host = await createHost({ userDataDir: path.join(dir, 'data'), builtinPluginsDir: builtins, mountPlugins: true });
+  t.after(async () => { if (host) await disposeHost(host); await fs.rm(dir, { recursive: true, force: true }); });
+  await host.memory.wikiReady(); host.memory.scheduleConsolidation = () => {};
+  const global = await host.memory.append({ content: '航线偏好：提前到达', category: '偏好', scope: 'global' }, workspaceA, 'one');
+  const projectA = await host.memory.append({ content: '航线项目甲资料', category: '项目', scope: 'workspace' }, workspaceA, 'one');
+  await host.memory.append({ content: '航线项目乙资料', category: '项目', scope: 'workspace' }, workspaceB, 'two');
+  await host.memory.append({ content: '航线当前会话资料', category: '会话', scope: 'session' }, workspaceA, 'one');
+  await host.memory.append({ content: '航线其他会话资料', category: '会话', scope: 'session' }, workspaceB, 'two');
+  const query = async (workspacePath, sessionId) => {
+    const response = await host.tools.execute('plugin__dyworker_knowledge_base__kb_query', { query: '航线' },
+      { sessionId, runId: 'test', workspacePath, source: 'agent' });
+    assert.equal(response.ok, true, response.error); return JSON.parse(response.result);
+  };
+  let found = await query(workspaceA, 'one');
+  assert.equal(found.matched, 2);
+  for (const expected of ['提前到达', '项目甲资料']) assert.ok(JSON.stringify(found).includes(expected));
+  assert.doesNotMatch(JSON.stringify(found), /项目乙资料|当前会话资料|其他会话资料/);
+  await host.connection.dispatch({ path: '/api/kb/import', method: 'POST', body: JSON.stringify({ name: '航线.txt', contentBase64: Buffer.from('航线文件资料').toString('base64') }) });
+  found = await query(workspaceA, 'one'); assert.equal(found.matched, 3); assert.match(JSON.stringify(found), /航线文件资料/);
+  await host.connection.dispatch({ path: '/api/kb/delete-file', method: 'POST', body: JSON.stringify({ source: '航线.txt' }) });
+  const ui = async () => JSON.parse((await host.connection.dispatch({ path: '/api/kb/memories' })).body).rows;
+  let rows = await ui(); assert.equal(rows.length, 3);
+  assert.ok(rows.some(row => row.id === projectA.id)); assert.ok(!rows.some(row => row.scope === 'session'));
+  assert.ok(!rows.some(row => String(row.id).startsWith('builtin-')));
+  assert.equal((await host.memory.consolidate()).ok, true);
+  assert.equal((await query(workspaceA, 'one')).matched, 2);
+  assert.equal((await host.memory.update({ id: global.id, content: '航线偏好：提前一小时到达', category: '偏好' })).ok, true);
+  assert.match(JSON.stringify(await query(workspaceA, 'one')), /提前一小时到达/);
+  assert.equal((await host.memory.remove(projectA.id)).ok, true);
+  found = await query(workspaceA, 'one'); assert.equal(found.matched, 1); assert.doesNotMatch(JSON.stringify(found), /项目甲资料/);
+  rows = await ui(); assert.ok(!rows.some(row => row.id === projectA.id));
+  await disposeHost(host); host = null;
+  host = await createHost({ userDataDir: path.join(dir, 'data'), builtinPluginsDir: builtins, mountPlugins: true });
+  found = await query(workspaceB, 'two'); assert.equal(found.matched, 2);
+  assert.doesNotMatch(JSON.stringify(found), /项目甲资料|当前会话资料/);
+});

@@ -247,6 +247,28 @@ export class MemoryService extends Service {
     return pages;
   }
 
+  // 直接读取记忆原始数据供知识库检索，避免复制后的陈旧内容；会话和项目范围仍受限。
+  async knowledgeRows({ workspacePath = '', sessionId = '', allWorkspaces = false } = {} as any) {
+    await this.wikiReady();
+    const normalize = (value: any) => { const normalized = value ? path.normalize(String(value)) : '';
+      return normalized === path.parse(normalized).root ? normalized : normalized.replace(/[\\/]+$/, ''); };
+    const normalizedWorkspace = normalize(workspacePath);
+    const allowed = (item: any) => item.scope === 'global'
+      || (item.scope === 'workspace' && (allWorkspaces || (normalizedWorkspace && normalize(item.workspacePath) === normalizedWorkspace)))
+      || (item.scope === 'session' && sessionId && item.sessionId === sessionId);
+    const rows = new Map<string, any>();
+    for (const page of await readWikiPages(this.wikiRoot())) {
+      if (!allowed(page)) continue;
+      for (const row of page.rows) rows.set(String(row.id), { ...row, scope: page.scope, workspacePath: page.workspacePath || '' });
+    }
+    // 尚在整合队列中的新记忆也要立即可查；同一条记忆以待整合版本为准。
+    for (const item of await this.readSaved()) {
+      if (allowed(item)) rows.set(String(item.id), { id: item.id, name: item.name, category: item.category,
+        kind: item.kind, content: item.content, scope: item.scope, workspacePath: item.workspacePath || '' });
+    }
+    return [...rows.values()];
+  }
+
   // 编辑一条记忆：内置条目写覆盖表；待整合队列（含会话记忆）改 memory.json；已整合的改 wiki 页面。
   async update(payload) {
     const id = String(payload?.id || "").trim();

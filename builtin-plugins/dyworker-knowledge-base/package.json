@@ -1,0 +1,13 @@
+{
+  "name": "dyworker-knowledge-base",
+  "version": "0.1.5",
+  "private": true,
+  "type": "module",
+  "description": "导入资料并按分类和关键词检索知识库。",
+  "homepage": "https://github.com/htcqp802/dsh-knowledge-base",
+  "main": "index.js",
+  "exports": { ".": "./index.js", "./client": "./client.js" },
+  "dsh": { "client": { "platform": "web" } },
+  "dyworker": { "builtin": true },
+  "license": "MIT"
+}
