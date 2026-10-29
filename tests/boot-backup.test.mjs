@@ -18,6 +18,8 @@ test("启动快照：复制会话与设置，且不碰大目录", async (t) => {
   await fs.writeFile(path.join(dir, "sessions", "index.json"), JSON.stringify({ version: 1, order: ["a"], activeId: "a" }), "utf8");
   await fs.writeFile(path.join(dir, "sessions", "a-1.json"), JSON.stringify({ id: "a", messages: [{ role: "user", content: "hi" }] }), "utf8");
   await fs.writeFile(path.join(dir, "settings.json"), JSON.stringify({ endpoint: "https://x", model: "m" }), "utf8");
+  const usage = [{ time: "2026-08-01T10:00:00Z", model: "m", prompt: 100, completion: 20 }];
+  await fs.writeFile(path.join(dir, "usage-stats.json"), JSON.stringify(usage), "utf8");
   await fs.mkdir(path.join(dir, "memory-wiki", "pages"), { recursive: true });
   await fs.writeFile(path.join(dir, "memory-wiki", "pages", "facts.md"), "# 事实\n长期记忆", "utf8");
   await fs.mkdir(path.join(dir, "models", "big"), { recursive: true });
@@ -25,10 +27,13 @@ test("启动快照：复制会话与设置，且不碰大目录", async (t) => {
 
   const result = await snapshotCriticalFiles({ dir, now: () => new Date("2026-10-01T10:00:00Z") });
   assert.equal(result.ok, true);
-  assert.equal(result.copied, 4, "index + 1 个会话 + settings + memory-wiki");
+  assert.equal(result.copied, 5, "index + 1 个会话 + settings + memory-wiki + usage-stats");
   const snap = path.join(dir, ".backups", "2026-10-01T10-00-00-000Z");
   assert.ok((await fs.readdir(path.join(snap, "sessions"))).includes("a-1.json"));
   assert.equal(JSON.parse(await fs.readFile(path.join(snap, "settings.json"), "utf8")).model, "m");
+  await fs.writeFile(path.join(dir, 'usage-next.json'), '[]', 'utf8');
+  await fs.rename(path.join(dir, 'usage-next.json'), path.join(dir, 'usage-stats.json'));
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(snap, "usage-stats.json"), "utf8")), usage, "主文件更新后，快照仍保留历史用量");
   assert.equal(await fs.stat(path.join(snap, "models")).catch(() => null), null, "不应快照 models 这类可再生目录");
   assert.match(await fs.readFile(path.join(snap, "memory-wiki", "pages", "facts.md"), "utf8"), /长期记忆/, "记忆 wiki 应被快照");
   // 会话文件用硬链接：内容一致且不额外占盘（同一 inode）

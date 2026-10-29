@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import test from 'node:test';
+import { aggregateTokenActivity } from '../src/tokenActivity.ts';
 import { runAgent, compactConversation, reviewApproval } from '../electron/agent.mts';
 const settings = { endpoint: 'http://mock.local/v1/chat/completions', model: 'audit-model', apiKey: 'test' };
 const response = (message) => ({ ok: true, json: async () => ({ choices: [{ message }], usage: { prompt_tokens: 100, completion_tokens: 10 } }) });
@@ -47,7 +48,7 @@ test('超限后的强制压缩与重试都计入用量', async t => {
 });
 async function storageHarness(seed = []) {
   const source = await readModuleSource(new URL('../electron/main.mts', import.meta.url));
-  const block = source.slice(source.indexOf('const USAGE_STATS_LIMIT ='), source.indexOf('// ---- 跨会话历史搜索 ----'));
+  const block = source.slice(source.indexOf('let usageStatsCache ='), source.indexOf('// ---- 跨会话历史搜索 ----'));
   const clear = source.slice(source.indexOf('function clearUsageStats()'), source.indexOf('\nconst shellDeps ='));
   let reads = 0; let release;
   let persisted = structuredClone(seed);
@@ -98,15 +99,28 @@ test('清空时尚未完成的读取不会把旧记录恢复', async () => {
   assert.equal(persisted.length, 1);
   assert.equal(persisted[0].model, 'new');
 });
-test('达到记录上限后并发写入仍保留最新两万条', async () => {
-  const store = await storageHarness(Array.from({ length: 20000 }, (_, i) => ({ model: `old-${i}`, prompt: 1, completion: 0 })));
+test('超过两万次调用后仍保留八九月份历史，保存并重启后累计不减少', async () => {
+  const seed = Array.from({ length: 20000 }, (_, i) => ({ time: i % 2 ? '2026-08-15T10:00:00+08:00' : '2026-09-15T10:00:00+08:00', model: `old-${i}`, prompt: 1, completion: 0 }));
+  const store = await storageHarness(seed);
   store.release();
   await store.readUsageStats();
   await Promise.all(Array.from({ length: 20 }, (_, i) => store.appendUsageStat({ model: `new-${i}`, prompt: 10, completion: 1 })));
   const persisted = await store.flush();
-  assert.equal(persisted.length, 20000);
-  assert.equal(persisted[0].model, 'old-20');
+  assert.equal(persisted.length, 20020);
+  assert.equal(persisted[0].model, 'old-0');
+  assert.equal(persisted.filter(e => e.time.startsWith('2026-08')).length, 10000);
+  assert.equal(persisted.filter(e => e.time.startsWith('2026-09')).length, 10000);
   assert.equal(persisted.filter(e => e.model.startsWith('new-')).length, 20);
+  const restarted = await storageHarness(persisted);
+  restarted.release();
+  const restored = await restarted.readUsageStats();
+  assert.equal(restored.length, 20020);
+  assert.equal(restored.reduce((sum, e) => sum + e.prompt + e.completion, 0), 20220);
+  const activity = aggregateTokenActivity(restored.filter(e => e.model.startsWith('old-')), new Date('2026-10-29T10:00:00+08:00'));
+  const days = activity.weeks.flatMap(week => week.days);
+  assert.equal(days.find(day => day.key === '2026-08-15').tokens, 10000);
+  assert.equal(days.find(day => day.key === '2026-09-15').tokens, 10000);
+  assert.equal(activity.total, 20000);
 });
 
 test('压缩请求未返回用量时仍生成带估算标记的记录', async () => {

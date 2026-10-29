@@ -14,7 +14,7 @@ const KEEP_SNAPSHOTS = 3;
 const MAX_BYTES = 200 * 1024 * 1024;
 
 // 单文件状态：缺失就跳过
-const STATE_FILES = ["settings.json", "workspace-pins.json", "skills.json", "appearance.json", "standing-rules.json", "memory.json"];
+const STATE_FILES = ["settings.json", "workspace-pins.json", "skills.json", "appearance.json", "standing-rules.json", "memory.json", "usage-stats.json"];
 
 // 目录型状态：记忆 wiki（页面都是用户/助手长期积累的，不可再生）
 const STATE_DIRS = ["memory-wiki"];

@@ -941,10 +941,8 @@ async function readHooks(workspacePath) {
 
 // ---- token 用量统计（按模型累计，端点实测优先，估算记录 estimated 标记）----
 
-const USAGE_STATS_LIMIT = 20000;
-
-// 进程内缓存 + 防抖落盘：此前每次用量事件都把整个文件（上限 2 万条、可达数 MB）
-// 读-改-写一遍；现在读一次常驻内存，写入合并到 1 秒一次的尾沿
+// 历史用量持续保留，不能按调用次数裁剪，否则累计值和活动图会随新调用丢失历史。
+// 进程内缓存 + 防抖落盘：读一次常驻内存，写入合并到 1 秒一次的尾沿。
 let usageStatsCache = null;
 let usageStatsLoadPromise = null;
 let usageStatsWriteTimer = null;
@@ -983,7 +981,6 @@ async function appendUsageStat(event) {
       .filter(key => event[key] != null && Number.isFinite(Number(event[key])) && Number(event[key]) >= 0)
       .map(key => [key, Math.round(Number(event[key]))])),
   });
-  if (items.length > USAGE_STATS_LIMIT) usageStatsCache = items.slice(-USAGE_STATS_LIMIT);
   scheduleUsageStatsWrite();
 }
 
