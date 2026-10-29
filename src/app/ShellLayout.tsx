@@ -60,7 +60,6 @@ export interface ShellChromeProps {
   runPushOnly: () => Promise<void>;
   setConversationSearchOpen: Dispatch<SetStateAction<boolean>>;
   botTeamPageOpen: boolean;
-  botTeamProvider: string;
   sidebarOpen: boolean;
   setSidebarOpen: Dispatch<SetStateAction<boolean>>;
   settingsOpen: boolean;
@@ -133,7 +132,6 @@ export function ShellChrome(props: ShellChromeProps) {
     runPushOnly,
     setConversationSearchOpen,
     botTeamPageOpen,
-    botTeamProvider,
     sidebarOpen,
     setSidebarOpen,
     settingsOpen,
@@ -371,7 +369,7 @@ export function ShellChrome(props: ShellChromeProps) {
               <PanelLeftIcon size={18} />
             </button>
             {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? (botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队") : activeSession?.title || "新任务"}</strong>
+            <strong>{botTeamPageOpen ? "机器人团队" : activeSession?.title || "新任务"}</strong>
           </div>
           {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}

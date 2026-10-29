@@ -69,7 +69,6 @@ export interface ConversationPaneProps {
 
   botTeamPageOpen: boolean;
   botTeamAvailable: boolean;
-  botTeamProvider: string;
   pluginsPageOpen: boolean;
   settingsOpen: boolean;
 
@@ -263,7 +262,7 @@ export function ConversationPane(props: ConversationPaneProps) {
   const {
     ConversationMessageRow, messageRowActions,
     activeSession, workspacePath,
-    botTeamPageOpen, botTeamAvailable, botTeamProvider, pluginsPageOpen, settingsOpen,
+    botTeamPageOpen, botTeamAvailable, pluginsPageOpen, settingsOpen,
     conversationView, setConversationView, pluginConversationViews,
     conversationSearchOpen, setConversationSearchOpen, conversationSearchQuery, setConversationSearchQuery,
     conversationSearchMatchIndex, setConversationSearchMatchIndex, conversationMatchTotal, conversationSearchInputRef,
@@ -283,8 +282,8 @@ export function ConversationPane(props: ConversationPaneProps) {
   } = props;
   return (
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
-        {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label={botTeamProvider === "qwenpaw" ? "QwenPaw 助手页面" : "机器人团队页面"}>
-          <PluginSlotView slot="workspace.page" pluginId={botTeamProvider} pluginKey={botTeamProvider === "qwenpaw" ? "qwenpaw" : "bot-team"} visible={!settingsOpen} />
+        {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
+          <PluginSlotView slot="workspace.page" pluginId="ds-bot" pluginKey="bot-team" visible={!settingsOpen} />
         </section> : <>
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}

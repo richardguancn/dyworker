@@ -42,7 +42,6 @@ export interface SidebarProps {
   setBotTeamPageOpen: Dispatch<SetStateAction<boolean>>;
   setPluginsPageOpen: Dispatch<SetStateAction<boolean>>;
   botTeamAvailable: boolean;
-  botTeamProvider: string;
   setRightPanelOpen: Dispatch<SetStateAction<boolean>>;
   setConversationView: Dispatch<SetStateAction<string>>;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
@@ -86,7 +85,7 @@ export function Sidebar(props: SidebarProps) {
     workspaceMenuPath, setWorkspaceMenuPath, sessionMenuId, setSessionMenuId,
     renamingId, setRenamingId,
     pluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen, setPluginsPageOpen,
-    botTeamAvailable, botTeamProvider, setRightPanelOpen, setConversationView,
+    botTeamAvailable, setRightPanelOpen, setConversationView,
     setSettingsOpen, setConversationSearchOpen, setTerminalOpen,
     recentExpanded, showArchived, setShowArchived, sessions,
     runningSessionIds, sleepingSessions, skillSummarySessionId, fileManagerLabel,
@@ -325,9 +324,9 @@ export function Sidebar(props: SidebarProps) {
 
           {botTeamAvailable && <section className="sidebar-section bot-team-section">
             <button className={`recent-section-toggle bot-team-entry ${botTeamPageOpen ? "active" : ""}`}
-              aria-label={botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队"} aria-current={botTeamPageOpen ? "page" : undefined}
+              aria-label="机器人团队" aria-current={botTeamPageOpen ? "page" : undefined}
               onClick={() => { setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
-              <Bot size={16} /><span>{botTeamProvider === "qwenpaw" ? "QwenPaw 助手" : "机器人团队"}</span><ChevronRight size={13} />
+              <Bot size={16} /><span>机器人团队</span><ChevronRight size={13} />
             </button>
           </section>}
 

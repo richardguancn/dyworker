@@ -13,12 +13,11 @@ import { useViewStore } from "./viewStore";
 export function usePluginSessionRuntime({ activeSession }: { activeSession: SessionRecord | undefined }) {
   const { sessions, workspacePath, activeId } = useSessionStore();
   const { setPluginPanelChoices } = usePanelStore();
-  const { setToolPanelTabs, setBotTeamProvider, setBotTeamAvailable, setBotTeamPageOpen, setPluginConversationViews, setConversationView, setRightPanelOpen, setActiveToolPanelTabId, setToolPanelMenuOpen } = useLayoutStore();
+  const { setToolPanelTabs, setBotTeamAvailable, setBotTeamPageOpen, setPluginConversationViews, setConversationView, setRightPanelOpen, setActiveToolPanelTabId, setToolPanelMenuOpen } = useLayoutStore();
   const { ready } = useViewStore();
 
 
-  // 内置插件（随应用分发、默认启用）的客户端半边开机自动加载——内置就该开机即用，
-  // 不需要用户去插件页点"加载界面半边"。失败只记录，不影响启动。
+  // 已启用插件的客户端界面在启动后自动加载。失败只记录，不影响启动。
   useEffect(() => {
     let cancelled = false;
     void loadEnabledClientHalves().then((results) => {
@@ -69,9 +68,7 @@ export function usePluginSessionRuntime({ activeSession }: { activeSession: Sess
     const host = clientHost();
     const sync = () => {
       const pages = host.contributionsFor("workspace.page");
-      const qwenpaw = pages.some(item => item.pluginId === "qwenpaw" && item.meta.key === "qwenpaw");
-      const available = qwenpaw || pages.some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
-      setBotTeamProvider(qwenpaw ? "qwenpaw" : "ds-bot");
+      const available = pages.some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
       setBotTeamAvailable(available);
       if (!available) setBotTeamPageOpen(false);
     };

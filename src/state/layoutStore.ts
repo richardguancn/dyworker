@@ -80,8 +80,6 @@ export interface LayoutState {
   setBotTeamPageOpen: (value: Updater<boolean>) => void;
   botTeamAvailable: boolean;
   setBotTeamAvailable: (value: Updater<boolean>) => void;
-  botTeamProvider: string;
-  setBotTeamProvider: (value: Updater<string>) => void;
 
   conversationView: string;
   setConversationView: (value: Updater<string>) => void;
@@ -166,8 +164,6 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setBotTeamPageOpen: (value) => set((s) => updateField(s, "botTeamPageOpen", value)),
   botTeamAvailable: false,
   setBotTeamAvailable: (value) => set((s) => updateField(s, "botTeamAvailable", value)),
-  botTeamProvider: "ds-bot",
-  setBotTeamProvider: (value) => set((s) => updateField(s, "botTeamProvider", value)),
 
   conversationView: "chat",
   setConversationView: (value) => set((s) => updateField(s, "conversationView", value)),

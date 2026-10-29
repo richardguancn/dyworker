@@ -110,7 +110,7 @@ export function App() {
     railMenuOpen, setRailMenuOpen, topMenuOpen, setTopMenuOpen, conversationToolsOpen, setConversationToolsOpen,
     sessionMenuId, setSessionMenuId, workspaceMenuPath, setWorkspaceMenuPath, renamingId, setRenamingId,
     pluginsPageOpen, setPluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen,
-    botTeamAvailable, setBotTeamAvailable, botTeamProvider, setBotTeamProvider,
+    botTeamAvailable, setBotTeamAvailable,
     conversationView, setConversationView, pluginConversationViews, setPluginConversationViews,
     showArchived, setShowArchived, workspaceOpen, setWorkspaceOpen,
     workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionsExpanded, setWorkspaceSessionsExpanded,
@@ -1205,7 +1205,6 @@ export function App() {
         runPushOnly={runPushOnly}
         setConversationSearchOpen={setConversationSearchOpen}
         botTeamPageOpen={botTeamPageOpen}
-        botTeamProvider={botTeamProvider}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
         settingsOpen={settingsOpen}
@@ -1256,7 +1255,6 @@ export function App() {
         setBotTeamPageOpen={setBotTeamPageOpen}
         setPluginsPageOpen={setPluginsPageOpen}
         botTeamAvailable={botTeamAvailable}
-        botTeamProvider={botTeamProvider}
         setRightPanelOpen={setRightPanelOpen}
         setConversationView={setConversationView}
         setSettingsOpen={setSettingsOpen}
@@ -1308,7 +1306,6 @@ export function App() {
         activeId={activeId}
         botTeamPageOpen={botTeamPageOpen}
         botTeamAvailable={botTeamAvailable}
-        botTeamProvider={botTeamProvider}
         pluginsPageOpen={pluginsPageOpen}
         settingsOpen={settingsOpen}
         conversationView={conversationView}
