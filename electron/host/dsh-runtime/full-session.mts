@@ -294,7 +294,16 @@ export class OfficialDshSession {
         const result = await this.options.onExtraTool(message.tool.name, message.tool.args,
           { sessionId: message.tool.sessionId, callId: message.tool.callId, signal: controller.signal });
         controller.signal.throwIfAborted();
-        value = result?.control === true && input.fixedExtraTools?.includes(message.tool.name)
+        if (message.tool.name.startsWith('plugin__dyworker_linux_computer_use__')) {
+          if (result?.ok === false) throw new Error(String(result.error || result.result || '电脑操作失败'));
+          const images = Array.isArray(result?.images) ? result.images.slice(0, 2).filter((image: any) =>
+            typeof image?.data === 'string' && image.data.length <= 20_000_000 && /^image\/(png|jpeg|webp)$/i.test(image.mimeType || '')) : [];
+          const refs = images.length ? await this.persistenceContext.attachments.saveImages(images.map((image: any) => ({
+            data: Buffer.from(image.data, 'base64'), mediaType: image.mimeType, name: '电脑操作截图',
+          }))) : [];
+          controller.signal.throwIfAborted();
+          value = { text: String(result?.result || ''), images: refs };
+        } else value = result?.control === true && input.fixedExtraTools?.includes(message.tool.name)
           && ['sleep_until', 'finish_task'].includes(message.tool.name) && message.tool.sessionId === input.sessionId
           ? { text: String(result.text || ''), control: true } : { text: typeof result === 'string' ? result : JSON.stringify(result) ?? 'null' };
       } else {

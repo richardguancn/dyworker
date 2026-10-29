@@ -1,0 +1,12 @@
+{
+  "name": "dyworker-linux-computer-use",
+  "version": "0.7.31",
+  "private": true,
+  "type": "module",
+  "description": "Linux 电脑操作：查看和操作桌面应用；仅在 Linux 可用。",
+  "homepage": "https://github.com/agent-sh/computer-use-linux",
+  "main": "index.js",
+  "exports": { ".": "./index.js" },
+  "dyworker": { "builtin": true, "defaultEnabledPlatforms": ["linux"], "supportedPlatforms": ["linux"] },
+  "license": "MIT"
+}

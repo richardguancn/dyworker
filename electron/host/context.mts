@@ -15,6 +15,7 @@ import { SessionsService } from "./services/session-archive.mts";
 import { AgentService } from "./services/agent.mts";
 import { DshRuntimeService } from "./services/dsh-runtime.mts";
 import { BotTeamService } from './services/bot-team.mts';
+import { LinuxComputerUseService } from './services/linux-computer-use.mts';
 import { mountPluginHost } from "./plugin-host.mts";
 import { IpcService } from "./services/ipc.mts";
 import { StorageService } from "./services/storage.mts";
@@ -146,6 +147,7 @@ export async function createHost(options: HostOptions) {
   });
   new DshRuntimeService(ctx, { dir: path.join(options.userDataDir, 'dsh-runtime') });
   new BotTeamService(ctx);
+  new LinuxComputerUseService(ctx);
   await ctx.fiber.await();
   // 插件宿主（可选）：官方 loader + 树文件，见 host/plugin-host.mts 的挂载顺序说明
   if (options.mountPlugins) {

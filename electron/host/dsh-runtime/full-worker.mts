@@ -153,10 +153,10 @@ process.once('message', async (input: any) => {
           }
           const value = await ask('extra-tool', { tool: { sessionId: exec.agent.id, callId: exec.callId, name: tool.name, args } }, exec.signal);
           if (value.control === true) exec.concludeTurn();
-          return { text: value.text };
+          return { text: value.text, ...(Array.isArray(value.images) ? { images: value.images } : {}) };
         },
-        output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
-          render: (_args: any, value: any) => [{ type: 'text', text: value.text }] },
+        output: { schema: { type: 'object', properties: { text: { type: 'string' }, images: { type: 'array', items: { type: 'object', additionalProperties: true } } }, required: ['text'], additionalProperties: false },
+          render: (_args: any, value: any) => [{ type: 'text', text: value.text }, ...(value.images || []).map((attachment: any) => ({ type: 'image', attachment }))] },
       });
     };
     for (const wrapped of mcpDiscovery.initial) {

@@ -1094,7 +1094,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     }
     return callMcpTool(settings, name, args, { signal });
   };
-  route.dispose = async () => { await ctx.plugins.stopRun(sessionId, runId); await browserAgent.dispose(); };
+  route.dispose = async () => { await ctx.plugins.stopRun(sessionId, runId); await ctx.linuxComputerUse.stopRun(sessionId, runId); await browserAgent.dispose(); };
   return route;
 }
 
