@@ -132,6 +132,31 @@ test('取消不合作的真实插件加载会等待进程终止并删除副本',
  assert.deepEqual((await fs.readdir(os.tmpdir())).filter(name=>name.startsWith('dyw-catalog-cache-')).sort(),before);
 });
 
+test('运行中的目录提示可以落后，最终保存统计以完整读取结果为准',{timeout:20000},async t=>{
+ const {input,plugin}=await fixture(t);await plugin();
+ const ctx=await createOfficialDshContext({dataDir:input.sourceDir,workspacePath:input.workspacePath});
+ let header;
+ try{
+  const list=new ApiSessionList(ctx,16);await mountDshProfile(ctx,{...input,dataDir:input.sourceDir});
+  // 准备但不挂入运行目录的 Session 不发布事件；已有提示不会自行折叠后续记录。
+  const session=ctx.sessions.prepare('cache-root',{meta:{cwd:input.workspacePath}});header=session.header;
+  assert.equal(ctx.sessionProjections.snapshot(session).values['catalog-test'],10);
+  for(const text of ['第一条尚未计入提示的记录','第二条尚未计入提示的记录'])
+   session.append('user/message',createUserMessage({source:{kind:'user'},content:[{type:'text',text}]}),{surfaceOp:'append'});
+  // 同步比较，不靠等待时间碰运气：目录只取现有提示，完整读取才推进统计。
+  const hint=list.summaryFor(session),actual=ctx.sessionProjections.snapshot(session);
+  assert.equal(hint.projections.values['catalog-test'],10);
+  assert.equal(actual.values['catalog-test'],12);
+  assert.ok(hint.projections.asOfSeq<actual.asOfSeq);
+  const handle=await ctx.sessionPersistence.create(header);
+  try{await handle.append(session.snapshotEvents());await handle.flush();}finally{await handle.close();}
+  await ctx.sessionProjectionCache.write(session);
+ }finally{await ctx.fiber.dispose();}
+ const before=await bytes(input.sourceDir),reader=await readPluginCatalogCache({...input,headers:[header]});
+ assert.equal(reader.cachedSnapshot(header).values['catalog-test'],12);
+ assert.deepEqual(await bytes(input.sourceDir),before);
+});
+
 test('真实父子任务均使用已保存的插件统计，冷读取没有新增模型请求',{timeout:20000},async t=>{
  const {host,input,plugin,list}=await fixture(t);await plugin();
  await host.dshRuntime.request('','session-create',{cwd:input.workspacePath,sessionId:'cache-root'});let calls=0;
@@ -141,14 +166,23 @@ test('真实父子任务均使用已保存的插件统计，冷读取没有新�
    yield {type:'block-start',index:0,blockType:block.type};yield {type:'block-end',index:0,block};
    yield {type:'finish',reason:{kind:block.type==='tool-call'?'tool-calls':'stop'}};
   }});
- let expected;
- try{await runtime.start();await runtime.request('prompt',{text:'建立真实缓存子任务'});expected=(await runtime.request('history-list',{address:{kind:'session',sessionId:'cache-root'}})).items;}
+ const expected=new Map();
+ try{
+  await runtime.start();await runtime.request('prompt',{text:'建立真实缓存子任务'});await runtime.request('wait-jobs');
+  const rows=(await runtime.request('history-list',{address:{kind:'session',sessionId:'cache-root'}})).items;
+  for(const row of rows){
+   const address=row.sessionId==='cache-root'?{kind:'session',sessionId:'cache-root'}
+    :{kind:'subagent',parentSessionId:row.parentSessionId,childSessionId:row.sessionId,mode:'one-shot'};
+   // history-list 是可能尚未刷新的提示；与保存结果比较前必须取得同一任务的完整统计。
+   const state=await runtime.request('history-state',{address});expected.set(row.sessionId,state.projections.values['catalog-test']);
+  }
+ }
  finally{await runtime.close();}
  const before=await bytes(input.sourceDir),baseline=calls,result=await list();
+ assert.equal(calls,baseline,'冷读取不能新增模型请求');assert.deepEqual(await bytes(input.sourceDir),before,'冷读取不能改写原始存档');
  assert.equal(result.items.length,2);const child=result.items.find(row=>row.parentSessionId==='cache-root');assert.ok(child);
- for(const row of result.items)assert.equal(row.projections.values['catalog-test'],expected.find(item=>item.sessionId===row.sessionId).projections.values['catalog-test']);
+ for(const row of result.items)assert.equal(row.projections.values['catalog-test'],expected.get(row.sessionId),`会话 ${row.sessionId} 应保留完整读取后的统计`);
  assert.equal(result.rootIdBySession[child.sessionId],'cache-root');assert.equal(result.addresses[child.sessionId].mode,'one-shot');
- assert.equal(calls,baseline);assert.deepEqual(await bytes(input.sourceDir),before);
 });
 
 for(const disable of [true,false])test(`读取完成前${disable?'真实停用插件':'原依赖目录切换后回滚'}会拒绝旧结果`,{timeout:20000},async t=>{
