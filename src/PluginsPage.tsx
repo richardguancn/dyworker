@@ -329,7 +329,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                   {bundle?.version ? <span className="plugin-tag">v{bundle.version}</span> : null}
                   {bundle?.source?.kind === 'local' && !entry.builtin ? <span className="plugin-tag">本地制作</span> : null}
 
-                  <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.disabled ? "已停用" : entry.active ? "已启动" : entry.state === "session-required" ? "用于 DSH 插件会话" : entry.state === "loading" ? "启动中" : entry.state === "failed" ? "启动失败" : "等待所需能力"}</span>
+                  <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.unsupportedReason ? "当前系统不支持" : entry.disabled ? "已停用" : entry.active ? "已启动" : entry.state === "session-required" ? "用于 DSH 插件会话" : entry.state === "loading" ? "启动中" : entry.state === "failed" ? "启动失败" : "等待所需能力"}</span>
                   {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
                   {/* 内置插件：随应用分发、开机自动加载，可停用但不能卸载（说明收进悬浮） */}
                   {entry.builtin ? (
@@ -339,6 +339,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                   ) : null}
                 </div>
                 {description ? <p className="plugin-card-desc">{description}</p> : <p className="plugin-card-desc muted">{entry.name}</p>}
+                {entry.unsupportedReason && <p className="plugin-card-desc muted">{entry.unsupportedReason}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
                 <div className="plugin-card-tools">
                   <button className="plugins-text-button" aria-label={`查看 ${entry.id} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>详情</button>

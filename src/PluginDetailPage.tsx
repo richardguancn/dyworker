@@ -8,7 +8,7 @@ import {BUILTIN_PLUGIN_LABELS} from './pluginLabels';
 import type { PluginCompatibility, PluginDetailRecord, PluginEntryRecord, PluginBundleRecord } from './types';
 
 export function pluginStateLabel(entry: PluginEntryRecord) {
-  return entry.disabled ? '已停用' : entry.active ? '已启动' : entry.state === 'session-required' ? '用于 DSH 插件会话'
+  return entry.unsupportedReason ? '当前系统不支持' : entry.disabled ? '已停用' : entry.active ? '已启动' : entry.state === 'session-required' ? '用于 DSH 插件会话'
     : entry.state === 'loading' ? '启动中' : entry.state === 'stopping' ? '正在停用' : entry.state === 'failed' ? '启动失败' : '等待所需能力';
 }
 
@@ -79,7 +79,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
           {entry?.builtin && <span className="plugin-tag">内置</span>}{catalog && <span className="plugin-tag">{catalog.category}</span>}</div>
       </div>
       <div className="plugin-detail-actions">{entry ? <>
-        <button className="plugins-add-button" disabled={busy || checking} onClick={onToggle}>{entry.disabled ? '启用插件' : '停用插件'}</button>
+        <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? '启用插件' : '停用插件'}</button>
         {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>卸载插件</button>}
       </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>安装插件</button>}</div>
     </header>
@@ -89,7 +89,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
     {entry?.error && <div className="plugins-message bad" role="alert">{entry.error}</div>}
     {bundle?.drift && <div className="plugins-message warn">版本与安装记录不一致：{bundle.drift}</div>}
     <section className="plugin-detail-section"><h2>使用方式</h2>
-      {entry?.state === 'session-required' ? <p>在任务中选择“DSH 插件会话”使用。会话中的设置单独保存。</p>
+      {entry?.unsupportedReason ? <p>{entry.unsupportedReason}</p> : entry?.state === 'session-required' ? <p>在任务中选择“DSH 插件会话”使用。会话中的设置单独保存。</p>
         : entry?.disabled ? <p>插件已停用。启用后可在适用的任务中使用。</p>
         : entry ? <p>{entry.active ? '插件已启动，可在适用的任务中使用。' : '插件尚未启动，请查看上方状态和原因。'}</p>
         : <p>安装时会检查所选版本是否可用。</p>}

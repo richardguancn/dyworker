@@ -221,12 +221,12 @@ export class PluginHostService extends Service {
         const full = path.join(dir, name);
         if (prefix) {
           const manifest = this.readBuiltinManifest(full);
-          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full, defaultDisabled: manifest.dyworker?.defaultEnabled === false });
+          if (manifest) found.push({ id: manifest.name || `${prefix}/${name}`, name: manifest.name || `${prefix}/${name}`, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) && !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform)) });
           continue;
         }
         if (name.startsWith("@")) { readDir(full, name); continue; }
         const manifest = this.readBuiltinManifest(full);
-        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full, defaultDisabled: manifest.dyworker?.defaultEnabled === false });
+        if (manifest) found.push({ id: manifest.name || name, name: manifest.name || name, dir: full, supportedPlatforms: manifest.dyworker?.supportedPlatforms, defaultDisabled: manifest.dyworker?.defaultEnabled === false || (Array.isArray(manifest.dyworker?.defaultEnabledPlatforms) && !manifest.dyworker.defaultEnabledPlatforms.includes(process.platform)) });
       }
     };
     readDir(root, "");
@@ -242,6 +242,13 @@ export class PluginHostService extends Service {
     } catch {
       return null;
     }
+  }
+
+  unsupportedReason(row) {
+    const builtin = this.builtinPlugins().find(entry => entry.id === row.id || entry.name === row.name);
+    if (!Array.isArray(builtin?.supportedPlatforms) || builtin.supportedPlatforms.includes(process.platform)) return null;
+    const labels = { linux: 'Linux', darwin: 'macOS', win32: 'Windows' };
+    return `此插件仅支持 ${builtin.supportedPlatforms.map(platform => labels[platform] || platform).join('、')}，当前系统无法使用。`;
   }
 
   /** 条目模块名 → 客户端半边声明（dsh.client，没有则为 null） */
@@ -311,7 +318,8 @@ export class PluginHostService extends Service {
     }
     this.patchWarnings = warnings;
     this.rows = rows.map((row) => normalizeRow(
-      builtinNames.has(row.name) || builtinIds.has(row.id) ? { ...row, builtin: true } : row,
+      builtinNames.has(row.name) || builtinIds.has(row.id)
+        ? { ...row, builtin: true, ...(this.unsupportedReason(row) ? { disabled: true } : {}) } : row,
     ));
     return this.rows;
   }
@@ -1215,7 +1223,7 @@ export class PluginHostService extends Service {
       return {
         id: row.id, name: row.name, description: this.descriptions.get(row.name) || "",
         client: this.clients.get(row.name) || null, builtin: Boolean(row.builtin),
-        disabled, config: row.config ?? null, ...runtime,
+        disabled, config: row.config ?? null, ...runtime, unsupportedReason: this.unsupportedReason(row),
         error: this.failures.get(row.id) || (runtime.missingServices.length ? `等待必需能力：${runtime.missingServices.join("、")}` : null),
       };
     });
@@ -1272,6 +1280,10 @@ export class PluginHostService extends Service {
   async setEnabled(target, enabled) {
     const ids = this.resolveTargetIds(target);
     if (!ids.length) return { ok: false, id: target, error: this.targetError(target) };
+    if (enabled) {
+      const unsupported = ids.map(id => this.rows.find(row => row.id === id)).filter(Boolean).map(row => this.unsupportedReason(row)).find(Boolean);
+      if (unsupported) return { ok: false, id: target, error: unsupported };
+    }
     const results = [];
     for (const id of ids) {
       const row = this.baseRows.find((item) => item.id === id);

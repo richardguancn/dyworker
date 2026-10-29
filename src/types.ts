@@ -1310,6 +1310,7 @@ export interface PluginEntryRecord {
   client?: { platform?: string; inject?: string[] } | null;
   /** 内置插件（随应用分发，默认启用，可在插件页停用） */
   builtin?: boolean;
+  unsupportedReason?: string | null;
   disabled: boolean;
   config: unknown;
   active: boolean;
