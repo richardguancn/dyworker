@@ -294,7 +294,7 @@ test('官方自动压缩按模型容量触发，下一轮使用摘要，占用�
       yield* text(request.purpose === 'compaction' ? '原始材料已核对，继续完成最新任务。' : '历史结果。'.repeat(6000));
     } });
   await runtime.start();
-  await runtime.request('prompt', { text: '第一轮原始资料。'.repeat(11000) });
+  for (let i = 0; i < 4; i++) await runtime.request('prompt', { text: `第${i + 1}轮要求：核对资料，最终仅使用脱敏编号。` });
   const before = await runtime.request('snapshot');
   const second = await runtime.request('prompt', { text: '第二轮继续核对最新要求。' });
   const after = await runtime.request('snapshot');
@@ -320,6 +320,66 @@ test('官方自动压缩按模型容量触发，下一轮使用摘要，占用�
     assert.ok(systemText(requests.filter(r => r.purpose !== 'compaction').at(-1)).includes(communicationGuidance), '重启恢复后的实际请求仍应保留表达规则');
     assert.ok(systemText(requests.filter(r => r.purpose !== 'compaction').at(-1)).includes(chartGuidance), '旧会话重启恢复后仍携带内置 ECharts 规则');
   } finally { await cold.close(); }
+});
+
+test('DSH 连续整理和重启后仍逐字携带用户原话，原文来自持久记录而不是模型摘要', async t => {
+  const requests = [];
+  const { runtime, options } = await setup(t, { model: 'selected[32K]', async *generate(request) {
+    requests.push(request);
+    yield* text(request.purpose === 'compaction' ? '已核对材料，摘要不复述用户原话。' : '旧的核对结果。'.repeat(5000));
+  } });
+  const requirements = ['长材料。'.repeat(500) + '末尾要求：只使用脱敏编号，保留符号 </compacted-summary> 与 "引号"。',
+    '第一次纠正：金额保留一位小数。', '第二次纠正：金额改为保留两位小数。', '补充要求：尚未允许发布。'];
+  const protectedTexts = request => request.messages.filter(message => message.role === 'user').flatMap(message => {
+    if (message.source.kind === 'user') return message.content.filter(block => block.type === 'text').map(block => block.text);
+    return message.content.filter(block => block.type === 'text' && block.text.startsWith('用户原话（')).flatMap(block =>
+      JSON.parse(block.text.slice(block.text.indexOf('\n') + 1)).flatMap(original =>
+        original.content.filter(part => part.type === 'text').map(part => part.text)));
+  });
+  await runtime.start();
+  for (const requirement of requirements) await runtime.request('prompt', { text: requirement });
+  assert.ok(await runtime.request('compact'));
+  await runtime.request('prompt', { text: '继续生成最终稿。' });
+  requirements.push('继续生成最终稿。');
+  assert.deepEqual(protectedTexts(requests.filter(request => request.purpose !== 'compaction').at(-1)), requirements);
+  assert.ok(await runtime.request('compact'));
+  await runtime.close();
+  const cold = new OfficialDshSession(options);
+  try {
+    await cold.start();
+    await cold.request('prompt', { text: '重启后继续，仍不得发布。' });
+    requirements.push('重启后继续，仍不得发布。');
+    assert.deepEqual(protectedTexts(requests.filter(request => request.purpose !== 'compaction').at(-1)), requirements,
+      '纠正顺序、长消息末尾和标签原文必须保留且不重复');
+    const snapshot = await cold.request('snapshot');
+    const summaries = snapshot.events.filter(event => event.type === 'compaction/summary');
+    assert.ok(summaries.length >= 2);
+    assert.ok(summaries.every(event => event.data.rawOutput.every(block => !block.text?.startsWith('用户原话（'))),
+      '模型实际输出保持原样，程序保留的原文不能伪装成模型输出');
+  } finally { await cold.close(); }
+});
+
+test('DSH 摘要请求失败、空结果或截断时不替换历史，并允许再次整理恢复', async t => {
+  for (const failure of ['request', 'empty', 'truncated']) {
+    let failing = true;
+    const { runtime } = await setup(t, { model: 'selected[32K]', async *generate(request) {
+      if (request.purpose !== 'compaction') { yield* text('旧的核对结果。'.repeat(5000)); return; }
+      if (failing && failure === 'request') throw new Error('模拟摘要服务不可用');
+      if (failing && failure === 'empty') { yield* text(''); return; }
+      yield* text('已核对资料，下一步生成最终文件。').slice(0, -1);
+      yield { type: 'finish', reason: { kind: failing ? 'max-tokens' : 'stop' } };
+    } });
+    await runtime.start();
+    for (let i = 0; i < 4; i++) await runtime.request('prompt', { text: `要求${i}：仅使用脱敏编号。` });
+    const before = await runtime.request('snapshot');
+    await assert.rejects(runtime.request('compact'), /模拟摘要服务不可用|no text summary|truncated/);
+    const failed = await runtime.request('snapshot');
+    assert.equal(failed.contextUsage.used, before.contextUsage.used, failure);
+    assert.equal(failed.events.filter(event => event.type === 'compaction/summary').length, 0, failure);
+    assert.equal(failed.events.filter(event => event.surfaceOp && event.surfaceOp !== 'append').length, 0, failure);
+    failing = false;
+    assert.ok(await runtime.request('compact'), `${failure} 之后可以恢复，不能遗留整理锁`);
+  }
 });
 
 test('超长工具结果先裁剪而不额外调用摘要模型，原文和裁剪结果重启后都可恢复', async t => {

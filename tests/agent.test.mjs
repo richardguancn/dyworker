@@ -4336,6 +4336,9 @@ test("Computer Use 新状态没有截图时不会沿用上一张旧图", async (
     Array.isArray(message.content) && message.content.some((part) => part.type === "image_url")));
   assert.ok(!calls[2].messages.some((message) =>
     Array.isArray(message.content) && message.content.some((part) => part.type === "image_url")));
+  assert.ok(!result.executedMessages.some(message =>
+    Array.isArray(message.content) && message.content.some(part => part.type === 'image_url')),
+  '完整执行记录也不能让已经失效的截图在下一轮重新出现');
 });
 
 test("当前模型不支持截图时自动改用无障碍文字继续", async () => {
@@ -5295,7 +5298,7 @@ test("compactConversation 压缩早前消息为摘要，保留系统提示、原
   assert.ok(!messages.some((message, index) => index > 0 && message.role === "tool" && messages[index - 1].role !== "tool" && !messages[index - 1].tool_calls), "不存在孤立的 tool 消息");
 });
 
-test("compactConversation 摘要请求失败时熔断回退为直接省略，任务不中断", async () => {
+test("compactConversation 摘要请求失败时保留原记录，不把失败记为整理成功", async () => {
   const messages = [
     { role: "system", content: "系统提示" },
     { role: "user", content: "原始任务" },
@@ -5304,15 +5307,15 @@ test("compactConversation 摘要请求失败时熔断回退为直接省略，任
     messages.push({ role: "assistant", content: `第${index}轮`, tool_calls: [toolCall(`c${index}`, "list_files", {})] });
     messages.push({ role: "tool", tool_call_id: `c${index}`, content: "目录列表" });
   }
+  const original = structuredClone(messages);
   const compacted = await compactConversation({
     messages,
     settings,
     networkRetryBaseDelayMs: 1,
     fetchImpl: async () => { throw new Error("网络中断"); },
   });
-  assert.equal(compacted, true);
-  assert.match(messages[2].content, /已省略/);
-  assert.equal(messages[1].content, "原始任务");
+  assert.equal(compacted, false);
+  assert.deepEqual(messages, original);
 });
 
 test('少量超大消息也按容量压缩，保留全部系统约定、原始任务和最新要求', async () => {
@@ -5332,7 +5335,8 @@ test('少量超大消息也按容量压缩，保留全部系统约定、原始�
   assert.deepEqual(messages.slice(0, 3).map(m => m.content), ['系统提示', '项目约定', '原始任务']);
   assert.equal(messages.at(-1).content, '最新要求：继续核对，禁止发布');
   assert.match(messages[3].content, /简短摘要/);
-  assert.ok(estimateMessagesTokens(messages) < before / 10);
+  assert.equal(messages[4].content, '之前的补充要求。'.repeat(4000), '早前补充要求也必须完整保留');
+  assert.ok(estimateMessagesTokens(messages) < before * 0.6);
 });
 
 test("runAgent 上下文逼近模型上限时，首次模型请求前自动压缩早前会话", async () => {
@@ -5369,7 +5373,7 @@ test("runAgent 上下文逼近模型上限时，首次模型请求前自动压�
   assert.match(JSON.stringify(summaryCall.messages), /上下文压缩器/);
   const modelCall = calls[calls.length - 1];
   assert.match(JSON.stringify(modelCall.messages), /上下文压缩/, "正式请求应使用压缩后的摘要继续");
-  assert.ok(!modelCall.messages.some((message) => String(message.content || "").includes("第1条用户消息")), "早前原始消息不再逐条发送（原始任务除外）");
+  assert.ok(modelCall.messages.some((message) => String(message.content || "").includes("第1条用户消息")), "早前用户要求逐字保留，不能依赖模型摘要恢复");
 });
 
 test('百万窗口达到约八成时提前压缩，不等到接近百分之百', async () => {

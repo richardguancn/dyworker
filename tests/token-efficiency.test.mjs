@@ -99,6 +99,91 @@ test('原生长对话整理有明确预算；摘要截断时保留原始内容',
   assert.deepEqual(messages, original, '不以截断的摘要覆盖历史');
 });
 
+const compactionSettings = { endpoint: 'https://model.example.test/v1/chat/completions', model: 'test', apiKey: 'fake' };
+const longHistory = () => [{ role: 'system', content: '项目约定' }, { role: 'user', content: '整理报告' },
+  ...Array.from({ length: 22 }, (_, index) => ({ role: index % 2 ? 'user' : 'assistant',
+    content: index % 2 ? `补充要求${index}` : `工作结果${index}。`.repeat(100) }))];
+
+test('摘要服务拒绝、空摘要或取消时原记录不变，也不发布成功通知', async () => {
+  for (const outcome of ['rejected', 'empty', 'cancelled']) {
+    const messages = longHistory(), original = structuredClone(messages);
+    const controller = new AbortController();
+    const changed = await compactConversation({ messages, settings: compactionSettings, signal: controller.signal,
+      onSummary: () => assert.fail('失败不能报告整理成功'), fetchImpl: async () => {
+        if (outcome === 'rejected') return { ok: false, status: 401, text: async () => 'authentication failure' };
+        if (outcome === 'cancelled') controller.abort();
+        return chatResponse(outcome === 'empty' ? '' : '整理后的内容');
+      } });
+    assert.equal(changed, false, outcome);
+    assert.deepEqual(messages, original, outcome);
+  }
+});
+
+test('长消息末尾、早前纠正和中途系统约定完整保留，重复整理不依赖摘要复述', async () => {
+  const messages = longHistory();
+  messages[3].content = [{ type: 'text', text: '附件说明。'.repeat(13000) },
+    { type: 'text', text: '最后补充要求：只保留脱敏编号，文件名使用最终稿。' }];
+  messages.splice(6, 0, { role: 'system', content: '后续约定：金额保留两位小数' });
+  messages.splice(8, 0, { role: 'user', content: '[上下文压缩] 这是用户写的原话，也要逐字保留。' });
+  const protectedBefore = structuredClone(messages.filter(message => ['user', 'system'].includes(message.role)));
+  const fetchImpl = async () => chatResponse('已核对原始材料，下一步生成最终文件。');
+  assert.equal(await compactConversation({ messages, settings: compactionSettings, fetchImpl }), true);
+  assert.deepEqual(messages.filter(message => ['user', 'system'].includes(message.role)), protectedBefore);
+  messages.push(...Array.from({ length: 20 }, () => ({ role: 'assistant', content: '新工作记录。'.repeat(100) })));
+  assert.equal(await compactConversation({ messages, settings: compactionSettings, fetchImpl }), true);
+  assert.deepEqual(messages.filter(message => ['user', 'system'].includes(message.role)), protectedBefore);
+  assert.equal(messages.filter(message => message.role === 'assistant' && message.content.startsWith('[上下文压缩]')).length, 1);
+});
+
+test('只有用户要求可供整理时不调用模型，摘要没有缩短材料时不改写记录', async () => {
+  const users = Array.from({ length: 24 }, (_, index) => ({ role: 'user', content: `要求${index}` }));
+  const originalUsers = structuredClone(users);
+  assert.equal(await compactConversation({ messages: users, settings: compactionSettings,
+    fetchImpl: () => assert.fail('没有工作记录可缩短时不应浪费摘要调用') }), false);
+  assert.deepEqual(users, originalUsers);
+  const messages = longHistory(), original = structuredClone(messages);
+  assert.equal(await compactConversation({ messages, settings: compactionSettings,
+    fetchImpl: async () => chatResponse('没有缩短的摘要。'.repeat(2000)) }), false);
+  assert.deepEqual(messages, original);
+});
+
+test('长任务多次整理后保留本轮全部执行记录，后续会话能继续使用，文件内容实际正确', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-compaction-ledger-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const content = '必须完整保留的原始材料。'.repeat(1500);
+  let workCalls = 0, summaries = 0;
+  const result = await runAgent({ settings: compactionSettings, workspacePath: root, contextLimit: 16000,
+    conversation: [{ role: 'user', content: '制作四份材料，逐份保存并保留可继续使用的工作记录。' }],
+    fetchImpl: async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      if (!payload.tools) { summaries++; return chatResponse('已保存材料，继续制作剩余文件。'); }
+      if (workCalls < 4) {
+        const index = workCalls++;
+        return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: null,
+          tool_calls: [call(`write-${index}`, 'write_file', { path: `材料${index}.txt`, content })] } }] }) };
+      }
+      return chatResponse('四份材料已保存。');
+    } });
+  assert.equal(result.status, 'done');
+  assert.ok(summaries >= 2, `实际发生 ${summaries} 次整理`);
+  const calls = result.executedMessages.flatMap(message => message.tool_calls || []);
+  assert.deepEqual(calls.map(tool => tool.id), ['write-0', 'write-1', 'write-2', 'write-3']);
+  assert.ok(calls.every(tool => JSON.parse(tool.function.arguments).content === content));
+  assert.equal(result.executedMessages.filter(message => message.role === 'tool').length, 4);
+  assert.equal(result.executedMessages.filter(message => String(message.content).startsWith('[上下文压缩]')).length, 0);
+  for (let index = 0; index < 4; index++) assert.equal(await fs.readFile(path.join(root, `材料${index}.txt`), 'utf8'), content);
+  const next = await runAgent({ settings: compactionSettings, workspacePath: root, contextLimit: 1_000_000,
+    conversation: [{ role: 'user', content: '制作四份材料。' }, { role: 'assistant', content: result.finalText,
+      executedMessages: result.executedMessages }, { role: 'user', content: '继续核对之前的四份材料。' }],
+    fetchImpl: async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      assert.equal(payload.messages.filter(message => message.role === 'tool').length, 4);
+      assert.ok(payload.messages.some(message => message.tool_calls?.some(tool => tool.id === 'write-0')));
+      return chatResponse('已核对之前的四份材料记录。');
+    } });
+  assert.equal(next.status, 'done');
+});
+
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 const reading = content => [
   { role: 'assistant', content: '', tool_calls: [call('read-one', 'read_file', { path: '材料.txt' })] },

@@ -15,7 +15,7 @@ import * as StorageDomain from '@deepseek-ai/dsh-storage-domain';
 import ProjectionCache from '@deepseek-ai/dsh-session-projection-cache';
 import FileSystem from '@deepseek-ai/dsh-fs-local';
 import TokenMeter from '@deepseek-ai/dsh-token-meter';
-import Compaction from '@deepseek-ai/dsh-compaction-basic';
+import Compaction from './compaction.mts';
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner';
 import Subagents from '@deepseek-ai/dsh-subagent';
 import * as SpawnSubagent from '@deepseek-ai/dsh-subagent-spawn-in-process';

@@ -31,6 +31,7 @@
     "test:agent": "node --test tests/agent.test.mjs",
     "test:evals": "node --test tests/skill-evals.test.mjs",
     "eval:skills": "node evals/run-skill-evals.mjs",
+    "eval:tokens": "node evals/run-token-efficiency.mjs",
     "test:channels": "node --test tests/channels.test.mjs",
     "test:memory": "node --test tests/memory.test.mjs",
     "package": "node scripts/build.mjs package dir",

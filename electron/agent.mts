@@ -227,7 +227,14 @@ export async function runAgent({
       appendConversationMessage(entry, index);
     }
   }
-  const initialMessageCount = messages.length;
+  // 模型可见历史会被整理或裁短；本轮实际执行记录独立累积，不能再按旧下标截取。
+  let executionStart = messages.length;
+  const executionMessages: any[] = [];
+  const captureExecutionMessages = () => {
+    // 工具正文保留裁短前的副本；界面截图继续跟随原消息失效，避免下轮重新发送旧画面。
+    executionMessages.push(...messages.slice(executionStart).map(message => message.role === 'tool' ? { ...message } : message));
+    executionStart = messages.length;
+  };
 
   let activityCounter = 0;
   let currentPlanStepId = ""; // 最近一次 plan-update 中 in_progress 步骤的 id，用于给活动挂步骤
@@ -671,7 +678,8 @@ export async function runAgent({
       }
     }
 
-    const rawExecuted = messages.slice(initialMessageCount).map((msg) => ({
+    captureExecutionMessages();
+    const rawExecuted = executionMessages.map((msg) => ({
       role: msg.role,
       content: msg.content ?? "",
       ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
@@ -695,6 +703,8 @@ export async function runAgent({
   };
   for (let round = 1; ; round++) {
       if (isCancelled() || cancellationSignal?.aborted) return withChanges({ status: "cancelled", finalText });
+      // 先保存上一轮原始结果，再允许缩短本次请求携带的旧内容。
+      captureExecutionMessages();
       const thinkingStartTime = Date.now();
       let currentRoundThinking = "";
       const thinkingId = startActivity("thinking", "思考过程", "");
@@ -748,6 +758,7 @@ export async function runAgent({
           },
         }));
         if (compacted) {
+          executionStart = messages.length;
           if (memoryReviewDue) {
             messages.push({
               role: "system",
@@ -874,7 +885,10 @@ export async function runAgent({
                   }
                 },
               }));
-              if (compacted) continue;
+              if (compacted) {
+                executionStart = messages.length;
+                continue;
+              }
               // 消息结构已无法压缩（保留区之外没有可省略的内容），不再重试，落入错误分支
             }
             const canRetryWithoutImages = hasInterfaceImages(messages)
