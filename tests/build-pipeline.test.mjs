@@ -14,7 +14,7 @@ function fixture(t) {
     writeFileSync(path.join(root, file), contents);
   };
   write('package.json', '{"type":"module"}');
-  for (const file of ['build.mjs', 'build-cache.mjs']) {
+  for (const file of ['build.mjs', 'build-cache.mjs', 'build-awake.mjs']) {
     mkdirSync(path.join(root, 'scripts'), { recursive: true });
     cpSync(new URL(`../scripts/${file}`, import.meta.url), path.join(root, 'scripts', file));
   }

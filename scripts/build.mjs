@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, writeF
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuse, environmentFingerprint, fingerprint, readReceipt, writeReceipt } from './build-cache.mjs';
+import { keepBuildAwake } from './build-awake.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cacheDir = path.join(root, 'output/.build-cache');
@@ -58,7 +59,10 @@ function acquireLock() {
 }
 acquireLock();
 const started = performance.now();
+let releaseAwake = () => {};
 try {
+  releaseAwake = await keepBuildAwake();
+  if (process.platform === 'darwin') console.log('[构建] 本次构建期间保持系统唤醒，结束后自动释放');
   const environment = environmentFingerprint();
   const dependencies = fingerprint(root, ['node_modules'], { metadataOnly: true });
   const rootFiles = () => readdirSync(root, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name);
@@ -133,6 +137,7 @@ try {
     assertChecked();
   }
 } finally {
+  releaseAwake();
   rmSync(lockFile, { force: true });
   console.log(`[构建] 总耗时 ${((performance.now() - started) / 1000).toFixed(1)} 秒`);
 }

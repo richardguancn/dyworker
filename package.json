@@ -219,7 +219,11 @@
         "dir"
       ],
       "icon": "build/icon.icns",
-      "artifactName": "dyworker-${version}-${arch}.${ext}"
+      "artifactName": "dyworker-${version}-${arch}.${ext}",
+      "signIgnore": [
+        "\\.(?:nib|pak|dat|bin|asar|png|jpe?g|gif|icns|xlsx|pptx|docx|json|wasm|bcmap|icc|pfb|ttf|otf|woff2?)$",
+        "/node-llama-cpp/llama/gitRelease\\.bundle$"
+      ]
     },
     "win": {
       "target": [

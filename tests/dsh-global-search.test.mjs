@@ -19,18 +19,26 @@ const message=(session,text)=>session.append('user/message',createUserMessage({c
 async function directory(){return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dyw-global-search-')));}
 async function persist(ctx,session){const handle=await ctx.sessionPersistence.create(session.header);try{await handle.append(session.snapshotEvents());await handle.flush();}finally{await handle.close();}}
 
+// 不同测试记录彼此独立；每批仍等待真实保存完成，再开始搜索验收。
+async function persistBatch(ctx,sessions){
+  for(let start=0;start<sessions.length;start+=4)await Promise.all(sessions.slice(start,start+4).map(session=>persist(ctx,session)));
+}
+
 test('跨任务搜索在一个原始排名中返回最多二十项，未登记的高匹配任务不能参与排名；无模型或写入',async t=>{
   const dir=await directory(),ctx=await createOfficialDshContext({dataDir:dir,workspacePath:dir});
   t.after(async()=>{await ctx.fiber.dispose();await fs.rm(dir,{recursive:true,force:true});});
-  const roots=[];
+  const roots=[],initialSessions=[];
   for(let i=0;i<27;i++){
     const id=`root-${i}`,session=ctx.sessions.create(id,{meta:{cwd:dir}});
-    message(session,`corpusmarker ${i} ${'corpusmarker '.repeat(i%5)}`);await persist(ctx,session);roots.push({id,runtime:'dsh',workspacePath:dir});
+    message(session,`corpusmarker ${i} ${'corpusmarker '.repeat(i%5)}`);initialSessions.push(session);roots.push({id,runtime:'dsh',workspacePath:dir});
   }
+  await persistBatch(ctx,initialSessions);
   const expected=await ctx.sessionQuery.searchSessions({query:'corpusmarker',limit:20,eventFilters:[{kind:'type',values:['user/message','assistant/message']},{kind:'surface',values:['current']}]},{signal:signal()});
+  const outsideSessions=[];
   for(let i=0;i<65;i++){
-    const outside=ctx.sessions.create(`outside-${i}`,{meta:{cwd:dir}});message(outside,'corpusmarker corpusmarker corpusmarker corpusmarker corpusmarker');await persist(ctx,outside);
+    const outside=ctx.sessions.create(`outside-${i}`,{meta:{cwd:dir}});message(outside,'corpusmarker corpusmarker corpusmarker corpusmarker corpusmarker');outsideSessions.push(outside);
   }
+  await persistBatch(ctx,outsideSessions);
   await ctx.sessionPersistence.flush();
   const before=await ctx.sessionPersistence.list();
   const request=query=>searchDshSessions({dir,query,signal:signal(),roots:async()=>roots,active:()=>({persistenceContext:ctx})});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -67,7 +67,16 @@ test('敏感引用始终携带风险证据，正文中的提及不冒充实际�
 
 test('虚拟环境系统解释器不再当作外部数据，作为读取参数和私人链接仍受检查', async t => {
   const root = await fixture(t), workspace = new Workspace(root, { trustTempDirs: false });
-  const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
+  // 检查已知 PATH 入口，不把启动器转交到的 Xcode 等内部路径假定为已知入口。
+  let python;
+  for (const directory of String(process.env.PATH || '').split(path.delimiter)) {
+    const candidate = path.resolve(directory, IS_WINDOWS ? 'python.exe' : 'python3');
+    try {
+      await fs.access(candidate, constants.X_OK);
+      if ((await fs.stat(candidate)).isFile()) { python = candidate; break; }
+    } catch (error) { if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes(error.code)) throw error; }
+  }
+  assert.ok(python, '本项检查需要 PATH 中存在 Python');
   await fs.mkdir(path.join(root, '.venv/bin'), { recursive: true });
   await fs.symlink(python, path.join(root, '.venv/bin/python'));
   assert.deepEqual(externalPathsForTool(workspace, 'run_command', { command: '.venv/bin/python -m unittest' }), []);

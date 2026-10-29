@@ -14,8 +14,6 @@ module.exports = {
     identity: 'Dengyu Guan (FB2LB8L36P)',
     hardenedRuntime: true,
     notarize: false,
-    // 这些是资源数据，由外层应用签名封存；不逐个请求可执行文件时间戳。
-    signIgnore: ['\\.(?:nib|pak|dat|bin|asar|png|jpe?g|gif|icns|xlsx|pptx|docx|json|wasm)$'],
     extendInfo: {
       NSMicrophoneUsageDescription: '用于将你的语音转换为任务输入。',
       NSAppleEventsUsageDescription: '根据你的任务操作其他应用。',
