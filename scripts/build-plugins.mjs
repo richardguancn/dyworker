@@ -20,10 +20,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { buildClientHelpers } from './build-client-helpers.mjs';
+import { buildLinuxIcons } from './build-linux-icons.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const builtinDir = path.join(root, "builtin-plugins");
 const checkOnly = process.argv.includes("--check");
+await buildLinuxIcons({ checkOnly });
 await buildClientHelpers(checkOnly);
 
 /** 宿主模块表里已有的模块：一律外部化，运行时 require 由加载器提供 */

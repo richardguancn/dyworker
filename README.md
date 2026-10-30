@@ -136,7 +136,7 @@ macOS 打包时，图片、字体、语言包和文档等资源由外层应用�
 
 产物统一位于 `output/electron/`。
 
-Windows 和 Linux 安装包的应用图标由 `package.json` 中的 `build.win.icon`、`build.linux.icon` 分别指定，默认都使用 `build/icon.png`；Windows 打包时会自动转换成所需的图标格式。更换默认图案时，替换这张方形 PNG 后重新打包。
+Windows 和 Linux 安装包的应用图标由 `package.json` 中的 `build.win.icon`、`build.linux.icon` 分别指定。Windows 默认使用 `build/icon.png`，打包时自动转换格式；Linux 使用 `build/icons/` 中的多尺寸 PNG，构建时会从同一张圆角原图自动更新。更换默认图案时，替换 `build/icon.png` 后重新打包，也可运行 `npm run build:icons` 单独更新 Linux 菜单图标。Linux 图标包含 16、24、32、48、64、128、256、512 像素八种尺寸，避免应用菜单只收到未被主题收录的 1024 像素图标。
 
 在「设置 → 外观」中，macOS 可选择 Dock 图标，Windows 和 Linux 可选择运行窗口的深色或浅色图标，支持预览、取消和保存；图标选择独立于界面主题，保存后重启仍保留。启动器和固定快捷方式的图标由安装包提供，不随窗口图标选择改变。
 

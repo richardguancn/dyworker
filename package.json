@@ -39,7 +39,8 @@
     "package:linux:arm64": "node scripts/build.mjs package linux-arm64",
     "package:windows:x64": "node scripts/build.mjs package windows-x64",
     "preview": "vite preview",
-    "build:plugins": "node scripts/build-plugins.mjs"
+    "build:plugins": "node scripts/build-plugins.mjs",
+    "build:icons": "node scripts/build-linux-icons.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
@@ -247,7 +248,7 @@
       "target": [
         "deb"
       ],
-      "icon": "build/icon.png",
+      "icon": "build/icons",
       "maintainer": "DYWorker Team <support@dyworker.local>",
       "syncDesktopName": true
     },
