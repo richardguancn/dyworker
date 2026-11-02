@@ -23,9 +23,9 @@ export function inlineApprovalTools(tools: any[]) {
   return tools.map(tool => {
     const fn = tool?.function;
     const schema = fn?.parameters;
-    if (!fn || !schema || schema.type !== 'object' || schema.properties?.[INLINE_APPROVAL_KEY]) return tool;
+    if (!fn || !schema || schema.type !== 'object' || schema.properties?.[INLINE_APPROVAL_KEY] || !needsInlineApprovalSchema(fn.name)) return tool;
     return { ...tool, function: { ...fn, parameters: { ...schema, properties: { ...schema.properties,
-      [INLINE_APPROVAL_KEY]: { type: 'object', description: '对本次操作的审核意见；不影响工具参数',
+      [INLINE_APPROVAL_KEY]: { type: 'object', description: '本次操作审核意见',
         properties: { decision: { type: 'string', enum: ['allow', 'deny', 'ask'] }, reason: { type: 'string' } },
         required: ['decision', 'reason'] },
     } } } };

@@ -42,8 +42,10 @@ for (const [label, opinion, approved, expected] of [
   assert.equal(exists, expected);
   assert.equal(requests.length, label === '缺少意见' ? 3 : 2);
   assert.equal(approvals.length, ['缺少意见', '需要确认'].includes(label) ? 1 : 0);
-  const schema = requests[0].tools.find(item => item.function?.name === 'delete_file').function.parameters;
-  assert.ok(schema.properties.__dyworker_approval);
+  const runCmdSchema = requests[0].tools.find(item => item.function?.name === 'run_command').function.parameters;
+  assert.ok(runCmdSchema.properties.__dyworker_approval);
+  const readSchema = requests[0].tools.find(item => item.function?.name === 'read_file').function.parameters;
+  assert.equal(readSchema.properties.__dyworker_approval, undefined);
 });
 
 test('同次审核缺少路径事实时重新审核，按审核结论执行或请求授权', async t => {
