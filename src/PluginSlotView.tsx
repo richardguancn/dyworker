@@ -98,7 +98,7 @@ export function requestPluginPanels(pluginId: string, slots: string[], options: 
  * 渲染某个插件在右侧面板插槽里的贡献。
  * 未指定 pluginKey 时渲染该插槽的全部贡献（调试与预览用）。
  */
-export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session, wide, hideEmpty = false, workspacePath, visible, onClose }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown; wide?: boolean; hideEmpty?: boolean; workspacePath?: string; visible?: boolean; onClose?: () => void }) {
+export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane.tab", sessionId, session, wide, hideEmpty = false, workspacePath, visible, onClose, emptyMessage = "这个位置还没有内容" }: { pluginId?: string; pluginKey?: string; slot?: string; sessionId?: string; session?: unknown; wide?: boolean; hideEmpty?: boolean; workspacePath?: string; visible?: boolean; onClose?: () => void; emptyMessage?: string }) {
   const host = clientHost();
   const [, force] = React.useReducer((value: number) => value + 1, 0);
   React.useEffect(() => host.subscribe(() => force()), [host]);
@@ -180,7 +180,7 @@ export function PluginSlotView({ pluginId, pluginKey, slot = "sidebar.right.pane
 
   if (!contributions.length) {
     if (hideEmpty) return null;
-    return React.createElement("div", { className: "plugin-slot-empty" }, "这个位置还没有内容");
+    return React.createElement("div", { className: "plugin-slot-empty" }, emptyMessage);
   }
 
   return React.createElement(

@@ -1,5 +1,5 @@
 /**
- * 知识库管理面板 — 会话视图「知识库」tab。
+ * 知识库管理面板 — 全局设置中的知识库。
  *
  * v0.3：目录浏览器（类操作系统文件管理器）。
  *   - 面包屑导航：根 → 分类 → 文件，可点击任意层级，可返回上一级
@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { KnowledgeGraph } from './KnowledgeGraph'
 type ConvViewProps = Record<string, unknown>
 
 interface KbEntry {
@@ -78,32 +79,32 @@ type Moving = { source: string } | null
 type Collapsed = Set<string> | null
 
 const card: React.CSSProperties = {
-  border: '1px solid #e5e7eb', borderRadius: 10, padding: '14px 16px',
-  background: '#fff', boxShadow: '0 1px 3px rgba(16,24,40,.06)',
+  border: '1px solid var(--border, #e5e7eb)', borderRadius: 10, padding: '14px 16px',
+  background: 'var(--card, #fff)', boxShadow: '0 1px 3px rgba(16,24,40,.06)',
 }
 
 const heading: React.CSSProperties = { margin: '0 0 4px', fontSize: 16, fontWeight: 600 }
 
-const sub: React.CSSProperties = { margin: '0 0 12px', fontSize: 12.5, color: '#6b7280' }
+const sub: React.CSSProperties = { margin: '0 0 12px', fontSize: 12.5, color: 'var(--muted, #6b7280)' }
 
 const dropZone: React.CSSProperties = {
-  border: '2px dashed #cbd5e1', borderRadius: 8, padding: '18px',
-  textAlign: 'center', fontSize: 13, color: '#6b7280', cursor: 'pointer',
-  background: '#f9fafb', transition: 'border-color .15s',
+  border: '2px dashed var(--border-strong, #cbd5e1)', borderRadius: 8, padding: '18px',
+  textAlign: 'center', fontSize: 13, color: 'var(--muted, #6b7280)', cursor: 'pointer',
+  background: 'var(--surface, #f9fafb)', transition: 'border-color .15s',
 }
 
 const breadcrumb: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 6, fontSize: 13.5,
-  padding: '2px 0 10px', color: '#6b7280', flexWrap: 'wrap',
+  padding: '2px 0 10px', color: 'var(--muted, #6b7280)', flexWrap: 'wrap',
 }
 
-const crumb: React.CSSProperties = { cursor: 'pointer', color: '#2563eb', fontWeight: 500 }
+const crumb: React.CSSProperties = { cursor: 'pointer', color: 'var(--accent, #2563eb)', fontWeight: 500 }
 
-const crumbCurrent: React.CSSProperties = { color: '#1f2937', fontWeight: 600 }
+const crumbCurrent: React.CSSProperties = { color: 'var(--ink, #1f2937)', fontWeight: 600 }
 
 const backBtn: React.CSSProperties = {
-  border: '1px solid #d1d5db', background: '#fff', borderRadius: 6,
-  padding: '2px 10px', fontSize: 12, cursor: 'pointer', color: '#374151',
+  border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', borderRadius: 6,
+  padding: '2px 10px', fontSize: 12, cursor: 'pointer', color: 'var(--ink, #374151)',
 }
 
 const row: React.CSSProperties = {
@@ -114,35 +115,35 @@ const row: React.CSSProperties = {
 const rowActions: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }
 
 const smallBtn: React.CSSProperties = {
-  border: '1px solid #d1d5db', background: '#fff', borderRadius: 6,
-  padding: '2px 8px', fontSize: 11.5, cursor: 'pointer', color: '#374151',
+  border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', borderRadius: 6,
+  padding: '2px 8px', fontSize: 11.5, cursor: 'pointer', color: 'var(--ink, #374151)',
 }
 
 const primaryBtn: React.CSSProperties = {
-  border: '1px solid #2563eb', background: '#2563eb', color: '#fff',
+  border: '1px solid var(--accent, #2563eb)', background: 'var(--accent, #2563eb)', color: '#fff',
   borderRadius: 6, padding: '2px 8px', fontSize: 11.5, cursor: 'pointer',
 }
 
 const renameInput: React.CSSProperties = {
-  border: '1px solid #2563eb', borderRadius: 6, padding: '3px 8px',
+  border: '1px solid var(--accent, #2563eb)', borderRadius: 6, padding: '3px 8px',
   fontSize: 13, outline: 'none', width: 260,
 }
 
 const iconSize: React.CSSProperties = { fontSize: 18, flexShrink: 0 }
 
-const meta: React.CSSProperties = { fontSize: 11.5, color: '#9ca3af', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const meta: React.CSSProperties = { fontSize: 11.5, color: 'var(--muted, #9ca3af)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 
 const inputStyle: React.CSSProperties = {
-  border: '1px solid #d1d5db', borderRadius: 8, padding: '8px 12px',
+  border: '1px solid var(--border, #d1d5db)', borderRadius: 8, padding: '8px 12px',
   fontSize: 13, outline: 'none', flex: 1,
 }
 
 const button: React.CSSProperties = {
-  border: '1px solid #d1d5db', background: '#fff', borderRadius: 8,
-  padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: '#2563eb',
+  border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', borderRadius: 8,
+  padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--accent, #2563eb)',
 }
 
-const primaryButton: React.CSSProperties = { ...button, background: '#2563eb', color: '#fff', borderColor: '#2563eb' }
+const primaryButton: React.CSSProperties = { ...button, background: 'var(--accent, #2563eb)', color: '#fff', borderColor: 'var(--accent, #2563eb)' }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -208,6 +209,7 @@ function buildFolders(entries: KbEntry[]): FolderInfo[] {
 }
 
 export function KnowledgePanel(_props: ConvViewProps): ReactNode {
+  const [mode, setMode] = useState<'graph' | 'directory'>('graph')
   const [entries, setEntries] = useState<KbEntry[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
@@ -224,6 +226,18 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const [memories, setMemories] = useState<MemoryEntry[]>([])
   const [memoryResults, setMemoryResults] = useState<MemoryEntry[]>([])
   const [memoryError, setMemoryError] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [exportMessage, setExportMessage] = useState('')
+  const exportKnowledge = async () => {
+    setExportMessage(''); setExporting(true)
+    try {
+      if (!window.dyworker?.exportKnowledge) throw new Error('当前环境不支持导出')
+      const result = await window.dyworker.exportKnowledge({ kind: 'knowledge' })
+      if (!result.ok) throw new Error(result.error || '导出失败')
+      if (!result.canceled) setExportMessage(`已导出到 ${result.path}`)
+    } catch (error) { setExportMessage(`导出失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setExporting(false) }
+  }
   // AI 整理
   const [classifying, setClassifying] = useState(false)
   const [suggestions, setSuggestions] = useState<ClassifySuggestion[] | null>(null)
@@ -476,13 +490,26 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     : []
   const isRoot = view.kind === 'root'
 
-  // 与聊天输入框同宽：复用 DSH 的 --dsh-chat-content-width 变量，居中。
+  const tabs = <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+    <div style={{ marginRight: 'auto' }} />
+    <button style={mode === 'graph' ? primaryButton : button} aria-pressed={mode === 'graph'} onClick={() => setMode('graph')}>关系图谱</button>
+    <button style={mode === 'directory' ? primaryButton : button} aria-pressed={mode === 'directory'} onClick={() => { setMode('directory'); void refresh() }}>资料目录</button>
+  </div>
+  if (mode === 'graph') return <div style={{ width: '100%', maxWidth: 1600, margin: '0 auto', padding: '20px 24px', boxSizing: 'border-box' }}>{tabs}<div style={{ border: '1px solid var(--border, #e8ebef)', borderRadius: 12, overflow: 'hidden', background: 'var(--card, #fff)' }}><KnowledgeGraph /></div></div>
+
+  // 资料目录保持原有宽度，图谱使用可用画布。
   return (
     <div style={{ maxWidth: 'var(--dsh-chat-content-width)', width: '100%', margin: '0 auto', padding: '20px 24px' }}>
+      {tabs}
       <div style={{ ...card, marginBottom: 14 }}>
         <h3 style={heading}>知识库</h3>
         <p style={sub}>支持 md / txt / json / yml / docx / pdf；单个文件不超过 20 MB，同名文件重新导入会更新内容。</p>
         <p style={sub}>个人记忆与导入资料可一起检索。记忆内容在「记忆」中管理，项目记忆仅供对应项目使用。</p>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+          <button style={button} disabled={exporting} onClick={() => void exportKnowledge()}>{exporting ? '导出中…' : '导出资料'}</button>
+          <span style={{ ...sub, margin: 0 }}>导出解析后的资料内容，不包含原始上传文件。</span>
+        </div>
+        {exportMessage && <p role="status" style={sub}>{exportMessage}</p>}
 
         <div
           style={dropZone}
@@ -500,7 +527,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
         />
 
         {lastImport !== null && lastImport.imported > 0 && (
-          <div style={{ marginTop: 10, fontSize: 12.5, color: '#16a34a', background: '#ecfdf3', borderRadius: 8, padding: '8px 12px' }}>
+          <div style={{ marginTop: 10, fontSize: 12.5, color: '#16a34a', background: 'var(--sidebar-active, #ecfdf3)', borderRadius: 8, padding: '8px 12px' }}>
             ✓ 已导入《{lastImport.source}》：{lastImport.imported} 个条目，分类「{lastImport.category}」（可在目录中重命名 / 移动）
           </div>
         )}
@@ -509,7 +536,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
 
       {/* AI 建议面板 */}
       {suggestions !== null && (
-        <div style={{ ...card, border: '1px solid #bfdbfe', background: '#eff6ff', marginBottom: 14 }}>
+        <div style={{ ...card, border: '1px solid #bfdbfe', background: 'var(--sidebar-active, #eff6ff)', marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
                 🤖 AI 建议（只建议，不改动；勾选后点"应用"）
               </div>
@@ -533,9 +560,9 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                     <span style={{ color: '#dc2626', flex: 1 }}>⚠️ {s.error}</span>
                   ) : (
                     <>
-                      <span style={{ color: '#9ca3af' }}>→</span>
-                      <span style={{ color: '#2563eb', fontWeight: 500 }}>{s.category}</span>
-                      <span style={{ color: '#6b7280', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span style={{ color: 'var(--muted, #9ca3af)' }}>→</span>
+                      <span style={{ color: 'var(--accent, #2563eb)', fontWeight: 500 }}>{s.category}</span>
+                      <span style={{ color: 'var(--muted, #6b7280)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {s.name}
                         {Array.isArray(s.tags) && s.tags.length > 0 ? ` · #${s.tags.join(' #')}` : ''}
                       </span>
@@ -574,7 +601,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
             {/* 面包屑 + 返回（根视图无面包屑） */}
             <div style={breadcrumb}>
               {!isRoot && <button style={backBtn} onClick={() => setView({ kind: 'root' })}>← 上一级</button>}
-              {breadcrumbs.length > 0 && <span style={{ color: '#9ca3af' }}>/</span>}
+              {breadcrumbs.length > 0 && <span style={{ color: 'var(--muted, #9ca3af)' }}>/</span>}
               {breadcrumbs.map((c, i) => (
                 <span key={i} style={c.current ? crumbCurrent : crumb} onClick={c.onClick}>{c.label}</span>
               ))}
@@ -644,7 +671,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                             border: editing !== null && editing.kind === 'category' && editing.value === folder.category
                               ? '2px solid #2563eb'
                               : hoveredFolder === folder.category ? '1px solid #2563eb' : '1px solid transparent',
-                            cursor: 'pointer', background: hoveredFolder === folder.category ? '#f9fafb' : 'transparent',
+                            cursor: 'pointer', background: hoveredFolder === folder.category ? 'var(--surface, #f9fafb)' : 'transparent',
                             transition: 'border-color .15s, background .15s', position: 'relative',
                           }}
                           onClick={() => setView({ kind: 'category', category: folder.category })}
@@ -653,16 +680,16 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                         >
                           {/* 图标 + 目录名：名称紧跟图标 */}
                           <span style={{ fontSize: 18, flexShrink: 0 }}>📁</span>
-                          <span style={{ fontWeight: 600, fontSize: 14, color: '#1f2937', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink, #1f2937)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {folder.category}
                           </span>
-                          <span style={{ fontSize: 11.5, color: '#9ca3af', marginLeft: 4, flexShrink: 0 }}>
+                          <span style={{ fontSize: 11.5, color: 'var(--muted, #9ca3af)', marginLeft: 4, flexShrink: 0 }}>
                             {folder.files.length > 0 ? `${folder.files.length} 个文件 · ${folder.count} 个条目` : '空目录'}
                           </span>
                           {hoveredFolder === folder.category && (
                             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                               <button
-                                style={{ ...smallBtn, border: '1px solid #d1d5db', background: '#fff', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: '#374151' }}
+                                style={{ ...smallBtn, border: '1px solid var(--border, #d1d5db)', background: 'var(--card, #fff)', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: 'var(--ink, #374151)' }}
                                 onClick={() => setEditing({ kind: 'category', value: folder.category })}
                                 title="重命名目录"
                               >
@@ -670,7 +697,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                               </button>
                               {folder.files.length === 0 && (
                                 <button
-                                  style={{ ...smallBtn, border: '1px solid #fecaca', background: '#fff', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: '#dc2626' }}
+                                  style={{ ...smallBtn, border: '1px solid #fecaca', background: 'var(--card, #fff)', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: '#dc2626' }}
                                   onClick={() => void deleteCategory(folder.category)}
                                   title="删除空目录"
                                 >
@@ -691,7 +718,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
               {memories.length === 0 && <p style={sub}>暂无个人记忆。</p>}
               {memories.map(item => <div key={item.id} style={{ padding: '10px 0', borderTop: '1px solid #f0f1f4', fontSize: 13 }}>
                 <strong>{item.name || item.category}</strong>
-                <span style={{ color: '#6b7280', marginLeft: 8 }}>{item.scope === 'workspace' ? `项目：${item.workspacePath}` : '个人'}</span>
+                <span style={{ color: 'var(--muted, #6b7280)', marginLeft: 8 }}>{item.scope === 'workspace' ? `项目：${item.workspacePath}` : '个人'}</span>
                 <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</div>
               </div>)}
             </>}
@@ -710,18 +737,18 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                           <div
                             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer', borderRadius: 10 }}
                             onClick={() => toggleFile(file.source)}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = '#f9fafb' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface, #f9fafb)' }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                           >
-                            <span style={{ fontSize: 11, color: '#9ca3af', width: 12, flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
+                            <span style={{ fontSize: 11, color: 'var(--muted, #9ca3af)', width: 12, flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
                             <span style={iconSize}>📄</span>
-                            <span style={{ fontWeight: 600, fontSize: 13.5, color: '#1f2937' }}>{file.source}</span>
+                            <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--ink, #1f2937)' }}>{file.source}</span>
                             <span style={meta}>{fileChunks.length} 块 · {file.updatedAt}</span>
                             <div style={rowActions} onClick={(e) => e.stopPropagation()}>
                               {moving?.source === file.source && (
                                 <select
                                   autoFocus
-                                  style={{ border: '1px solid #2563eb', borderRadius: 6, padding: '2px 6px', fontSize: 11.5 }}
+                                  style={{ border: '1px solid var(--accent, #2563eb)', borderRadius: 6, padding: '2px 6px', fontSize: 11.5 }}
                                   value=""
                                   onChange={(e) => { if (e.target.value !== '') void moveTo(file.source, e.target.value) }}
                                   onBlur={() => setMoving(null)}
@@ -738,21 +765,21 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                           {/* 文件内容：切块条目直接展示 */}
                           {!collapsed && fileChunks.map((entry) => (
                             <div key={entry.id} style={{ ...row, cursor: 'default', paddingLeft: 34, borderTop: '1px solid #f5f6f8', borderRadius: 0 }}>
-                              <span style={{ fontSize: 12, color: '#cbd5e1' }}>·</span>
+                              <span style={{ fontSize: 12, color: 'var(--border-strong, #cbd5e1)' }}>·</span>
                               {/* 文本容器：flex 布局保证超长内容省略号截断 */}
                               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                                <span style={{ fontWeight: 500, color: '#374151', flex: '0 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <span style={{ fontWeight: 500, color: 'var(--ink, #374151)', flex: '0 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {entry.name}
                                 </span>
-                                <span style={{ fontSize: 11.5, color: '#9ca3af', flex: '1 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <span style={{ fontSize: 11.5, color: 'var(--muted, #9ca3af)', flex: '1 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {entry.summary}
                                 </span>
                                 {entry.tags.map((tag) => (
-                                  <span key={tag} style={{ display: 'inline-block', fontSize: 11, color: '#374151', background: '#f3f4f6', borderRadius: 999, padding: '1px 8px', flexShrink: 0 }}>{tag}</span>
+                                  <span key={tag} style={{ display: 'inline-block', fontSize: 11, color: 'var(--ink, #374151)', background: 'var(--surface, #f3f4f6)', borderRadius: 999, padding: '1px 8px', flexShrink: 0 }}>{tag}</span>
                                 ))}
                               </div>
                               <button
-                                style={{ ...smallBtn, color: '#9ca3af', borderColor: 'transparent', fontSize: 13, padding: '1px 6px', flexShrink: 0 }}
+                                style={{ ...smallBtn, color: 'var(--muted, #9ca3af)', borderColor: 'transparent', fontSize: 13, padding: '1px 6px', flexShrink: 0 }}
                                 title="删除这条内容"
                                 onClick={(e) => { e.stopPropagation(); void deleteEntry(entry.id) }}
                               >
@@ -775,17 +802,17 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
             {searchResults.map((entry) => (
               <div key={entry.id} style={{ ...row, cursor: 'default' }}>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                  <span style={{ color: '#374151', flex: '0 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
-                  <span style={{ color: '#9ca3af', fontSize: 11.5, flexShrink: 0 }}>
+                  <span style={{ color: 'var(--ink, #374151)', flex: '0 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
+                  <span style={{ color: 'var(--muted, #9ca3af)', fontSize: 11.5, flexShrink: 0 }}>
                     {entry.category} / {entry.source ?? ''}
                   </span>
                 </div>
-                <div style={{ color: '#6b7280', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.summary}</div>
+                <div style={{ color: 'var(--muted, #6b7280)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.summary}</div>
               </div>
             ))}
             {memoryResults.map(item => <div key={`memory-${item.id}`} style={{ padding: '10px', borderTop: '1px solid #f0f1f4', fontSize: 13 }}>
               <strong>{item.name || item.category}</strong>
-              <span style={{ color: '#6b7280', marginLeft: 8 }}>个人记忆 · {item.scope === 'workspace' ? `项目：${item.workspacePath}` : '个人'}</span>
+              <span style={{ color: 'var(--muted, #6b7280)', marginLeft: 8 }}>个人记忆 · {item.scope === 'workspace' ? `项目：${item.workspacePath}` : '个人'}</span>
               <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</div>
             </div>)}
           </>

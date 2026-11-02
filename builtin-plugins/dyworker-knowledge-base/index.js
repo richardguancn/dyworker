@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import * as upstream from './upstream/lib/index.js';
 import * as upstreamWeb from './upstream/lib/web.js';
+import { mountGraph } from './graph-api.js';
 
 export const name = 'dyworker-knowledge-base';
 export const inject = ['tools', 'storage', 'connection', 'memory'];
@@ -47,6 +48,7 @@ export function apply(ctx) {
   const dataDir = ctx.storage.resolve('knowledge-base');
   fs.mkdirSync(dataDir, { recursive: true });
   const config = { categories: [], dataDir };
+  const graph = mountGraph(ctx, dataDir);
   const definitions = [];
   const closeTools = upstream.apply({ tools: { register: definition => definitions.push(definition) } }, config);
   ctx.effect(() => closeTools);
@@ -65,8 +67,26 @@ export function apply(ctx) {
           .slice(0, 50).map(row => ({ id: row.id, category: row.category, name: row.name || row.category,
             summary: row.content, source: '个人记忆', scope: row.scope, detail: row.content }));
         const documentResult = JSON.parse(result);
-        return JSON.stringify({ ...documentResult, matched: documentResult.matched + memories.length,
-          rows: [...(documentResult.rows || []), ...memories], ...(memories.length ? { hint: undefined } : {}) });
+        const { graph: currentGraph } = await graph.load({ workspacePath: execution.workspacePath });
+        const direct = new Set([
+          ...memories.map(row => `memory:${row.id}`),
+          ...(documentResult.rows || []).map(row => `document:${encodeURIComponent(row.source || `条目 ${row.id}`)}`),
+        ]);
+        const related = new Map();
+        for (const link of currentGraph.links) {
+          if (link.kind !== 'manual' && link.score < .45) continue;
+          const other = direct.has(link.source) ? link.target : direct.has(link.target) ? link.source : '';
+          if (!other || direct.has(other) || related.has(other) || related.size >= 5) continue;
+          const node = currentGraph.nodes.find(node => node.id === other);
+          if (!node || (category && node.category !== category)) continue;
+          related.set(other, { id: node.memoryId || node.id, category: node.category, name: node.name,
+            summary: node.content, detail: node.content, source: node.source, scope: node.scope,
+            matchedVia: '关联内容', relation: link.label });
+        }
+        return JSON.stringify({ ...documentResult,
+          related: related.size, rows: [...(documentResult.rows || []), ...memories, ...related.values()],
+          matched: documentResult.matched + memories.length + related.size,
+          ...((memories.length || related.size) ? { hint: undefined } : {}) });
       },
     }));
   }
@@ -84,7 +104,12 @@ export function apply(ctx) {
     if (route.path === '/api/kb/classify') continue;
     ctx.effect(() => ctx.connection.fetch.register({
       path: route.path, methods: [readRoutes.has(route.path) ? 'GET' : 'POST'],
-      fetch: request => adaptRoute(route.handler, request),
+      fetch: async request => {
+        const rename = route.path === '/api/kb/rename-file' ? await request.clone().json() : null;
+        const response = await adaptRoute(route.handler, request);
+        if (response.ok && rename) await graph.renameSource(rename.source, rename.newSource);
+        return response;
+      },
     }));
   }
 }

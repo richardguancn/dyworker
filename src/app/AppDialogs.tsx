@@ -183,7 +183,7 @@ export function AppDialogs({ browserActiveDownloadCount, activeToolPanelTab, com
             setMemoriesLintMessage("");
             void window.dyworker.lintMemories()
               .then(async (result) => {
-                setMemoriesLintMessage(result?.ok ? "整理完成：重复与矛盾的记忆已合并修订。" : `整理失败：${result?.error || "未知原因"}`);
+                setMemoriesLintMessage(result?.ok ? result.message || "整理完成。" : `整理失败：${result?.error || "未知原因"}`);
                 if (window.dyworker?.listMemories) setMemories(await window.dyworker.listMemories());
               })
               .catch((error) => setMemoriesLintMessage(`整理失败：${String(error)}`))

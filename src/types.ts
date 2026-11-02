@@ -253,7 +253,7 @@ export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-a
 
 // 设置面板页签。原定义在 features/settings/SettingsDialog，因设置状态迁入 state 层而
 // 上移到共享类型，SettingsDialog 继续 re-export 以保持既有引用路径不变。
-export type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
+export type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "knowledge" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
 
 export type AgentEvent =
   | { type: "dsh-conversation"; turns: DshVisibleTurn[] }
@@ -1190,8 +1190,9 @@ export interface DyworkerBridge {
   onInboxFocusItem?(callback: (item: InboxItem) => void): () => void;
   onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; runId?: string; wakeAt?: string; reason?: string; manual?: boolean }) => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
+  exportKnowledge(payload: { kind: "memories" | "knowledge" | "graph" | "image"; image?: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
   updateMemory(payload: { id: string; content: string; category?: string; name?: string; kind?: string }): Promise<{ ok: boolean; error?: string }>;
-  lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string }>;
+  lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string; message?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;
   listCuratedPlugins(workspacePath?: string): Promise<CuratedPluginRecord[]>;
   setCuratedPluginEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }>;

@@ -1,4 +1,4 @@
-import { LoaderCircle, Pencil, Search, Trash2 } from "lucide-react";
+import { Download, LoaderCircle, Pencil, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { WikiMemoryPage, WikiMemoryRow } from "../../types";
 
@@ -130,6 +130,18 @@ export function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMe
   };
   const [memoryQuery, setMemoryQuery] = useState("");
   const [kindFilter, setKindFilter] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
+  const exportMemories = async () => {
+    if (!window.dyworker?.exportKnowledge) { setExportMessage("当前环境不支持导出。"); return; }
+    setExporting(true); setExportMessage("");
+    try {
+      const result = await window.dyworker.exportKnowledge({ kind: "memories" });
+      if (!result.ok) setExportMessage(`导出失败：${result.error || "未知原因"}`);
+      else if (!result.canceled) setExportMessage(`记忆已导出到 ${result.path}`);
+    } catch (error) { setExportMessage(`导出失败：${String(error)}`); }
+    finally { setExporting(false); }
+  };
   const total = pages.reduce((sum, page) => sum + page.rows.length, 0);
   // 看板过滤：按关键词（名字/内容/分类）与记忆类型筛选，空结果保留卡片框架
   const queryText = memoryQuery.trim().toLowerCase();
@@ -149,7 +161,9 @@ export function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMe
           {linting ? <LoaderCircle className="spin" size={13} /> : null}
           {linting ? "整理中…" : "整理记忆"}
         </button>
+        <button type="button" className="button-secondary tiny" onClick={() => void exportMemories()} disabled={exporting}><Download size={13} /> {exporting ? "导出中…" : "导出记忆"}</button>
       </div>
+      {exportMessage && <p role="status" className="dialog-note">{exportMessage}</p>}
       {total > 0 && (
         <div className="memory-filter-bar">
           <div className="memory-filter-search">

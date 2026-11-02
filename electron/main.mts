@@ -45,6 +45,7 @@ import { gitIpcPlugin } from "./host/plugins/git-ipc.mts";
 import { inboxIpcPlugin } from "./host/plugins/inbox-ipc.mts";
 import { localModelsIpcPlugin } from "./host/plugins/local-models-ipc.mts";
 import { memoriesIpcPlugin } from "./host/plugins/memories-ipc.mts";
+import { knowledgeExportIpcPlugin } from "./host/plugins/knowledge-export-ipc.mts";
 import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
 import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
 import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
@@ -1534,6 +1535,7 @@ ctx.plugin(skillsIpcPlugin({ trustedHandle, searchSkillLibraries, installSkillFr
 
 // memories:*：领域在 ctx.memory（记忆队列 + wiki 页面与整合）
 ctx.plugin(memoriesIpcPlugin({ trustedHandle }));
+ctx.plugin(knowledgeExportIpcPlugin({ trustedHandle, dialog, app, fs, path, getMainWindow: () => mainWindow }));
 
 // inbox:*：领域在 ctx.inbox（无人值守审批/提问的挂起与决议）
 ctx.plugin(inboxIpcPlugin({ trustedHandle }));

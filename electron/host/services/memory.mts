@@ -31,7 +31,10 @@ import {
   removeWikiMemory,
   serializeMemoryRow,
   updateWikiMemory,
+  deriveIndexContent,
+  pageRelPathForItem,
 } from "../../memory-wiki.mts";
+import { exactDuplicateOrganization, pageRecords, validateOrganization } from '../../memory-organization.mts';
 import { readJson, writeJson } from "../io.mts";
 
 declare module "@deepseek-ai/cordis" {
@@ -45,6 +48,7 @@ export class MemoryService extends Service {
   wikiReadyPromise = null;
   consolidationTimer = null;
   consolidationRunning = false;
+  mutationChain = Promise.resolve();
 
   constructor(ctx, config = {} as any) {
     super(ctx, "memory");
@@ -58,6 +62,77 @@ export class MemoryService extends Service {
 
   file(name) {
     return path.join(this.dir, name);
+  }
+
+  mutate<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = this.mutationChain.catch(() => {}).then(operation);
+    this.mutationChain = result.then(() => {}, () => {});
+    return result;
+  }
+
+  async provenance() {
+    const data = await readJson(this.file('memory-provenance.json'), {});
+    return { aliases: data.aliases || {}, sources: data.sources || {} };
+  }
+
+  async organizationState() {
+    return { pages: (await readWikiPages(this.wikiRoot())).map(page => ({ relPath: page.relPath, content: page.content })),
+      pending: (await this.readSaved()).filter(item => item.scope !== 'session'), provenance: await this.provenance() };
+  }
+
+  stateFingerprint(state) {
+    return crypto.createHash('sha256').update(JSON.stringify(state)).digest('hex');
+  }
+
+  async restoreOrganizationState(state) {
+    const root = this.wikiRoot();
+    for (const page of await readWikiPages(root)) await fs.rm(path.join(root, page.relPath), { force: true });
+    for (const page of state.pages) {
+      if (!/^pages\/(?:projects\/)?[\w\u3400-\u9fff][\w\u3400-\u9fff.-]*\.md$/.test(page.relPath)) throw new Error('恢复记录包含无效页面');
+      const file = path.join(root, page.relPath);
+      await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, page.content, 'utf8');
+    }
+    const sessions = (await this.readSaved()).filter(item => item.scope === 'session');
+    await writeJson(this.file('memory.json'), [...sessions, ...state.pending]);
+    await writeJson(this.file('memory-provenance.json'), state.provenance);
+    await fs.writeFile(path.join(root, 'index.md'), deriveIndexContent(await readWikiPages(root)), 'utf8');
+  }
+
+  async organizationHistory() {
+    return this.mutate(() => this.organizationHistoryUnlocked());
+  }
+
+  async organizationHistoryUnlocked() {
+    await this.wikiReady();
+    const history = await readJson(this.file('memory-organization-history.json'), []);
+    const fingerprint = this.stateFingerprint(await this.organizationState());
+    return { rows: history.map((item, index) => ({ id: item.id, createdAt: item.createdAt, merged: item.merged,
+      merges: item.merges, conflicts: item.conflicts, message: item.message, undone: !!item.undone,
+      canUndo: index === 0 && !item.undone && item.afterFingerprint === fingerprint })) };
+  }
+
+  async undoOrganization(id) {
+    return this.mutate(async () => {
+      await this.wikiReady();
+      const history = await readJson(this.file('memory-organization-history.json'), []);
+      const latest = history[0];
+      if (!latest || latest.id !== id || latest.undone) return { ok: false, error: '只能撤销最近一次整理' };
+      if (latest.afterFingerprint !== this.stateFingerprint(await this.organizationState())) return { ok: false, error: '整理后记忆已有新增或修改，为保留这些内容，无法直接撤销' };
+      const current = await this.organizationState(), previousHistory = JSON.parse(JSON.stringify(history));
+      await writeJson(this.file('memory-organization-journal.json'), { before: current, history: previousHistory });
+      try {
+        await this.restoreOrganizationState(latest.before);
+        latest.undone = true;
+        await writeJson(this.file('memory-organization-history.json'), history);
+        await fs.appendFile(path.join(this.wikiRoot(), 'log.md'), `\n## [${new Date().toISOString()}] undo | 撤销整理 ${id}\n`);
+        await fs.rm(this.file('memory-organization-journal.json'), { force: true });
+        return { ok: true, message: '已恢复整理前的记忆和关联' };
+      } catch (error) {
+        await this.restoreOrganizationState(current);
+        await writeJson(this.file('memory-organization-history.json'), previousHistory);
+        await fs.rm(this.file('memory-organization-journal.json'), { force: true }); throw error;
+      }
+    });
   }
 
   wikiRoot() {
@@ -80,6 +155,13 @@ export class MemoryService extends Service {
   wikiReady() {
     this.wikiReadyPromise ??= (async () => {
       const root = this.wikiRoot();
+      const journal = await readJson(this.file('memory-organization-journal.json'), null);
+      if (journal?.before) {
+        await this.restoreOrganizationState(journal.before);
+        const history = await readJson(this.file('memory-organization-history.json'), []);
+        await writeJson(this.file('memory-organization-history.json'), journal.history || history.filter(item => item.id !== journal.id));
+        await fs.rm(this.file('memory-organization-journal.json'), { force: true });
+      }
       const items = await this.readSaved();
       // 会话记忆不迁移进 wiki，留在队列文件里按会话注入
       const migratable = items.filter((item) => item.scope !== "session");
@@ -147,7 +229,7 @@ export class MemoryService extends Service {
       return { ok: false, error: "整合进行中，稍后自动重试" };
     }
     this.consolidationRunning = true;
-    try {
+    try { return await this.mutate(async () => {
       await this.wikiReady();
       const root = this.wikiRoot();
       const all = await this.readSaved();
@@ -155,36 +237,77 @@ export class MemoryService extends Service {
       const sessionItems = all.filter((item) => item.scope === "session");
       const pending = all.filter((item) => item.scope !== "session");
       if (!lint && !pending.length) return { ok: true };
-      const pages = await readWikiPages(root);
-      const settings = await this.ctx.settings.read();
-      let applied = 0;
-      if (settings.endpoint && settings.model && settings.apiKey) {
-        try {
-          const message = await requestModel({ settings, messages: buildConsolidationMessages({ pages, pending, lint }), tools: false } as any);
-          applied = await applyConsolidation(root, parseConsolidationResult(message?.content || ""));
-        } catch (error: any) {
-          console.log(`[memory-wiki] LLM 整合失败，回退规则式：${error?.message || error}`);
-        }
-      }
-      if (applied) {
-        // 模型漏掉的新记忆保留在队列里等下一轮，其余清空；会话记忆始终保留。
-        const knownIds = new Set((await readWikiPages(root)).flatMap((page) => page.rows.map((row) => row.id)));
-        const missed = pending.filter((item) => !knownIds.has(String(item?.id || "")));
-        await writeJson(this.file("memory.json"), [...sessionItems, ...missed]);
-        return { ok: true, applied };
-      }
-      if (pending.length) {
+      const before = await this.organizationState();
+      const transactionId = crypto.randomUUID();
+      const previousHistory = await readJson(this.file('memory-organization-history.json'), []);
+      await writeJson(this.file('memory-organization-journal.json'), { id: transactionId, before, history: previousHistory });
+      try {
         await integrateItems(root, pending, { logTitle: "规则式整合" });
         await writeJson(this.file("memory.json"), sessionItems);
-        return { ok: true, applied: 0 };
+        let pages = await readWikiPages(root);
+        const originals = new Map(pageRecords(pages).map(row => [row.id, row]));
+        const exact = validateOrganization(pages, exactDuplicateOrganization(pages));
+        let applied = await applyConsolidation(root, exact), modelUsed = false, modelError = '';
+        const merges = [...exact.merges]; let conflicts = [];
+        pages = await readWikiPages(root);
+        const settings = await this.ctx.settings.read();
+        if (settings.endpoint && settings.model && pageRecords(pages).length > 1) {
+          let result = null;
+          try {
+            const message = await requestModel({ settings, messages: buildConsolidationMessages({ pages, pending: [], lint }), tools: false, fetchImpl: fetch } as any);
+            result = validateOrganization(pages, parseConsolidationResult(message?.content || ''));
+          } catch (error: any) {
+            modelError = 'AI 整理未完成，本次仅合并完全重复的内容。';
+            console.log(`[memory-wiki] 保留原记忆：${error?.message || error}`);
+          }
+          if (result) {
+            applied += await applyConsolidation(root, result);
+            merges.push(...result.merges); conflicts = result.conflicts; modelUsed = true;
+          }
+        }
+        const provenance = await this.provenance();
+        for (const merge of merges) {
+          const ids = [merge.targetId, ...merge.sourceIds], origins = new Map();
+          for (const id of ids) for (const row of provenance.sources[id] || [originals.get(id)].filter(Boolean)) origins.set(row.id, row);
+          provenance.sources[merge.targetId] = [...origins.values()];
+          for (const id of merge.sourceIds) {
+            provenance.aliases[id] = merge.targetId;
+            for (const [from, to] of Object.entries(provenance.aliases)) if (to === id) provenance.aliases[from] = merge.targetId;
+          }
+        }
+        await writeJson(this.file('memory-provenance.json'), provenance);
+        const merged = merges.reduce((sum, merge) => sum + merge.sourceIds.length, 0);
+        const message = `${merged ? `已合并 ${merged} 条重复记忆。` : '未发现可自动合并的重复记忆。'}${conflicts.length ? `有 ${conflicts.length} 组内容需要确认，已保留原文。` : ''}${modelError || (!modelUsed ? '相近表达的进一步整理需要可用的 AI 模型。' : '')}`;
+        if (lint || merges.length) {
+          const after = await this.organizationState();
+          const history = await readJson(this.file('memory-organization-history.json'), []);
+          const final = new Map(pageRecords(await readWikiPages(root)).map(row => [row.id, row]));
+          const record = { id: transactionId, createdAt: new Date().toISOString(), before,
+            afterFingerprint: this.stateFingerprint(after), merged, message,
+            merges: merges.map(merge => ({ ...merge, before: [merge.targetId, ...merge.sourceIds].map(id => originals.get(id)).filter(Boolean), after: final.get(provenance.aliases[merge.targetId] || merge.targetId) })),
+            conflicts: conflicts.map(item => ({ ...item, memories: item.ids.map(id => originals.get(id)) })) };
+          await writeJson(this.file('memory-organization-history.json'), [record, ...history].slice(0, 10));
+        }
+        await fs.rm(this.file('memory-organization-journal.json'), { force: true });
+        return { ok: true, applied, merged, conflicts: conflicts.length, message };
+      } catch (error) {
+        await this.restoreOrganizationState(before);
+        await writeJson(this.file('memory-organization-history.json'), previousHistory);
+        await fs.rm(this.file('memory-organization-journal.json'), { force: true });
+        throw error;
       }
-      return { ok: false, error: lint ? "整理未产生有效结果" : "整合未产生有效结果" };
+    });
     } finally {
       this.consolidationRunning = false;
     }
   }
 
   async append(item, workspacePath, sessionId = "") {
+    return this.mutate(() => this.appendUnlocked(item, workspacePath, sessionId));
+  }
+
+  async appendUnlocked(item, workspacePath, sessionId = "") {
+    await this.wikiReady();
     const items = await this.readSaved();
     const record = buildMemoryRecord(item, {
       id: crypto.randomUUID(),
@@ -203,6 +326,11 @@ export class MemoryService extends Service {
     if (duplicate) return duplicate;
     items.push(record);
     await writeJson(this.file("memory.json"), items);
+    if (record.scope !== 'session') {
+      const provenance = await this.provenance();
+      provenance.sources[record.id] = [{ ...record, originSessionId: sessionId }];
+      await writeJson(this.file('memory-provenance.json'), provenance);
+    }
     // 新记忆已入队，任务收尾后由 wiki 整合流程合并进页面。
     this.scheduleConsolidation();
     return record;
@@ -217,7 +345,24 @@ export class MemoryService extends Service {
   async list() {
     await this.wikiReady();
     // 空的核心页面不展示，避免面板出现一堆零条记忆的卡片
-    const pages = (await listWikiPages(this.wikiRoot())).filter((page) => page.rows.length);
+    const wikiPages = await listWikiPages(this.wikiRoot());
+    const pages = wikiPages.filter((page) => page.rows.length);
+    // 待整合的长期记忆已保存成功，应立即出现在面板中，不必等待后台整理。
+    const queued = (await this.readSaved()).filter((item) => item.scope !== 'session');
+    const knownIds = new Set(pages.flatMap(page => page.rows.map(row => row.id)));
+    for (const item of queued) {
+      if (knownIds.has(item.id)) continue;
+      const relPath = pageRelPathForItem(item);
+      let page = pages.find(page => page.relPath === relPath);
+      if (!page) {
+        page = wikiPages.find(candidate => candidate.relPath === relPath) ||
+          { relPath, title: item.scope === 'workspace' ? `项目：${path.basename(item.workspacePath)}` : item.category,
+            scope: item.scope, workspacePath: item.workspacePath || '', rows: [], content: '', updated: '' };
+        pages.push(page);
+      }
+      page.rows.push({ id: item.id, name: item.name, kind: item.kind, category: item.category, content: item.content });
+      knownIds.add(item.id);
+    }
     // 会话记忆单独成卡展示（带所属会话标识），与全局 wiki 页面并列
     const sessionItems = (await this.readSaved()).filter((item) => item.scope === "session");
     if (sessionItems.length) {
@@ -269,8 +414,19 @@ export class MemoryService extends Service {
     return [...rows.values()];
   }
 
+  async knowledgeSnapshot(options = {} as any) {
+    return this.mutate(async () => {
+      await this.wikiReady();
+      return { rows: await this.knowledgeRows(options), provenance: await this.provenance() };
+    });
+  }
+
   // 编辑一条记忆：内置条目写覆盖表；待整合队列（含会话记忆）改 memory.json；已整合的改 wiki 页面。
   async update(payload) {
+    return this.mutate(() => this.updateUnlocked(payload));
+  }
+
+  async updateUnlocked(payload) {
     const id = String(payload?.id || "").trim();
     const content = String(payload?.content || "").trim();
     if (!id) return { ok: false, error: "缺少记忆 id" };
@@ -307,6 +463,10 @@ export class MemoryService extends Service {
   }
 
   async remove(id) {
+    return this.mutate(() => this.removeUnlocked(id));
+  }
+
+  async removeUnlocked(id) {
     if (isBuiltinMemoryId(id)) return { ok: false, error: "内置记忆不能删除" };
     await this.wikiReady();
     // 队列和 wiki 页面各删一份：尚未整合的条目在队列里，已整合的在页面行上。

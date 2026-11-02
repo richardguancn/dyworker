@@ -1,4 +1,4 @@
-import { BarChart3, Bell, Check, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Palette, RefreshCw, Search, Settings, ShieldAlert, UserRound } from "lucide-react";
+import { BarChart3, Bell, Check, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, UserRound } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { beginSession, discardSession } from "../../appearance/controller";
 import { hasConfiguredModel } from "../../../electron/host/dsh-runtime/model-settings.mts";
@@ -7,6 +7,7 @@ import { AppearanceSettingsPanel } from "../../appearance/AppearanceSettingsPane
 import { McpSettingsPanel } from "../../McpSettingsPanel";
 import { PluginsPage } from "../../PluginsPage";
 import { PluginIcon } from "../../PluginIcon";
+import { PluginSlotView } from "../../PluginSlotView";
 import { MemoriesPanel } from "../memory/MemoryPanels";
 import { SkillLibrariesPanel, SkillsPanel } from "../skills/SkillPanels";
 import { PlansPanel } from "../plans/PlansPanel";
@@ -42,6 +43,7 @@ const settingsNav: { group: string; items: { id: SettingsTab; label: string; ico
   { group: "资源", items: [
     { id: "plugins", label: "插件", icon: PluginIcon, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
     { id: "memories", label: "记忆", icon: History },
+    { id: "knowledge", label: "知识库", icon: Network, keywords: ["知识图谱", "关系图谱", "资料"] },
     { id: "skills", label: "技能", icon: FileCode2 },
     { id: "skill-libraries", label: "技能库", icon: Globe },
     { id: "plans", label: "定时计划", icon: ListTodo },
@@ -579,7 +581,7 @@ export function SettingsDialog({
           })}
           </div>
         </aside>
-        <div className="settings-content">
+        <div className={`settings-content${tab === "knowledge" ? " knowledge-settings" : ""}`}>
         <div className="dialog-header"><h2>{activeLabel}</h2></div>
         {tab === "identity" ? (
           <IdentitySettingsPanel
@@ -756,6 +758,8 @@ export function SettingsDialog({
           </form>
         ) : tab === "memories" ? (
           <MemoriesPanel pages={memories} onDelete={onDeleteMemory} onEdit={onEditMemory} onLint={onLintMemories} linting={memoriesLinting} lintMessage={memoriesLintMessage} />
+        ) : tab === "knowledge" ? (
+          <PluginSlotView slot="settings.section" pluginId="dyworker-knowledge-base" pluginKey="knowledge-base" emptyMessage="请在「插件」中启用知识库。" />
         ) : tab === "skills" ? (
           <SkillsPanel
             items={skills}

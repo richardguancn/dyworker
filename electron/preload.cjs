@@ -218,6 +218,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   },
   clearUsageStats: () => ipcRenderer.invoke("usage:clear"),
   deleteMemory: (id) => ipcRenderer.invoke("memories:delete", id),
+  exportKnowledge: (payload) => ipcRenderer.invoke("knowledge:export", payload),
   updateMemory: (payload) => ipcRenderer.invoke("memories:update", payload),
   lintMemories: () => ipcRenderer.invoke("memories:lint"),
   listSkills: (workspacePath) => ipcRenderer.invoke("skills:list", workspacePath),

@@ -527,6 +527,11 @@ html .settings-page .settings-nav-item svg { width: 16px; height: 16px; flex: no
 html .settings-page .settings-nav-item.active { background: var(--sidebar-active); box-shadow: none; font-weight: 500; }
 html .settings-page .settings-content { min-width: 0; padding: 72px 24px 56px; background: var(--surface); }
 .settings-page .settings-content > * { width: min(728px, 100%); margin-left: auto; margin-right: auto; flex-shrink: 0; }
+html .settings-page .knowledge-settings > * { width: min(1600px, 100%); }
+html .settings-page .knowledge-settings .plugin-slot-item > div { padding: 0 !important; }
+html .settings-page .settings-dialog .knowledge-settings label.kg-search { display: flex; flex-direction: row; margin: 0; font-weight: 400; }
+html .settings-page .knowledge-settings .kg-search input:not([type="checkbox"]) { border: 0; background: transparent; height: auto; padding: 0; box-shadow: none; }
+html .settings-page .settings-dialog .knowledge-settings .kg-select { width: auto; height: auto; }
 html .settings-page .dialog-header { margin-bottom: 44px; padding: 0; border: 0; }
 html .settings-page .dialog-header h2 { margin: 0; font-size: calc(28px * var(--font-ui-scale)); font-weight: 600; }
 html .settings-page .dialog-section-title { font-size: calc(14px * var(--font-ui-scale)); }
