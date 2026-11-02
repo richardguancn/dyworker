@@ -492,7 +492,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
           question: request.question,
           options: request.options,
           title: `${channelLabel}消息提问`,
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+          questionPresentation: request.answerFormat === 'dsh' || request.optionDescriptions?.length ? request : undefined,
         }, { signal: questionSignal ? AbortSignal.any([questionSignal,channelAbort.signal]) : channelAbort.signal });
         registerPending({ itemId: pending.itemId, kind: "question", options: request.options || [] });
         const optionsText = (request.options || []).map((option, index) => `${index + 1}. ${option}${request.optionDescriptions?.[index] ? `：${request.optionDescriptions[index]}` : ''}`).join("\n");

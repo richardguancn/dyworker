@@ -64,6 +64,40 @@ async function setup(t,fetchImpl,windowOpen=true,permissionCase=null) {
   return {host,workspacePath,envelopes,outbound,entryRuns,wakeRuns,runChannel,wake};
 }
 
+test('普通任务的对象选项经渠道和自动续跑保留名称说明，并按普通文字回答', async t => {
+  const toolReplies = [];
+  const {host,workspacePath,runChannel,wake,outbound} = await setup(t, async (_url, options) => {
+    const messages = JSON.parse(options.body).messages;
+    const answered = messages.find(message => message.role === 'tool');
+    if (answered) { toolReplies.push(answered.content); return response('已收到选择。'); }
+    return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{
+      id:'question-options',type:'function',function:{name:'ask_user',arguments:JSON.stringify({
+        question:'教学方案可以生成吗？',options:[{label:'直接生成',description:'按当前方案生成。'},{label:'先调整内容',description:'补充教学要求。'}],
+      })},
+    }]}}]}),{headers:{'content-type':'application/json'}});
+  }, true, {runtime:'dyworker'});
+  const shown = [];
+  host.inbox.notify = item => {
+    if (item.kind !== 'question') return;
+    shown.push(item);
+    void host.inbox.resolve(item.id, {answer:'先调整内容'});
+  };
+  await runChannel('生成教学方案');
+  await host.sessions.replace({id:'wake-question-options',runtime:'dyworker',workspacePath,messages:[{role:'user',content:'生成教学方案'}]});
+  await wake({sessionId:'wake-question-options',workspacePath,prompt:'生成教学方案',reason:'提问验收',createdAt:new Date().toISOString(),wakeAt:new Date().toISOString()});
+  assert.equal(shown.length, 2);
+  for (const item of shown) {
+    assert.deepEqual(item.options, ['直接生成','先调整内容']);
+    assert.deepEqual(item.questionPresentation.optionDescriptions, ['按当前方案生成。','补充教学要求。']);
+    assert.equal(item.questionPresentation.answerFormat, undefined);
+  }
+  assert.equal(toolReplies.length, 2);
+  assert.ok(toolReplies.every(reply => reply.includes('用户回答：先调整内容')));
+  assert.ok(outbound.some(text => text.includes('1. 直接生成：按当前方案生成。')));
+  const stored = await host.inbox.list();
+  assert.ok(shown.every(item => stored.some(row => row.id === item.id && row.status === 'resolved')));
+});
+
 test('渠道和自动唤醒沿用会话选择，不被默认模型替换',async t=>{
   const profile={id:'alternate',endpoint:'https://fixture.test/v1/chat/completions',model:'alternate-model',apiKey:'alternate-key'};
   const models=[];

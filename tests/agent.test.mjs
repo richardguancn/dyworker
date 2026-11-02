@@ -5614,6 +5614,55 @@ test("ask_user 经注入的 requestUserInput 拿到回答并回传给模型", as
   assert.match(toolMessage.content, /用户回答：每周五下午四点/);
 });
 
+test("ask_user 正确展示对象选项及说明，并把选中的名称回传给模型", async () => {
+  const root = await makeWorkspace();
+  const calls = [];
+  let asked;
+  await runAgent({
+    settings, workspacePath: root,
+    conversation: [{ role: "user", content: "生成教学方案" }],
+    requestUserInput: async (request) => {
+      asked = request;
+      return { ok: true, answer: request.options[1] };
+    },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("q-options", "ask_user", {
+        question: "上面的教学方案可以直接生成吗？（回复一个选项即可）",
+        options: [
+          { label: " 直接生成 ", description: " 按上面的方案生成。 " },
+          { label: "先调整内容", description: "补充教学要求。" },
+          { label: "只要大纲" },
+          { label: "暂不生成", description: "稍后再继续。" },
+        ],
+      })] },
+      { role: "assistant", content: "请补充需要调整的内容。" },
+    ], calls),
+  });
+  assert.deepEqual(asked.options, ["直接生成", "先调整内容", "只要大纲", "暂不生成"]);
+  assert.deepEqual(asked.optionDescriptions, ["按上面的方案生成。", "补充教学要求。", "", "稍后再继续。"]);
+  assert.match(calls[1].messages.find(message => message.role === "tool").content, /用户回答：先调整内容/);
+});
+
+test("ask_user 混合选项过滤无效及重名项，最多保留五项且说明保持对应", async () => {
+  const root = await makeWorkspace();
+  let asked;
+  await runAgent({
+    settings, workspacePath: root,
+    conversation: [{ role: "user", content: "选择方案" }],
+    requestUserInput: async (request) => { asked = request; return { ok: true, answer: "自行填写" }; },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("q-mixed", "ask_user", {
+        question: "选哪个？", options: [null, {}, 123, false, "  ", { label: " " }, { label: 12 },
+          " A ", { label: "A", description: "重复" }, { label: " B ", description: "说明 B" },
+          "C", { label: "D", description: {} }, "E", "F"],
+      })] },
+      { role: "assistant", content: "已收到。" },
+    ]),
+  });
+  assert.deepEqual(asked.options, ["A", "B", "C", "D", "E"]);
+  assert.deepEqual(asked.optionDescriptions, ["", "说明 B", "", "", ""]);
+});
+
 test("ask_user 在未注入 requestUserInput 的环境（子代理/无界面）优雅降级", async () => {
   const root = await makeWorkspace();
   const calls = [];

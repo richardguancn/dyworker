@@ -1435,9 +1435,18 @@ export async function runAgent({
                 result = "当前环境不支持向用户提问（子代理或无界面运行），请根据已有信息继续，或在交付时说明缺少的信息。";
                 break;
               }
-              const options = (Array.isArray(args.options) ? args.options : [])
-                .map((option) => String(option || "").trim()).filter(Boolean).slice(0, 5);
-              const answer = await requestUserInput({ id: String(toolCall.id || `question-${Date.now()}`), question, options });
+              // 部分模型会返回 { label, description }，不能把整个对象转成字符串。
+              const choices: Array<{ label: string; description: string }> = [];
+              for (const option of Array.isArray(args.options) ? args.options : []) {
+                const label = (typeof option === "string" ? option
+                  : typeof option?.label === "string" ? option.label : "").trim();
+                if (!label || choices.some(choice => choice.label === label)) continue;
+                choices.push({ label, description: typeof option?.description === "string" ? option.description.trim() : "" });
+                if (choices.length === 5) break;
+              }
+              const options = choices.map(choice => choice.label);
+              const answer = await requestUserInput({ id: String(toolCall.id || `question-${Date.now()}`), question, options,
+                ...(choices.some(choice => choice.description) ? { optionDescriptions: choices.map(choice => choice.description) } : {}) });
               if (answer?.ok !== false) userReplies.push({ question, answer: answer?.answer ?? answer });
               ok = Boolean(answer?.ok);
               result = answer?.ok

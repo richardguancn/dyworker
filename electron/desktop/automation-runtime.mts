@@ -142,7 +142,7 @@ async function resumeWake(wake, options: any = {}) {
           question: request.question,
           options: request.options,
           title: "续跑任务提问",
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+          questionPresentation: request.answerFormat === 'dsh' || request.optionDescriptions?.length ? request : undefined,
         }, { signal: questionSignal ? AbortSignal.any([questionSignal,wakeAbort.signal]) : wakeAbort.signal });
         deps.ctx.scheduler.running = false;
         try {
@@ -434,7 +434,7 @@ async function runScheduledTask(record, meta) {
           question: request.question,
           options: request.options,
           title: `定时任务「${record.name || "未命名"}」提问`,
-          questionPresentation: request.answerFormat === 'dsh' ? request : undefined,
+          questionPresentation: request.answerFormat === 'dsh' || request.optionDescriptions?.length ? request : undefined,
         }, { signal: questionSignal ? AbortSignal.any([questionSignal,scheduleAbort.signal]) : scheduleAbort.signal });
         deps.ctx.scheduler.running = false;
         try {
