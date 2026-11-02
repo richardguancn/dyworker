@@ -1,0 +1,17 @@
+{
+  "reviewed_on": "2026-11-01",
+  "report_path": "/Users/gdy/.gemini/antigravity/brain/86df2677-5a89-481d-abad-d79786ec8878/superagent-research-report.md",
+  "report_sha256": "9268c0e925fda0582365e16e3f52b71fe4df6d258f10a5d8c47f0df65e564d82",
+  "upstream_commit": "6337fc823ce20251c8de8085948165c81aaa701e",
+  "test_results": {
+    "input": {
+      "passed": 2,
+      "failed": 0
+    },
+    "channels": {
+      "passed": 4,
+      "failed": 0
+    }
+  },
+  "scope": "方案审核；未修改产品源码，未验证拟议新功能"
+}

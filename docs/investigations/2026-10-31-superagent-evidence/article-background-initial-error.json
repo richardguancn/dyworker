@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "id": "workflow-1",
+      "kind": "workflow",
+      "label": "background-check",
+      "owner": "full-one",
+      "status": "failed",
+      "detail": "workflow execution failed (sandbox-unavailable): sandbox-exec: sandbox_apply: Operation not permitted\n",
+      "startedAt": 1793463029433,
+      "finishedAt": 1793463029453,
+      "output": {
+        "total": 0,
+        "earliest": 0
+      }
+    }
+  ],
+  "note": "首次检查被外层运行限制阻止；未修改应用权限或源码。"
+}

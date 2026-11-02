@@ -1,0 +1,15 @@
+{
+  "local": "0.2.1-alpha.1",
+  "required": "^0.2.1-alpha.2",
+  "compatible": false,
+  "sameDirectoryBlockers": [
+    {
+      "sessionId": "A",
+      "kind": "task"
+    }
+  ],
+  "nestedDirectoryBlockers": [],
+  "increasePercent": 36.762806715454154,
+  "savingPercent": 26.880705067673905,
+  "note": "路径为假设输入，只调用比较函数，不创建或读写该路径。"
+}
