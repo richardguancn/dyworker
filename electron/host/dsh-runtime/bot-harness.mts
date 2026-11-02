@@ -218,7 +218,7 @@ export function createBotHarnessTools(options: any) {
     },
   };
 
-  const inherited = toolDefinitions()
+  const inherited = toolDefinitions(options.settings)
     .filter(tool => BOT_HARNESS_TOOL_NAMES.includes(tool.function.name))
     .map(tool => tool.function);
   // 会话检索、插件工具、MCP 工具由宿主转交同一执行入口，描述/参数也用宿主现成的定义。

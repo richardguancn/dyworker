@@ -10,7 +10,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isGlmNativeVisionModel, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "../electron/providers.mts";
-import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent } from "../electron/agent.mts";
+import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent, toolDefinitions } from "../electron/agent.mts";
+import { systemPrompt } from "../electron/agent/prompt.mts";
+import { createBotHarnessTools } from "../electron/host/dsh-runtime/bot-harness.mts";
 
 const KIMI_ENDPOINT = "https://api.moonshot.cn/v1/chat/completions";
 
@@ -955,7 +957,27 @@ test("runAgent：GLM 端点下 ocr_file 走 GLM-OCR 并把文件编码为 Data U
   assert.match(toolMessage.content, /# 识别结果/);
 });
 
-test("runAgent：非 GLM 端点调用 ocr_file 返回可操作的失败提示", async () => {
+test("OCR 不限定厂商，只有已配置智谱服务时提供可选的 GLM 工具", () => {
+  const settingsList = [
+    { endpoint: GLM_ENDPOINT, apiKey: 'sk-glm' },
+    { endpoint: GLM_ENDPOINT, apiKey: ' ' },
+    { endpoint: 'https://api.deepseek.com/v1/chat/completions', apiKey: 'sk-ds' },
+    { endpoint: KIMI_ENDPOINT, apiKey: 'sk-kimi' },
+    { endpoint: 'http://localhost:8000/v1/chat/completions', apiKey: '' },
+  ];
+  for (const [index, settings] of settingsList.entries()) {
+    assert.equal(toolDefinitions(settings).some(tool => tool.function.name === 'ocr_file'), index === 0);
+    const harness = createBotHarnessTools({ settings, workspacePath: os.tmpdir(),
+      readSettings: async () => settings, approve: async () => true, hostCtx: {} });
+    assert.equal(harness.tools.some(tool => tool.name === 'ocr_file'), index === 0);
+  }
+  const prompt = systemPrompt('/tmp');
+  assert.match(prompt, /不限定厂商/);
+  assert.match(prompt, /可用 run_command 调用本地识字程序/);
+  assert.doesNotMatch(prompt, /扫描件\/图片识字用 ocr_file/);
+});
+
+test("runAgent：历史遗留的 ocr_file 调用不再要求切换到 GLM", async () => {
   const root = await makeWorkspace();
   const messages = [
     { role: "assistant", content: "", tool_calls: [toolCall("call_ocr2", "ocr_file", { path: "x.png" })] },
@@ -980,7 +1002,50 @@ test("runAgent：非 GLM 端点调用 ocr_file 返回可操作的失败提示", 
   const toolMessage = chatBodies[1].messages.find((message) => message.role === "tool");
   assert.match(toolMessage.content, /^失败/, "ocr_file 在非 GLM 端点应失败回填");
   assert.match(toolMessage.content, /GLM-OCR/);
-  assert.match(toolMessage.content, /切换为 GLM/);
+  assert.match(toolMessage.content, /本地 OCR/);
+  assert.match(toolMessage.content, /无需切换当前模型服务/);
+  assert.doesNotMatch(toolMessage.content, /请在设置中把模型服务切换/);
+  assert.ok(chatBodies.every(body => !body.tools.some(tool => tool.function.name === 'ocr_file')));
+});
+
+test("runAgent：非 GLM 模型可选用其他识字工具并收到识别结果", async () => {
+  const root = await makeWorkspace();
+  const chatBodies = [];
+  const messages = [
+    { role: 'assistant', content: '', tool_calls: [toolCall('local-ocr', 'plugin__local_ocr', { path: '扫描件.png' })] },
+    { role: 'assistant', content: '识别结果：办公通知。' },
+  ];
+  const result = await runAgent({
+    settings: { endpoint: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-v4-flash', apiKey: 'sk-ds' },
+    workspacePath: root, conversation: [{ role: 'user', content: '识别图片里的文字' }],
+    extraTools: [{ type: 'function', function: { name: 'plugin__local_ocr', description: '本地识字',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } }],
+    onExtraTool: async (name, args) => {
+      assert.equal(name, 'plugin__local_ocr');
+      assert.equal(args.path, '扫描件.png');
+      return { ok: true, result: '办公通知' };
+    },
+    requestApproval: async () => true,
+    fetchImpl: async (url, options) => {
+      assert.equal(String(url), 'https://api.deepseek.com/v1/chat/completions');
+      chatBodies.push(JSON.parse(options.body));
+      return jsonResponse({ choices: [{ message: messages.length > 1 ? messages.shift() : messages[0] }] });
+    },
+  });
+  assert.equal(result.status, 'done');
+  assert.match(chatBodies[1].messages.find(message => message.role === 'tool').content, /办公通知/);
+  assert.ok(chatBodies.every(body => !body.tools.some(tool => tool.function.name === 'ocr_file')));
+});
+
+test("requestModel：直接请求也不向非 GLM 模型提供智谱识字工具", async () => {
+  await requestModel({ settings: { endpoint: 'http://localhost:8000/v1/chat/completions', model: 'vision-model', apiKey: '' },
+    messages: [{ role: 'user', content: '识字' }],
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.ok(!body.tools.some(tool => tool.function.name === 'ocr_file'));
+      assert.ok(body.tools.some(tool => tool.function.name === 'run_command'));
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: '完成' } }] });
+    } });
 });
 
 test("requestModel：GLM 纯文本模型带图无视觉服务时报错，glm-5.3-flash 原生放行", async () => {

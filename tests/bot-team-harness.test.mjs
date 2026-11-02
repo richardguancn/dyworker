@@ -111,9 +111,10 @@ test('机器人继承桌面任务工具并真实执行：文件、命令、审�
   await waitTurn(team, session, beforeKickoff, 10000).catch(() => undefined);
 
   // 1) 工具面：桌面任务的文件、命令、联网、模板、记忆、历史检索都在。
-  for (const name of [...BOT_HARNESS_TOOL_NAMES, 'list_sessions', 'search_sessions', 'read_session']) {
+  for (const name of [...BOT_HARNESS_TOOL_NAMES.filter(name => name !== 'ocr_file'), 'list_sessions', 'search_sessions', 'read_session']) {
     assert.ok(toolNames.includes(name), `机器人缺少继承工具：${name}`);
   }
+  assert.equal(toolNames.includes('ocr_file'), false, '非智谱服务不应引导机器人使用 GLM-OCR');
   for (const name of ['browser__open', 'open_file']) {
     assert.equal(toolNames.includes(name), false, `界面相关工具不应直接暴露给机器人：${name}`);
   }

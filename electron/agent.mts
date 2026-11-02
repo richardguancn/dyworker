@@ -526,7 +526,7 @@ export async function runAgent({
 
   // 子代理不派发 dispatch_agent，防止无限递归；审批串行化，避免并行子任务同时弹多个确认
   const mcpDiscovery = prepareMcpDiscovery(extraTools);
-  const availableTools = toolDefinitionsWith(mcpDiscovery.initial)
+  const availableTools = toolDefinitionsWith(mcpDiscovery.initial, settings)
     .filter((tool) => depth === 0 || tool?.function?.name !== "dispatch_agent");
   // Kimi 开放平台原生工具（v1：12 个 Formula + 可选内置 $web_search）：
   // 仅当 endpoint 命中 api.moonshot.cn / api.moonshot.ai 且原生工具总开关未关时启用。
@@ -558,7 +558,7 @@ export async function runAgent({
       // 里禁用了 web-search，本地 web_search 保留并按厂商路由回退到 DeepSeek/博查等后端
       const formulaHasWebSearch = kimiFormulaNameToUri.has("web_search");
       effectiveTools = [
-        ...toolDefinitions().filter((tool) => tool?.function?.name !== "web_search" || !formulaHasWebSearch),
+        ...toolDefinitions(settings).filter((tool) => tool?.function?.name !== "web_search" || !formulaHasWebSearch),
         ...(formula.definitions || []),
         // 内置 $web_search（builtin_function）由开关控制，v1 默认关闭（官方提示该功能正在升级）
         ...(settings.enableWebSearchBuiltin === true ? [KIMI_WEB_SEARCH_DEFINITION] : []),

@@ -27,7 +27,7 @@ export async function requestModel({ settings, messages, fetchImpl, signal = nul
     : messages;
   const rewrittenMessages = await rewriteImagesForTextModel({ settings, messages: sanitizedMessages, fetchImpl, signal });
   const modelMessages = adaptMessagesForModel(rewrittenMessages, settings);
-  const selectedTools = tools === false ? false : adaptToolsForModel(tools || toolDefinitionsWith(extraTools), settings);
+  const selectedTools = tools === false ? false : adaptToolsForModel(tools || toolDefinitionsWith(extraTools, settings), settings);
   // 模型名可能带上下文覆盖后缀（如 k3[1M]），发给服务端前剥离
   const apiModel = bareModelName(settings.model);
   // 推理强度参数：按厂商官方 API 文档映射（档位由设置界面限定，见 reasoningRequestParams 注释）

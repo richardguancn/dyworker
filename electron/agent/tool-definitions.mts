@@ -1,4 +1,5 @@
 // 代理内置工具定义。
+import { detectProvider } from '../providers.mts';
 
 
 function stringProperty(description) {
@@ -20,7 +21,8 @@ function functionTool(name, description, properties, required) {
   };
 }
 
-export function toolDefinitions() {
+// 不传设置时返回完整目录；模型调用传入设置，避免提供当前无法使用的厂商工具。
+export function toolDefinitions(settings = null) {
   return [
     functionTool("update_plan", "维护本任务工作计划（2-8 步），开始多步任务时建立，每完成一步更新完整列表。",
       {
@@ -60,7 +62,7 @@ export function toolDefinitions() {
       }, ["path"]),
     functionTool("view_image", "查看本地图片画面（PNG/JPEG/WebP/GIF/BMP）。",
       { path: stringProperty("图片路径") }, ["path"]),
-    functionTool("ocr_file", "识别图片或扫描版 PDF 中的文字与表格（需智谱 GLM 密钥并经用户同意上传）；文字型 PDF 优先用 read_file。",
+    functionTool("ocr_file", "可选的 GLM-OCR 云端识字工具，使用当前智谱服务的密钥，需经用户同意上传。也可按任务选择本地 OCR、视觉模型或其他识字工具；文字型 PDF 优先用 read_file。",
       {
         path: stringProperty("文件路径"),
         start_page: integerProperty("PDF 起始页码（1 起）", 1, 1000),
@@ -216,10 +218,11 @@ export function toolDefinitions() {
         goalAchieved: { type: "boolean", description: "长期目标已达成时设为 true" }
       },
       ["summary", "evidence"]),
-  ];
+  ].filter(tool => !settings || tool.function.name !== 'ocr_file'
+    || (detectProvider(settings.endpoint) === 'glm' && String(settings.apiKey || '').trim()));
 }
 
 // extraTools：外部（MCP）工具，已是 OpenAI function 格式
-export function toolDefinitionsWith(extraTools = []) {
-  return [...toolDefinitions(), ...extraTools];
+export function toolDefinitionsWith(extraTools = [], settings = null) {
+  return [...toolDefinitions(settings), ...extraTools];
 }

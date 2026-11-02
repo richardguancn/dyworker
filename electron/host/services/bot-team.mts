@@ -282,7 +282,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
       .filter((tool: any) => BOT_DELEGATED_TOOL_NAMES.has(tool?.name) || String(tool?.name || '').startsWith('plugin__')
         || String(tool?.name || '').startsWith('mcp__'));
     const harness = createBotHarnessTools({ ctx, hostCtx, workspacePath, workspace: botWorkspace, approve,
-      readSettings: refreshSettings, extraDefinitions: delegated,
+      settings: appSettings, readSettings: refreshSettings, extraDefinitions: delegated,
       routeExtra: async (name: string, args: any, exec: any) => {
         const route = routeFor(String(exec?.sessionId || ''));
         if (!route) throw new Error('机器人团队没有可用的应用工具入口');

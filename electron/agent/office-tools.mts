@@ -267,7 +267,7 @@ const OCR_PDF_MAX_BYTES = 50 * 1024 * 1024;
 
 export async function runOcrFile(workspace, settings, fetchImpl, args) {
   if (detectProvider(settings.endpoint) !== "glm" || !String(settings.apiKey || "").trim()) {
-    throw new Error("ocr_file 的识别服务来自智谱开放平台（GLM-OCR）：请在设置中把模型服务切换为 GLM（智谱）并配置密钥后再试");
+    throw new Error("ocr_file 是可选的 GLM-OCR 云端工具，当前未配置该服务。请改用本地 OCR、可用的视觉模型或其他识字工具，无需切换当前模型服务");
   }
   const target = workspace.resolve(String(args.path || ""), { forWrite: false });
   const extension = path.extname(target).toLowerCase();
