@@ -374,13 +374,13 @@ export class DshRuntimeService extends Service {
       }
       const instructions = await loadProjectInstructions(options.workspacePath);
       const memoryPages = await options.resolvers.readMemoryPages?.(sessionId) ?? [];
-      const pages = selectWikiPages(memoryPages, { workspacePath: options.workspacePath, query: prompt, limit: 3 });
+      const pages = selectWikiPages(memoryPages, { workspacePath: options.workspacePath, query: prompt, limit: 2 });
       const sessionMemory = memoryPages.find((page: any) => page.relPath === 'pages/session.md');
       if (sessionMemory && !pages.includes(sessionMemory)) pages.unshift(sessionMemory);
-      const context = [options.goal ? `当前长期目标：${options.goal}。继续推进尚未完成的工作并验证结果；只有整个目标已达成，才在 finish_task 中设置 goalAchieved=true。完成本轮的一部分工作不代表目标达成。用户当前要求优先。` : '当前没有进行中的长期目标。历史目标可能已暂停、删除或完成，不要自行恢复执行。', options.workingContext,
+      const context = [options.goal ? `长期目标：${options.goal}（用户当前要求优先；仅在整个目标达成时 finish_task 设 goalAchieved=true）。` : '当前无进行中的长期目标。', options.workingContext,
         nativeSkills.context, workspaceFileGuidance,
-        instructions ? `工作区 AGENTS.md 的约定；若与用户当前要求冲突，以当前要求为准：\n${instructions}` : '',
-        pages.length ? `相关长期记忆仅作为背景；若与用户当前要求冲突，以当前要求为准：\n${pages.map((page: any) => `## ${page.title}\n${String(page.content || '').slice(0, 2600)}`).join('\n\n')}` : ''];
+        instructions ? `工作区 AGENTS.md 约定（当前要求优先）：\n${instructions}` : '',
+        pages.length ? `相关长期记忆（仅作背景，当前要求优先）：\n${pages.map((page: any) => `## ${page.title}\n${String(page.content || '').slice(0, 900)}`).join('\n\n').slice(0, 2200)}` : ''];
       await runtime.request('context', { text: context.filter(Boolean).join('\n\n') }, { signal });
       if (childPrompt) {
         const receipt = await runtime.request('start-child', {prompt:childPrompt,files:[...preparedChildFiles]}, {signal});

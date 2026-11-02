@@ -1,8 +1,8 @@
 // 用假设数据验证模型示例、扩展图表和 JSON 样式可以由同一个内置引擎实际绘制。
-import { chartGuidance } from '../../electron/host/chart-guidance.mts';
+import { visualSkillInstructions } from '../../electron/host/chart-guidance.mts';
 const title = text => ({ text, left: 'center', textStyle: { fontSize: 14 } });
 export const chartOptions = [
-  ...[...chartGuidance.matchAll(/```echarts\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1])),
+  ...[...visualSkillInstructions.matchAll(/```echarts\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1])),
   {
     title: title('排名与构成（假设数据）'), tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
     legend: { bottom: 0 }, grid: { left: 12, right: 20, top: 50, bottom: 40, containLabel: true },

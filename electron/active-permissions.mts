@@ -45,4 +45,4 @@ export function activePermissions(initialMode: string, subscribe: any, request: 
   };
 }
 
-export const workspaceFileGuidance = '新建的 Python、JavaScript 等任务脚本和交付文件，默认保存在当前工作目录；中间文件放在当前工作目录的 .dyworker/tmp/ 下，使用任务专属子目录避免覆盖。除非用户明确指定，或工具必须使用系统临时目录，不要默认将任务文件建在 /tmp/。执行脚本时以当前工作目录为工作目录。普通文件创建和脚本执行交给工具权限检查，不要额外用文字或提问工具重复索要许可；若工具要求审批、拒绝或报错，应遵循结果，不得绕过。';
+export const workspaceFileGuidance = '新建脚本与交付文件默认保存在当前工作目录，中间文件放 `.dyworker/tmp/` 任务子目录（勿默认建在 `/tmp/`）。直接交工具权限检查，不要先用文字重复索要许可；若被要求审批、拒绝或报错，遵循结果不得绕过。';

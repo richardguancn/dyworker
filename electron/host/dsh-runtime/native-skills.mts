@@ -1,9 +1,11 @@
 import { toolDefinitions } from '../../agent.mts';
+import { VISUAL_SKILL_ID, visualOutputSkill } from '../chart-guidance.mts';
 import { formatSkillInstructions, skillContextSummary } from '../../skills.mts';
 
 /** 保留原生模板编号与内容；列表逐步披露，正文只在批准读取后返回。 */
 export function dshNativeSkills(input: any[], options: any = {}) {
-  let skills = (input || []).filter(skill => skill && skill.enabled !== false);
+  let rawSkills = Array.isArray(input) ? input : [];
+  let skills = rawSkills.filter(skill => skill && skill.enabled !== false);
   const names = new Set(['list_skills', 'load_skill']);
   if (options.append) names.add('save_skill');
   if (options.update) names.add('update_skill');
@@ -12,7 +14,11 @@ export function dshNativeSkills(input: any[], options: any = {}) {
     context: skills.length ? `以下工作模板可在需要时使用。任务与模板相关时，先用 load_skill 读取完整要求；若与用户当前要求冲突，以当前要求为准：\n${skillContextSummary(skills)}` : '',
     async execute(name: string, args: any) {
       options.signal?.throwIfAborted();
-      if (options.read) skills = (await options.read()).filter((skill: any) => skill && skill.enabled !== false);
+      if (options.read) {
+        const latest = await options.read();
+        rawSkills = Array.isArray(latest) ? latest : [];
+        skills = rawSkills.filter((skill: any) => skill && skill.enabled !== false);
+      }
       if (name === 'list_skills') return skills.length ? skills.map(skill =>
         `- ${skill.id}｜${skill.name}｜${skill.sourceLabel || '本地'}：${skill.description || ''}`).join('\n') : '（还没有发现可用技能）';
       if (name === 'save_skill' && options.append) {
@@ -37,7 +43,10 @@ export function dshNativeSkills(input: any[], options: any = {}) {
         return `工作模板「${record.name}」已更新，下次使用将按改进后的要求执行`;
       }
       if (name !== 'load_skill') throw new Error('未知的工作模板工具');
-      const skill = skills.find(item => String(item.id) === String(args.skill_id || ''));
+      const requestedId = String(args.skill_id || '');
+      const skill = skills.find(item => String(item.id) === requestedId)
+        || (requestedId === VISUAL_SKILL_ID && !rawSkills.some(item => String(item?.id) === VISUAL_SKILL_ID && item?.enabled === false)
+          ? visualOutputSkill : null);
       if (!skill) throw new Error(`没有找到模板：${args.skill_id || ''}`);
       return formatSkillInstructions(skill);
     },

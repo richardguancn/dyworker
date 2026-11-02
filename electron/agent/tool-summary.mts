@@ -101,6 +101,8 @@ export function toolSummary(name, args) {
     case "read_history_context": return "查看历史任务上下文";
     case "list_skills": return "查看工作模板列表";
     case "load_skill": return "读取工作模板";
+    case "load_toolset": return `加载工具组：${Array.isArray(args.groups) ? args.groups.join("、") : (args.groups || "")}`;
+    case "discover_mcp_tools": return `查找服务工具：${String(args.query || "全部").slice(0, 40)}`;
     case "save_skill": return `保存工作模板：${args.name || ""}`;
     case "update_skill": return `改进工作模板：${args.skill_id || ""}`;
     case "web_search": return `搜索网页：${String(args.query || "").slice(0, 40)}`;

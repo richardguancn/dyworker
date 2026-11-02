@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import { discoverFileSkills, mergeSkillRecords } from "../../skills.mts";
 import { readJson, writeJson } from "../io.mts";
 import { authoringSkills } from "../../authoring-skills.ts";
+import { visualOutputSkill } from "../chart-guidance.mts";
 import { readCuratedPlugins, bundledCuratedRoot } from '../../curated-plugins.mts';
 
 declare module "@deepseek-ai/cordis" {
@@ -20,6 +21,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const builtInSkills = [
+  visualOutputSkill,
   ...authoringSkills,
   {
     id: "builtin-official-draft",

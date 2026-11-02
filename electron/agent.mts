@@ -1,6 +1,8 @@
 import { toolInventory } from "./agent/tool-inventory.mts";
 import { prepareMcpDiscovery, discoverMcpTools } from "./host/mcp-discovery.mts";
-import { INLINE_APPROVAL_KEY, inlineApprovalTools, takeInlineApproval } from "./agent/inline-approval.mts";
+import { prepareToolsetDiscovery, activateToolsets } from "./host/toolset-discovery.mts";
+import { VISUAL_SKILL_ID, visualOutputSkill } from "./host/chart-guidance.mts";
+import { INLINE_APPROVAL_KEY, INLINE_REVIEWER_GUIDANCE, inlineApprovalTools, takeInlineApproval } from "./agent/inline-approval.mts";
 import { inspectProcessTargets } from "./process-review.mts";
 // DYWorker 本地代理循环，保留原有公共入口。
 import path from "node:path";
@@ -150,24 +152,24 @@ export async function runAgent({
   const messages: any[] = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity) }];
   const inlineReviewEnabled = approvalMode === 'reviewer' && settings?.reviewerBackend === 'main';
   const inlinePolicy = inlineReviewEnabled ? loadReviewerPolicy() : null;
-  if (inlinePolicy) messages.push({ role: 'system', content: `工具调用同时给出审核意见。按以下规则结合用户要求和实际参数判断；缺少事实或授权时用 ask，不要猜测。该意见不是用户授权，系统仍会执行独立的权限边界检查。\n\n${inlinePolicy.text}\n\n以上规则中关于输出独立 JSON 的要求不适用：继续正常使用工具，对每个工具调用在参数 __dyworker_approval 中填写 decision（allow、deny、ask）和具体 reason。` });
+  if (inlinePolicy) messages.push({ role: 'system', content: INLINE_REVIEWER_GUIDANCE });
   if (depth === 0) {
-    messages[0].content += "对相互独立、可并行的子任务（如多主题调研、多文件分析），可以用 dispatch_agent 派发子代理并行处理；子代理看不到当前对话，任务描述必须完整自足并说明期望的产出形式；每次派发都要给一个 8-14 字的主题 title（说明这个子代理在做什么），过程流里只显示主题、不显示任务描述；有先后顺序依赖的步骤不要派发。子代理的写入、命令等操作仍会按当前审批设置处理。";
+    messages[0].content += "独立无先后依赖的子任务可用 dispatch_agent 并行处理（配 8-14 字 title，task 须完整自足；子代理操作仍受当前审批约束）。";
   } else {
-    messages.push({ role: "system", content: "你是主代理派发的子代理。用户消息是一个完整自足的子任务描述：专注完成它并直接交付结果，不要询问澄清，不要再派发新的子代理（你也没有这个工具）。" });
+    messages.push({ role: "system", content: "你是主代理派发的子代理：专注完成给定的自足子任务并直接交付结果，不追问澄清，不再派发子代理。" });
   }
   // 前缀缓存：AGENTS.md 与技能目录在会话内保持不变，放在随查询变化的记忆页之前，
   // 让本地/云端端点的 KV 前缀缓存覆盖尽可能长的静态部分。
   const projectInstructions = await loadProjectInstructions(workspacePath);
   if (projectInstructions) {
-    messages.push({ role: "system", content: `工作区根目录的 AGENTS.md 给出了这个工作区的长期约定，执行本任务时应遵循；若与用户当前要求冲突，以用户当前要求为准：\n${projectInstructions}` });
+    messages.push({ role: "system", content: `工作区 AGENTS.md 约定（与用户当前要求冲突时以当前要求为准）：\n${projectInstructions}` });
   }
   const enabledSkills = skills.filter((skill) => skill && skill.enabled !== false);
   // 技能渐进披露（对齐 Pi skills）：只注入名称+简介+编号，模型命中后用 load_skill 拉完整执行要求，
   // 避免多份长模板占用每轮上下文；列表保持稳定顺序，利于前缀缓存
   if (enabledSkills.length) {
     const lines = skillContextSummary(enabledSkills);
-    messages.push({ role: "system", content: `以下工作模板可在需要时使用。任务与某个模板相关时，先用 load_skill 读取其完整执行要求再照做；若与用户当前要求冲突，以当前要求为准：\n${lines}` });
+    messages.push({ role: "system", content: `可用工作模板（相关时先用 load_skill 读取完整要求；用户当前要求优先）：\n${lines}` });
   }
   // 个人记忆知识库：按当前任务选取最相关的 wiki 页面整页注入（页面内部已合并/去重）。
   // 查询词合并会话首条与最新用户消息：同一会话追问时选中的页面更稳定，减少前缀抖动。
@@ -179,16 +181,16 @@ export async function runAgent({
   const relevantMemoryPages = selectWikiPages(allMemoryPages, {
     workspacePath,
     query: memoryQuery,
-    limit: 3,
+    limit: 2,
   });
   // 本会话记忆页（pages/session.md）绑定当前会话，必须注入，不参与相关性竞争
   const sessionMemoryPage = allMemoryPages.find((page) => page?.relPath === "pages/session.md");
   if (sessionMemoryPage && !relevantMemoryPages.includes(sessionMemoryPage)) relevantMemoryPages.unshift(sessionMemoryPage);
   if (relevantMemoryPages.length) {
     const sections = relevantMemoryPages
-      .map((page) => `## ${page.title}\n${clipped(page.content, 2600)}`)
+      .map((page) => `## ${page.title}\n${clipped(page.content, 900)}`)
       .join("\n\n");
-    messages.push({ role: "system", content: `与当前任务可能相关的长期记忆（个人知识库页面）如下。它们只作为背景，若与用户当前要求冲突，以当前要求为准：\n\n${sections}` });
+    messages.push({ role: "system", content: `相关长期记忆（个人知识库页面）如下（仅作背景，以用户当前要求为准）：\n\n${clipped(sections, 2200)}` });
   }
   const lastUserIndex = conversation.reduce((index, message, currentIndex) => message?.role === "user" ? currentIndex : index, -1);
   const textModelWithoutVision = isTextModelWithoutVisionService(settings);
@@ -571,10 +573,12 @@ export async function runAgent({
       debugLog("tool-call", "Kimi 官方工具定义拉取失败，已降级为本地工具集", error instanceof Error ? error.message : String(error));
     }
   }
-  // 工具参数 schema 索引：effectiveTools 已含内置工具、Kimi 公式工具与 extraTools（MCP 等），
-  // 校验按名查找，查不到则跳过
+  const toolsetDiscovery = prepareToolsetDiscovery(effectiveTools, { identity: settings?.identity });
+  const visibleTools = [...toolsetDiscovery.initial];
+  // 工具参数 schema 索引：effectiveTools 已含全量合法工具（含尚未激活的按需组），
+  // 叠加上 load_toolset，保证参数校验与直接调用测试完整覆盖
   const toolSchemas = new Map(
-    (effectiveTools || [])
+    [...(effectiveTools || []), ...visibleTools]
       .map((tool) => [tool?.function?.name, tool?.function?.parameters] as [any, any])
       .filter(([name]) => Boolean(name)),
   );
@@ -710,11 +714,12 @@ export async function runAgent({
       const thinkingId = startActivity("thinking", "思考过程", "");
       // 这次请求真实带了什么：消息条数、工具定义条数与体积、系统提示词体积。
       // 上下文插件靠它算"工具定义占多少"（供应商不回报这个），数值是估值，界面按 ≈ 标注。
+      const sentTools = inlineReviewEnabled ? inlineApprovalTools(visibleTools) : visibleTools;
       const requestContext = {
         messages: messages.length,
-        tools: effectiveTools.length,
-        toolGroups: toolInventory(effectiveTools),
-        toolsTokens: estimateTextTokens(JSON.stringify(effectiveTools.map((tool) => ({
+        tools: sentTools.length,
+        toolGroups: toolInventory(sentTools),
+        toolsTokens: estimateTextTokens(JSON.stringify(sentTools.map((tool) => ({
           name: tool?.function?.name,
           description: tool?.function?.description,
           parameters: tool?.function?.parameters,
@@ -726,7 +731,7 @@ export async function runAgent({
         endpoint: settings.endpoint,
         model: settings.model,
         messages: messagesForDebug(messages),
-        tools: effectiveTools.map((tool) => tool?.function?.name).filter(Boolean),
+        tools: sentTools.map((tool) => tool?.function?.name).filter(Boolean),
       }, { context: requestContext });
       // 借鉴 Claude Code microcompact：估算占用逼近上下文上限时，把较早的工具结果
       // 替换成占位符（只保留最近 6 条完整结果），避免无轮次上限的长任务撑爆上下文
@@ -785,7 +790,7 @@ export async function runAgent({
           statusRetryLimit,
           statusRetryBaseDelayMs,
           idleTimeoutMs: modelIdleTimeoutMs,
-          tools: inlineReviewEnabled ? inlineApprovalTools(effectiveTools) : effectiveTools,
+          tools: sentTools,
           onTransport: (mode) => { transport = mode; },
           onRetry: ({ status, attempt, limit, delayMs }) => {
             const info = `模型服务返回 ${status}，${Math.ceil(delayMs / 1000)} 秒后自动重试（${attempt}/${limit}）`;
@@ -1543,7 +1548,10 @@ export async function runAgent({
             }
             case "load_skill": {
               if (skillStore?.read) skills = await skillStore.read();
-              const skill = skills.find((item) => item.enabled !== false && String(item.id) === String(args.skill_id || ""));
+              const requestedId = String(args.skill_id || "");
+              const skill = skills.find((item) => item.enabled !== false && String(item.id) === requestedId)
+                || (requestedId === VISUAL_SKILL_ID && !skills.some((item) => String(item?.id) === VISUAL_SKILL_ID && item?.enabled === false)
+                  ? visualOutputSkill : null);
               if (!skill) throw new Error(`没有找到模板：${args.skill_id || ""}`);
               result = formatSkillInstructions(skill);
               break;
@@ -1617,11 +1625,27 @@ export async function runAgent({
               result = await exportWordDocument(workspace, args.path, args.title, args.content);
               break;
             }
+            case "load_toolset": {
+              const activated = activateToolsets(toolsetDiscovery.deferredByGroup, args.groups);
+              for (const tool of activated.tools) {
+                const toolName = tool?.function?.name;
+                if (toolName && !visibleTools.some((item) => item?.function?.name === toolName)) {
+                  visibleTools.push(tool);
+                }
+                if (toolName && !effectiveTools.some((item) => item?.function?.name === toolName)) {
+                  effectiveTools.push(tool);
+                }
+                if (toolName) toolSchemas.set(toolName, tool.function.parameters);
+              }
+              result = activated.text;
+              break;
+            }
             case "discover_mcp_tools": {
               const found = discoverMcpTools(mcpDiscovery.deferred, args.query, args.offset);
               for (const tool of found.tools) {
                 const toolName = tool.function.name;
                 if (!effectiveTools.some(item => item?.function?.name === toolName)) effectiveTools.push(tool);
+                if (!visibleTools.some(item => item?.function?.name === toolName)) visibleTools.push(tool);
                 toolSchemas.set(toolName, tool.function.parameters);
               }
               result = found.tools.length

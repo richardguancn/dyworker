@@ -23,6 +23,7 @@ import { communicationGuidance } from '../communication-guidance.mts';
 import { chartGuidance } from '../chart-guidance.mts';
 import { commandGuidance } from '../command-guidance.mts';
 import { prepareMcpDiscovery, discoverMcpTools } from '../../host/mcp-discovery.mts';
+import { prepareToolsetDiscovery, activateToolsets } from '../../host/toolset-discovery.mts';
 
 installFileHandleBridge();
 const send = (value: any) => process.send?.(value);
@@ -141,6 +142,7 @@ process.once('message', async (input: any) => {
       return signature === fingerprint(exec) ? undefined : 'DYWorker 未允许此操作';
     });
     const mcpDiscovery = prepareMcpDiscovery((input.extraTools || []).map((tool: any) => ({type: 'function', function: tool})));
+    const toolsetDiscovery = prepareToolsetDiscovery(mcpDiscovery.initial, { pinnedNames: input.fixedExtraTools || [] });
     const loadedMcp = new Map<string, () => void>();
     const resetMcp = () => { for (const dispose of loadedMcp.values()) dispose(); loadedMcp.clear(); };
     const registerExtraTool = (tool: any) => {
@@ -161,7 +163,9 @@ process.once('message', async (input: any) => {
           render: (_args: any, value: any) => [{ type: 'text', text: value.text }, ...(value.images || []).map((attachment: any) => ({ type: 'image', attachment }))] },
       });
     };
-    for (const wrapped of mcpDiscovery.initial) {
+    const textOutput = { schema: {type:'object', properties:{text:{type:'string'}}, required:['text'], additionalProperties:false},
+      render: (_args: any, value: any) => [{type:'text', text:value.text}] };
+    for (const wrapped of toolsetDiscovery.initial) {
       const tool = wrapped.function;
       if (tool.name === 'discover_mcp_tools') {
         ctx.tools.register({ ...tool, execute: async (args: any) => {
@@ -171,8 +175,18 @@ process.once('message', async (input: any) => {
           return { text: found.tools.length
             ? `已加载 ${found.tools.length} 个工具（共 ${found.total} 个匹配，从 ${found.offset} 开始）：\n${found.tools.map((entry: any) => `${entry.function.name}：${entry.function.description}`).join('\n')}\n${found.offset + found.tools.length < found.total ? `还有更多结果，可用 offset=${found.offset + found.tools.length} 继续。` : ''}下一次请求即可直接调用这些工具。`
             : `没有找到匹配工具（共 ${found.total} 个）。请换关键词或使用空关键词分页查看。` };
-        }, output: { schema: {type:'object', properties:{text:{type:'string'}}, required:['text'], additionalProperties:false},
-          render: (_args: any, value: any) => [{type:'text', text:value.text}] } });
+        }, output: textOutput });
+        fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));
+      } else if (tool.name === 'load_toolset') {
+        ctx.tools.register({ ...tool, execute: async (args: any) => {
+          const activated = activateToolsets(toolsetDiscovery.deferredByGroup, args.groups);
+          for (const entry of activated.tools) {
+            const fn = entry.function || entry;
+            if (!loadedMcp.has(fn.name)) loadedMcp.set(fn.name, registerExtraTool(fn));
+          }
+          return { text: activated.text };
+        }, output: textOutput });
+        fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));
       } else {
         registerExtraTool(tool);
         if (input.fixedExtraTools?.includes(tool.name)) fixedExtraTools.set(tool.name, ctx.tools.get(tool.name));

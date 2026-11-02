@@ -16,8 +16,8 @@ export function createDshApproval(options: any) {
         || await options.beforeToolExecute?.({ name, args });
       const audit = (decision: string, detail = '') => options.audit?.({ tool: name, summary: `DSH：${name}`, decision, detail });
       if (hook?.action === 'block') { audit('blocked', hook.message); return false; }
-      if (['job_list', 'job_output'].includes(name) && hook?.action !== 'require_approval') {
-        audit('auto-allowed', '读取当前任务所属的官方后台任务'); return true;
+      if (['job_list', 'job_output', 'load_toolset', 'discover_mcp_tools'].includes(name) && hook?.action !== 'require_approval') {
+        audit('auto-allowed', '读取官方后台任务或按需检索工具目录'); return true;
       }
       // 提问入口由运行环境固定，不能被插件的同名工具替换；沿用原有提问权限。
       const extraNames = (options.extraTools || []).map((value: any) => (value.function || value).name);
