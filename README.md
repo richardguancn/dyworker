@@ -170,6 +170,33 @@ npm run build   # 类型检查并构建；未变化且完整的产物可复用
 npm run verify  # 构建 + 全部测试一次完成
 ```
 
+## 架构总览
+
+渲染进程与主进程通过 IPC 通信；主进程核心服务挂载在 Cordis 宿主上统一装配与生命周期管理，桌面会话、定时唤醒、定时任务、IM 渠道四类任务入口共用同一个代理执行服务。详细设计见 [docs/architecture.md](docs/architecture.md)。
+
+```mermaid
+flowchart TB
+    subgraph UI["渲染进程 React"]
+        U["任务对话 · 执行轨迹 · 上下文 · 文件审阅 · 设置/插件/计划任务"]
+    end
+    subgraph HOST["Electron 主进程 · Cordis 宿主"]
+        E["AgentService：桌面会话 / 定时唤醒 / 定时任务 / IM 渠道，四类入口统一装配"]
+        S["核心服务：settings 加密存储 · audit 审计 · sessions 会话存档 · memory 长期记忆 · skills 工作模板 · scheduler 定时计划 · inbox 无人值守审批 · rules 允许规则"]
+        R["运行期域插件：IM 渠道（QQ/微信） · 后台任务 · 用量统计"]
+    end
+    L["代理循环核心：工具调用 · 上下文管理 · 多步规划"]
+    T["工具集：文件 · Office 文档读写 · 浏览器 · 终端 · 本机操作 · MCP"]
+    G["安全：敏感路径守卫 · 关键操作审批 · 全程审计留痕"]
+    M["OpenAI 兼容模型服务：DeepSeek / 通义 / 智谱 / 内网自建"]
+    U -->|"IPC"| E
+    R -->|"渠道任务"| E
+    E --> S
+    E --> L
+    L --> T
+    L --> G
+    L -->|"HTTPS"| M
+```
+
 ## 项目结构
 
 ```text
