@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 let sandbox: Promise<any> | undefined;
+export const unpackedCommandPath = (value: string) => value.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 async function provider() {
   return sandbox ??= (async () => {
     // DSH 与宿主有独立的 sessions 服务；动态加载避免第三方类型把两者合并。
@@ -23,8 +24,7 @@ export async function prepareCommandExecution(command: string, { workspacePath, 
     throw protectionUnavailable('无法识别本次执行权限，命令未执行');
   }
   const windows = process.platform === 'win32';
-  const bridge = fileURLToPath(new URL('./scripts/windows_command_runner.cjs', import.meta.url))
-    .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  const bridge = unpackedCommandPath(fileURLToPath(new URL('./scripts/windows_command_runner.cjs', import.meta.url)));
   const argv = windows ? [process.execPath, bridge, Buffer.from(String(command), 'utf8').toString('base64'), process.env.ELECTRON_RUN_AS_NODE || '']
     : ['/bin/bash', '-lc', String(command)];
   const env = windows ? { ELECTRON_RUN_AS_NODE: '1' } : undefined;
@@ -40,5 +40,8 @@ export async function prepareCommandExecution(command: string, { workspacePath, 
   const nativeWindows = windows && confined.argv?.[0] === process.execPath
     && path.normalize(confined.argv?.[1] || '') === path.normalize(expectedRunner);
   requireCommandProtection(confined, mode, nativeWindows ? 'windows-acl' : undefined);
-  return { ...confined, env, runnerFailureRules: [...confined.runnerFailureRules, ...(windows ? [bridgeFailure] : [])] };
+  // 独立 Node 程序使用物理目录；Koffi 也必须从该目录发现原生文件。
+  // 先核对官方 runner 身份，再只改已识别入口的存储位置，权限参数保持原样。
+  const confinedArgv = nativeWindows ? [confined.argv[0], unpackedCommandPath(expectedRunner), ...confined.argv.slice(2)] : confined.argv;
+  return { ...confined, argv: confinedArgv, env, runnerFailureRules: [...confined.runnerFailureRules, ...(windows ? [bridgeFailure] : [])] };
 }

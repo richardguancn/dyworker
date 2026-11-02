@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
 import { communicationGuidance } from "../electron/host/communication-guidance.mts";
 import { chartGuidance } from "../electron/host/chart-guidance.mts";
+import { commandGuidance } from "../electron/host/command-guidance.mts";
 import { adaptMessagesForModel, addWorkdays, approvalDecision, bareModelName, builtinHooks, calculateWorkdays, compactConversation, computerUseActionNeedsApproval, diffLineCounts, estimateMessagesTokens, evaluateHooks, externalPathsForTool, isContextOverflowError, isImpactSummaryEligible, isIncompleteDeliveryEnding, isResponsesEndpoint, listServerModels, matchStandingRule, normalizeModelEndpoint, pickDeliveryText, pointsElsewhereOnly, probeServerContextLimit, promisesDelivery, reasoningRequestParams, resolveSubAgentSettings, sanitizeToolCalls, subAgentTopic, suggestStandingRule, pruneOldToolResults, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, isReviewerEligible, isSafePublicUrl, isSafeRelativePath, parseBingResults, parseBochaResults, parseSoResults, parseSogouResults, requestModel, reviewApproval, reviewerBoundaryNote, reviewerCacheKey, runAgent, summarizeApprovalImpact, summarizeCommandEffects, toolDefinitions, unifiedDiff, workdaysBetween, Workspace } from "../electron/agent.mts";
 import { CHANNEL_MEDIA_EXTENSIONS, MAX_MEDIA_BYTES, channelMediaToolDefinitions, mediaKindForExtension, resolveChannelMediaPath } from "../electron/channels/media-tools.mts";
 import { buildLocalReviewPrompt, configureLocalReviewer, downloadLocalReviewerModel, LOCAL_REVIEWER_MODEL, localReviewerModelPath, localReviewerModelStatus, stripThinkingBlocks } from "../electron/local-reviewer.mts";
@@ -4961,6 +4962,7 @@ test("系统提示词按静态纪律在前、动态信息在尾组织", async ()
   assert.match(system, /# 表达质量/);
   assert.ok(system.includes(communicationGuidance), "实际模型请求应包含完整共用表达规则");
   assert.ok(system.includes(chartGuidance), "实际模型请求应包含完整共用图表规则");
+  assert.ok(system.includes(commandGuidance()), "实际模型请求应包含本机命令环境");
   assert.match(system, /简洁不得牺牲准确性与任务可用性/);
   assert.match(system, /不把可能写成确定/);
   assert.ok(system.indexOf("# 表达质量") < system.indexOf("当前工作区"), "表达质量段应在动态工作区信息之前");

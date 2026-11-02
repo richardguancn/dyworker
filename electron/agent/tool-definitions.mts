@@ -90,7 +90,7 @@ export function toolDefinitions() {
       ["source", "target"]),
     functionTool("delete_file", "删除单个文件（不可恢复，仅在确有必要时使用）。",
       { path: stringProperty("文件路径") }, ["path"]),
-    functionTool("run_command", "在工作区内运行本地程序或脚本。读文件内容用 read_file（不要 cat），找文件用 list_files，改文件用 edit_file/write_file。长驻服务请设 background: true。",
+    functionTool("run_command", "在工作区内运行本地程序或脚本。" + (process.platform === 'win32' ? '当前为 Windows，使用 cmd.exe 语法；PowerShell 脚本须显式调用 powershell.exe -File，不能直接写 Bash 或 PowerShell 正文。' : '通过 /bin/bash -lc 执行。') + "读文件内容用 read_file（不要 cat），找文件用 list_files，改文件用 edit_file/write_file。长驻服务请设 background: true。",
       {
         command: stringProperty("完整 shell 命令"),
         background: { type: "boolean", description: "是否后台运行（用于长驻服务）" },

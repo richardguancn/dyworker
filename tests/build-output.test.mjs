@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const outDir = path.resolve("dist/electron");
-const requiredAssets = ["main.mjs", "preload.cjs", "webview-preload.cjs", "reviewer-policy.md", "host/dsh-runtime/vendor/session-history.mjs"];
+const requiredAssets = ["main.mjs", "preload.cjs", "webview-preload.cjs", "reviewer-policy.md", "host/dsh-runtime/vendor/session-history.mjs", "scripts/windows_command_runner.cjs", "scripts/windows_package_probe.cjs"];
 
 test("dist/electron 一旦构建过，就不允许缺少 preload 等运行时静态资源", (t) => {
   if (!fs.existsSync(path.join(outDir, "main.mjs"))) {

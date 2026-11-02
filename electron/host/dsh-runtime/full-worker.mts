@@ -21,6 +21,7 @@ import { createChildControl } from './child-control.mts';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import { communicationGuidance } from '../communication-guidance.mts';
 import { chartGuidance } from '../chart-guidance.mts';
+import { commandGuidance } from '../command-guidance.mts';
 import { prepareMcpDiscovery, discoverMcpTools } from '../../host/mcp-discovery.mts';
 
 installFileHandleBridge();
@@ -91,6 +92,7 @@ process.once('message', async (input: any) => {
     }, { global: true });
     ctx.systemPrompt.section({ name: 'dyworker-communication', order: 100, text: communicationGuidance, interpolate: false });
     ctx.systemPrompt.section({ name: 'dyworker-charts', order: 110, text: chartGuidance, interpolate: false });
+    ctx.systemPrompt.section({ name: 'dyworker-command-environment', order: 120, text: commandGuidance(), interpolate: false });
     ctx.systemPrompt.context({ name: 'dyworker-task', order: 20, text: () => taskContext });
     const grants = new Map<any, string>();
     const questionTool = ctx.tools.get('ask_user_question');

@@ -2,6 +2,7 @@
 import { workspaceFileGuidance } from '../active-permissions.mts';
 import { chartGuidance } from '../host/chart-guidance.mts';
 import { communicationGuidance } from '../host/communication-guidance.mts';
+import { commandGuidance } from '../host/command-guidance.mts';
 
 
 // 系统提示词按「身份与静态纪律在前、会话动态信息在尾」组织（借鉴 Claude Code 的静态/动态分层），
@@ -34,7 +35,9 @@ export function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", id
 
     "# 工具使用\n"
     + workspaceFileGuidance + "\n"
-    + "- 修改文本文件前先 read_file 核对，局部修改优先用 edit_file；看图片用 view_image，扫描件/图片识字用 ocr_file；run_command 只用于专用工具做不到的事；互不依赖的只读操作同批并行发出；两步以上任务用 update_plan 维护进度。",
+    + "- 修改文本文件前先 read_file 核对，局部修改优先用 edit_file；看图片用 view_image；扫描件/图片识字按用户要求和可用能力选择本地 OCR、视觉模型或其他识字工具，不限定厂商，可用 run_command 调用本地识字程序；其他任务的 run_command 只用于专用工具做不到的事；互不依赖的只读操作同批并行发出；两步以上任务用 update_plan 维护进度。",
+
+    commandGuidance(),
 
     "# 本机应用操作\n"
     + "- 仅在无专用工具时操作桌面界面。macOS 权限不足先调 check_permissions；Linux 缺组件依次用 check_dependencies、prepare_dependency_install、install_dependencies（勿用 sudo）；完整展示安装预览并取得确认后，原样传入 packages、plan_token、plan_summary 安装，完成后重新检查。\n"

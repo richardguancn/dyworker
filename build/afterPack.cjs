@@ -12,8 +12,23 @@
 // 之后如果配置了正式证书（CSC_LINK/CSC_NAME），electron-builder 会在本钩子之后用正式证书覆盖签名。
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
+const { stageKoffiNative } = require('./koffi-native.cjs');
 
 exports.default = async function afterPack(context) {
+  if (context.electronPlatformName === 'win32') {
+    const { Arch } = require('builder-util');
+    const arch = Arch[context.arch];
+    const unpackedDir = path.join(context.appOutDir, 'resources/app.asar.unpacked');
+    stageKoffiNative({ projectDir: context.packager.projectDir, unpackedDir, platform: 'win32', arch });
+    if (process.platform === 'win32') {
+      const executable = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
+      const probe = path.join(unpackedDir, 'dist/electron/scripts/windows_package_probe.cjs');
+      // cwd 设为应用目录，防止漏包时意外借用源码目录中的依赖。
+      execFileSync(executable, [probe], { cwd: context.appOutDir,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_PATH: '' },
+        timeout: 90000, stdio: 'inherit' });
+    }
+  }
   if (context.electronPlatformName !== "darwin") return;
   if (process.env.CSC_LINK || process.env.CSC_NAME) return;
   const appName = context.packager.appInfo.productFilename;
