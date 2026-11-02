@@ -100,7 +100,7 @@ test("轨迹模型：多个轮次按序聚合，空输入不炸", () => {
 
 test("轨迹：搜索命中用户输入 / 回复 / 工具参数与结果", () => {
   const events = [
-    requestEvent(1, 1, 0, "2026-10-01T22:00:00.000Z", { user: "帮我查大亚湾的隐患" }),
+    requestEvent(1, 1, 0, "2026-10-01T22:00:00.000Z", { user: "帮我查本月的隐患" }),
     { seq: 2, turn: 1, step: 0, time: "2026-10-01T22:00:01.000Z", kind: "model-response", direction: "out", target: "model", title: "模型响应", parentSeq: 1, content: JSON.stringify({ role: "assistant", content: "已检索到 3 条" }) },
     { seq: 3, turn: 1, step: 1, time: "2026-10-01T22:00:02.000Z", kind: "tool-call", direction: "in", target: "tool", title: "调用工具 gov_search", content: JSON.stringify({ keyword: "隐患" }) },
     { seq: 4, turn: 1, step: 1, time: "2026-10-01T22:00:03.000Z", kind: "tool-result", direction: "out", target: "tool", title: "工具 gov_search 成功", content: "命中 3 条记录", parentSeq: 3 },
@@ -108,7 +108,7 @@ test("轨迹：搜索命中用户输入 / 回复 / 工具参数与结果", () =>
   const model = buildTraceModel(events);
   const turn = model.turns[0];
   assert.equal(traceMatches(turn, ""), true, "空关键词全通过");
-  assert.equal(traceMatches(turn, "大亚湾"), true);
+  assert.equal(traceMatches(turn, "隐患"), true);
   assert.equal(traceMatches(turn, "已检索"), true);
   assert.equal(traceMatches(turn, "gov_search"), true);
   assert.equal(traceMatches(turn, "命中 3 条"), true);
