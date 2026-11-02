@@ -116,7 +116,7 @@ export function Sidebar(props: SidebarProps) {
         <button className={`session-item ${selected ? "active" : ""}`} onClick={() => selectSession(session)} title={session.title}>
           {session.pinned && <Pin size={12} className="pin-icon" />}
           {session.channel && (
-            <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : "微信"}</span>
+            <span className={`session-channel-badge ${session.channel}`}>{session.channel === "qq" ? "QQ" : session.channel === "feishu" ? "飞书" : "微信"}</span>
           )}
           <span>{session.title}</span>
           {session.unread && <span className="session-unread-dot" role="status" aria-label="有新的完成结果" title="有新的完成结果" />}

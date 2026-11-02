@@ -4,11 +4,12 @@
 // 本文件不依赖 electron,方便用 node --test 直接测试。
 
 import { randomUUID } from "node:crypto";
+import { createFeishuClient } from "./feishu.mts";
 import { createQqBotClient, parseApprovalReply } from "./qq-bot.mts";
 import { createWechatChannel } from "./wechat.mts";
 
-export const CHANNEL_IDS = ["qq", "wechat"];
-export const CHANNEL_LABELS = { qq: "QQ", wechat: "微信" };
+export const CHANNEL_IDS = ["qq", "wechat", "feishu"];
+export const CHANNEL_LABELS = { qq: "QQ", wechat: "微信", feishu: "飞书" };
 
 // 渠道媒体大小上限（入站下载与出站发送共用，见设计文档第 2/4/9 节）
 export { MAX_MEDIA_BYTES } from "./shared.mts";
@@ -58,11 +59,13 @@ export function createChannelManager({
   wechatStateRoot = "", // 微信 ClawBot SDK 本地状态目录（userData/wechat-state，由 main 注入）
   createQqClient = createQqBotClient,
   createWechat = createWechatChannel,
+  createFeishu = createFeishuClient,
 } = {} as any) {
   const adapters = new Map(); // channelId → adapter 实例
   const statusMap = {
     qq: { status: "disabled", detail: "" },
     wechat: { status: "disabled", detail: "" },
+    feishu: { status: "disabled", detail: "" },
   };
   const queues = new Map(); // chatKey → Promise(队尾)
   const queueLengths = new Map(); // chatKey → 排队中的消息数
@@ -333,6 +336,15 @@ export function createChannelManager({
         onStatus: handleAdapterStatus,
         onLogin: onSaveWechatCredentials,
         onSessionExpired: onWechatSessionExpired,
+      });
+    }
+    if (channelId === "feishu") {
+      return createFeishu({
+        appId: config.appId,
+        appSecret: config.appSecret,
+        mediaDir: mediaDir ? `${mediaDir}/feishu` : "",
+        onMessage: (message) => void handleInbound(message).catch(() => { }),
+        onStatus: handleAdapterStatus,
       });
     }
     return null;

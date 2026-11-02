@@ -157,6 +157,8 @@ export function countUndecryptableSecrets(stored, secretStorage) {
   }
   const qq = source.channels?.qq && typeof source.channels.qq === "object" ? source.channels.qq : {};
   if (stuck(qq.appSecret, qq.appSecretEncrypted)) count += 1;
+  const feishu = source.channels?.feishu && typeof source.channels.feishu === "object" ? source.channels.feishu : {};
+  if (stuck(feishu.appSecret, feishu.appSecretEncrypted)) count += 1;
   return count;
 }
 
@@ -200,6 +202,13 @@ export function preserveUndecryptableSecrets(serialized, stored, secretStorage) 
       qq: { ...serialized.channels.qq, appSecret: String(storedQq.appSecret), appSecretEncrypted: true },
     };
   }
+  const storedFeishu = stored.channels?.feishu && typeof stored.channels.feishu === "object" ? stored.channels.feishu : {};
+  if (serialized.channels?.feishu && shouldKeep(serialized.channels.feishu.appSecret, storedFeishu.appSecret, storedFeishu.appSecretEncrypted)) {
+    serialized.channels = {
+      ...serialized.channels,
+      feishu: { ...serialized.channels.feishu, appSecret: String(storedFeishu.appSecret), appSecretEncrypted: true },
+    };
+  }
   serialized.mcpServers = (serialized.mcpServers || []).map(server => {
     const old = (stored.mcpServers || []).find(item => item.id === server.id);
     if (old && shouldKeep(server.privateConfig, old.privateConfig, old.privateConfigEncrypted)) return {...server, privateConfig: old.privateConfig, privateConfigEncrypted: true};
@@ -208,18 +217,20 @@ export function preserveUndecryptableSecrets(serialized, stored, secretStorage) 
   return serialized;
 }
 
-// IM 消息渠道配置(QQ 官方机器人 / 微信 ClawBot);QQ appSecret 与 apiKey 同款加密。
+// IM 消息渠道配置(QQ 官方机器人 / 微信 ClawBot / 飞书官方长连接);QQ 与飞书 appSecret 与 apiKey 同款加密。
 // 微信登录凭据(bot_token)不进设置文件,由主进程单独存 channel-credentials.json,避免渲染端陈旧覆盖。
 function normalizeChannels(channels, secretStorage, direction) {
   const source = channels && typeof channels === "object" ? channels : {};
   const qq = source.qq && typeof source.qq === "object" ? source.qq : {};
   const wechat = source.wechat && typeof source.wechat === "object" ? source.wechat : {};
+  const feishu = source.feishu && typeof source.feishu === "object" ? source.feishu : {};
   // 渠道审批严格度：auto(自动执行,少打扰)/interactive(严格逐次确认)/其余回退 reviewer
   const approvalMode = source.approvalMode === "auto" || source.approvalMode === "interactive"
     ? source.approvalMode
     : "reviewer";
   if (direction === "serialize") {
     const secret = encryptSecret(qq.appSecret, secretStorage);
+    const feishuSecret = encryptSecret(feishu.appSecret, secretStorage);
     return {
       qq: {
         enabled: qq.enabled === true,
@@ -228,6 +239,12 @@ function normalizeChannels(channels, secretStorage, direction) {
         appSecretEncrypted: secret.encrypted,
       },
       wechat: { enabled: wechat.enabled === true },
+      feishu: {
+        enabled: feishu.enabled === true,
+        appId: String(feishu.appId || "").trim(),
+        appSecret: feishuSecret.value,
+        appSecretEncrypted: feishuSecret.encrypted,
+      },
       approvalMode,
       ...(source.runtime === "dsh" || source.runtime === "dyworker" ? {runtime:source.runtime} : {}),
       modelProfileId: String(source.modelProfileId || ""),
@@ -240,6 +257,11 @@ function normalizeChannels(channels, secretStorage, direction) {
       appSecret: decryptSecret(qq.appSecret, qq.appSecretEncrypted === true, secretStorage),
     },
     wechat: { enabled: wechat.enabled === true },
+    feishu: {
+      enabled: feishu.enabled === true,
+      appId: String(feishu.appId || "").trim(),
+      appSecret: decryptSecret(feishu.appSecret, feishu.appSecretEncrypted === true, secretStorage),
+    },
     approvalMode,
     ...(source.runtime === "dsh" || source.runtime === "dyworker" ? {runtime:source.runtime} : {}),
     modelProfileId: String(source.modelProfileId || ""),

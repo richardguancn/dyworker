@@ -82,7 +82,7 @@ export function useSessionIpcRuntime(deps: SessionIpcRuntimeDeps) {
       // wakes.json 为权威）；已完成/失败的一轮也会借此清掉过期的挂起标记
       void refreshPendingWakes();
       setNotice(session.channel
-        ? `收到${session.channel === "qq" ? "QQ" : "微信"}消息，渠道会话已建立`
+        ? `收到${session.channel === "qq" ? "QQ" : session.channel === "feishu" ? "飞书" : "微信"}消息，渠道会话已建立`
         : "定时计划已执行，结果已保存到最近任务");
     });
     // 定时计划开始运行：主进程在起跑前就把本次运行的会话标识推过来，界面立刻建出会话与
@@ -154,7 +154,7 @@ export function useSessionIpcRuntime(deps: SessionIpcRuntimeDeps) {
         const now = new Date().toISOString();
         return [{
           id: payload.sessionId,
-          title: payload.channel ? `${payload.channel === "qq" ? "QQ" : "微信"}消息` : "到点自动唤醒续跑",
+          title: payload.channel ? `${payload.channel === "qq" ? "QQ" : payload.channel === "feishu" ? "飞书" : "微信"}消息` : "到点自动唤醒续跑",
           workspacePath: payload.workspacePath,
           ...(payload.channel ? { channel: payload.channel } : {}),
           ...(workingContext !== undefined ? { workingContext } : {}),
@@ -165,7 +165,7 @@ export function useSessionIpcRuntime(deps: SessionIpcRuntimeDeps) {
         }, ...current];
       });
       setNotice(payload.channel
-        ? `${payload.channel === "qq" ? "QQ" : "微信"}渠道任务有新进展`
+        ? `${payload.channel === "qq" ? "QQ" : payload.channel === "feishu" ? "飞书" : "微信"}渠道任务有新进展`
         : "挂起的任务已到点自动唤醒，结果已写入任务记录");
     });
     const offInbox = window.dyworker?.onInboxChanged?.(() => {

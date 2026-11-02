@@ -7,6 +7,8 @@ import test from "node:test";
 
 import { chunkText, createQqBotClient, normalizeQqEvent, normalizeQqMediaAttachment, parseApprovalReply } from "../electron/channels/qq-bot.mts";
 import { createWechatChannel, fetchWechatQrStatus, runWechatQrLogin, sniffImageExtension } from "../electron/channels/wechat.mts";
+import { clearFeishuTokenCache, createFeishuClient, decodePbFrame, encodePbFrame, normalizeFeishuEvent, pbHeadersToMap } from "../electron/channels/feishu.mts";
+import { feishuDocToolDefinitions, formatBitableCellValue, formatSheetValuesAsMarkdown, handleFeishuDocTool, markdownToFeishuBlocks, parseFeishuDocReference, sanitizeConvertedBlocks } from "../electron/channels/feishu-docs.mts";
 import { chatKeyOf, createChannelManager, isNewSessionCommand, MAX_MEDIA_BYTES } from "../electron/channels/manager.mts";
 import { verifyChannelMediaPath } from "../electron/channels/media-tools.mts";
 import { isWorkspaceSwitchRequest, looksLikePathDirective, parseWorkspaceSwitch, resolveWorkspaceSwitch } from "../electron/channels/workspace.mts";
@@ -1460,3 +1462,672 @@ test("verifyChannelMediaPath 待写入路径(mustExist=false)只校验已存在�
   assert.equal(denied.ok, false);
   assert.match(denied.error, /工作区外/);
 });
+
+// ---- 飞书 Protobuf pbbp2.Frame 编解码与事件归一化 ----
+
+test("飞书 pbbp2.Frame:二进制编解码往返一致", () => {
+  const payload = Buffer.from(JSON.stringify({ schema: "2.0", header: { event_type: "im.message.receive_v1" } }), "utf8");
+  const encoded = encodePbFrame({
+    seqId: 123456789n,
+    logId: 987654321n,
+    service: 33554432,
+    method: 1,
+    headers: [
+      { key: "type", value: "event" },
+      { key: "message_id", value: "msg-001" },
+      { key: "sum", value: "1" },
+      { key: "seq", value: "0" },
+    ],
+    payloadEncoding: "utf8",
+    payloadType: "application/json",
+    payload,
+     logIdNew: "20261101210000",
+  });
+  const decoded = decodePbFrame(encoded);
+  assert.equal(decoded.seqId, 123456789n);
+  assert.equal(decoded.logId, 987654321n);
+  assert.equal(decoded.service, 33554432);
+  assert.equal(decoded.method, 1);
+  const headerMap = pbHeadersToMap(decoded.headers);
+  assert.equal(headerMap.type, "event");
+  assert.equal(headerMap.message_id, "msg-001");
+  assert.equal(decoded.payload.toString("utf8"), payload.toString("utf8"));
+  assert.equal(decoded.logIdNew, "20261101210000");
+});
+
+test("normalizeFeishuEvent:解析单聊/群聊文本、富文本 post、图片、文件与语音消息", () => {
+  // 1. 单聊文本
+  const dmText = normalizeFeishuEvent({
+    schema: "2.0",
+    header: { event_id: "ev1", event_type: "im.message.receive_v1" },
+    event: {
+      sender: { sender_type: "user", sender_id: { open_id: "ou_user1" } },
+      message: {
+        message_id: "om_1",
+        chat_id: "oc_dm1",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "  帮我查一下会议纪要  " }),
+      },
+    },
+  });
+  assert.equal(dmText.channel, "feishu");
+  assert.equal(dmText.chatType, "dm");
+  assert.equal(dmText.chatId, "oc_dm1");
+  assert.equal(dmText.userId, "ou_user1");
+  assert.equal(dmText.text, "帮我查一下会议纪要");
+  assert.equal(dmText.messageId, "om_1");
+
+  // 2. 群聊 @机器人 文本清理占位符
+  const groupText = normalizeFeishuEvent({
+    header: { event_type: "im.message.receive_v1" },
+    event: {
+      sender: { sender_type: "user", sender_id: { open_id: "ou_user2" } },
+      message: {
+        message_id: "om_2",
+        chat_id: "oc_group1",
+        chat_type: "group",
+        message_type: "text",
+        content: JSON.stringify({ text: "@_user_1 汇总本周周报" }),
+        mentions: [{ key: "@_user_1", name: "办公助手" }],
+      },
+    },
+  });
+  assert.equal(groupText.chatType, "group");
+  assert.equal(groupText.chatId, "oc_group1");
+  assert.equal(groupText.text, "汇总本周周报");
+
+  // 3. 富文本 post（含内联图片与链接）
+  const postEvent = normalizeFeishuEvent({
+    header: { event_type: "im.message.receive_v1" },
+    event: {
+      sender: { sender_type: "user", sender_id: { open_id: "ou_user3" } },
+      message: {
+        message_id: "om_3",
+        chat_id: "oc_dm3",
+        chat_type: "p2p",
+        message_type: "post",
+        content: JSON.stringify({
+          title: "项目方案",
+          content: [
+            [{ tag: "text", text: "请审阅" }, { tag: "a", text: "飞书文档", href: "https://example.feishu.cn/docx/doxcn123" }],
+            [{ tag: "img", image_key: "img_v2_abc" }],
+          ],
+        }),
+      },
+    },
+  });
+  assert.match(postEvent.text, /项目方案/);
+  assert.match(postEvent.text, /飞书文档\s*\(https:\/\/example\.feishu\.cn\/docx\/doxcn123\)/);
+  assert.equal(postEvent.media.length, 1);
+  assert.equal(postEvent.media[0].fileKey, "img_v2_abc");
+
+  // 4. 语音消息 audio
+  const audioEvent = normalizeFeishuEvent({
+    header: { event_type: "im.message.receive_v1" },
+    event: {
+      sender: { sender_type: "user", sender_id: { open_id: "ou_user4" } },
+      message: {
+        message_id: "om_4",
+        chat_id: "oc_dm4",
+        chat_type: "p2p",
+        message_type: "audio",
+        content: JSON.stringify({ file_key: "file_v2_audio1", duration: 3000 }),
+      },
+    },
+  });
+  assert.equal(audioEvent.text, "[语音]");
+  assert.equal(audioEvent.media.length, 1);
+  assert.equal(audioEvent.media[0].kind, "voice");
+  assert.equal(audioEvent.media[0].duration, 3);
+
+  // 忽略机器人自身消息或非接收事件
+  assert.equal(normalizeFeishuEvent({
+    header: { event_type: "im.message.receive_v1" },
+    event: { sender: { sender_type: "app" }, message: { message_id: "om_5", chat_id: "oc_1", message_type: "text", content: "{\"text\":\"hi\"}" } },
+  }), null);
+});
+
+class FakeBinaryWebSocket {
+  static instances = [];
+  constructor(url) {
+    this.url = url;
+    this.readyState = 1;
+    this.sent = [];
+    FakeBinaryWebSocket.instances.push(this);
+    queueMicrotask(() => this.onopen?.());
+  }
+  send(payload) {
+    this.sent.push(Buffer.from(payload));
+  }
+  close() {
+    this.readyState = 3;
+    this.onclose?.();
+  }
+}
+
+test("飞书客户端:长连接握手、分片重组、ACK 回执与消息收发", async () => {
+  clearFeishuTokenCache();
+  FakeBinaryWebSocket.instances = [];
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("/auth/v3/tenant_access_token/internal")) {
+      return { ok: true, json: async () => ({ code: 0, tenant_access_token: "t-feishu-1", expire: 7200 }) };
+    }
+    if (url.includes("/callback/ws/endpoint")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            URL: "wss://msg-frontier.feishu.cn/ws/v2?service_id=33554432",
+            ClientConfig: { PingInterval: 120, ReconnectInterval: 30 },
+          },
+        }),
+      };
+    }
+    if (url.includes("/im/v1/messages/om_in_1/reply")) {
+      return { ok: true, json: async () => ({ code: 0, data: { message_id: "om_out_1" } }) };
+    }
+    return { ok: true, json: async () => ({ code: 0, data: {} }) };
+  };
+
+  const received = [];
+  const statuses = [];
+  const client = createFeishuClient({
+    appId: "cli_test1",
+    appSecret: "sec_test1",
+    fetchImpl,
+    webSocketImpl: FakeBinaryWebSocket,
+    onMessage: (msg) => received.push(msg),
+    onStatus: (st) => statuses.push(st),
+  });
+
+  try {
+    await client.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(statuses.some((s) => s.status === "online"));
+    const ws = FakeBinaryWebSocket.instances.at(-1);
+    assert.ok(ws);
+
+    // 模拟 2 个分片的事件帧
+    const fullJson = Buffer.from(JSON.stringify({
+      schema: "2.0",
+      header: { event_id: "ev_frag_1", event_type: "im.message.receive_v1" },
+      event: {
+        sender: { sender_type: "user", sender_id: { open_id: "ou_100" } },
+        message: {
+          message_id: "om_in_1",
+          chat_id: "oc_chat_1",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "分片消息测试" }),
+        },
+      },
+    }), "utf8");
+    const mid = Math.floor(fullJson.length / 2);
+    const frame0 = encodePbFrame({
+      seqId: 10n, logId: 20n, service: 33554432, method: 1,
+      headers: [{ key: "type", value: "event" }, { key: "message_id", value: "frag_m1" }, { key: "sum", value: "2" }, { key: "seq", value: "0" }],
+      payload: fullJson.subarray(0, mid),
+    });
+    const frame1 = encodePbFrame({
+      seqId: 11n, logId: 20n, service: 33554432, method: 1,
+      headers: [{ key: "type", value: "event" }, { key: "message_id", value: "frag_m1" }, { key: "sum", value: "2" }, { key: "seq", value: "1" }],
+      payload: fullJson.subarray(mid),
+    });
+
+    ws.onmessage({ data: frame0 });
+    ws.onmessage({ data: frame1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // 验证发送了 ACK 帧（code: 200）
+    assert.equal(ws.sent.length, 1);
+    const ackFrame = decodePbFrame(ws.sent[0]);
+    const ackPayload = JSON.parse(ackFrame.payload.toString("utf8"));
+    assert.equal(ackPayload.code, 200);
+
+    // 验证接收并重组了消息
+    assert.equal(received.length, 1);
+    assert.equal(received[0].text, "分片消息测试");
+    assert.equal(received[0].userId, "ou_100");
+
+    // 验证出站回复调用 /reply
+    await client.sendText({ chatType: "dm", chatId: "oc_chat_1", messageId: "om_in_1" }, "收到你的飞书消息");
+    const replyCall = calls.find((c) => c.url.includes("/im/v1/messages/om_in_1/reply"));
+    assert.ok(replyCall, "应优先使用被动回复接口");
+    const replyBody = JSON.parse(replyCall.options.body);
+    assert.equal(replyBody.msg_type, "text");
+    assert.deepEqual(JSON.parse(replyBody.content), { text: "收到你的飞书消息" });
+  } finally {
+    await client.stop();
+  }
+});
+
+// ---- 飞书云文档（Docx / Wiki / Drive）工具集测试 ----
+
+test("parseFeishuDocReference:支持 docx/wiki/docs 链接与裸 Token 解析", () => {
+  assert.deepEqual(parseFeishuDocReference("https://xxx.feishu.cn/docx/doxcnaBC123456"), {
+    type: "docx",
+    token: "doxcnaBC123456",
+    domain: "https://xxx.feishu.cn",
+  });
+  assert.deepEqual(parseFeishuDocReference("https://xxx.larksuite.com/wiki/wikcnXYZ98765?from=from_copylink"), {
+    type: "wiki",
+    token: "wikcnXYZ98765",
+    domain: "https://xxx.larksuite.com",
+  });
+  assert.deepEqual(parseFeishuDocReference("doxcnTokenOnly123"), { type: "docx", token: "doxcnTokenOnly123" });
+  assert.deepEqual(parseFeishuDocReference("wikcnNodeToken123"), { type: "wiki", token: "wikcnNodeToken123" });
+  assert.deepEqual(parseFeishuDocReference("https://xxx.feishu.cn/base/bascnAppTok1?table=tbl123&view=vew456"), {
+    type: "bitable",
+    token: "bascnAppTok1",
+    domain: "https://xxx.feishu.cn",
+    tableId: "tbl123",
+    viewId: "vew456",
+  });
+  assert.deepEqual(parseFeishuDocReference("bascnBareToken1"), { type: "bitable", token: "bascnBareToken1" });
+  assert.deepEqual(parseFeishuDocReference("https://xxx.feishu.cn/sheets/shtcnSpread1?sheet=sheet01"), {
+    type: "sheet",
+    token: "shtcnSpread1",
+    domain: "https://xxx.feishu.cn",
+    sheetId: "sheet01",
+  });
+  assert.deepEqual(parseFeishuDocReference("shtcnBareSheet1"), { type: "sheet", token: "shtcnBareSheet1" });
+});
+
+test("markdownToFeishuBlocks & sanitizeConvertedBlocks:Markdown 转块与只读属性清理", () => {
+  const blocks = markdownToFeishuBlocks("# 一级标题\n\n普通段落带 **加粗** 和 [链接](https://feishu.cn)\n\n- 列表项一\n1. 有序项\n> 引用文字\n---\n```ts\nconst x = 1;\n```");
+  assert.ok(blocks.some((b) => b.block_type === 3), "包含 heading1");
+  assert.ok(blocks.some((b) => b.block_type === 2), "包含 text");
+  assert.ok(blocks.some((b) => b.block_type === 12), "包含 bullet");
+  assert.ok(blocks.some((b) => b.block_type === 13), "包含 ordered");
+  assert.ok(blocks.some((b) => b.block_type === 15), "包含 quote");
+  assert.ok(blocks.some((b) => b.block_type === 22), "包含 divider");
+  assert.ok(blocks.some((b) => b.block_type === 14), "包含 code");
+
+  const sanitized = sanitizeConvertedBlocks([
+    { block_id: "b1", block_type: 31, table: { property: { row_size: 2, column_size: 2, merge_info: [{ row_span: 1 }] } } },
+  ]);
+  assert.equal(sanitized[0].table.property.merge_info, undefined, "应清理只读的 merge_info");
+});
+
+test("handleFeishuDocTool:支持读取知识库文档、创建文档并自动授权、追加与覆写文档", async () => {
+  clearFeishuTokenCache();
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("/auth/v3/tenant_access_token/internal")) {
+      return { ok: true, json: async () => ({ code: 0, tenant_access_token: "t-doc-token", expire: 7200 }) };
+    }
+    if (url.includes("/wiki/v2/spaces/get_node")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { node: { title: "知识库规范", obj_type: "docx", obj_token: "doxcnFromWiki1" } },
+        }),
+      };
+    }
+    if (url.includes("/docx/v1/documents/doxcnFromWiki1/raw_content")) {
+      return { ok: true, json: async () => ({ code: 0, data: { content: "第一行正文\n第二行正文" } }) };
+    }
+    if (url.endsWith("/blocks/doxcnFromWiki1") && (!options.method || options.method === "GET")) {
+      return { ok: true, json: async () => ({ code: 0, data: { block: { children: ["old_1", "old_2"] } } }) };
+    }
+    if (url.endsWith("/docx/v1/documents/doxcnFromWiki1") && (!options.method || options.method === "GET")) {
+      return { ok: true, json: async () => ({ code: 0, data: { document: { title: "知识库规范", revision_id: 5 } } }) };
+    }
+    if (url.endsWith("/docx/v1/documents") && options.method === "POST") {
+      return { ok: true, json: async () => ({ code: 0, data: { document: { document_id: "doxcnNewDoc1", title: "周报汇总" } } }) };
+    }
+    if (url.includes("/docx/v1/documents/blocks/convert")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            first_level_block_ids: ["blk_1"],
+            blocks: [{ block_id: "blk_1", block_type: 2, text: { elements: [{ text_run: { content: "转换后的正文" } }] } }],
+          },
+        }),
+      };
+    }
+    if (url.includes("/children/batch_delete")) {
+      return { ok: true, json: async () => ({ code: 0, data: {} }) };
+    }
+    if (url.endsWith("/blocks/doxcnFromWiki1") && (!options.method || options.method === "GET")) {
+      return { ok: true, json: async () => ({ code: 0, data: { block: { children: ["old_1", "old_2"] } } }) };
+    }
+    if (url.includes("/children") && options.method === "POST") {
+      return { ok: true, json: async () => ({ code: 0, data: { children: [{ block_id: "c1" }] } }) };
+    }
+    if (url.includes("/drive/v1/permissions/doxcnNewDoc1/members")) {
+      return { ok: true, json: async () => ({ code: 0, data: {} }) };
+    }
+    return { ok: true, json: async () => ({ code: 0, data: {} }) };
+  };
+
+  assert.equal(feishuDocToolDefinitions().length, 10);
+
+  // 1. 读取 Wiki 链接（自动解析为 docx 并读取正文）
+  const readRes = await handleFeishuDocTool("feishu_read_doc", {
+    url_or_token: "https://example.feishu.cn/wiki/wikcnTestNode",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(readRes.ok, true);
+  assert.match(readRes.result, /知识库规范/);
+  assert.match(readRes.result, /第一行正文/);
+
+  // 2. 创建文档并自动为飞书会话发起人授权
+  const createRes = await handleFeishuDocTool("feishu_create_doc", {
+    title: "周报汇总",
+    markdown: "# 本周进展\n\n已完成飞书接入",
+  }, { appId: "cli_1", appSecret: "sec_1", defaultOpenId: "ou_sender_1", fetchImpl });
+  assert.equal(createRes.ok, true);
+  assert.match(createRes.result, /doxcnNewDoc1/);
+  assert.match(createRes.result, /ou_sender_1/);
+
+  // 3. 覆写已有文档（replace 模式会先 batch_delete 再插入）
+  const writeRes = await handleFeishuDocTool("feishu_write_doc", {
+    url_or_token: "https://example.feishu.cn/wiki/wikcnTestNode",
+    markdown: "## 新章节",
+    mode: "replace",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(writeRes.ok, true);
+  assert.match(writeRes.result, /已覆写飞书云文档/);
+  assert.ok(calls.some((c) => c.url.includes("/children/batch_delete") && c.options.method === "DELETE"));
+});
+
+test("飞书多维表格 (Bitable):探查表与字段结构、查询记录并扁平化单元格、创建与批量增改删记录", async () => {
+  clearFeishuTokenCache();
+  assert.equal(formatBitableCellValue([{ type: "text", text: "第一段" }, { type: "text", text: "第二段" }]), "第一段第二段");
+  assert.deepEqual(formatBitableCellValue([{ id: "ou_1", name: "张三" }]), ["张三(ou_1)"]);
+  assert.equal(formatBitableCellValue({ text: "飞书官网", link: "https://feishu.cn" }), "飞书官网 (https://feishu.cn)");
+
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("/auth/v3/tenant_access_token/internal")) {
+      return { ok: true, json: async () => ({ code: 0, tenant_access_token: "t-bitable-token", expire: 7200 }) };
+    }
+    if (url.endsWith("/bitable/v1/apps/bascnTest1") && (!options.method || options.method === "GET")) {
+      return { ok: true, json: async () => ({ code: 0, data: { app: { name: "项目任务台账", app_token: "bascnTest1" } } }) };
+    }
+    if (url.includes("/bitable/v1/apps/bascnTest1/tables?") && (!options.method || options.method === "GET")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            items: [
+              { table_id: "tblMain1", name: "主任务表" },
+              { table_id: "tblSub2", name: "子任务表" },
+            ],
+          },
+        }),
+      };
+    }
+    if (url.includes("/bitable/v1/apps/bascnTest1/tables/tblMain1/fields")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            items: [
+              { field_id: "fld1", field_name: "任务名称", type: 1 },
+              { field_id: "fld2", field_name: "状态", type: 3, property: { options: [{ name: "待处理" }, { name: "已完成" }] } },
+            ],
+          },
+        }),
+      };
+    }
+    if (url.includes("/bitable/v1/apps/bascnTest1/tables/tblMain1/records/search")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            total: 1,
+            has_more: false,
+            items: [
+              {
+                record_id: "rec_101",
+                fields: {
+                  任务名称: [{ type: "text", text: "接入飞书多维表格" }],
+                  状态: "已完成",
+                },
+              },
+            ],
+          },
+        }),
+      };
+    }
+    if (url.endsWith("/bitable/v1/apps") && options.method === "POST") {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { app: { app_token: "bascnCreated1", default_table_id: "tblDefault1", url: "https://feishu.cn/base/bascnCreated1" } },
+        }),
+      };
+    }
+    if (url.includes("/records/batch_create")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { records: [{ record_id: "rec_new_1" }, { record_id: "rec_new_2" }] },
+        }),
+      };
+    }
+    if (url.includes("/records/batch_update")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { records: [{ record_id: "rec_101" }] },
+        }),
+      };
+    }
+    if (url.includes("/records/batch_delete")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { records: [{ deleted: true, record_id: "rec_101" }] },
+        }),
+      };
+    }
+    return { ok: true, json: async () => ({ code: 0, data: {} }) };
+  };
+
+  // 1. 探查多维表格结构（从 URL 自动识别 ?table=tblMain1）
+  const inspectRes = await handleFeishuDocTool("feishu_bitable_inspect", {
+    url_or_token: "https://example.feishu.cn/base/bascnTest1?table=tblMain1",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(inspectRes.ok, true);
+  assert.match(inspectRes.result, /项目任务台账/);
+  assert.match(inspectRes.result, /主任务表/);
+  assert.match(inspectRes.result, /待处理, 已完成/);
+
+  // 2. 查询记录并扁平化富文本字段
+  const readRes = await handleFeishuDocTool("feishu_bitable_read_records", {
+    url_or_token: "https://example.feishu.cn/base/bascnTest1?table=tblMain1",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(readRes.ok, true);
+  assert.match(readRes.result, /rec_101/);
+  assert.match(readRes.result, /"任务名称": "接入飞书多维表格"/);
+
+  // 3. 创建新多维表格并自动授权发起人
+  const createAppRes = await handleFeishuDocTool("feishu_bitable_write_records", {
+    action: "create_app",
+    name: "季度OKR看板",
+  }, { appId: "cli_1", appSecret: "sec_1", defaultOpenId: "ou_creator_1", fetchImpl });
+  assert.equal(createAppRes.ok, true);
+  assert.match(createAppRes.result, /bascnCreated1/);
+  assert.match(createAppRes.result, /ou_creator_1/);
+
+  // 4. 批量新增记录
+  const addRes = await handleFeishuDocTool("feishu_bitable_write_records", {
+    action: "add_records",
+    url_or_token: "https://example.feishu.cn/base/bascnTest1?table=tblMain1",
+    records: JSON.stringify([{ 任务名称: "任务1", 状态: "待处理" }, { 任务名称: "任务2", 状态: "已完成" }]),
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(addRes.ok, true);
+  assert.match(addRes.result, /rec_new_1, rec_new_2/);
+
+  // 5. 批量更新与删除记录
+  const updateRes = await handleFeishuDocTool("feishu_bitable_write_records", {
+    action: "update_records",
+    url_or_token: "bascnTest1",
+    table_id: "tblMain1",
+    records: JSON.stringify([{ record_id: "rec_101", fields: { 状态: "已完成" } }]),
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(updateRes.ok, true);
+  assert.match(updateRes.result, /已更新多维表格/);
+
+  const delRes = await handleFeishuDocTool("feishu_bitable_write_records", {
+    action: "delete_records",
+    url_or_token: "bascnTest1",
+    table_id: "tblMain1",
+    record_ids: JSON.stringify(["rec_101"]),
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(delRes.ok, true);
+  assert.match(delRes.result, /删除 1 条记录/);
+});
+
+test("飞书电子表格 (Sheet):读取工作表列表与单元格数据、创建表格并授权、追加与更新数据", async () => {
+  clearFeishuTokenCache();
+  const md = formatSheetValuesAsMarkdown([["姓名", "职务", "得分"], ["张三", "开发", 95], ["李四", "测试", 88]]);
+  assert.match(md, /\| 姓名 \| 职务 \| 得分 \|/);
+  assert.match(md, /\| 张三 \| 开发 \| 95 \|/);
+
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("/auth/v3/tenant_access_token/internal")) {
+      return { ok: true, json: async () => ({ code: 0, tenant_access_token: "t-sheet-token", expire: 7200 }) };
+    }
+    if (url.endsWith("/sheets/v3/spreadsheets/shtcnTest1") && (!options.method || options.method === "GET")) {
+      return { ok: true, json: async () => ({ code: 0, data: { spreadsheet: { title: "2026年度预算表", token: "shtcnTest1" } } }) };
+    }
+    if (url.includes("/sheets/v3/spreadsheets/shtcnTest1/sheets/query")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            sheets: [
+              { sheet_id: "s101", title: "第一季度", grid_properties: { row_count: 50, column_count: 10 } },
+              { sheet_id: "s102", title: "第二季度", grid_properties: { row_count: 50, column_count: 10 } },
+            ],
+          },
+        }),
+      };
+    }
+    if (url.includes("/sheets/v2/spreadsheets/shtcnTest1/values/")) {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: {
+            valueRange: {
+              range: "第一季度!A1:C2",
+              values: [["部门", "预算", "实际支出"], ["研发部", "100万", "85万"]],
+            },
+          },
+        }),
+      };
+    }
+    if (url.endsWith("/sheets/v3/spreadsheets") && options.method === "POST") {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { spreadsheet: { spreadsheet_token: "shtcnNewCreated", title: "新建财务表", url: "https://feishu.cn/sheets/shtcnNewCreated" } },
+        }),
+      };
+    }
+    if (url.includes("/sheets/v2/spreadsheets/shtcnTest1/values_append") && options.method === "POST") {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { updates: { updatedRows: 1 } },
+        }),
+      };
+    }
+    if (url.includes("/sheets/v2/spreadsheets/shtcnTest1/values") && options.method === "PUT") {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { updates: { updatedCells: 3 } },
+        }),
+      };
+    }
+    if (url.includes("/sheets/batch_update") && options.method === "POST") {
+      return {
+        ok: true,
+        json: async () => ({
+          code: 0,
+          data: { replies: [{ addSheet: { properties: { sheetId: "s103", title: "第三季度" } } }] },
+        }),
+      };
+    }
+    if (url.includes("/drive/v1/permissions/shtcnNewCreated/members")) {
+      return { ok: true, json: async () => ({ code: 0, data: {} }) };
+    }
+    return { ok: true, json: async () => ({ code: 0, data: {} }) };
+  };
+
+  // 1. 读取电子表格（自动识别 ?sheet=s101，展示子表清单与 Markdown 数据表格）
+  const readRes = await handleFeishuDocTool("feishu_sheet_read", {
+    url_or_token: "https://example.feishu.cn/sheets/shtcnTest1?sheet=s101",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(readRes.ok, true);
+  assert.match(readRes.result, /2026年度预算表/);
+  assert.match(readRes.result, /第一季度/);
+  assert.match(readRes.result, /研发部 \| 100万 \| 85万/);
+
+  // 2. 创建新电子表格并自动为发起人授权
+  const createRes = await handleFeishuDocTool("feishu_sheet_write", {
+    action: "create",
+    title: "新建财务表",
+  }, { appId: "cli_1", appSecret: "sec_1", defaultOpenId: "ou_creator_1", fetchImpl });
+  assert.equal(createRes.ok, true);
+  assert.match(createRes.result, /shtcnNewCreated/);
+  assert.match(createRes.result, /ou_creator_1/);
+
+  // 3. 追加数据行
+  const appendRes = await handleFeishuDocTool("feishu_sheet_write", {
+    action: "append",
+    url_or_token: "shtcnTest1",
+    sheet_id: "s101",
+    values: JSON.stringify([["市场部", "50万", "45万"]]),
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(appendRes.ok, true);
+  assert.match(appendRes.result, /追加 1 行数据/);
+
+  // 4. 更新单元格
+  const updateRes = await handleFeishuDocTool("feishu_sheet_write", {
+    action: "update",
+    url_or_token: "shtcnTest1",
+    range: "第一季度!A2:C2",
+    values: JSON.stringify([["研发部", "120万", "90万"]]),
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(updateRes.ok, true);
+  assert.match(updateRes.result, /更新.*数据/);
+
+  // 5. 新建工作表
+  const addSheetRes = await handleFeishuDocTool("feishu_sheet_write", {
+    action: "add_sheet",
+    url_or_token: "shtcnTest1",
+    sheet_title: "第三季度",
+  }, { appId: "cli_1", appSecret: "sec_1", fetchImpl });
+  assert.equal(addSheetRes.ok, true);
+  assert.match(addSheetRes.result, /新增工作表「第三季度」/);
+});
+
+

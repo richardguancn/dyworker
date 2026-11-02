@@ -24,8 +24,8 @@ export function parseVoiceMessageDetails(message: ChatMessage) {
   let text = raw;
   let channelPrefix = "";
 
-  // 匹配 [来自QQ 张三] 或 [来自微信] 等
-  const channelMatch = text.match(/^(\[来自(?:QQ|微信|qq|wechat)[^\]]*\])\s*/i);
+  // 匹配 [来自QQ 张三] 或 [来自微信] 或 [来自飞书 张三] 等
+  const channelMatch = text.match(/^(\[来自(?:QQ|微信|飞书|qq|wechat|feishu)[^\]]*\])\s*/i);
   if (channelMatch) {
     channelPrefix = channelMatch[1];
     text = text.slice(channelMatch[0].length).trim();

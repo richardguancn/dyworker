@@ -65,6 +65,10 @@
   background: #3f9d63;
 }
 
+.session-channel-badge.feishu {
+  background: #3370ff;
+}
+
 .channel-model-select {
   max-width: 240px;
   padding: 6px 8px;

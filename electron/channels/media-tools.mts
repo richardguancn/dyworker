@@ -48,7 +48,7 @@ export function channelMediaToolDefinitions() {
   return [
     tool(
       "send_media",
-      "把工作区里生成的文件作为结果发回当前 IM 渠道（QQ/微信）。只能发送图片或常见文档（png/jpg/jpeg/gif/webp/bmp/pdf/csv/xlsx/xls/docx/doc/pptx/ppt/zip/txt/md），不能发送可执行文件；路径必须是工作区相对路径；单个文件不超过 50 MB。发送动作与文字回复同权责，不需额外审批。",
+      "把工作区里生成的文件作为结果发回当前 IM 渠道（QQ/微信/飞书）。只能发送图片或常见文档（png/jpg/jpeg/gif/webp/bmp/pdf/csv/xlsx/xls/docx/doc/pptx/ppt/zip/txt/md），不能发送可执行文件；路径必须是工作区相对路径；单个文件不超过 50 MB。发送动作与文字回复同权责，不需额外审批。",
       { path: stringArg("工作区相对路径，如 output/图表.png"), caption: stringArg("可选：随文件附带的说明文字") },
       ["path"],
     ),

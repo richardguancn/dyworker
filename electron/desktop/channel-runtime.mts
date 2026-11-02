@@ -379,17 +379,17 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     if (!workspacePath) {
       throw new Error("还没有选择工作区,请先在电脑端打开 DYWorker 并选择工作区");
     }
-    // QQ / 微信 语音附件是 silk/音频：解码 → WAV → 现有转写服务；失败/未配置时按占位文案进任务并提示
+    // QQ / 微信 / 飞书 语音附件：解码/读取 → 现有转写服务；失败/未配置时按占位文案进任务并提示
     let effectiveText = text;
     const voiceItem = (Array.isArray(media) ? media : []).find((item) => item?.kind === "voice" && item?.filePath);
     if (voiceItem) {
-      if (channel === "qq" || !text || text === "[语音]") {
+      if (channel === "qq" || channel === "feishu" || !text || text === "[语音]") {
         try {
           const { text: transcribed, duration } = await transcribeQqVoice(voiceItem.filePath, taskSettings);
           if (transcribed) effectiveText = `[语音转写] ${transcribed}`;
           if (duration) voiceItem.duration = duration;
         } catch {
-          if (channel === "qq") {
+          if (channel === "qq" || channel === "feishu") {
             await reply("收到语音，但语音识别服务还没有配置好。").catch(() => { });
           }
         }
@@ -415,7 +415,8 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     sendUserMessage();
     // 渠道任务与桌面会话保持统一的审批权限（使用全局设置/桌面当前选择的审批模式）
     const approvalMode = normalizeApprovalMode(settings?.approvalMode);
-    let routerExecution: any = { sessionId, runId: channelRunId };
+    const channelUserId = String(chat?.userId || "");
+    let routerExecution: any = { sessionId, runId: channelRunId, channel, channelUserId };
     let baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
     // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
     const routeExtraTool = async (name, args) => {
@@ -436,7 +437,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     };
     routeExtraTool.dispose = () => baseRouter.dispose();
     routeExtraTool.setExecutionContext = (execution: any) => {
-      routerExecution = { ...execution, sessionId, runId: channelRunId };
+      routerExecution = { ...execution, sessionId, runId: channelRunId, channel, channelUserId };
       baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
     };
     const collector = createTranscriptCollector({runId:channelRunId,userMessage});

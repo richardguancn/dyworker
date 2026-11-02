@@ -14,6 +14,7 @@ export const RISK = Object.freeze({
 export const toolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
 export const workspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
 export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
+export const feishuWriteTools = new Set(["feishu_create_doc", "feishu_write_doc", "feishu_grant_doc_permission", "feishu_bitable_write_records", "feishu_sheet_write"]);
 
 // 浏览器协作中的只读操作（打开网页、点击、输入、动作等可能产生对外影响，需确认；观察、等待、交接属于只读）
 export const browserReadOnlyTools = new Set([
@@ -82,6 +83,9 @@ export function classify(name, args = {} as any, { platform = process.platform }
   }
   if (workspaceWriteTools.has(name) || toolsNeedingApproval.has(name)) {
     return { risk: RISK.WRITE_LOCAL, consequential: true, computerUseMutation: false, internet: false };
+  }
+  if (feishuWriteTools.has(name)) {
+    return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: false };
   }
   // 未识别的命名空间工具（插件工具 plugin__*、外部工具 dsh__* 等）：
   // **一律按有副作用处理**。插件自称"只读"不能作为授权依据——名字不在已知命名空间里时，

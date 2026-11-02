@@ -543,9 +543,12 @@ export function ChannelsPanel({ value, onSave }: {
   onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
 }) {
   const channels = value.channels ?? defaultSettings.channels;
+  const feishu = channels.feishu ?? { enabled: false, appId: "", appSecret: "" };
   const [statusMap, setStatusMap] = useState<ChannelsStatusMap | null>(null);
   const [qqAppId, setQqAppId] = useState(channels.qq.appId);
   const [qqSecret, setQqSecret] = useState(channels.qq.appSecret);
+  const [feishuAppId, setFeishuAppId] = useState(feishu.appId);
+  const [feishuSecret, setFeishuSecret] = useState(feishu.appSecret);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -659,6 +662,45 @@ export function ChannelsPanel({ value, onSave }: {
         <span className="mcp-server-name">
           <strong>{channels.wechat.enabled ? "微信渠道运行中" : "启用微信渠道"}</strong>
           <small>{channels.wechat.enabled ? "凭据加密保存在本机,下次启动自动登录" : "开启后用手机微信扫码登录"}</small>
+        </span>
+      </div>
+
+      <div className="dialog-section-title">飞书（官方长连接 + 云文档 / 电子表格 / 多维表格）</div>
+      <ChannelStatusLine status={statusMap?.feishu} />
+      <p className="dialog-note">
+        在 <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">飞书开放平台</a> 创建企业自建应用，开启「机器人」能力；在「事件与回调」选择「使用长连接接收事件」并订阅 <code>im.message.receive_v1</code>；在「权限管理」开通消息收发及云文档/电子表格/多维表格权限（<code>docx:document</code>、<code>sheets:spreadsheet</code>、<code>bitable:app</code>、<code>wiki:wiki:readonly</code>、<code>drive:drive</code>），发布版本后将 App ID 和 App Secret 填到这里。保存凭据后，桌面对话与所有渠道均可直接读写飞书云文档（Docx）、电子表格（Sheet）、多维表格（Bitable）与知识库（Wiki）。
+      </p>
+      <div className="mcp-add-form">
+        <input
+          value={feishuAppId}
+          placeholder="App ID (如 cli_xxx)"
+          onChange={(event) => setFeishuAppId(event.target.value)}
+        />
+        <input
+          value={feishuSecret}
+          type="password"
+          placeholder="App Secret(加密保存)"
+          onChange={(event) => setFeishuSecret(event.target.value)}
+        />
+        <button
+          type="button"
+          className="button-secondary"
+          disabled={saving}
+          onClick={() => void saveChannels({ ...channels, feishu: { ...feishu, appId: feishuAppId.trim(), appSecret: feishuSecret.trim() } }, "飞书凭据已保存")}
+        >保存凭据</button>
+      </div>
+      <div className="mcp-server-row">
+        <label className="skill-switch" title={feishu.enabled ? "点击停用" : "点击启用"}>
+          <input
+            type="checkbox"
+            checked={feishu.enabled}
+            disabled={saving || !feishu.appId || !feishu.appSecret}
+            onChange={(event) => void saveChannels({ ...channels, feishu: { ...feishu, enabled: event.target.checked } }, event.target.checked ? "飞书渠道已启用" : "飞书渠道已停用")}
+          />
+        </label>
+        <span className="mcp-server-name">
+          <strong>{feishu.enabled ? "飞书渠道运行中" : "启用飞书消息渠道"}</strong>
+          <small>{feishu.appId ? "开关即时生效；即使不开启消息监听，已保存的凭据也可用于飞书云文档工具" : "先在上方保存 App ID 和 App Secret"}</small>
         </span>
       </div>
 

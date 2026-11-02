@@ -537,7 +537,7 @@ export function App() {
       .map((session) => ({
         id: `session:${session.id}`,
         title: `@「${session.title}」`,
-        detail: `历史会话 · ${formatMessageTime(session.updatedAt)} · ${session.messages.length} 条消息${session.channel === "qq" ? " · QQ" : session.channel === "wechat" ? " · 微信" : ""}`,
+        detail: `历史会话 · ${formatMessageTime(session.updatedAt)} · ${session.messages.length} 条消息${session.channel === "qq" ? " · QQ" : session.channel === "wechat" ? " · 微信" : session.channel === "feishu" ? " · 飞书" : ""}`,
         session,
       }));
     const fileCandidates = workspaceFiles

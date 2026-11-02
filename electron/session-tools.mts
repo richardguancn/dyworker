@@ -104,7 +104,7 @@ function listSessionsSummary(sessions, args = {} as any) {
     const messages = session.messages;
     const lastUser = [...messages].reverse().find((message) => message?.role === "user");
     const status = lastTaskStatus(session);
-    const flags = [session?.channel === "qq" ? "QQ" : session?.channel === "wechat" ? "微信" : "", session?.archived ? "已归档" : ""].filter(Boolean);
+    const flags = [session?.channel === "qq" ? "QQ" : session?.channel === "wechat" ? "微信" : session?.channel === "feishu" ? "飞书" : "", session?.archived ? "已归档" : ""].filter(Boolean);
     const head = [
       `${index + 1}. 「${collapseSpace(session?.title) || "未命名会话"}」`,
       `id=${session?.id}`,

@@ -51,7 +51,12 @@ export const defaultSettings: ProviderSettings = {
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
   mcpServers: [],
-  channels: { qq: { enabled: false, appId: "", appSecret: "" }, wechat: { enabled: false }, modelProfileId: "" },
+  channels: {
+    qq: { enabled: false, appId: "", appSecret: "" },
+    wechat: { enabled: false },
+    feishu: { enabled: false, appId: "", appSecret: "" },
+    modelProfileId: "",
+  },
   skillLibraries: [{
     id: "skillhub",
     name: "SkillHub",

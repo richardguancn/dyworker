@@ -78,11 +78,18 @@ export async function transcribeAudio(audioBytes, mimeType, settings) {
   return { text: text.trim() };
 }
 
-// QQ 语音附件是 silk 编码：silk → PCM → 补 WAV 头 → 走现有转写服务
+// 渠道语音附件转写：QQ/微信语音是 silk 编码（silk → PCM → 补 WAV 头），飞书语音是 Ogg/Opus 格式
 export async function transcribeQqVoice(filePath, settings) {
+  const raw = await fs.readFile(filePath);
+  const isOgg = raw.length >= 4 && raw[0] === 0x4f && raw[1] === 0x67 && raw[2] === 0x67 && raw[3] === 0x53;
+  const lowerPath = String(filePath || "").toLowerCase();
+  if (isOgg || lowerPath.endsWith(".ogg") || lowerPath.endsWith(".opus")) {
+    const result = await transcribeAudio(raw, "audio/ogg", settings);
+    const text = stripAsrText(result?.text || "");
+    return { text, duration: undefined };
+  }
   const { decode } = await import("silk-wasm");
-  const silk = await fs.readFile(filePath);
-  const pcm = await decode(silk, 24000);
+  const pcm = await decode(raw, 24000);
   const duration = pcm.duration ? Math.round(pcm.duration / 1000) : Math.max(1, Math.round(pcm.data.byteLength / (24000 * 2)));
   const wav = buildWavFromPcm(Buffer.from(pcm.data), 24000);
   const result = await transcribeAudio(wav, "audio/wav", settings);

@@ -11,6 +11,7 @@ import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } fro
 import { collectOrphanAssets,commitStagedImage,defaultAppearance,normalizeAppearance,readAppearance,removeAppearanceImage,saveAppearance } from "./appearance.mts";
 import { createBackgroundTasksManager } from "./background-tasks.mts";
 import { BrowserAgent,browserToolDefinitions } from "./browser.mts";
+import { FEISHU_DOC_TOOL_NAMES,feishuDocToolDefinitions,handleFeishuDocTool } from "./channels/feishu-docs.mts";
 import { CHANNEL_LABELS,createChannelManager } from "./channels/manager.mts";
 import { parseApprovalReply } from "./channels/qq-bot.mts";
 import { saveClipboardImage } from "./clipboard-image.mts";
@@ -1037,8 +1038,13 @@ const mcpRuntime = createMcpRuntime({
 });
 const { callMcpTool, closeAllMcpClients } = mcpRuntime;
 
-function mcpExtraTools(...args: Parameters<typeof mcpRuntime.mcpExtraTools>) {
-  return mcpRuntime.mcpExtraTools(...args);
+async function mcpExtraTools(...args: Parameters<typeof mcpRuntime.mcpExtraTools>) {
+  const mcp = await mcpRuntime.mcpExtraTools(...args);
+  const settings: any = args[0];
+  const feishuTools = settings?.channels?.feishu?.appId && settings?.channels?.feishu?.appSecret
+    ? feishuDocToolDefinitions()
+    : [];
+  return [...mcp, ...feishuTools];
 }
 
 
@@ -1051,7 +1057,7 @@ function agentExtraTools(mcpTools) {
   return [...mcpTools, ...browserToolDefinitions(), ...filePreviewToolDefinitions(), ...sessionToolDefinitions(), ...ctx.tools.definitions()];
 }
 
-function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "" } = {} as any) {
+function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "", channel = "", channelUserId = "" } = {} as any) {
   const browserAgent = new BrowserAgent({
     openPanel: renderer
       ? (url, tabId, credential) =>
@@ -1082,6 +1088,13 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     if (SESSION_TOOL_NAMES.has(String(name))) {
       const sessions = await readAllSessions();
       return handleSessionTool(name, args, { sessions });
+    }
+    if (FEISHU_DOC_TOOL_NAMES.has(String(name))) {
+      return handleFeishuDocTool(name, args, {
+        appId: settings?.channels?.feishu?.appId || "",
+        appSecret: settings?.channels?.feishu?.appSecret || "",
+        defaultOpenId: channel === "feishu" ? String(channelUserId || "") : "",
+      });
     }
     if (name.startsWith("browser__")) return browserAgent.handle(name, args);
     // 插件工具：经 ctx.tools 派发（内部做风险闸门与审计留痕）
@@ -2020,6 +2033,7 @@ async function reconcileChannels() {
   await ctx.channelManager.reconcile({
     qq: settings.channels?.qq || {},
     wechat: { ...(settings.channels?.wechat || {}), ...wechatCredentials },
+    feishu: settings.channels?.feishu || {},
   });
 }
 const channelRuntime = createChannelRuntime({

@@ -114,6 +114,38 @@ export function toolSummary(name, args) {
     case "finish_task": return "交付任务结果";
     case "ask_user": return "向用户提问";
     case "sleep_until": return `挂起到 ${args.wake_at || `${args.minutes || "?"} 分钟后`} 继续`;
+    case "feishu_read_doc": return `读取飞书云文档：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_search_docs": return `搜索飞书云文档：${String(args.query || "（全部）").slice(0, 40)}`;
+    case "feishu_create_doc": return `创建飞书云文档：${String(args.title || "").slice(0, 40)}`;
+    case "feishu_write_doc": return `${args.mode === "replace" ? "覆写" : "写入"}飞书云文档：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_grant_doc_permission": return `设置飞书文档权限：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_bitable_inspect": return `查看飞书多维表格结构：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_bitable_read_records": return `读取飞书多维表格记录：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_bitable_write_records": {
+      const act = String(args.action || "add_records");
+      const label = act === "create_app"
+        ? `创建飞书多维表格：${String(args.name || args.title || "").slice(0, 40)}`
+        : act === "create_table"
+          ? `新建多维表格数据表：${String(args.name || args.table_name || "").slice(0, 40)}`
+          : act === "update_records"
+            ? `更新飞书多维表格记录：${String(args.url_or_token || "").slice(0, 40)}`
+            : act === "delete_records"
+              ? `删除飞书多维表格记录：${String(args.url_or_token || "").slice(0, 40)}`
+              : `向飞书多维表格写入记录：${String(args.url_or_token || "").slice(0, 40)}`;
+      return label;
+    }
+    case "feishu_sheet_read": return `读取飞书电子表格：${String(args.url_or_token || "").slice(0, 50)}`;
+    case "feishu_sheet_write": {
+      const act = String(args.action || "append");
+      const label = act === "create"
+        ? `创建飞书电子表格：${String(args.title || args.name || "").slice(0, 40)}`
+        : act === "add_sheet"
+          ? `新建工作表：${String(args.sheet_title || args.title || "").slice(0, 40)}`
+          : act === "update"
+            ? `更新飞书电子表格单元格：${String(args.url_or_token || "").slice(0, 40)}`
+            : `向飞书电子表格追加数据：${String(args.url_or_token || "").slice(0, 40)}`;
+      return label;
+    }
     default:
       if (isComputerUseTool(name)) {
         const action = computerUseAction(name);
@@ -166,6 +198,25 @@ export function approvalDetails(name, args) {
   if (name === "save_skill") return `${args.name || ""}\n${args.description || ""}\n\n${clipped(String(args.instructions || ""), 2000)}`;
   if (name === "update_skill") {
     return `模板：${args.skill_id || ""}\n\n改进后的执行要求：\n${clipped(String(args.instructions || ""), 2000)}`;
+  }
+  if (name === "feishu_create_doc") {
+    return `标题：${args.title || "（无标题）"}${args.folder_token ? `\n目录 Token：${args.folder_token}` : ""}${args.markdown ? `\n\n${clipped(String(args.markdown), 2000)}` : ""}`;
+  }
+  if (name === "feishu_write_doc") {
+    return `目标文档：${args.url_or_token || ""}\n模式：${args.mode === "replace" ? "覆写全文（replace）" : "追加到末尾（append）"}\n\n${clipped(String(args.markdown ?? ""), 2000)}`;
+  }
+  if (name === "feishu_grant_doc_permission") {
+    return `目标文档：${args.url_or_token || ""}${args.open_id ? `\n授权用户：${args.open_id}（${args.perm || "full_access"}）` : ""}${args.link_share_entity ? `\n链接分享：${args.link_share_entity}` : ""}`;
+  }
+  if (name === "feishu_bitable_write_records") {
+    const payloadPreview = args.records ?? args.record_ids ?? args.fields ?? "";
+    const detailText = typeof payloadPreview === "string" ? payloadPreview : JSON.stringify(payloadPreview, null, 2);
+    return `操作类型：${args.action || "add_records"}${args.url_or_token ? `\n目标表格：${args.url_or_token}` : ""}${args.table_id ? `\n数据表：${args.table_id}` : ""}${args.name ? `\n名称：${args.name}` : ""}${detailText ? `\n\n${clipped(detailText, 2000)}` : ""}`;
+  }
+  if (name === "feishu_sheet_write") {
+    const payloadPreview = args.values ?? "";
+    const detailText = typeof payloadPreview === "string" ? payloadPreview : JSON.stringify(payloadPreview, null, 2);
+    return `操作类型：${args.action || "append"}${args.url_or_token ? `\n目标表格：${args.url_or_token}` : ""}${args.sheet_id ? `\n工作表：${args.sheet_id}` : ""}${args.range ? `\n范围：${args.range}` : ""}${args.title ? `\n标题：${args.title}` : ""}${detailText ? `\n\n${clipped(detailText, 2000)}` : ""}`;
   }
   if (name.startsWith("mcp__") || name.startsWith("browser__")) return clipped(JSON.stringify(args, null, 2), 2000);
   return String(args.path || "");

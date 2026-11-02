@@ -15,7 +15,12 @@ import { buildReviewContext } from '../../approval-context.mts';
 // 机器人自己不做第二套权限判断：审批模式沿用应用设置，人工确认落到「机器人团队」面板。
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 /** 机器人从桌面任务继承的工具里，界面相关的那部分不接：由会话检索、插件工具、MCP 工具补足。 */
-const BOT_DELEGATED_TOOL_NAMES = new Set(['list_sessions', 'search_sessions', 'read_session']);
+const BOT_DELEGATED_TOOL_NAMES = new Set([
+  'list_sessions', 'search_sessions', 'read_session',
+  'feishu_read_doc', 'feishu_search_docs', 'feishu_create_doc', 'feishu_write_doc', 'feishu_grant_doc_permission',
+  'feishu_bitable_inspect', 'feishu_bitable_read_records', 'feishu_bitable_write_records',
+  'feishu_sheet_read', 'feishu_sheet_write',
+]);
 // 上游能力库依赖独立的技能服务、MCP 加载器及审批页面；本适配继续使用应用自己的工具入口。
 const BOT_UNAVAILABLE_TOOL_NAMES = new Set(['request_secret', 'list_secrets', 'list_capabilities',
   'save_capability', 'delete_capability', 'attach_capability', 'detach_capability', 'show_view']);

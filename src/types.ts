@@ -371,8 +371,8 @@ export interface SessionRecord {
   };
   // 上一轮实际读取和操作得到的工作资料，作为下一轮的隐藏上下文保存
   workingContext?: string;
-  // 来源渠道(QQ/微信消息驱动的会话),用于列表标识
-  channel?: "qq" | "wechat";
+  // 来源渠道(QQ/微信/飞书消息驱动的会话),用于列表标识
+  channel?: "qq" | "wechat" | "feishu";
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
@@ -397,7 +397,7 @@ export interface SessionSavePayload {
   order: string[];
   // 当前选中的会话 id：随增量落盘，重启后恢复选中
   activeId?: string;
-  meta: Array<{ id: string; channel?: "qq" | "wechat"; workspacePath?: string }>;
+  meta: Array<{ id: string; channel?: "qq" | "wechat" | "feishu"; workspacePath?: string }>;
 }
 
 export interface WorkspaceEntry {
@@ -537,6 +537,7 @@ export interface ChannelsConfig {
   runtime?: "dyworker" | "dsh";
   qq: { enabled: boolean; appId: string; appSecret: string };
   wechat: { enabled: boolean };
+  feishu: { enabled: boolean; appId: string; appSecret: string };
   modelProfileId: string;
   approvalMode?: "auto" | "reviewer" | "interactive";
 }
@@ -549,7 +550,7 @@ export interface ChannelStatus {
   qrUrl?: string;
 }
 
-export type ChannelsStatusMap = Record<"qq" | "wechat", ChannelStatus>;
+export type ChannelsStatusMap = Record<"qq" | "wechat" | "feishu", ChannelStatus>;
 
 export type UserIdentity = "general" | "government";
 
@@ -1216,7 +1217,7 @@ export interface DyworkerBridge {
   onSessionPrepend(callback: (session: SessionRecord) => void): () => void;
   onDshSessionRenamed(callback: (payload: {sessionId:string;title:string}) => void): () => void;
   onDshSessionCreated(callback: (payload: {session:SessionRecord}) => void): () => void;
-  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat"; runId?: string; messages: ChatMessage[]; goalState?: SessionRecord['goalState'] }) => void): () => void;
+  onSessionAppend(callback: (payload: { sessionId: string; workspacePath: string; channel?: "qq" | "wechat" | "feishu"; runId?: string; messages: ChatMessage[]; goalState?: SessionRecord['goalState'] }) => void): () => void;
   cancelWakesForSession(sessionId: string): Promise<{ ok: boolean }>;
   /** 主进程待唤醒列表：渲染端“挂起中”状态的权威来源（重启后同样准确） */
   listPendingWakes?(): Promise<PendingWakeRecord[]>;

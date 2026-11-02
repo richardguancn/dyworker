@@ -146,10 +146,16 @@ test("应用改名后旧加密密钥无法解密时被准确统计", () => {
         appSecret: "qq-secret",
         appSecretEncrypted: true,
       },
+      feishu: {
+        enabled: true,
+        appId: "cli_feishu",
+        appSecret: "feishu-secret",
+        appSecretEncrypted: true,
+      },
     },
   };
-  assert.equal(countUndecryptableSecrets(stored, brokenStorage), 4);
-  assert.equal(countUndecryptableSecrets({ ...stored, encrypted: false }, brokenStorage), 3);
+  assert.equal(countUndecryptableSecrets(stored, brokenStorage), 5);
+  assert.equal(countUndecryptableSecrets({ ...stored, encrypted: false }, brokenStorage), 4);
   assert.equal(countUndecryptableSecrets({ apiKey: "", encrypted: true }, brokenStorage), 0);
   assert.equal(countUndecryptableSecrets({ apiKey: "plain", encrypted: false }, brokenStorage), 0);
 });
@@ -350,4 +356,22 @@ test('自定义思考档位按地址和模型保存，重读后保留默认与�
   assert.equal(restored.reasoningOverrides[0].defaultEffort, 'ultra');
   assert.deepEqual(restored.reasoningOverrides[1].options, []);
   assert.deepEqual(deserializeSettings({}, secretStorage).reasoningOverrides, []);
+});
+
+test("飞书渠道凭据加密保存后可完整恢复", () => {
+  const stored = serializeSettings({
+    channels: {
+      qq: { enabled: false, appId: "", appSecret: "" },
+      wechat: { enabled: false },
+      feishu: { enabled: true, appId: " cli_abc123 ", appSecret: " feishu-secret-xyz " },
+      modelProfileId: "",
+    },
+  }, secretStorage);
+  assert.equal(JSON.stringify(stored).includes("feishu-secret-xyz"), false);
+  assert.equal(stored.channels.feishu.appSecretEncrypted, true);
+
+  const restored = deserializeSettings(stored, secretStorage);
+  assert.equal(restored.channels.feishu.enabled, true);
+  assert.equal(restored.channels.feishu.appId, "cli_abc123");
+  assert.equal(restored.channels.feishu.appSecret, "feishu-secret-xyz");
 });
