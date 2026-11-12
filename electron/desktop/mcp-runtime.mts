@@ -1,5 +1,6 @@
 // 从桌面入口拆出的工具服务器连接与调用。
-import { COMPUTER_USE_INSTALL_TIMEOUT_MS,COMPUTER_USE_SERVER_ID,discoverComputerUseServer } from "../computer-use.mts";
+import { COMPUTER_USE_SERVER_ID,discoverComputerUseServer,isComputerUseTool } from "../computer-use.mts";
+import { createComputerUseRuntime } from "./computer-use-runtime.mts";
 import { resolveMcpServer } from "../mcp-config.mts";
 import { HttpMcpClient } from "../mcp-http.mts";
 import { McpClient } from "../mcp.mts";
@@ -7,6 +8,7 @@ import { estimateTextTokens } from "../agent/messages.mts";
 
 export function createMcpRuntime(deps: {
   mcpShuttingDown: boolean;
+  resourcesPath?: string;
 }) {
 
 
@@ -14,7 +16,7 @@ export function createMcpRuntime(deps: {
 
 const mcpClients = new Map();
 const mcpClientConnections = new Map();
-const builtInComputerUseServer = discoverComputerUseServer();
+const computerUse = createComputerUseRuntime(discoverComputerUseServer({ resourcesPath: deps.resourcesPath }));
 
 function mcpServersOf(settings) {
   const list = Array.isArray(settings?.mcpServers) ? settings.mcpServers : [];
@@ -23,7 +25,7 @@ function mcpServersOf(settings) {
     && server.enabled !== false
     && String(server.transport === "http" ? server.url : server.command || "").trim()
     && String(server.id || "") !== COMPUTER_USE_SERVER_ID);
-  return builtInComputerUseServer ? [builtInComputerUseServer, ...configured] : configured;
+  return configured;
 }
 
 function mcpServerArgs(server) {
@@ -83,7 +85,7 @@ function sanitizeMcpInputSchema(schema) {
 }
 
 async function mcpExtraTools(settings) {
-  const extra = [];
+  const extra = [...await computerUse.definitions()];
   for (const server of mcpServersOf(settings)) {
     try {
       const client = await getMcpClient(server);
@@ -92,9 +94,7 @@ async function mcpExtraTools(settings) {
           type: "function",
           function: {
             name: `mcp__${server.id || server.name}__${tool.name}`,
-            description: server.id === COMPUTER_USE_SERVER_ID
-              ? `【本机应用操作】${tool.description || tool.name}`
-              : `【MCP:${server.name}】${tool.description || tool.name}`,
+            description: `【MCP:${server.name}】${tool.description || tool.name}`,
             parameters: sanitizeMcpInputSchema(tool.inputSchema),
           },
         });
@@ -110,7 +110,9 @@ async function mcpExtraTools(settings) {
   return extra;
 }
 
-async function callMcpTool(settings, fullName, args, { signal } = {} as any) {
+async function callMcpTool(settings, fullName, args, context = {} as any) {
+  if (isComputerUseTool(fullName)) return computerUse.call(fullName, args, context);
+  const { signal } = context;
   const rest = fullName.slice(5);
   for (const server of mcpServersOf(settings)) {
     const prefix = `${server.id || server.name}__`;
@@ -118,25 +120,11 @@ async function callMcpTool(settings, fullName, args, { signal } = {} as any) {
     const client = await getMcpClient(server);
     try {
       const toolName = rest.slice(prefix.length);
-      const result = await client.callTool(toolName, args, {
-        requestTimeoutMs: server.id === COMPUTER_USE_SERVER_ID && toolName === "install_dependencies"
-          ? COMPUTER_USE_INSTALL_TIMEOUT_MS
-          : undefined,
-        signal,
-      });
+      const result = await client.callTool(toolName, args, { signal });
       return { ok: !result.isError, result: result.text, images: result.images };
     } catch (error: any) {
       if (!client.process && !client.connected) mcpClients.delete(JSON.stringify(server));
       if (signal?.aborted) return { ok: false, result: "任务已停止" };
-      if (server.id === COMPUTER_USE_SERVER_ID) {
-        const guidance = process.platform === "linux"
-          ? "请确认当前使用 X11 桌面会话，并已安装 xdotool、wmctrl、python3-pyatspi 和 ImageMagick。"
-          : "请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用；可先让助手调用 check_permissions 查看权限状态。";
-        return {
-          ok: false,
-          result: `本机应用操作没有获得系统响应。${guidance}然后重试。原始原因：${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
       throw error;
     }
   }
@@ -157,7 +145,7 @@ function cachedMcpStats(settings) {
 async function closeAllMcpClients() {
   const clients = [...mcpClients.values()];
   mcpClients.clear();
-  await Promise.allSettled(clients.map((client) => client.close()));
+  await Promise.allSettled([computerUse.stopAll(), ...clients.map((client) => client.close())]);
 }
-  return { mcpExtraTools, callMcpTool, closeAllMcpClients, cachedMcpStats };
+  return { mcpExtraTools, callMcpTool, closeAllMcpClients, cachedMcpStats, stopComputerUse: computerUse.stopRun };
 }

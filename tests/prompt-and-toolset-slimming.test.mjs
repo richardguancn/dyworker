@@ -59,7 +59,7 @@ test('prepareToolsetDiscovery 将飞书工具与插件工具按需归组，不�
   assert.match(activated.text, /已激活 1 个工具/);
 });
 
-test('电脑与浏览器工具说明反映默认后台执行及两种系统的观察编号要求', () => {
+test('电脑与浏览器工具说明包含观察编号和 Linux 共享桌面要求', () => {
   const tools = [
     { function: { name: 'mcp__computer-use__get_app_state', description: '读取应用' } },
     { function: { name: 'browser__open', description: '打开网页' } },
@@ -67,7 +67,8 @@ test('电脑与浏览器工具说明反映默认后台执行及两种系统的�
   const discovery = prepareToolsetDiscovery(tools);
   assert.match(discovery.initial.find(item => item.function.name === 'load_toolset').function.description, /任务独立后台浏览器/);
   const loaded = activateToolsets(discovery.deferredByGroup, ['desktop']);
-  assert.match(loaded.text, /Mac 和 Linux 按控件编号操作时原样传该次观察的 observation_id/);
+  assert.match(loaded.text, /动作携带最新 observation_id/);
+  assert.match(loaded.text, /Linux 共享桌面截图和系统输入需要用户明确允许/);
 });
 
 test('runAgent 首轮仅暴露精简工具与精准自审参数，load_toolset 与 builtin-visual-output 按需生效', async t => {

@@ -4,11 +4,10 @@
 
 import { app, BrowserWindow, session } from 'electron';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { McpClient } from '../dist/electron/mcp.mjs';
+import { createComputerUseRuntime } from '../dist/electron/desktop/computer-use-runtime.mjs';
 import { listImportableBrowsers, cookieMatchesHost } from '../dist/electron/browser-import.mjs';
 import { requiresFullParameterReview, reviewActionFacts } from '../dist/electron/approval-context.mjs';
-import { isLinuxSharedDesktopTool } from '../dist/electron/computer-use.mjs';
+import { discoverComputerUseServer } from '../dist/electron/computer-use.mjs';
 
 const c = {
   reset: '\x1b[0m',
@@ -134,16 +133,10 @@ async function main() {
   // =========================================================================
   console.log(`${c.bold}${c.magenta}【用例 3】安全审批防御与替我审批 (Reviewer) 顺畅流转校验${c.reset}`);
   try {
-    // 1. Linux 共享桌面工具严格识别
-    assert.equal(isLinuxSharedDesktopTool('plugin__dyworker_linux_computer_use__click'), true);
-    assert.equal(isLinuxSharedDesktopTool('plugin__dyworker_linux_computer_use__type'), true);
-    assert.equal(isLinuxSharedDesktopTool('macos_computer_use__click'), false);
-    assert.equal(isLinuxSharedDesktopTool('browser__click'), false);
-
     // 2. 构造不同场景的动作
     const isolatedBrowserOpen = { kind: 'browser__open', args: { url: 'https://github.com', sessionSource: 'isolated' } };
     const importedBrowserOpen = { kind: 'browser__open', args: { url: 'https://github.com', sessionSource: 'chrome' } };
-    const sharedLinuxAction = { kind: 'plugin__dyworker_linux_computer_use__click', args: { use_shared_desktop: true } };
+    const sharedLinuxAction = { kind: 'mcp__computer-use__click', args: { background: false } };
 
     // 独立后台打开：不强制参数级重审
     assert.equal(requiresFullParameterReview(isolatedBrowserOpen), false);
@@ -157,7 +150,7 @@ async function main() {
     // Linux 共享桌面：必须进行完整参数模型审核，常驻规则无法静默绕过
     assert.equal(requiresFullParameterReview(sharedLinuxAction), true);
     const linuxFact = reviewActionFacts(sharedLinuxAction);
-    assert.match(linuxFact, /Linux 共享桌面插件/);
+    assert.match(linuxFact, /Linux 当前桌面/);
     console.log(`  ${c.gray}共享桌面审核事实注入: "${linuxFact.trim()}"${c.reset}`);
 
     console.log(`  ${c.green}✔ 常驻规则加固生效：Linux 共享桌面和前台破坏性操作无法静默绕过。${c.reset}`);
@@ -173,55 +166,23 @@ async function main() {
   // Case 4: macOS 原生 Computer Use 服务防御拦截机制
   // =========================================================================
   console.log(`${c.bold}${c.magenta}【用例 4】原生操作系统 Computer Use MCP 服务与后台防御测试${c.reset}`);
-  if (process.platform === 'darwin') {
-    const client = new McpClient({
-      command: process.execPath,
-      args: [fileURLToPath(new URL('../dist/electron/macos-computer-use-server.mjs', import.meta.url))],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      requestTimeoutMs: 30000,
-    });
-
-    try {
-      await client.connect();
-      console.log(`  ${c.cyan}▶ 成功启动并连接 macOS Computer Use 服务${c.reset}`);
-
-      // 检查工具列表
-      const toolNames = client.tools.map(t => t.name);
-      assert.ok(toolNames.includes('check_permissions'));
-      assert.ok(toolNames.includes('list_apps'));
-      assert.ok(toolNames.includes('get_app_state'));
-      assert.ok(toolNames.includes('click'));
-      assert.ok(toolNames.includes('scroll'));
-      assert.ok(toolNames.includes('set_value'));
-      console.log(`  ${c.gray}注册工具数: ${toolNames.length} 个 (包含 check_permissions, click, scroll 等)${c.reset}`);
-
-      // 诊断系统权限
-      const permRes = await client.callTool('check_permissions', {});
-      const hasAccessibility = !permRes.text.includes('未授权');
-      console.log(`  ${c.gray}当前环境系统辅助功能 (Accessibility) 权限状态: ${hasAccessibility ? '已授权' : '未授权 (安全受限模式)'}${c.reset}`);
-
-      // 检验危险前台动作在后台调用时的拦截防护
-      const fakeTarget = { app: 'com.apple.finder', window_id: '1', window_title: '访达', background: true };
-      const blockedKey = await client.callTool('press_key', { ...fakeTarget, key: 'Return' });
-      assert.equal(blockedKey.isError, true);
-      assert.match(blockedKey.text, /该动作暂不支持后台执行/);
-      console.log(`  ${c.green}✔ 安全防御生效：后台 press_key 动作被正确拦截并引导，绝不盲目切换前台破坏用户输入。${c.reset}`);
-
-      // 检验排队请求取消机制
-      client.notify('notifications/cancelled', { requestId: 'req_test_cancel_999' });
-      // cancel 拦截表已记录该 id
-      console.log(`  ${c.green}✔ 排队取消机制对齐：已注入 cancelledToolRequests 快速截断防护。${c.reset}`);
-
-      results.push({ name: '原生 Computer Use 服务与后台防御拦截', status: 'PASS' });
-      await client.close();
-    } catch (err) {
-      console.log(`  ${c.red}✘ 用例 4 失败: ${err.message}${c.reset}`);
-      results.push({ name: '原生 Computer Use 服务与后台防御拦截', status: 'FAIL', error: err.message });
-      await client.close().catch(() => {});
+  const computerUse = createComputerUseRuntime(discoverComputerUseServer({
+    resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+  }));
+  try {
+    const names = (await computerUse.definitions()).map(tool => tool.function.name);
+    for (const name of ['list_apps', 'get_app_state', 'click', 'set_value']) {
+      assert.ok(names.includes(`mcp__computer-use__${name}`));
     }
-  } else {
-    console.log(`  ${c.gray}非 macOS 环境，跳过原生 macOS 专有服务测试。${c.reset}`);
-    results.push({ name: '原生 Computer Use 服务与后台防御拦截', status: 'SKIPPED' });
+    const outcome = await computerUse.call('mcp__computer-use__click', { app: process.platform === 'darwin' ? 'com.example.editor' : '123', element_index: '0' },
+      { sessionId: 'computer-use-smoke', runId: 'probe' });
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.result, /最新观察编号/);
+    results.push({ name: '本机操作工具发现及观察保护', status: 'PASS' });
+  } catch (error) {
+    results.push({ name: '本机操作工具发现及观察保护', status: 'FAIL', error: error.message });
+  } finally {
+    await computerUse.stopAll();
   }
   console.log();
 

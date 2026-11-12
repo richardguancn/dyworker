@@ -47,8 +47,13 @@ test('Windows 打包钩子将匹配版本的二进制放到 Koffi 的实际查�
     assert.equal(fs.readFileSync(destination, 'utf8'), 'native fixture');
   } else {
     const { Arch } = require('builder-util');
-    await afterPack({ electronPlatformName: 'win32', arch: Arch.x64, appOutDir,
-      packager: { projectDir: f.projectDir } });
+    const context = { electronPlatformName: 'win32', arch: Arch.x64, appOutDir,
+      packager: { projectDir: f.projectDir, appInfo: { productFilename: 'DYWorker' } } };
+    await assert.rejects(afterPack(context), /安装包缺少本机应用操作文件/);
+    for (const asset of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'windows/amd64/open-computer-use.exe']) {
+      f.write(path.join(appOutDir, 'resources/computer-use', asset), 'computer-use fixture');
+    }
+    await afterPack(context);
     assert.equal(fs.readFileSync(path.join(packaged, 'node_modules/koffi/build/koffi/win32_x64/koffi.node'), 'utf8'), 'native fixture');
   }
 });

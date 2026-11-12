@@ -33,6 +33,7 @@ const computerUseToolLabels = {
   install_dependencies: "安装缺失的本机操控组件",
   list_apps: "查看本机应用",
   launch_app: "启动本机应用",
+  get_shared_app_state: "截取 Linux 当前桌面上的窗口区域",
   get_app_state: "查看应用界面",
   click: "点击应用界面",
   hover: "悬停应用界面",

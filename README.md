@@ -66,9 +66,9 @@ DeepSeek V4 Flash 或 V4 Pro 选择后也可以处理图片：在模型设置中
 
 ### 🖥️ 本机操作与国产化支持
 
-- 可以操作 macOS、Linux 桌面上的应用：激活窗口、点击、输入文字，让 AI 从"动口"变成"动手"。
+- 本机应用操作使用 [Open Computer Use v1.1.4](https://github.com/iFurySt/open-computer-use/releases/tag/v1.1.4)，可查看和操作 macOS、Windows 和 Linux 上正在运行的应用。随 DYWorker 安装包分发，无需安装 Codex CLI。
 - 原生支持麒麟 V10（ARM64）和 UOS：一条命令打出 `.deb` 安装包，直接安装。
-- 首次使用可一键"检查并安装本机操控环境"，缺什么组件自动补装（安装前请求系统授权）。
+- macOS 需要 14 或更新版本，首次使用需在系统设置中为 Open Computer Use 授予辅助功能和屏幕录制权限。Linux 需要已登录的图形会话和系统无障碍组件。
 - 系统级能力通过 systemd-logind / freedesktop D-Bus 对接，麒麟/UOS 上尽力支持，不支持时静默降级，不会报错崩溃。
 
 ### 🔍 执行过程与文件审阅
@@ -143,7 +143,7 @@ Windows 和 Linux 安装包的应用图标由 `package.json` 中的 `build.win.i
 
 - **Windows**：推荐在 Windows 10/11 的 PowerShell 中执行 `npm ci && npm run package:windows:x64`。未签名的安装程序可能触发 SmartScreen 提示，正式公开发布时建议配置 Windows 代码签名证书后再打包（证书和密码不要写入仓库）。
 - **macOS**：`npm run package:mac` 使用当前 Mac 的处理器架构生成 `.dmg` 和 `.zip`。正式发布并自动更新时需要使用有效的 Apple 签名。
-- **Linux ARM64 / 麒麟 V10**：`npm run package:linux:arm64` 生成 `.AppImage` 和 `.deb` 安装包。桌面操控建议使用 X11 会话；Wayland 下应用会提示切换。首次使用时可在应用中执行"检查并安装本机操控环境"，按提示安装缺少的系统组件。
+- **Linux ARM64 / 麒麟 V10**：`npm run package:linux:arm64` 生成 `.AppImage` 和 `.deb` 安装包。桌面操控需要 Python 3、PyGObject、GTK 和 AT-SPI。安装 deb 时由包管理器处理这些依赖；使用 AppImage 时需要系统已安装。Wayland 的截图和坐标操作取决于桌面环境。Linux 默认只读取目标应用的控件，使用当前桌面的截图、鼠标和键盘时需另行确认。
 - 最可靠的发布方式是在对应系统上打包：Windows 包在 Windows 上生成，macOS 包在 macOS 上生成，Linux 包在 Linux 上生成。
 
 ### GitHub 标签发布与自动更新

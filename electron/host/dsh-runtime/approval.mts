@@ -1,3 +1,5 @@
+import { isComputerUseTool } from '../../computer-use.mts';
+import { toolSummary } from '../../agent/tool-summary.mts';
 import { reviewTaskAction } from '../../approval-policy.mts';
 import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewerUnavailableMessage, reviewerEvidenceMessage, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
@@ -70,7 +72,7 @@ export function createDshApproval(options: any) {
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,
-        title: `DSH 插件操作：${name}`, approvalReason: reason, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') }, evaluate);
+        title: isComputerUseTool(publicName) ? toolSummary(publicName, args) : `DSH 插件操作：${name}`, approvalReason: reason, details: [JSON.stringify(args, null, 2), reason].filter(Boolean).join('\n\n') }, evaluate);
       if (!pending) { audit('denied', '没有可用的审批入口'); return false; }
       // 用户关闭会话或停止时不能留下等待中的审批调用。
       let abort: () => void;

@@ -35,6 +35,6 @@ test('关闭本机操作服务时等待已开始的清理', async t => {
 });
 
 test('Mac 本机操作服务连接保留清理等待时间', () => {
-  const server = discoverComputerUseServer({ platform: 'darwin', macosServerPath: '/test/server.mjs', pathExists: () => true });
-  assert.equal(resolveMcpServer(server).shutdownGraceMs, 5000);
+  const server = discoverComputerUseServer({ platform: 'darwin', developmentPath: '/test', pathExists: () => true });
+  assert.equal(resolveMcpServer(server).shutdownGraceMs, 1500);
 });

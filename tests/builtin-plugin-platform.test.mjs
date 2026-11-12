@@ -7,7 +7,7 @@ import { createHost, disposeHost } from '../electron/host/context.mts';
 import { PluginHostService } from '../electron/host/plugin-host.mts';
 import { fileURLToPath } from 'node:url';
 
-test('随应用分发的插件仅 Linux 电脑操作在 Linux 默认开启', () => {
+test('本机操作移出内置插件目录后三个平台默认启用规则一致', () => {
   const service = Object.assign(Object.create(PluginHostService.prototype), {
     builtinDir: fileURLToPath(new URL('../builtin-plugins/', import.meta.url)),
     baseRows: [], bundles: [], overrides: {},
@@ -17,9 +17,9 @@ test('随应用分发的插件仅 Linux 电脑操作在 Linux 默认开启', () 
     for (const platform of ['linux', 'darwin', 'win32']) {
       Object.defineProperty(process, 'platform', { ...original, value: platform });
       const entries = service.compose();
-      assert.ok(entries.length >= 6);
+      assert.ok(entries.length >= 5);
       assert.deepEqual(entries.filter(row => !row.disabled).map(row => row.id),
-        platform === 'linux' ? ['dyworker-linux-computer-use'] : []);
+        []);
     }
   } finally { Object.defineProperty(process, 'platform', original); }
 });

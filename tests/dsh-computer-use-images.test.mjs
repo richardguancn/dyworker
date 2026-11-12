@@ -11,13 +11,13 @@ test('电脑操作截图作为图片传递给模型并保存到任务记录', { 
   await fs.mkdir(path.join(profileDir, 'node_modules'), { recursive: true });
   await fs.mkdir(workspacePath);
   await fs.writeFile(path.join(profileDir, 'package.json'), '{"name":"test-profile","private":true}');
-  const name = 'plugin__dyworker_linux_computer_use__screenshot';
+  const name = 'mcp__computer-use__get_app_state';
   const sharp = (await import('sharp')).default;
   const image = (await sharp({ create: { width: 3, height: 2, channels: 3, background: '#186a32' } }).png().toBuffer()).toString('base64');
   const requests = [];
   const runtime = new OfficialDshSession({ profileDir, dataDir: path.join(root, 'data'), workspacePath,
     sessionId: 'image-test', plugins: [], approve: async () => true,
-    // plugin__ 前缀的工具默认按工具组延迟加载；本测试验证图片链路，显式钉进首轮
+    // 本机操作工具默认按需加载；此处直接验证截图回传。
     fixedExtraTools: [name],
     extraTools: [{ name, description: '屏幕截图', parameters: { type: 'object', properties: {} } }],
     onExtraTool: async () => ({ ok: true, result: '已截图', images: [{ data: image, mimeType: 'image/png' }] }),

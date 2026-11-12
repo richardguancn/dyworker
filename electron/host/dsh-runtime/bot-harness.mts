@@ -78,7 +78,7 @@ export function createBotApproval(options: any) {
       if (route === 'review') {
         const reviewMode = mode();
         const observation = await readReviewObservation({ name, args, availableNames: await resolved(options.extraToolNames),
-          execute: (reader: string, readArgs: any) => options.onExtraTool?.(reader, readArgs, tool), signal,
+          execute: (reader: string, readArgs: any, context: any) => options.onExtraTool?.(reader, readArgs, { ...tool, ...context }), signal,
           check: async (reader: string, readArgs: any) => evaluateHooks([...builtinHooks, ...await resolved(options.hooks)], 'before_tool', reader, readArgs)
             || await options.beforeToolExecute?.({ name: reader, args: readArgs }) });
         const getContext = async () => withReviewApprovals(await options.getReviewContext?.(tool) || buildReviewContext({ conversation: options.conversation,
@@ -235,7 +235,9 @@ export function createBotHarnessTools(options: any) {
     if (!allowed) return invocation.denialReason || `用户没有允许这次「${name}」操作，本次调用已取消。不要变通重试同一操作，请说明具体原因。`;
     if (!handlers[name] && !SKILL_TOOL_NAMES.has(name) && !HISTORY_TOOL_NAMES.has(name)) {
       if (typeof routeExtra !== 'function') throw new Error(`机器人没有继承工具：${name}`);
-      return text(await routeExtra(name, args, { ...exec, sessionId: String(exec?.agent?.id || '') }));
+      const result = await routeExtra(name, args, { ...exec, sessionId: String(exec?.agent?.id || '') });
+      // Bot tools have a text-only result contract.
+      return name.startsWith('mcp__computer-use__') ? String(result?.result || '') : text(result);
     }
     const externalPaths = externalPathsForTool(workspace, name, args);
     const release = externalPaths.length ? workspace.authorizeExternalPaths(externalPaths) : undefined;

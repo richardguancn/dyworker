@@ -419,7 +419,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
     let routerExecution: any = { sessionId, runId: channelRunId, channel, channelUserId };
     let baseRouter = createExtraToolRouter(taskSettings, workspacePath, routerExecution);
     // send_media / text_to_speech / switch_workspace 先由渠道处理器接管，其余交给现有 MCP/浏览器路由
-    const routeExtraTool = async (name, args) => {
+    const routeExtraTool = async (name, args, context) => {
       if (name === "send_media") return handleChannelSendMedia(args, { workspacePath, pendingMedia });
       if (name === "text_to_speech") return handleChannelTextToSpeech(args, { workspacePath, pendingMedia, settings: taskSettings });
       if (name === "switch_workspace") {
@@ -433,7 +433,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
         }
         return result;
       }
-      return baseRouter(name, args);
+      return baseRouter(name, args, context);
     };
     routeExtraTool.dispose = () => baseRouter.dispose();
     routeExtraTool.setExecutionContext = (execution: any) => {

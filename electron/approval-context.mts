@@ -122,8 +122,8 @@ export function reviewActionFacts(action: any) {
     ? (args.use_shared_desktop === true
       ? '【当前操作环境】本次通过 Linux 共享桌面插件直接在用户当前可见桌面会话中执行，可能移动系统鼠标指针、发送按键或切换窗口焦点；请结合用户任务授权判断。'
       : '【当前操作环境】Linux 共享桌面插件调用（未显式传 use_shared_desktop=true 时插件自身不会触碰当前桌面）。')
-    : isComputerUseTool(kind) && args.background === false
-      ? '【当前操作模式】本次显式指定 background=false（前台模式），将激活目标应用窗口或使用系统级鼠标键盘；请结合用户任务需要与当前界面判断。'
+    : isComputerUseTool(kind) && (args.background === false || computerUseAction(kind) === 'get_shared_app_state')
+      ? '【当前操作模式】本次会使用 Linux 当前桌面，截图可能包含遮挡目标的其他窗口，输入可能使用系统鼠标或键盘；请核对用户是否允许。'
       : kind === 'browser__open' && String(args.sessionSource || '').trim() && String(args.sessionSource || '').trim() !== 'isolated'
         ? `【浏览器会话来源】本次打开页面请求只读复用浏览器登录态（sessionSource=${String(args.sessionSource).trim()}${args.profileId ? `, profileId=${String(args.profileId).trim()}` : ''}），仅将匹配目标网站域名的 Cookie/同源存储写入本任务临时分区，不会修改原浏览器数据；请结合用户任务目标判断。`
         : '';
@@ -138,7 +138,7 @@ export function reviewActionFacts(action: any) {
 export function isStatefulUiOperation(name: string) {
   if (typeof name !== "string" || !name) return false;
   return (isComputerUseTool(name) && classify(name).consequential
-    && !["launch_app", "install_dependencies"].includes(computerUseAction(name)))
+    && !["launch_app", "install_dependencies", "get_shared_app_state"].includes(computerUseAction(name)))
     || (name.startsWith("browser__") && classify(name).consequential && name !== "browser__open");
 }
 
@@ -149,7 +149,7 @@ export async function readReviewObservation({ name, args = {}, availableNames = 
     : ["browser__inspect", "browser__snapshot", "browser__observe"].find(value => availableNames.includes(value));
   if (!reader || !availableNames.includes(reader) || !execute) return { available: false, text: "没有可用的当前界面读取入口" };
   const readArgs = isComputerUseTool(name)
-    ? { app: args.app, ...(args.window_id ? { window_id: args.window_id } : {}), ...(args.window_title ? { window_title: args.window_title } : {}) }
+    ? { app: args.app, ...(args.observation_id ? { observation_id: args.observation_id } : {}), ...(args.window_id ? { window_id: args.window_id } : {}), ...(args.window_title ? { window_title: args.window_title } : {}) }
     : {};
   let timer: ReturnType<typeof setTimeout>, abort: () => void;
   try {
@@ -159,7 +159,7 @@ export async function readReviewObservation({ name, args = {}, availableNames = 
       return { available: false, text: verdict.message || "当前界面读取受到用户规则限制" };
     }
     const extra: any = await Promise.race([
-      execute(reader, readArgs),
+      execute(reader, readArgs, { review: isComputerUseTool(name), signal }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("读取当前界面超时")), timeoutMs); timer.unref?.(); }),
       new Promise((_, reject) => {
         abort = () => reject(signal.reason || new Error("任务已停止"));

@@ -29,6 +29,8 @@ export function evaluateApproval({
   if (hookRequiresApproval) return "ask";
   // 常驻允许规则：命中用户"始终允许"或本次会话允许的规则时直接放行，且永不覆盖 deny-changes 与钩子
   if (matchStandingRule(standingRules, name, args)) return "allow";
+  // 共享桌面截屏和系统输入仍应获得人工确认。
+  if (isComputerUseTool(name) && (computerUseAction(name) === "get_shared_app_state" || args.background === false)) return "ask";
   // 完全访问模式：放行所有常规命令、工作区读写与本机界面操作（避免弹窗夺取焦点冲掉下拉菜单）；
   // 仅系统级管理员安装（install_dependencies，需提权修改操作系统）保留确认。
   if (approvalMode === "full-access") {

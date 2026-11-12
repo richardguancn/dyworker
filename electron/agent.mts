@@ -1051,7 +1051,7 @@ export async function runAgent({
           };
         }
         const appKey = String(args.app || "").trim().toLocaleLowerCase();
-        const windowKey = String(args.window_id || "").trim().toLocaleLowerCase();
+        const windowKey = String(args.observation_id || args.window_id || "").trim().toLocaleLowerCase();
         const elementKey = String(args.element_index || "").trim().toLocaleLowerCase();
         const controlKey = `${appKey}:${windowKey}:${elementKey}`;
         const targetControl = isComputerUseTool(name) && args.element_index
@@ -1242,8 +1242,8 @@ export async function runAgent({
                 check: async (reader, readArgs) => evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], "before_tool", reader, readArgs)
                   || await beforeToolExecute?.({ name: reader, args: readArgs }), signal: cancellationSignal });
               const observation = await readReviewObservation({ name: approvalToolName, args, availableNames: [...extraToolNames],
-                execute: async (reader, readArgs) => {
-                  const execute = (effectiveArgs) => onExtraTool(reader, effectiveArgs);
+                execute: async (reader, readArgs, context) => {
+                  const execute = (effectiveArgs) => onExtraTool(reader, effectiveArgs, context);
                   return aroundToolCall ? aroundToolCall({ name: reader, args: readArgs, execute }) : execute(readArgs);
                 },
                 check: async (reader, readArgs) => evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], "before_tool", reader, readArgs)
@@ -1789,19 +1789,20 @@ export async function runAgent({
                     supplementalMessages = [...supplementalMessages, ...contexts];
                   }
                 }
-                const stateRead = isComputerUseTool(name) && computerUseAction(name) === "get_app_state";
+                const stateRead = isComputerUseTool(name) && ["get_app_state", "get_shared_app_state"].includes(computerUseAction(name));
                 if (stateRead && extra.ok) {
-                  const returnedWindowId = String(result || "").match(/^窗口编号：(.+)$/m)?.[1]?.trim().toLocaleLowerCase()
+                  const returnedWindowId = String(result || "").match(/^(?:观察编号|窗口编号)：(.+)$/m)?.[1]?.trim().toLocaleLowerCase()
                     || String(args.window_id || "").trim().toLocaleLowerCase();
-                  for (const key of computerUseControls.keys()) {
-                    if (key.startsWith(`${appKey}:`)) computerUseControls.delete(key);
+                  const key = appKey;
+                  for (const oldKey of computerUseControls.keys()) {
+                    if (oldKey.startsWith(`${key}:`)) computerUseControls.delete(oldKey);
                   }
                   for (const line of String(result || "").split(/\r?\n/)) {
-                    const match = line.match(/^\[(e\d+)\]\s+(.+)$/i);
+                    const match = line.match(/^\s*(?:\[(e\d+)\]|(\d+))\s+(.+)$/i);
                     if (!match) continue;
                     computerUseControls.set(
-                      `${appKey}:${returnedWindowId}:${match[1].toLocaleLowerCase()}`,
-                      clipped(match[2], 160),
+                      `${key}:${returnedWindowId}:${(match[1] || match[2]).toLocaleLowerCase()}`,
+                      clipped(match[3], 160),
                     );
                   }
                 }
@@ -1872,7 +1873,7 @@ export async function runAgent({
             content: `${ok ? "成功" : "失败"}\n${result}`,
           },
           supplementalMessages,
-          invalidateInterfaceImages: isComputerUseTool(name) && computerUseAction(name) === "get_app_state",
+          invalidateInterfaceImages: isComputerUseTool(name) && ["get_app_state", "get_shared_app_state"].includes(computerUseAction(name)),
         };
       };
 

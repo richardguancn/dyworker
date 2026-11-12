@@ -101,7 +101,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
     settings: () => appSettings, requestApproval,
     extraToolNames: async () => (await resolvers.mcpExtraTools?.(appSettings) || []).map((value: any) => (value.function || value).name),
     extraToolDefinitions: async () => (await resolvers.mcpExtraTools?.(appSettings) || []),
-    onExtraTool: (name: string, args: any, tool: any) => routeFor(tool.sessionId)?.(name, args),
+    onExtraTool: (name: string, args: any, tool: any) => routeFor(tool.sessionId)?.(name, args, tool),
     getReviewContext: async ({ sessionId }: any) => {
       const agent = handles.get(sessionId)?.agent;
       const events = agent?.session?.snapshotEvents?.() || [];
@@ -113,7 +113,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
   const routeFor = (sessionId: string) => {
     let route = routers.get(sessionId);
     if (!route && typeof resolvers.createExtraToolRouter === 'function') {
-      route = resolvers.createExtraToolRouter(appSettings, workspacePath, { sessionId, signal: lifetime.signal });
+      route = resolvers.createExtraToolRouter(appSettings, workspacePath, { sessionId, runId: sessionId, signal: lifetime.signal });
       routers.set(sessionId, route);
     }
     return route;
@@ -286,7 +286,7 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
       routeExtra: async (name: string, args: any, exec: any) => {
         const route = routeFor(String(exec?.sessionId || ''));
         if (!route) throw new Error('机器人团队没有可用的应用工具入口');
-        return route(name, args);
+        return route(name, args, exec);
       } });
     for (const tool of harness.tools) ctx.tools.register({ name: tool.name, description: tool.description || tool.name,
       parameters: tool.parameters || { type: 'object', properties: {} },

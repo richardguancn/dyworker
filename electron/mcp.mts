@@ -1,6 +1,7 @@
 // MCP（Model Context Protocol）stdio 客户端：换行分隔的 JSON-RPC 2.0
 // 不依赖 electron，可用 node --test 直接测试。
 import { spawn } from "node:child_process";
+import path from "node:path";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -11,6 +12,7 @@ env;
 cwd;
 requestTimeoutMs;
 shutdownGraceMs;
+isolateProcessTree;
 process;
 buffer;
 stderrTail;
@@ -18,13 +20,14 @@ nextId;
 pending;
 tools;
 serverInfo;
-constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_MS, shutdownGraceMs = 1000 } = {} as any) {
+constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_MS, shutdownGraceMs = 1000, isolateProcessTree = false } = {} as any) {
     this.command = command;
     this.args = args;
     this.env = env;
     this.cwd = cwd;
     this.requestTimeoutMs = Math.max(1, Number(requestTimeoutMs) || REQUEST_TIMEOUT_MS);
     this.shutdownGraceMs = Math.min(10000, Math.max(1000, Number(shutdownGraceMs) || 1000));
+    this.isolateProcessTree = isolateProcessTree;
     this.process = null;
     this.buffer = "";
     this.stderrTail = "";
@@ -39,6 +42,8 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
       env: this.env || { ...process.env },
       cwd: this.cwd || undefined,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: this.isolateProcessTree && process.platform !== "win32",
+      windowsHide: this.isolateProcessTree,
     });
     this.process.on("error", () => this.failAll(new Error(`MCP 服务器启动失败：${this.command}`)));
     this.process.on("exit", () => {
@@ -46,6 +51,8 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
       this.failAll(new Error(`MCP 服务器意外退出${detail ? `：${detail}` : ""}`));
       this.process = null;
     });
+    this.process.stdin.on("error", (error) => this.failAll(error));
+    this.process.stdout.setEncoding("utf8");
     this.process.stdout.on("data", (chunk) => this.handleData(chunk));
     // 必须持续读取 stderr，避免服务日志写满管道后反向阻塞整个 MCP 连接。
     this.process.stderr.on("data", (chunk) => {
@@ -186,25 +193,38 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
   }
 
   async close() {
+    const busy = this.pending.size > 0;
     this.failAll(new Error("MCP 连接已关闭"));
     const child = this.process;
     if (!child) return;
     this.process = null;
     if (child.exitCode != null || child.signalCode != null) return;
-    const exited = new Promise<any>((resolve) => child.once("exit", resolve));
-    child.kill("SIGTERM");
+    const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+    const terminate = (signal: NodeJS.Signals) => {
+      if (!this.isolateProcessTree || !child.pid) return child.kill(signal);
+      if (process.platform === "win32") {
+        // Kill the bridge and its PowerShell worker together.
+        const systemTool = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe");
+        const killer = spawn(systemTool, ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        killer.on("error", () => child.kill());
+        killer.on("exit", code => { if (code && child.exitCode == null) child.kill(); });
+      } else {
+        try { process.kill(-child.pid, signal); }
+        catch { child.kill(signal); }
+      }
+    };
+    // EOF lets an idle native session restore the observed window before exit.
+    if (this.isolateProcessTree && !busy && child.stdin?.writable) child.stdin.end();
+    else terminate("SIGTERM");
     let shutdownTimer: ReturnType<typeof setTimeout>;
     const graceful = await Promise.race([
       exited.then(() => true),
-      new Promise<any>((resolve) => { shutdownTimer = setTimeout(() => resolve(false), this.shutdownGraceMs); }),
+      new Promise<boolean>(resolve => { shutdownTimer = setTimeout(() => resolve(false), this.shutdownGraceMs); }),
     ]);
     clearTimeout(shutdownTimer);
     if (!graceful && child.exitCode == null && child.signalCode == null) {
-      child.kill("SIGKILL");
-      await Promise.race([
-        exited,
-        new Promise<any>((resolve) => setTimeout(resolve, 500)),
-      ]);
+      terminate("SIGKILL");
+      await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 500))]);
     }
   }
 }

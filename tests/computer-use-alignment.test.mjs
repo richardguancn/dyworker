@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveBrowserUploadFiles, findObservedFileNode } from '../electron/browser-upload.mts';
-import { macosCoordinateScale } from '../electron/macos-computer-use-server.mts';
 import { readReviewObservation, requiresFullParameterReview, reviewActionFacts } from '../electron/approval-context.mts';
 import { matchStandingRule, suggestStandingRule } from '../electron/agent/standing-rules.mts';
 import { isReviewerEligible, planTaskApproval, reviewApproval } from '../electron/agent/review.mts';
@@ -12,14 +11,9 @@ import { BrowserControlManager } from '../electron/browser-control.mts';
 import { browserToolDefinitions } from '../electron/browser.mts';
 import { classify } from '../electron/risk.mts';
 import { browserKeyDefinition } from '../electron/browser-keyboard.mts';
-import { foregroundElementClickArgs } from '../electron/linux-computer-use-server.mts';
 import { validateDesktopClick } from '../electron/desktop/click-parameters.mts';
 
 test('桌面控件右键与双击保留目标、按键和次数，并拒绝越界或含糊参数', () => {
-  const geometry = { x: 100, y: 200, width: 300, height: 200 };
-  assert.deepEqual(foregroundElementClickArgs(geometry, { x: 130, y: 260 }, 'right', 1), ['mousemove', '--sync', '130', '260', 'click', '--repeat', '1', '3']);
-  assert.deepEqual(foregroundElementClickArgs(geometry, { x: 130, y: 260 }, 'left', 2), ['mousemove', '--sync', '130', '260', 'click', '--repeat', '2', '1']);
-  assert.throws(() => foregroundElementClickArgs(geometry, { x: 401, y: 260 }, 'right', 1), /超出/);
   assert.throws(() => validateDesktopClick({ element_index: 'e1', x: 1, y: 2 }), /只能选择/);
   assert.throws(() => validateDesktopClick({ mouse_button: 'invalid' }), /鼠标按键/);
   assert.throws(() => validateDesktopClick({ click_count: 0 }), /点击次数/);
@@ -58,16 +52,6 @@ test('文件输入框定位穿透同源子页和 Shadow DOM，不能拿错观察
   assert.equal(findObservedFileNode(tree, 'obs-a', 9), target);
   assert.equal(findObservedFileNode(tree, 'obs-b', 9), null);
   assert.equal(findObservedFileNode(tree, 'obs-a', 8), null);
-});
-
-test('Mac 截图坐标使用实际比例并拒绝缺图、过期和越界坐标', () => {
-  const capture = { data: 'png', scale: 2, width: 1600, height: 1000, capturedAt: 1000 };
-  assert.equal(macosCoordinateScale(capture, { x: 1000, y: 500 }, 2000), 2);
-  assert.equal(macosCoordinateScale(capture, { from_x: 20, from_y: 30, to_x: 200, to_y: 300 }, 2000), 2);
-  assert.throws(() => macosCoordinateScale(capture, { x: 1600, y: 1 }, 2000), /范围/);
-  assert.throws(() => macosCoordinateScale(capture, { x: NaN, y: 1 }, 2000), /范围/);
-  assert.throws(() => macosCoordinateScale(capture, { x: 1, y: 1 }, 62000), /重新观察/);
-  assert.throws(() => macosCoordinateScale(null, { x: 1, y: 1 }), /重新观察/);
 });
 
 test('操作审核优先用不更改观察编号的核对入口，上传仍为需审核的外部操作', async () => {
@@ -117,7 +101,7 @@ test('常驻规则不静默放行 Linux 共享桌面工具，且不影响替我�
   }
 
   assert.match(reviewActionFacts({ kind: 'plugin__dyworker_linux_computer_use__click', args: { use_shared_desktop: true } }), /当前可见桌面会话/);
-  assert.match(reviewActionFacts({ kind: 'mcp__computer-use__launch_app', args: { app: 'Notes', background: false } }), /background=false/);
+  assert.match(reviewActionFacts({ kind: 'mcp__computer-use__launch_app', args: { app: 'Notes', background: false } }), /Linux 当前桌面/);
   assert.match(reviewActionFacts({ kind: 'browser__open', args: { url: 'https://example.com', sessionSource: 'firefox' } }), /sessionSource=firefox/);
   assert.equal(requiresFullParameterReview({ kind: 'plugin__dyworker_linux_computer_use__click', args: { use_shared_desktop: true } }), true);
   assert.equal(requiresFullParameterReview({ kind: 'mcp__computer-use__launch_app', args: { app: 'Notes', background: false } }), true);

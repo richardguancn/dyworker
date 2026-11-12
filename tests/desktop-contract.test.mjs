@@ -53,7 +53,6 @@ const agent = readModuleSource(new URL("../electron/agent.mts", import.meta.url)
 const browserSource = readSource(new URL("../electron/browser.mts", import.meta.url));
 const browserImport = readSource(new URL("../electron/browser-import.mts", import.meta.url));
 const localstorageImport = readSource(new URL("../electron/localstorage-import.mts", import.meta.url));
-const linuxComputerUseSource = readSource(new URL("../electron/linux-computer-use-server.mts", import.meta.url));
 const settingsStorage = readSource(new URL("../electron/settings.mts", import.meta.url));
 const appUpdater = readSource(new URL("../electron/app-updater.mts", import.meta.url));
 const releaseWorkflow = readSource(new URL("../.github/workflows/release.yml", import.meta.url));
@@ -1100,9 +1099,9 @@ test("技能库设置贯通配置、主进程和渲染端", () => {
   assert.match(app, /installSkillFromLibrary\(\{ libraryId: result\.libraryId, slug: result\.slug \}\)/);
 });
 
-test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复配置", () => {
-  assert.match(main, /discoverComputerUseServer\(\)/);
-  assert.match(main, /builtInComputerUseServer/);
+test("Computer Use 在三个平台作为基础能力自动接入", () => {
+  assert.match(main, /createComputerUseRuntime\(discoverComputerUseServer\(/);
+  assert.match(main, /stopComputerUse/);
   assert.match(main, /COMPUTER_USE_SERVER_ID/);
   assert.match(main, /closeAllMcpClients/);
   assert.match(main, /app\.on\("before-quit"/);
@@ -1116,15 +1115,8 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   // 调度定时器（tick/首帧补偿/近邻唤醒）由 ctx.scheduler 的 dispose 统一清理
   const schedulerServiceSource = readSource(new URL("../electron/host/services/scheduler.mts", import.meta.url));
   assert.match(schedulerServiceSource, /clearInterval\(this\.schedulerTimer\)/);
-  assert.match(main, /请确认当前使用 X11 桌面会话/);
-  assert.match(main, /toolName === "install_dependencies"/);
-  assert.match(main, /COMPUTER_USE_INSTALL_TIMEOUT_MS/);
   assert.match(main, /signal: abortController\.signal/);
   assert.doesNotMatch(main, /await client\.close\(\);\n\s*mcpClients\.delete/);
-  assert.match(main, /请确认 DYWorker 已在 系统设置 → 隐私与安全性 → 辅助功能 和 屏幕录制 中启用/);
-  assert.match(main, /builtInComputerUseServer \? \[builtInComputerUseServer, \.\.\.configured\]/);
-  assert.match(packageJson, /electron\/scripts\/linux_computer_use\.py/);
-  assert.match(packageJson, /electron\/scripts\/macos_computer_use\.js/);
 });
 
 test("context ring exposes used tokens, total capacity, and percentage", () => {
@@ -1321,10 +1313,6 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(browserSource, /dispose\(\)/);
   // 外部工具路由 dispose 统一在代理服务收尾执行（含渠道定制路由）
   assert.match(hostAgentService, /onExtraTool\?\.dispose\?\.\(\)/);
-  assert.match(linuxComputerUseSource, /message\.method === "notifications\/cancelled"/);
-  assert.match(linuxComputerUseSource, /cancelledToolRequests\.add\(requestId\)/);
-  assert.match(linuxComputerUseSource, /cancelled: cancelledToolRequests\.delete\(message\.id\)/);
-  assert.match(linuxComputerUseSource, /activeToolRequest\?\.cancelled/);
   assert.match(agent, /browserReadOnlyTools/);
   // 变更卡片可直接打开产出文件
   assert.match(app, /dyworker\.openPath/);

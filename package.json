@@ -177,6 +177,7 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",
+    "open-computer-use": "1.1.4",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
@@ -193,13 +194,10 @@
     "npmRebuild": false,
     "asarUnpack": [
       "dist/electron/host/**/*",
-      "dist/electron/scripts/linux_computer_use.py",
       "dist/electron/scripts/linux_window_shadow.py",
-      "dist/electron/scripts/macos_computer_use.js",
       "dist/electron/scripts/windows_command_runner.cjs",
       "dist/electron/scripts/windows_package_probe.cjs",
       "dist/electron/scripts/decision_server.py",
-      "builtin-plugins/dyworker-linux-computer-use/bin/**/*",
       "node_modules/**/*",
       "builtin-plugins/curated/**/*"
     ],
@@ -207,6 +205,13 @@
       "output": "output/electron",
       "buildResources": "build"
     },
+    "extraResources": [
+      {
+        "from": "node_modules/open-computer-use",
+        "to": "computer-use",
+        "filter": ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+      }
+    ],
     "afterPack": "build/afterPack.cjs",
     "files": [
       "dist/client/**/*",
@@ -222,6 +227,7 @@
       "!node_modules/node-llama-cpp/llama/localBuilds/*/compile_commands.json"
     ],
     "mac": {
+      "extraResources": [{"from": "node_modules/open-computer-use/dist/Open Computer Use.app", "to": "computer-use/Open Computer Use.app"}],
       "category": "public.app-category.productivity",
       "target": [
         "dir"
@@ -229,11 +235,13 @@
       "icon": "build/icon.icns",
       "artifactName": "dyworker-${version}-${arch}.${ext}",
       "signIgnore": [
+        "/computer-use/Open Computer Use\\.app(?:/|$)",
         "\\.(?:nib|pak|dat|bin|asar|png|jpe?g|gif|icns|xlsx|pptx|docx|json|wasm|bcmap|icc|pfb|ttf|otf|woff2?)$",
         "/node-llama-cpp/llama/gitRelease\\.bundle$"
       ]
     },
     "win": {
+      "extraResources": [{"from": "node_modules/open-computer-use/dist/windows", "to": "computer-use/windows"}],
       "target": [
         {
           "target": "nsis",
@@ -252,6 +260,7 @@
       "perMachine": false
     },
     "linux": {
+      "extraResources": [{"from": "node_modules/open-computer-use/dist/linux", "to": "computer-use/linux"}],
       "category": "Utility",
       "target": [
         "deb"
@@ -269,6 +278,9 @@
         "libxtst6",
         "xdg-utils",
         "libatspi2.0-0",
+        "python3-gi",
+        "gir1.2-atspi-2.0",
+        "gir1.2-gtk-3.0",
         "libuuid1",
         "libsecret-1-0",
         "python3",

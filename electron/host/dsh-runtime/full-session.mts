@@ -294,7 +294,7 @@ export class OfficialDshSession {
         const result = await this.options.onExtraTool(message.tool.name, message.tool.args,
           { sessionId: message.tool.sessionId, callId: message.tool.callId, signal: controller.signal });
         controller.signal.throwIfAborted();
-        if (message.tool.name.startsWith('plugin__dyworker_linux_computer_use__')) {
+        if (message.tool.name.startsWith('mcp__computer-use__')) {
           if (result?.ok === false) throw new Error(String(result.error || result.result || '电脑操作失败'));
           const images = Array.isArray(result?.images) ? result.images.slice(0, 2).filter((image: any) =>
             typeof image?.data === 'string' && image.data.length <= 20_000_000 && /^image\/(png|jpeg|webp)$/i.test(image.mimeType || '')) : [];

@@ -210,7 +210,7 @@ test("main.mjs 接线契约:extraTools 含会话工具,路由优先于浏览器/
   // createExtraToolRouter 的路由里会话工具先于 browser__/MCP 判定
   assert.match(source, /SESSION_TOOL_NAMES\.has\(String\(name\)\)[\s\S]*?handleSessionTool\(name, args, \{ sessions \}\)[\s\S]*?name\.startsWith\("browser__"\)/);
   // 渠道自定义路由最终 fall through 到 baseRouter(createExtraToolRouter 实例),会话工具可达
-  assert.match(source, /return baseRouter\(name, args\);/);
+  assert.match(source, /return baseRouter\(name, args, context\);/);
 });
 
 // ---- 侧边聊天（只检索当前会话） ----

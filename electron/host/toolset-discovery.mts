@@ -29,8 +29,8 @@ const FILE_AND_WAKE_TOOLS = new Set([
 
 const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
   desktop: {
-    summary: '操控本机桌面应用界面（启动应用、查看窗口控件、点击/输入/按键/权限与依赖检查）',
-    guidance: '本机应用操作守则：首次操作应用前先 get_app_state，后续交互原样传 window_id 并每次重新获取状态；Mac 和 Linux 按控件编号操作时原样传该次观察的 observation_id。内置本机操作默认仅后台操作，不能因失败擅自切换前台；仅用户明确允许占用前台和输入设备时才能传 background=false。Linux 的 launch_app 无法保证后台启动，未运行的应用可优先尝试其他后台工具；独立 Linux 插件的进程不等于隔离桌面。macOS 缺权限先调 check_permissions；Linux 缺组件依次用 check_dependencies、prepare_dependency_install、取得确认后原样传 packages/plan_token/plan_summary 调 install_dependencies（勿用 sudo）。',
+    summary: '查看和操作本机桌面应用（控件、截图、点击、输入与按键）',
+    guidance: '先用 list_apps 确认目标应用，再用 get_app_state 读取界面。动作携带最新 observation_id，完成后重新读取确认。Linux 共享桌面截图和系统输入需要用户明确允许。',
   },
   browser: {
     summary: '任务独立后台浏览器或右侧可见浏览器（网页、标签页、表单、上传、下载、观察与人工接管）；已有外部浏览器用 desktop',

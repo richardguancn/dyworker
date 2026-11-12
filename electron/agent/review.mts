@@ -71,6 +71,7 @@ export const REVIEWER_POLICY = loadReviewerPolicy().text;
 // 其他既有高风险命令、工作区外删除和用户规则保留人工确认。
 // 用户/系统钩子、系统交互与审批逻辑自身保护继续由共享入口保留。
 export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval = false, approvalMode = "", forExternalPaths = false } = {} as any) {
+  if (isComputerUseTool(name) && (computerUseAction(name) === "get_shared_app_state" || args.background === false)) return false;
   if (hookRequiresApproval) return false;
   if (approvalMode !== "reviewer" && !(approvalMode === "auto" && forExternalPaths)) return false;
   if (name === 'run_command') {

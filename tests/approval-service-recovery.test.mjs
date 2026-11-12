@@ -3,7 +3,6 @@ import test from 'node:test';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { evaluateApproval, isReviewerAutoApprovableCommand, matchStandingRule, reviewApproval, runAgent, suggestStandingRule } from '../electron/agent.mts';
 
@@ -185,14 +184,4 @@ test('人工允许一个文件后，同类文件仍要独立确认，拒绝后�
   assert.equal(result.status, 'done'); assert.equal(asks, 2);
   await assert.rejects(fs.access(path.join(root, 'obsolete.cpp')), { code: 'ENOENT' });
   assert.equal(await fs.readFile(path.join(root, 'keep.cpp'), 'utf8'), 'keep.cpp');
-});
-
-test('无标题窗口原样标签可选中，真实标题改变和窗口消失仍停止', async () => {
-  const source = await fs.readFile(new URL('../electron/scripts/macos_computer_use.js', import.meta.url), 'utf8');
-  const functions = source.slice(source.indexOf('function processWindows('), source.indexOf('function walkWindow('));
-  const select = vm.runInNewContext(functions + '; selectWindow', { norm: value => String(value || '').trim().toLowerCase(), bridgeString: value => String(value || '') });
-  const process = title => ({ windows: () => [{ title: () => title }] });
-  assert.equal(select(process(''), 'jie2', '1', '（无标题）').title, '');
-  assert.throws(() => select(process('New document'), 'jie2', '1', '（无标题）'), /标题已经变化/);
-  assert.throws(() => select(process(''), 'jie2', '2', '（无标题）'), /没有找到窗口编号/);
 });

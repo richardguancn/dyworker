@@ -1084,6 +1084,7 @@ async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4
     .join("\n\n");
 }
 const mcpRuntime = createMcpRuntime({
+  resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
   get mcpShuttingDown() { return mcpShuttingDown; },
   set mcpShuttingDown(value) { mcpShuttingDown = value; },
 });
@@ -1143,7 +1144,9 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     if (signal.aborted) onBrowserAbort();
     else signal.addEventListener("abort", onBrowserAbort, { once: true });
   }
-  const route = async (name, args) => {
+  const desktopLifetime = new AbortController();
+  let desktopRun = { sessionId, runId, signal };
+  const route = async (name, args, context = {} as any) => {
     if (name === "open_file") return requestFilePreview(args, { workspacePath, sessionId, renderer });
     // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
     if (SESSION_TOOL_NAMES.has(String(name))) {
@@ -1164,14 +1167,17 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
       if (!executed.ok) throw new Error(executed.error || "插件工具执行失败");
       return pluginToolResult(executed.result);
     }
-    return callMcpTool(settings, name, args, { signal });
+    const toolSignal = AbortSignal.any([desktopLifetime.signal, ...[desktopRun.signal, context.signal].filter(Boolean)]);
+    return callMcpTool(settings, name, args, { ...desktopRun, signal: toolSignal, review: context.review === true });
   };
+  route.setExecutionContext = (context) => { desktopRun = context; };
   route.hasPendingHumanHandoff = () => backgroundBrowserHandoffs.owns(taskBrowser.background);
   route.setExecutionResult = result => { taskBrowser.executionResult = result; };
   route.dispose = async () => {
+    desktopLifetime.abort(new Error("任务已结束"));
     signal?.removeEventListener('abort', onBrowserAbort);
     await taskBrowser.dispose();
-    const results = await Promise.allSettled([ctx.plugins.stopRun(sessionId, runId), ctx.linuxComputerUse.stopRun(sessionId, runId)]);
+    const results = await Promise.allSettled([ctx.plugins.stopRun(sessionId, runId), mcpRuntime.stopComputerUse(desktopRun.sessionId, desktopRun.runId)]);
     const failure = results.find(result => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
   };
