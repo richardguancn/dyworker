@@ -9,6 +9,7 @@ import { buildKnowledgeGraph, knowledgeNodes, memoryNodeId, documentNodeId } fro
 import { buildPageContent, parsePageContent, workspacePageRelPath } from '../electron/memory-wiki.mts';
 import { validateOrganization } from '../electron/memory-organization.mts';
 import { knowledgeExportIpcPlugin } from '../electron/host/plugins/knowledge-export-ipc.mts';
+import { u as openKb, _ as upsertEntry } from '../builtin-plugins/dyworker-knowledge-base/upstream/lib/parse-ByetpssQ.js';
 
 const memory = (id, content, extra = {}) => ({ id, content, name: '', category: '常用信息', kind: 'fact', scope: 'global', workspacePath: '', ...extra });
 
@@ -104,6 +105,43 @@ async function fixture(t) {
   };
   return { host, route, restart, dir };
 }
+
+test('大图谱保留所有资料和手动关联，详情分页且新增资料能刷新', async t => {
+  const { host, route } = await fixture(t);
+  const dataDir = host.storage.resolve('knowledge-base');
+  const db = openKb(dataDir);
+  const count = 1100;
+  const filename = index => `现场记录-${index % count}.md`;
+  const id = index => documentNodeId(filename(index));
+  const insert = (source, index) => upsertEntry(db, { source, category: '现场记录', name: `验收段落 ${index}`, summary: '', payload: `第 ${index} 段验收内容` });
+  try {
+    db.exec('BEGIN');
+    for (let i = 0; i < count; i++) insert(filename(i), 0);
+    for (let i = 1; i <= 10; i++) insert(filename(0), i);
+    db.exec('COMMIT');
+    const relations = Array.from({ length: count }, (_, i) => [1, 7].map(step => ({ source: id(i), target: id(i + step), label: '验收记录' }))).flat();
+    await fs.writeFile(path.join(dataDir, 'graph-relations.json'), JSON.stringify(relations));
+    const graph = await route('/api/kb/graph');
+    assert.equal(graph.status, 200);
+    assert.equal(graph.nodes.length, count);
+    assert.equal(graph.links.filter(link => link.kind === 'manual').length, count * 2);
+    assert.equal(graph.nodes.find(node => node.id === id(0)).chunks, 11);
+    const detailUrl = `/api/kb/graph/detail?id=${encodeURIComponent(id(0))}`;
+    const first = await route(detailUrl);
+    assert.equal(first.nextOffset, 8);
+    const last = await route(`${detailUrl}&offset=${first.nextOffset}`);
+    assert.match(last.content, /第 10 段/);
+    assert.equal(last.previousOffset, 0);
+    assert.equal(last.nextOffset, undefined);
+    assert.deepEqual((await route(`/api/kb/graph/search?q=${encodeURIComponent('第 10 段')}`)).ids, [id(0)]);
+    const summary = await route('/api/kb/files?summary=1');
+    assert.deepEqual(summary.counts, [{ category: '现场记录', files: count, count: count + 10 }]);
+    const page = await route(`/api/kb/files?category=${encodeURIComponent('现场记录')}&offset=1080`);
+    assert.equal(page.files.length, 20);
+    insert('后补验收.md', 0);
+    assert.equal((await route('/api/kb/graph')).nodes.length, count + 1);
+  } finally { db.close(); }
+});
 
 test('真实整理合并重复记忆，保留原文和关联，重启后可撤销且不影响会话记忆', async t => {
   let { host, route, restart } = await fixture(t);

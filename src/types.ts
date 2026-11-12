@@ -1245,6 +1245,7 @@ export interface DyworkerBridge {
   exportKnowledge(payload: { kind: "memories" | "knowledge" | "graph" | "image"; image?: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
   knowledgeLocalFolders(payload: { action: "list" | "connect" | "refresh" | "disconnect"; id?: string; category?: string }): Promise<{
     ok: boolean; canceled?: boolean; error?: string;
+    progress?: { processed: number; file?: string };
     folders?: { id: string; path: string; category: string }[];
     report?: { updated: number; unchanged: number; removed: number; skipped: number; failed: number;
       issues: { path: string; reason: string }[] };

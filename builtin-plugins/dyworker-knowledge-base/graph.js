@@ -46,7 +46,8 @@ export function knowledgeNodes(memories, documents) {
     const node = files.get(id);
     node.content += `${node.content ? '\n\n' : ''}${typeof item.payload === 'string' ? item.payload : item.summary || ''}`;
     node.tags = [...new Set([...node.tags, ...(item.tags || [])])];
-    node.chunks++;
+    node.chunks += item.chunks ?? 1;
+    if (item.truncated) node.truncated = true;
   }
   return [...nodes, ...files.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -95,7 +96,8 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
   // 从标题中找反复出现的具体主题词，不要求不同类型的记忆正文高度相似。
   const titleTerms = nodes.map(node => {
     const terms = new Set();
-    for (const part of node.name.toLowerCase().match(/[a-z][a-z0-9_-]{2,}|[\p{Script=Han}]+/gu) || []) {
+    const title = node.kind === 'document' ? node.name.replace(/\.[a-z0-9]{1,10}$/i, '') : node.name;
+    for (const part of title.toLowerCase().match(/[a-z][a-z0-9_-]{2,}|[\p{Script=Han}]+/gu) || []) {
       if (/^[a-z]/.test(part)) { if (!stopWords.has(part)) terms.add(part); continue; }
       for (let i = 0; i <= part.length - 3; i++) {
         const term = part.slice(i, i + 3);
@@ -109,10 +111,13 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
   const hints = titleTerms.map(terms => [...terms].filter(term => titleCounts.get(term) >= 3)
     .sort((a, b) => titleCounts.get(b) - titleCounts.get(a) || b.length - a.length || a.localeCompare(b))[0] || '');
   const hintAnchors = new Map();
+  const hintMembers = new Map();
   hints.forEach((hint, index) => {
     if (!hint) return;
     if (hintAnchors.has(hint)) parent[index] = root(hintAnchors.get(hint));
     else hintAnchors.set(hint, index);
+    if (!hintMembers.has(hint)) hintMembers.set(hint, []);
+    hintMembers.get(hint).push(nodes[index]);
   });
   // 用户已有的具体主题归档也是分组依据；通用类型（事实、偏好等）不能当作主题。
   // 分类只影响颜色，不会凭空生成事实关联线。
@@ -124,15 +129,21 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
     else categoryAnchors.set(key, index);
   });
   const candidates = [];
-  // 倒排候选避免对所有节点做全文两两比较；过于常见的词不单独触发关联。
+  const large = nodes.length > 400;
+  // 大图谱优先比较共享稀有词较多的候选，避免常见词让比较次数随节点数平方增长。
   features.forEach((weights, i) => {
-    const pairs = new Set();
-    for (const token of weights.keys()) {
+    const pairs = new Map();
+    const terms = [...weights.keys()];
+    if (large) terms.sort((a, b) => frequencies.get(a) - frequencies.get(b) || weights.get(b) - weights.get(a));
+    let eligible = 0;
+    for (const token of terms) {
       const matches = postings.get(token);
-      if (matches.length > Math.max(60, nodes.length * .4)) continue;
-      for (const j of matches) if (j > i) pairs.add(j);
+      if (matches.length < 2 || matches.length > (large ? 96 : Math.max(60, nodes.length * .4))) continue;
+      if (large && eligible++ >= 32) break;
+      for (const j of matches) if (j > i) pairs.set(j, (pairs.get(j) || 0) + 1);
     }
-    for (const j of pairs) {
+    const shortlist = large && pairs.size > 64 ? [...pairs.keys()].sort((a, b) => pairs.get(b) - pairs.get(a) || a - b).slice(0, 64) : pairs.keys();
+    for (const j of shortlist) {
       if (!compatible(nodes[i], nodes[j])) continue;
       let dot = 0; const shared = [];
       for (const [token, weight] of weights) if (features[j].has(token)) {
@@ -142,8 +153,8 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
       const score = dot / (norms[i] * norms[j]);
       const contentShared = shared.filter(item => !item.token.startsWith('分类:'));
       if (score < .2 || contentShared.length < 2) continue;
-      shared.sort((a, b) => b.weight - a.weight || a.token.localeCompare(b.token));
-      candidates.push({ i, j, score, terms: shared.filter(item => !item.token.startsWith('分类:')).slice(0, 3).map(item => item.token) });
+      contentShared.sort((a, b) => b.weight - a.weight || a.token.localeCompare(b.token));
+      candidates.push({ i, j, score, terms: contentShared.slice(0, 3).map(item => item.token) });
     }
   });
   candidates.sort((a, b) => b.score - a.score || a.i - b.i || a.j - b.j);
@@ -161,11 +172,10 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
     degree.set(source, (degree.get(source) || 0) + 1); degree.set(target, (degree.get(target) || 0) + 1);
   }
   // 用少量主题相近的候选线串起同一主题；不将这些弱关系用于任务检索扩展。
-  for (const hint of hintAnchors.keys()) {
-    const members = nodes.map((node, i) => ({ node, i })).filter(item => hints[item.i] === hint);
+  for (const [hint, members] of hintMembers) {
     for (let i = 0; i < members.length; i++) {
       for (let step = 1; step <= 2 && step < members.length; step++) {
-        const source = members[i].node, target = members[(i + step) % members.length].node;
+        const source = members[i], target = members[(i + step) % members.length];
         const key = relationKey(source.id, target.id);
         if (!compatible(source, target) || excluded.has(key) || links.has(key) || (degree.get(source.id) || 0) >= 5 || (degree.get(target.id) || 0) >= 5) continue;
         links.set(key, { source: source.id, target: target.id, kind: 'similar', label: '主题相近', score: .2, reason: `共同主题：${hint}` });
@@ -177,8 +187,9 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
   nodes.forEach((node, index) => { const id = root(index); if (!clusters.has(id)) clusters.set(id, []); clusters.get(id).push(node); });
   const topics = [], topicOf = new Map(), usedHues = [];
   for (const [anchor, members] of clusters) {
-    const categories = members.map(node => node.category).filter(category => !genericCategories.has(category));
-    const category = categories.sort((a, b) => categories.filter(x => x === b).length - categories.filter(x => x === a).length || a.localeCompare(b))[0];
+    const categories = new Map();
+    for (const { category } of members) if (!genericCategories.has(category)) categories.set(category, (categories.get(category) || 0) + 1);
+    const category = [...categories.keys()].sort((a, b) => categories.get(b) - categories.get(a) || a.localeCompare(b))[0];
     const counts = new Map();
     for (const node of members) for (const token of tokens(node.name)) counts.set(token, (counts.get(token) || 0) + 1);
     const term = [...counts].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || a[0].localeCompare(b[0]))[0]?.[0];
@@ -186,11 +197,13 @@ export function buildKnowledgeGraph(nodes, saved = [], aliases = {}) {
     const label = commonHint ? `${commonHint}相关` : category || (members.length > 1 && term ? `${term}相关` : members[0].name.slice(0, 12));
     const id = `topic:${nodes[anchor].id}`;
     let hue = hash(label) % 360;
-    for (let attempt = 0; attempt < 24 && usedHues.some(value => Math.min(Math.abs(value - hue), 360 - Math.abs(value - hue)) < 22); attempt++) hue = (hue + 137.508) % 360;
-    usedHues.push(hue);
+    if (usedHues.length < 18) {
+      for (let attempt = 0; attempt < 24 && usedHues.some(value => Math.min(Math.abs(value - hue), 360 - Math.abs(value - hue)) < 22); attempt++) hue = (hue + 137.508) % 360;
+      usedHues.push(hue);
+    }
     const topic = { id, label, color: `hsl(${Math.round(hue)}, 57%, 46%)`, count: members.length };
     topics.push(topic); for (const node of members) topicOf.set(node.id, topic);
   }
-  return { nodes: nodes.map(node => ({ ...node, content: node.content.slice(0, 8000), truncated: node.content.length > 8000,
+  return { nodes: nodes.map(node => ({ ...node, content: node.content.slice(0, 8000), truncated: node.truncated || node.content.length > 8000,
     topicId: topicOf.get(node.id).id, color: topicOf.get(node.id).color })), links: [...links.values()], topics };
 }

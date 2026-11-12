@@ -1,13 +1,48 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { c as listEntries, o as getCustomCategories, u as openKb } from './upstream/lib/parse-ByetpssQ.js';
+import { DatabaseSync } from 'node:sqlite';
+import { o as getCustomCategories, u as openKb } from './upstream/lib/parse-ByetpssQ.js';
 import { buildKnowledgeGraph, knowledgeNodes, relationKey, documentNodeId, memoryNodeId } from './graph.js';
+import { runKnowledgeJob } from './knowledge-worker.js';
+
+const graphDocuments = `
+  SELECT kb.id, kb.source, kb.category, substr(kb.payload, 1, 4001) AS payload, kb.tags, grouped.chunks
+  FROM (SELECT MIN(id) AS first_id, COUNT(*) AS chunks FROM kb WHERE source <> '' GROUP BY source
+        UNION ALL SELECT id, 1 FROM kb WHERE source IS NULL OR source = '') grouped
+  JOIN kb ON kb.id = grouped.first_id`;
+
+function graphOverview(db, memories, saved, aliases) {
+  const documents = db.prepare(graphDocuments).all().map(row => ({ ...row, payload: row.payload.slice(0, 4000),
+    truncated: row.chunks > 1 || row.payload.length > 4000, tags: JSON.parse(row.tags || '[]') }));
+  return buildKnowledgeGraph(knowledgeNodes(memories, documents), saved, aliases);
+}
+
+export function loadGraphOverview({ dataDir, memories, saved, aliases }) {
+  const db = new DatabaseSync(path.join(dataDir, 'kb.sqlite'), { readOnly: true });
+  try { return graphOverview(db, memories, saved, aliases); }
+  finally { db.close(); }
+}
+
+export function findDocumentMatches({ dataDir, query }) {
+  const db = new DatabaseSync(path.join(dataDir, 'kb.sqlite'), { readOnly: true });
+  const columns = "DISTINCT kb.source, CASE WHEN kb.source IS NULL OR kb.source = '' THEN kb.id END AS id";
+  try {
+    const rows = [...query].length >= 3
+      ? db.prepare(`SELECT ${columns} FROM kb_fts JOIN kb ON kb.id = kb_fts.rowid WHERE kb_fts MATCH ? AND instr(lower(kb.payload), ?) > 0`)
+        .all(`"${query.replaceAll('"', '""')}"`, query)
+      : db.prepare(`SELECT ${columns} FROM kb WHERE instr(lower(kb.payload), ?) > 0`).all(query);
+    return rows.map(row => documentNodeId(row.source || `条目 ${row.id}`));
+  } finally { db.close(); }
+}
 
 export function mountGraph(ctx, dataDir) {
   const db = openKb(dataDir);
   ctx.effect(() => () => db.close());
   const file = path.join(dataDir, 'graph-relations.json');
+  const controller = new AbortController();
+  ctx.effect(() => () => controller.abort(new Error('知识库已停用')));
+  const cache = new Map();
   let mutations = Promise.resolve();
   const read = async () => {
     try { const data = JSON.parse(await fs.readFile(file, 'utf8')); return Array.isArray(data) ? data : []; }
@@ -22,12 +57,41 @@ export function mountGraph(ctx, dataDir) {
     });
     mutations = next; return next;
   };
-  const load = async (options = { allWorkspaces: true }) => {
-    const { rows, provenance } = await ctx.memory.knowledgeSnapshot(options);
+  const load = async (options = { allWorkspaces: true }, snapshot) => {
+    const { rows, provenance } = snapshot ?? await ctx.memory.knowledgeSnapshot(options);
     const memories = rows.map(row => ({ ...row, origins: provenance.sources[row.id] || [] }));
     const aliases = Object.fromEntries(Object.entries(provenance.aliases).map(([from, to]) => [memoryNodeId(from), memoryNodeId(to)]));
-    const nodes = knowledgeNodes(memories, listEntries(db));
-    return { nodes, graph: buildKnowledgeGraph(nodes, await read(), aliases) };
+    const saved = await read();
+    const revision = db.prepare('PRAGMA data_version').get().data_version;
+    const digest = crypto.createHash('sha256').update(JSON.stringify([revision, memories, aliases, saved])).digest('hex');
+    if (cache.has(digest)) return cache.get(digest);
+    const large = memories.length > 120 || saved.length > 400 || db.prepare('SELECT id FROM kb LIMIT 1 OFFSET ?').get(120 - memories.length);
+    const result = large
+      ? runKnowledgeJob('graph-overview', { dataDir, memories, saved, aliases }, { signal: controller.signal })
+      : Promise.resolve(graphOverview(db, memories, saved, aliases));
+    cache.set(digest, result);
+    if (cache.size > 3) cache.delete(cache.keys().next().value);
+    result.catch(() => { if (cache.get(digest) === result) cache.delete(digest); });
+    return result;
+  };
+  const readNode = async (id, offset = 0) => {
+    if (typeof id !== 'string') return;
+    if (id.startsWith('memory:')) {
+      const { rows, provenance } = await ctx.memory.knowledgeSnapshot({ allWorkspaces: true });
+      const row = rows.find(row => memoryNodeId(row.id) === id);
+      return row && knowledgeNodes([{ ...row, origins: provenance.sources[row.id] || [] }], [])[0];
+    }
+    if (!id.startsWith('document:')) return;
+    const source = decodeURIComponent(id.slice('document:'.length));
+    const unsourced = /^条目 (\d+)$/.exec(source)?.[1];
+    const pageSize = 8;
+    let rows = db.prepare('SELECT id, source, category, payload, tags FROM kb WHERE source = ? ORDER BY id LIMIT ? OFFSET ?')
+      .all(source, pageSize + 1, offset);
+    if (!rows.length && !offset && unsourced) rows = db.prepare("SELECT id, source, category, payload, tags FROM kb WHERE id = ? AND (source IS NULL OR source = '')").all(Number(unsourced));
+    if (!rows.length) return;
+    const nextOffset = rows.length > pageSize ? offset + pageSize : undefined;
+    const node = knowledgeNodes([], rows.slice(0, pageSize).map(row => ({ ...row, tags: JSON.parse(row.tags || '[]') })))[0];
+    return { ...node, nextOffset, previousOffset: offset > 0 ? Math.max(0, offset - pageSize) : undefined };
   };
   const route = (url, method, handler) => ctx.effect(() => ctx.connection.fetch.register({
     path: url, methods: [method], fetch: async request => {
@@ -35,7 +99,11 @@ export function mountGraph(ctx, dataDir) {
       catch (error) { return Response.json({ error: error.message || String(error) }, { status: 400 }); }
     },
   }));
-  route('/api/kb/graph', 'GET', async () => (await load()).graph);
+  route('/api/kb/graph', 'GET', () => load());
+  route('/api/kb/graph/search', 'GET', async request => {
+    const query = new URL(request.url).searchParams.get('q')?.trim().toLowerCase();
+    return { ids: query ? await runKnowledgeJob('graph-search', { dataDir, query }, { signal: request.signal }) : [] };
+  });
   const allDocuments = () => db.prepare('SELECT id, category, name, summary, payload, tags, source, updated_at FROM kb ORDER BY id').all().map(row => ({
     id: row.id, category: row.category, name: row.name, summary: row.summary, content: row.payload,
     tags: JSON.parse(row.tags || '[]'), source: row.source, updatedAt: row.updated_at,
@@ -48,15 +116,18 @@ export function mountGraph(ctx, dataDir) {
     const nodes = knowledgeNodes(rows.map(row => ({ ...row, origins: provenance.sources[row.id] || [] })), documents);
     const relations = await read();
     const aliases = Object.fromEntries(Object.entries(provenance.aliases).map(([from, to]) => [memoryNodeId(from), memoryNodeId(to)]));
-    const graph = buildKnowledgeGraph(nodes, relations, aliases);
+    const graph = nodes.length > 120 || relations.length > 400
+      ? await runKnowledgeJob('graph', [nodes.map(node => ({ ...node, content: node.content.slice(0, 8000) })), relations, aliases], { signal: controller.signal })
+      : buildKnowledgeGraph(nodes, relations, aliases);
     const full = new Map(nodes.map(node => [node.id, node.content]));
     return { format: 'dyworker-knowledge-graph', version: 1, exportedAt: new Date().toISOString(),
       nodes: graph.nodes.map(node => ({ ...node, content: full.get(node.id), truncated: false })),
       links: graph.links, topics: graph.topics, savedRelations: relations, memoryAliases: aliases };
   });
   route('/api/kb/graph/detail', 'GET', async request => {
-    const id = new URL(request.url).searchParams.get('id');
-    const node = (await load()).nodes.find(node => node.id === id);
+    const params = new URL(request.url).searchParams;
+    const offset = Number(params.get('offset'));
+    const node = await readNode(params.get('id'), Number.isSafeInteger(offset) && offset > 0 ? offset : 0);
     if (!node) throw new Error('这条内容已被删除或合并，请刷新图谱');
     return node;
   });
@@ -64,8 +135,7 @@ export function mountGraph(ctx, dataDir) {
     const bytes = await request.text();
     if (bytes.length > 16_000) throw new Error('关联内容过长');
     const body = JSON.parse(bytes);
-    const { nodes } = await load();
-    const source = nodes.find(node => node.id === body.source), target = nodes.find(node => node.id === body.target);
+    const [source, target] = await Promise.all([readNode(body.source), readNode(body.target)]);
     if (!source || !target || source.id === target.id) throw new Error('请选择两条不同的有效内容');
     if (source.scope === 'workspace' && target.scope === 'workspace' && source.workspacePath !== target.workspacePath) throw new Error('不同项目的专属记忆不能直接关联');
     const key = relationKey(source.id, target.id);

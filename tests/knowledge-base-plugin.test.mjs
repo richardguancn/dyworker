@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { knowledgeFoldersIpcPlugin } from '../electron/host/plugins/knowledge-folders-ipc.mts';
@@ -61,7 +62,18 @@ test('本地目录批量收录、更新与断开，并可用知识库工具检�
   canceled = true;
   assert.deepEqual(await folderAction('connect'), { ok: true, canceled: true });
   canceled = false;
-  const connected = await folderAction('connect', { category: '资料', folderPath: dir });
+  let finished = false;
+  const connection = folderAction('connect', { category: '资料', folderPath: dir }).finally(() => { finished = true; });
+  let indexing;
+  for (let i = 0; i < 100 && !finished; i++) {
+    indexing = await folderAction('list');
+    if (indexing.progress?.file) break;
+    await delay(20);
+  }
+  assert.ok(indexing?.progress?.file, '处理文件时能读取更新进度');
+  assert.equal((await route('/api/kb/files?summary=1')).status, 200);
+  assert.equal(finished, false, '读取资料目录无需等待后台更新完成');
+  const connected = await connection;
   assert.equal(connected.ok, true, connected.error);
   assert.equal(connected.report.updated, 58);
   assert.equal(connected.report.skipped, 2);

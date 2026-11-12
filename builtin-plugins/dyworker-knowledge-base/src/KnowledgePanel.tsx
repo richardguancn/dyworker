@@ -87,7 +87,7 @@ interface ClassifySuggestion {
 
 interface FolderInfo {
   category: string
-  files: FileInfo[]
+  files: number
   count: number
 }
 
@@ -212,7 +212,10 @@ const FILE_PAGE_SIZE = 50
 
 export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const [mode, setMode] = useState<'graph' | 'directory'>('graph')
-  const [files, setFiles] = useState<FileInfo[]>([])
+  const [filePageData, setFilePageData] = useState<{ category: string; page: number; files: FileInfo[] }>()
+  const [filePageError, setFilePageError] = useState('')
+  const [folderCounts, setFolderCounts] = useState<FolderInfo[]>([])
+  const [directoryVersion, setDirectoryVersion] = useState(0)
   const [categories, setCategories] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
   const [importingLabel, setImportingLabel] = useState('导入中…')
@@ -230,6 +233,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const [localFolders, setLocalFolders] = useState<NonNullable<LocalFoldersResult['folders']>>([])
   const [localReport, setLocalReport] = useState<LocalFoldersResult['report']>()
   const [localBusy, setLocalBusy] = useState(false)
+  const [localProgress, setLocalProgress] = useState<LocalFoldersResult['progress']>()
   const [localError, setLocalError] = useState('')
   const [creatingCategory, setCreatingCategory] = useState(false)
   const [query, setQuery] = useState('')
@@ -260,9 +264,10 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
 
   const refresh = useCallback(async () => {
     try {
-      const data = await getJson<{ files: FileInfo[]; categories: string[] }>('/api/kb/files')
-      setFiles(data.files)
+      const data = await getJson<{ counts: FolderInfo[]; categories: string[] }>('/api/kb/files?summary=1')
+      setFolderCounts(data.counts)
       setCategories(data.categories)
+      setDirectoryVersion(version => version + 1)
     } catch (error) {
       console.error('knowledge-base: list failed', error)
     }
@@ -271,8 +276,6 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
       setMemories(data.rows); setMemoryError('')
     } catch { setMemoryError('个人记忆读取失败，请稍后重试。') }
   }, [])
-
-  useEffect(() => { void refresh() }, [refresh])
 
   const refreshLocalFolders = useCallback(async () => {
     if (!window.dyworker?.knowledgeLocalFolders) return
@@ -283,7 +286,19 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     } catch (error) { setLocalError(error instanceof Error ? error.message : String(error)) }
   }, [])
 
-  useEffect(() => { void refreshLocalFolders() }, [refreshLocalFolders])
+  useEffect(() => { if (mode === 'directory') { void refresh(); void refreshLocalFolders() } }, [mode, refresh, refreshLocalFolders])
+
+  useEffect(() => {
+    if (!localBusy) { setLocalProgress(undefined); return }
+    let active = true
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await window.dyworker?.knowledgeLocalFolders({ action: 'list' })
+        if (active && result?.progress) setLocalProgress(result.progress)
+      } catch { /* 最终结果由目录操作返回。 */ }
+    }, 500)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [localBusy])
 
   const loadFileEntries = async (file: FileInfo, offset = 0) => {
     const request = ++fileRequest.current
@@ -430,9 +445,8 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
       const s = suggestions[i]
       if (s === undefined || s.error !== undefined) continue
       try {
-        const currentCat = files.find((file) => file.source === s.source)?.category
         // 分类变化 → 移动
-        if (currentCat !== undefined && s.category !== undefined && s.category !== '' && s.category !== currentCat) {
+        if (s.category) {
           await postJson('/api/kb/move-file', { source: s.source, category: s.category })
         }
         // 文件名变化 → 重命名（改名后 source 变了，后续引用用新名）
@@ -449,7 +463,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     setSuggestions(null)
     await refresh()
     if (failed > 0) window.alert(`整理完成：成功 ${ok} 个，失败 ${failed} 个`)
-  }, [accepted, suggestions, files, refresh])
+  }, [accepted, suggestions, refresh])
 
   /** 提交重命名（分类或文件）。分类改名后回根视图；文件改名留在当前分类视图。 */
   const submitRename = useCallback(async (value: string) => {
@@ -550,13 +564,8 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     setSearching(false)
   }
 
-  const folders = new Map<string, FolderInfo>(categories.map(category => [category, { category, files: [], count: 0 }]))
-  for (const file of files) {
-    const folder = folders.get(file.category) ?? { category: file.category, files: [], count: 0 }
-    folder.files.push(file)
-    folder.count += file.count
-    folders.set(file.category, folder)
-  }
+  const folders = new Map<string, FolderInfo>(categories.map(category => [category, { category, files: 0, count: 0 }]))
+  for (const folder of folderCounts) folders.set(folder.category, folder)
   const fullFolders = [...folders.values()]
   // 面包屑不含根级：根视图（知识库首页）不显示面包屑，从分类级开始。
   const breadcrumbs: Array<{ label: string; onClick: () => void; current: boolean }> = []
@@ -569,11 +578,21 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   }
 
   // 当前视图数据
-  const currentFiles = view.kind === 'category'
-    ? folders.get(view.category)?.files ?? []
-    : []
-  const lastPage = Math.max(0, Math.ceil(currentFiles.length / FILE_PAGE_SIZE) - 1)
+  const activeCategory = view.kind === 'category' ? view.category : null
+  const fileCount = activeCategory !== null ? folders.get(activeCategory)?.files ?? 0 : 0
+  const lastPage = Math.max(0, Math.ceil(fileCount / FILE_PAGE_SIZE) - 1)
   const currentPage = Math.min(filePage, lastPage)
+  const currentFiles = filePageData?.category === activeCategory && filePageData.page === currentPage ? filePageData.files : null
+  useEffect(() => {
+    if (mode !== 'directory' || activeCategory === null) return
+    let active = true
+    setFilePageError('')
+    const params = new URLSearchParams({ category: activeCategory, offset: String(currentPage * FILE_PAGE_SIZE) })
+    getJson<{ files: FileInfo[] }>(`/api/kb/files?${params}`).then(data => {
+      if (active) setFilePageData({ category: activeCategory, page: currentPage, files: data.files })
+    }).catch(() => { if (active) setFilePageError('文件列表读取失败，请重试。') })
+    return () => { active = false }
+  }, [mode, activeCategory, currentPage, directoryVersion])
   const visibleLocalFolders = localFolders.filter(folder => view.kind !== 'category' || folder.category === view.category)
   const isRoot = view.kind === 'root'
 
@@ -587,7 +606,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const tabs = <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
     <div style={{ marginRight: 'auto' }} />
     <button style={mode === 'graph' ? primaryButton : button} aria-pressed={mode === 'graph'} onClick={() => setMode('graph')}>{t('kb.tabGraph', '关系图谱')}</button>
-    <button style={mode === 'directory' ? primaryButton : button} aria-pressed={mode === 'directory'} onClick={() => { setMode('directory'); void refresh() }}>{t('kb.tabDirectory', '资料目录')}</button>
+    <button style={mode === 'directory' ? primaryButton : button} aria-pressed={mode === 'directory'} onClick={() => setMode('directory')}>{t('kb.tabDirectory', '资料目录')}</button>
   </div>
   if (mode === 'graph') return <div style={{ width: '100%', maxWidth: 1600, margin: '0 auto', padding: '20px 24px', boxSizing: 'border-box' }}>{tabs}<div style={{ border: '1px solid var(--border, #e8ebef)', borderRadius: 12, overflow: 'hidden', background: 'var(--card, #fff)' }}><KnowledgeGraph /></div></div>
 
@@ -646,7 +665,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                 <button style={smallBtn} disabled={localBusy || importing} onClick={() => void manageLocalFolder('disconnect', folder.id)}>断开</button>
               </div>
             ))}
-            {localBusy && <p role="status" style={sub}>正在处理本地目录，文件较多时可能需要一些时间…</p>}
+            {localBusy && <p role="status" style={{ ...sub, overflowWrap: 'anywhere' }}>{localProgress ? `已检查 ${localProgress.processed} 个文件${localProgress.file ? ` · ${localProgress.file}` : ''}` : '正在处理本地目录…'}</p>}
             {localError && <p role="alert" style={sub}>{localError}</p>}
             {localReport && <div style={{ marginTop: 8 }}>
               <p role="status" style={sub}>更新 {localReport.updated} 个，未变化 {localReport.unchanged} 个，移除 {localReport.removed} 个，跳过 {localReport.skipped} 个，失败 {localReport.failed} 个。</p>
@@ -815,7 +834,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                             {folder.category}
                           </span>
                           <span style={{ fontSize: 11.5, color: 'var(--muted, #9ca3af)', marginLeft: 4, flexShrink: 0 }}>
-                            {folder.files.length > 0 ? `${folder.files.length} 个文件 · ${folder.count} 个条目` : '空目录'}
+                            {folder.files > 0 ? `${folder.files} 个文件 · ${folder.count} 个条目` : '空目录'}
                           </span>
                           {hoveredFolder === folder.category && (
                             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
@@ -826,7 +845,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                               >
                                 ✏️ 重命名
                               </button>
-                              {folder.files.length === 0 && !localFolders.some(local => local.category === folder.category) && (
+                              {folder.files === 0 && !localFolders.some(local => local.category === folder.category) && (
                                 <button
                                   style={{ ...smallBtn, border: '1px solid #fecaca', background: 'var(--card, #fff)', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: '#dc2626' }}
                                   onClick={() => void deleteCategory(folder.category)}
@@ -856,10 +875,12 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
 
             {/* 分类视图：文件分组 + 直接展示条目（两级结构，不再进第三层） */}
             {view.kind === 'category' && (
-              currentFiles.length === 0
+              filePageError ? <p role="alert" style={sub}>{filePageError} <button style={smallBtn} onClick={() => setDirectoryVersion(version => version + 1)}>重试</button></p>
+                : currentFiles === null ? <p role="status" style={sub}>正在读取文件…</p>
+                : currentFiles.length === 0
                 ? <p style={{ ...sub, padding: '8px 0' }}>该分类为空。</p>
                 : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 }}>
-                    {currentFiles.slice(currentPage * FILE_PAGE_SIZE, (currentPage + 1) * FILE_PAGE_SIZE).map((file) => {
+                    {currentFiles.map((file) => {
                       const { source } = file
                       const editable = !!source && !isLocalSource(source)
                       const collapsed = openFile?.source !== source

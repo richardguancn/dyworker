@@ -295,18 +295,22 @@ function apply(ctx, config) {
 	webServer.register({
 		kind: "exact",
 		path: "/api/kb/files",
-		handler: async (_req, res) => {
+		handler: async (req, res) => {
+			const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+			const category = params.get('category');
+			if (params.has('summary')) {
+				const counts = db.prepare('SELECT category, COUNT(*) AS files, SUM(chunks) AS count FROM (SELECT category, COUNT(*) AS chunks FROM kb GROUP BY category, source) GROUP BY category').all();
+				return sendJson(res, 200, { counts, categories: allCategories(db, config.categories) });
+			}
+			const grouped = 'SELECT source, category, COUNT(*) AS count, MAX(updated_at) AS updatedAt, MIN(id) AS first_id FROM kb';
+			if (category !== null) {
+				const offset = Number(params.get('offset'));
+				const files = db.prepare(`${grouped} WHERE category = ? GROUP BY source ORDER BY updatedAt DESC, first_id DESC LIMIT 50 OFFSET ?`)
+					.all(category, Number.isSafeInteger(offset) && offset > 0 ? offset : 0);
+				return sendJson(res, 200, { files });
+			}
 			sendJson(res, 200, {
-				files: db.prepare("SELECT source, category, COUNT(*) AS n, MAX(updated_at) AS t, MIN(id) AS first_id FROM kb GROUP BY source, category ORDER BY t DESC, first_id DESC").all().map((r) => {
-					const first = db.prepare("SELECT summary FROM kb WHERE id = ?").get(r.first_id);
-					return {
-						source: r.source,
-						category: r.category,
-						count: r.n,
-						updatedAt: r.t,
-						summary: first?.summary ?? ""
-					};
-				}),
+				files: db.prepare(`SELECT grouped.source, grouped.category, grouped.count, grouped.updatedAt, kb.summary FROM (${grouped} GROUP BY source, category) grouped JOIN kb ON kb.id = grouped.first_id ORDER BY grouped.updatedAt DESC, grouped.first_id DESC`).all(),
 				categories: allCategories(db, config.categories)
 			});
 		}

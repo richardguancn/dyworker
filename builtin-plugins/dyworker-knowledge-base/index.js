@@ -12,6 +12,7 @@ const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const readRoutes = new Set(['/api/kb/list', '/api/kb/search', '/api/kb/files']);
 const editRoutes = new Set(['/api/kb/move-file', '/api/kb/rename-file', '/api/kb/delete-file',
   '/api/kb/delete-category']);
+const writeTools = new Set(['kb_import', 'kb_update', 'kb_delete']);
 
 function workspaceFile(workspace, value) {
   if (!workspace || typeof value !== 'string' || !value.trim()) throw new Error('需要工作文件夹中的文件路径');
@@ -62,30 +63,35 @@ export function apply(ctx) {
       parameters: definition.parameters,
       handler: async (args, execution) => {
         const input = definition.name === 'kb_import' ? { ...args, path: workspaceFile(execution.workspacePath, args?.path) } : args;
-        const result = await definition.execute(input, { signal: execution.signal });
+        const execute = () => definition.execute(input, { signal: execution.signal });
+        const result = await (writeTools.has(definition.name) ? localFolders.write(execution.signal, execute) : execute());
         if (definition.name !== 'kb_query') return result;
         const query = String(input.query || '').trim().toLowerCase();
         const category = String(input.category || '').trim();
-        const memories = (await ctx.memory.knowledgeRows({ workspacePath: execution.workspacePath }))
+        const options = { workspacePath: execution.workspacePath };
+        const snapshot = await ctx.memory.knowledgeSnapshot(options);
+        const memories = snapshot.rows
           .filter(row => (!category || row.category === category) && query && `${row.name} ${row.category} ${row.content}`.toLowerCase().includes(query))
           .slice(0, 50).map(row => ({ id: row.id, category: row.category, name: row.name || row.category,
             summary: row.content, source: '个人记忆', scope: row.scope, detail: row.content }));
         const documentResult = JSON.parse(result);
-        const { graph: currentGraph } = await graph.load({ workspacePath: execution.workspacePath });
         const direct = new Set([
           ...memories.map(row => `memory:${row.id}`),
           ...(documentResult.rows || []).map(row => `document:${encodeURIComponent(row.source || `条目 ${row.id}`)}`),
         ]);
         const related = new Map();
-        for (const link of currentGraph.links) {
+        const currentGraph = direct.size ? await graph.load(options, snapshot) : null;
+        const byId = new Map(currentGraph?.nodes.map(node => [node.id, node]));
+        for (const link of currentGraph?.links ?? []) {
           if (link.kind !== 'manual' && link.score < .45) continue;
           const other = direct.has(link.source) ? link.target : direct.has(link.target) ? link.source : '';
-          if (!other || direct.has(other) || related.has(other) || related.size >= 5) continue;
-          const node = currentGraph.nodes.find(node => node.id === other);
+          if (!other || direct.has(other) || related.has(other)) continue;
+          const node = byId.get(other);
           if (!node || (category && node.category !== category)) continue;
           related.set(other, { id: node.memoryId || node.id, category: node.category, name: node.name,
             summary: node.content, detail: node.content, source: node.source, scope: node.scope,
             matchedVia: '关联内容', relation: link.label });
+          if (related.size >= 5) break;
         }
         return JSON.stringify({ ...documentResult,
           related: related.size, rows: [...(documentResult.rows || []), ...memories, ...related.values()],
@@ -108,13 +114,16 @@ export function apply(ctx) {
     if (route.path === '/api/kb/classify') continue;
     ctx.effect(() => ctx.connection.fetch.register({
       path: route.path, methods: [readRoutes.has(route.path) ? 'GET' : 'POST'],
-      fetch: async request => {
-        const edit = editRoutes.has(route.path) ? await request.clone().json().catch(() => null) : null;
-        const error = edit && localFolders.editError(route.path, edit);
-        if (error) return Response.json({ error }, { status: 400 });
-        const response = await adaptRoute(route.handler, request);
-        if (response.ok && edit && route.path === '/api/kb/rename-file') await graph.renameSource(edit.source, edit.newSource);
-        return response;
+      fetch: request => {
+        const execute = async () => {
+          const edit = editRoutes.has(route.path) ? await request.clone().json().catch(() => null) : null;
+          const error = edit && localFolders.editError(route.path, edit);
+          if (error) return Response.json({ error }, { status: 400 });
+          const response = await adaptRoute(route.handler, request);
+          if (response.ok && edit && route.path === '/api/kb/rename-file') await graph.renameSource(edit.source, edit.newSource);
+          return response;
+        };
+        return readRoutes.has(route.path) ? execute() : localFolders.write(request.signal, execute);
       },
     }));
   }

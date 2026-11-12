@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { knowledgeExportIpcPlugin } from '../electron/host/plugins/knowledge-export-ipc.mts';
 import { knowledgeFoldersIpcPlugin } from '../electron/host/plugins/knowledge-folders-ipc.mts';
+import { documentNodeId } from '../builtin-plugins/dyworker-knowledge-base/graph.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-graph-preview-'));
@@ -15,9 +16,12 @@ await fs.symlink(path.join(root, 'builtin-plugins/dyworker-knowledge-base'), pat
 const host = await createHost({ userDataDir: path.join(dir, 'data'), builtinPluginsDir: builtins, mountPlugins: true });
 const previewHandlers = new Map();
 const localFolder = path.join(dir, '本地验收资料');
+const large = process.env.KNOWLEDGE_PREVIEW_DENSE === 'large';
 await fs.mkdir(path.join(localFolder, '项目手册'), { recursive: true });
-await fs.writeFile(path.join(localFolder, '项目手册', '交付说明.md'), '交付验收后登记项目识别码。');
-for (let i = 1; i <= 50; i++) await fs.writeFile(path.join(localFolder, `现场记录-${i}.txt`), `现场记录第 ${i} 项。`);
+const sections = large ? Array.from({ length: 10 }, (_, i) => `# 第 ${i + 1} 节\n${'按现场流程完成交付核对。'.repeat(80)}\n\n`).join('') : '';
+await fs.writeFile(path.join(localFolder, '项目手册', '交付说明.md'), `${sections}交付验收后登记项目识别码。`);
+const fileCount = large ? 1100 : 50;
+for (let i = 1; i <= fileCount; i++) await fs.writeFile(path.join(localFolder, `现场记录-${i}.txt`), `现场记录第 ${i} 项。`);
 await fs.writeFile(path.join(localFolder, '照片.png'), '');
 await host.plugin(knowledgeFoldersIpcPlugin({ trustedHandle: (name, handler) => previewHandlers.set(name, handler),
   dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [localFolder] }) }, getMainWindow: () => null }));
@@ -26,6 +30,13 @@ await host.plugin(knowledgeExportIpcPlugin({ trustedHandle: (name, handler) => p
   app: { getPath: () => dir }, fs, path, getMainWindow: () => null }));
 await host.fiber.await();
 await host.plugins.setEnabled('dyworker-knowledge-base', true);
+if (large) {
+  const indexed = await previewHandlers.get('knowledge:local-folders')(null, { action: 'connect' });
+  if (!indexed.ok) throw new Error(indexed.error);
+  const node = i => documentNodeId(`local://${indexed.folders[0].id}/现场记录-${i % fileCount + 1}.txt`);
+  const relations = Array.from({ length: fileCount }, (_, i) => [1, 11].map(step => ({ source: node(i), target: node(i + step), label: '现场验收' }))).flat();
+  await fs.writeFile(host.storage.resolve('knowledge-base/graph-relations.json'), JSON.stringify(relations));
+}
 host.memory.scheduleConsolidation = () => {};
 const items = [
   ['服务器部署', '服务器通过 Docker 部署服务，发布之前备份数据库。', '部署与备份'],

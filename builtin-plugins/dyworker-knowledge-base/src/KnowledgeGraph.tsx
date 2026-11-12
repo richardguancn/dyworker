@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
@@ -18,7 +18,7 @@ interface Origin { id: string; name?: string; content: string; originSessionId?:
 interface Node {
   id: string; memoryId?: string; name: string; kind: 'memory' | 'document'; category: string;
   content: string; source: string; scope: string; workspacePath: string; color: string; topicId: string;
-  truncated?: boolean; origins: Origin[]; chunks?: number;
+  truncated?: boolean; origins: Origin[]; chunks?: number; nextOffset?: number; previousOffset?: number;
 }
 interface Link { source: string; target: string; kind: 'manual' | 'similar'; label: string; reason?: string }
 interface Topic { id: string; label: string; color: string; count: number }
@@ -29,11 +29,46 @@ interface HistoryRow {
   conflicts: { reason: string; memories: Origin[] }[];
 }
 
-async function api<T>(url: string, body?: unknown): Promise<T> {
-  const response = await fetch(url, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+async function api<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, body === undefined ? { signal } : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal });
   const data = await response.json();
   if (!response.ok || data.ok === false) throw new Error(data.error || '操作失败，请稍后重试');
   return data;
+}
+
+function topicPositions(nodes: Node[]) {
+  const groups = new Map<string, Node[]>();
+  for (const node of nodes) {
+    const group = groups.get(node.topicId);
+    if (group) group.push(node);
+    else groups.set(node.topicId, [node]);
+  }
+  const clusters = [...groups.values()].map(nodes => ({ nodes, size: 30 + 22 * Math.sqrt(nodes.length) }))
+    .sort((a, b) => b.size - a.size);
+  const width = Math.max(clusters[0]?.size ?? 0, 1.3 * Math.sqrt(clusters.reduce((area, { size }) => area + size * size, 0)));
+  const positions = new Map<string, { x: number; y: number }>();
+  let x = 0, y = 0, height = 0;
+  for (const { nodes, size } of clusters) {
+    if (x && x + size > width) { y += height; x = 0; height = 0; }
+    nodes.forEach((node, index) => {
+      const angle = index * Math.PI * (3 - Math.sqrt(5));
+      const radius = 10 * Math.sqrt(index);
+      positions.set(node.id, { x: x + size / 2 + radius * Math.cos(angle), y: y + size / 2 + radius * Math.sin(angle) });
+    });
+    x += size;
+    height = Math.max(height, size);
+  }
+  return positions;
+}
+
+function PageList<T>({ items, render }: { items: T[]; render: (item: T) => ReactNode }) {
+  const [page, setPage] = useState(0);
+  const size = 40;
+  const pages = Math.ceil(items.length / size);
+  const current = Math.min(page, Math.max(0, pages - 1));
+  return <>{items.slice(current * size, (current + 1) * size).map(render)}
+    {pages > 1 && <div className="kg-pages"><button className="kg-btn" disabled={!current} onClick={() => setPage(current - 1)}>上一页</button><span>{current + 1} / {pages}</span><button className="kg-btn" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>下一页</button></div>}
+  </>;
 }
 
 const styles = `
@@ -63,6 +98,7 @@ const styles = `
 .kg-empty{position:absolute;inset:60px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted, #929ba6);text-align:center;line-height:1.8;pointer-events:none}.kg-empty strong{font-size:15px;font-weight:500;color:var(--ink, #596271)}
 .kg-history{border-top:1px solid var(--kg-border);padding:20px;background:var(--surface, #fcfdfc);max-height:540px;overflow:auto}.kg-history details{padding:12px 0;border-bottom:1px solid var(--kg-border)}.kg-history summary{cursor:pointer;line-height:1.8}.kg-history-item{padding:12px 14px;border:1px solid var(--kg-border);border-radius:7px;background:var(--card, white);margin:10px 0;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.kg-before{color:var(--muted, #7d8490)}.kg-after{color:var(--ink, #386852)}
 .kg-spin{animation:kg-spin 1s linear infinite}@keyframes kg-spin{to{transform:rotate(360deg)}}
+.kg-pages{display:flex;align-items:center;justify-content:center;gap:7px;margin:8px 0;color:var(--kg-muted);font-size:12px}.kg-pages button{padding:4px 6px}
 @container(max-width:850px){.kg-side{width:250px;padding:15px}.kg-hint{display:none}.kg-toolbar{gap:8px;padding:12px}.kg-search{max-width:none}.kg-select{max-width:170px}}
 @container(max-width:620px){.kg-body{flex-direction:column}.kg-side{width:100%;max-height:380px;border-left:0;border-top:1px solid var(--kg-border)}.kg-canvas{height:470px;min-height:470px}.kg-toolbar .kg-btn{flex:1}.kg-search{flex-basis:100%}.kg-select{flex:1;max-width:100%}}
 `;
@@ -71,8 +107,10 @@ export function KnowledgeGraph() {
   const [graph, setGraph] = useState<Graph>({ nodes: [], links: [], topics: [] });
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [query, setQuery] = useState(''), [scope, setScope] = useState('all'), [kind, setKind] = useState('all');
+  const [documentMatches, setDocumentMatches] = useState<{ keyword: string; ids: Set<string> }>();
   const [topic, setTopic] = useState(''), [selectedId, setSelectedId] = useState('');
   const [detail, setDetail] = useState<Node | null>(null), [detailLoading, setDetailLoading] = useState(false), [detailError, setDetailError] = useState('');
+  const [browseOpen, setBrowseOpen] = useState(false), [relationOpen, setRelationOpen] = useState(false);
   const [neighborsOnly, setNeighborsOnly] = useState(false), [showLinks, setShowLinks] = useState(true);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false), [history, setHistory] = useState<HistoryRow[]>([]);
@@ -86,6 +124,7 @@ export function KnowledgeGraph() {
   }, []);
   const canvas = useRef<HTMLDivElement>(null), chart = useRef<echarts.ECharts | null>(null);
   const renderedIds = useRef('');
+  const detailRequest = useRef(0);
   const onSelect = useRef(setSelectedId);
   useEffect(() => {
     const observer = new MutationObserver(() => setThemeVersion(version => version + 1));
@@ -99,8 +138,8 @@ export function KnowledgeGraph() {
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const [data, records] = await Promise.all([api<Graph>('/api/kb/graph'), api<{ rows: HistoryRow[] }>('/api/kb/memory-history')]);
-      setGraph(data); setHistory(records.rows);
+      const data = await api<Graph>('/api/kb/graph');
+      setGraph(data);
       setSelectedId(id => data.nodes.some(node => node.id === id) ? id : '');
       setTopic(id => data.topics.some(item => item.id === id) ? id : '');
     } catch (error) { setError(String(error instanceof Error ? error.message : error)); }
@@ -108,26 +147,59 @@ export function KnowledgeGraph() {
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    if (!selectedId) { setDetail(null); setDetailError(''); setDetailLoading(false); return; }
-    let active = true; setDetail(null); setDetailError(''); setDetailLoading(true); setLinkTarget('');
-    api<Node>(`/api/kb/graph/detail?id=${encodeURIComponent(selectedId)}`).then(data => { if (active) setDetail(data); })
-      .catch(error => { if (active) setDetailError(error.message); }).finally(() => { if (active) setDetailLoading(false); });
+    if (!historyOpen) return;
+    let active = true;
+    api<{ rows: HistoryRow[] }>('/api/kb/memory-history').then(({ rows }) => { if (active) setHistory(rows); })
+      .catch(error => { if (active) setError(error.message); });
     return () => { active = false; };
-  }, [selectedId, graph]);
+  }, [historyOpen, graph]);
+  const loadDetail = useCallback(async (id: string, offset = 0) => {
+    const request = ++detailRequest.current;
+    setDetailError(''); setDetailLoading(true);
+    try {
+      const data = await api<Node>(`/api/kb/graph/detail?${new URLSearchParams({ id, offset: String(offset) })}`);
+      if (request === detailRequest.current) setDetail(data);
+    } catch (error) { if (request === detailRequest.current) setDetailError(error instanceof Error ? error.message : String(error)); }
+    finally { if (request === detailRequest.current) setDetailLoading(false); }
+  }, []);
+  useEffect(() => {
+    setDetail(null); setLinkTarget(''); setRelationOpen(false);
+    if (selectedId) void loadDetail(selectedId);
+    else { setDetailError(''); setDetailLoading(false); }
+    return () => { detailRequest.current++; };
+  }, [selectedId, graph, loadDetail]);
 
-  const selected = graph.nodes.find(node => node.id === selectedId);
-  const neighbors = useMemo(() => new Set(graph.links.filter(link => link.source === selectedId || link.target === selectedId)
-    .flatMap(link => [link.source, link.target])), [graph, selectedId]);
+  const byId = useMemo(() => new Map(graph.nodes.map(node => [node.id, node])), [graph]);
+  const selected = byId.get(selectedId);
+  const selectedLinks = useMemo(() => graph.links.filter(link => link.source === selectedId || link.target === selectedId), [graph, selectedId]);
+  const focusedId = neighborsOnly ? selectedId : '';
+  const focusedNodes = useMemo(() => focusedId ? new Set([focusedId, ...selectedLinks.flatMap(link => [link.source, link.target])]) : null, [focusedId, focusedId ? selectedLinks : null]);
+  const keyword = useDeferredValue(query).trim().toLowerCase();
+  useEffect(() => {
+    if (!keyword || kind === 'memory') return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      api<{ ids: string[] }>(`/api/kb/graph/search?q=${encodeURIComponent(keyword)}`, undefined, controller.signal)
+        .then(({ ids }) => {
+          if (controller.signal.aborted) return;
+          setDocumentMatches(previous => ids.length ? { keyword, ids: new Set(ids) } : previous?.keyword === keyword ? undefined : previous);
+        })
+        .catch(error => { if (!controller.signal.aborted) setError(error.message); });
+    }, 160);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [keyword, kind, graph]);
   const visible = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
     return graph.nodes.filter(node => (scope === 'all' || (scope === 'global' ? node.scope === 'global' : node.workspacePath === scope))
       && (kind === 'all' || node.kind === kind) && (!topic || node.topicId === topic)
-      && (!keyword || `${node.name} ${node.content} ${node.category}`.toLowerCase().includes(keyword))
-      && (!neighborsOnly || !selectedId || node.id === selectedId || neighbors.has(node.id)));
-  }, [graph, scope, kind, topic, query, neighborsOnly, selectedId, neighbors]);
+      && (!keyword || `${node.name} ${node.content} ${node.category}`.toLowerCase().includes(keyword)
+        || (documentMatches?.keyword === keyword && documentMatches.ids.has(node.id)))
+      && (!focusedNodes || focusedNodes.has(node.id)));
+  }, [graph, scope, kind, topic, keyword, focusedNodes, documentMatches]);
   const visibleIds = useMemo(() => new Set(visible.map(node => node.id)), [visible]);
   const links = useMemo(() => graph.links.filter(link => visibleIds.has(link.source) && visibleIds.has(link.target)), [graph, visibleIds]);
-  const workspaces = [...new Set(graph.nodes.map(node => node.workspacePath).filter(Boolean))];
+  const workspaces = useMemo(() => [...new Set(graph.nodes.map(node => node.workspacePath).filter(Boolean))], [graph]);
+  const dense = visible.length > 120 || links.length > 300;
+  const positions = useMemo(() => dense ? topicPositions(visible) : null, [dense, visible]);
 
   useEffect(() => {
     if (!canvas.current) return;
@@ -143,35 +215,36 @@ export function KnowledgeGraph() {
     const textColor = theme.getPropertyValue('--muted').trim() || '#646d79';
     const inkColor = theme.getPropertyValue('--ink').trim() || '#253d32';
     const surfaceColor = theme.getPropertyValue('--card').trim() || '#fff';
-    const previous = (chart.current?.getOption() as any)?.series?.[0];
     const sameNodes = renderedIds.current === ids; renderedIds.current = ids;
+    const previous = sameNodes ? (chart.current?.getOption() as any)?.series?.[0] : undefined;
     chart.current?.setOption({
-      animationDurationUpdate: 250,
+      animation: !dense, animationDurationUpdate: 250,
       tooltip: { trigger: 'item', renderMode: 'richText', formatter: (event: any) => event.dataType === 'node' ? event.data.name : event.data.reason || event.data.label },
-      series: [{ type: 'graph', layout: 'force', roam: true, roamTrigger: 'global', draggable: true,
+      series: [{ type: 'graph', id: 'knowledge', layout: dense ? 'none' : 'force', roam: true, roamTrigger: 'global', draggable: true,
+        nodeScaleRatio: dense ? .65 : .6,
         scaleLimit: { min: .15, max: 6 }, left: '10%', right: '12%', top: '14%', bottom: '15%',
-        zoom: sameNodes ? previous?.zoom || .9 : visible.length > 35
+        zoom: sameNodes ? previous?.zoom || .9 : dense ? .92 : visible.length > 35
           ? Math.max(.15, .55 * widthFactor * Math.sqrt(35 / visible.length))
           : Math.max(.15, Math.min(.9, .9 * widthFactor * Math.sqrt(25 / Math.max(1, visible.length)))),
         ...(sameNodes && previous?.center ? { center: previous.center } : {}),
         force: { initLayout: 'circular', repulsion: 160, edgeLength: 100, gravity: .07, friction: .6, layoutAnimation: false },
         label: { show: visible.length <= 35, position: 'bottom', distance: 7, color: textColor, fontSize: 12, width: 145, overflow: 'truncate' },
-        labelLayout: { hideOverlap: true },
-        emphasis: { focus: 'adjacency', scale: 1.4, label: { show: true, color: inkColor }, lineStyle: { width: 2, opacity: .85 } },
+        labelLayout: { hideOverlap: !dense },
+        emphasis: dense ? { disabled: true } : { focus: 'adjacency', scale: 1.4, label: { show: true, color: inkColor }, lineStyle: { width: 2, opacity: .85 } },
         blur: { itemStyle: { opacity: .18 }, lineStyle: { opacity: .05 }, label: { opacity: .25 } },
         data: visible.map(node => {
-          return { id: node.id, name: node.name, value: 1, symbolSize: node.id === selectedId ? 18 : 11,
+          return { id: node.id, name: node.name, value: 1, ...positions?.get(node.id), symbolSize: node.id === selectedId ? 18 : dense ? 6 : 11,
             itemStyle: { color: node.color, borderColor: node.id === selectedId ? inkColor : surfaceColor, borderWidth: node.id === selectedId ? 2 : 1.5 },
             label: { show: visible.length <= 35 || node.id === selectedId, fontWeight: node.id === selectedId ? 600 : 400 },
           };
         }),
         links: showLinks ? links.map(link => ({ ...link, lineStyle: {
           color: '#aebdb5', type: link.kind === 'manual' ? 'solid' : 'dashed', width: link.kind === 'manual' ? 1.25 : .8,
-          opacity: selectedId && link.source !== selectedId && link.target !== selectedId ? .12 : .5,
+          opacity: selectedId && link.source !== selectedId && link.target !== selectedId ? .12 : dense && link.kind !== 'manual' ? .26 : .5,
         } })) : [],
       }],
     }, { notMerge: true });
-  }, [visible, links, selectedId, showLinks, themeVersion]);
+  }, [visible, links, selectedId, showLinks, themeVersion, dense, positions]);
 
   const perform = async (operation: () => Promise<{ message?: string }>) => {
     setBusy(true); setError(''); setNotice('');
@@ -181,9 +254,9 @@ export function KnowledgeGraph() {
   };
   const clearFilters = () => { setQuery(''); setScope('all'); setKind('all'); setTopic(''); setNeighborsOnly(false); };
   const zoom = (factor: number) => {
-    const option = chart.current?.getOption() as any;
-    const series = option?.series?.[0];
-    if (series) chart.current?.setOption({ series: [{ zoom: Math.min(6, Math.max(.15, (series.zoom || 1) * factor)) }] });
+    const instance = chart.current;
+    if (instance) instance.dispatchAction({ type: 'graphRoam', seriesId: 'knowledge', zoom: factor,
+      originX: instance.getWidth() / 2, originY: instance.getHeight() / 2 });
   };
   const exportGraph = async (kind: 'graph' | 'image') => {
     setError(''); setNotice(''); setBusy(true);
@@ -229,26 +302,31 @@ export function KnowledgeGraph() {
           <span className="kg-tag">{selected.kind === 'memory' ? t("kg.tagMemory", "记忆") : t("kg.tagDocument", "资料")}</span><span className="kg-tag">{selected.category || t("kg.tagUncategorized", "未分类")}</span>
           <div className="kg-muted">{selected.scope === 'workspace' ? `${t("kg.scopeProjectOnly", "仅用于项目：")}${selected.workspacePath}` : t("kg.scopeGeneral", "个人与通用知识")}{selected.chunks ? ` · ${selected.chunks} ${t("kg.chunksCount", "段内容")}` : ''}</div>
           {detailLoading ? <p className="kg-muted">{t("kg.loadingContent", "正在读取正文…")}</p> : detailError ? <p role="alert">{detailError}</p> : <div className="kg-content">{detail?.content || selected.content}</div>}
+          {(detail?.previousOffset !== undefined || detail?.nextOffset !== undefined) && <div className="kg-pages"><button className="kg-btn" disabled={detailLoading || detail.previousOffset === undefined} onClick={() => void loadDetail(selectedId, detail.previousOffset)}>上一段正文</button><button className="kg-btn" disabled={detailLoading || detail.nextOffset === undefined} onClick={() => void loadDetail(selectedId, detail.nextOffset)}>下一段正文</button></div>}
           {selected.kind === 'memory' && <p className="kg-muted">{t("kg.editMemoryTip", "可在设置中的「记忆」修改内容。")}</p>}
           {!!detail?.origins?.length && <details><summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.originsTitle", "来源与原文")}（{detail.origins.length}）</summary>{detail.origins.map(origin => <div className="kg-history-item" key={origin.id}>{origin.name && <strong>{origin.name}<br /></strong>}{origin.content}{origin.createdAt && <div className="kg-muted">{new Date(origin.createdAt).toLocaleString()}</div>}{origin.originSessionId && <div className="kg-muted">{t("kg.originSessionPrefix", "来自任务：")}{origin.originSessionId}</div>}</div>)}</details>}
           <h4>{t("kg.relationsTitle", "关联内容")}</h4>
           <label className="kg-muted" style={{ display: 'flex', gap: 6 }}><input type="checkbox" checked={neighborsOnly} onChange={event => setNeighborsOnly(event.target.checked)} />{t("kg.neighborsOnly", "只看这条内容及其关联")}</label>
-          {graph.links.filter(link => link.source === selectedId || link.target === selectedId).map(link => {
-            const other = graph.nodes.find(node => node.id === (link.source === selectedId ? link.target : link.source));
+          <PageList key={selectedId} items={selectedLinks} render={link => {
+            const other = byId.get(link.source === selectedId ? link.target : link.source);
             return other && <div className="kg-link" key={`${link.source}:${link.target}`}><span className="kg-dot" style={{ background: other.color, marginTop: 5 }} /><button className="kg-link-open" onClick={() => setSelectedId(other.id)}>{other.name}<div className="kg-muted">{link.label} · {link.kind === 'manual' ? t("kg.linkManual", "已确认") : t("kg.linkAuto", "自动发现")}</div>{link.reason && <div className="kg-muted">{link.reason}</div>}</button><button className="kg-btn" style={{ padding: 4 }} aria-label={`${t("kg.unlinkPrefix", "解除与")}${other.name}${t("kg.unlinkSuffix", "的关联")}`} disabled={busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: other.id, remove: true }))}><Unlink size={12} /></button></div>;
-          })}
-          {!neighbors.size && <p className="kg-muted">{t("kg.noNeighbors", "暂未发现关联，可以手动连接相关内容。")}</p>}
-          <h4>{t("kg.addRelationTitle", "添加关联")}</h4>
+          }} />
+          {!selectedLinks.length && <p className="kg-muted">{t("kg.noNeighbors", "暂未发现关联，可以手动连接相关内容。")}</p>}
+          <details open={relationOpen} onToggle={event => setRelationOpen(event.currentTarget.open)} style={{ marginTop: 18 }}>
+            <summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.addRelationTitle", "添加关联")}</summary>
+            {relationOpen && <div style={{ paddingTop: 8 }}>
           <select className="kg-select" style={{ width: '100%', maxWidth: '100%' }} aria-label={t("kg.chooseTargetAria", "选择要关联的内容")} value={linkTarget} onChange={event => setLinkTarget(event.target.value)}><option value="">{t("kg.chooseAnother", "选择另一条内容…")}</option>{graph.nodes.filter(node => node.id !== selectedId && !(node.scope === 'workspace' && selected.scope === 'workspace' && node.workspacePath !== selected.workspacePath)).map(node => <option key={node.id} value={node.id}>{node.name}</option>)}</select>
           <input className="kg-select" style={{ width: '100%', boxSizing: 'border-box', margin: '8px 0', maxWidth: '100%' }} aria-label={t("kg.relationNoteAria", "关联说明")} placeholder={t("kg.relationNotePlaceholder", "关联说明，如：补充说明")} value={linkLabel} maxLength={80} onChange={event => setLinkLabel(event.target.value)} />
           <button className="kg-btn" disabled={!linkTarget || busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: linkTarget, label: linkLabel }))}><Link2 size={13} />{t("kg.saveRelation", "保存关联")}</button>
+            </div>}
+          </details>
         </> : <>
           <h3>{t("kg.sideHeading", "内容的联系，一眼可见")}</h3><p className="kg-muted">{t("kg.sideDesc", "相近内容使用相同颜色。点击节点查看正文，沿着连线发现相关知识。")}</p>
           <div className="kg-muted">{t("kg.sideSolidLine", "实线：手动确认的关联")}<br />{t("kg.sideDashedLine", "虚线：依据共同内容自动发现")}</div>
           <h4>{t("kg.sideTopics", "内容主题 · {count}").replace("{count}", String(graph.topics.length))}</h4>
-          <div className="kg-topics"><button className={`kg-topic ${!topic ? 'active' : ''}`} onClick={() => setTopic('')}><span className="kg-topic-name">{t("kg.sideAllTopics", "全部主题")}</span><span className="kg-count">{graph.nodes.length}</span></button>{graph.topics.map(item => <button key={item.id} className={`kg-topic ${topic === item.id ? 'active' : ''}`} onClick={() => setTopic(value => value === item.id ? '' : item.id)}><span className="kg-dot" style={{ background: item.color }} /><span className="kg-topic-name">{item.label}</span><span className="kg-count">{item.count}</span></button>)}</div>
+          <div className="kg-topics"><button className={`kg-topic ${!topic ? 'active' : ''}`} onClick={() => setTopic('')}><span className="kg-topic-name">{t("kg.sideAllTopics", "全部主题")}</span><span className="kg-count">{graph.nodes.length}</span></button><PageList items={graph.topics} render={item => <button key={item.id} className={`kg-topic ${topic === item.id ? 'active' : ''}`} onClick={() => setTopic(value => value === item.id ? '' : item.id)}><span className="kg-dot" style={{ background: item.color }} /><span className="kg-topic-name">{item.label}</span><span className="kg-count">{item.count}</span></button>} /></div>
         </>}
-        <details style={{ marginTop: 22 }}><summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.sideBrowseCurrent", "浏览当前内容（{count}）").replace("{count}", String(visible.length))}</summary>{visible.map(node => <button key={node.id} className="kg-topic" onClick={() => setSelectedId(node.id)}><span className="kg-dot" style={{ background: node.color }} /><span className="kg-topic-name">{node.name}</span></button>)}</details>
+        <details style={{ marginTop: 22 }} onToggle={event => setBrowseOpen(event.currentTarget.open)}><summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.sideBrowseCurrent", "浏览当前内容（{count}）").replace("{count}", String(visible.length))}</summary>{browseOpen && <PageList key={JSON.stringify([scope, kind, topic, keyword, focusedId])} items={visible} render={node => <button key={node.id} className="kg-topic" onClick={() => setSelectedId(node.id)}><span className="kg-dot" style={{ background: node.color }} /><span className="kg-topic-name">{node.name}</span></button>} />}</details>
         {(query || scope !== 'all' || kind !== 'all' || topic || neighborsOnly) && <button className="kg-btn" style={{ marginTop: 18 }} onClick={clearFilters}>{t("kg.sideClearFilters", "清除筛选")}</button>}
       </aside>
     </div>
