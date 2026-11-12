@@ -1,11 +1,11 @@
-import { FolderOpen, Search, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { FolderOpen } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { FileBrowserToolbar } from "../../FileBrowserToolbar";
 import { FileTextEditor } from "../../FileTextEditor";
-import { filterWorkspaceEntries, isMarkdownFile, isTextPreviewFile } from "../../lib/files";
+import { isMarkdownFile, isTextPreviewFile } from "../../lib/files";
 import type { WorkspaceEntry } from "../../types";
 import { MarkdownLiveEditorPane } from "./MarkdownLiveEditorPane";
-import { WorkspaceNode } from "./WorkspaceNode";
+import { WorkspaceTree } from "./WorkspaceTree";
 
 // ===== Codex 风格文件浏览:左预览右目录树 =====
 
@@ -54,11 +54,10 @@ export function FilesSplitPanel({
   workspacePath: string;
   workspaceEntries: WorkspaceEntry[];
   workspaceOpen: boolean;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onError: (message: string) => void;
   onInsertFile?: (entry: WorkspaceEntry) => void;
 }) {
-  const [fileFilter, setFileFilter] = useState("");
   const [selection, setSelection] = useState<FilePanelSelection | null>(null);
   // markdown 默认即时渲染编辑（Codex 式：行首显示源码、其余渲染态），可切换为纯源码编辑
   const [showSource, setShowSource] = useState(false);
@@ -81,12 +80,6 @@ export function FilesSplitPanel({
   const savingRef = useRef(false);
   // 每个文件最近一次编辑内容：写盘完成后判断是否仍有更新内容，避免旧结果回写基准
   const latestEditRef = useRef<{ path: string; content: string } | null>(null);
-  const fileFilterActive = Boolean(fileFilter.trim());
-  const visibleEntries = useMemo(
-    () => filterWorkspaceEntries(workspaceEntries, fileFilter),
-    [workspaceEntries, fileFilter],
-  );
-
   const draftKeyFor = (workspace: string, path: string) => `${workspace}|${path}`;
 
   // 自动保存：防抖落盘；切文件、切工作区、面板卸载前都会先冲刷队列
@@ -188,7 +181,6 @@ export function FilesSplitPanel({
     previewRequest.current += 1;
     void flushSaves();
     setSelection(null);
-    setFileFilter("");
     setSaveError("");
     setSaveState("idle");
     setShowSource(false);
@@ -334,42 +326,19 @@ export function FilesSplitPanel({
             }}
           />
         )}
-        {treeVisible && (
         <div
           className={`file-split-tree ${treeWidth ? "pinned" : ""}`}
+          hidden={!treeVisible}
           ref={treeRef}
           style={treeWidth ? { flex: `0 0 ${treeWidth}px`, width: treeWidth } : undefined}
         >
-          {workspacePath && (
-            <div className="tool-file-filter">
-              <Search size={14} />
-              <input
-                placeholder="筛选文件…"
-                aria-label="筛选文件"
-                value={fileFilter}
-                onChange={(event) => setFileFilter(event.target.value)}
-              />
-              {fileFilterActive && (
-                <button className="icon-button subtle tiny" aria-label="清除筛选" title="清除筛选" onClick={() => setFileFilter("")}>
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-          )}
-          {workspaceOpen && (workspaceEntries.length ? (visibleEntries.length ? (
-            <div className="workspace-tree">
-              {visibleEntries.map((entry) => (
-                <WorkspaceNode entry={entry} key={entry.path} onOpenFile={(item) => void previewFile(item)} onInsertFile={onInsertFile} forceExpand={fileFilterActive} />
-              ))}
-            </div>
+          {workspacePath ? (
+            <WorkspaceTree key={workspacePath} entries={workspaceEntries} workspaceOpen={workspaceOpen}
+              onOpenFile={(entry) => void previewFile(entry)} onInsertFile={onInsertFile} />
           ) : (
-            <p className="panel-empty">没有匹配「{fileFilter.trim()}」的文件。</p>
-          )) : (
-            workspacePath ? <p className="panel-empty">这个文件夹是空的。</p> : null
-          ))}
-          {!workspacePath && <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>}
+            <p className="panel-empty">选择工作文件夹后，可以在这里浏览和引用文件。</p>
+          )}
         </div>
-        )}
       </div>
     </div>
   );

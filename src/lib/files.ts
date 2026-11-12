@@ -55,14 +55,40 @@ export function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
 export function filterWorkspaceEntries(entries: WorkspaceEntry[], query: string): WorkspaceEntry[] {
   const keyword = query.trim().toLowerCase();
   if (!keyword) return entries;
-  const walk = (list: WorkspaceEntry[]): WorkspaceEntry[] => list.flatMap((entry) => {
-    if (entry.kind === "directory") {
-      const children = walk(entry.children || []);
-      return children.length || entry.name.toLowerCase().includes(keyword) ? [{ ...entry, children }] : [];
+  const walk = (list: WorkspaceEntry[]): WorkspaceEntry[] => {
+    const filtered: WorkspaceEntry[] = [];
+    for (const entry of list) {
+      const matches = entry.name.toLowerCase().includes(keyword);
+      if (entry.kind === "directory") {
+        const children = entry.children?.length ? walk(entry.children) : [];
+        if (matches || children.length) filtered.push({ ...entry, children });
+      } else if (matches) {
+        filtered.push(entry);
+      }
     }
-    return entry.name.toLowerCase().includes(keyword) ? [entry] : [];
-  });
+    return filtered;
+  };
   return walk(entries);
+}
+
+// 按展开后的显示顺序取前 count 行，保留目录层级和已完整展示的分支对象。
+export function takeWorkspaceEntries(entries: WorkspaceEntry[], count: number) {
+  let remaining = count;
+  let hasMore = false;
+  const take = (list: WorkspaceEntry[]): WorkspaceEntry[] => {
+    const visible: WorkspaceEntry[] = [];
+    for (const entry of list) {
+      if (remaining <= 0) {
+        hasMore = true;
+        break;
+      }
+      remaining -= 1;
+      const children = entry.children?.length ? take(entry.children) : entry.children;
+      visible.push(hasMore ? { ...entry, children } : entry);
+    }
+    return visible;
+  };
+  return { entries: take(entries), hasMore };
 }
 
 export type ReviewDiffRow =

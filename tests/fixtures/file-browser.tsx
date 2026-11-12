@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FilesSplitPanel } from '../../src/App';
+import { FilesSplitPanel } from '../../src/features/files/FilesSplitPanel';
 import { FilePreviewPanel } from '../../src/FilePreviewPanel';
 import type { DyworkerBridge, WorkspaceEntry } from '../../src/types';
 import '../../src/styles.css';

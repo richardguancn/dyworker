@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronRight, Copy, FileSearch, FolderOpen, MoreHorizontal, Monitor, Terminal, WrapText } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, FileSearch, FolderOpen, MoreHorizontal, Monitor, RefreshCw, Terminal, WrapText } from 'lucide-react';
+import { t } from './i18n';
 
 type Props = {
   path?: string; workspacePath: string; content?: string; textReady?: boolean;
   wrap: boolean; onToggleWrap: () => void; treeVisible?: boolean; onToggleTree?: () => void;
   onChooseFile?: () => void; onToggleSource?: () => void; showSource?: boolean;
-  onRefresh?: () => void; status?: ReactNode; beforeOpen?: () => Promise<void>;
+  onRefresh?: () => void | Promise<void>; status?: ReactNode; beforeOpen?: () => Promise<void>;
 };
 
 export function FileBrowserToolbar({ path, workspacePath, content, textReady, wrap, onToggleWrap, treeVisible, onToggleTree, onChooseFile, onToggleSource, showSource, onRefresh, status, beforeOpen }: Props) {
@@ -16,6 +17,7 @@ export function FileBrowserToolbar({ path, workspacePath, content, textReady, wr
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
   const [opening, setOpening] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [appIcon, setAppIcon] = useState('');
   const host = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -73,14 +75,21 @@ export function FileBrowserToolbar({ path, workspacePath, content, textReady, wr
   }, [menu]);
   useEffect(() => { if (!feedback) return; const timer = window.setTimeout(() => setFeedback(''), 2200); return () => window.clearTimeout(timer); }, [feedback]);
   const toggle = (next: typeof menu) => { setError(''); setMenu(value => value === next ? null : next); };
+  const refresh = async () => {
+    if (!onRefresh || refreshing) return;
+    setMenu(null); setError(''); setRefreshing(true);
+    try { await onRefresh(); }
+    catch (err) { setError(`刷新文件列表失败：${err instanceof Error ? err.message : String(err)}`); }
+    finally { setRefreshing(false); }
+  };
   const absolute = paths.absolute || (path && (/^(?:\/|[A-Za-z]:[\\/])/.test(path) ? path : `${workspacePath.replace(/[\\/]+$/, '')}/${path}`));
   const copy = async (value?: string) => {
     setMenu(null); setError('');
     if (value === undefined) { setError('当前文件没有可复制的内容或路径'); return; }
     try {
-      if (window.dyworker?.writeClipboardText) { if (!(await window.dyworker.writeClipboardText(value)).ok) throw new Error('复制失败'); }
+      if (window.dyworker?.writeClipboardText) { if (!(await window.dyworker.writeClipboardText(value)).ok) throw new Error(t('file.copyFailed', '复制失败')); }
       else await navigator.clipboard.writeText(value);
-      setFeedback('已复制');
+      setFeedback(t('common.copied', '已复制'));
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
   const act = async (action: 'default' | 'terminal' | 'folder' | 'save') => {
@@ -92,12 +101,12 @@ export function FileBrowserToolbar({ path, workspacePath, content, textReady, wr
       const result = action === 'terminal' ? await bridge?.openFileTerminal?.(workspacePath, path)
         : action === 'save' ? await bridge?.saveFileAs?.(workspacePath, path, textReady ? content : undefined)
         : action === 'folder' ? await bridge?.revealInFolder(absolute) : await bridge?.openPath(absolute);
-      if (!result?.ok) throw new Error(result?.error || '当前环境无法执行此操作');
-      if (action === 'save' && !('canceled' in result && result.canceled)) setFeedback('已另存为');
+      if (!result?.ok) throw new Error(result?.error || t('file.cannotExecuteAction', '当前环境无法执行此操作'));
+      if (action === 'save' && !('canceled' in result && result.canceled)) setFeedback(t('file.savedAs', '已另存为'));
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setOpening(false); }
   };
-  const rootName = workspacePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '文件';
+  const rootName = workspacePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || t('file.defaultRootName', '文件');
   const AppMark = appIcon
     ? <img className="file-browser-app-icon" src={appIcon} alt="" aria-hidden="true" />
     : <Monitor size={17} aria-hidden="true" />;
@@ -105,43 +114,44 @@ export function FileBrowserToolbar({ path, workspacePath, content, textReady, wr
   const segments = [rootName, ...(relative ? relative.split(/[\\/]/) : [])];
   return <div className="file-browser-header" ref={host}>
     <div className="file-browser-toolbar">
-      <button className="file-browser-breadcrumb" title={absolute || workspacePath} onClick={onChooseFile} disabled={!onChooseFile} aria-label={onChooseFile ? '选择文件' : '文件路径'}>
+      <button className="file-browser-breadcrumb" title={absolute || workspacePath} onClick={onChooseFile} disabled={!onChooseFile} aria-label={onChooseFile ? t('file.chooseFile', '选择文件') : t('file.filePath', '文件路径')}>
         {segments.map((segment, i) => <span className={i === segments.length - 1 && path ? 'current' : ''} key={i}>{i > 0 && <ChevronRight size={14} />}<span>{segment}</span></span>)}
       </button>
       <div className="file-browser-actions">
         {status}
         <div className="file-browser-menu-anchor">
           <div className="file-browser-pill split">
-            <button aria-label="复制路径" title="复制路径" disabled={!path} onClick={() => void copy(pathKind === 'absolute' ? absolute : paths[pathKind])}><Copy size={17} /></button>
-            <button aria-label="路径复制方式" aria-haspopup="menu" aria-expanded={menu === 'paths'} disabled={!path} onClick={() => toggle('paths')}><ChevronDown size={14} /></button>
+            <button aria-label={t('file.copyPath', '复制路径')} title={t('file.copyPath', '复制路径')} disabled={!path} onClick={() => void copy(pathKind === 'absolute' ? absolute : paths[pathKind])}><Copy size={17} /></button>
+            <button aria-label={t('file.pathCopyMethod', '路径复制方式')} aria-haspopup="menu" aria-expanded={menu === 'paths'} disabled={!path} onClick={() => toggle('paths')}><ChevronDown size={14} /></button>
           </div>
-          {menu === 'paths' && dropdown('路径复制方式', <>
-            {([['absolute', '绝对路径'], ['projectRelative', '相对于项目的路径'], ['repositoryRelative', '相对于仓库根目录']] as const).map(([kind, label]) => <button role="menuitemradio" aria-checked={pathKind === kind} key={kind} disabled={kind === 'repositoryRelative' && paths.repositoryRelative === undefined} title={kind === 'repositoryRelative' && paths.repositoryRelative === undefined ? '当前文件不在 Git 仓库中' : undefined} onClick={() => { setPathKind(kind); void copy(kind === 'absolute' ? absolute : paths[kind]); }}><span>{label}</span>{pathKind === kind && <Check size={14} />}</button>)}
+          {menu === 'paths' && dropdown(t('file.pathCopyMethod', '路径复制方式'), <>
+            {([['absolute', t('file.absolutePath', '绝对路径')], ['projectRelative', t('file.projectRelative', '相对于项目的路径')], ['repositoryRelative', t('file.repositoryRelative', '相对于仓库根目录')]] as const).map(([kind, label]) => <button role="menuitemradio" aria-checked={pathKind === kind} key={kind} disabled={kind === 'repositoryRelative' && paths.repositoryRelative === undefined} title={kind === 'repositoryRelative' && paths.repositoryRelative === undefined ? t('file.notInGit', '当前文件不在 Git 仓库中') : undefined} onClick={() => { setPathKind(kind); void copy(kind === 'absolute' ? absolute : paths[kind]); }}><span>{label}</span>{pathKind === kind && <Check size={14} />}</button>)}
           </>)}
         </div>
         <div className="file-browser-menu-anchor">
-          <button className="file-browser-pill icon" aria-label="更多文件操作" aria-haspopup="menu" aria-expanded={menu === 'more'} disabled={!path} onClick={() => toggle('more')}><MoreHorizontal size={19} /></button>
-          {menu === 'more' && dropdown('更多文件操作', <>
-            <button role="menuitem" onClick={() => void copy(pathKind === 'absolute' ? absolute : paths[pathKind])}><Copy size={17} />复制路径</button>
-            <button role="menuitem" disabled={!textReady} onClick={() => void copy(content)}><Copy size={17} />复制文件内容</button>
-            <button role="menuitem" disabled={!textReady} onClick={() => { onToggleWrap(); setMenu(null); }}><WrapText size={17} />{wrap ? '禁用自动换行' : '启用自动换行'}</button>
-            {onToggleSource && <button role="menuitem" onClick={() => { onToggleSource(); setMenu(null); }}><FileSearch size={17} />{showSource ? '查看预览' : '查看源代码'}</button>}
-            {onRefresh && <><hr /><button role="menuitem" onClick={() => { onRefresh(); setMenu(null); }}>刷新文件列表</button></>}
+          <button className="file-browser-pill icon" aria-label={t('file.moreActions', '更多文件操作')} aria-haspopup="menu" aria-expanded={menu === 'more'} disabled={!path} onClick={() => toggle('more')}><MoreHorizontal size={19} /></button>
+          {menu === 'more' && dropdown(t('file.moreActions', '更多文件操作'), <>
+            <button role="menuitem" onClick={() => void copy(pathKind === 'absolute' ? absolute : paths[pathKind])}><Copy size={17} />{t('file.copyPath', '复制路径')}</button>
+            <button role="menuitem" disabled={!textReady} onClick={() => void copy(content)}><Copy size={17} />{t('file.copyContent', '复制文件内容')}</button>
+            <button role="menuitem" disabled={!textReady} onClick={() => { onToggleWrap(); setMenu(null); }}><WrapText size={17} />{wrap ? t('file.disableWrap', '禁用自动换行') : t('file.enableWrap', '启用自动换行')}</button>
+            {onToggleSource && <button role="menuitem" onClick={() => { onToggleSource(); setMenu(null); }}><FileSearch size={17} />{showSource ? t('file.viewPreview', '查看预览') : t('file.viewSource', '查看源代码')}</button>}
+            {onRefresh && workspacePath && <><hr /><button role="menuitem" disabled={refreshing} onClick={() => void refresh()}>{t('file.refreshList', '刷新文件列表')}</button></>}
           </>)}
         </div>
         <div className="file-browser-menu-anchor">
           <div className="file-browser-pill split file-browser-open">
-            <button disabled={!path || opening} onClick={() => void act('default')}>{AppMark}打开</button>
-            <button aria-label="打开方式" aria-haspopup="menu" aria-expanded={menu === 'open'} disabled={!path || opening} onClick={() => toggle('open')}><ChevronDown size={14} /></button>
+            <button disabled={!path || opening} onClick={() => void act('default')}>{AppMark}{t('file.open', '打开')}</button>
+            <button aria-label={t('file.openWith', '打开方式')} aria-haspopup="menu" aria-expanded={menu === 'open'} disabled={!path || opening} onClick={() => toggle('open')}><ChevronDown size={14} /></button>
           </div>
-          {menu === 'open' && dropdown('打开方式', <>
-            <button role="menuitem" onClick={() => void act('default')}>{AppMark}默认应用</button>
-            <button role="menuitem" onClick={() => void act('terminal')}><Terminal size={17} />终端</button>
-            <hr /><button role="menuitem" onClick={() => void act('folder')}>打开所在文件夹</button>
-            <button role="menuitem" onClick={() => void act('save')}>另存为…</button>
+          {menu === 'open' && dropdown(t('file.openWith', '打开方式'), <>
+            <button role="menuitem" onClick={() => void act('default')}>{AppMark}{t('file.defaultApp', '默认应用')}</button>
+            <button role="menuitem" onClick={() => void act('terminal')}><Terminal size={17} />{t('file.terminal', '终端')}</button>
+            <hr /><button role="menuitem" onClick={() => void act('folder')}>{t('file.openFolder', '打开所在文件夹')}</button>
+            <button role="menuitem" onClick={() => void act('save')}>{t('file.saveAsEllipsis', '另存为…')}</button>
           </>)}
         </div>
-        {onToggleTree && <button className="file-browser-pill icon file-browser-tree-toggle" aria-label={treeVisible ? '隐藏文件树' : '显示文件树'} aria-pressed={treeVisible} onClick={onToggleTree}><FolderOpen size={20} /></button>}
+        {onRefresh && workspacePath && <button type="button" className="file-browser-pill icon" aria-label={t('file.refreshList', '刷新文件列表')} title={t('file.refreshList', '刷新文件列表')} disabled={refreshing} aria-busy={refreshing} onClick={() => void refresh()}><RefreshCw size={16} /></button>}
+        {onToggleTree && <button className="file-browser-pill icon file-browser-tree-toggle" aria-label={treeVisible ? t('file.hideTree', '隐藏文件树') : t('file.showTree', '显示文件树')} aria-pressed={treeVisible} onClick={onToggleTree}><FolderOpen size={20} /></button>}
       </div>
     </div>
     {feedback && <span className="file-browser-feedback" role="status">{feedback}</span>}

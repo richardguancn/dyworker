@@ -1,9 +1,9 @@
 import { AtSign, ChevronDown, ChevronRight, File, Folder, FolderOpen } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { WORKSPACE_FILE_DRAG_TYPE } from "../../lib/files";
 import type { WorkspaceEntry } from "../../types";
 
-export function WorkspaceNode({ entry, depth = 0, onOpenFile, onInsertFile, forceExpand = false }: {
+export const WorkspaceNode = memo(function WorkspaceTreeNode({ entry, depth = 0, onOpenFile, onInsertFile, forceExpand = false }: {
   entry: WorkspaceEntry;
   depth?: number;
   onOpenFile: (entry: WorkspaceEntry) => void;
@@ -61,4 +61,4 @@ export function WorkspaceNode({ entry, depth = 0, onOpenFile, onInsertFile, forc
       ))}
     </div>
   );
-}
+});

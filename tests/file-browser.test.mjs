@@ -5,6 +5,24 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileAppIcon, fileBrowserPaths, openFileTerminal, saveFileAs } from '../electron/file-browser.mts';
+import { filterWorkspaceEntries, takeWorkspaceEntries } from '../src/lib/files.ts';
+
+test('大目录筛选分批显示时保留目录层级和下一批文件', () => {
+  const file = (name, parent = '') => ({ name, path: `${parent}/${name}`, kind: 'file' });
+  const entries = [
+    { name: '归档', path: '/归档', kind: 'directory', children: [file('A报告.TXT', '/归档'), file('B报告.txt', '/归档'), file('说明.md', '/归档')] },
+    file('C报告.txt'),
+  ];
+  const matches = filterWorkspaceEntries(entries, ' 报告.txt ');
+  const first = takeWorkspaceEntries(matches, 2);
+  assert.equal(first.hasMore, true);
+  assert.deepEqual(first.entries.map(entry => entry.name), ['归档']);
+  assert.deepEqual(first.entries[0].children.map(entry => entry.name), ['A报告.TXT']);
+  assert.equal(takeWorkspaceEntries(matches, 3).hasMore, true);
+  assert.deepEqual(takeWorkspaceEntries(matches, 4), { entries: matches, hasMore: false });
+  assert.deepEqual(filterWorkspaceEntries(entries, '不存在'), []);
+  assert.equal(filterWorkspaceEntries(entries, '  '), entries);
+});
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-file-browser-'));

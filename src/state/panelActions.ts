@@ -45,8 +45,16 @@ export const syncAtBottom = () => {
   setAtBottom(viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 48);
 };
 
+let workspaceRefreshId = 0;
 export const refreshWorkspace = async () => {
   const { workspacePath, setWorkspaceEntries } = useSessionStore.getState();
   if (!window.dyworker || !workspacePath) return;
-  setWorkspaceEntries(await window.dyworker.refreshWorkspace(workspacePath));
+  const requestId = ++workspaceRefreshId;
+  const isCurrent = () => requestId === workspaceRefreshId && workspacePath === useSessionStore.getState().workspacePath;
+  try {
+    const entries = await window.dyworker.refreshWorkspace(workspacePath);
+    if (isCurrent()) setWorkspaceEntries(entries);
+  } catch (error) {
+    if (isCurrent()) throw error;
+  }
 };
