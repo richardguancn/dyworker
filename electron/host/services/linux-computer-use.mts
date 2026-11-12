@@ -26,10 +26,12 @@ export class LinuxComputerUseService extends Service {
       if (!tools.length) throw new Error('Linux 电脑操作没有提供可用工具');
       this.active = true;
       for (const tool of tools) {
+        const schema = tool.inputSchema || { type: 'object', properties: {} };
+        if (Object.hasOwn(schema.properties || {}, 'use_shared_desktop')) throw new Error('Linux 电脑操作工具参数与宿主控制字段冲突');
         ctx.effect(() => ctx.tools.register({
           plugin: 'dyworker-linux-computer-use', name: tool.name,
-          description: `【Linux 本机应用操作】${tool.description || tool.name}`,
-          parameters: tool.inputSchema || { type: 'object', properties: {} },
+          description: `【共享桌面操作，可能干扰用户】仅在用户明确允许使用当前桌面时传 use_shared_desktop=true；否则使用内置后台控件操作。${tool.description || tool.name}`,
+          parameters: { ...schema, properties: { ...(schema.properties || {}), use_shared_desktop: { type: 'boolean', description: '仅用户明确允许操作当前桌面、可能影响其窗口或输入时传 true；默认不执行。' } } },
           handler: async (args, execution) => {
             const result = await this.call(tool.name, args, execution);
             return { ok: !result.isError, result: result.text, images: result.images };
@@ -68,6 +70,8 @@ export class LinuxComputerUseService extends Service {
   async call(tool: string, args: any, execution: any) {
     const session = String(execution.sessionId || ''), run = String(execution.runId || '');
     if (!session || !run) throw new Error('本机操作需要所属任务');
+    if (args?.use_shared_desktop !== true) throw new Error('该插件使用用户当前桌面，可能影响窗口、鼠标或键盘；已停止。请使用内置后台控件操作。');
+    const { use_shared_desktop: _sharedDesktop, ...toolArgs } = args;
     const key = JSON.stringify([session, run]);
     execution.signal?.throwIfAborted();
     const client = await this.client(key);
@@ -75,7 +79,7 @@ export class LinuxComputerUseService extends Service {
     let closing: Promise<void> | undefined;
     const abort = () => { closing = this.closeKey(key); };
     execution.signal?.addEventListener('abort', abort, { once: true });
-    try { return await client.callTool(tool, args, { signal: execution.signal }); }
+    try { return await client.callTool(tool, toolArgs, { signal: execution.signal }); }
     finally { execution.signal?.removeEventListener('abort', abort); if (closing) await closing; }
   }
 

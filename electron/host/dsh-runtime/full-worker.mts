@@ -24,6 +24,7 @@ import { chartGuidance } from '../chart-guidance.mts';
 import { commandGuidance } from '../command-guidance.mts';
 import { prepareMcpDiscovery, discoverMcpTools } from '../../host/mcp-discovery.mts';
 import { prepareToolsetDiscovery, activateToolsets } from '../../host/toolset-discovery.mts';
+import { computerUseGuidance } from '../computer-use-guidance.mts';
 
 installFileHandleBridge();
 const send = (value: any) => process.send?.(value);
@@ -94,6 +95,7 @@ process.once('message', async (input: any) => {
     ctx.systemPrompt.section({ name: 'dyworker-communication', order: 100, text: communicationGuidance, interpolate: false });
     ctx.systemPrompt.section({ name: 'dyworker-charts', order: 110, text: chartGuidance, interpolate: false });
     ctx.systemPrompt.section({ name: 'dyworker-command-environment', order: 120, text: commandGuidance(), interpolate: false });
+    ctx.systemPrompt.section({ name: 'dyworker-computer-use', order: 130, text: computerUseGuidance, interpolate: false });
     ctx.systemPrompt.context({ name: 'dyworker-task', order: 20, text: () => taskContext });
     const grants = new Map<any, string>();
     const questionTool = ctx.tools.get('ask_user_question');

@@ -17,6 +17,8 @@ test('电脑操作截图作为图片传递给模型并保存到任务记录', { 
   const requests = [];
   const runtime = new OfficialDshSession({ profileDir, dataDir: path.join(root, 'data'), workspacePath,
     sessionId: 'image-test', plugins: [], approve: async () => true,
+    // plugin__ 前缀的工具默认按工具组延迟加载；本测试验证图片链路，显式钉进首轮
+    fixedExtraTools: [name],
     extraTools: [{ name, description: '屏幕截图', parameters: { type: 'object', properties: {} } }],
     onExtraTool: async () => ({ ok: true, result: '已截图', images: [{ data: image, mimeType: 'image/png' }] }),
     async *generate(request) {

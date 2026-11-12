@@ -16,6 +16,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { t } from "./i18n";
 import type { BackgroundTaskRecord } from "./types";
 
 export interface BackgroundTasksPanelProps {
@@ -31,13 +32,13 @@ function formatDuration(startTime: string, endTime?: string | null): string {
   if (isNaN(start)) return "";
   const end = endTime ? new Date(endTime).getTime() : Date.now();
   const diffSec = Math.max(0, Math.floor((end - start) / 1000));
-  if (diffSec < 60) return `${diffSec} 秒`;
+  if (diffSec < 60) return `${diffSec} ${t("common.seconds", "秒")}`;
   const minutes = Math.floor(diffSec / 60);
   const seconds = diffSec % 60;
-  if (minutes < 60) return `${minutes} 分 ${seconds} 秒`;
+  if (minutes < 60) return `${minutes} ${t("common.minutes", "分")} ${seconds} ${t("common.seconds", "秒")}`;
   const hours = Math.floor(minutes / 60);
   const remMinutes = minutes % 60;
-  return `${hours} 小时 ${remMinutes} 分`;
+  return `${hours} ${t("common.hours", "小时")} ${remMinutes} ${t("common.minutes", "分")}`;
 }
 
 export function BackgroundTasksPanel({
@@ -190,9 +191,9 @@ export function BackgroundTasksPanel({
       {/* 单行头部：标题 + 运行数 + 作用域；全部停止仅在多个任务同时运行时出现 */}
       <div className="bt-header">
         <Radio size={14} className={runningTasks.length > 0 ? "bt-spin" : ""} />
-        <strong>后台任务</strong>
+        <strong>{t("background.tasksTitle", "后台任务")}</strong>
         {runningTasks.length > 0 && (
-          <span className="bt-meta bt-meta-run">{runningTasks.length} 个运行中</span>
+          <span className="bt-meta bt-meta-run">{runningTasks.length} {t("background.runningCount", "个运行中")}</span>
         )}
         <span className="bt-header-spacer" />
         {runningTasks.length > 1 && (
@@ -200,10 +201,10 @@ export function BackgroundTasksPanel({
             type="button"
             className={`code-open-external bt-cancel ${armStopAll ? "bt-cancel-armed" : ""}`}
             onClick={armStopAllOnce}
-            title="停止并释放所有运行中的服务"
+            title={t("background.stopAllHint", "停止并释放所有运行中的服务")}
           >
             {armStopAll ? <AlertTriangle size={13} /> : <Square size={13} />}
-            {armStopAll ? "确认停止" : "全部停止"}
+            {armStopAll ? t("background.confirmStop", "确认停止") : t("background.stopAll", "全部停止")}
           </button>
         )}
         <div className="bt-scope-toggle">
@@ -211,17 +212,17 @@ export function BackgroundTasksPanel({
             type="button"
             className={`bt-scope-btn ${scope === "current" ? "active" : ""}`}
             onClick={() => setScope("current")}
-            title="仅展示当前会话启动的后台服务"
+            title={t("background.currentScopeHint", "仅展示当前会话启动的后台服务")}
           >
-            当前
+            {t("background.currentScope", "当前")}
           </button>
           <button
             type="button"
             className={`bt-scope-btn ${scope === "all" ? "active" : ""}`}
             onClick={() => setScope("all")}
-            title="展示所有会话启动的后台服务"
+            title={t("background.allScopeHint", "展示所有会话启动的后台服务")}
           >
-            全部
+            {t("background.allScope", "全部")}
           </button>
         </div>
       </div>
@@ -233,7 +234,7 @@ export function BackgroundTasksPanel({
           <input
             type="text"
             className="bt-cmd-input"
-            placeholder="启动后台服务…"
+            placeholder={t("background.launchPlaceholder", "启动后台服务…")}
             value={newCommand}
             onChange={(e) => setNewCommand(e.target.value)}
             disabled={starting}
@@ -241,7 +242,7 @@ export function BackgroundTasksPanel({
         </div>
         <button type="submit" className="button-primary bt-launch-btn" disabled={!newCommand.trim() || starting}>
           {starting ? <LoaderCircle size={13} className="spin" /> : <Play size={13} />}
-          启动
+          {t("background.launch", "启动")}
         </button>
       </form>
 
@@ -290,7 +291,7 @@ export function BackgroundTasksPanel({
                         <Check size={14} className="bt-ok" />
                       )}
                       <span className={`bt-status-tag ${task.status}`}>
-                        {isRunning ? "运行中" : isError ? "异常退出" : "已停止"}
+                        {isRunning ? t("background.statusRunning", "运行中") : isError ? t("background.statusError", "异常退出") : t("background.statusStopped", "已停止")}
                       </span>
                     </div>
 
@@ -300,7 +301,7 @@ export function BackgroundTasksPanel({
 
                     {task.pid && <span className="bt-pid-tag">PID {task.pid}</span>}
 
-                    <span className="bt-duration">{durationText ? `已运行 ${durationText}` : ""}</span>
+                    <span className="bt-duration">{durationText ? `${t("background.durationRan", "已运行")} ${durationText}` : ""}</span>
                   </div>
 
                   {/* 命令展示 */}
@@ -323,7 +324,7 @@ export function BackgroundTasksPanel({
                               void window.dyworker.openBrowser({ url });
                             }
                           }}
-                          title="在内置浏览器打开服务页面"
+                          title={t("background.openUrlHint", "在内置浏览器打开服务页面")}
                         >
                           {url}
                           <ExternalLink size={11} />
@@ -338,10 +339,10 @@ export function BackgroundTasksPanel({
                       type="button"
                       className="bt-action-btn subtle"
                       onClick={() => toggleLog(task.id)}
-                      title="展开/折叠运行日志"
+                      title={t("background.toggleLogHint", "展开/折叠运行日志")}
                     >
                       <Terminal size={13} />
-                      {isExpanded ? "收起日志" : "查看日志"}
+                      {isExpanded ? t("background.collapseLog", "收起日志") : t("background.viewLog", "查看日志")}
                       {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
 
@@ -351,10 +352,10 @@ export function BackgroundTasksPanel({
                       type="button"
                       className="bt-action-btn subtle"
                       onClick={() => handleRestartTask(task.id)}
-                      title="重启该后台服务"
+                      title={t("background.restartHint", "重启该后台服务")}
                     >
                       <RefreshCw size={12} />
-                      重启
+                      {t("background.restart", "重启")}
                     </button>
 
                     {isRunning ? (
@@ -362,20 +363,20 @@ export function BackgroundTasksPanel({
                         type="button"
                         className="bt-action-btn stop"
                         onClick={() => handleStopTask(task.id)}
-                        title="终止进程并释放端口"
+                        title={t("background.stopServiceHint", "终止进程并释放端口")}
                       >
                         <Square size={12} />
-                        关闭服务
+                        {t("background.closeService", "关闭服务")}
                       </button>
                     ) : (
                       <button
                         type="button"
                         className="bt-action-btn subtle"
                         onClick={() => handleRestartTask(task.id)}
-                        title="重新启动服务"
+                        title={t("background.restartServiceHint", "重新启动服务")}
                       >
                         <Play size={12} />
-                        重新启动
+                        {t("background.restartService", "重新启动")}
                       </button>
                     )}
                   </div>
@@ -385,12 +386,12 @@ export function BackgroundTasksPanel({
                     <div className="bt-log-terminal">
                       <div className="bt-log-header">
                         <Terminal size={11} />
-                        <span>实时日志（最近 {task.outputTail?.length || 0} 行）</span>
+                        <span>{t("background.liveLogsPrefix", "实时日志（最近")} {task.outputTail?.length || 0} {t("background.liveLogsSuffix", "行）")}</span>
                       </div>
                       <pre className="bt-log-content">
                         {task.outputTail && task.outputTail.length > 0
                           ? task.outputTail.join("\n")
-                          : "（暂无控制台输出）"}
+                          : t("background.noConsoleOutput", "（暂无控制台输出）")}
                       </pre>
                     </div>
                   )}

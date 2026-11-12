@@ -8,11 +8,14 @@ import { fileURLToPath } from "node:url";
 import { McpClient } from "../electron/mcp.mts";
 import {
   absoluteWindowPoint,
+  accessibility,
   desktopToolDefinitions,
   findAvailableDisplay,
   findBestWindow,
   hasNonAscii,
   isTrustedRootFile,
+  isolatedAccessibilityUnavailableError,
+  launchApp,
   linuxDependencyInstallCommand,
   linuxDependencyPackages,
   normalizeX11WindowId,
@@ -23,6 +26,8 @@ import {
   targetDisplay,
   unpackedResourcePath,
   VirtualDisplayManager,
+  virtualDisplayManager,
+  virtualDisplayUnavailableError,
 } from "../electron/linux-computer-use-server.mts";
 
 // 该文件全部为 Linux 桌面操控专项测试（依赖 X11、dpkg、/usr/bin/python3 等），
@@ -90,6 +95,7 @@ linuxTest("Linux 桌面服务提供与 macOS 一致的基础操作", () => {
     "hover",
     "perform_secondary_action",
     "set_value",
+    "replace_text",
     "select_text",
     "scroll",
     "drag",
@@ -251,14 +257,14 @@ linuxTest("Linux 无障碍助手支持控件身份指纹绑定与过期检测", 
   assert.match(helper, /signatures\["e%d" % index\] = signature/);
 });
 
-linuxTest("Linux 桌面服务支持控件身份指纹缓存与自动补全", async () => {
+linuxTest("Linux 桌面服务按观察编号绑定控件身份", async () => {
   const source = await fs.readFile(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "electron", "linux-computer-use-server.mts"),
     "utf8",
   );
-  assert.match(source, /elementSignatureCache/);
-  assert.match(source, /cacheElementSignatures\(args\.app, window\.id, tree\.signatures\)/);
-  assert.match(source, /cachedElementSignature\(args\.app, window\.id, args\.element_index\)/);
+  assert.match(source, /elementObservations/);
+  assert.match(source, /rememberObservation\(args\.app, window, tree\.signatures\)/);
+  assert.match(source, /elementObservations\.get\(String\(args\.observation_id/);
 });
 
 linuxTest("Linux 桌面服务提供坐标滚动与悬停入口", async () => {
@@ -292,7 +298,7 @@ linuxTest("Linux 桌面服务在退出时释放按键与鼠标残留", async () 
     "utf8",
   );
   assert.match(source, /releaseInputDevices/);
-  assert.match(source, /keyup", "1"\]/);
+  assert.match(source, /mouseup", "1"\]/);
   assert.match(source, /keyup", "ctrl"\]/);
   assert.match(source, /keyup", "shift"\]/);
   assert.match(source, /keyup", "alt"\]/);
@@ -617,5 +623,40 @@ test("VirtualDisplayManager 支持虚拟显示沙箱配置、分辨率固化与�
   assert.equal(disabledManager.effectiveDisplay(), "");
 
   disabledManager.stop();
+});
+
+test("独立桌面启动失败或停止后仍保持隔离要求", async () => {
+  const manager = new VirtualDisplayManager({ enabled: true });
+  const originalPath = process.env.PATH;
+  try {
+    process.env.PATH = "";
+    assert.equal(await manager.start(), "");
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  }
+  assert.equal(manager.enabled, true);
+  assert.match(virtualDisplayUnavailableError(manager).message, /未找到 Xvfb/);
+  manager.display = ":105";
+  manager.isStarted = true;
+  assert.equal(virtualDisplayUnavailableError(manager), null);
+  manager.stop();
+  assert.match(virtualDisplayUnavailableError(manager).message, /已停止操作/);
+});
+
+test("独立显示未隔离应用会话时，阻止访问和启动应用", async () => {
+  const original = virtualDisplayManager.enabled;
+  try {
+    virtualDisplayManager.enabled = true;
+    assert.match(isolatedAccessibilityUnavailableError().message, /尚未隔离/);
+    const state = await accessibility({ command: 'state', app: 'test' });
+    assert.equal(state.ok, false);
+    assert.match(state.error, /尚未隔离/);
+    await assert.rejects(launchApp('test'), /尚未隔离/);
+    virtualDisplayManager.enabled = false;
+    assert.equal(isolatedAccessibilityUnavailableError(), null);
+  } finally {
+    virtualDisplayManager.enabled = original;
+  }
 });
 

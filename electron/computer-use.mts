@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 export const COMPUTER_USE_SERVER_ID = "computer-use";
 export const COMPUTER_USE_TOOL_PREFIX = `mcp__${COMPUTER_USE_SERVER_ID}__`;
+export const LINUX_SHARED_DESKTOP_TOOL_PREFIX = "plugin__dyworker_linux_computer_use__";
 
 const COMPUTER_USE_REQUEST_TIMEOUT_MS = 60_000;
 export const COMPUTER_USE_INSTALL_TIMEOUT_MS = 16 * 60_000;
@@ -43,6 +44,7 @@ export function discoverComputerUseServer({
       enabled: true,
       builtIn: true,
       requestTimeoutMs: COMPUTER_USE_REQUEST_TIMEOUT_MS,
+      shutdownGraceMs: 5000,
     };
   }
 
@@ -55,4 +57,8 @@ export function isComputerUseTool(name) {
 
 export function computerUseAction(name) {
   return isComputerUseTool(name) ? String(name).slice(COMPUTER_USE_TOOL_PREFIX.length) : "";
+}
+
+export function isLinuxSharedDesktopTool(name) {
+  return String(name || "").startsWith(LINUX_SHARED_DESKTOP_TOOL_PREFIX);
 }

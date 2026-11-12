@@ -1,11 +1,23 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { validateDesktopClick } from './desktop/click-parameters.mts';
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
+
+async function probeVirtualDisplay(program, args) {
+  try {
+    const result = await execFileAsync(program, args, { timeout: 5_000 });
+    return { code: 0, ...result };
+  } catch (error: any) {
+    return { code: -1, stdout: error.stdout || "", stderr: error.stderr || error.message };
+  }
+}
 export function unpackedResourcePath(file) {
   return String(file).replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 }
@@ -109,6 +121,10 @@ function appTargetProperties(properties = {} as any) {
   return { app: appProperty, window_id: windowIdProperty, window_title: windowTitleProperty, ...properties };
 }
 
+function actionTargetProperties(properties = {} as any) {
+  return appTargetProperties({ background: { type: 'boolean', description: '默认 true：助手仅直接操作控件，不主动切换前台或使用系统鼠标键盘；应用自身仍可能改变窗口状态。不支持时返回错误。false 可能占用前台和输入设备，仅在用户明确允许时使用。' }, observation_id: { type: 'string', description: 'get_app_state 返回的观察编号；按控件编号操作时必须提供。' }, ...properties });
+}
+
 function stableTargetRequired(required = []) {
   return ["app", "window_id", "window_title", ...required];
 }
@@ -159,9 +175,10 @@ export function desktopToolDefinitions() {
     tool("list_apps", "列出当前桌面上正在运行的应用和窗口。", {}, [], true),
     tool("launch_app", "从系统应用菜单启动指定应用。启动会改变桌面状态，需要用户授权。", {
       app: appProperty,
+      background: { type: 'boolean', description: '默认 true；当前无法保证在后台启动应用，故会停止。仅用户明确允许前台启动时传 false。' },
     }, ["app"]),
     tool("get_app_state", "读取已运行应用的当前窗口、可访问控件与目标窗口截图。每轮操作应用前必须先调用。", appTargetProperties(), ["app"], true),
-    tool("click", "按控件编号或目标窗口内坐标点击。窗口截图左上角为 (0,0)。", appTargetProperties({
+    tool("click", "按控件编号或目标窗口内坐标点击。后台仅支持控件的直接点击动作。", actionTargetProperties({
       element_index: { type: "string", description: "get_app_state 返回的控件编号，例如 e12" },
       element_signature: {
         type: "object",
@@ -172,14 +189,14 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹，用于操作前核对控件未变化",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
       y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
       mouse_button: { type: "string", enum: ["left", "right", "middle"], description: "鼠标按键，默认 left" },
       click_count: { type: "integer", minimum: 1, maximum: 3, description: "点击次数，默认 1" },
     }), stableTargetRequired()),
-    tool("hover", "把鼠标移动到控件或目标窗口内坐标上方，不点击。", appTargetProperties({
+    tool("hover", "把鼠标移动到控件或目标窗口内坐标上方，不点击。", actionTargetProperties({
       element_index: { type: "string", description: "get_app_state 返回的控件编号，例如 e12" },
       element_signature: {
         type: "object",
@@ -190,12 +207,12 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
       y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
     }), stableTargetRequired()),
-    tool("perform_secondary_action", "执行控件公开的次级动作，例如展开、显示菜单或增加数值。", appTargetProperties({
+    tool("perform_secondary_action", "执行控件公开的次级动作，例如展开、显示菜单或增加数值。后台模式下不能执行可能显示菜单、激活或聚焦窗口的动作。", actionTargetProperties({
       element_index: { type: "string", description: "控件编号" },
       element_signature: {
         type: "object",
@@ -206,11 +223,11 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       action: { type: "string", description: "get_app_state 中显示的动作名称" },
     }), stableTargetRequired(["element_index", "action"])),
-    tool("set_value", "设置输入框、可编辑文字或数值控件的值。", appTargetProperties({
+    tool("set_value", "设置输入框、可编辑文字或数值控件的值。", actionTargetProperties({
       element_index: { type: "string", description: "控件编号" },
       element_signature: {
         type: "object",
@@ -221,11 +238,23 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       value: { type: "string", description: "要设置的值" },
     }), stableTargetRequired(["element_index", "value"])),
-    tool("select_text", "选择可编辑控件中的文字，或把光标放到文字前后。", appTargetProperties({
+    tool("replace_text", "在纯文本控件中唯一匹配原文并替换；会重设控件的完整文字，复杂排版可能改变。无需切换前台或使用鼠标键盘。", appTargetProperties({
+      observation_id: { type: "string", description: "get_app_state 返回的观察编号" },
+      element_index: { type: "string", description: "文字控件编号" },
+      old_text: { type: "string", minLength: 1, description: "需要替换的原文，必须非空" },
+      new_text: { type: "string", description: "替换后的文字；空字符串表示删除" },
+      prefix: { type: "string", description: "紧接原文之前的文字，用于区分重复内容" },
+      suffix: { type: "string", description: "紧接原文之后的文字，用于区分重复内容" },
+    }), stableTargetRequired(["element_index", "old_text", "new_text"])),
+    tool('insert_text', '在最近观察到的光标或选区处插入文字，无需使用鼠标键盘或剪贴板；替换选区时会重设完整文字，复杂排版可能改变。', appTargetProperties({
+      element_index: { type: 'string', description: '可编辑控件编号' },
+      text: { type: 'string', description: '插入文字；空字符串可删除当前选区' },
+    }), stableTargetRequired(['element_index', 'text'])),
+    tool("select_text", "选择可编辑控件中的文字，或把光标放到文字前后。", actionTargetProperties({
       element_index: { type: "string", description: "文字控件编号" },
       element_signature: {
         type: "object",
@@ -236,14 +265,14 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       text: { type: "string", description: "要选择的原文" },
       prefix: { type: "string", description: "可选的前置文字，用于区分重复内容" },
       suffix: { type: "string", description: "可选的后置文字，用于区分重复内容" },
       selection: { type: "string", enum: ["text", "cursor_before", "cursor_after"], description: "选择方式，默认 text" },
     }), stableTargetRequired(["element_index", "text"])),
-    tool("scroll", "在指定控件或窗口内坐标位置向上、下、左或右滚动。控件树不可用时可用坐标滚动。", appTargetProperties({
+    tool("scroll", "在指定控件或窗口内坐标位置向上、下、左或右滚动。控件树不可用时可用坐标滚动。", actionTargetProperties({
       element_index: { type: "string", description: "滚动区域或附近控件编号" },
       element_signature: {
         type: "object",
@@ -254,23 +283,23 @@ export function desktopToolDefinitions() {
           index_in_parent: { type: "number" },
         },
         additionalProperties: false,
-        description: "get_app_state 返回的控件身份指纹",
+        description: "可选的参考信息；操作时以 observation_id 对应的记录为准",
       },
       x: { type: "number", description: "目标窗口内 X 坐标，截图左上角为 0" },
       y: { type: "number", description: "目标窗口内 Y 坐标，截图左上角为 0" },
       direction: { type: "string", enum: ["up", "down", "left", "right", "u", "d", "l", "r"] },
       pages: { type: "number", minimum: 0.1, maximum: 10, description: "滚动页数，默认 1" },
     }), stableTargetRequired(["direction"])),
-    tool("drag", "按目标窗口内坐标从一个位置拖动到另一个位置，截图左上角为 (0,0)。", appTargetProperties({
+    tool("drag", "按目标窗口内坐标从一个位置拖动到另一个位置，截图左上角为 (0,0)。", actionTargetProperties({
       from_x: { type: "number" },
       from_y: { type: "number" },
       to_x: { type: "number" },
       to_y: { type: "number" },
     }), stableTargetRequired(["from_x", "from_y", "to_x", "to_y"])),
-    tool("press_key", "向指定应用发送一个按键或组合键，例如 Return、ctrl+s、alt+F4。", appTargetProperties({
+    tool("press_key", "向指定应用发送一个按键或组合键，例如 Return、ctrl+s、alt+F4。", actionTargetProperties({
       key: { type: "string", description: "xdotool 按键格式" },
     }), stableTargetRequired(["key"])),
-    tool("type_text", "向指定应用输入原样文字。", appTargetProperties({
+    tool("type_text", "向指定应用输入原样文字。中文、换行等内容需要使用并覆盖系统剪贴板；若需要保留剪贴板，请使用控件文字操作。", actionTargetProperties({
       text: { type: "string", description: "要输入的文字" },
     }), stableTargetRequired(["text"])),
   ];
@@ -315,9 +344,9 @@ constructor({
     if (!this.enabled) return "";
     if (this.isStarted && this.display) return this.display;
 
-    const whichXvfb = await tryRun("which", ["Xvfb"], { timeoutMs: 5_000 });
+    // 启动探测不能经过普通操作的隔离检查：此时独立桌面尚未启动。
+    const whichXvfb = await probeVirtualDisplay("which", ["Xvfb"]);
     if (whichXvfb.code !== 0) {
-      this.enabled = false;
       this.lastError = "未找到 Xvfb，无法启动独立桌面环境";
       return "";
     }
@@ -334,12 +363,28 @@ constructor({
         detached: true,
         stdio: "ignore",
       });
+      const child = this.child;
+      let childError = "";
+      child.on("error", (error) => {
+        childError = error.message;
+        if (this.child === child) {
+          this.isStarted = false;
+          this.lastError = error.message;
+        }
+      });
+      child.on("exit", () => {
+        if (this.child === child) {
+          this.isStarted = false;
+          this.lastError = "独立桌面进程已退出";
+        }
+      });
       this.child.unref();
 
       const displayNum = this.display.replace(/^:/, "");
       const socketPath = `/tmp/.X11-unix/X${displayNum}`;
       let socketReady = false;
       for (let i = 0; i < 40; i += 1) {
+        if (childError || child.exitCode !== null || child.signalCode !== null) throw new Error(childError || "独立桌面进程启动后退出");
         socketReady = await fs.access(socketPath).then(() => true).catch(() => false);
         if (socketReady) break;
         await new Promise<any>((resolve) => setTimeout(resolve, 50));
@@ -350,16 +395,16 @@ constructor({
       }
 
       // 验证 X 服务器真正可连接，而不仅仅是套接字文件存在
-      const xdpyinfo = await tryRun("xdpyinfo", ["-display", this.display], { timeoutMs: 5_000 });
+      const xdpyinfo = await probeVirtualDisplay("xdpyinfo", ["-display", this.display]);
       if (xdpyinfo.code !== 0) {
         throw new Error(`Xvfb 显示 ${this.display} 无法连接：${xdpyinfo.stderr || xdpyinfo.stdout || "xdpyinfo 失败"}`);
       }
+      if (childError || child.exitCode !== null || child.signalCode !== null) throw new Error(childError || "独立桌面进程启动后退出");
 
       this.isStarted = true;
       this.lastError = "";
       return this.display;
     } catch (error: any) {
-      this.enabled = false;
       this.lastError = error instanceof Error ? error.message : String(error);
       if (this.child) {
         try { this.child.kill("SIGTERM"); } catch { /* 忽略 */ }
@@ -389,13 +434,18 @@ constructor({
   }
 }
 
-export function virtualDisplayUnavailableError() {
-  if (virtualDisplayManager.enabled && !virtualDisplayManager.isStarted) {
+export function virtualDisplayUnavailableError(manager = virtualDisplayManager) {
+  if (manager.enabled && !manager.effectiveDisplay()) {
     return new Error(
-      `独立桌面环境启动失败，已停止操作以避免切回用户当前桌面。原因：${virtualDisplayManager.lastError || "未知"}`
+      `独立桌面环境启动失败，已停止操作以避免切回用户当前桌面。原因：${manager.lastError || "未知"}`
     );
   }
   return null;
+}
+
+export function isolatedAccessibilityUnavailableError(manager = virtualDisplayManager) {
+  if (!manager.enabled) return null;
+  return new Error('独立显示环境尚未隔离系统无障碍服务和应用会话，已停止访问或启动应用，以免影响用户桌面。');
 }
 
 export const virtualDisplayManager = new VirtualDisplayManager();
@@ -446,6 +496,9 @@ function run(program, args = [], {
       ...(effectiveDisplay ? { DISPLAY: effectiveDisplay } : {}),
       ...env,
     };
+    const request = activeToolRequest;
+    const sendsInput = program === 'xdotool' && args.some(arg => ['key', 'type', 'click', 'mousedown'].includes(String(arg)));
+    if (request && sendsInput) request.inputMayBeHeld = true;
     const child = spawn(program, args, {
       env: mergedEnv,
       detached: detached || killProcessGroup,
@@ -467,11 +520,15 @@ function run(program, args = [], {
         finish(new Error(`${program} 执行超时`));
       }, timeoutMs)
       : null;
-    child.on("error", (error) => finish(error));
+    child.on("error", (error) => {
+      if (request && sendsInput) request.inputMayBeHeld = false;
+      finish(error);
+    });
     // 必须等 'close' 而不是 'exit'：'exit' 只表示进程终止，管道里缓冲的 stdout/stderr
     // 可能还没送达（新版 Node 24 下调度变化让快退出的脚本稳定复现丢输出）。
     child.on("close", (code, signal) => {
       activeChildren.delete(child);
+      if (request && sendsInput && code === 0) request.inputMayBeHeld = false;
       finish(null, { code: code ?? -1, signal, stdout, stderr });
       if (shutdownRequested && ![...activeChildren].some((item: any) => item.__dyworkerProtectedSystemTransaction)) {
         process.exit(0);
@@ -1026,7 +1083,9 @@ async function desktopEntries() {
   return entries;
 }
 
-async function launchApp(query) {
+export async function launchApp(query) {
+  const isolationError = isolatedAccessibilityUnavailableError();
+  if (isolationError) throw isolationError;
   const needle = normalized(query);
   const entries = await desktopEntries();
   const entry = entries
@@ -1066,9 +1125,10 @@ async function runningWindow(app, windowId = "", windowTitle = "", requireStable
   throw new Error(`应用“${app}”尚未运行。请先使用 launch_app 启动它。`);
 }
 
-async function launchAndFindWindow(app) {
+async function launchAndFindWindow(app, background = true) {
   const existing = selectWindow(await listWindows(), app);
   if (existing) return existing;
+  if (background) throw new Error('当前无法保证启动应用时不切换用户的前台窗口，已停止。请使用已运行的应用或其他后台工具。');
   await launchApp(app);
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await new Promise<any>((resolve) => setTimeout(resolve, 500));
@@ -1078,7 +1138,9 @@ async function launchAndFindWindow(app) {
   throw new Error(`应用“${app}”已经尝试启动，但没有发现可操作窗口。`);
 }
 
-async function accessibility(payload) {
+export async function accessibility(payload) {
+  const isolationError = isolatedAccessibilityUnavailableError();
+  if (isolationError) return { ok: false, error: isolationError.message };
   const result = await tryRun("python3", [accessibilityHelper], {
     input: JSON.stringify(payload),
     timeoutMs: 15_000,
@@ -1094,23 +1156,17 @@ async function accessibility(payload) {
   }
 }
 
-// 缓存最近一次 get_app_state 返回的控件指纹，按应用+窗口绑定。
-// 模型后续操作只需携带 element_index，服务端自动补全指纹做核对。
-const elementSignatureCache = new Map();
-
-function signatureCacheKey(app, windowId) {
-  return `${String(app || "")}::${String(windowId || "")}`;
+// 每次观察分别保存，审核时重新读取不会替换待执行动作所引用的观察。
+const elementObservations = new Map<string, any>();
+function observationKey(app, window) {
+  return JSON.stringify([String(app || '').toLowerCase(), normalizeX11WindowId(window.id), String(window.title || '')]);
 }
 
-function cacheElementSignatures(app, windowId, signatures) {
-  if (!signatures || typeof signatures !== "object") return;
-  elementSignatureCache.set(signatureCacheKey(app, windowId), signatures);
-}
-
-function cachedElementSignature(app, windowId, elementIndex) {
-  const signatures = elementSignatureCache.get(signatureCacheKey(app, windowId));
-  if (!signatures) return null;
-  return signatures[String(elementIndex || "").toLowerCase()] || null;
+function rememberObservation(app, window, signatures, ownerPid) {
+  const id = randomUUID();
+  elementObservations.set(id, { key: observationKey(app, window), signatures, ownerPid, capturedAt: Date.now() });
+  if (elementObservations.size > 50) elementObservations.delete(elementObservations.keys().next().value);
+  return id;
 }
 
 export function normalizeX11WindowId(id) {
@@ -1127,6 +1183,12 @@ export function normalizeX11WindowId(id) {
     return str;
   }
   return str;
+}
+
+async function windowOwnerPid(window) {
+  const result = await tryRun('xdotool', ['getwindowpid', window.id], { timeoutMs: 3000 });
+  const pid = result.code === 0 ? result.stdout.trim() : '';
+  return /^[1-9]\d*$/.test(pid) ? pid : '';
 }
 
 export async function activeWindowId() {
@@ -1146,8 +1208,8 @@ export function hasNonAscii(str) {
   return /[^\x20-\x7E]/.test(String(str || ""));
 }
 
-export async function typeViaClipboard(window, text) {
-  await activateWindow(window);
+async function typeViaClipboard(window, text) {
+  await confirmActiveWindow(window);
   let clipOk = false;
   const xclipResult = await tryRun("xclip", ["-selection", "clipboard"], {
     input: text,
@@ -1156,6 +1218,7 @@ export async function typeViaClipboard(window, text) {
   if (xclipResult.code === 0) {
     clipOk = true;
   } else {
+    await confirmActiveWindow(window);
     const xselResult = await tryRun("xsel", ["--clipboard", "--input"], {
       input: text,
       timeoutMs: 8_000,
@@ -1170,18 +1233,15 @@ export async function typeViaClipboard(window, text) {
   }
 
   await new Promise<any>((resolve) => setTimeout(resolve, 80));
-  await activateWindow(window);
+  await confirmActiveWindow(window);
 
   const pasteResult = await tryRun("xdotool", ["key", "--clearmodifiers", "ctrl+v"], { timeoutMs: 5_000 });
   if (pasteResult.code !== 0) {
-    const fallbackPaste = await tryRun("xdotool", ["key", "--clearmodifiers", "shift+Insert"], { timeoutMs: 5_000 });
-    if (fallbackPaste.code !== 0) {
-      throw new Error(pasteResult.stderr || fallbackPaste.stderr || "文字粘贴失败");
-    }
+    throw new Error(pasteResult.stderr || "文字粘贴失败，请检查目标窗口中的文字后再试。");
   }
 }
 
-async function captureWindow(window) {
+async function captureWindowRaw(window) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-screen-"));
   const file = path.join(directory, "screen.png");
   try {
@@ -1207,6 +1267,33 @@ async function captureWindow(window) {
   }
 }
 
+// 读取窗口与所属进程的身份。窗口编号可能被系统复用；进程启动时间可进一步区分进程编号复用。
+export async function windowCaptureIdentity(window, { windows = listWindows, getPid = async id => {
+  const result = await tryRun('xdotool', ['getwindowpid', id], { timeoutMs: 3000 });
+  return result.code === 0 ? result.stdout.trim() : '';
+}, readStat = pid => fs.readFile(`/proc/${pid}/stat`, 'utf8') } = {} as any) {
+  const matches = (await windows()).filter(item => normalizeX11WindowId(item.id) === normalizeX11WindowId(window.id));
+  if (matches.length !== 1 || matches[0].className !== window.className || matches[0].title !== window.title) return null;
+  const pid = String(await getPid(window.id));
+  if (!/^[1-9]\d*$/.test(pid)) return null;
+  const stat = await readStat(pid).catch(() => '');
+  const end = stat.lastIndexOf(')');
+  const startTime = end >= 0 ? stat.slice(end + 1).trim().split(/\s+/)[19] : '';
+  if (!/^\d+$/.test(startTime || '')) return null;
+  return { id: normalizeX11WindowId(window.id), className: window.className, title: window.title, pid, startTime };
+}
+
+export async function captureVerifiedWindow(window, { identity = windowCaptureIdentity, capture = captureWindowRaw } = {} as any) {
+  try {
+    const before = await identity(window);
+    if (!before) return '';
+    const image = await capture(window);
+    if (!image) return '';
+    const after = await identity(window);
+    return after && JSON.stringify(before) === JSON.stringify(after) ? image : '';
+  } catch { return ''; }
+}
+
 async function activateWindow(window) {
   const targetId = normalizeX11WindowId(window.id);
   const initial = await activeWindowId();
@@ -1214,13 +1301,13 @@ async function activateWindow(window) {
     return;
   }
 
-  const xdoResult = await tryRun("xdotool", ["windowactivate", "--sync", window.id], { timeoutMs: 5_000 });
+  await tryRun("xdotool", ["windowactivate", "--sync", window.id], { timeoutMs: 5_000 });
   let current = await activeWindowId();
   if (current && targetId && current === targetId) {
     return;
   }
 
-  const wmctrlResult = await tryRun("wmctrl", ["-i", "-a", window.id], { timeoutMs: 5_000 });
+  await tryRun("wmctrl", ["-i", "-a", window.id], { timeoutMs: 5_000 });
   for (let i = 0; i < 4; i += 1) {
     await new Promise<any>((resolve) => setTimeout(resolve, 150));
     current = await activeWindowId();
@@ -1229,9 +1316,7 @@ async function activateWindow(window) {
     }
   }
 
-  if (xdoResult.code !== 0 && wmctrlResult.code !== 0 && !current) {
-    throw new Error("无法激活目标窗口。请确认已安装 xdotool 与 wmctrl，并且当前使用 X11 桌面会话。");
-  }
+  throw new Error("无法确认目标窗口已进入前台，已停止输入。请重新读取应用状态并检查窗口。");
 }
 
 async function windowGeometry(window) {
@@ -1241,6 +1326,21 @@ async function windowGeometry(window) {
     throw new Error("无法读取目标窗口的位置和大小，已停止坐标操作以避免点到其他应用。");
   }
   return geometry;
+}
+
+async function confirmActiveWindow(window) {
+  if (await activeWindowId() !== normalizeX11WindowId(window.id)) {
+    throw new Error('目标窗口已不在前台，已停止输入。请重新读取应用状态。');
+  }
+}
+
+async function foregroundPointerGeometry(window, previous = null) {
+  const current = await windowGeometry(window);
+  if (previous && (current.width !== previous.width || current.height !== previous.height)) {
+    throw new Error('目标窗口大小已变化，已停止鼠标操作。请重新读取应用状态。');
+  }
+  await confirmActiveWindow(window);
+  return current;
 }
 
 export function absoluteWindowPoint(geometry, rawX, rawY, label) {
@@ -1261,18 +1361,37 @@ function buttonNumber(button) {
   return { left: "1", middle: "2", right: "3" }[button] || "1";
 }
 
+function elementPointInWindow(geometry, center, label) {
+  return absoluteWindowPoint(geometry, Number(center.x) - geometry.x, Number(center.y) - geometry.y, label);
+}
+
+export function foregroundElementClickArgs(geometry, center, button = 'left', clickCount = 1) {
+  const point = elementPointInWindow(geometry, center, '点击');
+  const count = Math.min(3, Math.max(1, Number(clickCount) || 1));
+  return ['mousemove', '--sync', String(point.x), String(point.y), 'click', '--repeat', String(count), buttonNumber(button)];
+}
+
 async function elementAction(args, command, extra = {} as any) {
   const window = await runningWindow(args.app, args.window_id, args.window_title, true);
-  if (command !== "bounds") await activateWindow(window);
-  const signature = args.element_signature
-    || cachedElementSignature(args.app, window.id, args.element_index);
+  const background = args.background !== false;
+  const observation = elementObservations.get(String(args.observation_id || ''));
+  if (!observation || observation.key !== observationKey(args.app, window) || Date.now() - observation.capturedAt > 120_000) {
+    throw new Error('控件观察已失效或不属于此窗口，请重新读取应用状态并提供观察编号。');
+  }
+  const signature = observation.signatures[String(args.element_index || '').toLowerCase()];
+  if (!signature) throw new Error('控件编号不在该次观察中，请重新读取应用状态。');
+  const ownerPid = await windowOwnerPid(window);
+  if (!ownerPid || ownerPid !== observation.ownerPid) throw new Error('目标窗口所属应用已变化或无法确认，请重新读取应用状态。');
+  if (!background && command !== "bounds") await activateWindow(window);
   const result = await accessibility({
     command,
     app: args.app,
     hints: [window.className, window.title],
     window_title: window.title,
+    expected_pid: ownerPid,
     element_index: args.element_index,
     element_signature: signature,
+    background,
     ...extra,
   });
   if (!result.ok) throw new Error(result.error || "无障碍控件操作失败");
@@ -1375,30 +1494,36 @@ async function callTool(name, args) {
   }
 
   if (name === "launch_app") {
-    const window = await launchAndFindWindow(args.app);
-    return { text: `应用已启动：${window.title || window.className || args.app}。请调用 get_app_state 读取当前界面。` };
+    const window = await launchAndFindWindow(args.app, args.background !== false);
+    return { text: `已找到应用窗口：${window.title || window.className || args.app}。请调用 get_app_state 读取当前界面。` };
   }
 
   if (name === "get_app_state") {
     const window = await runningWindow(args.app, args.window_id, args.window_title);
-    const [tree, image] = await Promise.all([
-      accessibility({ command: "state", app: args.app, hints: [window.className, window.title], window_title: window.title }),
-      captureWindow(window),
+    const ownerPid = await windowOwnerPid(window);
+    let [tree, image] = await Promise.all([
+      ownerPid ? accessibility({ command: "state", app: args.app, hints: [window.className, window.title], window_title: window.title, expected_pid: ownerPid })
+        : Promise.resolve({ ok: false, error: '无法确认目标窗口所属应用。' }),
+      captureVerifiedWindow(window),
     ]);
-    if (tree.ok && tree.signatures) {
-      cacheElementSignatures(args.app, window.id, tree.signatures);
+    if (ownerPid && await windowOwnerPid(window) !== ownerPid) {
+      tree = { ok: false, error: '读取期间目标窗口所属应用已变化。' };
+      image = '';
     }
+    const observationId = tree.ok && tree.signatures && typeof tree.signatures === 'object'
+      ? rememberObservation(args.app, window, tree.signatures, ownerPid) : '';
     const fallback = [
       `应用：${args.app}`,
       `窗口：${window.title || "（无标题）"}`,
       `窗口类别：${window.className || "（未知）"}`,
       `窗口编号：${window.id}`,
+      observationId ? `观察编号：${observationId} （按控件编号操作时必须提供 observation_id）` : '',
       "",
       tree.ok
-        ? tree.text
+        ? `${tree.text}${image ? '' : '\n未能安全取得目标窗口截图；请根据控件信息继续。'}`
         : `未能读取控件结构：${tree.error}\n${
           image
-            ? "仍可根据目标窗口截图使用坐标操作。"
+            ? "可查看目标窗口截图；坐标操作需要前台输入，不能在默认后台模式执行。"
             : "也未取得目标窗口截图；请安装 ImageMagick。"
         }建议安装 python3-pyatspi 以获得控件编号。`,
       virtualDisplayManager.isStarted
@@ -1411,14 +1536,45 @@ async function callTool(name, args) {
     return { text: fallback, image };
   }
 
+  const background = args.background !== false;
+  if (name === 'click') validateDesktopClick(args);
+  if (background && ["hover", "drag", "press_key", "type_text"].includes(name)) {
+    throw new Error('该动作暂不支持后台执行，已停止以免占用用户的鼠标、键盘或前台窗口。可尝试直接操作控件或使用浏览器。');
+  }
+  if (background && name === 'scroll' && !args.element_index && (args.x !== undefined || args.y !== undefined)) {
+    throw new Error('该动作暂不支持后台执行：后台滚动暂不支持按屏幕绝对坐标滚动，请提供 element_index 控件编号，或不传坐标以滚动窗口主滚动区。');
+  }
+  if (background && name === 'click' && (!args.element_index || (args.mouse_button && args.mouse_button !== 'left') || (args.click_count && args.click_count !== 1))) {
+    throw new Error('后台点击仅支持控件的单次左键动作，请先读取控件并使用 element_index。');
+  }
+
   if (name === "click") {
     if (args.element_index) {
-      await elementAction(args, "click");
+      if (!background && ((args.mouse_button && args.mouse_button !== 'left') || (args.click_count && args.click_count !== 1))) {
+        await elementAction(args, 'bounds'); // 未确认观察有效前不得切换用户的窗口。
+        const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+        await activateWindow(window);
+        const center = await elementAction(args, 'bounds');
+        const clickArgs = foregroundElementClickArgs(await foregroundPointerGeometry(window), center, args.mouse_button, args.click_count);
+        const result = await tryRun('xdotool', clickArgs);
+        if (result.code !== 0) throw new Error(result.stderr || '鼠标点击失败');
+      } else {
+        const result = await elementAction(args, "click");
+        if (!background && result.pointerFallback) {
+          const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+          const center = await elementAction(args, "bounds");
+          const clickArgs = foregroundElementClickArgs(await foregroundPointerGeometry(window), center);
+          const click = await tryRun("xdotool", clickArgs);
+          if (click.code !== 0) throw new Error(click.stderr || "鼠标点击失败");
+        }
+      }
     } else {
       if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) throw new Error("click 需要 element_index，或同时提供 x 和 y");
       const window = await runningWindow(args.app, args.window_id, args.window_title, true);
-      const point = absoluteWindowPoint(await windowGeometry(window), args.x, args.y, "点击");
+      const previous = await windowGeometry(window);
+      absoluteWindowPoint(previous, args.x, args.y, "点击");
       await activateWindow(window);
+      const point = absoluteWindowPoint(await foregroundPointerGeometry(window, previous), args.x, args.y, "点击");
       const count = Math.min(3, Math.max(1, Number(args.click_count) || 1));
       const result = await tryRun("xdotool", [
         "mousemove", "--sync", String(point.x), String(point.y),
@@ -1431,18 +1587,22 @@ async function callTool(name, args) {
 
   if (name === "hover") {
     if (args.element_index) {
-      const bounds = await elementAction(args, "bounds");
+      await elementAction(args, "bounds");
       const window = await runningWindow(args.app, args.window_id, args.window_title, true);
       await activateWindow(window);
+      const bounds = await elementAction(args, "bounds");
+      const point = elementPointInWindow(await foregroundPointerGeometry(window), bounds, "悬停");
       const result = await tryRun("xdotool", [
-        "mousemove", "--sync", String(bounds.x), String(bounds.y),
+        "mousemove", "--sync", String(point.x), String(point.y),
       ]);
       if (result.code !== 0) throw new Error(result.stderr || "鼠标移动失败");
     } else {
       if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) throw new Error("hover 需要 element_index，或同时提供 x 和 y");
       const window = await runningWindow(args.app, args.window_id, args.window_title, true);
-      const point = absoluteWindowPoint(await windowGeometry(window), args.x, args.y, "悬停");
+      const previous = await windowGeometry(window);
+      absoluteWindowPoint(previous, args.x, args.y, "悬停");
       await activateWindow(window);
+      const point = absoluteWindowPoint(await foregroundPointerGeometry(window, previous), args.x, args.y, "悬停");
       const result = await tryRun("xdotool", [
         "mousemove", "--sync", String(point.x), String(point.y),
       ]);
@@ -1452,6 +1612,11 @@ async function callTool(name, args) {
   }
 
   if (name === "perform_secondary_action") {
+    const background = args.background !== false;
+    const actionClean = String(args.action || "").trim().toLowerCase().replace(/[-_\s]/g, "");
+    if (background && ["menu", "showmenu", "openmenu", "popup", "popupmenu", "focus", "grabfocus", "raise", "activate", "axraise", "axfocus", "axshowmenu"].includes(actionClean)) {
+      throw new Error("该动作可能显示菜单、切换或聚焦窗口，不能在后台执行。");
+    }
     await elementAction(args, "secondary", { action: args.action });
     return { text: `已执行“${args.action}”（executed）。请重新读取应用状态后再继续。` };
   }
@@ -1459,6 +1624,19 @@ async function callTool(name, args) {
   if (name === "set_value") {
     await elementAction(args, "set_value", { value: String(args.value ?? "") });
     return { text: "控件内容已设置（executed）。请重新读取应用状态后再继续。" };
+  }
+
+  if (name === "replace_text") {
+    if (typeof args.old_text !== 'string' || !args.old_text || typeof args.new_text !== 'string') throw new Error('替换文字需要非空原文和明确的新文字。');
+    await elementAction({ ...args, background: true }, 'replace_text', { old_text: args.old_text, new_text: args.new_text,
+      prefix: String(args.prefix || ''), suffix: String(args.suffix || '') });
+    return { text: '已替换控件中的指定文字并核对控件值。请重新读取应用状态，必要时保存并检查结果。' };
+  }
+
+  if (name === 'insert_text') {
+    if (typeof args.text !== 'string') throw new Error('需要明确提供插入文字。');
+    await elementAction({ ...args, background: true }, 'insert_text', { text: args.text });
+    return { text: '已更新选区文字并核对控件内容。请重新读取应用状态，必要时保存并检查结果。' };
   }
 
   if (name === "select_text") {
@@ -1472,21 +1650,47 @@ async function callTool(name, args) {
   }
 
   if (name === "scroll") {
-    const window = await runningWindow(args.app, args.window_id, args.window_title, true);
-    await activateWindow(window);
     const direction = String(args.direction || "down").toLowerCase();
     const button = { up: "4", u: "4", down: "5", d: "5", left: "6", l: "6", right: "7", r: "7" }[direction];
     if (!button) throw new Error("滚动方向必须是 up、down、left 或 right");
     const repeats = Math.min(30, Math.max(1, Math.round((Number(args.pages) || 1) * 3)));
-    let point;
+    if (background) {
+      if (!args.element_index && (args.x !== undefined || args.y !== undefined)) {
+        throw new Error("该动作暂不支持后台执行：后台滚动暂不支持按屏幕绝对坐标滚动，请提供 element_index 控件编号，或不传坐标以滚动窗口主滚动区。");
+      }
+      if (args.element_index) {
+        await elementAction(args, "scroll", { direction: args.direction, pages: args.pages || 1 });
+      } else {
+        const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+        const ownerPid = await windowOwnerPid(window);
+        await accessibility({
+          command: "scroll_window",
+          app: args.app,
+          hints: [window.className, window.title],
+          window_title: window.title,
+          expected_pid: ownerPid,
+          direction: args.direction,
+          pages: args.pages || 1,
+          background: true,
+        });
+      }
+      return { text: "滚动已完成（executed）。请重新读取应用状态后再继续。" };
+    }
+    const window = await runningWindow(args.app, args.window_id, args.window_title, true);
+    let previous;
     if (args.element_index) {
-      point = await elementAction(args, "bounds");
+      await elementAction(args, "bounds");
     } else {
       if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) {
         throw new Error("scroll 需要 element_index，或同时提供 x 和 y 坐标");
       }
-      point = absoluteWindowPoint(await windowGeometry(window), args.x, args.y, "滚动");
+      previous = await windowGeometry(window);
+      absoluteWindowPoint(previous, args.x, args.y, "滚动");
     }
+    await activateWindow(window);
+    const center = args.element_index ? await elementAction(args, "bounds") : null;
+    const geometry = await foregroundPointerGeometry(window, previous);
+    const point = center ? elementPointInWindow(geometry, center, "滚动") : absoluteWindowPoint(geometry, args.x, args.y, "滚动");
     const result = await tryRun("xdotool", [
       "mousemove", "--sync", String(point.x), String(point.y),
       "click", "--repeat", String(repeats), button,
@@ -1497,10 +1701,13 @@ async function callTool(name, args) {
 
   if (name === "drag") {
     const window = await runningWindow(args.app, args.window_id, args.window_title, true);
-    const geometry = await windowGeometry(window);
+    const previous = await windowGeometry(window);
+    absoluteWindowPoint(previous, args.from_x, args.from_y, "拖动起点");
+    absoluteWindowPoint(previous, args.to_x, args.to_y, "拖动终点");
+    await activateWindow(window);
+    const geometry = await foregroundPointerGeometry(window, previous);
     const from = absoluteWindowPoint(geometry, args.from_x, args.from_y, "拖动起点");
     const to = absoluteWindowPoint(geometry, args.to_x, args.to_y, "拖动终点");
-    await activateWindow(window);
     const result = await tryRun("xdotool", [
       "mousemove", "--sync", String(from.x), String(from.y),
       "mousedown", "1",
@@ -1514,6 +1721,7 @@ async function callTool(name, args) {
   if (name === "press_key") {
     const window = await runningWindow(args.app, args.window_id, args.window_title, true);
     await activateWindow(window);
+    await confirmActiveWindow(window);
     const result = await tryRun("xdotool", ["key", "--clearmodifiers", String(args.key || "")]);
     if (result.code !== 0) throw new Error(result.stderr || "按键失败");
     return { text: "按键已发送（executed）。请重新读取应用状态后再继续。" };
@@ -1526,11 +1734,12 @@ async function callTool(name, args) {
     if (hasNonAscii(text) || text.includes("\n") || text.includes("\t")) {
       await typeViaClipboard(window, text);
     } else {
+      await confirmActiveWindow(window);
       const result = await tryRun("xdotool", ["type", "--clearmodifiers", "--delay", "8", "--", text], {
         timeoutMs: 30_000,
       });
       if (result.code !== 0) {
-        await typeViaClipboard(window, text);
+        throw new Error(result.stderr || "文字输入失败，请检查目标窗口中的文字后再试。");
       }
     }
     return { text: "文字已输入（executed）。请重新读取应用状态后再继续。" };
@@ -1554,6 +1763,7 @@ async function handleMessage(message) {
     if (activeToolRequest?.id === requestId) {
       activeToolRequest.cancelled = true;
       for (const child of activeChildren) stopChild(child, "SIGTERM");
+      void releaseInputDevices();
     }
     return null;
   }
@@ -1573,11 +1783,13 @@ async function handleMessage(message) {
     return { jsonrpc: "2.0", id: message.id, result: { tools: desktopToolDefinitions() } };
   }
   if (message.method === "tools/call") {
-    const requestState = { id: message.id, cancelled: cancelledToolRequests.delete(message.id) };
+    const actionName = String(message.params?.name || "");
+    const args = message.params?.arguments || {};
+    const requestState = { id: message.id, cancelled: cancelledToolRequests.delete(message.id), inputMayBeHeld: false };
     activeToolRequest = requestState;
     try {
       if (requestState.cancelled) throw new Error("任务已停止");
-      const result = await callTool(String(message.params?.name || ""), message.params?.arguments || {});
+      const result = await callTool(actionName, args);
       if (requestState.cancelled) throw new Error("任务已停止");
       return { jsonrpc: "2.0", id: message.id, result: { content: responseContent(result), isError: false } };
     } catch (error: any) {
@@ -1591,6 +1803,7 @@ async function handleMessage(message) {
       };
     } finally {
       cancelledToolRequests.delete(message.id);
+      if (activeToolRequest === requestState && requestState.inputMayBeHeld) await releaseInputDevices();
       if (activeToolRequest === requestState) activeToolRequest = null;
     }
   }
@@ -1604,16 +1817,20 @@ async function handleMessage(message) {
 async function releaseInputDevices() {
   // 任务停止或服务退出时，释放可能残留的按键和鼠标，防止后续输入漂移。
   // 只发送「抬起」事件，不发送「按下」，确保任何中断的拖动/组合键都被安全终止。
+  if (!activeToolRequest?.inputMayBeHeld) return;
+  activeToolRequest.inputMayBeHeld = false;
   const display = targetDisplay();
+  if (virtualDisplayManager.enabled && !display) return;
   const env = display ? { ...process.env, DISPLAY: display } : process.env;
   const releaseCommands = [
-    ["keyup", "1"], ["keyup", "2"], ["keyup", "3"],
+    ["mouseup", "1"], ["mouseup", "2"], ["mouseup", "3"],
     ["keyup", "ctrl"], ["keyup", "shift"], ["keyup", "alt"], ["keyup", "super"],
     ["keyup", "Return"], ["keyup", "Escape"],
   ];
   for (const args of releaseCommands) {
     try {
       const child = spawn("xdotool", args, { env, stdio: "ignore" });
+      child.on("error", () => {});
       child.unref();
     } catch {
       // 忽略：xdotool 可能不可用，或 X 服务器已断开
