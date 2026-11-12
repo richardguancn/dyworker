@@ -7,7 +7,7 @@ export function settingsIpcPlugin(deps) {
   return {
     name: "ipc:settings",
     apply(ctx) {
-      const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, reconcileChannels, applyTelemetrySettings } = deps;
+      const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, applyDecisionSettings, warmDecisionService, reconcileChannels, applyTelemetrySettings } = deps;
 
       trustedHandle("settings:mcp-stats", async () => deps.mcpStats());
 
@@ -25,6 +25,9 @@ export function settingsIpcPlugin(deps) {
           applyReviewerModelDir(settings);
           applyAsrSettings(settings);
           applyTtsSettings(settings);
+          // 本地决策模型：目录/模型热生效；决策后端 + 本地托管时后台预热服务（不阻塞保存）
+          applyDecisionSettings(settings);
+          warmDecisionService(settings);
           // 渠道配置热生效:按新设置 diff 启停 QQ/微信连接
           await reconcileChannels();
           // 统计/消息设置热生效：开关、服务地址、免打扰等即时应用

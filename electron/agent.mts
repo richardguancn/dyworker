@@ -1,6 +1,7 @@
 import { toolInventory } from "./agent/tool-inventory.mts";
 import { prepareMcpDiscovery, discoverMcpTools } from "./host/mcp-discovery.mts";
-import { prepareToolsetDiscovery, activateToolsets } from "./host/toolset-discovery.mts";
+import { prepareToolsetDiscovery, activateToolsets, resolveGroupSummary } from "./host/toolset-discovery.mts";
+import { requestToolsetRoute } from "./agent/decision-client.mts";
 import { VISUAL_SKILL_ID, visualOutputSkill } from "./host/chart-guidance.mts";
 import { INLINE_APPROVAL_KEY, INLINE_REVIEWER_GUIDANCE, inlineApprovalTools, takeInlineApproval } from "./agent/inline-approval.mts";
 import { inspectProcessTargets } from "./process-review.mts";
@@ -17,7 +18,7 @@ import { resolveSubAgentSettings } from "./agent/model-settings.mts";
 import { isModelTransportError,modelTransportError,waitModelRetry } from "./agent/model-transport.mts";
 import { calculateWorkdays,checkOfficialDocument,currentDatetime,exportExcelWorkbook,exportWordDocument,runOcrFile,scanSensitiveInfo,sliceLines } from "./agent/office-tools.mts";
 import { approvalDecision,needsApproval } from "./agent/permissions.mts";
-import { memoriesAsPagesFallback,systemPrompt } from "./agent/prompt.mts";
+import { getPromptDefinition, memoriesAsPagesFallback,systemPrompt } from "./agent/prompt.mts";
 import { readUsageExtras } from "./agent/responses.mts";
 import { externalApprovalDetails,isImpactSummaryEligible,loadReviewerPolicy,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewerBoundaryNote,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
 import { MODEL_IDLE_TIMEOUT_MS,MODEL_NETWORK_RETRY_BASE_DELAY_MS,MODEL_NETWORK_RETRY_LIMIT,MODEL_STATUS_RETRY_BASE_DELAY_MS,MODEL_STATUS_RETRY_LIMIT,MODEL_TIMEOUT_MS,MODEL_TIMEOUT_RETRY_LIMIT,MODEL_TRANSPORT_RETRY_BASE_DELAY_MS,READ_ONLY_TOOLS,clipped } from "./agent/shared.mts";
@@ -140,23 +141,27 @@ export async function runAgent({
   // 审核模型来源标签：出现在调试日志与审计记录里，便于确认每条决策是哪个模型做出的
   const configuredReviewerModelLabel = settings?.reviewerBackend === "local"
     ? "本地内置 Qwen3-0.6B"
-    : String(settings?.reviewerBackend || "") === "custom"
-      ? `自定义审核端点(${String(settings?.reviewerModel || "").trim() || "未配置"})`
-      : `当前模型(${settings?.model || ""})`;
+    : settings?.reviewerBackend === "decision"
+      ? "决策模型(Intern-Decision)"
+      : String(settings?.reviewerBackend || "") === "custom"
+        ? `自定义审核端点(${String(settings?.reviewerModel || "").trim() || "未配置"})`
+        : `当前模型(${settings?.model || ""})`;
   const latestQuery = [...conversation].reverse().find((message) => message.role === "user")?.content || "";
   const userApprovals = [], userReplies = [], reviewToolEvidence = [];
   const reviewerContext = () => getAuthorizationContext
     ? delegatedReviewContext(getAuthorizationContext(), conversation, userApprovals, userReplies)
     : buildReviewContext({ conversation, goal, workingContext: priorWorkingContext,
       projectInstructions, approvals: userApprovals, replies: userReplies, recentTools: reviewToolEvidence });
-  const messages: any[] = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity) }];
+  const promptLocale = String(settings?.locale || "zh-CN");
+  const promptDef = getPromptDefinition(promptLocale);
+  const messages: any[] = [{ role: "system", content: systemPrompt(workspacePath, loop, memoryReviewDue, goal, settings?.identity, promptLocale) }];
   const inlineReviewEnabled = approvalMode === 'reviewer' && settings?.reviewerBackend === 'main';
   const inlinePolicy = inlineReviewEnabled ? loadReviewerPolicy() : null;
   if (inlinePolicy) messages.push({ role: 'system', content: INLINE_REVIEWER_GUIDANCE });
   if (depth === 0) {
-    messages[0].content += "独立无先后依赖的子任务可用 dispatch_agent 并行处理（配 8-14 字 title，task 须完整自足；子代理操作仍受当前审批约束）。";
+    messages[0].content += promptDef.dispatchAdvice;
   } else {
-    messages.push({ role: "system", content: "你是主代理派发的子代理：专注完成给定的自足子任务并直接交付结果，不追问澄清，不再派发子代理。" });
+    messages.push({ role: "system", content: promptDef.subAgentGreeting });
   }
   // 前缀缓存：AGENTS.md 与技能目录在会话内保持不变，放在随查询变化的记忆页之前，
   // 让本地/云端端点的 KV 前缀缓存覆盖尽可能长的静态部分。
@@ -584,6 +589,32 @@ export async function runAgent({
   );
   // extraTools 中定义的工具名：工具执行时统一路由到 onExtraTool（见 default 分支）
   const extraToolNames = new Set((extraTools || []).map((tool) => tool?.function?.name).filter(Boolean));
+  // 工具组预路由（决策模型）：发首轮请求前按最新用户消息预选工具组，省掉主模型
+  // 先调 load_toolset 的一轮往返。3 秒超时，服务未启动/不可达/超时一律静默降级，
+  // 保持现状（主模型仍可随时显式调用 load_toolset），绝不阻塞首轮。
+  const decisionQuery = messageText({ content: latestQuery }).trim();
+  if (settings?.decisionEndpoint && toolsetDiscovery.availableGroups.length > 0 && decisionQuery) {
+    const routedGroups = await requestToolsetRoute({
+      settings,
+      query: decisionQuery,
+      recentContext: conversation.slice(-3, -1)
+        .map(message => `${message.role === "user" ? "用户" : "助手"}：${messageText(message)}`)
+        .join("\n")
+        .slice(0, 3000),
+      groups: toolsetDiscovery.availableGroups.map(group => ({
+        name: group,
+        summary: resolveGroupSummary(group, toolsetDiscovery.deferredByGroup.get(group)),
+      })),
+      fetchImpl,
+      signal: cancellationSignal,
+    }).catch(() => []);
+    for (const tool of activateToolsets(toolsetDiscovery.deferredByGroup, routedGroups).tools) {
+      const toolName = tool?.function?.name;
+      if (toolName && !visibleTools.some((item) => item?.function?.name === toolName)) visibleTools.push(tool);
+      if (toolName && !effectiveTools.some((item) => item?.function?.name === toolName)) effectiveTools.push(tool);
+      if (toolName) toolSchemas.set(toolName, tool.function.parameters);
+    }
+  }
   let approvalChain = Promise.resolve();
   // action 可传工厂函数：审批卡出队时才生成，返回 null 表示排队期间情况已变（如先行授权
   // 覆盖了本操作），跳过弹卡直接视为放行——并行只读轮次里靠它避免同路径重复询问
@@ -1228,7 +1259,7 @@ export async function runAgent({
                 review: (input) => withModelTimeout((signal) => reviewApproval({ ...input, signal })),
                 input: {
                     settings, contextLimit,
-                    action: { kind: approvalToolName, title: summary, command: displayArgs.command, workspacePath: workspace.root,
+                    action: { kind: approvalToolName, title: summary, args: displayArgs, command: displayArgs.command, workspacePath: workspace.root,
                       details: reviewerBoundaryNote(workspace, approvalToolName, args) + reviewActionDetails(approvalToolName, displayArgs) + entryScripts, observation,
                       toolDefinition: reviewToolDefinition(effectiveTools, name), accessCheck: hookVerdict?.message },
                     context: reviewContext,

@@ -3,13 +3,15 @@
 import { downloadLocalReviewerModel, localReviewerModelStatus } from "../../local-reviewer.mts";
 import { downloadLocalAsrModel, downloadLocalAsrRuntime, localAsrAllModelsStatus, localAsrModelStatus, localAsrRuntimeStatus } from "../../local-asr.mts";
 import { downloadLocalTtsModel, localTtsAllModelsStatus, localTtsModelStatus, localTtsRuntimeStatus, normalizeTtsModelId } from "../../local-tts.mts";
-import { normalizeTtsEngine } from "../../settings.mts";
+import { decisionRuntimeStatus, downloadLocalDecisionModel, ensureDecisionRuntime, localDecisionAllModelsStatus, localDecisionModelStatus } from "../../local-decision.mts";
+import { ensureLocalDecisionServer } from "../../local-decision-server.mts";
+import { normalizeDecisionService, normalizeTtsEngine } from "../../settings.mts";
 
 export function localModelsIpcPlugin(deps) {
   return {
     name: "ipc:local-models",
     apply(ctx) {
-      const { trustedHandle, dialog, getMainWindow, app, path, fs, readSettings, applyAsrSettings, asrSettingsFrom, applyTtsSettings, getAsrServerPath } = deps;
+      const { trustedHandle, dialog, getMainWindow, app, path, fs, readSettings, applyAsrSettings, asrSettingsFrom, applyTtsSettings, applyDecisionSettings, getAsrServerPath } = deps;
       // 下载进度推给渲染端：窗口在插件 apply 之后才创建、且可能重建，必须每次现取
       const notify = (channel, payload) => {
         const win = getMainWindow();
@@ -34,6 +36,61 @@ trustedHandle("reviewer-local:download", async () => {
 trustedHandle("reviewer-local:choose-dir", async () => {
   const result = await dialog.showOpenDialog(getMainWindow(), {
     title: "选择审核模型保存目录",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return { canceled: false, path: result.filePaths[0] };
+});
+
+trustedHandle("decision-local:status", async () => {
+  const saved = await readSettings();
+  const modelId = applyDecisionSettings(saved);
+  return {
+    service: normalizeDecisionService(saved.decisionService),
+    model: localDecisionModelStatus(modelId),
+    models: localDecisionAllModelsStatus(),
+    runtime: decisionRuntimeStatus(),
+  };
+});
+
+trustedHandle("decision-local:download", async (_event, payload) => {
+  try {
+    // 先应用磁盘上的最新设置：改了保存路径后无需重启，下载直接落到新目录
+    const saved = await readSettings();
+    const savedModelId = applyDecisionSettings(saved);
+    // 下载界面当前选中的模型（未指定时用设置里保存的模型）
+    const requestedModelId = String(payload?.modelId || "").trim() || savedModelId;
+    // 先备好 Python 运行时（探测/venv/pip 依赖，约 1-2GB 下载），再拉模型权重（约 4.3GB），进度统一推送
+    await ensureDecisionRuntime({
+      modelId: requestedModelId,
+      onProgress: (progress) => {
+        notify("decision-local:download-progress", progress);
+      },
+    });
+    await downloadLocalDecisionModel({
+      modelId: requestedModelId,
+      onProgress: (progress) => {
+        notify("decision-local:download-progress", { ...progress, modelId: requestedModelId });
+      },
+    });
+    // 下载完成即后台预热服务（模型加载 30-60 秒，不阻塞返回；失败由首次判定按需再启）
+    void ensureLocalDecisionServer({ modelId: requestedModelId }).catch(() => {});
+    return {
+      ok: true,
+      status: {
+        model: localDecisionModelStatus(requestedModelId),
+        models: localDecisionAllModelsStatus(),
+        runtime: decisionRuntimeStatus(),
+      },
+    };
+  } catch (error: any) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+trustedHandle("decision-local:choose-dir", async () => {
+  const result = await dialog.showOpenDialog(getMainWindow(), {
+    title: "选择决策模型保存目录",
     properties: ["openDirectory", "createDirectory"],
   });
   if (result.canceled || !result.filePaths[0]) return { canceled: true };

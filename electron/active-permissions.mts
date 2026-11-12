@@ -46,3 +46,8 @@ export function activePermissions(initialMode: string, subscribe: any, request: 
 }
 
 export const workspaceFileGuidance = '新建脚本与交付文件默认保存在当前工作目录，中间文件放 `.dyworker/tmp/` 任务子目录（勿默认建在 `/tmp/`）。直接交工具权限检查，不要先用文字重复索要许可；若被要求审批、拒绝或报错，遵循结果不得绕过。';
+
+export function getWorkspaceFileGuidance(locale: string = 'zh-CN'): string {
+  if (locale.startsWith('zh')) return workspaceFileGuidance;
+  return 'Save new scripts and deliverables in the current working directory by default; place intermediate files in the `.dyworker/tmp/` task subdirectory (do not default to `/tmp/`). Rely directly on tool permission checks rather than asking for permission repeatedly in text; if approval is required, denied, or an error occurs, follow the result without bypassing it.';
+}

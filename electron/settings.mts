@@ -4,6 +4,7 @@ import { DEFAULT_UPDATE_URL, normalizeUpdateUrl } from "./app-updater.mts";
 import { normalizeSkillLibraries } from "./skill-libraries.mts";
 import { normalizeAsrModelId } from "./local-asr.mts";
 import { normalizeTtsModelId } from "./local-tts.mts";
+import { normalizeDecisionModelId } from "./local-decision.mts";
 import { parseQuietHours } from "./remote-messages.mts";
 import { normalizeReasoningOverrides } from "./model-reasoning.ts";
 
@@ -77,12 +78,20 @@ export function wakeApprovalMode(globalMode, sourceMode) {
   return unattendedApprovalMode(globalMode, source === "interactive" ? "auto" : source);
 }
 
-// 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义 OpenAI 兼容端点。
-// 旧数据没这个字段时按是否填过自定义审核端点推断，避免升级后静默改变行为。
+// 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义 OpenAI 兼容端点 /
+// decision 决策模型（Intern-Decision）。旧数据没这个字段时按是否填过自定义审核端点推断，
+// 避免升级后静默改变行为。
 export function normalizeReviewerBackend(value, source = {} as any) {
   const v = String(value || "");
-  if (v === "main" || v === "local" || v === "custom") return v;
+  if (v === "main" || v === "local" || v === "custom" || v === "decision") return v;
   return String(source.reviewerEndpoint || "").trim() && String(source.reviewerModel || "").trim() ? "custom" : "main";
+}
+
+// 决策模型阈值统一夹取（审批放行阈值、工具组预路由阈值）；渲染端自由输入，主进程兜底。
+export function normalizeDecisionThreshold(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n * 1000) / 1000));
 }
 
 export function normalizeIdentity(value) {
@@ -97,6 +106,12 @@ export function normalizeTranscriptionEngine(value) {
 // 语音合成引擎：cloud 走 OpenAI 兼容 /audio/speech，local 走内置 Qwen3-TTS + llama-tts。
 export function normalizeTtsEngine(value) {
   return String(value || "") === "local" ? "local" : "cloud";
+}
+
+// 决策模型服务方式：local 走内置托管（Python venv + 本地权重），remote 走用户自起服务/远程端点。
+// 与 ttsEngine 同款显式开关，默认 remote 保持既有行为。
+export function normalizeDecisionService(value) {
+  return String(value || "") === "local" ? "local" : "remote";
 }
 
 function encryptionAvailable(secretStorage) {
@@ -362,6 +377,13 @@ export function deserializeSettings(stored, secretStorage) {
     reviewerProbability: source.reviewerProbability !== false,
     // 审核模型保存目录（local 模式用）；留空存到应用数据目录
     reviewerModelDir: String(source.reviewerModelDir || ""),
+    // 决策模型（Intern-Decision）服务地址与两个阈值（审批分档、工具组预路由）
+    decisionEndpoint: String(source.decisionEndpoint || ""),
+    decisionService: normalizeDecisionService(source.decisionService),
+    decisionLocalModel: normalizeDecisionModelId(source.decisionLocalModel),
+    decisionModelDir: String(source.decisionModelDir || ""),
+    reviewerDecisionThreshold: normalizeDecisionThreshold(source.reviewerDecisionThreshold, 0.9, 0.5, 0.99),
+    toolsetRouteThreshold: normalizeDecisionThreshold(source.toolsetRouteThreshold, 0.5, 0.3, 0.99),
     searxngEndpoint: String(source.searxngEndpoint || ""),
     bochaApiKey: String(source.bochaApiKey || ""),
     deepseekSearchApiKey: String(source.deepseekSearchApiKey || ""),
@@ -383,6 +405,7 @@ export function deserializeSettings(stored, secretStorage) {
     nativeToolsDisabled: Array.isArray(source.nativeToolsDisabled) ? source.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(source.telemetry),
+    locale: String(source.locale || "").trim() || undefined,
   };
 }
 
@@ -392,6 +415,7 @@ export function serializeSettings(settings, secretStorage) {
   }
   const normalizedProfiles = normalizeProfiles(settings?.profiles);
   const normalized = {
+    locale: String(settings?.locale || "").trim() || undefined,
     identity: normalizeIdentity(settings?.identity),
     endpoint: String(settings?.endpoint || "").trim(),
     model: String(settings?.model || "").trim(),
@@ -422,6 +446,12 @@ export function serializeSettings(settings, secretStorage) {
     reviewerBackend: normalizeReviewerBackend(settings?.reviewerBackend, settings || {}),
     reviewerProbability: settings?.reviewerProbability !== false,
     reviewerModelDir: String(settings?.reviewerModelDir || "").trim(),
+    decisionEndpoint: String(settings?.decisionEndpoint || "").trim(),
+    decisionService: normalizeDecisionService(settings?.decisionService),
+    decisionLocalModel: normalizeDecisionModelId(settings?.decisionLocalModel),
+    decisionModelDir: String(settings?.decisionModelDir || "").trim(),
+    reviewerDecisionThreshold: normalizeDecisionThreshold(settings?.reviewerDecisionThreshold, 0.9, 0.5, 0.99),
+    toolsetRouteThreshold: normalizeDecisionThreshold(settings?.toolsetRouteThreshold, 0.5, 0.3, 0.99),
     searxngEndpoint: String(settings?.searxngEndpoint || "").trim(),
     bochaApiKey: String(settings?.bochaApiKey || "").trim(),
     deepseekSearchApiKey: String(settings?.deepseekSearchApiKey || "").trim(),
@@ -471,6 +501,12 @@ export function serializeSettings(settings, secretStorage) {
     reviewerBackend: normalized.reviewerBackend,
     reviewerProbability: normalized.reviewerProbability,
     reviewerModelDir: normalized.reviewerModelDir,
+    decisionEndpoint: normalized.decisionEndpoint,
+    decisionService: normalized.decisionService,
+    decisionLocalModel: normalized.decisionLocalModel,
+    decisionModelDir: normalized.decisionModelDir,
+    reviewerDecisionThreshold: normalized.reviewerDecisionThreshold,
+    toolsetRouteThreshold: normalized.toolsetRouteThreshold,
     searxngEndpoint: normalized.searxngEndpoint,
     bochaApiKey: normalized.bochaApiKey,
     deepseekSearchApiKey: normalized.deepseekSearchApiKey,

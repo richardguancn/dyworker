@@ -375,3 +375,30 @@ test("飞书渠道凭据加密保存后可完整恢复", () => {
   assert.equal(restored.channels.feishu.appId, "cli_abc123");
   assert.equal(restored.channels.feishu.appSecret, "feishu-secret-xyz");
 });
+
+test("决策模型设置：端点与阈值往返保存，阈值越界夹取，decision 后端原样保留", () => {
+  const stored = serializeSettings({
+    reviewerBackend: "decision",
+    decisionEndpoint: " http://127.0.0.1:7860 ",
+    reviewerDecisionThreshold: 0.95,
+    toolsetRouteThreshold: 0.55,
+  }, secretStorage);
+  const restored = deserializeSettings(stored, secretStorage);
+  assert.equal(restored.reviewerBackend, "decision");
+  assert.equal(restored.decisionEndpoint, "http://127.0.0.1:7860");
+  assert.equal(restored.reviewerDecisionThreshold, 0.95);
+  assert.equal(restored.toolsetRouteThreshold, 0.55);
+
+  // 阈值在渲染端自由输入，主进程统一夹取（审批 0.5–0.99、预路由 0.3–0.99）
+  const clamped = serializeSettings({ reviewerDecisionThreshold: 1.5, toolsetRouteThreshold: 0.1 }, secretStorage);
+  assert.equal(clamped.reviewerDecisionThreshold, 0.99);
+  assert.equal(clamped.toolsetRouteThreshold, 0.3);
+  const floored = serializeSettings({ reviewerDecisionThreshold: 0.2 }, secretStorage);
+  assert.equal(floored.reviewerDecisionThreshold, 0.5);
+  // 非法值回退默认；缺省字段按默认补齐
+  assert.equal(serializeSettings({ reviewerDecisionThreshold: "abc" }, secretStorage).reviewerDecisionThreshold, 0.9);
+  assert.equal(deserializeSettings({}, secretStorage).decisionEndpoint, "");
+  assert.equal(deserializeSettings({}, secretStorage).toolsetRouteThreshold, 0.5);
+  // 旧数据没有 reviewerBackend 时仍按自定义端点推断，不受新枚举影响
+  assert.equal(serializeSettings({ reviewerEndpoint: "https://x.example/v1", reviewerModel: "m1" }, secretStorage).reviewerBackend, "custom");
+});

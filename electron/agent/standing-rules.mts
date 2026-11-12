@@ -1,6 +1,6 @@
 // 常驻允许规则的匹配与建议。
 import path from "node:path";
-import { isComputerUseTool } from "../computer-use.mts";
+import { isComputerUseTool, isLinuxSharedDesktopTool } from "../computer-use.mts";
 import { shellWords } from "../shell-syntax.mts";
 import { basenameOf,commandChainingPattern,ruleDevProgramWidths,ruleEligibleDomainTools,ruleEligiblePathTools,ruleGitCommands,ruleNeverAllowCommands,ruleTrustedPrograms } from "./command-policy.mts";
 import { hookPathMatcher } from "./hooks.mts";
@@ -16,7 +16,7 @@ function ruleDomainOf(url) {
 
 export function matchStandingRule(rules, name, args = {} as any) {
   if (!Array.isArray(rules) || !rules.length) return false;
-  if (isComputerUseTool(name)) return false;
+  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name)) return false;
   for (const rule of rules) {
     if (!rule || typeof rule !== "object") continue;
     if (rule.kind === "path-glob" && ruleEligiblePathTools.has(name) && rule.tool === name) {
@@ -34,7 +34,7 @@ export function matchStandingRule(rules, name, args = {} as any) {
     // 插件工具：与 mcp-tool 同款"逐工具精确白名单"。默认永远是问，
     // 只有用户显式"始终允许这个插件工具"才放行；只读模式（deny-changes）
     // 在更早处已直接拒绝，常驻规则不会覆盖它。
-    if (rule.kind === "plugin-tool" && name.startsWith("plugin__")) {
+    if (rule.kind === "plugin-tool" && name.startsWith("plugin__") && !isLinuxSharedDesktopTool(name)) {
       if (String(rule.pattern || "") === name) return true;
     }
     if (rule.kind === "command-prefix" && name === "run_command") {
@@ -50,6 +50,7 @@ export function matchStandingRule(rules, name, args = {} as any) {
 
 // 为一次审批请求生成可"始终允许"的规则建议；不可规则化时返回 null。
 export function suggestStandingRule(name, args = {} as any) {
+  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name)) return null;
   if (name === "run_command") {
     const command = String(args.command || "").trim();
     const words = shellWords(command);

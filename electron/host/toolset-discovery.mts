@@ -1,6 +1,8 @@
 // 扩展工具组按需激活：首轮只向模型暴露高频核心工具与薄索引 load_toolset，
 // 停用或未接入的分组不出现在索引中；激活后工具保留原名与原有审批边界。
 
+import { browserUseGuidance } from './computer-use-guidance.mts';
+
 const OFFICE_TOOLS = new Set([
   'gov_search',
   'check_official_document',
@@ -28,11 +30,11 @@ const FILE_AND_WAKE_TOOLS = new Set([
 const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
   desktop: {
     summary: '操控本机桌面应用界面（启动应用、查看窗口控件、点击/输入/按键/权限与依赖检查）',
-    guidance: '本机应用操作守则：应用未运行时先 launch_app；首次操作应用前先 get_app_state，后续交互原样传 window_id 并每次重新获取状态；macOS 缺权限先调 check_permissions；Linux 缺组件依次用 check_dependencies、prepare_dependency_install、取得确认后原样传 packages/plan_token/plan_summary 调 install_dependencies（勿用 sudo）。',
+    guidance: '本机应用操作守则：首次操作应用前先 get_app_state，后续交互原样传 window_id 并每次重新获取状态；Mac 和 Linux 按控件编号操作时原样传该次观察的 observation_id。内置本机操作默认仅后台操作，不能因失败擅自切换前台；仅用户明确允许占用前台和输入设备时才能传 background=false。Linux 的 launch_app 无法保证后台启动，未运行的应用可优先尝试其他后台工具；独立 Linux 插件的进程不等于隔离桌面。macOS 缺权限先调 check_permissions；Linux 缺组件依次用 check_dependencies、prepare_dependency_install、取得确认后原样传 packages/plan_token/plan_summary 调 install_dependencies（勿用 sudo）。',
   },
   browser: {
-    summary: '右侧内置可见浏览器（打开网页、查看可交互快照、点击/输入/等待、下载记录与转交人工）',
-    guidance: '浏览器协作守则：操作网页统一用 browser__* 在右侧可见窗口进行；每次点击/输入前先用 browser__observe 或 browser__snapshot 核对元素，遇登录/验证码用 browser__handoff 交用户完成。',
+    summary: '任务独立后台浏览器或右侧可见浏览器（网页、标签页、表单、上传、下载、观察与人工接管）；已有外部浏览器用 desktop',
+    guidance: browserUseGuidance,
   },
   office: {
     summary: '政务与办公专项（gov.cn 政策检索、公文格式检查、工作日推算、导出 Word/Excel、敏感信息扫描、OCR）',
@@ -43,9 +45,34 @@ const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
   file_and_wake: {
     summary: '扩展文件操作与定时唤醒（新建目录、追加/复制/移动/删除文件、获取当前时间、挂起任务 sleep_until）',
   },
+  feishu: {
+    summary: '飞书云文档、多维表格与电子表格检索及读写',
+  },
 };
 
-const GROUP_ORDER = ['desktop', 'browser', 'office', 'history_and_skills', 'file_and_wake'] as const;
+const GROUP_ORDER = ['desktop', 'browser', 'office', 'history_and_skills', 'file_and_wake', 'feishu'] as const;
+
+export function resolveGroupSummary(group: string, tools?: any[]): string {
+  if (GROUP_META[group]?.summary) return GROUP_META[group].summary;
+  if (group.startsWith('plugin_')) {
+    const pluginId = group.replace(/^plugin_/, '');
+    if (pluginId.includes('knowledge_base') || pluginId.includes('kb')) {
+      return '知识库检索与文档导入/管理';
+    }
+    if (pluginId.includes('office')) {
+      return 'Word、Excel、PPT 等 Office 文档创建与编辑';
+    }
+    if (tools && tools.length > 0) {
+      const toolNames = tools.slice(0, 3).map(t => {
+        const fn = t?.function || t;
+        return fn?.name?.replace(/^plugin__[^_]+__/, '') || '';
+      }).filter(Boolean);
+      return `插件「${pluginId}」扩展工具（含 ${toolNames.join('、')}${tools.length > 3 ? ' 等' : ''}）`;
+    }
+    return `插件「${pluginId}」扩展工具`;
+  }
+  return '扩展工具集合';
+}
 
 function toolNameOf(tool: any): string {
   return String((tool?.function || tool)?.name || '');
@@ -59,6 +86,11 @@ function classifyGroup(name: string, identity: string): string | null {
     return 'history_and_skills';
   }
   if (FILE_AND_WAKE_TOOLS.has(name)) return 'file_and_wake';
+  if (name.startsWith('feishu_')) return 'feishu';
+  if (name.startsWith('plugin__')) {
+    const match = /^plugin__([a-zA-Z0-9_-]+)__/.exec(name);
+    return match ? `plugin_${match[1]}` : 'plugins';
+  }
   return null;
 }
 
@@ -92,10 +124,14 @@ export function prepareToolsetDiscovery(
     deferredByGroup.set(group, bucket);
   }
 
-  const availableGroups = GROUP_ORDER.filter(group => (deferredByGroup.get(group)?.length || 0) > 0);
+  const discoveredGroups = [...deferredByGroup.keys()];
+  const availableGroups = [
+    ...GROUP_ORDER.filter(group => discoveredGroups.includes(group)),
+    ...discoveredGroups.filter(group => !(GROUP_ORDER as readonly string[]).includes(group)).sort(),
+  ];
   if (availableGroups.length > 0) {
     const groupLines = availableGroups
-      .map(group => `${group}（${GROUP_META[group].summary}）`)
+      .map(group => `${group}（${resolveGroupSummary(group, deferredByGroup.get(group))}）`)
       .join('；');
     initial.push({
       type: 'function',

@@ -22,6 +22,7 @@ export const browserReadOnlyTools = new Set([
   "browser__snapshot",
   "browser__close",
   "browser__observe",
+  "browser__inspect",
   "browser__wait",
   "browser__handoff",
 ]);

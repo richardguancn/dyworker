@@ -92,7 +92,7 @@ export function createBotApproval(options: any) {
         const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
           currentVersion: async () => reviewContextFingerprint(mode() + await getContext() + await readEntryScripts()),
           review: options.review || reviewApproval, input: { settings: await resolved(options.settings), fetchImpl: options.fetchImpl,
-          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, command: args.command, workspacePath, details: JSON.stringify(args) + entryScripts, observation,
+          signal, action: { kind: name, title: `机器人：${toolSummary(name, args)}`, args, command: args.command, workspacePath, details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
           context, onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal?.throwIfAborted();

@@ -39,6 +39,37 @@ test('prepareToolsetDiscovery 按身份分层工具组并去重历史搜索，�
   assert.ok(!gov.availableGroups.includes('office'));
 });
 
+test('prepareToolsetDiscovery 将飞书工具与插件工具按需归组，不在首轮暴露', () => {
+  const toolsWithPluginsAndFeishu = [
+    { type: 'function', function: { name: 'read_file', description: '读文件' } },
+    { type: 'function', function: { name: 'feishu_read_doc', description: '读取飞书文档' } },
+    { type: 'function', function: { name: 'feishu_bitable_read_records', description: '读多维表格' } },
+    { type: 'function', function: { name: 'plugin__dyworker_knowledge_base__kb_query', description: '知识库检索' } },
+    { type: 'function', function: { name: 'plugin__dsh_office_tools__word_create', description: '创建 Word' } },
+  ];
+  const discovery = prepareToolsetDiscovery(toolsWithPluginsAndFeishu);
+  const initialNames = discovery.initial.map(t => t.function.name);
+  assert.deepEqual(initialNames, ['read_file', 'load_toolset']);
+  assert.ok(discovery.availableGroups.includes('feishu'));
+  assert.ok(discovery.availableGroups.includes('plugin_dyworker_knowledge_base'));
+  assert.ok(discovery.availableGroups.includes('plugin_dsh_office_tools'));
+
+  const activated = activateToolsets(discovery.deferredByGroup, ['plugin_dyworker_knowledge_base']);
+  assert.deepEqual(activated.tools.map(t => t.function.name), ['plugin__dyworker_knowledge_base__kb_query']);
+  assert.match(activated.text, /已激活 1 个工具/);
+});
+
+test('电脑与浏览器工具说明反映默认后台执行及两种系统的观察编号要求', () => {
+  const tools = [
+    { function: { name: 'mcp__computer-use__get_app_state', description: '读取应用' } },
+    { function: { name: 'browser__open', description: '打开网页' } },
+  ];
+  const discovery = prepareToolsetDiscovery(tools);
+  assert.match(discovery.initial.find(item => item.function.name === 'load_toolset').function.description, /任务独立后台浏览器/);
+  const loaded = activateToolsets(discovery.deferredByGroup, ['desktop']);
+  assert.match(loaded.text, /Mac 和 Linux 按控件编号操作时原样传该次观察的 observation_id/);
+});
+
 test('runAgent 首轮仅暴露精简工具与精准自审参数，load_toolset 与 builtin-visual-output 按需生效', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-slim-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -116,6 +147,71 @@ test('runAgent 首轮仅暴露精简工具与精准自审参数，load_toolset �
   assert.match(JSON.stringify(requests[1].messages), /dyworker-ui/);
   const exists = await fs.stat(path.join(root, 'obsolete.txt')).then(() => true, () => false);
   assert.equal(exists, false);
+});
+
+test('runAgent 决策模型预路由：命中阈值的工具组首轮直接激活，服务不可达时静默降级', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-route-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const extraTools = [...browserToolDefinitions()];
+  const conversation = [{ role: 'user', content: '打开 example.com 检查页面内容' }];
+
+  // 命中阈值：browser 组按 noul 概率 0.9 预激活，首轮请求即含 browser__open
+  const requests = [];
+  let decisionCalls = 0;
+  let step = 0;
+  const result = await runAgent({
+    settings: { ...settings, decisionEndpoint: 'http://127.0.0.1:7930', toolsetRouteThreshold: 0.5 },
+    workspacePath: root,
+    approvalMode: 'reviewer',
+    extraTools,
+    onExtraTool: async () => ({ ok: true, result: 'ok' }),
+    conversation,
+    fetchImpl: async (url, options) => {
+      if (String(url).includes('/v1/decisions')) {
+        decisionCalls += 1;
+        const body = JSON.parse(options.body);
+        assert.equal(body.questions.browser.type, 'noul');
+        assert.match(body.state, /打开 example.com/);
+        return { ok: true, json: async () => ({ answers: { browser: { type: 'noul', probabilities: { yes: 0.9, no: 0.1 } } } }) };
+      }
+      requests.push(JSON.parse(options.body));
+      const message = step++ === 0
+        ? { role: 'assistant', content: '已检查页面，一切正常。' }
+        : { role: 'assistant', content: '完成。' };
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+  assert.equal(result.status, 'done');
+  assert.equal(decisionCalls, 1);
+  const firstToolNames = requests[0].tools.map(item => item.function.name);
+  assert.ok(firstToolNames.includes('browser__open'), '预路由命中的浏览器工具组应在首轮出现');
+  assert.ok(firstToolNames.includes('load_toolset'));
+
+  // 服务不可达（502）：预路由静默降级，首轮与现状完全一致；同端点短期不再探测
+  const fallbackRequests = [];
+  let fallbackStep = 0;
+  let downCalls = 0;
+  const downResult = await runAgent({
+    settings: { ...settings, decisionEndpoint: 'http://127.0.0.1:7931' },
+    workspacePath: root,
+    approvalMode: 'reviewer',
+    extraTools,
+    onExtraTool: async () => ({ ok: true, result: 'ok' }),
+    conversation,
+    fetchImpl: async (url, options) => {
+      if (String(url).includes('/v1/decisions')) { downCalls += 1; return { ok: false, status: 502, json: async () => ({}) }; }
+      fallbackRequests.push(JSON.parse(options.body));
+      const message = fallbackStep++ === 0
+        ? { role: 'assistant', content: '先看一下页面。' }
+        : { role: 'assistant', content: '完成。' };
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+  assert.equal(downResult.status, 'done');
+  assert.equal(downCalls, 1);
+  const downFirst = fallbackRequests[0].tools.map(item => item.function.name);
+  assert.ok(!downFirst.includes('browser__open'), '预路由降级后首轮不应出现按需工具');
+  assert.ok(downFirst.includes('load_toolset'));
 });
 
 test('DSH 原生技能支持内置图表技能兜底且尊重停用设置', async () => {

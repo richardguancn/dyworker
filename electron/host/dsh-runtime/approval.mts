@@ -52,7 +52,7 @@ export function createDshApproval(options: any) {
         const review = await reviewTaskAction({ version: reviewContextFingerprint(reviewMode + context + entryScripts), signal,
           currentVersion: async () => reviewContextFingerprint(currentMode() + await getContext() + await readEntryScripts()),
           review: options.review || reviewApproval, input: { settings: options.settings, fetchImpl: options.fetchImpl,
-          signal, action: { kind: publicName, title: `DSH：${name}`, command: args.command, workspacePath: tool.workspacePath || options.workspacePath || '', details: JSON.stringify(args) + entryScripts, observation,
+          signal, action: { kind: publicName, title: `DSH：${name}`, args, command: args.command, workspacePath: tool.workspacePath || options.workspacePath || '', details: JSON.stringify(args) + entryScripts, observation,
             toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
           onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal.throwIfAborted();
