@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import hljs from "highlight.js/lib/common";
+import { isPreviewableExtension } from "../electron/file-preview-formats.mts";
 import { localImagePathFromSource } from "../electron/local-image-path.mts";
 import { useResolvedTheme } from "./appearance/controller";
 import { getComposerWorkspacePath } from "./state/sessionStore";
@@ -22,11 +23,30 @@ import { openFilePreviewRef } from "./state/sharedRefs";
 
 const localImageMarker = "dyworker-local-image:";
 
+function localPreviewPathFromHref(href: string): string {
+  if (/^[?#]/.test(href)) return "";
+
+  let filePath = href;
+  if (/^file:\//i.test(href)) {
+    const url = URL.parse(href);
+    if (!url || (url.hostname && url.hostname !== "localhost")) return "";
+    filePath = url.pathname.replace(/^\/([a-z]:\/)/i, "$1");
+  }
+  try { filePath = decodeURIComponent(filePath); } catch { /* 保留原路径 */ }
+
+  const withoutDrive = filePath.replace(/^[a-z]:[\\/]/i, "/");
+  if (/^(?:[\\/]{2}|[a-z][a-z\d+.-]*:)/i.test(withoutDrive) || filePath.includes("\0")) return "";
+  const name = filePath.split(/[\\/]/).pop() || "";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && isPreviewableExtension(name.slice(dot).toLowerCase()) ? filePath : "";
+}
+
 export function markdownUrlTransform(url: string, _key: string, node: Readonly<{ tagName: string }>) {
   if (node.tagName === "img") {
     const filePath = localImagePathFromSource(url);
     if (filePath) return `${localImageMarker}${encodeURIComponent(filePath)}`;
   }
+  if (node.tagName === "a" && localPreviewPathFromHref(url)) return url;
   return defaultUrlTransform(url);
 }
 
@@ -373,12 +393,9 @@ function remarkAutoSpace() {
   };
 }
 
-function MarkdownLink({ href, children, ...props }: ComponentPropsWithoutRef<"a">) {
-  // 只接管本地 HTML 文档链接；网络地址保留原来的打开方式。
-  let filePath = href || "";
-  try { filePath = decodeURIComponent(filePath); } catch { /* 保留原路径 */ }
-  const localHtml = /\.html?$/i.test(filePath) && !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(filePath.replace(/^[a-z]:[\\/]/i, "/"));
-  return <a {...props} href={href} onClick={localHtml ? event => {
+function MarkdownLink({ href, children, node: _node, ...props }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+  const filePath = localPreviewPathFromHref(href || "");
+  return <a {...props} href={href} onClick={filePath ? event => {
     event.preventDefault();
     openFilePreviewRef.current(filePath, getComposerWorkspacePath());
   } : undefined}>{children}</a>;

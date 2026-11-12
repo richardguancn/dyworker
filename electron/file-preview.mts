@@ -1,9 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { officePreviewExtensions, previewImageTypes, textPreviewExtensions } from "./file-preview-formats.mts";
 
-const IMAGE_TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".avif": "image/avif" };
-const OFFICE = new Set([".doc", ".docx", ".docm", ".xlsx", ".xlsm", ".xls", ".ppt", ".pptx", ".pptm", ".rtf"]);
-const TEXT = new Set([".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".yaml", ".yml", ".xml", ".log", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".sql", ".sh", ".html", ".htm", ".ini", ".toml", ".c", ".cpp", ".h", ".java", ".go", ".rs", ".vue", ".svelte"]);
 export const MAX_PREVIEW_BYTES = 32 * 1024 * 1024;
 
 export async function resolvePreviewFile(workspacePath, filePath, enforceSizeLimit = true) {
@@ -22,19 +20,19 @@ export async function readFilePreview(workspacePath, filePath) {
   try {
     const file = await resolvePreviewFile(workspacePath, filePath);
     const extension = path.extname(file.path).toLowerCase();
-    const mime = IMAGE_TYPES[extension] || (extension === ".pdf" ? "application/pdf" : "");
+    const mime = previewImageTypes[extension] || (extension === ".pdf" ? "application/pdf" : "");
     if (mime) {
       const data = await fs.readFile(file.path);
       if (!data.length) throw new Error("文件为空，无法预览");
       if (data.length > MAX_PREVIEW_BYTES) throw new Error("文件超过 32 MB，请使用系统应用打开");
       return { ok: true, ...file, kind: extension === ".pdf" ? "pdf" : "image", mime, data: data.toString("base64") };
     }
-    if (OFFICE.has(extension)) {
+    if (officePreviewExtensions.has(extension)) {
       const { Workspace } = await import("./agent.mts");
       const content = await new Workspace(workspacePath).readFile(file.path);
       return { ok: true, ...file, kind: "text", content, note: "文档文字预览；原始排版、图片和图表请使用系统应用查看。" };
     }
-    if (extension && !TEXT.has(extension)) return { ok: true, ...file, kind: "unsupported", note: "暂不支持预览此格式，请使用系统应用打开。" };
+    if (extension && !textPreviewExtensions.has(extension)) return { ok: true, ...file, kind: "unsupported", note: "暂不支持预览此格式，请使用系统应用打开。" };
     if (file.size > 2 * 1024 * 1024) throw new Error("文本超过 2 MB，请使用系统应用打开");
     const data = await fs.readFile(file.path);
     if (data.includes(0)) return { ok: true, ...file, kind: "unsupported", note: "此文件包含二进制内容，请使用系统应用打开。" };
