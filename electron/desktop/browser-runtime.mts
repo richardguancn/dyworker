@@ -3,6 +3,7 @@ import { app,ipcMain } from "electron";
 import { isSafeBrowserUrl } from "../agent.mts";
 import { BrowserControlManager } from "../browser-control.mts";
 import { forwardNativePanelShortcut } from "../panel-shortcuts.ts";
+import { browserInputGuard } from "./browser-input-guard.mts";
 
 export function createBrowserRuntime(deps: {
   mainWindow: import("electron").BrowserWindow | null;
@@ -80,14 +81,10 @@ app.on("web-contents-created", (_event, contents) => {
   });
   // 键盘输入拦截屏障（补充要求 6）：助手自动操作期间，拦截落入网页的原生按键并触发用户接管
   contents.on("before-input-event", (event, input) => {
-    if (
-      browserControlManager.getStatus().status === "running" &&
-      browserControlManager.session?.webContentsId === contents.id
-    ) {
-      if (input.type === "keyDown" && !input.isAutoRepeat) {
-        event.preventDefault();
-        browserControlManager.takeover({ reason: "检测到用户键盘按键，已由你接管" });
-      }
+    const guard = browserInputGuard(browserControlManager.getStatus(), browserControlManager.session?.webContentsId, contents.id, input);
+    if (guard.prevent) {
+      event.preventDefault();
+      if (guard.takeover) browserControlManager.takeover({ reason: "检测到用户键盘按键，已由你接管" });
       return;
     }
     // 网页拥有焦点时按键不会冒泡到主界面，统一转发应用面板快捷键。
@@ -174,28 +171,33 @@ function sendBrowserPanelCommand(renderer, payload) {
 }
 
 // 助手指定的标签页切换：切过去，并把它对应的 webview 交给调用方重新接管控制
-function activateBrowserPanelTab(renderer, tabId, { ownerSessionId = "" } = {} as any) {
+function activateBrowserPanelTab(renderer, tabId, { ownerSessionId = "", token = "" } = {} as any) {
   const target = browserPanelTabsFor(ownerSessionId).find((tab) => tab.id === tabId);
-  if (!target) return Promise.resolve({ ok: false, result: `找不到标签页 ${tabId}，请先用 browser__tabs list 查看当前标签页` });
-  if (!sendBrowserPanelCommand(renderer, { action: "activate", tabId, ownerSessionId: String(ownerSessionId || "") })) {
-    return Promise.resolve({ ok: false, result: "当前任务窗口不可用，无法切换标签页" });
+  if (!target) return Promise.resolve({ ok: false, safeToResume: true, result: `找不到标签页 ${tabId}，请先用 browser__tabs list 查看当前标签页` });
+  if (!token || !browserControlManager.isOpenReservationValid(token)) return Promise.resolve({ ok: false, safeToResume: true, result: '切换请求已取消' });
+  if (!sendBrowserPanelCommand(renderer, { action: "activate", tabId, ownerSessionId: String(ownerSessionId || ""), token })) {
+    return Promise.resolve({ ok: false, safeToResume: true, result: "当前任务窗口不可用，无法切换标签页" });
   }
   return waitForBrowserPanelState(() => {
+    if (!browserControlManager.isOpenReservationValid(token)) return { cancelled: true };
     const current = browserPanelTabsFor(ownerSessionId).find((tab) => tab.id === tabId);
     if (!current) return { closed: true };
     return current.active ? { tab: current } : null;
   }).then(async (shown) => {
     if (!shown) return { ok: false, result: "切换标签页超时" };
+    if (shown.cancelled) return { ok: false, result: '切换请求已取消' };
     if (shown.closed) return { ok: false, result: `标签页 ${tabId} 已关闭` };
     const { tab } = shown;
     // 空白标签页还没有 webview：切过去即可，等它打开网页后再接管
     if (!tab.webContentsId) return { ok: true, tab, contents: null };
     const contents = await waitForBrowserPanelState(() => {
+      if (!browserControlManager.isOpenReservationValid(token)) return { cancelled: true };
       if (activeEmbeddedBrowserContentsId !== tab.webContentsId) return null;
       const candidate = embeddedBrowserContentsById.get(tab.webContentsId);
       return candidate && !candidate.isDestroyed?.() ? candidate : null;
     });
     if (!contents) return { ok: false, result: "切换标签页超时" };
+    if (contents.cancelled) return { ok: false, result: '切换请求已取消' };
     return { ok: true, tab, contents };
   });
 }

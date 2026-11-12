@@ -5,7 +5,7 @@ export function browserControlIpcPlugin(deps) {
   return {
     name: "ipc:browser-control",
     apply(ctx) {
-      const { trustedHandle, browserControlManager, getMainWindow } = deps;
+      const { trustedHandle, browserControlManager, getMainWindow, backgroundBrowserHandoffs } = deps;
 
 trustedHandle("browser-control:takeover", () => browserControlManager.takeover());
 
@@ -26,6 +26,16 @@ trustedHandle("browser-control:resume", (_event, payload) => {
 trustedHandle("browser-control:stop", () => browserControlManager.stop());
 
 trustedHandle("browser-control:status", () => browserControlManager.getStatus());
+trustedHandle('browser-control:validate-switch', (_event, request) => {
+  const reservation = browserControlManager.openReservation;
+  return Boolean(reservation && browserControlManager.isOpenReservationValid(request?.token)
+    && reservation.ownerSessionId === String(request?.ownerSessionId || '') && reservation.tabId === String(request?.tabId || ''));
+});
+trustedHandle('background-browser-handoff:list', () => backgroundBrowserHandoffs.list());
+trustedHandle('background-browser-handoff:show', (_event, id) => backgroundBrowserHandoffs.show(id));
+trustedHandle('background-browser-handoff:ready', (_event, id) => backgroundBrowserHandoffs.ready(id));
+trustedHandle('background-browser-handoff:choose-file', (_event, id) => backgroundBrowserHandoffs.chooseFile(id));
+trustedHandle('background-browser-handoff:discard', (_event, id) => backgroundBrowserHandoffs.discard(id));
     },
   };
 }

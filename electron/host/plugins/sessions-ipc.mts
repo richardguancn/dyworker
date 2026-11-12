@@ -6,7 +6,7 @@ export function sessionsIpcPlugin(deps) {
     name: "ipc:sessions",
     inject: ["sessions"],
     apply(ctx) {
-      const { trustedHandle, syncChannelSessionWorkspaces, channelMetaOf } = deps;
+      const { trustedHandle, syncChannelSessionWorkspaces, channelMetaOf, backgroundBrowserHandoffs } = deps;
 
 trustedHandle("sessions:save", async (_event, payload) => {
   try {
@@ -27,6 +27,7 @@ trustedHandle("sessions:save", async (_event, payload) => {
     };
     await syncChannelSessionWorkspaces(Array.isArray(payload?.meta) ? payload.meta : channelMetaOf(delta.changed));
     await ctx.sessions.applyDelta(delta);
+    await Promise.all(delta.removed.map((id: any) => backgroundBrowserHandoffs?.discardOwner?.(String(id))));
     return { ok: true };
   } catch (error: any) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

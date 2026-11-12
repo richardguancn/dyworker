@@ -78,6 +78,7 @@ export class AgentService extends Service {
       const loop = options.loop || { enabled: false, iteration: 1, maximum: 1 };
       let iterationMessages = options.conversation;
       while (true) {
+        onExtraTool?.setExecutionResult?.(null);
         await this.ctx.mods.dispatch(sessionId,'turn.start',{turnId:options.runId||sessionId},async()=>({}),signal);
         if (options.loopStateEvents) {
           emit({ type: "loop-state", active: loop.enabled, iteration: loop.iteration, maximum: loop.maximum, status: "正在执行" });
@@ -132,6 +133,7 @@ export class AgentService extends Service {
           requestApproval: permissions.request,
           requestUserInput: options.requestUserInput,
         });
+        onExtraTool?.setExecutionResult?.(result);
         await this.ctx.mods.dispatch(sessionId,'turn.complete',{turnId:options.runId||sessionId,answer:result.finalText||'',isAborted:isCancelled()},async()=>({}),signal.aborted?undefined:signal);
         // 每轮任务结束前都做记忆复盘落盘（四个入口原行为一致）
         const memoryWorkspacePath = resolveWorkspacePath();
@@ -143,6 +145,9 @@ export class AgentService extends Service {
           await options.onCancelled?.();
           return { status: "cancelled", finalText: result.finalText || "",
             ...(result.dshTurns ? {dshTurns:result.dshTurns,executedMessages:result.executedMessages} : {}) };
+        }
+        if (onExtraTool?.hasPendingHumanHandoff?.()) {
+          return { ...result, status: 'paused', goalAchieved: false, reason: '网页等待人工处理，处理完成后可继续。' };
         }
         if (result.status === "sleeping" && result.wake) {
           // 主动挂起（self-wake）：登记唤醒记录，到点由调度 tick 续跑

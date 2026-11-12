@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Cookie, Database, History, KeyRound, X } from "lucide-react";
+import { t } from "../../i18n";
 import type { BrowserImportKinds, BrowserImportSource } from "../../types";
 import { BrowserBrandMark } from "./BrowserBrandMark";
 import type { BrowserPasswordEntry } from "./browserUtils";
@@ -84,30 +85,30 @@ export function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () 
   };
 
   const kindRows: { key: keyof BrowserImportKinds; label: string; icon: typeof KeyRound; unit: string; note?: string }[] = [
-    { key: "passwords", label: "已保存的密码", icon: KeyRound, unit: "个" },
-    { key: "cookies", label: "Cookie", icon: Cookie, unit: "条" },
-    { key: "history", label: "浏览记录", icon: History, unit: "条" },
-    { key: "localstorage", label: "站点数据", icon: Database, unit: "项", note: "localStorage，kimi 等新站点的登录态在这里" },
+    { key: "passwords", label: t("browser.savedPasswords", "已保存密码"), icon: KeyRound, unit: t("browser.passwordUnit", "个") },
+    { key: "cookies", label: "Cookie", icon: Cookie, unit: t("browser.cookieUnit", "条") },
+    { key: "history", label: t("browser.history", "浏览记录"), icon: History, unit: t("browser.historyUnit", "条") },
+    { key: "localstorage", label: t("browser.siteData", "站点数据"), icon: Database, unit: t("browser.siteDataUnit", "项"), note: t("browser.siteDataNote", "保存各网站的本地登录态与缓存") },
   ];
 
   return (
     <div className="dialog-overlay" role="presentation" onClick={onClose}>
-      <div className="browser-import-dialog" role="dialog" aria-modal="true" aria-label="从浏览器导入" onClick={(event) => event.stopPropagation()}>
+      <div className="browser-import-dialog" role="dialog" aria-modal="true" aria-label={t("browser.importTitle", "从浏览器导入")} onClick={(event) => event.stopPropagation()}>
         <div className="browser-import-header">
           <div className="browser-import-title">
-            <strong>从浏览器导入</strong>
-            <span>选择要导入到内置浏览器的数据</span>
+            <strong>{t("browser.importTitle", "从浏览器导入")}</strong>
+            <span>{t("browser.importSubtitle", "选择要导入到内置浏览器的数据")}</span>
           </div>
-          <button className="icon-button subtle tiny" onClick={onClose} aria-label="关闭" title="关闭"><X size={15} /></button>
+          <button className="icon-button subtle tiny" onClick={onClose} aria-label={t("common.close", "关闭")} title={t("common.close", "关闭")}><X size={15} /></button>
         </div>
         {sources === null ? (
-          <p className="panel-empty">正在检测本机浏览器…</p>
+          <p className="panel-empty">{t("browser.detectingBrowsers", "正在检测本机浏览器…")}</p>
         ) : !sources.length ? (
-          <p className="panel-empty">没有检测到可导入的浏览器。支持 Chrome、Edge、Chromium、Brave，以及国产 Linux 环境下的 360 安全浏览器和奇安信可信浏览器。</p>
+          <p className="panel-empty">{t("browser.noImportableBrowsers", "没有检测到可导入的浏览器。支持 Chrome、Edge、Chromium、Brave 等主流浏览器。")}</p>
         ) : (
           <>
             <div className="browser-import-from">
-              <span className="browser-import-from-label">从</span>
+              <span className="browser-import-from-label">{t("browser.importFrom", "从")}</span>
               <div className="browser-import-picker" data-menu-root>
                 <button
                   className="browser-import-picker-button"
@@ -116,11 +117,11 @@ export function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () 
                   onClick={() => setPickerOpen((value) => !value)}
                 >
                   {selected && <BrowserBrandMark id={selected.id} name={selected.name} />}
-                  <span className="browser-import-picker-name">{selected?.name || "选择浏览器"}</span>
+                  <span className="browser-import-picker-name">{selected?.name || t("browser.chooseBrowser", "选择浏览器")}</span>
                   <ChevronDown size={14} />
                 </button>
                 {pickerOpen && (
-                  <div className="browser-import-picker-menu" role="listbox" aria-label="选择浏览器">
+                  <div className="browser-import-picker-menu" role="listbox" aria-label={t("browser.chooseBrowser", "选择浏览器")}>
                     {sources.map((source) => {
                       const key = `${source.id}|${source.userDataDir}`;
                       return (
@@ -142,12 +143,12 @@ export function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () 
             </div>
             {selected && selected.profiles.length > 1 && (
               <div className="browser-import-from">
-                <span className="browser-import-from-label">画像</span>
+                <span className="browser-import-from-label">{t("browser.profile", "画像")}</span>
                 <select
                   className="browser-import-profile-select"
                   value={effectiveProfileId}
                   onChange={(event) => setProfileId(event.target.value)}
-                  aria-label="选择用户画像"
+                  aria-label={t("browser.chooseProfile", "选择用户画像")}
                 >
                   {selected.profiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>{profile.name}</option>
@@ -155,7 +156,7 @@ export function BrowserImportDialog({ onClose, onDone, onError }: { onClose: () 
                 </select>
               </div>
             )}
-            {selected && <p className="browser-import-hint">导入前，请完全关闭 {selected.name}</p>}
+            {selected && <p className="browser-import-hint">{t("browser.closeBeforeImport", `导入前，请完全关闭 ${selected.name}`, { name: selected.name })}</p>}
             <div className="browser-import-kinds">
               {kindRows.map((row) => {
                 const Icon = row.icon;
@@ -272,14 +273,13 @@ export function BrowserPasswordsDialog({
 
   return (
     <div className="dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="skill-draft-dialog browser-passwords-dialog" role="dialog" aria-modal="true" aria-label="密码和自动填充">
+      <div className="skill-draft-dialog browser-passwords-dialog" role="dialog" aria-modal="true" aria-label={t("browser.passwordsDialogAria", "密码和自动填充")}>
         <div className="dialog-header">
-          <h2>密码和自动填充</h2>
-          <button className="icon-button subtle" aria-label="关闭" onClick={onClose}><X size={16} /></button>
+          <h2>{t("browser.passwordsDialogTitle", "密码和自动填充")}</h2>
+          <button className="icon-button subtle" aria-label={t("common.close", "关闭")} onClick={onClose}><X size={16} /></button>
         </div>
         <p className="browser-passwords-hint">
-          保存的密码经系统加密存储（与导入的密码同库）。在页面提交登录表单时会询问是否保存；
-          再次打开对应站点时可通过「填充已保存的密码」一键填写。
+          {t("browser.passwordsHint", "已保存密码经系统加密存储。登录时可一键自动填写。")}
         </p>
         {error && <p className="error-text">{error}</p>}
         {entries.length ? (
@@ -291,20 +291,20 @@ export function BrowserPasswordsDialog({
                 <div className="browser-password-row" key={key}>
                   <div className="browser-password-copy">
                     <strong>{entry.origin.replace(/^https?:\/\//i, "")}</strong>
-                    <span>{entry.username || "（无用户名）"} · {entry.source || "导入"}</span>
+                    <span>{entry.username || t("browser.noUsername", "（无用户名）")} · {entry.source || t("browser.importedSource", "导入")}</span>
                     {revealed[key] && <code>{revealed[key]}</code>}
                   </div>
                   <div className="browser-password-actions">
-                    <button onClick={() => void toggleReveal(entry)}>{revealed[key] ? "隐藏" : "显示"}</button>
-                    {canFill && <button className="primary" onClick={() => { onFill(); onClose(); }}>填充到当前页</button>}
-                    <button className="danger" onClick={() => void removeEntry(entry)}>删除</button>
+                    <button onClick={() => void toggleReveal(entry)}>{revealed[key] ? t("browser.hidePassword", "隐藏") : t("browser.showPassword", "显示")}</button>
+                    {canFill && <button className="primary" onClick={() => { onFill(); onClose(); }}>{t("browser.fillCurrentPage", "填充到当前页")}</button>}
+                    <button className="danger" onClick={() => void removeEntry(entry)}>{t("common.delete", "删除")}</button>
                   </div>
                 </div>
               );
             })}
           </div>
         ) : (
-          <p className="browser-passwords-empty">还没有保存的密码。在内置浏览器里登录网站时选择「保存」即可。</p>
+          <p className="browser-passwords-empty">{t("browser.noSavedPasswords", "暂无保存的密码。在内置浏览器中登录时可一键保存。")}</p>
         )}
       </div>
     </div>

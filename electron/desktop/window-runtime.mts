@@ -19,6 +19,7 @@ export function createWindowRuntime(deps: {
   isTrustedRendererUrl: (url: unknown) => boolean;
   isDevelopment: boolean;
   rendererEntryUrl: string;
+  onMainWindowClosed?: () => void;
 }) {
   const { resolvedAppearanceTheme, applyWindowAppearance, performAppearanceReset, isTrustedRendererUrl } = deps;
 
@@ -207,6 +208,7 @@ function createWindow() {
   }
   deps.mainWindow.once("closed", () => {
     deps.mainWindow = undefined;
+    deps.onMainWindowClosed?.();
   });
   // 主窗口权限：media 沿用现有放行；本机字体枚举仅放行主窗口自身，内嵌网页不开放
   deps.mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) =>

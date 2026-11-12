@@ -121,6 +121,37 @@ function createMockWebContents({ url = "https://example.com/test", title = "测�
   return contents;
 }
 
+test('复制和粘贴使用当前页面的临时文字，拒绝无内容、密码和其他剪贴板快捷键', async () => {
+  const contents = createMockWebContents();
+  let selection = { text: '示例文字', editable: true };
+  contents.executeJavaScript = async () => selection;
+  const adapter = new BrowserPageAdapter(contents);
+  assert.equal((await adapter.dispatchKeypress('ControlOrMeta+v')).ok, false);
+  assert.equal((await adapter.dispatchKeypress('ControlOrMeta+c')).ok, true);
+  assert.equal((await adapter.dispatchKeypress('ControlOrMeta+v')).ok, true);
+  assert.deepEqual(contents.sentCDPCommands.filter(item => item.method === 'Input.insertText').map(item => item.params.text), ['示例文字']);
+  assert.ok(!contents.sentCDPCommands.some(item => item.params?.commands?.some(command => ['copy', 'cut', 'paste'].includes(command))));
+  assert.equal((await adapter.dispatchKeypress('Shift+Insert')).ok, false);
+  assert.equal((await adapter.dispatchKeypress('Control+Shift+Insert')).ok, false);
+  assert.equal((await adapter.dispatchKeypress('Control+Shift+Delete')).ok, false);
+  selection = { error: '不能复制密码框内容' };
+  assert.match((await adapter.dispatchKeypress('ControlOrMeta+c')).result, /密码/);
+  adapter.dispose();
+  assert.equal(adapter.taskClipboard, null);
+  const next = new BrowserPageAdapter(createMockWebContents());
+  assert.equal((await next.dispatchKeypress('ControlOrMeta+v')).ok, false);
+  next.dispose();
+});
+
+test('适配器不关闭由后台页面持有的保护通道', async () => {
+  const contents = createMockWebContents();
+  contents.debugger.attached = true;
+  const adapter = new BrowserPageAdapter(contents);
+  assert.equal(await adapter.ensureDebugger(), true);
+  adapter.dispose();
+  assert.equal(contents.debugger.isAttached(), true);
+});
+
 test("BrowserPageAdapter: observe 提取语义树与视口截图", async () => {
   const mockContents = createMockWebContents();
   const adapter = new BrowserPageAdapter(mockContents);
@@ -225,6 +256,148 @@ test("BrowserPageAdapter: wait 支持条件提前退出与超时机制", async (
   assert.equal(timeoutRes.ok, false);
   assert.equal(timeoutRes.errorCode, "WAIT_TIMEOUT");
 
+  adapter.dispose();
+});
+
+test('等待时页面卡住或任务取消能及时结束，迟到结果不能当作成功', async () => {
+  const contents = createMockWebContents();
+  const calls = [];
+  let resolveProbe;
+  contents.executeJavaScript = (script, userGesture) => { calls.push({ script, userGesture }); return new Promise(resolve => { resolveProbe = resolve; }); };
+  const adapter = new BrowserPageAdapter(contents, { scriptTimeoutMs: 40 });
+  const stalled = await adapter.wait({ condition: { type: 'text_present', value: '完成' }, timeoutMs: 500 });
+  assert.equal(stalled.errorCode, 'PAGE_UNRESPONSIVE');
+  assert.equal(calls[0].userGesture, false);
+  const controller = new AbortController();
+  const waiting = adapter.wait({ condition: { type: 'text_present', value: '完成' }, timeoutMs: 1000, signal: controller.signal });
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(waiting, /WAIT_ABORTED/);
+  resolveProbe('完成');
+  const beforeImmediate = calls.length;
+  const immediate = new AbortController();
+  const cancelled = adapter.wait({ condition: { type: 'text_present', value: '完成' }, timeoutMs: 1000, signal: immediate.signal });
+  immediate.abort();
+  await assert.rejects(cancelled, /WAIT_ABORTED/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, beforeImmediate, '取消发生在读取开始前时不能再读取页面');
+  assert.equal((await adapter.wait({ condition: { type: 'invalid' }, timeoutMs: 100 })).errorCode, 'INVALID_WAIT');
+  assert.equal((await adapter.wait({ condition: { type: 'url_contains', value: 'test' }, timeoutMs: Infinity })).errorCode, 'INVALID_WAIT');
+  adapter.dispose();
+});
+
+test('等待元素时能识别无效选择器，不伪造用户操作', async () => {
+  const contents = createMockWebContents();
+  let gesture;
+  contents.executeJavaScript = async (_script, value) => { gesture = value; return { ok: false }; };
+  const adapter = new BrowserPageAdapter(contents);
+  const result = await adapter.wait({ condition: { type: 'element_present', selector: '[' }, timeoutMs: 1000 });
+  assert.equal(result.errorCode, 'INVALID_SELECTOR');
+  assert.equal(gesture, false);
+  adapter.dispose();
+});
+
+test('鼠标按下未返回时被接管，也只在正确位置释放一次正确按键', async () => {
+  const contents = createMockWebContents();
+  const commands = [];
+  let finishPress;
+  contents.debugger.sendCommand = async (method, params) => {
+    commands.push({ method, params });
+    if (params.type === 'mousePressed') return new Promise(resolve => { finishPress = resolve; });
+    return {};
+  };
+  const adapter = new BrowserPageAdapter(contents);
+  const controller = new AbortController();
+  const action = adapter.dispatchMouseAction('right_click', { x: 77, y: 44 }, { signal: controller.signal });
+  while (!finishPress) await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  const cleanup = adapter.releaseInputState();
+  await assert.rejects(action, /LEASE_REVOKED/);
+  await cleanup;
+  const releases = commands.filter(item => item.params.type === 'mouseReleased');
+  assert.deepEqual(releases.map(item => item.params), [{ type: 'mouseReleased', x: 77, y: 44, button: 'right', clickCount: 1 }]);
+  finishPress({});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(commands.filter(item => item.params.type === 'mouseReleased').length, 1);
+  adapter.dispose();
+});
+
+test('按键按下未返回时取消，释放时保留完整按键信息', async () => {
+  const contents = createMockWebContents();
+  const commands = [];
+  let finishPress;
+  contents.debugger.sendCommand = async (method, params) => {
+    commands.push({ method, params });
+    if (params.type === 'rawKeyDown') return new Promise(resolve => { finishPress = resolve; });
+    return {};
+  };
+  const adapter = new BrowserPageAdapter(contents);
+  const controller = new AbortController();
+  const action = adapter.dispatchKeypress('Shift+Tab', { signal: controller.signal });
+  while (!finishPress) await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  const cleanup = adapter.releaseInputState();
+  await assert.rejects(action, /LEASE_REVOKED/);
+  await cleanup;
+  const releases = commands.filter(item => item.params.type === 'keyUp');
+  assert.deepEqual(releases.map(item => item.params), [{ type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: 8 }]);
+  finishPress({});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(commands.filter(item => item.params.type === 'keyUp').length, 1);
+  adapter.dispose();
+});
+
+test('先前输入仍在释放时，新输入必须等待释放确认', async () => {
+  const contents = createMockWebContents();
+  const commands = [];
+  let finishRelease;
+  contents.debugger.sendCommand = async (method, params) => {
+    commands.push({ method, params });
+    if (params.type === 'mouseReleased') return new Promise(resolve => { finishRelease = resolve; });
+    return {};
+  };
+  const adapter = new BrowserPageAdapter(contents, { inputReleaseTimeoutMs: 200 });
+  const click = adapter.dispatchMouseAction('click', { x: 15, y: 20 });
+  while (!finishRelease) await new Promise(resolve => setImmediate(resolve));
+  const typing = adapter.dispatchKeypress('Tab');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(commands.some(item => item.params.type === 'rawKeyDown'), false);
+  finishRelease({});
+  assert.equal((await click).ok, true);
+  assert.equal((await typing).ok, true);
+  assert.equal(commands.some(item => item.params.type === 'rawKeyDown'), true);
+  adapter.dispose();
+});
+
+test('输入释放失败或超时后不再发送后续输入', async () => {
+  for (const failure of ['reject', 'timeout']) {
+    const contents = createMockWebContents();
+    const commands = [];
+    contents.debugger.sendCommand = async (method, params) => {
+      commands.push({ method, params });
+      if (params.type === 'mouseReleased') {
+        if (failure === 'reject') throw new Error('通道故障');
+        return new Promise(() => {});
+      }
+      return {};
+    };
+    const adapter = new BrowserPageAdapter(contents, { inputReleaseTimeoutMs: 30 });
+    await assert.rejects(adapter.dispatchMouseAction('click', { x: 15, y: 20 }), /INPUT_RELEASE_FAILED/);
+    await assert.rejects(adapter.dispatchKeypress('Tab'), /INPUT_RELEASE_FAILED/);
+    assert.equal(commands.some(item => item.params.type === 'rawKeyDown'), false);
+    adapter.dispose();
+  }
+});
+
+test('输入释放未确认时，不能通过页面脚本继续更改控件', async () => {
+  const contents = createMockWebContents();
+  const adapter = new BrowserPageAdapter(contents);
+  const observation = await adapter.observe();
+  const before = contents.executedScripts.length;
+  adapter.inputReleaseFailed = true;
+  const result = await adapter.act({ observationId: observation.observationId, action: { type: 'select', ref: 0, value: 'a' } });
+  assert.equal(result.errorCode, 'INPUT_RELEASE_FAILED');
+  assert.equal(contents.executedScripts.length, before);
   adapter.dispose();
 });
 

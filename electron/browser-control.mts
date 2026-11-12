@@ -51,6 +51,7 @@ constructor({ onStateChange } = {} as any) {
     if (this.session && this.session.status === CONTROL_STATUS.HUMAN_CONTROL) {
       throw new Error("HUMAN_TAKEOVER: 页面当前处于人工接管中，未获得用户继续许可前禁止进行自动操作");
     }
+    this.assertInputReleased();
     if (this.session && this.session.status === CONTROL_STATUS.RUNNING) {
       if (this.session.ownerSessionId && ownerSessionId && this.session.ownerSessionId !== ownerSessionId) {
         throw new Error(`TARGET_BUSY: 当前浏览器正被任务 ${this.session.ownerSessionId} 占用，禁止跨任务抢占`);
@@ -136,6 +137,7 @@ constructor({ onStateChange } = {} as any) {
       leaseEpoch,
       actionText,
       pauseReason,
+      inputReleaseState,
       startedAt
     } = this.session;
 
@@ -149,6 +151,7 @@ constructor({ onStateChange } = {} as any) {
       leaseEpoch,
       actionText: actionText || "",
       pauseReason: pauseReason || "",
+      inputReleaseState: inputReleaseState || 'ready',
       elapsedMs: startedAt ? Date.now() - startedAt : 0
     };
   }
@@ -159,6 +162,46 @@ constructor({ onStateChange } = {} as any) {
     } catch (err: any) {
       // 忽略广播错误
     }
+  }
+
+  assertInputReleased() {
+    const session = this.session, adapter = session?.adapter;
+    if (!adapter || session.webContents?.isDestroyed?.()) return;
+    if (session.inputReleaseState === 'failed' || adapter.inputReleaseFailed)
+      throw new Error('TARGET_BUSY: 无法确认之前的操作已结束，请关闭该网页后重新打开');
+    if (session.inputReleaseState === 'pending' || adapter.inputReleases?.size || adapter.lastInputState?.mouseDown || adapter.lastInputState?.keyDown)
+      throw new Error('TARGET_BUSY: 正在结束之前的操作，请稍候');
+  }
+
+  finishStoppedRelease(session, adapter) {
+    if (session.status !== CONTROL_STATUS.STOPPED || session.inputReleaseState !== 'ready' || session.adapter !== adapter) return;
+    try { adapter.dispose(); } catch {}
+    session.adapter = null;
+  }
+
+  beginInputRelease(session) {
+    const adapter = session?.adapter;
+    session.inputReleaseState = 'ready';
+    if (!adapter) return;
+    const epoch = session.leaseEpoch, expectedStatus = session.status;
+    try {
+      adapter.setLeaseChecker(() => false);
+      void adapter.releaseInputState();
+      if (adapter.inputReleaseFailed) session.inputReleaseState = 'failed';
+      else if (adapter.inputReleases?.size) {
+        session.inputReleaseState = 'pending';
+        void adapter.waitForInputRelease().then(ok => {
+          if (this.session !== session || session.leaseEpoch !== epoch || session.status !== expectedStatus) return;
+          session.inputReleaseState = ok ? 'ready' : 'failed';
+          this.finishStoppedRelease(session, adapter);
+          this.broadcastState();
+        }).catch(() => {
+          if (this.session !== session || session.leaseEpoch !== epoch || session.status !== expectedStatus) return;
+          session.inputReleaseState = 'failed';
+          this.broadcastState();
+        });
+      }
+    } catch { session.inputReleaseState = 'failed'; }
   }
 
   /**
@@ -180,6 +223,7 @@ constructor({ onStateChange } = {} as any) {
     if (this.session && this.session.status === CONTROL_STATUS.HUMAN_CONTROL) {
       throw new Error("HUMAN_TAKEOVER: 页面当前处于人工接管中，未获得用户继续许可前禁止重新获取控制");
     }
+    this.assertInputReleased();
 
     // 严密防御：若同一窗口下已有处于运行态的其他任务，直接拒绝跨任务抢占 (F2 / 补充要求 2)
     if (this.session && this.session.status === CONTROL_STATUS.RUNNING) {
@@ -237,6 +281,10 @@ constructor({ onStateChange } = {} as any) {
   takeover({ reason = "已由你接管" } = {} as any) {
     this.openReservation = null;
     if (!this.session) return { ok: false, result: "当前没有活跃的浏览器控制会话" };
+    if (this.session.status === CONTROL_STATUS.HUMAN_CONTROL) return { ok: true, status: CONTROL_STATUS.HUMAN_CONTROL };
+    if (this.session.status === CONTROL_STATUS.STOPPED || !this.session.adapter || this.session.webContents?.isDestroyed?.()) {
+      return { ok: false, result: "当前操作已结束，无法接管。" };
+    }
 
     // 同步递增 leaseEpoch，使所有在途和排队中的动作立即失效
     this.session.leaseEpoch += 1;
@@ -249,14 +297,7 @@ constructor({ onStateChange } = {} as any) {
     this.session.abortController = new AbortController();
 
     // 关键：同步切断 adapter 的 CDP 执行检查器，并在被接管瞬间释放按键 (F1_protocol_await_boundary)
-    if (this.session.adapter) {
-      try {
-        this.session.adapter.setLeaseChecker(() => false);
-        void this.session.adapter.releaseInputState();
-      } catch {
-        // 忽略释放异常
-      }
-    }
+    this.beginInputRelease(this.session);
 
     this.broadcastState();
     return { ok: true, status: CONTROL_STATUS.HUMAN_CONTROL };
@@ -267,9 +308,14 @@ constructor({ onStateChange } = {} as any) {
    */
   resume({ ownerSessionId, runId } = {} as any) {
     if (!this.session) return { ok: false, result: "没有可恢复的控制会话" };
+    if (![CONTROL_STATUS.HUMAN_CONTROL, CONTROL_STATUS.PAUSED].includes(this.session.status) || !this.session.adapter) {
+      return { ok: false, result: "当前操作无法继续，请重新开始。" };
+    }
     if (this.session.webContents?.isDestroyed?.()) {
       return { ok: false, result: "目标网页已关闭，无法恢复" };
     }
+    if (this.session.inputReleaseState === 'pending') return { ok: false, result: '正在结束之前的输入，请稍候。' };
+    if (this.session.inputReleaseState === 'failed' || this.session.adapter?.inputReleaseFailed) return { ok: false, result: '无法确认之前的输入已经结束，请关闭该网页后重新打开。' };
 
     if (ownerSessionId && this.session.ownerSessionId !== ownerSessionId) {
       return { ok: false, result: "会话身份不匹配，无法恢复控制" };
@@ -280,6 +326,7 @@ constructor({ onStateChange } = {} as any) {
     this.session.status = CONTROL_STATUS.RUNNING;
     this.session.actionText = "助手正在重新观察页面...";
     this.session.pauseReason = "";
+    this.session.inputReleaseState = 'ready';
     this.session.abortController = new AbortController();
 
     // 关键修复 (F8_resume_limit)：人工恢复后重置连续动作计数与计时器，给予新配额
@@ -299,30 +346,26 @@ constructor({ onStateChange } = {} as any) {
   /**
    * 停止控制会话
    */
-  stop({ reason = "用户已停止操作" } = {} as any) {
+  stop({ reason = "用户已停止操作", allowReopen = false } = {} as any) {
     // 停止必须撤销在途打开预占，失去权限的旧请求不得再发起导航 (C2)
     this.openReservation = null;
     if (!this.session) return { ok: true };
+    if (this.session.status === CONTROL_STATUS.STOPPED) {
+      if (!allowReopen) this.session.allowOpenAfterStop = false;
+      return { ok: true, status: CONTROL_STATUS.STOPPED };
+    }
 
     this.session.leaseEpoch += 1;
     this.session.status = CONTROL_STATUS.STOPPED;
+    this.session.allowOpenAfterStop = allowReopen === true;
+    this.session.allowOpenAfterPause = false;
     this.session.actionText = "";
     this.session.pauseReason = reason;
     this.session.abortController.abort();
 
-    if (this.session.adapter) {
-      try {
-        void this.session.adapter.releaseInputState();
-      } catch {
-        // 忽略
-      }
-      try {
-        this.session.adapter.dispose();
-      } catch {
-        // 忽略
-      }
-      this.session.adapter = null;
-    }
+    const adapter = this.session.adapter;
+    this.beginInputRelease(this.session);
+    if (adapter) this.finishStoppedRelease(this.session, adapter);
 
     this.inFlightActionIds.clear();
     this.completedActionIds.clear();
@@ -334,22 +377,20 @@ constructor({ onStateChange } = {} as any) {
   /**
    * 暂停控制（切页、窗口最小化、网络异常等）
    */
-  pause({ reason = "已暂停" } = {} as any) {
+  pause({ reason = "已暂停", allowOpen = false, preserveOpenReservation = false } = {} as any) {
     if (!this.session || this.session.status === CONTROL_STATUS.STOPPED) return;
+    // 普通暂停事件不能撤销用户接管；页面确已销毁时允许进入暂停状态。
+    if (this.session.status === CONTROL_STATUS.HUMAN_CONTROL && !this.session.webContents?.isDestroyed?.()) return;
+    if (!preserveOpenReservation) this.openReservation = null;
 
     this.session.leaseEpoch += 1;
     this.session.status = CONTROL_STATUS.PAUSED;
+    this.session.allowOpenAfterPause = allowOpen === true;
     this.session.actionText = "";
     this.session.pauseReason = reason;
     this.session.abortController.abort();
 
-    if (this.session.adapter) {
-      try {
-        void this.session.adapter.releaseInputState();
-      } catch {
-        // 忽略
-      }
-    }
+    this.beginInputRelease(this.session);
 
     this.broadcastState();
   }
@@ -407,7 +448,8 @@ constructor({ onStateChange } = {} as any) {
   /**
    * 串行队列执行，带上下文校验与双代次防护
    */
-  async runExclusive(taskFn, { description = "", context = {} } = {} as any) {
+  async runExclusive(taskFn, { description = "", context = {}, countsAsAction = false } = {} as any) {
+    if (!this.session) return { ok: false, errorCode: "TARGET_UNAVAILABLE", result: "尚未绑定受控页面" };
     if (this.session.status === CONTROL_STATUS.HUMAN_CONTROL) {
       return { ok: false, errorCode: "HUMAN_TAKEOVER", result: "页面已被用户接管，请等待用户交还控制权" };
     }
@@ -449,7 +491,7 @@ constructor({ onStateChange } = {} as any) {
 
       try {
         const res = await taskFn(this.session.adapter, { signal, checkLease, session: this.session });
-        if (this.session) {
+        if (countsAsAction && this.session && checkLease()) {
           this.session.actionCount += 1;
         }
         return res;
@@ -472,12 +514,13 @@ constructor({ onStateChange } = {} as any) {
   /**
    * 观察当前页面
    */
-  async observe({ mode = "auto", captureScreenshot = true, context = {} } = {} as any) {
+  async observe({ mode = "auto", captureScreenshot = true, offset = 0, context = {} } = {} as any) {
     return this.runExclusive(
       async (adapter) => {
         const obs = await adapter.observe({
           mode,
           captureScreenshot,
+          offset,
           workspacePath: this.session.workspacePath
         });
         return {
@@ -513,6 +556,10 @@ constructor({ onStateChange } = {} as any) {
     );
   }
 
+  async inspect({ context = {} } = {} as any) {
+    return this.runExclusive(adapter => adapter.inspect(), { description: "正在核对当前页面...", context });
+  }
+
   /**
    * 执行交互动作（包含在途与已完成 actionId 并发去重，修复 F7 / 补充要求 5）
    */
@@ -540,14 +587,16 @@ constructor({ onStateChange } = {} as any) {
       }
     }
 
-    const actionDesc = action?.type ? `正在执行 ${action.type}` : "正在操作页面";
+    const actionDesc = ({ click: '正在点击', double_click: '正在双击', right_click: '正在右击', hover: '正在移动指针',
+      type: '正在填写', keypress: '正在按键', scroll: '正在滚动', select: '正在选择', drag: '正在拖动',
+      upload: '正在上传文件', back: '正在返回上一页', forward: '正在前往下一页', reload: '正在刷新页面' })[action?.type] || '正在操作页面';
 
     const taskPromise = this.runExclusive(
-      async (adapter, { signal, checkLease }) => {
-        const result = await adapter.act({ observationId, action }, { signal, checkLease });
+      async (adapter, { signal, checkLease, session }) => {
+        const result = await adapter.act({ observationId, action }, { signal, checkLease, workspacePath: session.workspacePath });
         return result;
       },
-      { description: actionDesc, context }
+      { description: actionDesc, context, countsAsAction: true }
     );
 
     if (actionId) {
@@ -592,6 +641,8 @@ constructor({ onStateChange } = {} as any) {
 
   dispose() {
     this.stop({ reason: "管理器已销毁" });
+    const adapter = this.session?.adapter;
+    if (adapter) void adapter.waitForInputRelease().finally(() => { try { adapter.dispose(); } catch {} });
     this.session = null;
     this.openReservation = null;
     this.actionQueue = Promise.resolve();

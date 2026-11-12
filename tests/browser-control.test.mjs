@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BrowserControlManager, CONTROL_STATUS } from "../electron/browser-control.mts";
 import { BrowserAgent } from "../electron/browser.mts";
+import { EventEmitter } from 'node:events';
+import { browserControlIpcPlugin } from '../electron/host/plugins/browser-control-ipc.mts';
 
 function createMockWebContents() {
   return {
@@ -109,6 +111,237 @@ test("BrowserControlManager: 接管 (takeover) 立即同步递增 leaseEpoch 并
   manager.dispose();
 });
 
+test('可见页面接管时先等待输入释放，失败时不能交还助手', async () => {
+  for (const ok of [true, false]) {
+    const states = [];
+    const manager = new BrowserControlManager({ onStateChange: state => states.push(state) });
+    const contents = createMockWebContents();
+    let finishRelease;
+    contents.debugger.sendCommand = async (_method, params) => {
+      if (params.type === 'mouseReleased') return new Promise((resolve, reject) => { finishRelease = () => ok ? resolve({}) : reject(new Error('释放失败')); });
+      return {};
+    };
+    await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'tab', webContents: contents });
+    const adapter = manager.session.adapter;
+    await adapter.ensureDebugger();
+    adapter.lastInputState.mouseDown = { x: 50, y: 60, button: 'left' };
+    assert.equal(manager.takeover().ok, true);
+    assert.equal(manager.getStatus().inputReleaseState, 'pending');
+    assert.equal(manager.resume({ ownerSessionId: 'one' }).ok, false);
+    finishRelease();
+    for (let i = 0; i < 10 && manager.getStatus().inputReleaseState === 'pending'; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(manager.getStatus().inputReleaseState, ok ? 'ready' : 'failed');
+    assert.equal(manager.resume({ ownerSessionId: 'one' }).ok, ok);
+    assert.ok(states.some(state => state.inputReleaseState === 'pending'));
+    manager.dispose();
+  }
+});
+
+test('暂停时等待输入释放，期间切换为接管不会提前开放页面', async () => {
+  const manager = new BrowserControlManager();
+  const contents = createMockWebContents();
+  let finishRelease;
+  contents.debugger.sendCommand = async (_method, params) => params.type === 'mouseReleased'
+    ? new Promise(resolve => { finishRelease = resolve; }) : {};
+  await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'tab', webContents: contents });
+  const adapter = manager.session.adapter;
+  await adapter.ensureDebugger();
+  adapter.lastInputState.mouseDown = { x: 10, y: 20, button: 'left' };
+  manager.pause({ reason: '暂时暂停' });
+  assert.equal(manager.getStatus().inputReleaseState, 'pending');
+  manager.takeover();
+  assert.equal(manager.getStatus().status, CONTROL_STATUS.HUMAN_CONTROL);
+  assert.equal(manager.getStatus().inputReleaseState, 'pending');
+  finishRelease({});
+  for (let i = 0; i < 10 && manager.getStatus().inputReleaseState === 'pending'; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(manager.getStatus().inputReleaseState, 'ready');
+  manager.dispose();
+});
+
+test('停止后等待输入释放，期间禁止重新打开或接管，失败时保持保护', async () => {
+  for (const ok of [true, false]) {
+    const manager = new BrowserControlManager();
+    const contents = createMockWebContents();
+    let finishRelease, detachCount = 0;
+    let attached = false;
+    contents.debugger.isAttached = () => attached;
+    contents.debugger.attach = () => { attached = true; };
+    contents.debugger.detach = () => { detachCount++; };
+    contents.debugger.sendCommand = async (_method, params) => params.type === 'mouseReleased'
+      ? new Promise((resolve, reject) => { finishRelease = () => ok ? resolve({}) : reject(new Error('释放失败')); }) : {};
+    await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'tab', webContents: contents });
+    const adapter = manager.session.adapter;
+    await adapter.ensureDebugger();
+    adapter.lastInputState.mouseDown = { x: 10, y: 20, button: 'left' };
+    manager.stop();
+    assert.equal(manager.getStatus().status, CONTROL_STATUS.STOPPED);
+    assert.equal(manager.getStatus().inputReleaseState, 'pending');
+    assert.equal(manager.takeover().ok, false);
+    assert.equal(manager.resume({ ownerSessionId: 'one' }).ok, false);
+    assert.equal(manager.getStatus().status, CONTROL_STATUS.STOPPED);
+    assert.equal(detachCount, 0);
+    assert.throws(() => manager.reserveOpen({ ownerSessionId: 'one' }), /TARGET_BUSY/);
+    await assert.rejects(manager.acquireControl({ ownerSessionId: 'one', webContents: contents }), /TARGET_BUSY/);
+    manager.stop();
+    finishRelease();
+    for (let i = 0; i < 10 && manager.getStatus().inputReleaseState === 'pending'; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(manager.getStatus().inputReleaseState, ok ? 'ready' : 'failed');
+    assert.equal(detachCount, ok ? 1 : 0);
+    assert.equal(manager.takeover().ok, false);
+    assert.equal(manager.resume({ ownerSessionId: 'one' }).ok, false);
+    if (ok) await manager.acquireControl({ ownerSessionId: 'one', webContents: contents });
+    else await assert.rejects(manager.acquireControl({ ownerSessionId: 'one', webContents: contents }), /TARGET_BUSY/);
+    manager.dispose();
+  }
+});
+
+test('输入尚未释放时切换标签页不会先改变用户看到的页面', async () => {
+  const manager = new BrowserControlManager();
+  const contents = createMockWebContents();
+  let finishRelease, activations = 0;
+  contents.debugger.sendCommand = async (_method, params) => params.type === 'mouseReleased'
+    ? new Promise(resolve => { finishRelease = resolve; }) : {};
+  const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => ({ ok: true, contents }),
+    activateTab: async () => { activations++; return { ok: true, contents }; } });
+  agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+  await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+  await manager.session.adapter.ensureDebugger();
+  manager.session.adapter.lastInputState.mouseDown = { x: 10, y: 20, button: 'left' };
+  manager.stop();
+  const blocked = await agent.handle('browser__tabs', { action: 'activate', tabId: 'two' });
+  assert.equal(blocked.errorCode, 'TARGET_BUSY');
+  assert.equal(activations, 0);
+  finishRelease({});
+  for (let i = 0; i < 10 && manager.getStatus().inputReleaseState === 'pending'; i++) await new Promise(resolve => setImmediate(resolve));
+  const switched = await agent.handle('browser__tabs', { action: 'activate', tabId: 'two' });
+  assert.equal(switched.errorCode, 'CONTROL_INACTIVE');
+  assert.equal(activations, 0);
+  agent.dispose();
+});
+
+test('标签页切换等待期间被停止或接管，迟到结果不能重新取得控制', async () => {
+  for (const control of ['stop', 'takeover']) for (const blank of [false, true]) {
+    const manager = new BrowserControlManager();
+    const contents = createMockWebContents();
+    let finishSwitch;
+    const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => ({ ok: true, contents }),
+      activateTab: () => new Promise(resolve => { finishSwitch = resolve; }) });
+    agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+    await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+    const switching = agent.handle('browser__tabs', { action: 'activate', tabId: 'two' });
+    assert.equal(manager.getStatus().status, CONTROL_STATUS.PAUSED);
+    manager[control]();
+    finishSwitch({ ok: true, contents: blank ? null : contents });
+    const result = await switching;
+    assert.equal(result.errorCode, 'LEASE_REVOKED');
+    assert.equal(manager.getStatus().status, control === 'stop' ? CONTROL_STATUS.STOPPED : CONTROL_STATUS.HUMAN_CONTROL);
+    agent.dispose();
+  }
+});
+
+test('界面切换前核验请求归属，接管或停止后原请求立即失效', async () => {
+  for (const control of ['stop', 'takeover']) {
+    const manager = new BrowserControlManager();
+    const contents = createMockWebContents();
+    await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+    const handlers = new Map();
+    browserControlIpcPlugin({ trustedHandle: (name, handler) => handlers.set(name, handler), browserControlManager: manager,
+      getMainWindow: () => null, backgroundBrowserHandoffs: {} }).apply({});
+    const token = manager.reserveOpen({ ownerSessionId: 'one', runId: 'run', tabId: 'two' }).token;
+    const validate = handlers.get('browser-control:validate-switch');
+    const request = { token, ownerSessionId: 'one', tabId: 'two' };
+    assert.equal(validate(null, request), true);
+    assert.equal(validate(null, { ...request, tabId: 'other' }), false);
+    assert.equal(validate(null, { ...request, ownerSessionId: 'other' }), false);
+    manager[control]();
+    assert.equal(validate(null, request), false);
+    manager.dispose();
+  }
+});
+
+test('无法确认切换结果时保持暂停，避免继续操作可能已被切走的旧页面', async () => {
+  const manager = new BrowserControlManager();
+  const contents = createMockWebContents();
+  const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => ({ ok: true, contents }),
+    activateTab: async () => ({ ok: false, result: '切换标签页超时' }) });
+  agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+  await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+  const result = await agent.handle('browser__tabs', { action: 'activate', tabId: 'two' });
+  assert.equal(result.ok, false);
+  assert.equal(manager.getStatus().status, CONTROL_STATUS.PAUSED);
+  agent.dispose();
+});
+
+test('暂停或用户停止后旧任务不能通过打开网页绕过控制，关闭后新任务仍可打开', async () => {
+  for (const status of ['pause', 'stop']) {
+    const manager = new BrowserControlManager();
+    const contents = createMockWebContents();
+    let opens = 0, destroyed = false;
+    contents.isDestroyed = () => destroyed;
+    const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => { opens++; return { ok: true, contents: createMockWebContents() }; } });
+    agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+    await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+    manager[status]();
+    assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).errorCode, 'CONTROL_INACTIVE');
+    destroyed = true;
+    assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).errorCode, 'CONTROL_INACTIVE');
+    assert.equal(opens, 0);
+    agent.setContext({ ownerSessionId: 'one', runId: 'new-run' });
+    assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).ok, true);
+    assert.equal(opens, 1);
+    agent.dispose();
+  }
+});
+
+test('主动关闭页面后可重新打开；用户再次停止后不能重新打开', async () => {
+  const manager = new BrowserControlManager();
+  const contents = createMockWebContents();
+  const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => ({ ok: true, contents }), closePanel: async () => {} });
+  agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+  await agent.handle('browser__open', { url: 'https://example.com' });
+  assert.equal((await agent.handle('browser__close')).ok, true);
+  assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).ok, true);
+  assert.equal((await agent.handle('browser__close')).ok, true);
+  manager.stop();
+  assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).errorCode, 'CONTROL_INACTIVE');
+  agent.dispose();
+});
+
+test('打开网页过程中暂停会撤销请求，迟到结果不能恢复操作', async () => {
+  const manager = new BrowserControlManager();
+  const contents = createMockWebContents();
+  let finishOpen, token;
+  const agent = new BrowserAgent({ controlManager: manager, openPanel: async (_url, _tab, credential) => {
+    token = credential.token;
+    return new Promise(resolve => { finishOpen = resolve; });
+  } });
+  agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+  await manager.acquireControl({ ownerSessionId: 'one', runId: 'run', tabId: 'one', webContents: contents });
+  const opening = agent.handle('browser__open', { url: 'https://example.com' });
+  assert.equal(manager.isOpenReservationValid(token), true);
+  manager.pause({ reason: '用户切换了页面' });
+  assert.equal(manager.isOpenReservationValid(token), false);
+  finishOpen({ ok: true, contents });
+  assert.equal((await opening).errorCode, 'LEASE_REVOKED');
+  assert.equal(manager.getStatus().status, CONTROL_STATUS.PAUSED);
+  agent.dispose();
+});
+
+test('关闭失败不能允许旧任务重新打开页面', async () => {
+  for (const throws of [true, false]) {
+    const manager = new BrowserControlManager();
+    const contents = createMockWebContents();
+    const agent = new BrowserAgent({ controlManager: manager, openPanel: async () => ({ ok: true, contents }),
+      closePanel: async () => { if (throws) throw new Error('关闭失败'); return { ok: false, result: '关闭失败' }; } });
+    agent.setContext({ ownerSessionId: 'one', runId: 'run' });
+    await agent.handle('browser__open', { url: 'https://example.com' });
+    if (throws) await assert.rejects(agent.handle('browser__close'), /关闭失败/);
+    else assert.equal((await agent.handle('browser__close')).ok, false);
+    assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).errorCode, 'CONTROL_INACTIVE');
+    agent.dispose();
+  }
+});
+
 test("BrowserControlManager: 恢复控制 (resume) 必须匹配 session 并重置观察", async () => {
   const manager = new BrowserControlManager();
   const mockContents = createMockWebContents();
@@ -183,11 +416,26 @@ test("BrowserControlManager: 目标页面已销毁时拒绝控制获取", async 
   manager.dispose();
 });
 
+test('等待条件满足但重新观察失败时不能当作完整成功', async () => {
+  const contents = createMockWebContents();
+  const agent = new BrowserAgent({ openPanel: async () => ({ ok: true, contents }), getContents: () => contents });
+  agent.setContext({ ownerSessionId: 'wait-session', runId: 'wait-run' });
+  assert.equal((await agent.handle('browser__open', { url: 'https://example.com/form' })).ok, true);
+  agent.controlManager.wait = async () => ({ ok: true, result: '页面已出现目标文字' });
+  agent.controlManager.observe = async () => ({ ok: false, errorCode: 'LEASE_REVOKED', result: '用户已接管' });
+  const result = await agent.handle('browser__wait', { type: 'text_present', value: '完成' });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'LEASE_REVOKED');
+  assert.match(result.result, /未能读取等待后的页面/);
+  agent.dispose();
+});
+
 test("BrowserAgent 端到端闭环：打开页面、观察、填写、选择与提交", async () => {
   const mockContents = createMockWebContents();
+  let closed = 0;
   const agent = new BrowserAgent({
     openPanel: async (url) => ({ ok: true, contents: mockContents }),
-    closePanel: async () => {},
+    closePanel: async () => { closed++; },
     getContents: () => mockContents
   });
   agent.setContext({ ownerSessionId: "session-test", runId: "run-test" });
@@ -227,8 +475,34 @@ test("BrowserAgent 端到端闭环：打开页面、观察、填写、选择与�
   });
   assert.equal(blockedAct.ok, false);
   assert.equal(blockedAct.errorCode, "HUMAN_TAKEOVER");
+  const blockedClose = await agent.handle('browser__close');
+  assert.equal(blockedClose.errorCode, 'HUMAN_TAKEOVER');
+  assert.equal(closed, 0);
+  agent.controlManager.pause({ reason: '任务取消' });
+  assert.equal(agent.controlManager.session.status, CONTROL_STATUS.HUMAN_CONTROL);
+  await assert.rejects(agent.controlManager.acquireControl({ ownerSessionId: 'other', runId: 'new', webContents: mockContents }), /HUMAN_TAKEOVER/);
 
   agent.dispose();
+});
+
+test('关闭浏览器前先停止操作并移除下载处理，避免页面关闭延迟期间继续控制', async () => {
+  for (const closeName of ['browser__close', 'browser__tabs']) {
+    const contents = createMockWebContents();
+    contents.session = new EventEmitter();
+    let statusWhenClosing = '';
+    let listenersWhenClosing = -1;
+    const agent = new BrowserAgent({ openPanel: async () => ({ ok: true, contents }), getContents: () => contents,
+      closePanel: async () => { statusWhenClosing = agent.controlManager.session.status; listenersWhenClosing = contents.session.listenerCount('will-download'); } });
+    agent.setContext({ ownerSessionId: 'owner', runId: 'run' });
+    assert.equal((await agent.handle('browser__open', { url: 'https://example.com' })).ok, true);
+    assert.equal(contents.session.listenerCount('will-download'), 1);
+    const result = await agent.handle(closeName, closeName === 'browser__tabs' ? { action: 'close' } : {});
+    assert.equal(result.ok, true);
+    assert.equal(statusWhenClosing, CONTROL_STATUS.STOPPED);
+    assert.equal(listenersWhenClosing, 0);
+    assert.equal(agent.controlManager.session.status, CONTROL_STATUS.STOPPED);
+    agent.dispose();
+  }
 });
 
 test("BrowserAgent: 多标签页工具 list/activate/close 走面板清单，切页后重新接管控制", async () => {
@@ -249,7 +523,7 @@ test("BrowserAgent: 多标签页工具 list/activate/close 走面板清单，切
     listTabs: () => tabs(),
     activateTab: async (tabId) => {
       const tab = tabs().find((item) => item.id === tabId);
-      if (!tab) return { ok: false, result: `找不到标签页 ${tabId}` };
+      if (!tab) return { ok: false, safeToResume: true, result: `找不到标签页 ${tabId}` };
       commands.push(`activate:${tabId}`);
       activeContents = tabId === "browser-2" ? pageB : pageA;
       return { ok: true, contents: activeContents, tab };
@@ -280,16 +554,20 @@ test("BrowserAgent: 多标签页工具 list/activate/close 走面板清单，切
   const listedAgain = await agent.handle("browser__tabs", { action: "list" });
   assert.ok(listedAgain.result.includes("助手受控页"));
 
-  // 4. close 指定标签页：关掉的正是受控页时，控制会话一起停掉
+  // 4. 找不到的标签页明确报错，不影响当前控制会话。
+  const missing = await agent.handle("browser__tabs", { action: "activate", tabId: "browser-9" });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.result.includes("browser-9"));
+  assert.equal(agent.controlManager.getStatus().status, "running");
+
+  // 5. close 指定标签页：关掉的正是受控页时，控制会话一起停掉
   const closed = await agent.handle("browser__tabs", { action: "close", tabId: "browser-2" });
   assert.equal(closed.ok, true);
   assert.deepEqual(commands, ["activate:browser-2", "close:browser-2"]);
   assert.equal(agent.controlManager.getStatus().status, "stopped");
-
-  // 5. 找不到的标签页明确报错，不能默默退化成别的页面
-  const missing = await agent.handle("browser__tabs", { action: "activate", tabId: "browser-9" });
-  assert.equal(missing.ok, false);
-  assert.ok(missing.result.includes("browser-9"));
+  const restored = await agent.handle("browser__tabs", { action: "activate", tabId: "browser-1" });
+  assert.equal(restored.ok, true);
+  assert.equal(agent.controlManager.session.webContentsId, pageA.id);
 
   // 6. 切到空白标签页：控制会话暂停，不让助手继续操作背后看不见的旧页面
   const blankTabAgent = new BrowserAgent({
@@ -305,6 +583,7 @@ test("BrowserAgent: 多标签页工具 list/activate/close 走面板清单，切
   assert.equal(blankSwitch.ok, true);
   assert.ok(blankSwitch.result.includes("空白页"));
   assert.equal(blankTabAgent.controlManager.getStatus().status, "paused");
+  assert.equal((await blankTabAgent.handle("browser__open", { url: "https://example.com/form", tabId: "browser-3" })).ok, true);
 
   // 7. 宿主没有标签页管理能力时仍保持老语义：list 退回「当前受控标签页」
   const legacy = new BrowserAgent({
