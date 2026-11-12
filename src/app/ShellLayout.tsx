@@ -9,6 +9,7 @@ import { ConversationToolsIcon, PanelLeftIcon, PanelRightIcon } from "./icons";
 import { AppUpdateAction } from "../features/settings/SettingsSubPanels";
 import type { SettingsTab } from "../features/settings/SettingsDialog";
 import { displayWorkspace } from "../lib/text";
+import { t } from "../i18n";
 import type { AppUpdateStatus, GitBranchesInfo, GitDiffStats, SessionRecord, WorkspaceContext } from "../types";
 
 export interface ShellChromeProps {
@@ -369,7 +370,7 @@ export function ShellChrome(props: ShellChromeProps) {
               <PanelLeftIcon size={18} />
             </button>
             {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? "机器人团队" : activeSession?.title || "新任务"}</strong>
+            <strong>{botTeamPageOpen ? t("nav.botTeam", "机器人团队") : (!activeSession?.title || activeSession.title === "新任务" ? t("common.newTask", "新任务") : activeSession.title)}</strong>
           </div>
           {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}
@@ -440,16 +441,16 @@ export function ShellChrome(props: ShellChromeProps) {
           <button className={`rail-button ${railMenuOpen ? "active" : ""}`} aria-label="更多菜单" title="更多"
             aria-haspopup="menu" aria-expanded={railMenuOpen} onClick={() => setRailMenuOpen(open => !open)}><MoreHorizontal size={21} /></button>
           {railMenuOpen && <div className="session-menu rail-menu" role="menu">
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); createTask(); }}><SquarePen size={16} />新建任务</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}><Settings size={16} />设置</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsTab("about"); setSettingsOpen(true); }}><Info size={16} />关于</button>
-            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSidebarOpen(true); setShowArchived(value => !value); }}><History size={16} />{showArchived ? "隐藏归档任务" : "显示归档任务"}</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); createTask(); }}><SquarePen size={16} />{t("sidebar.newTask", "新建任务")}</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}><Settings size={16} />{t("nav.settings", "设置")}</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSettingsTab("about"); setSettingsOpen(true); }}><Info size={16} />{t("nav.about.label", "关于")}</button>
+            <button role="menuitem" onClick={() => { setRailMenuOpen(false); setSidebarOpen(true); setShowArchived(value => !value); }}><History size={16} />{showArchived ? t("sidebar.hideArchived", "隐藏归档任务") : t("sidebar.showArchived", "查看归档")}</button>
           </div>}
         </div>
         <div className="rail-footer">
           <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
             onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
-          <button className="rail-profile" aria-label="设置" title="设置" onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
+          <button className="rail-profile" aria-label="设置" title={t("nav.settings", "设置")} onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
             <span className="avatar" data-auth-status="logged-out"><UserRound size={15} /></span>
           </button>
         </div>

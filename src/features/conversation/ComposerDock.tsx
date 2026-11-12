@@ -4,7 +4,8 @@
 // 机械搬运，不改类名/文案/aria；所有状态与回调仍由 App 经 ConversationPane 传入。
 import { ArrowDown, ArrowUp, AtSign, Check, ChevronDown, CornerDownRight, ListEnd, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
 import { ContextRing } from "../usage/UsagePanels";
-import { composerApprovalModes } from "../plans/PlansPanel";
+import { t, useLocale } from "../../i18n";
+import { composerApprovalModes, getApprovalModeDetails } from "../plans/PlansPanel";
 import { displayWorkspace, messageVisibleText, shortTitle } from "../../lib/text";
 import { renderInlineTokens } from "../message/ClampedText";
 import { DshComposer } from "../../DshComposer";
@@ -51,6 +52,7 @@ export type ComposerDockProps = Pick<ConversationPaneProps,
 >;
 
 export function ComposerDock(props: ComposerDockProps) {
+  const [locale] = useLocale();
   const {
     setComposerDockNode, error, activeSessionError, setError, clearSessionError,
     notice, activeSessionNotice, setNotice, clearSessionNotice,
@@ -109,8 +111,8 @@ export function ComposerDock(props: ComposerDockProps) {
                   setNotice("");
                   if (activeSession?.id) clearSessionNotice(activeSession.id);
                 }}
-                title="关闭提示"
-                aria-label="关闭提示"
+                title={t("common.closeHint", "关闭提示")}
+                aria-label={t("common.closeHint", "关闭提示")}
               >
                 ×
               </button>
@@ -123,8 +125,8 @@ export function ComposerDock(props: ComposerDockProps) {
                 <div className="sleep-card" role="status" aria-label="任务已挂起">
                   <Moon size={14} className="sleep-card-icon" />
                   <span className="sleep-card-text">
-                    任务已挂起，将于 <strong>{formatWakeTime(activeSleeping.wakeAt)}</strong> 自动唤醒继续
-                    {activeSleeping.reason ? `（原因：${activeSleeping.reason}）` : ""}；期间不再接收新消息
+                    {t("composer.sleepingWakePrefix", "任务已挂起，将于")} <strong>{formatWakeTime(activeSleeping.wakeAt)}</strong> {t("composer.sleepingWakeSuffix", "自动唤醒继续")}
+                    {activeSleeping.reason ? `（${t("common.reason", "原因")}：${activeSleeping.reason}）` : ""}；{t("composer.sleepingNoReceive", "期间不再接收新消息")}
                   </span>
                   <span className="sleep-card-actions">
                     <button
@@ -132,14 +134,14 @@ export function ComposerDock(props: ComposerDockProps) {
                       className="sleep-card-button primary"
                       onClick={() => activeSession && void resumeSleepingTask(activeSession.id)}
                     >
-                      立即继续
+                      {t("composer.resumeNow", "立即继续")}
                     </button>
                     <button
                       type="button"
                       className="sleep-card-button"
                       onClick={() => activeSession && void cancelSleepingTask(activeSession.id)}
                     >
-                      取消唤醒
+                      {t("composer.cancelWake", "取消唤醒")}
                     </button>
                   </span>
                 </div>
@@ -147,9 +149,9 @@ export function ComposerDock(props: ComposerDockProps) {
               {activeTaskRunning && activeQueuedMessages.length > 0 && (
                 <div className="queue-card" role="status" aria-label="待发送的消息">
                   <div className="queue-card-head">
-                    <span className="queue-card-title">待发送</span>
-                    <span className="queue-card-count">{activeQueuedMessages.length} 条</span>
-                    <span className="queue-card-hint">当前任务结束后依次执行</span>
+                    <span className="queue-card-title">{t("composer.queuedTitle", "待发送")}</span>
+                    <span className="queue-card-count">{activeQueuedMessages.length} {t("composer.queuedCountUnit", "条")}</span>
+                    <span className="queue-card-hint">{t("composer.queuedHint", "当前任务结束后依次执行")}</span>
                   </div>
                   {activeQueuedMessages.map((entry) => (
                     <div className="queue-card-row" key={entry.message.runId}>
@@ -255,11 +257,11 @@ export function ComposerDock(props: ComposerDockProps) {
             {editingMessage && editingMessage.sessionId === activeSession?.id && (
               <div className="message-editing-banner" role="status">
                 <Pencil size={13} />
-                <span>正在编辑：{shortTitle(messageVisibleText(editingMessage.original))}</span>
+                <span>{t("composer.editing", "正在编辑：{title}", { title: shortTitle(messageVisibleText(editingMessage.original)) })}</span>
                 {editingMessage.original.runId && queuedRunIds.has(editingMessage.original.runId) && (
-                  <button type="button" className="danger" onClick={() => void cancelQueuedMessage()}>取消排队</button>
+                  <button type="button" className="danger" onClick={() => void cancelQueuedMessage()}>{t("composer.cancelQueued", "取消排队")}</button>
                 )}
-                <button type="button" onClick={cancelMessageEdit}>取消编辑</button>
+                <button type="button" onClick={cancelMessageEdit}>{t("composer.cancelEdit", "取消编辑")}</button>
               </div>
             )}
             {mentionMenu && (
@@ -455,8 +457,8 @@ export function ComposerDock(props: ComposerDockProps) {
                   }}
                   onCompositionStart={() => { composingRef.current = true; }}
                   onCompositionEnd={() => { composingRef.current = false; }}
-                  placeholder="描述要完成的工作"
-                  lang="zh-CN"
+                  placeholder={t("composer.placeholder", "描述要完成的工作")}
+                  lang={locale}
                   inputMode="text"
                   autoComplete="off"
                   spellCheck={false}
@@ -481,11 +483,11 @@ export function ComposerDock(props: ComposerDockProps) {
                     <div className="add-menu" role="menu">
                       <button role="menuitem" onClick={() => void chooseWorkspace()}>
                         <FolderOpen size={16} />
-                        <span><strong>{workspacePath ? "更换工作文件夹" : "选择工作文件夹"}</strong><small>让 DYWorker 读取项目文件</small></span>
+                        <span><strong>{workspacePath ? t("composer.changeWorkspace", "更换文件夹") : t("composer.chooseWorkspace", "选择文件夹")}</strong><small>{t("composer.workspaceDesc", "允许读取和修改项目文件")}</small></span>
                       </button>
                       <button role="menuitem" onClick={() => void chooseAttachments()}>
                         <Paperclip size={16} />
-                        <span><strong>添加附件</strong><small>支持文本、代码和图片</small></span>
+                        <span><strong>{t("composer.addAttachment", "添加附件")}</strong><small>{t("composer.attachmentDesc", "支持文本、代码和图片")}</small></span>
                       </button>
                       {activeSession?.runtime === 'dsh' && clientHost().inputSourcesForLaunch().map(source =>
                         <button role="menuitem" key={`input-source:${source.trigger}:${source.name}`}
@@ -507,18 +509,19 @@ export function ComposerDock(props: ComposerDockProps) {
                     onClick={() => setApprovalMenuOpen((value) => !value)}
                     aria-haspopup="menu"
                     aria-expanded={approvalMenuOpen}
-                    aria-label={activeApprovalMode.label}
-                    title={activeApprovalMode.description}
+                    aria-label={getApprovalModeDetails(approvalMode).label}
+                    title={getApprovalModeDetails(approvalMode).description}
                   >
                     <ActiveApprovalIcon size={15} />
-                    <span>{activeApprovalMode.label}</span>
+                    <span>{getApprovalModeDetails(approvalMode).label}</span>
                   </button>
                   {approvalMenuOpen && (
                     <div className="approval-mode-menu" role="menu">
-                      <div className="approval-mode-menu-title">应如何批准 DYWorker 操作？</div>
+                      <div className="approval-mode-menu-title">{t("composer.approval.menuTitle", "操作审批方式")}</div>
                       {composerApprovalModes.map((option) => {
                         const OptionIcon = option.icon;
                         const selected = option.value === approvalMode;
+                        const details = getApprovalModeDetails(option.value);
                         return (
                           <button
                             type="button"
@@ -530,8 +533,8 @@ export function ComposerDock(props: ComposerDockProps) {
                           >
                             <OptionIcon size={19} />
                             <span>
-                              <strong>{option.label}</strong>
-                              <small>{option.description}</small>
+                              <strong>{details.label}</strong>
+                              <small>{details.description}</small>
                             </span>
                             {selected && <Check size={16} className="approval-mode-check" />}
                           </button>
@@ -567,7 +570,7 @@ export function ComposerDock(props: ComposerDockProps) {
                   {modelMenuOpen && (
                     <div className="model-menu" role="menu">
                       {(settings.profiles || []).length ? (<>
-                        <div className="model-menu-title">已保存的模型</div>
+                        <div className="model-menu-title">{t("composer.savedModels", "已保存模型")}</div>
                         {(settings.profiles || []).map((profile) => {
                           const active = profile.endpoint === settings.endpoint && profile.model === settings.model;
                           return (
@@ -590,10 +593,10 @@ export function ComposerDock(props: ComposerDockProps) {
                       {composerModelsLoading ? (
                         <div className="model-menu-title">
                           <LoaderCircle className="spin" size={12} />
-                          正在获取此密钥可用的模型…
+                          {t("composer.fetchingModels", "正在获取可用模型…")}
                         </div>
                       ) : composerModels?.length ? (<>
-                        <div className="model-menu-title">此密钥可用的模型</div>
+                        <div className="model-menu-title">{t("composer.availableModels", "此密钥可用模型")}</div>
                         {composerModels
                           .filter((item) => !(settings.profiles || []).some((profile) => profile.endpoint === settings.endpoint && profile.model === item.id))
                           .map((item) => {
@@ -609,7 +612,7 @@ export function ComposerDock(props: ComposerDockProps) {
                                 <span>
                                   <strong>{item.id}</strong>
                                   {item.contextLimit
-                                    ? <small>{item.contextLimit >= 1048576 ? `${Math.round(item.contextLimit / 1048576)}M` : `${Math.round(item.contextLimit / 1024)}K`} 上下文</small>
+                                    ? <small>{item.contextLimit >= 1048576 ? `${Math.round(item.contextLimit / 1048576)}M` : `${Math.round(item.contextLimit / 1024)}K`} {t("composer.contextLimitSuffix", "上下文")}</small>
                                     : null}
                                 </span>
                                 {active && <Check size={14} />}
@@ -622,8 +625,8 @@ export function ComposerDock(props: ComposerDockProps) {
                           endpoint={settings.endpoint} model={settings.model} effort={settings.reasoningEffort} overrides={settings.reasoningOverrides}
                           onChange={reasoningEffort => void saveComposerReasoning(reasoningEffort)}
                           onConfigure={override => saveComposerReasoning(settings.reasoningEffort, override)} />
-                        <p className="model-menu-hint">模型和思考强度仅用于当前会话，其他会话保持各自的选择。</p>
-                        <p className="model-menu-hint">切换模型或思考强度会使已有的提示词缓存失效；介意额外的 token 消耗时，建议新建会话。</p>
+                        <p className="model-menu-hint">{t("composer.sessionScopeHint", "模型和思考强度仅用于当前会话，其他会话保持各自的选择。")}</p>
+                        <p className="model-menu-hint">{t("composer.promptCacheHint", "切换模型或思考强度会使已有的提示词缓存失效；介意额外的 token 消耗时，建议新建会话。")}</p>
                       </>}
                       <button
                         type="button"
@@ -636,7 +639,7 @@ export function ComposerDock(props: ComposerDockProps) {
                         }}
                       >
                         <Settings size={14} />
-                        管理模型配置
+                        {t("composer.manageModels", "管理模型配置")}
                       </button>
                     </div>
                   )}
@@ -648,8 +651,8 @@ export function ComposerDock(props: ComposerDockProps) {
                   className={`icon-button voice-button ${voiceState === "recording" ? "recording" : ""} ${voiceState === "transcribing" ? "transcribing" : ""}`}
                   onClick={() => void toggleVoiceInput()}
                   disabled={voiceState === "transcribing"}
-                  aria-label={voiceState === "recording" ? "结束录音" : "语音输入"}
-                  title={voiceState === "recording" ? "正在录音，再次点击结束" : "语音输入"}
+                  aria-label={voiceState === "recording" ? t("voice.stopRecording", "结束录音") : t("voice.startVoice", "语音输入")}
+                  title={voiceState === "recording" ? t("voice.recordingHint", "正在录音，再次点击结束") : t("voice.startVoice", "语音输入")}
                 >
                   {voiceState === "transcribing" ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} />}
                 </button>
@@ -662,8 +665,8 @@ export function ComposerDock(props: ComposerDockProps) {
                         const runId = runningRunIdsRef.current.get(activeSession.id);
                         if (runId) void window.dyworker?.cancelTask(activeSession.id, runId);
                       }}
-                      aria-label="停止当前任务"
-                      title={activeScheduledRun ? "停止当前计划任务（排队中的消息仍会继续执行）" : "停止当前任务（排队中的消息仍会继续执行）"}
+                      aria-label={t("composer.stopCurrentTask", "停止当前任务")} /* aria-label="停止当前任务" */
+                      title={activeScheduledRun ? t("composer.stopScheduledRunHint", "停止当前计划任务（排队中的消息仍会继续执行）") : t("composer.stopTaskHint", "停止当前任务（排队中的消息仍会继续执行）")}
                     >
                       <Square size={14} fill="currentColor" />
                     </button>
@@ -672,8 +675,8 @@ export function ComposerDock(props: ComposerDockProps) {
                     className="send-button"
                     onClick={() => void sendMessage()}
                     disabled={!canSend}
-                    aria-label={editingMessage ? "重新发送" : "发送"}
-                    title={activeSleeping ? "任务已挂起，请先点【立即继续】或【取消唤醒】" : "Enter 发送"}
+                    aria-label={editingMessage ? t("composer.resend", "重新发送") : t("composer.send", "发送")}
+                    title={activeSleeping ? t("composer.sleepingHint", "任务已挂起，请先点【立即继续】或【取消唤醒】") : t("composer.enterSend", "Enter 发送")} /* activeSleeping ? "任务已挂起，请先点【立即继续】或【取消唤醒】" : "Enter 发送" */
                   >
                     <ArrowUp size={19} />
                   </button>

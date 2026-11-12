@@ -255,10 +255,22 @@
   z-index: 1;
 }
 
+.composer-input-wrap > textarea {
+  field-sizing: content;
+  scrollbar-gutter: stable;
+}
+
+.composer-input-wrap > textarea,
+.dsh-composer-input {
+  max-height: min(420px, 45vh);
+  overflow-y: auto;
+}
+
 .composer-mirror {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  scrollbar-gutter: stable;
   padding: 1px 5px;
   color: transparent;
   font-size: calc(14.25px * var(--font-ui-scale, 1));

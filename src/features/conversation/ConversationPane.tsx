@@ -5,6 +5,7 @@
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
 import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, RefObject, SetStateAction } from "react";
 import { composerApprovalModes } from "../plans/PlansPanel";
+import { t } from "../../i18n";
 import { indexConversation } from "../../lib/text";
 import { ApprovalCard, QuestionCard } from "../message/Cards";
 import { ImageLightbox } from "../message/ImageLightbox";
@@ -15,6 +16,7 @@ import { TraceConsole } from "../../TraceConsole";
 import { PluginSlotView } from "../../PluginSlotView";
 import type { ComposerHandle } from "../../pluginRuntime/dshDraftEditor.ts";
 import { ComposerDock } from "./ComposerDock";
+import { BackgroundBrowserHandoff } from "../browser/BackgroundBrowserHandoff";
 import { AnnotationMarkerBubble } from "../annotations/SelectionOverlays";
 import type { AnnotationMarker } from "../../annotations";
 import type { ApprovalAction, ApprovalMode, Attachment, ChatMessage, DebugLogEntry, InboxItem, MessageAnnotation, ModelProfile, PendingWakeRecord, ProviderSettings, QuestionRequest, SessionRecord, TraceEvent, WorkspaceContext } from "../../types";
@@ -261,7 +263,7 @@ export function ConversationPane(props: ConversationPaneProps) {
   // 输入区 dock 相关 props 不再逐个解构：整体透传给 <ComposerDock {...props} />。
   const {
     ConversationMessageRow, messageRowActions,
-    activeSession, workspacePath,
+    activeSession, activeId, workspacePath,
     botTeamPageOpen, botTeamAvailable, pluginsPageOpen, settingsOpen,
     conversationView, setConversationView, pluginConversationViews,
     conversationSearchOpen, setConversationSearchOpen, conversationSearchQuery, setConversationSearchQuery,
@@ -287,13 +289,13 @@ export function ConversationPane(props: ConversationPaneProps) {
         </section> : <>
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
-        <div className="conversation-tabs" role="tablist" aria-label="会话视图">
+        <div className="conversation-tabs" role="tablist" aria-label={t("conversation.tabsLabel", "会话视图")}>
           <button
             role="tab"
             aria-selected={conversationView === "chat"}
             className={`conversation-tab ${conversationView === "chat" ? "active" : ""}`}
             onClick={() => setConversationView("chat")}
-          >对话</button>
+          >{t("conversation.tabChat", "对话")}</button>
           {/* 「轨迹」不再硬编码在这里：它由内置插件 dyworker-trajectory 注册进
               conversation.view 插槽（与官方 DSH 的轨迹插件同一套契约），
               视图代码仍是 src/TraceView，插件负责注册与按会话取 trace。 */}
@@ -304,7 +306,7 @@ export function ConversationPane(props: ConversationPaneProps) {
               aria-selected={conversationView === view.key}
               className={`conversation-tab ${conversationView === view.key ? "active" : ""}`}
               onClick={() => setConversationView(view.key)}
-            >{view.label}</button>
+            >{t(`plugin.tab.${view.key}`, view.label)}</button>
           ))}
         </div>
 
@@ -316,14 +318,14 @@ export function ConversationPane(props: ConversationPaneProps) {
         )}
 
         {conversationSearchOpen && (
-          <div className="conversation-search" role="search" aria-label="搜索会话内容">
+          <div className="conversation-search" role="search" aria-label={t("conversation.searchPlaceholder", "搜索本会话对话内容")}>
             <Search size={13} />
             <input
               ref={conversationSearchInputRef}
               type="search"
-              placeholder="搜索本会话对话内容…"
+              placeholder={t("conversation.searchPlaceholder", "搜索本会话对话内容…")}
               value={conversationSearchQuery}
-              aria-label="搜索本会话对话内容"
+              aria-label={t("conversation.searchPlaceholder", "搜索本会话对话内容")}
               onChange={(event) => {
                 setConversationSearchQuery(event.target.value);
                 setConversationSearchMatchIndex(0);
@@ -441,7 +443,7 @@ export function ConversationPane(props: ConversationPaneProps) {
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
                 <span className="empty-mark"><Sparkles size={44} strokeWidth={1.3} /></span>
-                <h1>{!props.ready ? "正在加载…" : props.error && !activeSession ? "暂时无法打开对话" : "我们要完成什么？"}</h1>
+                <h1>{!props.ready ? t("common.loading", "正在加载…") : props.error && !activeSession ? t("common.unableToOpen", "暂时无法打开对话") : t("conversation.whatToWorkOn", "我们要完成什么？")}</h1>
               </div>
             ) : (
               activeSession.messages.map((message, index) => {
@@ -605,6 +607,7 @@ export function ConversationPane(props: ConversationPaneProps) {
           />
         )}
 
+        <BackgroundBrowserHandoff sessionId={activeId} running={activeTaskRunning} />
         <ComposerDock {...props} />
         </>}
       </main>

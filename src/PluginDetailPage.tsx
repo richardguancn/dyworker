@@ -3,13 +3,20 @@ import { ArrowLeft, AlertTriangle, ExternalLink, Loader2 } from 'lucide-react';
 import { PluginIcon } from './PluginIcon';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { t } from './i18n';
 import type { CatalogPlugin } from './pluginCatalog';
 import {BUILTIN_PLUGIN_LABELS} from './pluginLabels';
 import type { PluginCompatibility, PluginDetailRecord, PluginEntryRecord, PluginBundleRecord } from './types';
 
 export function pluginStateLabel(entry: PluginEntryRecord) {
-  return entry.unsupportedReason ? '当前系统不支持' : entry.disabled ? '已停用' : entry.active ? '已启动' : entry.state === 'session-required' ? '用于 DSH 插件会话'
-    : entry.state === 'loading' ? '启动中' : entry.state === 'stopping' ? '正在停用' : entry.state === 'failed' ? '启动失败' : '等待所需能力';
+  return entry.unsupportedReason ? t('plugins.state.unsupported', '当前系统不支持')
+    : entry.disabled ? t('plugins.state.disabled', '已停用')
+    : entry.active ? t('plugins.state.active', '已启动')
+    : entry.state === 'session-required' ? t('plugins.state.sessionRequired', '用于 DSH 插件会话')
+    : entry.state === 'loading' ? t('plugins.state.loading', '启动中')
+    : entry.state === 'stopping' ? t('plugins.state.stopping', '正在停用')
+    : entry.state === 'failed' ? t('plugins.state.failed', '启动失败')
+    : t('plugins.state.waitingCapabilities', '等待所需能力');
 }
 
 /** 插件提供的链接与说明均作为资料展示，不执行 HTML，也不自动加载图片。 */
@@ -69,26 +76,26 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
   const links = [metadata?.homepage ? { label: '项目主页', url: pluginDocumentLink(metadata.homepage) } : null,
     metadata?.repository ? { label: '源码仓库', url: pluginDocumentLink(metadata.repository) } : null,
     catalog ? { label: '市场来源', url: `https://github.com/${catalog.repo}` } : null].filter(Boolean);
-  return <section className="plugins-page plugin-detail-page" aria-label="插件详情">
-    <button className="plugins-text-button plugin-detail-back" onClick={onBack}><ArrowLeft size={15} /> 返回插件列表</button>
+  return <section className="plugins-page plugin-detail-page" aria-label={t("plugins.detailAria", "插件详情")}>
+    <button className="plugins-text-button plugin-detail-back" onClick={onBack}><ArrowLeft size={15} /> {t("plugins.backToList", "返回列表")}</button>
     <header className="plugin-detail-header">
       <div className="plugin-detail-icon"><PluginIcon size={27} /></div>
       <div className="plugin-detail-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1>
         <div className="plugin-detail-tags">{version && <span className="plugin-tag">v{version}</span>}
-          <span className="plugin-tag">{entry ? pluginStateLabel(entry) : '尚未安装'}</span>
-          {entry?.builtin && <span className="plugin-tag">内置</span>}{catalog && <span className="plugin-tag">{catalog.category}</span>}</div>
+          <span className="plugin-tag">{entry ? pluginStateLabel(entry) : t("plugins.notInstalled", "尚未安装")}</span>
+          {entry?.builtin && <span className="plugin-tag">{t("plugins.builtin", "内置")}</span>}{catalog && <span className="plugin-tag">{catalog.category}</span>}</div>
       </div>
       <div className="plugin-detail-actions">{entry ? <>
-        <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? '启用插件' : '停用插件'}</button>
-        {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>卸载插件</button>}
-      </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>安装插件</button>}</div>
+        <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? t("plugins.enable", "启用") : t("plugins.disable", "停用")}</button>
+        {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>{t("plugins.uninstall", "卸载")}</button>}
+      </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>{t("plugins.installAction", "安装")}</button>}</div>
     </header>
-    <p className="plugin-detail-description">{builtin?.summary||catalog?.summary || metadata?.description || bundle?.description || entry?.description || '插件未提供说明。'}</p>
+    <p className="plugin-detail-description">{builtin?.summary||catalog?.summary || metadata?.description || bundle?.description || entry?.description || t("plugins.noDescription", "插件未提供说明。")}</p>
     {catalog&&entry&&!entry.builtin&&version!==catalog.support.version&&<div className="plugins-message warn">当前安装的版本不在已验证清单中。<button className="plugins-text-button" disabled={busy} onClick={onInstall}>安装已验证版本</button></div>}
     {error || detailError ? <div className="plugins-message bad" role="alert"><AlertTriangle size={14} /> {error || detailError}</div> : notice ? <div className="plugins-message ok" role="status">{notice}</div> : null}
     {entry?.error && <div className="plugins-message bad" role="alert">{entry.error}</div>}
     {bundle?.drift && <div className="plugins-message warn">版本与安装记录不一致：{bundle.drift}</div>}
-    <section className="plugin-detail-section"><h2>使用方式</h2>
+    <section className="plugin-detail-section"><h2>{t("plugins.usageSection", "使用方式")}</h2>
       {entry?.unsupportedReason ? <p>{entry.unsupportedReason}</p> : entry?.state === 'session-required' ? <p>在任务中选择“DSH 插件会话”使用。会话中的设置单独保存。</p>
         : entry?.disabled ? <p>插件已停用。启用后可在适用的任务中使用。</p>
         : entry ? <p>{entry.active ? '插件已启动，可在适用的任务中使用。' : '插件尚未启动，请查看上方状态和原因。'}</p>
@@ -98,7 +105,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
       {client && entry && <button className="plugins-text-button" disabled={busy || entry.disabled} onClick={onLoadClient}>重新加载插件界面</button>}
       {clientResult && <p role="status">{clientResult}</p>}
     </section>
-    <section className="plugin-detail-section"><h2>兼容情况</h2>
+    <section className="plugin-detail-section"><h2>{t("plugins.compatSection", "兼容情况")}</h2>
       {entry?.builtin ? <p>此插件随应用提供。其状态以上方实际运行结果为准。</p> : entry ? <>
         <p>检查会在临时目录实际启动插件。检查通过仅说明当前已提供的能力可用，使用中的操作仍按任务权限执行。</p>
         <button className="plugins-text-button" disabled={checking || busy} onClick={() => void check()}>{checking && <Loader2 size={13} className="spin" />}{checking ? '正在检查' : '检查当前版本'}</button>
@@ -112,8 +119,8 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
       </div>}
       {entry?.missingServices?.length ? <p>当前等待：{entry.missingServices.join('、')}</p> : null}
     </section>
-    {entry && <section className="plugin-detail-section"><h2>设置</h2>{configuration}</section>}
-    <section className="plugin-detail-section"><h2>插件资料</h2>
+    {entry && <section className="plugin-detail-section"><h2>{t("common.settings", "设置")}</h2>{configuration}</section>}
+    <section className="plugin-detail-section"><h2>{t("plugins.infoSection", "插件资料")}</h2>
       {loading && <p role="status">正在读取已安装插件的资料…</p>}
       {detail?.metadataError && <p className="plugin-row-error">部分资料无法读取：{detail.metadataError}</p>}
       <dl className="plugin-detail-facts"><dt>包名</dt><dd>{metadata?.name || bundle?.packageName || entry?.name || catalog?.packageName || '未提供'}</dd>
@@ -128,7 +135,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
         {metadata?.dependencies.map(item => <p key={item.name}>{item.name}：{item.version}</p>)}
         {metadata?.peerDependencies.map(item => <p key={`peer:${item.name}`}>{item.name}：{item.version}（共同依赖）</p>)}</details> : null}
     </section>
-    <section className="plugin-detail-section"><h2>插件说明</h2>
+    <section className="plugin-detail-section"><h2>{t("plugins.readmeSection", "插件说明")}</h2>
       {detail?.readme ? <div className="plugin-detail-readme"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={value => pluginDocumentLink(value) || ''}
         components={{ img: () => <span>（说明中的图片未自动加载）</span>, a: ({ href, children }) => href ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a> : <span>{children}</span> }}>{detail.readme}</ReactMarkdown>
         {detail.readmeTruncated && <p>说明较长，仅显示前 64 KB。完整说明请查看插件主页。</p>}</div>

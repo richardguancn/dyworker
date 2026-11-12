@@ -1,8 +1,9 @@
 // 外观设置面板：主题 / 背景 / 液态玻璃 / 字体字号 + 底部操作条。
 // 所有改动只写 controller 的草稿并实时预览；「保存外观」才持久化，「取消」恢复已保存值。
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ImagePlus, RefreshCw, Trash2, UserRound } from "lucide-react";
+import { ImagePlus, RefreshCw, Trash2, UserRound, Globe } from "lucide-react";
 import type { AppearanceImageFit, AppearanceSettings, AppearanceTheme } from "../types";
+import { t, useLocale, SUPPORTED_LOCALES, type SupportedLocale } from "../i18n";
 import {
   discardSession,
   importImage,
@@ -94,6 +95,7 @@ export function AppearanceSettingsPanel() {
   return (
     <div className="appearance-panel">
       <div className="appearance-fields">
+      <LanguageSection />
       {["darwin", "win32", "linux"].includes(platform) && <AppIconSection draft={draft} platform={platform} />}
       <ThemeSection draft={draft} />
       <AccountAvatarSection draft={draft} />
@@ -106,6 +108,63 @@ export function AppearanceSettingsPanel() {
   );
 }
 
+// ---- 语言 ----
+
+function LanguageSection() {
+  const [locale, setLocale] = useLocale();
+  const [notice, setNotice] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+  }, []);
+
+  const handleLocaleChange = (next: SupportedLocale) => {
+    setLocale(next);
+    // 切换后立即以目标语言给出即时反馈提示
+    window.setTimeout(() => {
+      setNotice(t("common.languageSwitched", "界面语言已更新"));
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setNotice(null), 2500);
+    }, 20);
+  };
+
+  return (
+    <>
+      <div className="dialog-section-title">{t("common.language", "界面语言")}</div>
+      <div className="appearance-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <p className="dialog-note" style={{ margin: 0 }}>
+          {t("common.languageDesc", "切换软件整体界面的显示语言。")}
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {notice && <span className="appearance-status ok" role="status" style={{ fontSize: 12 }}>{notice}</span>}
+          <select
+            value={locale}
+            aria-label={t("common.language", "界面语言")}
+            style={{
+              minWidth: 160,
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: "1px solid var(--border, rgba(0, 0, 0, 0.15))",
+              background: "var(--card-bg, #ffffff)",
+              color: "var(--fg, #000000)",
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+            onChange={(e) => handleLocaleChange(e.target.value as SupportedLocale)}
+          >
+            {SUPPORTED_LOCALES.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.nativeLabel}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ---- 主题 ----
 
 const APP_ICONS = [
@@ -115,12 +174,15 @@ const APP_ICONS = [
 
 function AppIconSection({ draft, platform }: { draft: AppearanceSettings; platform: string }) {
   const isMac = platform === "darwin";
-  const title = isMac ? "Dock 图标" : "应用图标";
+  const title = isMac ? t("appearance.dock.titleMac", "Dock 图标") : t("appearance.dock.title", "应用图标");
+  const help = isMac
+    ? t("appearance.dock.descMac", "自定桌面图标样式。")
+    : t("appearance.dock.descWin", "选择应用窗口使用的图标；启动器和固定快捷方式的图标由安装包提供");
   return (
     <div className="appearance-dock-row">
       <div className="appearance-dock-copy">
         <strong id="dock-icon-title">{title}</strong>
-        <p id="dock-icon-help">{isMac ? "选择应用在 Dock 中使用的图标" : "选择应用窗口使用的图标；启动器和固定快捷方式的图标由安装包提供"}</p>
+        <p id="dock-icon-help">{help}</p>
       </div>
       <div className="appearance-dock-choices" role="radiogroup" aria-labelledby="dock-icon-title" aria-describedby="dock-icon-help">
         {APP_ICONS.map((icon, index) => (
@@ -144,12 +206,23 @@ function AppIconSection({ draft, platform }: { draft: AppearanceSettings; platfo
 }
 
 function ThemeSection({ draft }: { draft: AppearanceSettings }) {
+  const themeOptions = [
+    { id: "system" as const, label: t("appearance.theme.system", "跟随系统") },
+    { id: "light" as const, label: t("appearance.theme.light", "浅色") },
+    { id: "dark" as const, label: t("appearance.theme.dark", "深色") },
+  ];
+  const presets = [
+    ["default" as const, t("appearance.theme.default", "默认")],
+    ["fresh" as const, t("appearance.theme.fresh", "清透")],
+    ["reading" as const, t("appearance.theme.reading", "阅读")],
+  ] as const;
+
   return (
     <>
-      <div className="dialog-section-title">主题</div>
+      <div className="dialog-section-title">{t("appearance.theme.title", "主题")}</div>
       <div className="appearance-row">
-        <div className="appearance-segmented" role="radiogroup" aria-label="主题">
-          {THEME_OPTIONS.map((option) => (
+        <div className="appearance-segmented" role="radiogroup" aria-label={t("appearance.theme.title", "主题")}>
+          {themeOptions.map((option) => (
             <button
               key={option.id}
               type="button"
@@ -163,13 +236,13 @@ function ThemeSection({ draft }: { draft: AppearanceSettings }) {
           ))}
         </div>
         <span style={{ flex: 1 }} />
-        {([["default", "默认"], ["fresh", "清透"], ["reading", "阅读"]] as const).map(([id, label]) => (
+        {presets.map(([id, label]) => (
           <button key={id} type="button" className="appearance-preset" onClick={() => updateDraft((current) => applyPreset(id, current))}>
             {label}
           </button>
         ))}
       </div>
-      <p className="dialog-note">预设只调整外观草稿，不立即保存；浅色和深色分别记忆自定义背景色，互不覆盖。</p>
+      <p className="dialog-note">{t("appearance.theme.note", "预设只调整外观草稿，浅色深色分别记忆背景。")}</p>
     </>
   );
 }
@@ -206,9 +279,9 @@ function AccountAvatarSection({ draft }: { draft: AppearanceSettings }) {
 
   return (
     <>
-      <div className="dialog-section-title">账户图标</div>
+      <div className="dialog-section-title">{t("appearance.avatar.title", "账户图标")}</div>
       <div className="appearance-row appearance-color-row">
-        <span className="appearance-color-label" id="account-avatar-color-label">登录后图标背景色</span>
+        <span className="appearance-color-label" id="account-avatar-color-label">{t("appearance.avatar.desc", "登录后图标背景色")}</span>
         <span className="avatar" data-auth-status="logged-in" aria-hidden="true"><UserRound size={16} /></span>
         <div className="appearance-swatches" role="group" aria-labelledby="account-avatar-color-label">
           {ACCOUNT_COLORS.map(({ color, label }) => (
@@ -233,7 +306,7 @@ function AccountAvatarSection({ draft }: { draft: AppearanceSettings }) {
           }} />
         {invalid && <span className="appearance-status error" role="alert">颜色格式不正确（#rgb / #rrggbb）</span>}
       </div>
-      <p className="dialog-note">当前图标显示未登录的灰色；这里可以预先保存登录后使用的颜色，默认橙色。修改后点击“保存外观”即可保留。</p>
+      <p className="dialog-note">{t("appearance.avatar.note", "预先设置登录后个人头像的默认背景色。")}</p>
     </>
   );
 }
@@ -268,17 +341,19 @@ function ColorRow({ draft, resolved }: { draft: AppearanceSettings; resolved: "l
     updateDraft((current) => ({ ...current, background: { ...current.background, [field]: normalized } }));
   };
 
+  const label = resolved === "light" ? t("appearance.background.lightColor", "浅色背景色") : t("appearance.background.darkColor", "深色背景色");
+
   return (
     <div className="appearance-row appearance-color-row">
-      <span className="appearance-color-label">{resolved === "light" ? "浅色背景色" : "深色背景色"}</span>
+      <span className="appearance-color-label">{label}</span>
       <div className="appearance-swatches">
         <button
           type="button"
           className={`appearance-swatch clear ${!value ? "active" : ""}`}
-          title="默认底色"
+          title={t("appearance.background.none", "无")}
           onClick={() => updateDraft((current) => ({ ...current, background: { ...current.background, [field]: null } }))}
         >
-          无
+          {t("appearance.background.none", "无")}
         </button>
         {SWATCHES.map((color) => (
           <button
@@ -314,7 +389,7 @@ function ColorRow({ draft, resolved }: { draft: AppearanceSettings; resolved: "l
           if (event.key === "Enter") submitHex((event.target as HTMLInputElement).value);
         }}
       />
-      <small className="appearance-color-hint">留空用默认底色</small>
+      <small className="appearance-color-hint">{t("appearance.background.defaultHint", "留空用默认底色")}</small>
       {invalid && <span className="appearance-status error">颜色格式不正确（#rgb / #rrggbb）</span>}
     </div>
   );
@@ -332,6 +407,12 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
   const transparency = draft.background.transparency;
   const overlay = draft.background.overlay;
 
+  const fitOptions = [
+    { id: "cover" as const, label: t("appearance.background.fitCover", "铺满") },
+    { id: "contain" as const, label: t("appearance.background.fitContain", "完整显示") },
+    { id: "tile" as const, label: t("appearance.background.fitTile", "平铺") },
+  ];
+
   const pickImage = async () => {
     if (importing) return;
     setImporting(true);
@@ -346,13 +427,13 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
 
   return (
     <>
-      <div className="dialog-section-title">背景</div>
+      <div className="dialog-section-title">{t("appearance.background.title", "背景")}</div>
       <ColorRow draft={draft} resolved="light" />
       <ColorRow draft={draft} resolved="dark" />
       <div className="appearance-row appearance-control-row">
         <span className="appearance-row-label">
-          背景透明度
-          <small>只调整背景，文字保持清晰；无图片时透出基础底色</small>
+          {t("appearance.background.transparency", "背景透明度")}
+          <small>{t("appearance.background.transparencyDesc", "调整背景透明度，文字与内容保持清晰。")}</small>
         </span>
         <div className="appearance-slider-row">
           <input
@@ -361,7 +442,7 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
             max={70}
             step={1}
             value={transparency}
-            aria-label="背景透明度"
+            aria-label={t("appearance.background.transparency", "背景透明度")}
             onChange={(event) => updateDraft((current) => ({
               ...current,
               background: { ...current.background, transparency: Number(event.target.value) },
@@ -371,34 +452,34 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
         </div>
       </div>
       <div className="appearance-row">
-        <span className="appearance-row-label">背景图片</span>
+        <span className="appearance-row-label">{t("appearance.background.image", "背景图片")}</span>
         <div className="appearance-image-box">
           {draft.background.imageId && imageUrl ? (
             <span className="appearance-image-thumb" style={{ backgroundImage: `url("${imageUrl}")` }} />
           ) : (
-            <span className="appearance-image-thumb empty">{draft.background.imageId ? (imageError ? "读取失败" : "读取中…") : "未设置"}</span>
+            <span className="appearance-image-thumb empty">{draft.background.imageId ? (imageError ? "读取失败" : "读取中…") : t("appearance.background.notSet", "未设置")}</span>
           )}
           <button type="button" className="button-secondary" onClick={() => void pickImage()} disabled={importing || previewOnly}>
             <ImagePlus size={14} />
-            {draft.background.imageId ? "更换图片" : "选择图片"}
+            {draft.background.imageId ? t("appearance.background.changeImage", "更换图片") : t("appearance.background.pickImage", "选择图片")}
           </button>
           {draft.background.imageId && (
             <button type="button" className="button-secondary" onClick={removeImage}>
               <Trash2 size={14} />
-              移除
+              {t("appearance.background.removeImage", "移除")}
             </button>
           )}
         </div>
         {(importError || imageError) && <span className="appearance-status error">{importError || imageError}</span>}
         <p className="dialog-note" style={{ flexBasis: "100%", margin: 0 }}>
-          支持 PNG / JPEG / WebP 静态图片，保存后由应用托管，源文件移动或删除不影响显示；图片本身不透明时会遮住窗口底层的系统背景效果。
+          {t("appearance.background.note", "支持静态图片，保存后由应用托管，移动文件不影响。")}
         </p>
       </div>
       {draft.background.imageId && (
         <div className="appearance-row">
-          <span className="appearance-row-label">图片显示</span>
+          <span className="appearance-row-label">{t("appearance.background.imageFit", "图片显示")}</span>
           <div className="appearance-segmented">
-            {FIT_OPTIONS.map((option) => (
+            {fitOptions.map((option) => (
               <button
                 key={option.id}
                 type="button"
@@ -413,8 +494,8 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
             ))}
           </div>
           <span className="appearance-row-label" style={{ flexBasis: "auto" }}>
-            图片遮罩
-            <small>降低复杂图片对阅读的干扰；浅色用浅遮罩、深色用深遮罩</small>
+            {t("appearance.background.imageOverlay", "图片遮罩")}
+            <small>{t("appearance.background.overlayDesc", "降低背景图片对比度，提升文字可读性。")}</small>
           </span>
           <div className="appearance-slider-row" style={{ flex: 1, minWidth: 180 }}>
             <input
@@ -423,7 +504,7 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
               max={80}
               step={1}
               value={overlay}
-              aria-label="图片遮罩"
+              aria-label={t("appearance.background.imageOverlay", "图片遮罩")}
               onChange={(event) => updateDraft((current) => ({
                 ...current,
                 background: { ...current.background, overlay: Number(event.target.value) },
@@ -433,7 +514,11 @@ function BackgroundSection({ draft, imageUrl, imageError, previewOnly }: {
           </div>
         </div>
       )}
-      <p className="dialog-note">当前正在编辑「{resolved === "dark" ? "深色" : "浅色"}」主题的背景色，切换主题后自动跟随对应颜色。</p>
+      <p className="dialog-note">
+        {resolved === "dark"
+          ? t("appearance.background.editNoteDark", "当前正在编辑深色主题背景，切换主题自动跟随。")
+          : t("appearance.background.editNoteLight", "当前正在编辑浅色主题背景，切换主题自动跟随。")}
+      </p>
     </>
   );
 }
@@ -449,14 +534,14 @@ function GlassSection({ draft, capabilities, effective }: {
   const backdropAvailable = Boolean(capabilities?.systemBackdrop.available);
   const backdropReason = capabilities?.systemBackdrop.reason;
   const strengthOptions = [
-    { id: "subtle" as const, label: "轻柔" },
-    { id: "standard" as const, label: "标准" },
-    { id: "strong" as const, label: "明显" },
+    { id: "subtle" as const, label: t("appearance.glass.subtle", "轻柔") },
+    { id: "standard" as const, label: t("appearance.glass.standard", "标准") },
+    { id: "strong" as const, label: t("appearance.glass.strong", "明显") },
   ];
 
   return (
     <>
-      <div className="dialog-section-title">液态玻璃效果</div>
+      <div className="dialog-section-title">{t("appearance.glass.title", "液态玻璃")}</div>
       <div className="mcp-server-row">
         <label className="skill-switch" title={glass.enabled ? "点击关闭" : "点击开启"}>
           <input
@@ -469,14 +554,14 @@ function GlassSection({ draft, capabilities, effective }: {
           />
         </label>
         <span className="mcp-server-name">
-          <strong>{glass.enabled ? "玻璃效果开启" : "启用玻璃效果"}</strong>
-          <small>应用内液态玻璃风格，不等同于 Apple 原生 Liquid Glass；作用于侧栏、顶部、输入框外壳和右侧工具栏</small>
+          <strong>{glass.enabled ? t("appearance.glass.enabled", "玻璃效果开启") : t("appearance.glass.enable", "启用玻璃效果")}</strong>
+          <small>{t("appearance.glass.desc", "侧栏、顶栏与工具栏半透明毛玻璃质感。")}</small>
         </span>
       </div>
       {glass.enabled && (
         <>
           <div className="appearance-row">
-            <span className="appearance-row-label">强度</span>
+            <span className="appearance-row-label">{t("appearance.glass.strength", "强度")}</span>
             <div className="appearance-segmented">
               {strengthOptions.map((option) => (
                 <button
@@ -494,7 +579,7 @@ function GlassSection({ draft, capabilities, effective }: {
             </div>
           </div>
           <div className="mcp-server-row">
-            <label className="skill-switch" title="轻量效果不启用背景模糊，占用更低">
+            <label className="skill-switch" title={t("appearance.glass.lightweightTitle", "省电模式")}>
               <input
                 type="checkbox"
                 checked={glass.lightweight}
@@ -505,14 +590,12 @@ function GlassSection({ draft, capabilities, effective }: {
               />
             </label>
             <span className="mcp-server-name">
-              <strong>轻量效果</strong>
-              <small>{capabilities?.glassDefault === "lightweight"
-                ? "当前平台默认使用轻量效果：静态半透明 + 边缘高光，不做背景模糊"
-                : "使用静态半透明 + 边缘高光，不做背景模糊，低性能设备建议开启"}</small>
+              <strong>{t("appearance.glass.lightweightTitle", "省电模式")}</strong>
+              <small>{t("appearance.glass.lightweightDesc", "降低视觉动效，提升老旧设备流畅度。")}</small>
             </span>
           </div>
           <div className="mcp-server-row">
-            <label className="skill-switch" title={backdropAvailable ? "透出系统桌面背景" : backdropReason || "当前系统不可用"}>
+            <label className="skill-switch" title={backdropAvailable ? t("appearance.glass.systemBackdropTitle", "系统磨砂") : backdropReason || t("appearance.glass.unavailable", "当前系统不可用")}>
               <input
                 type="checkbox"
                 checked={glass.systemBackdrop}
@@ -524,10 +607,8 @@ function GlassSection({ draft, capabilities, effective }: {
               />
             </label>
             <span className="mcp-server-name">
-              <strong>使用系统背景效果（高级）</strong>
-              <small>{backdropAvailable
-                ? `由系统提供窗口背景材质（${capabilities?.systemBackdrop.kind === "vibrancy" ? "macOS  Vibrancy" : "Windows 背景材质"}），实际效果受系统设置影响${effective?.applied && effective.applied !== "none" ? "，当前已生效" : ""}`
-                : (backdropReason || "当前系统使用应用内玻璃效果")}</small>
+              <strong>{t("appearance.glass.systemBackdropTitle", "系统磨砂")}</strong>
+              <small>{t("appearance.glass.systemBackdropDesc", "采用系统原生半透明材质，效果更贴合。")}</small>
             </span>
           </div>
         </>
@@ -545,6 +626,19 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
   const [fontList, setFontList] = useState<string[]>([]);
   const [fontQuery, setFontQuery] = useState("");
   const familyStack = fontStackFor(typo.family) || "system-ui";
+
+  const familyOptions = [
+    { id: "system", label: t("appearance.typo.fontSystem", "跟随系统"), family: "system" },
+    { id: "sans-serif", label: t("appearance.typo.fontSans", "无衬线"), family: "sans-serif" },
+    { id: "serif", label: t("appearance.typo.fontSerif", "衬线"), family: "serif" },
+  ];
+
+  const uiSizeOptions = [
+    { value: 13 as const, label: t("appearance.typo.sizeSmall", "小") },
+    { value: 14 as const, label: t("appearance.typo.sizeRegular", "标准") },
+    { value: 16 as const, label: t("appearance.typo.sizeLarge", "大") },
+    { value: 18 as const, label: t("appearance.typo.sizeHuge", "特大") },
+  ];
 
   const filteredFonts = useMemo(() => {
     const query = fontQuery.trim().toLowerCase();
@@ -573,11 +667,11 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
 
   return (
     <>
-      <div className="dialog-section-title">字体与字号</div>
+      <div className="dialog-section-title">{t("appearance.typo.title", "字体与字号")}</div>
       <div className="appearance-row">
-        <span className="appearance-row-label">显示字体</span>
+        <span className="appearance-row-label">{t("appearance.typo.fontFamily", "显示字体")}</span>
         <div className="appearance-segmented">
-          {FAMILY_OPTIONS.map((option) => (
+          {familyOptions.map((option) => (
             <button
               key={option.id}
               type="button"
@@ -592,7 +686,7 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
             className={isCustom || pickerState !== "idle" ? "active" : ""}
             onClick={() => void enumerateLocalFonts()}
           >
-            本机字体…
+            {t("appearance.typo.fontLocal", "本机字体…")}
           </button>
         </div>
       </div>
@@ -603,7 +697,7 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
               <input
                 className="appearance-hex-input"
                 style={{ width: 160, fontFamily: "inherit" }}
-                placeholder="搜索字体…"
+                placeholder={t("appearance.typo.searchPlaceholder", "搜索字体…")}
                 value={fontQuery}
                 onChange={(event) => setFontQuery(event.target.value)}
               />
@@ -630,7 +724,7 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
               <input
                 className="appearance-hex-input"
                 style={{ flex: 1, minWidth: 160, fontFamily: "inherit" }}
-                placeholder="输入字体名称，如 PingFang SC"
+                placeholder={t("appearance.typo.inputPlaceholder", "输入字体名称，如 PingFang SC")}
                 value={isCustom ? typo.family : ""}
                 spellCheck={false}
                 onChange={(event) => {
@@ -654,9 +748,12 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
         </div>
       )}
       <div className="appearance-row">
-        <span className="appearance-row-label">界面字号<small>作用于导航、按钮、输入与设置</small></span>
+        <span className="appearance-row-label">
+          {t("appearance.typo.uiSize", "界面字号")}
+          <small>{t("appearance.typo.uiSizeDesc", "作用于导航、按钮、输入框与设置项。")}</small>
+        </span>
         <div className="appearance-segmented">
-          {UI_SIZE_OPTIONS.map((option) => (
+          {uiSizeOptions.map((option) => (
             <button
               key={option.value}
               type="button"
@@ -672,7 +769,10 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
         </div>
       </div>
       <div className="appearance-row appearance-control-row">
-        <span className="appearance-row-label">正文字号<small>只放大聊天与 Markdown 阅读内容，代码与日志保持等宽字体</small></span>
+        <span className="appearance-row-label">
+          {t("appearance.typo.contentSize", "正文字号")}
+          <small>{t("appearance.typo.contentSizeDesc", "调整对话文本与正文阅读区域的字体大小。")}</small>
+        </span>
         <div className="appearance-slider-row">
           <input
             type="range"
@@ -680,7 +780,7 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
             max={24}
             step={1}
             value={typo.contentSize}
-            aria-label="正文字号"
+            aria-label={t("appearance.typo.contentSize", "正文字号")}
             onChange={(event) => updateDraft((current) => ({
               ...current,
               typography: { ...current.typography, contentSize: Number(event.target.value) },
@@ -691,11 +791,11 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
       </div>
       <div className="appearance-sample" style={{ fontFamily: familyStack }}>
         <span className="appearance-sample-content">
-          敏捷的棕色狐狸跳过了懒狗 The quick brown fox jumps over the lazy dog。
+          {t("appearance.sample.text", "敏捷的棕色狐狸跳过了懒狗 The quick brown fox jumps over the lazy dog。")}
         </span>
         <br />
         <span className="appearance-sample-content" style={{ color: "var(--muted)" }}>
-          0123456789，。；：？！""''（）【】《》 —— 样例跟随当前草稿的字体与正文字号。
+          {t("appearance.sample.note", "样例跟随当前草稿的字体与正文字号。")}
         </span>
       </div>
     </>
@@ -705,6 +805,7 @@ function TypographySection({ draft }: { draft: AppearanceSettings }) {
 // ---- 底部操作条 ----
 
 function ActionsBar({ store }: { store: ReturnType<typeof useAppearanceStore> }) {
+  const [locale] = useLocale();
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -725,9 +826,9 @@ function ActionsBar({ store }: { store: ReturnType<typeof useAppearanceStore> })
     try {
       const result = await saveDraft();
       if (result.ok) {
-        flash({ kind: "ok", text: "已保存" });
+        flash({ kind: "ok", text: t("appearance.actions.saved", "已保存") });
       } else if (result.previewOnly) {
-        flash({ kind: "error", text: "当前环境仅预览，外观不会保存" });
+        flash({ kind: "error", text: t("appearance.status.previewOnly", "当前环境仅预览，外观不会保存") });
       } else if (result.stale) {
         flash({ kind: "error", text: "外观已在别处更新，已按最新保存值刷新，请重新调整" });
       } else {
@@ -746,19 +847,19 @@ function ActionsBar({ store }: { store: ReturnType<typeof useAppearanceStore> })
   return (
     <div className="appearance-actions">
       <div className="appearance-action-status" role="status">
-      {store.dirty && <span className="appearance-status">预览中，保存后保留</span>}
-      {store.previewOnly && <span className="appearance-status">当前环境仅预览，外观不会保存</span>}
+      {store.dirty && <span className="appearance-status">{t("appearance.status.dirty", "预览中，保存后保留")}</span>}
+      {store.previewOnly && <span className="appearance-status">{t("appearance.status.previewOnly", "当前环境仅预览，外观不会保存")}</span>}
       {status && (status.kind === "error" || !store.dirty) && <span className={`appearance-status ${status.kind}`}>{status.text}</span>}
       </div>
       <div className="appearance-action-buttons">
       <button type="button" className="button-secondary" onClick={() => { resetDraft(); setStatus(null); }}>
-        恢复默认
+        {t("appearance.actions.reset", "恢复默认")}
       </button>
       <button type="button" className="button-secondary" onClick={cancel}>
-        取消
+        {t("common.cancel", "取消")}
       </button>
       <button type="button" className="button-primary" onClick={() => void save()} disabled={saving || store.previewOnly || !store.dirty}>
-        {saving ? "保存中…" : "保存外观"}
+        {saving ? t("appearance.actions.saving", "保存中…") : t("appearance.actions.save", "保存外观")}
       </button>
       </div>
     </div>

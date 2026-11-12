@@ -36,6 +36,7 @@ import { MarkdownSnippet } from "../../InteractiveMessage";
 import { ArchivedPlan } from "../../PlanProgress";
 import { formatWakeTime } from "../../wakeNote";
 import { contentEchoesProcessCommentary, processActivitiesWithCommentary } from "../../processCommentary.ts";
+import { t } from "../../i18n";
 
 export function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
   if (String(kind).startsWith("browser__")) return <Globe size={14} />;
@@ -138,7 +139,7 @@ export function ReasoningBlock({ text, streaming }: { text: string; streaming: b
   }, []);
   return (
     <details className="reasoning-block" open={streaming}>
-      <summary>{streaming ? "正在深度思考…" : "思考过程"}</summary>
+      <summary>{streaming ? t("thought.thinkingDeeply", "正在深度思考…") : t("thought.process", "思考过程")}</summary>
       <div
         className="reasoning-content"
         ref={contentRef}
@@ -246,14 +247,14 @@ export function ProcessThoughtItem({ text, durationMs, streaming }: { text: stri
       >
         <Brain size={14} className="process-thought-icon" />
         <span className="process-thought-title">
-          {streaming ? "正在深度思考…" : "思考过程"}
+          {streaming ? t("thought.thinkingDeeply", "正在深度思考…") : t("thought.process", "思考过程")}
           {duration ? ` · ${duration}` : ""}
         </span>
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {open && (
         <div className="process-thought-body" ref={contentRef}>
-          <div className="process-thought-text">{text || (streaming ? "思考中..." : "")}</div>
+          <div className="process-thought-text">{text || (streaming ? t("thought.thinking", "思考中…") : "")}</div>
         </div>
       )}
     </div>
@@ -273,7 +274,7 @@ export function ProcessSubagentItem({ activity }: { activity: ActivityRecord }) 
   const [open, setOpen] = useState(false);
   const childCount = activity.children?.length || 0;
   const isRunning = activity.status === "running" || Boolean(activity.children?.some((c) => c.status === "running"));
-  const taskTitle = activity.title.replace(/^派发子任务[：:]\s*/, "") || "子智能体任务";
+  const taskTitle = activity.title.replace(/^派发子任务[：:]\s*/, "") || t("process.subagentTask", "子智能体任务");
 
   return (
     <div className={`process-subagent-item ${isRunning ? "running" : "completed"}`}>
@@ -399,10 +400,10 @@ export const ProcessTimeline = memo(function ProcessTimeline({
 
   const durationText = message.durationMs ? formatDurationCodex(message.durationMs) : "";
   const triggerLabel = durationText
-    ? `用时 ${durationText}`
+    ? `${t("process.timeCostPrefix", "用时")} ${durationText}`
     : isStreaming
-      ? "正在处理任务"
-      : "处理过程";
+      ? t("process.processingTask", "正在处理任务")
+      : t("process.processTitle", "处理过程");
   // 任务执行中直接平铺过程行（对标 Codex 执行中的排版：过程行与正文同一起始边，
   // 顶部不出现折叠条）；只有任务结束、或用户主动收起后才显示「用时 XX 〉」折叠条。
   const showTrigger = collapsed || !isStreaming;
@@ -418,9 +419,9 @@ export const ProcessTimeline = memo(function ProcessTimeline({
           className="process-collapse-trigger"
           onClick={() => onToggleCollapse(messageKey, !collapsed)}
           aria-expanded={!collapsed}
-          title={collapsed ? "点击展开执行过程" : "点击收起执行过程"}
+          title={collapsed ? t("process.expandProcess", "点击展开执行过程") : t("process.collapseProcess", "点击收起执行过程")}
         >
-          <span className="process-trigger-label">{triggerLabel}{activities.some(activity => activity.title === "上下文已压缩") ? " · 上下文已压缩" : ""}</span>
+          <span className="process-trigger-label">{triggerLabel}{activities.some(activity => activity.title === "上下文已压缩") ? ` · ${t("process.contextCompacted", "上下文已压缩")}` : ""}</span>
           {collapsed ? (
             <ChevronRight size={14} className="process-trigger-icon" />
           ) : (
@@ -497,6 +498,6 @@ export function RunningStatusLabel({ loopState, startedAt, waking }: { loopState
     return <span>{`${wakingPrefix ? `${wakingPrefix} · ` : ""}持续执行 第 ${loopState.iteration}/${loopState.maximum} 轮 · ${loopState.status}`}</span>;
   }
   const elapsedSeconds = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
-  const label = wakingPrefix ? `${wakingPrefix}，正在继续处理` : "正在处理任务";
+  const label = wakingPrefix ? `${wakingPrefix}，${t("process.continuing", "正在继续处理")}` : t("process.processingTask", "正在处理任务");
   return <span>{`${label}${elapsedSeconds > 1 ? ` · ${formatDuration(elapsedSeconds * 1000)}` : ""}`}</span>;
 }

@@ -495,6 +495,16 @@ export interface BrowserControlState {
   actionText: string;
   pauseReason: string;
   elapsedMs: number;
+  inputReleaseState?: 'ready' | 'pending' | 'failed';
+}
+
+export interface BackgroundBrowserHandoff {
+  id: string;
+  ownerSessionId: string;
+  state: 'waiting' | 'opening' | 'human' | 'returning' | 'ready';
+  reason: string;
+  filePending?: boolean;
+  selectingFile?: boolean;
 }
 
 export interface McpServerConfig {
@@ -633,7 +643,25 @@ export interface TtsLocalStatus {
   runtime: { available: boolean; path: string; binDir: string };
 }
 
+// 本地决策模型（Intern-Decision）状态；Python venv 运行时对应语音的 llama.cpp 包
+export interface DecisionLocalStatus {
+  service: "remote" | "local";
+  model: {
+    id: string;
+    label: string;
+    configured: boolean;
+    files: VoiceLocalFileStatus[];
+    downloaded: boolean;
+    sizeBytes: number;
+    expectedBytes: number;
+  };
+  // 全部候选模型的概要（model 为当前保存的模型）
+  models: VoiceLocalModelSummary[];
+  runtime: { available: boolean; venvDir: string; venvPython: string };
+}
+
 export interface ProviderSettings {
+  locale?: string;
   identity: UserIdentity | null;
   endpoint: string;
   model: string;
@@ -674,11 +702,23 @@ export interface ProviderSettings {
   reviewerEndpoint: string;
   reviewerModel: string;
   reviewerApiKey: string;
-  // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义端点
-  reviewerBackend: "main" | "local" | "custom";
+  // 审核助手模型来源：main 跟随主模型 / local 内置本地小模型 / custom 自定义端点 / decision 决策模型
+  reviewerBackend: "main" | "local" | "custom" | "decision";
   reviewerProbability?: boolean;
   // 内置本地审核模型的保存目录；留空存到应用数据目录 models/reviewer
   reviewerModelDir: string;
+  // 决策模型（Intern-Decision）服务地址：审批分档与工具组预路由共用；remote 模式生效
+  decisionEndpoint: string;
+  // 决策模型服务方式：remote 用户自起服务/远程端点，local 内置托管（Python venv + 本地权重）
+  decisionService: "remote" | "local";
+  // 本地托管决策模型（decisionService 为 local 时生效，与主进程 DECISION_MODELS 对应）
+  decisionLocalModel: string;
+  // 本地决策模型保存目录；留空存到应用数据目录 models/decision
+  decisionModelDir: string;
+  // 决策模型审批阈值：p(allow) 或 p(deny) 达到才自动放行/拒绝，否则转人工（0.5–0.99）
+  reviewerDecisionThreshold: number;
+  // 工具组预路由阈值：p(yes) 达到才预激活工具组（0.3–0.99）
+  toolsetRouteThreshold: number;
   searxngEndpoint: string;
   bochaApiKey: string;
   // DeepSeek 原生搜索密钥：非 DeepSeek 端点下 web_search 默认走 DeepSeek 服务端搜索时用
@@ -1079,7 +1119,8 @@ export interface DyworkerBridge {
   /** 内置浏览器下载进度广播 */
   onBrowserDownloadProgress?(callback: (record: { id: string; filename: string; path: string; received: number; total: number; state: "progressing" | "interrupted" | "completed" | "cancelled"; startedAt: number }) => void): () => void;
   /** 助手发来的浏览器面板指令：open 打开网页（默认新标签页）、activate/close-tab 操作指定标签页、close 收起面板 */
-  onBrowserPanelRequest(callback: (request: { action: "open" | "close" | "activate" | "close-tab"; url?: string; tabId?: string; ownerSessionId?: string }) => void): () => void;
+  onBrowserPanelRequest(callback: (request: { action: "open" | "close" | "activate" | "close-tab"; url?: string; tabId?: string; ownerSessionId?: string; token?: string }) => void): () => void;
+  validateBrowserSwitch(request: { token: string; ownerSessionId: string; tabId: string }): Promise<boolean>;
   /** 浏览器 Computer Use：用户主动接管控制权 */
   takeoverBrowserControl?(): Promise<{ ok: boolean; status?: string; result?: string }>;
   /** 浏览器 Computer Use：用户交还控制权让助手继续 */
@@ -1088,6 +1129,12 @@ export interface DyworkerBridge {
   stopBrowserControl?(): Promise<{ ok: boolean; status?: string; result?: string }>;
   /** 浏览器 Computer Use：获取当前控制状态 */
   getBrowserControlStatus?(): Promise<BrowserControlState>;
+  listBackgroundBrowserHandoffs?(): Promise<BackgroundBrowserHandoff[]>;
+  showBackgroundBrowserHandoff?(id: string): Promise<{ ok: boolean; result?: string }>;
+  readyBackgroundBrowserHandoff?(id: string): Promise<{ ok: boolean; result?: string; ownerSessionId?: string; runId?: string }>;
+  chooseBackgroundBrowserFile?(id: string): Promise<{ ok: boolean; result?: string }>;
+  discardBackgroundBrowserHandoff?(id: string): Promise<{ ok: boolean; result?: string }>;
+  onBackgroundBrowserHandoffs?(callback: (entries: BackgroundBrowserHandoff[]) => void): () => void;
   /** 浏览器 Computer Use：监听控制状态广播 */
   onBrowserControlState?(callback: (state: BrowserControlState) => void): () => void;
   /** 浏览器 Computer Use：监听控制恢复广播（用于自动触发续跑任务） */
@@ -1126,6 +1173,10 @@ export interface DyworkerBridge {
   downloadTtsLocalModel(payload?: { modelId?: string }): Promise<{ ok: boolean; error?: string; status?: TtsLocalStatus }>;
   chooseTtsLocalDir(): Promise<{ canceled: boolean; path?: string }>;
   chooseTtsVoice(): Promise<{ canceled: boolean; path?: string }>;
+  getDecisionLocalStatus(): Promise<DecisionLocalStatus>;
+  downloadDecisionLocalModel(payload?: { modelId?: string }): Promise<{ ok: boolean; error?: string; status?: DecisionLocalStatus }>;
+  chooseDecisionLocalDir(): Promise<{ canceled: boolean; path?: string }>;
+  onDecisionLocalDownloadProgress(callback: (progress: { phase: string; received: number; total: number; percent: number; modelId?: string }) => void): () => void;
   // 参考音色转码：读原始字节给渲染层 Web Audio 解码，再把转换出的 wav 写回主进程
   readTtsVoiceFile(payload: { path: string }): Promise<{ ok: boolean; error?: string; bytes?: Uint8Array }>;
   writeTtsVoiceFile(payload: { bytes: Uint8Array }): Promise<{ ok: boolean; error?: string; path?: string }>;
@@ -1192,6 +1243,12 @@ export interface DyworkerBridge {
   onWakeStatus?(callback: (payload: { sessionId: string; status: "running" | "idle"; runId?: string; wakeAt?: string; reason?: string; manual?: boolean }) => void): () => void;
   deleteMemory(id: string): Promise<{ ok: boolean; removed?: boolean }>;
   exportKnowledge(payload: { kind: "memories" | "knowledge" | "graph" | "image"; image?: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
+  knowledgeLocalFolders(payload: { action: "list" | "connect" | "refresh" | "disconnect"; id?: string; category?: string }): Promise<{
+    ok: boolean; canceled?: boolean; error?: string;
+    folders?: { id: string; path: string; category: string }[];
+    report?: { updated: number; unchanged: number; removed: number; skipped: number; failed: number;
+      issues: { path: string; reason: string }[] };
+  }>;
   updateMemory(payload: { id: string; content: string; category?: string; name?: string; kind?: string }): Promise<{ ok: boolean; error?: string }>;
   lintMemories(): Promise<{ ok: boolean; applied?: number; error?: string; message?: string }>;
   listSkills(workspacePath?: string): Promise<SkillRecord[]>;

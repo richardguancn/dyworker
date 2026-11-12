@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { contextUsageSummary, formatTokenCount } from "../../contextUsage";
 import { TokenActivity } from "../../TokenActivityPanel";
 import type { UsageRecord } from "../../types";
+import { t } from "../../i18n";
 
 // 输入区只呈现当前上下文占用和模型上限；累计消耗统一在统计页查看。
 export function ContextRing({ used, limit, exact }: {
@@ -123,24 +124,29 @@ export function UsageStatsPanel({ records }: { records: UsageRecord[] | null }) 
     <>
       {records !== null && <TokenActivity records={records} />}
       {records === null ? (
-          <p className="dialog-note">正在读取…</p>
+          <p className="dialog-note">{t("usage.reading", "正在读取…")}</p>
         ) : summary.length === 0 ? (
-          <p className="dialog-note">还没有用量记录。发送任务后，每次模型调用的 token 用量会按模型累计在这里。</p>
+          <p className="dialog-note">{t("usage.noRecords", "还没有用量记录。发送任务后，每次模型调用的 token 用量会按模型累计在这里。")}</p>
         ) : (
           <>
             <p className="dialog-note">
-              今日 {formatTokenCount(totals.today)} tokens · 累计 {totals.requests} 次请求，输入 {formatTokenCount(totals.prompt)} + 输出 {formatTokenCount(totals.completion)} = {formatTokenCount(totals.prompt + totals.completion)} tokens
+              {t("usage.summaryText", "今日 {today} tokens · 累计 {requests} 次请求，输入 {prompt} + 输出 {completion} = {total} tokens")
+                .replace("{today}", formatTokenCount(totals.today))
+                .replace("{requests}", String(totals.requests))
+                .replace("{prompt}", formatTokenCount(totals.prompt))
+                .replace("{completion}", formatTokenCount(totals.completion))
+                .replace("{total}", formatTokenCount(totals.prompt + totals.completion))}
             </p>
             <table className="usage-table">
               <thead>
                 <tr>
-                  <th>模型</th>
-                  <th>请求</th>
-                  <th>输入</th>
-                  <th>输出</th>
-                  <th>合计</th>
-                  <th>今日</th>
-                  <th>备注</th>
+                  <th>{t("usage.tableModel", "模型")}</th>
+                  <th>{t("usage.tableRequests", "请求")}</th>
+                  <th>{t("usage.tableInput", "输入")}</th>
+                  <th>{t("usage.tableOutput", "输出")}</th>
+                  <th>{t("usage.tableTotal", "合计")}</th>
+                  <th>{t("usage.tableToday", "今日")}</th>
+                  <th>{t("usage.tableNote", "备注")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -152,12 +158,12 @@ export function UsageStatsPanel({ records }: { records: UsageRecord[] | null }) 
                     <td>{formatTokenCount(entry.completion)}</td>
                     <td>{formatTokenCount(entry.prompt + entry.completion)}</td>
                     <td>{formatTokenCount(entry.todayPrompt + entry.todayCompletion)}</td>
-                    <td>{entry.estimated > 0 ? `含 ${entry.estimated} 次估算` : "实测"}</td>
+                    <td>{entry.estimated > 0 ? t("usage.hasEstimated", "含 {count} 次估算").replace("{count}", String(entry.estimated)) : t("usage.exactMeasured", "实测")}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="dialog-note">标注「估算」的记录来自不回 usage 的端点，按中文 1 token、其他字符约 4 个 1 token 估算；实测记录以端点返回的 usage 为准。</p>
+            <p className="dialog-note">{t("usage.estimateNote", "标注「估算」的记录来自不回 usage 的端点，按中文 1 token、其他字符约 4 个 1 token 估算；实测记录以端点返回的 usage 为准。")}</p>
           </>
         )}
     </>

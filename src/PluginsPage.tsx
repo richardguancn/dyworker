@@ -12,6 +12,7 @@ import { requestPluginPanels, PluginSlotView } from "./PluginSlotView";
 import type { PluginBundleRecord, PluginEntryRecord, PluginListResult } from "./types";
 import { ModsPluginsPage } from './ModsPluginsPage';
 import { CuratedPluginsPage } from './CuratedPluginsPage';
+import { t } from "./i18n";
 
 // 插件页（整页，不是弹窗）：安装、启用、配置、卸载 + 兼容性判定。
 //
@@ -33,10 +34,10 @@ function tileColor(seed: string) {
 export function PluginsPage({onCreate,sessionId,mcpPanel,onSkillsChanged}:{onCreate:()=>void;sessionId?:string;mcpPanel:ReactNode;onSkillsChanged?:()=>void}) {
   const [format,setFormat]=useState('dsh');
   return <div className="plugins-page plugins-formats"><div className="plugins-navigation" role="tablist" aria-label="插件类型">
-    <button role="tab" aria-selected={format==='curated'} onClick={()=>setFormat('curated')}>内置精选</button>
-    <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>DSH 插件</button>
-    <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>Claude Mods</button>
-    <button role="tab" aria-selected={format==='mcp'} onClick={()=>setFormat('mcp')}>MCP</button>
+    <button role="tab" aria-selected={format==='curated'} onClick={()=>setFormat('curated')}>{t("plugins.tabs.curated", "内置精选")}</button>
+    <button role="tab" aria-selected={format==='dsh'} onClick={()=>setFormat('dsh')}>{t("plugins.tabs.dsh", "DSH 插件")}</button>
+    <button role="tab" aria-selected={format==='mods'} onClick={()=>setFormat('mods')}>{t("plugins.tabs.mods", "Claude Mods")}</button>
+    <button role="tab" aria-selected={format==='mcp'} onClick={()=>setFormat('mcp')}>{t("plugins.tabs.mcp", "MCP")}</button>
   </div>{format==='curated'?<CuratedPluginsPage onSkillsChanged={onSkillsChanged}/>:format==='mcp'?mcpPanel:format==='mods'?<ModsPluginsPage sessionId={sessionId}/>:<DshPluginsPage onCreate={onCreate}/>}</div>;
 }
 function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
@@ -251,17 +252,17 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
       ) : null}
       <header className="plugins-page-header">
         <div className="plugins-page-heading">
-          <h1>插件</h1>
-          <p>管理已安装插件，按需添加已验证的功能。</p>
+          <h1>{t("plugins.title", "插件")}</h1>
+          <p>{t("plugins.subtitle", "管理已安装插件，按需添加已验证的功能。")}</p>
         </div>
         <div className="plugins-page-actions">
-          <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> 创建插件</button>
-          <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>安装本地插件</button>
-          <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label="刷新插件清单" title="刷新插件清单">
+          <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> {t("plugins.create", "创建插件")}</button>
+          <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>{t("plugins.installLocal", "安装本地插件")}</button>
+          <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label={t("plugins.refreshCatalog", "刷新插件清单")} title={t("plugins.refreshCatalog", "刷新插件清单")}>
             {catalogLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
           <button className="plugins-add-button" onClick={() => {setView('available');setMarketQuery('');setMarketCategory('');}}>
-            <Plus size={15} /> 添加插件
+            <Plus size={15} /> {t("plugins.add", "添加插件")}
           </button>
         </div>
       </header>
@@ -273,18 +274,18 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
       ) : null}
 
       <div className="plugins-navigation" role="tablist" aria-label="插件列表">
-        <button role="tab" aria-selected={view==='installed'} className={view==='installed'?'active':''} onClick={()=>{setView('installed');setMarketQuery('');}}>已安装 <span>{verifiedEntries.length}</span></button>
-        <button role="tab" aria-selected={view==='available'} className={view==='available'?'active':''} onClick={()=>{setView('available');setMarketQuery('');}}>可安装 <span>{catalog.length}</span></button>
+        <button role="tab" aria-selected={view==='installed'} className={view==='installed'?'active':''} onClick={()=>{setView('installed');setMarketQuery('');}}>{t("plugins.installed", "已安装")} <span>{verifiedEntries.length}</span></button>
+        <button role="tab" aria-selected={view==='available'} className={view==='available'?'active':''} onClick={()=>{setView('available');setMarketQuery('');}}>{t("plugins.available", "可安装")} <span>{catalog.length}</span></button>
       </div>
       <div className="plugins-list-toolbar">
-        <label className="plugins-market-search"><Search size={15}/><input aria-label="搜索插件" value={marketQuery} onChange={event=>setMarketQuery(event.target.value)} placeholder="搜索插件名称或功能"/></label>
-        <span className="plugins-catalog-status" role="status">{catalogLoading?'正在更新清单…':catalogMeta.source==='platform'?'清单已从平台更新':catalogMeta.source==='cache'?'使用已保存清单':'随应用提供的清单'}</span>
+        <label className="plugins-market-search"><Search size={15}/><input aria-label="搜索插件" value={marketQuery} onChange={event=>setMarketQuery(event.target.value)} placeholder={t("plugins.searchPlaceholder", "搜索插件名称或功能")}/></label>
+        <span className="plugins-catalog-status" role="status">{catalogLoading ? t("plugins.statusUpdating", "正在更新清单…") : catalogMeta.source==='platform' ? t("plugins.statusPlatform", "清单已从平台更新") : catalogMeta.source==='cache' ? t("plugins.statusCache", "使用已保存清单") : t("plugins.statusBundled", "随应用提供的清单")}</span>
       </div>
       {catalogMeta.notice&&<p className="plugins-catalog-notice">{catalogMeta.notice}</p>}
       {view==='available'&&<div className="plugins-group" role="tabpanel" aria-label="可安装插件">
-        <div className="plugins-list-heading"><h2>可安装插件</h2><span>仅展示已验证的版本</span></div>
+        <div className="plugins-list-heading"><h2>{t("plugins.availableTitle", "可安装插件")}</h2><span>{t("plugins.availableDesc", "仅展示已验证的版本")}</span></div>
         <div className="plugins-market-categories">
-          {['',...new Set(catalog.map(plugin=>plugin.category))].map(category=><button key={category} className={`plugin-category-chip ${marketCategory===category?'on':''}`} aria-pressed={marketCategory===category} onClick={()=>setMarketCategory(category)}>{category||'全部'}</button>)}
+          {['',...new Set(catalog.map(plugin=>plugin.category))].map(category=><button key={category} className={`plugin-category-chip ${marketCategory===category?'on':''}`} aria-pressed={marketCategory===category} onClick={()=>setMarketCategory(category)}>{category || t("plugins.allCategories", "全部")}</button>)}
         </div>
         {available.map(plugin=>{
           const existing=entries.find(entry=>isInstalled(plugin,[entry]));
@@ -292,22 +293,22 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
           return <div className="plugin-card market" key={plugin.id}>
             <div className="plugin-card-icon" style={{'--plugin-tile':tileColor(plugin.packageName)} as React.CSSProperties}><PluginIcon size={20}/></div>
             <div className="plugin-card-body">
-              <div className="plugin-card-title"><button className="plugin-name-button" onClick={()=>{setError('');setNotice('');setDetailSelection({catalogId:plugin.id});}}>{plugin.displayName}</button><span className="plugin-tag ok"><Check size={11}/>已验证</span></div>
+              <div className="plugin-card-title"><button className="plugin-name-button" onClick={()=>{setError('');setNotice('');setDetailSelection({catalogId:plugin.id});}}>{plugin.displayName}</button><span className="plugin-tag ok"><Check size={11}/>{t("plugins.verified", "已验证")}</span></div>
               <p className="plugin-card-desc">{plugin.summary}</p>
               <p className="plugin-row-meta">{plugin.category}<span>·</span>v{plugin.support.version}<span>·</span>{plugin.packageName}</p>
             </div>
-            <button className="plugins-install-action" disabled={Boolean(busy)||catalogLoading||Boolean(installed)} onClick={()=>setMarketSpec(plugin.install)}>{installed?<><Check size={14}/>已安装</>:<><Plus size={14}/>{existing?'安装已验证版本':'安装'}</>}</button>
+            <button className="plugins-install-action" disabled={Boolean(busy)||catalogLoading||Boolean(installed)} onClick={()=>setMarketSpec(plugin.install)}>{installed?<><Check size={14}/>{t("plugins.statusInstalled", "已安装")}</>:<><Plus size={14}/>{existing ? t("plugins.installVerified", "安装已验证版本") : t("plugins.install", "安装")}</>}</button>
           </div>;
         })}
-        {!catalogLoading&&!available.length&&<p className="plugins-empty">{marketQuery||marketCategory?'没有找到匹配的插件。':'当前没有适用于此版本和系统的已验证插件。'}</p>}
+        {!catalogLoading&&!available.length&&<p className="plugins-empty">{marketQuery||marketCategory ? t("plugins.emptySearch", "没有找到匹配的插件。") : t("plugins.emptyAvailable", "当前没有适用于此版本和系统的已验证插件。")}</p>}
       </div>}
 
       {view==='installed'&&<div className="plugins-group" role="tabpanel" aria-label="已安装插件">
-        <div className="plugins-list-heading"><h2>已安装插件</h2><span>启用后在适用任务中使用</span></div>
+        <div className="plugins-list-heading"><h2>{t("plugins.installedTitle", "已安装插件")}</h2><span>{t("plugins.installedDesc", "启用后在适用任务中使用")}</span></div>
 
         {!catalogLoading&&shownEntries.length === 0 && (
           <p className="plugins-empty">
-            {marketQuery?'没有找到匹配的插件。':'还没有安装已验证的插件，可在“可安装”中选择。'}
+            {marketQuery ? t("plugins.emptySearch", "没有找到匹配的插件。") : t("plugins.emptyInstalled", "还没有安装已验证的插件，可在“可安装”中选择。")}
           </p>
         )}
 
@@ -327,14 +328,14 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                     <button className="plugin-name-button" onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{builtin?.name||approved?.displayName||entry.id}</button>
                   </span>
                   {bundle?.version ? <span className="plugin-tag">v{bundle.version}</span> : null}
-                  {bundle?.source?.kind === 'local' && !entry.builtin ? <span className="plugin-tag">本地制作</span> : null}
+                  {bundle?.source?.kind === 'local' && !entry.builtin ? <span className="plugin-tag">{t("plugins.localMade", "本地制作")}</span> : null}
 
-                  <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.unsupportedReason ? "当前系统不支持" : entry.disabled ? "已停用" : entry.active ? "已启动" : entry.state === "session-required" ? "用于 DSH 插件会话" : entry.state === "loading" ? "启动中" : entry.state === "failed" ? "启动失败" : "等待所需能力"}</span>
-                  {bundle?.drift ? <span className="plugin-tag warn">版本漂移：{bundle.drift}</span> : null}
+                  <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.unsupportedReason || (entry.disabled ? t("plugins.statusDisabled", "已停用") : entry.active ? t("plugins.statusActive", "已启动") : entry.state === "session-required" ? t("plugins.statusSessionRequired", "用于 DSH 插件会话") : entry.state === "loading" ? t("plugins.statusLoading", "启动中") : entry.state === "failed" ? t("plugins.statusFailed", "启动失败") : t("plugins.statusWaiting", "等待所需能力"))}</span>
+                  {bundle?.drift ? <span className="plugin-tag warn">{t("plugins.versionDrift", "版本漂移：")}{bundle.drift}</span> : null}
                   {/* 内置插件：随应用分发、开机自动加载，可停用但不能卸载（说明收进悬浮） */}
                   {entry.builtin ? (
-                    <span className="plugin-tag" title="随应用分发，开机自动加载；可停用，但不能卸载">
-                      内置
+                    <span className="plugin-tag" title={t("plugins.builtinTip", "随应用分发，开机自动加载；可停用，但不能卸载")}>
+                      {t("plugins.builtin", "内置")}
                     </span>
                   ) : null}
                 </div>
@@ -342,9 +343,9 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                 {entry.unsupportedReason && <p className="plugin-card-desc muted">{entry.unsupportedReason}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
                 <div className="plugin-card-tools">
-                  <button className="plugins-text-button" aria-label={`查看 ${entry.id} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>详情</button>
+                  <button className="plugins-text-button" aria-label={`查看 ${entry.id} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{t("plugins.details", "详情")}</button>
                   <button className="plugins-text-button" onClick={() => setDetailSelection({entryId:entry.id})}>
-                    设置
+                    {t("plugins.settings", "设置")}
                   </button>
                   {entry.builtin ? null : (
                     <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", async () => {
@@ -352,7 +353,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                       if(result?.ok!==false)await clientHost().unload(entry.id);
                       return result;
                     })}>
-                      <Trash2 size={13} /> 卸载
+                      <Trash2 size={13} /> {t("plugins.uninstall", "卸载")}
                     </button>
                   )}
                 </div>
@@ -376,11 +377,11 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
       </div>}
 
       <footer className="plugins-page-footer">
-        <span><Check size={13}/>清单更新不会自动升级已安装的插件</span>
-        {catalogMeta.publishedAt&&<span>清单发布于 {new Date(catalogMeta.publishedAt).toLocaleDateString('zh-CN')}</span>}
-        <details className="plugins-advanced"><summary>高级管理</summary><div>
-          <span>插件目录：{data?.status?.dir||'—'}</span>
-          <button className="plugins-text-button" onClick={()=>run('已重新载入清单',()=>bridge!.reloadPlugins())} disabled={Boolean(busy)}>重新载入清单</button>
+        <span><Check size={13}/>{t("plugins.updateNotice", "清单更新不会自动升级已安装的插件")}</span>
+        {catalogMeta.publishedAt&&<span>{t("plugins.publishedAt", "清单发布于 ")}{new Date(catalogMeta.publishedAt).toLocaleDateString()}</span>}
+        <details className="plugins-advanced"><summary>{t("plugins.advanced", "高级管理")}</summary><div>
+          <span>{t("plugins.directory", "插件目录：")}{data?.status?.dir||'—'}</span>
+          <button className="plugins-text-button" onClick={()=>run('已重新载入清单',()=>bridge!.reloadPlugins())} disabled={Boolean(busy)}>{t("plugins.reloadCatalog", "重新载入清单")}</button>
         </div></details>
       </footer>
     </section>

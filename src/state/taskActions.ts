@@ -13,6 +13,7 @@ import type { SessionRecord, SkillRecord } from "../types";
 import { useComposerStore } from "./composerStore";
 import { useInboxStore } from "./inboxStore";
 import { useLayoutStore } from "./layoutStore";
+import { refreshWorkspace } from "./panelActions";
 import { usePanelStore } from "./panelStore";
 import { previewWorkspace } from "./previewData";
 import { cancelSleepingTask, makeSession, showSessionError, showSessionNotice, updateSession } from "./sessionActions";
@@ -68,7 +69,7 @@ export const applyWorkspaceSelection = (targetWorkspacePath: string) => {
     setWorkspaceGroupOpen((current) => ({ ...current, [targetWorkspacePath]: true }));
     if (targetWorkspacePath !== workspacePath) {
       if (window.dyworker?.refreshWorkspace) {
-        void window.dyworker.refreshWorkspace(targetWorkspacePath).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
+        void refreshWorkspace().catch(() => setWorkspaceEntries([]));
       } else {
         setWorkspaceEntries(targetWorkspacePath === "/workspace/dyworker" ? previewWorkspace : []);
       }

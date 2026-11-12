@@ -12,13 +12,14 @@ import {
   weeklyTooltipTitle,
   type TokenActivityData,
 } from "./tokenActivity";
+import { t } from "./i18n";
 
 type ActivityMode = "daily" | "weekly" | "cumulative";
 
-const MODES: Array<{ id: ActivityMode; label: string }> = [
-  { id: "daily", label: "每天" },
-  { id: "weekly", label: "每周" },
-  { id: "cumulative", label: "累计总量" },
+const getModes = (): Array<{ id: ActivityMode; label: string }> => [
+  { id: "daily", label: t("usage.daily", "每天") },
+  { id: "weekly", label: t("usage.weekly", "每周") },
+  { id: "cumulative", label: t("usage.cumulative", "累计总量") },
 ];
 
 // 绿色梯度沿用 GitHub 贡献图；空格与标签色按深浅主题各配一套，与米色/深色底协调
@@ -233,12 +234,14 @@ export function TokenActivity({ records }: { records: UsageRecord[] }) {
     };
   }, [mode, data, theme, hasWidth]);
 
+  const modes = getModes();
+
   return (
     <div className="token-activity">
       <div className="token-activity-head">
-        <span className="token-activity-title">Token 活动</span>
-        <div className="token-activity-tabs" role="tablist" aria-label="Token 活动视图">
-          {MODES.map((item) => (
+        <span className="token-activity-title">{t("usage.activityTitle", "Token 活动")}</span>
+        <div className="token-activity-tabs" role="tablist" aria-label={t("usage.activityTitle", "Token 活动视图")}>
+          {modes.map((item) => (
             <button
               key={item.id}
               type="button"
@@ -257,13 +260,13 @@ export function TokenActivity({ records }: { records: UsageRecord[] }) {
         className="token-activity-chart"
         style={{ height }}
         role="img"
-        aria-label={`Token 活动图，近一年合计 ${formatTokenCN(data.total)} 个 Token`}
+        aria-label={`${t("usage.activityTitle", "Token 活动图")}，${data.total > 0 ? t("usage.yearTotal", "近一年合计 {count} 个 Token").replace("{count}", formatTokenCN(data.total)) : t("usage.noRecordsInYear", "近一年暂无使用记录")}`}
       />
       <div className="token-activity-caption">
-        <span>{data.total > 0 ? `近一年合计 ${formatTokenCN(data.total)} 个 Token` : "近一年暂无使用记录"}</span>
+        <span>{data.total > 0 ? t("usage.yearTotal", "近一年合计 {count} 个 Token").replace("{count}", formatTokenCN(data.total)) : t("usage.noRecordsInYear", "近一年暂无使用记录")}</span>
         <span className="token-activity-legend">
-          <i style={{ background: PALETTES[theme].empty }} />无用量
-          <i style={{ background: PALETTES[theme].block }} />{mode === "cumulative" ? "累计用量" : "有用量"}
+          <i style={{ background: PALETTES[theme].empty }} />{t("usage.noUsage", "无用量")}
+          <i style={{ background: PALETTES[theme].block }} />{mode === "cumulative" ? t("usage.cumUsage", "累计用量") : t("usage.hasUsage", "有用量")}
         </span>
       </div>
     </div>

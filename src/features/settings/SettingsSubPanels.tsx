@@ -2,6 +2,7 @@ import { AlertTriangle, Check, ChevronRight, Download, FolderOpen, Globe, Landma
 import { useEffect, useState } from "react";
 import { MarkdownSnippet } from "../../InteractiveMessage";
 import { defaultSettings } from "../../lib/settings";
+import { t } from "../../i18n";
 import type { AppUpdateStatus, ChannelConnectionStatus, ChannelsConfig, ChannelsStatusMap, HookRule, ProviderSettings, StandingRule, TelemetrySettings, TelemetryStatus, UserIdentity } from "../../types";
 
 export function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => Promise<boolean> }) {
@@ -36,50 +37,50 @@ export function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; 
       >
         <div className="full-access-title-row">
           <AlertTriangle size={29} strokeWidth={2.2} aria-hidden="true" />
-          <h2 id="full-access-dialog-title">要开启完整访问权限吗?</h2>
+          <h2 id="full-access-dialog-title">{t("fullAccess.title", "开启完全访问？")}</h2> {/* 要开启完整访问权限吗? */}
         </div>
         <p className="full-access-intro">
-          DYWorker 将能够在未经您许可的情况下，在这台计算机上的任何位置运行命令、使用互联网，以及创建和编辑文件。这包括但不限于：
+          {t("fullAccess.intro", "DYWorker 将可在未逐次确认的情况下访问文件、运行命令与网络请求。")}
         </p>
         <div className="full-access-capabilities">
           <div className="full-access-capability">
             <FolderOpen size={31} strokeWidth={1.8} aria-hidden="true" />
             <span>
-              <strong>文件和文件夹</strong>
-              <small>读取、创建、修改、上传或删除此计算机上任意位置的文件</small>
+              <strong>{t("fullAccess.files", "文件目录")}</strong> {/* 文件和文件夹 */}
+              <small>{t("fullAccess.filesDesc", "读取、创建、修改和删除此计算机上的文件")}</small>
             </span>
           </div>
           <div className="full-access-capability">
             <SquareTerminal size={31} strokeWidth={1.8} aria-hidden="true" />
             <span>
-              <strong>终端命令</strong>
-              <small>运行命令、安装软件和更改系统设置</small>
+              <strong>{t("fullAccess.terminal", "系统终端")}</strong> {/* 终端命令 */}
+              <small>{t("fullAccess.terminalDesc", "运行命令、安装软件并配置环境")}</small>
             </span>
           </div>
           <div className="full-access-capability">
             <Globe size={31} strokeWidth={1.8} aria-hidden="true" />
             <span>
-              <strong>互联网和已连接的应用</strong>
-              <small>访问网站、发送数据并使用已启用的插件</small>
+              <strong>{t("fullAccess.internet", "网络连接")}</strong> {/* 互联网和已连接的应用 */}
+              <small>{t("fullAccess.internetDesc", "访问网页、收发数据并调用扩展插件")}</small>
             </span>
           </div>
         </div>
         <p className="full-access-warning">
-          这会带来敏感数据丢失或泄露以及提示注入等风险。你可以关闭此功能。
+          {t("fullAccess.warning", "请确保处于可信环境。你可随时切回审批模式。")}
           <button type="button" className="full-access-learn-more" onClick={() => setShowDetails((value) => !value)}>
-            了解更多
+            {t("common.learnMore", "了解更多")}
           </button>
         </p>
         {showDetails && (
           <p className="full-access-details">
-            开启后，任务会减少逐次确认，更适合你明确承担风险并希望连续执行的场景。你可以随时从输入框旁的审批模式菜单切回替我审批或请示批准。
+            {t("fullAccess.details", "开启后将减少逐次确认，更适合连续执行任务。可随时从审批菜单切回。")}
           </p>
         )}
         <div className="full-access-actions">
-          <button type="button" className="full-access-cancel" onClick={onClose} disabled={saving}>取消</button>
+          <button type="button" className="full-access-cancel" onClick={onClose} disabled={saving}>{t("common.cancel", "取消")}</button>
           <button type="button" className="full-access-confirm" onClick={() => void confirm()} disabled={saving}>
             <AlertTriangle size={17} aria-hidden="true" />
-            {saving ? "开启中…" : "确认"}
+            {saving ? t("common.enabling", "开启中…") : t("common.confirm", "确认")}
           </button>
         </div>
       </div>
@@ -96,7 +97,7 @@ export function IdentitySetupDialog({ onChoose }: { onChoose: (identity: UserIde
     setError("");
     try {
       const saved = await onChoose(identity);
-      if (!saved) setError("身份没有保存成功，请重试。");
+      if (!saved) setError(t("identity.saveFailedRetry", "身份没有保存成功，请重试。"));
     } finally {
       setSaving(false);
     }
@@ -106,28 +107,28 @@ export function IdentitySetupDialog({ onChoose }: { onChoose: (identity: UserIde
     <div className="modal-backdrop identity-backdrop" role="presentation">
       <div className="identity-dialog" role="dialog" aria-modal="true" aria-labelledby="identity-dialog-title">
         <div className="identity-dialog-mark"><Sparkles size={21} aria-hidden="true" /></div>
-        <span className="dialog-kicker">首次使用</span>
-        <h2 id="identity-dialog-title">你准备怎样使用 DYWorker？</h2>
-        <p className="identity-dialog-intro">选择后，助手会按对应场景组织回答和执行方式。这个选择会保存在当前设备上，之后也可以在设置中修改。</p>
+        <span className="dialog-kicker">{t("identity.firstTime", "首次使用")}</span> {/* 首次使用 */}
+        <h2 id="identity-dialog-title">{t("identity.setupTitle", "你准备怎样使用 DYWorker？")}</h2>
+        <p className="identity-dialog-intro">{t("identity.setupIntro", "选择后助手将适配对应场景，可在设置随时调整。")}</p>
         <div className="identity-options">
           <button type="button" className="identity-option" disabled={saving} onClick={() => void choose("general")}>
             <span className="identity-option-icon"><UserRound size={23} aria-hidden="true" /></span>
             <span className="identity-option-copy">
-              <strong>通用身份</strong>
-              <small>适合个人、企业、开发者和一般办公场景，使用更通用的工作助手设定。</small>
+              <strong>{t("identity.generalTitle", "通用办公")}</strong> {/* 通用身份 */}
+              <small>{t("identity.generalDesc", "适合日常办公、编程开发与通用工作。")}</small>
             </span>
             <ChevronRight size={18} aria-hidden="true" />
           </button>
           <button type="button" className="identity-option" disabled={saving} onClick={() => void choose("government")}>
             <span className="identity-option-icon"><Landmark size={23} aria-hidden="true" /></span>
             <span className="identity-option-copy">
-              <strong>政府单位</strong>
-              <small>适合党政机关、事业单位等场景，优先遵循公文、政策和保密相关工作规则。</small>
+              <strong>{t("identity.govTitle", "政务公文")}</strong> {/* 政府单位 */}
+              <small>{t("identity.govDesc", "遵循公文格式 GB/T 9704 与保密规范。")}</small>
             </span>
             <ChevronRight size={18} aria-hidden="true" />
           </button>
         </div>
-        {saving && <p className="identity-dialog-status">正在保存选择…</p>}
+        {saving && <p className="identity-dialog-status">{t("identity.savingChoice", "正在保存选择…")}</p>}
         {error && <p className="identity-dialog-error">{error}</p>}
       </div>
     </div>
@@ -143,7 +144,7 @@ export function IdentitySettingsPanel({ value, onSave }: {
     if (identity === value.identity) return;
     setSaving(true);
     try {
-      await onSave({ ...value, identity }, "身份设置已更新");
+      await onSave({ ...value, identity }, t("identity.saved", "身份设置已更新"));
     } finally {
       setSaving(false);
     }
@@ -151,17 +152,17 @@ export function IdentitySettingsPanel({ value, onSave }: {
 
   return (
     <div className="identity-settings-panel">
-      <div className="dialog-section-title">助手身份</div>
-      <p className="profile-section-hint">身份只影响助手默认的工作语境，不会限制你使用其他功能。</p>
+      <div className="dialog-section-title">{t("identity.title", "工作角色")}{/* 助手身份 */}</div>
+      <p className="profile-section-hint">{t("identity.hint", "设定对话风格与倾向，随时可切换。")}</p>
       <div className="identity-settings-options">
         <button type="button" className={`identity-option compact ${value.identity === "general" ? "selected" : ""}`} disabled={saving} onClick={() => void select("general")}>
           <span className="identity-option-icon"><UserRound size={20} aria-hidden="true" /></span>
-          <span className="identity-option-copy"><strong>通用身份</strong><small>个人、企业、开发者和一般办公场景</small></span>
+          <span className="identity-option-copy"><strong>{t("identity.generalTitle", "日常办公")}</strong><small>{t("identity.generalDesc", "适合个人、开发与日常通用事务。")}</small></span>
           {value.identity === "general" && <Check size={17} aria-hidden="true" />}
         </button>
         <button type="button" className={`identity-option compact ${value.identity === "government" ? "selected" : ""}`} disabled={saving} onClick={() => void select("government")}>
           <span className="identity-option-icon"><Landmark size={20} aria-hidden="true" /></span>
-          <span className="identity-option-copy"><strong>政府单位</strong><small>党政机关、事业单位和政务办公场景</small></span>
+          <span className="identity-option-copy"><strong>{t("identity.governmentTitle", "机关公文")}</strong><small>{t("identity.governmentDesc", "依国家标准公文格式处理与导出。")}</small></span>
           {value.identity === "government" && <Check size={17} aria-hidden="true" />}
         </button>
       </div>
@@ -325,8 +326,34 @@ export function AppUpdateDialog({
 
 function hookRuleText(rule: HookRule) {
   const tools = Array.isArray(rule.tool) ? rule.tool.join("、") : rule.tool;
-  const target = rule.path ? ` 路径 ${rule.path}` : rule.command ? ` 命令 ${rule.command}` : "";
-  return { title: `${tools}${target}`, action: rule.action === "block" ? "阻止" : "强制审批", message: rule.message || "" };
+  const target = rule.path ? `${t("hooks.pathPrefix", " 路径 ")}${rule.path}` : rule.command ? `${t("hooks.commandPrefix", " 命令 ")}${rule.command}` : "";
+  let message = rule.message || "";
+  if (rule.message === "修改钩子规则属于高危操作，必须人工确认") {
+    message = t("hooks.msg.modifyHooks", rule.message);
+  } else if (rule.message === "禁止提权运行命令") {
+    message = t("hooks.msg.sudo", rule.message);
+  } else if (rule.message === "禁止格式化磁盘") {
+    message = t("hooks.msg.mkfs", rule.message);
+  } else if (rule.message === "禁止关机类命令") {
+    message = t("hooks.msg.shutdown", rule.message);
+  }
+  return { title: `${tools}${target}`, action: rule.action === "block" ? t("hooks.actionBlock", "阻止") : t("hooks.actionApproval", "强制审批"), message };
+}
+
+function formatStandingRuleTitle(rule: StandingRule) {
+  if (rule.kind === "domain") {
+    return t("hooks.ruleDomain", `以后访问 ${rule.pattern} 不再询问`, { host: rule.pattern });
+  }
+  if (rule.kind === "command-prefix") {
+    return t("hooks.ruleCommandPrefix", `以后以「${rule.pattern}」开头的命令不再询问`, { pattern: rule.pattern });
+  }
+  if (rule.kind === "path-glob") {
+    return t("hooks.rulePathGlob", `以后所有 ${rule.pattern} 文件不再询问`, { ext: rule.pattern });
+  }
+  if (rule.kind === "mcp-tool") {
+    return t("hooks.ruleMcp", `以后使用「${rule.pattern}」不再询问`, { tool: rule.pattern });
+  }
+  return rule.label || rule.pattern;
 }
 
 export function HooksPanel() {
@@ -341,17 +368,17 @@ export function HooksPanel() {
   };
   return (
     <div className="hooks-panel">
-      <div className="dialog-section-title">常驻允许规则（「始终允许」后同类操作不再询问）</div>
+      <div className="dialog-section-title">{t("hooks.standingRules", "免问授权（常用操作不再重复提示）")}</div>
       {rules.length ? rules.map((rule) => (
         <div className="hook-rule-row" key={rule.id}>
-          <span className="hook-rule-action allow">允许</span>
-          <span className="hook-rule-title">{rule.label || rule.pattern}</span>
-          <button className="icon-button subtle tiny" onClick={() => deleteRule(rule.id)} aria-label="删除这条规则">
+          <span className="hook-rule-action allow">{t("hooks.actionAllow", "允许")}</span>
+          <span className="hook-rule-title">{formatStandingRuleTitle(rule)}</span>
+          <button className="icon-button subtle tiny" onClick={() => deleteRule(rule.id)} aria-label={t("hooks.deleteRule", "删除这条规则")}>
             <Trash2 size={13} />
           </button>
         </div>
-      )) : <p className="dialog-note">还没有常驻规则。在审批卡片上点「始终允许」后会出现在这里；受信只读命令、常用开发命令（npm/python3/git 提交等）、同类文件写入、同域名网页可以规则化，本机界面操作永远逐次确认。</p>}
-      <div className="dialog-section-title">内置规则（始终生效，不可覆盖）</div>
+      )) : <p className="dialog-note">{t("hooks.emptyHint", "还没有免问规则。在确认卡片上勾选「始终允许」后会记录在此。")}</p>}
+      <div className="dialog-section-title">{t("hooks.builtinRules", "内置规则（始终生效）")}</div>
       {(data?.builtin || []).map((rule, index) => {
         const text = hookRuleText(rule);
         return (
@@ -362,7 +389,7 @@ export function HooksPanel() {
           </div>
         );
       })}
-      <div className="dialog-section-title">用户规则（对所有工作区生效）</div>
+      <div className="dialog-section-title">{t("hooks.userRules", "用户规则（全局生效）")}</div>
       {data?.user?.length ? data.user.map((rule, index) => {
         const text = hookRuleText(rule);
         return (
@@ -372,18 +399,18 @@ export function HooksPanel() {
             <small>{text.message}</small>
           </div>
         );
-      }) : <p className="dialog-note">还没有用户规则。规则写在下方的 JSON 文件里，保存后下一个任务生效。</p>}
+      }) : <p className="dialog-note">{t("hooks.noUserRules", "还没有用户规则。规则写在下方的 JSON 文件里，保存后下一个任务生效。")}</p>}
       <div className="dialog-actions" style={{ justifyContent: "flex-start" }}>
         <button type="button" className="button-secondary" onClick={() => void window.dyworker?.openUserHooks?.()}>
-          打开用户规则文件
+          {t("hooks.openUserHooks", "打开用户规则文件")}
         </button>
         <button type="button" className="button-secondary" onClick={() => void window.dyworker?.openAuditLog?.()}>
-          打开审计日志
+          {t("hooks.openAuditLog", "打开审计日志")}
         </button>
       </div>
-      <p className="dialog-note">审计日志记录所有文件修改、命令执行、联网与外部工具调用的审批与执行结果，可用于操作追溯。</p>
+      <p className="dialog-note">{t("hooks.auditLogNote", "审计日志记录所有文件修改、命令执行、联网与外部工具调用的审批与执行结果，可用于操作追溯。")}</p>
       <p className="dialog-note">
-        工作区级规则放在当前工作区的 .dyworker/hooks.json，只对该工作区生效。规则格式：{'{ "tool": "delete_file", "path": "*.docx", "action": "block", "message": "说明" }'}；action 支持 block（直接阻止）和 require_approval（任何模式下都强制人工确认）。
+        {t("hooks.workspaceRuleNote", '工作区级规则放在当前工作区的 .dyworker/hooks.json，只对该工作区生效。规则格式：{ "tool": "delete_file", "path": "*.docx", "action": "block", "message": "说明" }；action 支持 block（直接阻止）和 require_approval（任何模式下都强制人工确认）。')}
       </p>
     </div>
   );
@@ -428,44 +455,44 @@ export function TelemetrySettingsSection({ draft, setDraft }: {
 
   return (
     <div className="telemetry-settings">
-      <div className="dialog-section-title">运营服务</div>
+      <div className="dialog-section-title">{t("telemetry.cloudService", "云端服务")}</div>
       <label>
-        服务地址
+        {t("telemetry.serviceUrl", "服务地址")}
         <input
           type="url"
           value={telemetry.serviceUrl}
-          placeholder="https://运营服务地址（由管理员提供；留空表示完全关闭）"
+          placeholder={t("telemetry.serviceUrlPlaceholder", "https://服务地址（留空表示完全关闭）")}
           onChange={(event) => patch({ serviceUrl: event.target.value })}
         />
       </label>
-      <p className="dialog-note">使用统计与运营消息连接安全监管平台提供的受控接口。填写平台根地址，不需要附加接口路径。本机测试可填 http://localhost:8000；其他电脑请填可访问的 HTTPS 平台地址。修改后请点击“保存设置”；留空时两项功能都不联网。开启任一项后会用随机安装标识登记设备（不采集 MAC 地址、硬盘序列号、主机名和系统用户名）。</p>
-      <div className="dialog-section-title">使用统计</div>
+      <p className="dialog-note">{t("telemetry.serviceNote", "连接受控接口，不采集私密信息，留空时不联网。")}</p>
+      <div className="dialog-section-title">{t("telemetry.statsTitle", "用量统计")}</div>
       <label className="dialog-check">
         <input
           type="checkbox"
           checked={telemetry.statsEnabled}
           onChange={(event) => patch({ statsEnabled: event.target.checked })}
         />
-        上报使用统计（默认关闭）
+        {t("telemetry.statsReport", "上报使用统计（默认关闭）")}
       </label>
-      <p className="dialog-note">开启后本机记录前台有效使用区间：只在窗口处于前台且近期有人工操作时计时，连续 120 秒无操作即停止；断网时先存本地（最多 7 天或 20MB），恢复后自动补传并去重。只上传使用元数据（日期、时长、应用版本、平台），不上传聊天内容、文件、提示词、模型地址与密钥。关闭后立即停止采集并清空待传队列。</p>
-      <div className="dialog-section-title">运营消息</div>
+      <p className="dialog-note">{t("telemetry.statsNote", "仅统计软件活跃时长等基础指标，不上传聊天与文件。")}</p>
+      <div className="dialog-section-title">{t("telemetry.messagesTitle", "维护通知")}</div>
       <label className="dialog-check">
         <input
           type="checkbox"
           checked={telemetry.messagesEnabled}
           onChange={(event) => patch({ messagesEnabled: event.target.checked })}
         />
-        订阅公告、版本提醒与维护通知
+        {t("telemetry.subscribeMessages", "订阅公告、版本提醒与维护通知")}
       </label>
-      <p className="dialog-note">与使用统计互不影响：关闭统计仍可接收消息。在线时每 5 分钟检查新消息，离线期间的消息在下次打开或恢复联网后补收；退出应用期间不承诺即时提醒。</p>
+      <p className="dialog-note">{t("telemetry.messagesNote", "与使用统计互不影响：关闭统计仍可接收消息。在线时每 5 分钟检查新消息，离线期间的消息在下次打开或恢复联网后补收；退出应用期间不承诺即时提醒。")}</p>
       <label className="dialog-check">
         <input
           type="checkbox"
           checked={telemetry.notifyNewMessages}
           onChange={(event) => patch({ notifyNewMessages: event.target.checked })}
         />
-        收到新消息时显示系统通知
+        {t("telemetry.notifyNewMessages", "收到新消息时显示系统通知")}
       </label>
       <label className="dialog-check">
         <input
@@ -473,18 +500,18 @@ export function TelemetrySettingsSection({ draft, setDraft }: {
           checked={telemetry.notifyMarketing}
           onChange={(event) => patch({ notifyMarketing: event.target.checked })}
         />
-        营销类消息也弹系统通知（默认只进消息中心）
+        {t("telemetry.notifyMarketing", "营销类消息也弹系统通知（默认只进消息中心）")}
       </label>
       <label>
-        免打扰时段（可选）
+        {t("telemetry.quietHours", "免打扰时段（可选）")}
         <input
           value={telemetry.quietHours}
-          placeholder="例如 22:00-08:00；留空关闭。时段内新消息只进消息中心，不弹系统通知"
+          placeholder={t("telemetry.quietHoursPlaceholder", "例如 22:00-08:00；留空关闭。时段内新消息只进消息中心，不弹系统通知")}
           onChange={(event) => patch({ quietHours: event.target.value })}
         />
       </label>
       <label>
-        每日系统弹窗上限
+        {t("telemetry.dailyPopupLimit", "每日系统弹窗上限")}
         <input
           type="number"
           min={0}
@@ -495,22 +522,20 @@ export function TelemetrySettingsSection({ draft, setDraft }: {
       </label>
       {status && (
         <>
-          <div className="dialog-section-title">本机状态</div>
+          <div className="dialog-section-title">{t("telemetry.localStatusTitle", "本机状态")}</div>
           <p className="dialog-note">
-            设备登记：{status.registered ? "已完成" : "未登记"}
-            {status.registered ? `（凭据${status.credentialMode === "safe-storage" ? "已加密保存" : status.credentialMode === "session" ? "仅本次会话保存（系统安全存储不可用）" : "已撤销"}）` : ""}
-            {status.queue ? ` · 待上传 ${status.queue.pending} 条` : ""}
-            {status.queue?.droppedOverflow ? ` · 队列超限丢弃 ${status.queue.droppedOverflow} 条（报表覆盖有缺口）` : ""}
-            {status.lastSyncAt ? ` · 最近同步 ${new Date(status.lastSyncAt).toLocaleString("zh-CN")}` : ""}
-            {status.clockOffsetMs ? ` · 本机时钟偏差约 ${Math.round(status.clockOffsetMs / 1000)} 秒（已标记待审）` : ""}
+            {t("telemetry.registration", "设备登记")}：{status.registered ? t("telemetry.registered", "已完成") : t("telemetry.notRegistered", "未登记")}
+            {status.registered ? `（${status.credentialMode === "safe-storage" ? t("telemetry.credSafeStorage", "已加密保存") : status.credentialMode === "session" ? t("telemetry.credSession", "仅本次会话保存（系统安全存储不可用）") : t("telemetry.credRevoked", "已撤销")}）` : ""}
+            {status.queue ? ` · ${t("telemetry.queuePending", "待上传 {count} 条", { count: status.queue.pending })}` : ""}
+            {status.queue?.droppedOverflow ? ` · 队列超限丢弃 ${status.queue.droppedOverflow} 条` : ""}
+            {status.lastSyncAt ? ` · ${t("telemetry.lastSync", "最近同步 {time}", { time: new Date(status.lastSyncAt).toLocaleString() })}` : ""}
             {status.lastError ? ` · 最近错误：${status.lastError}` : ""}
-            {status.nextRegistrationRetryAt ? ` · 将于 ${new Date(status.nextRegistrationRetryAt).toLocaleString("zh-CN")} 自动重试，待上传数据会保留` : ""}
           </p>
         </>
       )}
       <div className="dialog-actions" style={{ justifyContent: "flex-start" }}>
         <button type="button" className="button-secondary" disabled={deleting} onClick={deleteData}>
-          {deleting ? "删除中…" : "删除此安装已上传数据"}
+          {deleting ? t("telemetry.deleting", "删除中…") : t("telemetry.deleteData", "删除此安装已上传数据")}
         </button>
       </div>
       {deleteResult && <p className="dialog-note">{deleteResult}</p>}
@@ -520,20 +545,23 @@ export function TelemetrySettingsSection({ draft, setDraft }: {
 
 // 消息渠道面板:QQ 官方机器人 + 微信 ClawBot。配置改动即存(走 settings:save,主进程热生效);
 // 连接状态由主进程 channels:status 推送,微信扫码登录二维码也经此下发。
-const channelStatusText: Record<ChannelConnectionStatus, string> = {
-  disabled: "未启用",
-  connecting: "连接中…",
-  "awaiting-scan": "等待扫码",
-  online: "已连接",
-  error: "错误",
-};
+function getChannelStatusText(status: ChannelConnectionStatus) {
+  switch (status) {
+    case "disabled": return t("channels.status.disabled", "未启用");
+    case "connecting": return t("channels.status.connecting", "连接中…");
+    case "awaiting-scan": return t("channels.status.awaitingScan", "等待扫码");
+    case "online": return t("channels.status.online", "已连接");
+    case "error": return t("channels.status.error", "错误");
+    default: return status;
+  }
+}
 
 function ChannelStatusLine({ status }: { status?: { status: ChannelConnectionStatus; detail: string; qrUrl?: string } }) {
   const current = status?.status ?? "disabled";
   return (
     <div className={`channel-status ${current}`}>
       <span className="channel-status-dot" />
-      <span>{channelStatusText[current]}{status?.detail ? `：${status.detail}` : ""}</span>
+      <span>{getChannelStatusText(current)}{status?.detail ? `：${status.detail}` : ""}</span>
     </div>
   );
 }
@@ -574,36 +602,36 @@ export function ChannelsPanel({ value, onSave }: {
 
   return (
     <>
-      <div className="dialog-section-title">渠道任务运行方式</div>
-      <label>任务运行方式
-        <select aria-label="渠道任务运行方式" value={channels.runtime || ''} disabled={saving}
-          onChange={event=>void saveChannels({...channels,runtime:event.target.value==='dsh' ? 'dsh' : event.target.value==='dyworker' ? 'dyworker' : undefined},'渠道任务运行方式已更新')}>
-          <option value="">沿用会话设置</option><option value="dyworker">办公助手</option><option value="dsh">DSH 插件会话</option>
+      <div className="dialog-section-title">{t("channels.runtimeSection", "协作方式")}</div>
+      <label>{t("channels.runtimeLabel", "执行模式")}
+        <select aria-label={t("channels.runtimeLabel", "执行模式")} value={channels.runtime || ''} disabled={saving}
+          onChange={event=>void saveChannels({...channels,runtime:event.target.value==='dsh' ? 'dsh' : event.target.value==='dyworker' ? 'dyworker' : undefined},t("channels.runtimeSaved", "协作方式已更新"))}>
+          <option value="">{t("channels.runtimeDefault", "沿用会话设置")}</option><option value="dyworker">{t("channels.runtimeWorker", "办公助手")}</option><option value="dsh">{t("channels.runtimeDsh", "插件会话")}</option>
         </select>
       </label>
-      <div className="dialog-section-title">渠道任务模型</div>
+      <div className="dialog-section-title">{t("channels.modelSection", "协作模型")}</div>
       <div className="mcp-server-row">
         <span className="mcp-server-name">
-          <strong>渠道对话使用的模型</strong>
-          <small>默认跟随桌面端当前模型;也可固定为一个已保存的模型档案</small>
+          <strong>{t("channels.modelLabel", "专属模型")}{/* 渠道任务模型 */}</strong>
+          <small>{t("channels.modelHint", "默认跟随当前模型，也可固定专属模型。")}</small>
         </span>
         <select
           className="channel-model-select"
           value={channels.modelProfileId}
           disabled={saving}
-          onChange={(event) => void saveChannels({ ...channels, modelProfileId: event.target.value }, "渠道模型已更新")}
+          onChange={(event) => void saveChannels({ ...channels, modelProfileId: event.target.value }, t("channels.modelSaved", "渠道模型已更新"))}
         >
-          <option value="">跟随当前模型（{value.model || "未配置"}）</option>
+          <option value="">{t("channels.followCurrentModel", "跟随当前模型")}（{value.model || t("common.unconfigured", "未配置")}）</option>
           {(value.profiles || []).map((profile) => (
             <option key={profile.id} value={profile.id}>{profile.name}（{profile.model}）</option>
           ))}
         </select>
       </div>
 
-      <div className="dialog-section-title">QQ 机器人（官方）</div>
+      <div className="dialog-section-title">{t("channels.qqTitle", "QQ 机器人（官方）")}</div>
       <ChannelStatusLine status={statusMap?.qq} />
       <p className="dialog-note">
-        在 <a href="https://q.qq.com" target="_blank" rel="noreferrer">QQ 开放平台</a> 创建机器人（个人主体即可，支持单聊与群聊），把 AppID 和 AppSecret 填到这里。群里需要 @机器人 才会响应，私聊直接对话。
+        {t("channels.qqGuide", "在 QQ 开放平台 创建机器人（个人主体即可，支持单聊与群聊），把 AppID 和 AppSecret 填到这里。群里需要 @机器人 才会响应，私聊直接对话。")}
       </p>
       <div className="mcp-add-form">
         <input

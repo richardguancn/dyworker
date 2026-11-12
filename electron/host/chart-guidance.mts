@@ -49,3 +49,12 @@ export const chartGuidance = [
   '- 统计、对比、趋势、占比、分布等数据图表默认使用 ```echarts 严格 JSON 代码块（用户未指定其他格式时勿用 Mermaid 统计图/ASCII/图片替代；Mermaid 仅画流程/时序/关系图）；选项比较、参数模拟、数据条或分步说明可用 ```dyworker-ui 严格 JSON 代码块。',
   `- 首次输出 \`\`\`echarts 或 \`\`\`dyworker-ui 前，先用 load_skill("${VISUAL_SKILL_ID}") 读取支持组件与 JSON 规范（单代码块单图，无注释、无函数、不设 backgroundColor）。`,
 ].join('\n');
+
+export function getChartGuidance(locale = 'zh-CN') {
+  if (locale.startsWith('zh')) return chartGuidance;
+  return [
+    '# Charts & Interactive Cards',
+    '- Default to strict JSON ```echarts code blocks for statistical, comparison, trend, ratio, or distribution charts (do not substitute with Mermaid charts, ASCII, or images unless requested; Mermaid is only for flowcharts, sequence diagrams, and relationships). Use strict JSON ```dyworker-ui code blocks for option comparisons, parameter simulations, bars, or step flows.',
+    `- Before outputting \`\`\`echarts or \`\`\`dyworker-ui for the first time, load supported components and JSON specifications via load_skill("${VISUAL_SKILL_ID}") (one chart per code block, no comments, no functions, no backgroundColor).`,
+  ].join('\n');
+}

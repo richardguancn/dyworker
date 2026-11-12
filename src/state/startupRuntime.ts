@@ -5,6 +5,7 @@
 // App 本地的 ref 经 sharedRefs import 共享同一实例，派生值 / 本地函数经 deps 注入，
 // state 读写改为在 hook 顶部解构对应 store。
 import { useEffect, useMemo } from "react";
+import { applyBrowserPanelSwitch } from "./browserPanelSwitch";
 import { clientHost } from "../pluginRuntime/clientHostSingleton.ts";
 import { createSessionSaveQueue } from "../sessionSaveQueue";
 import { createTraceBuffer, trimRecentText } from "../traceBuffer";
@@ -418,8 +419,8 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
         return;
       }
       if (request.action === "activate") {
-        const tabId = String(request.tabId || "");
-        if (tabId) browserPanelCommandsRef.current?.activate(tabId);
+        if (window.dyworker) void applyBrowserPanelSwitch(request, () => String(activeIdRef.current || ""),
+          input => window.dyworker!.validateBrowserSwitch(input), tabId => browserPanelCommandsRef.current?.activate(tabId));
         return;
       }
       if (request.action === "close-tab") {

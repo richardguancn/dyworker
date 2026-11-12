@@ -4,13 +4,13 @@
 // scrollToolPanelTabStrip、openToolPanelTab、浏览器工具函数、各种 useState/useEffect 等）
 // 仍留在 App.tsx，这里只通过 props 接收状态与回调。
 import { AlertTriangle, ArrowUpRight, ChevronLeft, ChevronRight, FileDiff, FileText, FolderOpen, Globe, History, KeyRound, MessageSquarePlus, Monitor, MoreVertical, Plus, RefreshCw, Search, SquarePlus, X } from "lucide-react";
-import { createElement } from "react";
+import { createElement, lazy, Suspense } from "react";
 import type { CSSProperties, Dispatch, ReactNode, RefObject, SetStateAction } from "react";
+import { t } from "../../i18n";
 import { PanelRightIcon } from "../../app/icons";
 import { PluginSlotView } from "../../PluginSlotView";
 import { BrowserControlOverlay } from "../../BrowserControlOverlay";
 import { FilePreviewPanel } from "../../FilePreviewPanel";
-import { FilesSplitPanel } from "../files/FilesSplitPanel";
 import { SideChatPanel } from "../sessions/SideChatPanel";
 import { BackgroundTasksPanel } from "../../BackgroundTasksPanel";
 import { GitReviewPanel } from "../review/GitReviewPanel";
@@ -18,6 +18,8 @@ import { ReviewPanel } from "../review/ReviewPanels";
 import { BROWSER_DEVICE_PRESETS, BROWSER_START_LINKS, type BrowserWebviewElement } from "../browser/browserUtils";
 import type { BrowserControlState, FileChange, ProviderSettings, SessionRecord, WorkspaceEntry } from "../../types";
 import type { ToolPanelTab } from "../../state/layoutStore";
+
+const FilesSplitPanel = lazy(async () => ({ default: (await import("../files/FilesSplitPanel")).FilesSplitPanel }));
 
 export interface ToolPanelProps {
   activeToolPanelKind: ToolPanelTab["kind"];
@@ -123,8 +125,8 @@ export function ToolPanel(props: ToolPanelProps) {
     choosePreviewFile, openFilePreview, insertFileToken, refreshWorkspace, openToolPanelTab, shortcutLabel,
   } = props;
   return (
-      <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label="右侧工具栏">
-        <div className="tool-panel-tabs" role="tablist" aria-label="打开的文件和网页">
+      <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label={t("toolpanel.sidebarAria", "右侧工具栏")}>
+        <div className="tool-panel-tabs" role="tablist" aria-label={t("toolpanel.tabsAria", "打开的文件和网页")}>
           <div className="tool-panel-tab-strip-wrap">
           <div
             className="tool-panel-tab-strip"
@@ -151,7 +153,7 @@ export function ToolPanel(props: ToolPanelProps) {
                   : tab.kind === "preview" ? <FileText size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
                 <span>{tab.title}</span>
               </button>
-              <button className="tool-panel-tab-close" aria-label={`关闭${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
+              <button className="tool-panel-tab-close" aria-label={`${t("common.close", "关闭")} ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
                 <X size={14} />
               </button>
             </div>
@@ -160,8 +162,8 @@ export function ToolPanel(props: ToolPanelProps) {
           {!pristineMenuPage && toolPanelTabOverflow.start && (
             <button
               className="tool-panel-tab-scroll prev"
-              aria-label="向前滚动标签页"
-              title="向前滚动标签页"
+              aria-label={t("toolpanel.scrollPrev", "向前滚动标签页")} /* aria-label="向前滚动标签页" */
+              title={t("toolpanel.scrollPrev", "向前滚动标签页")}
               onClick={() => scrollToolPanelTabStrip(-1)}
             >
               <ChevronLeft size={16} />
@@ -170,8 +172,8 @@ export function ToolPanel(props: ToolPanelProps) {
           {!pristineMenuPage && toolPanelTabOverflow.end && (
             <button
               className="tool-panel-tab-scroll next"
-              aria-label="向后滚动标签页"
-              title="向后滚动标签页"
+              aria-label={t("toolpanel.scrollNext", "向后滚动标签页")} /* aria-label="向后滚动标签页" */
+              title={t("toolpanel.scrollNext", "向后滚动标签页")}
               onClick={() => scrollToolPanelTabStrip(1)}
             >
               <ChevronRight size={16} />
@@ -183,8 +185,8 @@ export function ToolPanel(props: ToolPanelProps) {
             {!pristineMenuPage && (
               <button
                 className={`tool-panel-new-tab ${toolPanelAddMenuOpen ? "active" : ""}`}
-                aria-label="打开侧边操作"
-                title="打开侧边操作"
+                aria-label={t("toolpanel.openSideAction", "打开侧边操作")}
+                title={t("toolpanel.openSideAction", "打开侧边操作")}
                 aria-expanded={toolPanelAddMenuOpen}
                 onClick={() => { setToolPanelAddMenuOpen((value) => !value); setConversationToolsOpen(false); setBranchMenuOpen(false); setCommitPanelOpen(false); }}
               >
@@ -193,8 +195,8 @@ export function ToolPanel(props: ToolPanelProps) {
             )}
             <button
               className="icon-button subtle"
-              aria-label="收起右侧工具栏"
-              title="收起右侧工具栏"
+              aria-label={t("toolpanel.collapsePanel", "收起右侧工具栏")}
+              title={t("toolpanel.collapsePanel", "收起右侧工具栏")}
               onClick={() => { setRightPanelOpen(false); setToolPanelAddMenuOpen(false); }}
             >
               <PanelRightIcon size={18} />
@@ -219,8 +221,8 @@ export function ToolPanel(props: ToolPanelProps) {
               <div className="browser-toolbar">
                 <button
                   className="browser-toolbar-button"
-                  aria-label="后退"
-                  title="后退"
+                  aria-label={t("browser.back", "后退")}
+                  title={t("browser.back", "后退")}
                   onClick={() => activeBrowserWebview()?.goBack?.()}
                   disabled={!activeToolPanelTab.canGoBack}
                 >
@@ -228,8 +230,8 @@ export function ToolPanel(props: ToolPanelProps) {
                 </button>
                 <button
                   className="browser-toolbar-button"
-                  aria-label="前进"
-                  title="前进"
+                  aria-label={t("browser.forward", "前进")}
+                  title={t("browser.forward", "前进")}
                   onClick={() => activeBrowserWebview()?.goForward?.()}
                   disabled={!activeToolPanelTab.canGoForward}
                 >
@@ -238,8 +240,8 @@ export function ToolPanel(props: ToolPanelProps) {
                 {activeToolPanelTab.loading ? (
                   <button
                     className="browser-toolbar-button"
-                    aria-label="停止加载"
-                    title="停止加载"
+                    aria-label={t("browser.stop", "停止加载")}
+                    title={t("browser.stop", "停止加载")}
                     onClick={() => activeBrowserWebview()?.stop?.()}
                   >
                     <X size={16} />
@@ -247,8 +249,8 @@ export function ToolPanel(props: ToolPanelProps) {
                 ) : (
                   <button
                     className="browser-toolbar-button"
-                    aria-label="刷新"
-                    title="刷新"
+                    aria-label={t("browser.reload", "刷新")}
+                    title={t("browser.reload", "刷新")}
                     onClick={() => activeBrowserWebview()?.reload?.()}
                     disabled={!activeToolPanelTab.loadedUrl}
                   >
@@ -494,16 +496,18 @@ export function ToolPanel(props: ToolPanelProps) {
 
           {!menuPageShown && activeToolPanelKind === "files" && (
             <section className="tool-file-browser file-split-panel">
-              <FilesSplitPanel
-                onPreviewFile={(path) => openFilePreview(path, workspacePath)}
-                onChoosePreviewFile={() => void choosePreviewFile()}
-                workspacePath={workspacePath}
-                workspaceEntries={workspaceEntries}
-                workspaceOpen={workspaceOpen}
-                onRefresh={() => void refreshWorkspace()}
-                onError={setError}
-                onInsertFile={insertFileToken}
-              />
+              <Suspense fallback={<p className="panel-empty" role="status">{t("common.loading", "正在加载…")}</p>}>
+                <FilesSplitPanel
+                  onPreviewFile={(path) => openFilePreview(path, workspacePath)}
+                  onChoosePreviewFile={() => void choosePreviewFile()}
+                  workspacePath={workspacePath}
+                  workspaceEntries={workspaceEntries}
+                  workspaceOpen={workspaceOpen}
+                  onRefresh={refreshWorkspace}
+                  onError={setError}
+                  onInsertFile={insertFileToken}
+                />
+              </Suspense>
             </section>
           )}
 

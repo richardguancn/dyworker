@@ -390,7 +390,7 @@ html .reference-layout.platform-linux {
   html .reference-layout { transition: none; }
 }
 
-.reference-layout .composer-card textarea { height: 48px; min-height: 48px; }
+.reference-layout .dsh-input-queue-item > textarea { height: 48px; min-height: 48px; }
 .reference-layout .dsh-composer-input { min-height: 48px; }
 
 /* 按输入区实际宽度响应，左右面板展开时同样保持操作完整。 */

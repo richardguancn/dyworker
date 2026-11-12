@@ -1,6 +1,7 @@
 import { LoaderCircle, MessageSquare, MessageSquarePlus, MessagesSquare, Mic, Trash2 } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { t } from "../../i18n";
 import type { MessageAnnotation } from "../../types";
 import type { AnnotationMarker } from "../../annotations";
 
@@ -213,7 +214,7 @@ export function MessageAnnotationChip({ annotations }: { annotations: MessageAnn
         }}
       >
         <MessageSquare size={14} />
-        <span>{annotations.length} 条注释</span>
+        <span>{t("selection.notesCount", `${annotations.length} 条注释`, { count: annotations.length })}</span>
       </button>
       {pos && createPortal(
         <div
@@ -228,11 +229,11 @@ export function MessageAnnotationChip({ annotations }: { annotations: MessageAnn
             <div className="annotation-list-item" key={annotation.id} role="listitem">
               <span className="annotation-index">{index + 1}。</span>
               <div className="annotation-item-main">
-                <span className="annotation-field-label">所选文本：</span>
+                <span className="annotation-field-label">{t("selection.selectedText", "所选文本：")}</span>
                 <span className="annotation-quote" title={annotation.quote}>{annotation.quote}</span>
                 {annotation.comment.trim() && (
                   <>
-                    <span className="annotation-field-label">用户评论：</span>
+                    <span className="annotation-field-label">{t("selection.userComment", "用户评论：")}</span>
                     <span className="annotation-comment" title={annotation.comment}>{annotation.comment}</span>
                   </>
                 )}
@@ -292,7 +293,7 @@ export function SelectionQuoteBar({
       ref={barRef}
       className="selection-quote-bar"
       role="toolbar"
-      aria-label="选中文字操作"
+      aria-label={t("selection.barAria", "选中文字操作")}
       style={{ left, top }}
     >
       <button
@@ -302,7 +303,7 @@ export function SelectionQuoteBar({
         title={quote.text}
       >
         <MessageSquarePlus size={12} />
-        <span>添加到对话</span>
+        <span>{t("selection.addToChat", "引用对话")}</span>
       </button>
       <button
         type="button"
@@ -310,7 +311,7 @@ export function SelectionQuoteBar({
         onClick={onSendToSideChat}
       >
         <MessagesSquare size={12} />
-        <span>侧边聊天</span>
+        <span>{t("selection.sideChat", "侧边提问")}</span>
       </button>
     </div>
   );
@@ -378,12 +379,11 @@ export function AnnotationEditorCard({
         ref={textareaRef}
         value={comment}
         onChange={(event) => setComment(event.target.value)}
-        placeholder="添加可选评论…"
+        placeholder={t("selection.commentPlaceholder", "添加评论…")}
         rows={3}
-        lang="zh-CN"
       />
       <div className="annotation-editor-actions">
-        <button type="button" className="annotation-editor-icon" onClick={onDelete} aria-label="删除该注释" title="删除该注释">
+        <button type="button" className="annotation-editor-icon" onClick={onDelete} aria-label={t("selection.deleteComment", "删除该注释")} title={t("selection.deleteComment", "删除该注释")}>
           <Trash2 size={15} />
         </button>
         <span className="annotation-editor-spacer" />
@@ -392,13 +392,13 @@ export function AnnotationEditorCard({
           className={`annotation-editor-icon${voiceState === "recording" ? " recording" : ""}`}
           onClick={onVoiceStart}
           disabled={voiceState === "transcribing"}
-          aria-label={voiceState === "recording" ? "结束录音" : "语音输入评论"}
-          title={voiceState === "recording" ? "正在录音，再次点击结束" : "语音输入评论"}
+          aria-label={voiceState === "recording" ? t("voice.stopRecording", "结束录音") : t("selection.voiceInputComment", "语音输入评论")}
+          title={voiceState === "recording" ? t("voice.recordingHint", "正在录音，再次点击结束") : t("selection.voiceInputComment", "语音输入评论")}
         >
           {voiceState === "transcribing" ? <LoaderCircle size={15} className="spin" /> : <Mic size={15} />}
         </button>
-        <button type="button" className="annotation-editor-cancel" onClick={onClose}>取消</button>
-        <button type="button" className="annotation-editor-save" onClick={() => onSave(comment.trim())}>保存</button>
+        <button type="button" className="annotation-editor-cancel" onClick={onClose}>{t("common.cancel", "取消")}</button>
+        <button type="button" className="annotation-editor-save" onClick={() => onSave(comment.trim())}>{t("common.save", "保存")}</button>
       </div>
     </div>
   );

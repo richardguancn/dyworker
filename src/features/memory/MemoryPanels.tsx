@@ -1,15 +1,16 @@
 import { Download, LoaderCircle, Pencil, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { WikiMemoryPage, WikiMemoryRow } from "../../types";
+import { t } from "../../i18n";
 
 // 设置面板里手动编辑一条记忆（内置记忆的修改以覆盖方式生效）
-const MEMORY_KIND_LABELS: Record<string, string> = {
-  preference: "偏好",
-  rule: "规则",
-  taboo: "禁忌",
-  fact: "事实",
-  experience: "经验",
-};
+const getMemoryKindLabels = (): Record<string, string> => ({
+  preference: t("memory.kinds.preference", "偏好"),
+  rule: t("memory.kinds.rule", "规则"),
+  taboo: t("memory.kinds.taboo", "禁忌"),
+  fact: t("memory.kinds.fact", "事实"),
+  experience: t("memory.kinds.experience", "经验"),
+});
 
 export function MemoryEditDialog({
   row,
@@ -67,16 +68,16 @@ export function MemoryEditDialog({
         aria-label="编辑记忆"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <h3>编辑记忆</h3>
-        {row.builtIn ? <p className="dialog-note">这是随应用发布的内置记忆，你的修改会覆盖默认内容。</p> : null}
+        <h3>{t("memory.editTitle", "编辑记忆")}</h3>
+        {row.builtIn ? <p className="dialog-note">{t("memory.builtinNotice", "这是随应用发布的内置记忆，你的修改会覆盖默认内容。")}</p> : null}
         <label className="skill-draft-field">
-          <span>名字（可选，方便按名字引用）</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：报销流程" autoFocus />
+          <span>{t("memory.nameLabel", "名字（可选，方便按名字引用）")}</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("memory.namePlaceholder", "例如：报销流程")} autoFocus />
         </label>
         <div className="skill-draft-field">
-          <span>类型</span>
-          <div className="memory-filter-kinds" role="group" aria-label="记忆类型">
-            {Object.entries(MEMORY_KIND_LABELS).map(([value, label]) => (
+          <span>{t("memory.typeLabel", "类型")}</span>
+          <div className="memory-filter-kinds" role="group" aria-label={t("memory.typeLabel", "记忆类型")}>
+            {Object.entries(getMemoryKindLabels()).map(([value, label]) => (
               <button
                 type="button"
                 key={value}
@@ -89,11 +90,11 @@ export function MemoryEditDialog({
           </div>
         </div>
         <label className="skill-draft-field">
-          <span>分类</span>
-          <input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="例如：用户偏好" />
+          <span>{t("memory.categoryLabel", "分类")}</span>
+          <input value={category} onChange={(event) => setCategory(event.target.value)} placeholder={t("memory.categoryPlaceholder", "例如：用户偏好")} />
         </label>
         <label className="skill-draft-field">
-          <span>内容</span>
+          <span>{t("memory.contentLabel", "内容")}</span>
           <textarea
             rows={6}
             value={content}
@@ -121,13 +122,7 @@ export function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMe
   linting: boolean;
   lintMessage: string;
 }) {
-  const kindLabels: Record<string, string> = {
-    preference: "偏好",
-    rule: "规则",
-    taboo: "禁忌",
-    fact: "事实",
-    experience: "经验",
-  };
+  const kindLabels = getMemoryKindLabels();
   const [memoryQuery, setMemoryQuery] = useState("");
   const [kindFilter, setKindFilter] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -156,22 +151,22 @@ export function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMe
   return (
     <div className="panel-list">
       <div className="memory-wiki-toolbar">
-        <span className="panel-hint">个人记忆知识库：{pages.length} 个页面 · {total} 条记忆。助手保存的新记忆会在任务结束后自动合并进页面。</span>
+        <span className="panel-hint">{t("memory.toolbarHint", "个人记忆知识库：{pages} 个页面 · {total} 条记忆。助手保存的新记忆会在任务结束后自动合并进页面。").replace("{pages}", String(pages.length)).replace("{total}", String(total))}</span>
         <button type="button" className="button-secondary tiny" onClick={onLint} disabled={linting}>
           {linting ? <LoaderCircle className="spin" size={13} /> : null}
-          {linting ? "整理中…" : "整理记忆"}
+          {linting ? t("memory.cleaning", "整理中…") : t("memory.clean", "整理记忆")}
         </button>
-        <button type="button" className="button-secondary tiny" onClick={() => void exportMemories()} disabled={exporting}><Download size={13} /> {exporting ? "导出中…" : "导出记忆"}</button>
+        <button type="button" className="button-secondary tiny" onClick={() => void exportMemories()} disabled={exporting}><Download size={13} /> {exporting ? t("memory.exporting", "导出中…") : t("memory.export", "导出记忆")}</button>
       </div>
       {exportMessage && <p role="status" className="dialog-note">{exportMessage}</p>}
       {total > 0 && (
         <div className="memory-filter-bar">
           <div className="memory-filter-search">
             <Search size={13} />
-            <input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder="搜索名字、内容或分类" />
+            <input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} placeholder={t("memory.searchPlaceholder", "搜索名字、内容或分类")} />
           </div>
-          <div className="memory-filter-kinds" role="group" aria-label="按记忆类型过滤">
-            <button type="button" className={`memory-filter-chip${kindFilter === "" ? " active" : ""}`} onClick={() => setKindFilter("")}>全部</button>
+          <div className="memory-filter-kinds" role="group" aria-label={t("memory.filterByKind", "按记忆类型过滤")}>
+            <button type="button" className={`memory-filter-chip${kindFilter === "" ? " active" : ""}`} onClick={() => setKindFilter("")}>{t("memory.kinds.all", "全部")}</button>
             {Object.entries(kindLabels).map(([kind, label]) => (
               <button
                 type="button"
@@ -187,29 +182,29 @@ export function MemoriesPanel({ pages, onDelete, onEdit, onLint, linting, lintMe
       )}
       {lintMessage ? <p className="dialog-note">{lintMessage}</p> : null}
       {!pages.length ? (
-        <p className="panel-empty">助手在任务中发现长期有用的偏好和事实时，会自动保存在这里。</p>
+        <p className="panel-empty">{t("memory.empty", "助手在任务中发现长期有用的偏好和事实时，会自动保存在这里。")}</p>
       ) : !filteredPages.length ? (
-        <p className="panel-empty">没有匹配的记忆，换个关键词或清除类型过滤试试。</p>
+        <p className="panel-empty">{t("memory.noMatch", "没有匹配的记忆，换个关键词或清除类型过滤试试。")}</p>
       ) : filteredPages.map((page) => (
         <div className="memory-item" key={page.relPath}>
           <div className="memory-item-head">
             <div className="memory-meta">
               <span className="memory-category">{page.title}</span>
-              <span className="memory-badge">{page.relPath === "pages/session.md" ? "按任务会话绑定" : page.scope === "workspace" ? "当前工作区" : "全部工作区"}</span>
-              <span className="memory-badge">{page.rows.length} 条</span>
+              <span className="memory-badge">{page.relPath === "pages/session.md" ? t("memory.scopeSession", "按任务会话绑定") : page.scope === "workspace" ? t("memory.scopeWorkspace", "当前工作区") : t("memory.scopeGlobal", "全部工作区")}</span>
+              <span className="memory-badge">{page.rows.length} {t("memory.countSuffix", "条")}</span>
             </div>
           </div>
           {page.rows.map((row) => (
             <div className="memory-row" key={`${page.relPath}:${row.id}`}>
               <div className="memory-row-head">
                 {row.name ? <span className="memory-name" title={row.name}>「{row.name}」</span> : null}
-                <span className="memory-badge">{kindLabels[row.kind] || row.kind || "事实"}</span>
+                <span className="memory-badge">{kindLabels[row.kind] || row.kind || t("memory.kinds.fact", "事实")}</span>
                 {/* 分类徽标：与页面标题或类型徽标重复时不显示，避免出现「经验 经验」 */}
                 {row.category && row.category !== page.title && row.category !== (kindLabels[row.kind] || row.kind)
                   ? <span className="memory-badge subtle">{row.category}</span>
                   : null}
-                {row.builtIn ? <span className="memory-badge subtle">内置</span> : null}
-                {row.sessionId ? <span className="memory-badge subtle">仅本任务</span> : null}
+                {row.builtIn ? <span className="memory-badge subtle">{t("memory.builtinBadge", "内置")}</span> : null}
+                {row.sessionId ? <span className="memory-badge subtle">{t("memory.scopeSessionOnly", "仅本任务")}</span> : null}
                 <button className="icon-button subtle tiny" onClick={() => onEdit(row)} aria-label="编辑这条记忆">
                   <Pencil size={13} />
                 </button>

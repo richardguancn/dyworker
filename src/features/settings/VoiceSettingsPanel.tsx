@@ -2,6 +2,7 @@
 // 纯展示组件：状态（voiceLocal/ttsLocal/下载进度等）仍由 SettingsDialog 持有，
 // 避免切换 tab 时因子组件卸载而丢失；这里只通过 props 接收。
 import type { Dispatch, SetStateAction } from "react";
+import { t } from "../../i18n";
 import type { ProviderSettings, TtsLocalStatus, VoiceLocalStatus } from "../../types";
 
 // 本地转写模型候选清单（与主进程 ASR_MODELS 的展示信息保持一致；下载状态从 voiceLocal.models 合并）
@@ -50,15 +51,15 @@ export function VoiceSettingsPanel({
   pickAndPrepareTtsVoice: () => Promise<void>;
 }) {
   return (<>
-        <div className="dialog-section-title">语音转写</div>
+        <div className="dialog-section-title">{t("voice.asrSection", "语音输入")}</div>
         <label>
-          转写引擎
+          {t("voice.asrEngine", "识别服务")}
           <select
             value={draft.transcriptionEngine}
             onChange={(event) => setDraft({ ...draft, transcriptionEngine: event.target.value as ProviderSettings["transcriptionEngine"] })}
           >
-            <option value="cloud">云端服务（OpenAI 兼容 /audio/transcriptions）</option>
-            <option value="local">本地引擎（离线可用，多模型可选）</option>
+            <option value="cloud">{t("voice.engineCloud", "云端服务（OpenAI 兼容 /audio/transcriptions）")}</option>
+            <option value="local">{t("voice.engineLocal", "本地引擎（离线可用，多模型可选）")}</option>
           </select>
         </label>
         {draft.transcriptionEngine === "local" && (() => {
@@ -69,7 +70,7 @@ export function VoiceSettingsPanel({
           return (
           <div className="dialog-note">
             <label>
-              本地模型
+              {t("voice.localModel", "本地模型")}
               <select
                 value={selectedId}
                 onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })}
@@ -82,22 +83,22 @@ export function VoiceSettingsPanel({
               </select>
             </label>
             {selected?.downloaded
-              ? `本地语音模型已就绪：${selectedOption.label}（已存本机）。首次转写按需启动引擎（约 2-5 秒），空闲 3 分钟后自动退出释放内存。`
-              : `本地语音模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎约 20MB），下载完成后无需联网即可把语音转成文字。`}
+              ? t("voice.asrReady", `本地语音模型已就绪：${selectedOption.label}（已存本机）。首次转写按需启动引擎（约 2-5 秒），空闲 3 分钟后自动退出释放内存。`, { label: selectedOption.label })
+              : t("voice.asrNotDownloaded", `本地语音模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎约 20MB），下载完成后无需联网即可把语音转成文字。`, { label: selectedOption.label, note: selectedOption.note })}
             {!selected?.downloaded && (
               <button type="button" className="settings-update-check" onClick={() => void startVoiceLocalDownload(selectedId)} disabled={voiceDownloading}>
                 {voiceDownloading
                   ? `下载中 ${selected?.expectedBytes ? Math.min(99, Math.round((selected.sizeBytes / selected.expectedBytes) * 100)) : 0}%`
-                  : "下载模型与引擎"}
+                  : t("voice.downloadModel", "获取模型")}
               </button>
             )}
             {voiceDownloadError && <p style={{ color: "#c0392b" }}>{voiceDownloadError}</p>}
             <label>
-              模型保存路径（可选）
+              {t("voice.modelDir", "模型保存路径（可选）")}
               <span style={{ display: "flex", gap: 8 }}>
                 <input
                   value={draft.asrModelDir}
-                  placeholder="默认存到应用数据目录 models/asr"
+                  placeholder={t("voice.modelDirPlaceholder", "默认存到应用数据目录 models/asr")}
                   onChange={(event) => setDraft({ ...draft, asrModelDir: event.target.value })}
                 />
                 <button
@@ -108,33 +109,33 @@ export function VoiceSettingsPanel({
                     if (picked?.path) setDraft({ ...draft, asrModelDir: picked.path });
                   }}
                 >
-                  浏览…
+                  {t("common.browse", "浏览…")}
                 </button>
               </span>
             </label>
             <label>
-              自定义 llama-server 路径（可选）
+              {t("voice.llamaPath", "自定义引擎路径（可选）")}
               <input
                 value={draft.llamaServerPath}
-                placeholder="留空使用内置下载的语音引擎"
+                placeholder={t("voice.llamaPathPlaceholder", "留空使用内置下载的语音引擎")}
                 onChange={(event) => setDraft({ ...draft, llamaServerPath: event.target.value })}
               />
             </label>
-            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。切换模型后首次转写会重新加载引擎。</p>
+            <p>{t("voice.modelChangeNote", "更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“获取模型”。")}</p>
           </div>
           );
         })()}
         {draft.transcriptionEngine !== "local" && (<>
         <label>
-          转写服务地址
+          {t("voice.endpoint", "转写服务地址")}
           <input
             value={draft.transcriptionEndpoint}
-            placeholder="留空时根据模型服务地址自动生成"
+            placeholder={t("voice.endpointPlaceholder", "留空时根据模型服务地址自动生成")}
             onChange={(event) => setDraft({ ...draft, transcriptionEndpoint: event.target.value })}
           />
         </label>
         <label>
-          转写模型
+          {t("voice.model", "转写模型")}
           <input
             value={draft.transcriptionModel}
             placeholder="whisper-1"
@@ -142,15 +143,15 @@ export function VoiceSettingsPanel({
           />
         </label>
         </>)}
-        <div className="dialog-section-title" style={{ marginTop: 18 }}>语音合成（渠道语音发送）</div>
+        <div className="dialog-section-title" style={{ marginTop: 18 }}>{t("voice.ttsSection", "语音朗读")}</div>
         <label>
-          合成引擎
+          {t("voice.ttsEngine", "朗读服务")}
           <select
             value={draft.ttsEngine}
             onChange={(event) => setDraft({ ...draft, ttsEngine: event.target.value as ProviderSettings["ttsEngine"] })}
           >
-            <option value="cloud">云端服务（OpenAI 兼容 /audio/speech）</option>
-            <option value="local">本地引擎（Qwen3-TTS，离线可用）</option>
+            <option value="cloud">{t("voice.ttsEngineCloud", "云端服务（OpenAI 兼容 /audio/speech）")}</option>
+            <option value="local">{t("voice.ttsEngineLocal", "本地引擎（离线可用）")}</option>
           </select>
         </label>
         {draft.ttsEngine === "local" && (() => {
@@ -174,24 +175,24 @@ export function VoiceSettingsPanel({
               </select>
             </label>
             {selected?.downloaded
-              ? `本地语音合成模型已就绪：${selectedOption.label}（已存本机）。合成时按需启动引擎，无需联网。`
-              : `本地语音合成模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎与语音转写共用），下载完成后无需联网即可把文字合成语音。`}
+              ? t("voice.ttsReady", `本地语音合成模型已就绪：${selectedOption.label}（已存本机）。合成时按需启动引擎，无需联网。`, { label: selectedOption.label })
+              : t("voice.ttsNotDownloaded", `本地语音合成模型未下载：${selectedOption.label}（${selectedOption.note} + 引擎与语音转写共用），下载完成后无需联网即可把文字合成语音。`, { label: selectedOption.label, note: selectedOption.note })}
             {!selected?.downloaded && (
               <button type="button" className="settings-update-check" onClick={() => void startTtsLocalDownload(selectedId)} disabled={ttsDownloading}>
                 {ttsDownloading
                   ? (ttsDownloadPhase.startsWith("runtime:")
-                    ? "下载引擎中…"
+                    ? t("voice.ttsConverting", "下载引擎中…")
                     : `下载中 ${selected?.expectedBytes ? Math.min(99, Math.round((selected.sizeBytes / selected.expectedBytes) * 100)) : 0}%`)
-                  : "下载模型与引擎"}
+                  : t("voice.ttsDownloadBtn", "下载模型与引擎")}
               </button>
             )}
             {ttsDownloadError && <p style={{ color: "#c0392b" }}>{ttsDownloadError}</p>}
             <label>
-              模型保存路径（可选）
+              {t("voice.ttsModelDirLabel", "模型保存路径（可选）")}
               <span style={{ display: "flex", gap: 8 }}>
                 <input
                   value={draft.ttsModelDir}
-                  placeholder="默认存到应用数据目录 models/tts"
+                  placeholder={t("voice.ttsPathPlaceholder", "默认存到应用数据目录 models/tts")}
                   onChange={(event) => setDraft({ ...draft, ttsModelDir: event.target.value })}
                 />
                 <button
@@ -202,16 +203,16 @@ export function VoiceSettingsPanel({
                     if (picked?.path) setDraft({ ...draft, ttsModelDir: picked.path });
                   }}
                 >
-                  浏览…
+                  {t("voice.ttsBrowse", "浏览…")}
                 </button>
               </span>
             </label>
             <label>
-              参考音色音频（可选）
+              {t("voice.ttsVoicePathLabel", "参考音色音频（可选）")}
               <span style={{ display: "flex", gap: 8 }}>
                 <input
                   value={draft.ttsVoicePath}
-                  placeholder="留空用模型默认音色；选一段 6-15 秒的人声可克隆音色"
+                  placeholder={t("voice.ttsVoicePlaceholder", "留空用模型默认音色；选一段 6-15 秒的人声可克隆音色")}
                   onChange={(event) => setDraft({ ...draft, ttsVoicePath: event.target.value })}
                 />
                 <button
@@ -220,26 +221,26 @@ export function VoiceSettingsPanel({
                   onClick={() => void pickAndPrepareTtsVoice()}
                   disabled={ttsVoiceConverting}
                 >
-                  {ttsVoiceConverting ? "转换中…" : "浏览…"}
+                  {ttsVoiceConverting ? t("voice.ttsConverting", "转换中…") : t("voice.ttsBrowse", "浏览…")}
                 </button>
               </span>
             </label>
             {ttsVoiceConvertHint && <p style={{ marginTop: 6 }}>{ttsVoiceConvertHint}</p>}
-            <p>更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。切换模型后首次合成会使用新模型。</p>
+            <p>{t("voice.ttsChangeNote", "更改模型路径并保存后立即生效；若新目录里没有模型文件，重新点“下载模型与引擎”。切换模型后首次合成会使用新模型。")}</p>
           </div>
           );
         })()}
         {draft.ttsEngine !== "local" && (<>
         <label>
-          合成服务地址
+          {t("voice.ttsEndpoint", "合成服务地址")}
           <input
             value={draft.ttsEndpoint}
-            placeholder="OpenAI 兼容的 /audio/speech 地址，留空则不提供语音发送"
+            placeholder={t("voice.ttsEndpointPlaceholder", "OpenAI 兼容的 /audio/speech 地址，留空则不提供语音发送")}
             onChange={(event) => setDraft({ ...draft, ttsEndpoint: event.target.value })}
           />
         </label>
         <label>
-          合成模型
+          {t("voice.ttsModel", "合成模型")}
           <input
             value={draft.ttsModel}
             placeholder="tts-1"
@@ -247,15 +248,15 @@ export function VoiceSettingsPanel({
           />
         </label>
         <label>
-          合成密钥
+          {t("voice.ttsApiKey", "合成密钥")}
           <input
             type="password"
             value={draft.ttsApiKey}
-            placeholder="留空时使用主模型密钥"
+            placeholder={t("voice.ttsApiKeyPlaceholder", "留空时使用主模型密钥")}
             onChange={(event) => setDraft({ ...draft, ttsApiKey: event.target.value })}
           />
         </label>
         </>)}
-        <p className="dialog-note">切换服务商后只需核对模型名称并填入密钥。文本、图片附件和语音转写使用兼容 OpenAI 格式的服务。</p>
+        <p className="dialog-note">{t("voice.bottomNote", "切换服务商后只需核对模型名称并填入密钥。文本、图片附件和语音转写使用兼容 OpenAI 格式的服务。")}</p>
         </>);
 }

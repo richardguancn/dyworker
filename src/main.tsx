@@ -4,12 +4,19 @@ import { App } from "./App";
 import { MarkdownSnippet } from "./InteractiveMessage";
 import { installClientRuntime } from "./pluginRuntime/index.ts";
 import { bootstrapAppearance } from "./appearance/controller";
+import { useLayoutStore } from "./state/layoutStore.ts";
+import { useSettingsStore } from "./state/settingsStore.ts";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 import "./appearance/appearance.css";
 import "./layout.css";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
+
+if (typeof window !== "undefined") {
+  (window as any).__layoutStore = useLayoutStore;
+  (window as any).__settingsStore = useSettingsStore;
+}
 
 // 先读取并应用已保存外观（含受控 data-theme），再渲染首帧，避免启动后闪默认主题；
 // 任何失败（无桥接/超时/损坏）都回落默认值继续渲染

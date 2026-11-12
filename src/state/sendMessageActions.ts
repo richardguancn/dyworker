@@ -7,6 +7,7 @@
 // 函数体、文案与行为均保持不变。
 import { formatAnnotationsForPrompt } from "../annotations";
 import { bindSessionModel, settingsForSession } from "../../electron/session-model.mts";
+import { getLocale } from "../i18n";
 import { patchDshAssistant, reconcileDshTurns } from "../dshTurns";
 import { activeGoal, changeGoalStatus, settleGoal, startGoal } from "../goal";
 import { appendBranchActivity, patchActivityTree } from "../lib/activity";
@@ -63,6 +64,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
   const { settings: globalSettings, approvalMode } = useSettingsStore.getState();
   const settings = settingsForSession(globalSettings, overrideSessionId
     ? sessions.find(session => session.id === overrideSessionId) : selectActiveSession(sessionState));
+  settings.locale = getLocale();
   const activeSession = selectActiveSession(sessionState);
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
   if (pluginSubmission) {

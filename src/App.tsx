@@ -15,6 +15,7 @@ import { hasConfiguredModel } from "../electron/host/dsh-runtime/model-settings.
 import { getModelReasoningConfig,selectedReasoningEffort } from '../electron/model-reasoning.ts';
 import { resolvePanelShortcut,type PanelShortcut } from "../electron/panel-shortcuts";
 import { settingsForSession } from "../electron/session-model.mts";
+import { t } from "./i18n";
 import { AppDialogs } from "./app/AppDialogs";
 import { ShellChrome } from "./app/ShellLayout";
 import { Sidebar } from "./app/Sidebar";
@@ -24,7 +25,6 @@ import { DshChildHistory } from './DshChildHistory';
 import { mergeCreatedDshTask } from './dshTurns';
 import { browserTabTitleOf } from "./features/browser/browserUtils";
 import { ConversationPane } from "./features/conversation/ConversationPane";
-import { FilesSplitPanel } from "./features/files/FilesSplitPanel";
 import { ConversationMessageRow } from "./features/message/ConversationMessageRow";
 import { composerApprovalModes } from "./features/plans/PlansPanel";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
@@ -72,9 +72,6 @@ import { useToolPanelOverflow } from "./state/toolPanelOverflow";
 import { useViewStore } from "./state/viewStore";
 import { createTraceBuffer,trimRecentText } from "./traceBuffer";
 import type { ChatMessage,DebugLogEntry,SessionRecord,SkillRecord,TraceEvent,WorkspaceEntry } from "./types";
-
-// 兼容既有引用（tests/fixtures/file-browser.tsx 等）从 App 引入文件面板
-export { FilesSplitPanel };
 
 // 内置斜杠命令（对照 Codex /init），与工作模板一起出现在 / 菜单里
 const builtinCommands = [
@@ -914,7 +911,7 @@ export function App() {
       return;
     }
     if (window.dyworker?.refreshWorkspace) {
-      void window.dyworker.refreshWorkspace(path).then(setWorkspaceEntries).catch(() => setWorkspaceEntries([]));
+      void refreshWorkspace().catch(() => setWorkspaceEntries([]));
     }
   };
   // 注册 selectSession 给 forkSession：分叉出新任务后走与点侧栏列表项一致的切换流程
@@ -1141,7 +1138,7 @@ export function App() {
   const newTaskButton = (
     <button className="new-task-button" onClick={() => createTask()}>
       <SquarePen size={18} />
-      新建任务
+      {t("sidebar.newTask", "新建任务")}
     </button>
   );
 

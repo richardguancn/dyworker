@@ -6,6 +6,7 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginSlotView } from "../PluginSlotView";
 import { WORKSPACE_SESSION_LIMIT, displayWorkspace } from "../lib/text";
+import { t } from "../i18n";
 import type { InboxItem, PendingWakeRecord, SessionRecord } from "../types";
 
 type WorkspaceSessionGroups = {
@@ -209,8 +210,8 @@ export function Sidebar(props: SidebarProps) {
         {query !== "" && (
           <div className="sidebar-search-wrap">
             <Search size={15} />
-            <input autoFocus value={query.trimStart()} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务" />
-            <button className="bare-button" onClick={() => setQuery("")} aria-label="关闭搜索"><X size={14} /></button>
+            <input autoFocus value={query.trimStart()} onChange={(event) => setQuery(event.target.value)} placeholder={t("sidebar.searchTasks", "搜索任务")} />
+            <button className="bare-button" onClick={() => setQuery("")} aria-label={t("sidebar.closeSearch", "关闭搜索")}><X size={14} /></button>
           </div>
         )}
 
@@ -219,12 +220,12 @@ export function Sidebar(props: SidebarProps) {
             <div className="recent-section-toggle-row">
               <button className="recent-section-toggle" aria-expanded={workspaceGroupOpen.__projects__ !== false}
                 onClick={() => setWorkspaceGroupOpen(current => ({ ...current, __projects__: current.__projects__ === false }))}>
-                <span>项目</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                <span>{t("sidebar.projects", "工作区")}</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
               </button>
               <button
                 className="icon-button subtle tiny"
-                aria-label="导入任务或项目"
-                title="导入任务或项目（.dyworker 迁移包，可从其他电脑导入）"
+                aria-label={t("sidebar.importPackage", "导入任务或项目")} /* aria-label="导入任务或项目" */
+                title={t("sidebar.importPackageDesc", "导入任务或项目（.dyworker 迁移包，可从其他电脑导入）")}
                 onClick={() => void importSessionPackage()}
               >
                 <Upload size={14} />
@@ -324,9 +325,9 @@ export function Sidebar(props: SidebarProps) {
 
           {botTeamAvailable && <section className="sidebar-section bot-team-section">
             <button className={`recent-section-toggle bot-team-entry ${botTeamPageOpen ? "active" : ""}`}
-              aria-label="机器人团队" aria-current={botTeamPageOpen ? "page" : undefined}
+              aria-label={t("sidebar.botTeam", "团队助手")} aria-current={botTeamPageOpen ? "page" : undefined}
               onClick={() => { setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
-              <Bot size={16} /><span>机器人团队</span><ChevronRight size={13} />
+              <Bot size={16} /><span>{t("sidebar.botTeam", "团队助手")}</span><ChevronRight size={13} />
             </button>
           </section>}
 
@@ -336,7 +337,7 @@ export function Sidebar(props: SidebarProps) {
               onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, __recent__: !recentExpanded }))}
               aria-expanded={recentExpanded}
             >
-              <span>最近</span>
+              <span>{t("sidebar.recent", "最近记录")}</span>
               {recentExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
             </button>
             {recentExpanded && workspaceSessionGroups.recent.length ? (
@@ -344,7 +345,7 @@ export function Sidebar(props: SidebarProps) {
             ) : null}
             {sessions.some((session) => session.archived) && (
               <button className="archived-toggle" onClick={() => setShowArchived((value) => !value)}>
-                {showArchived ? "隐藏归档任务" : `显示归档任务（${sessions.filter((session) => session.archived).length}）`}
+                {showArchived ? t("sidebar.hideArchived", "隐藏归档任务") : `${t("sidebar.showArchived", "查看归档")}（${sessions.filter((session) => session.archived).length}）`}
               </button>
             )}
           </section>

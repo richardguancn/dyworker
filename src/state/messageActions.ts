@@ -8,6 +8,7 @@ import { attachmentImageSource } from "../ImageAttachment";
 import { blobToWavMono } from "../lib/audio";
 import { copyTextToClipboard, messageVisibleText } from "../lib/text";
 import { clientHost } from "../pluginRuntime/clientHostSingleton.ts";
+import { t } from "../i18n";
 import { useComposerStore } from "./composerStore";
 import { useLayoutStore } from "./layoutStore";
 import { usePanelStore } from "./panelStore";
@@ -162,7 +163,7 @@ export const copyMessage = async (message: ChatMessage) => {
   // 复制按钮只复制文本：图文混排进剪贴板时，部分粘贴目标（如输入框）会只取到图片、
   // 丢掉文本。图片由缩略图上的复制按钮单独复制。
   const copied = await copyTextToClipboard(text);
-  setNotice(copied ? "消息已复制" : "消息复制失败，请检查剪贴板权限");
+  setNotice(copied ? t("common.copied", "消息已复制") : t("common.copyFailed", "消息复制失败，请检查剪贴板权限"));
 };
 
 export const stopSpeakingMessage = () => {
@@ -308,7 +309,7 @@ export const startMessageEdit = (message: ChatMessage, messageIndex: number) => 
   // 引用注释一并恢复进 composer，重发时按编辑后的版本重新编号拼进正文
   setAnnotations(message.annotations ? message.annotations.map((annotation) => ({ ...annotation })) : []);
   setMentionMenu(null);
-  setNotice("已载入消息，修改后点击发送即可替换原消息并重新处理");
+  setNotice(t("composer.noticeEditLoaded", "已载入消息，修改后点击发送即可替换原消息并重新处理"));
   window.setTimeout(() => textareaRef.current?.focus(), 0);
 };
 
@@ -320,6 +321,6 @@ export const cancelMessageEdit = () => {
   setAttachments([]);
   setActiveSkills([]);
   setAnnotations([]);
-  setNotice("已取消编辑");
+  setNotice(t("composer.noticeEditCancelled", "已取消编辑"));
   window.setTimeout(() => textareaRef.current?.focus(), 0);
 };

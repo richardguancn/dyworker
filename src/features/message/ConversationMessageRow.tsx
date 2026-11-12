@@ -12,6 +12,7 @@ Volume2
 import { memo } from "react";
 import { ForkBranchIcon } from "../../app/icons";
 import { assistantImageAttachments } from "../../assistantImages.ts";
+import { t } from "../../i18n";
 import { ImageAttachmentView } from "../../ImageAttachment";
 import { InteractiveMessage } from "../../InteractiveMessage";
 import { formatMessageTime } from "../../lib/format";
@@ -192,11 +193,11 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
           )}
           <div className="message-actions user" aria-label="用户消息操作">
             <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
+            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label={t("chat.copyMessage", "复制消息")} title={t("chat.copyMessage", "复制消息")}>
               <Copy size={16} />
             </button>
             {!activeTaskRunning && (
-              <button type="button" onClick={() => actions.startMessageEdit(message, index)} aria-label="编辑消息" title="编辑消息">
+              <button type="button" onClick={() => actions.startMessageEdit(message, index)} aria-label={t("chat.editMessage", "编辑消息")} title={t("chat.editMessage", "编辑消息")}>
                 <Pencil size={16} />
               </button>
             )}
@@ -246,14 +247,14 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                     : <Volume2 size={16} />}
               </button>
             )}
-            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label="复制消息" title="复制消息">
+            <button type="button" onClick={() => void actions.copyMessage(message)} aria-label={t("chat.copyMessage", "复制消息")} title={t("chat.copyMessage", "复制消息")}>
               <Copy size={16} />
             </button>
-            <button type="button" onClick={() => actions.forkSessionAt(sessionId, index)} aria-label="从此处分叉新会话" title="从此处分叉：把会话开头到这里的对话复制为新会话">
+            <button type="button" onClick={() => actions.forkSessionAt(sessionId, index)} aria-label={t("chat.forkSession", "从此处分叉新会话")} title={t("chat.forkSessionTitle", "从此处分叉：把会话开头到这里的对话复制为新会话")}>
               <ForkBranchIcon size={16} />
             </button>
             <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
-            <span className="ai-disclaimer">由AI生成，请注意甄别</span>
+            <span className="ai-disclaimer">{t("chat.aiDisclaimer", "由AI生成，请注意甄别")}</span>
           </div>
         )}
       </div>

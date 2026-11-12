@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, Loader2, X } from "lucide-react";
+import { t } from "./i18n";
 import type { PluginCompatibility } from "./types";
 
 // 「添加插件」弹窗：包名 / GitHub 仓库地址 / 本地目录 三种来源，对齐 DSH 的添加向导。
@@ -10,12 +11,15 @@ import type { PluginCompatibility } from "./types";
 // 安全提示照抄 DSH 的口径并保留其含义：插件以你的权限在本机运行，来源不明可能损坏应用
 // 或读取泄露数据；且当前版本不支持自动更新（升级需先卸载再装新版）。
 
-const VERDICT_LABEL: Record<string, string> = {
-  runnable: "可以运行",
-  partial: "部分兼容",
-  unsupported: "无法运行",
-  pending: "安装后检查",
-};
+function getVerdictLabel(verdict?: string) {
+  switch (verdict) {
+    case "runnable": return t("plugins.compat.runnable", "可以运行");
+    case "partial": return t("plugins.compat.partial", "部分兼容");
+    case "unsupported": return t("plugins.compat.unsupported", "无法运行");
+    case "pending": return t("plugins.compat.pending", "安装后检查");
+    default: return verdict || "";
+  }
+}
 
 function verdictClass(verdict?: string) {
   if (verdict === "runnable") return "ok";
@@ -58,11 +62,11 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
   }, [sourceOpen]);
 
   const SOURCE_OPTIONS = [
-    { id: "default", label: "官方源", hint: "registry.npmjs.org" },
-    { id: "cn", label: "中国大陆镜像源", hint: "registry.npmmirror.com" },
-    { id: "custom", label: "自定义地址", hint: "" },
+    { id: "default", label: t("plugins.source.default", "官方源"), hint: "registry.npmjs.org" },
+    { id: "cn", label: t("plugins.source.cn", "中国大陆镜像源"), hint: "registry.npmmirror.com" },
+    { id: "custom", label: t("plugins.source.custom", "自定义地址"), hint: "" },
   ] as const;
-  const sourceLabel = SOURCE_OPTIONS.find((option) => option.id === source)?.label || "官方源";
+  const sourceLabel = SOURCE_OPTIONS.find((option) => option.id === source)?.label || t("plugins.source.default", "官方源");
 
   const check = async (override?: string) => {
     const probe = String(override ?? input ?? "").trim();
@@ -170,36 +174,36 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
   };
 
   return createPortal(
-    <div className="dialog-overlay" role="dialog" aria-label="添加插件">
+    <div className="dialog-overlay" role="dialog" aria-label={t("plugins.addDialogAria", "添加插件")}>
       <div className="add-plugin-dialog">
         {result ? (
           <div className="install-result">
             <header className="add-plugin-header">
-              <button className="icon-button subtle" onClick={onClose} aria-label="关闭"><X size={16} /></button>
+              <button className="icon-button subtle" onClick={onClose} aria-label={t("common.close", "关闭")}><X size={16} /></button>
             </header>
 
             <div className={`install-result-mark ${result.ok ? "ok" : "bad"}`}>
               {result.ok ? <Check size={26} /> : <AlertTriangle size={26} />}
             </div>
-            <h3 className="install-result-title">{result.ok ? "已安装" : result.incompatible ? (result.verdict === "partial" ? "部分功能不可用" : "无法运行") : "安装失败"}</h3>
+            <h3 className="install-result-title">{result.ok ? t("plugins.installedSuccess", "已安装") : result.incompatible ? (result.verdict === "partial" ? t("plugins.partialCompat", "部分功能不可用") : t("plugins.cannotRun", "无法运行")) : t("plugins.installFailed", "安装失败")}</h3>
 
             <div className="install-result-card">
               <strong>{result.name}</strong>
               {result.description ? <p>{result.description}</p> : null}
-              {result.version ? <span className="install-result-version">版本 {result.version}</span> : null}
+              {result.version ? <span className="install-result-version">{t("plugins.versionLabel", "版本")} {result.version}</span> : null}
             </div>
 
             <div className="install-result-details">
               <button className="add-plugin-guide-toggle" onClick={() => setResult({ ...result, detailOpen: !result.detailOpen })} aria-expanded={Boolean(result.detailOpen)}>
-                <ChevronDown size={14} className={result.detailOpen ? "rotated" : ""} /> 查看安装详情
+                <ChevronDown size={14} className={result.detailOpen ? "rotated" : ""} /> {t("plugins.viewInstallDetails", "查看安装详情")}
               </button>
               {result.detailOpen && (
                 <div className="install-result-detail-body">
                   <div className="install-result-meta">
-                    <span>来源：{{ npm: "npm 包", github: "GitHub 仓库", local: "本地目录" }[result.source || ""] || result.source || "—"}</span>
-                    {result.version ? <span>版本：{result.version}</span> : null}
-                    {result.dir ? <span>插件目录：{result.dir}</span> : null}
-                    {result.patchFile ? <span>清单：{result.patchFile}</span> : null}
+                    <span>{t("plugins.sourcePrefix", "来源：")}{{ npm: "npm 包", github: "GitHub 仓库", local: "本地目录" }[result.source || ""] || result.source || "—"}</span>
+                    {result.version ? <span>{t("plugins.versionPrefix", "版本：")}{result.version}</span> : null}
+                    {result.dir ? <span>{t("plugins.dirPrefix", "插件目录：")}{result.dir}</span> : null}
+                    {result.patchFile ? <span>{t("plugins.manifestPrefix", "清单：")}{result.patchFile}</span> : null}
                   </div>
                   {result.reasons?.length ? <ul>{result.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
                   {result.matrix ? <pre>{result.matrix}</pre> : null}
@@ -209,13 +213,13 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
 
             {result.ok ? (
               <button className="add-plugin-submit" onClick={() => void enableInstalled()} disabled={busy === "enable"}>
-                {busy === "enable" ? <Loader2 size={14} className="spin" /> : null} 立即启用
+                {busy === "enable" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.enableNow", "立即启用")}
               </button>
             ) : (
               <div className="install-result-actions">
-                <button className="plugins-text-button" onClick={() => setResult(null)}>返回</button>
+                <button className="plugins-text-button" onClick={() => setResult(null)}>{t("common.back", "返回")}</button>
                 {result.incompatible && <button className="add-plugin-submit" onClick={() => void install(true)} disabled={busy === "install"}>
-                  {busy === "install" ? <Loader2 size={14} className="spin" /> : null} 仍然安装（部分功能可能不可用）
+                  {busy === "install" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.installAnyway", "仍然安装（部分功能可能不可用）")}
                 </button>}
               </div>
             )}
@@ -224,17 +228,17 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
         ) : (
         <>
         <header className="add-plugin-header">
-          <h2>添加插件</h2>
-          <button className="icon-button subtle" onClick={onClose} aria-label="关闭"><X size={16} /></button>
+          <h2>{t("plugins.addPlugin", "添加插件")}</h2>
+          <button className="icon-button subtle" onClick={onClose} aria-label={t("common.close", "关闭")}><X size={16} /></button>
         </header>
 
-        <p className="add-plugin-sub">输入插件的包名、GitHub 仓库地址或本地目录路径。</p>
+        <p className="add-plugin-sub">{t("plugins.addPluginSub", "输入插件的包名、GitHub 仓库地址或本地目录路径。")}</p>
 
         <input
           className="add-plugin-input"
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="例如 dsh-plugin-whale-pet，或 https://github.com/owner/repo，或 /path/to/plugin"
+          placeholder={t("plugins.inputPlaceholder", "例如 dsh-plugin-whale-pet，或 https://github.com/owner/repo，或 /path/to/plugin")}
           spellCheck={false}
           autoFocus
         />
@@ -244,12 +248,12 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
             className="add-plugin-version"
             value={version}
             onChange={(event) => setVersion(event.target.value)}
-            placeholder="版本（仅包名来源可用）"
+            placeholder={t("plugins.versionPlaceholder", "版本（仅包名来源可用）")}
             spellCheck={false}
           />
           <div className="add-plugin-source-wrap" ref={sourceWrapRef}>
             <button className="add-plugin-source-button" onClick={() => setSourceOpen((open) => !open)} aria-expanded={sourceOpen}>
-              安装源 <strong>{sourceLabel}</strong>
+              {t("plugins.sourcePrefix", "安装源")} <strong>{sourceLabel}</strong>
               <ChevronDown size={14} className={sourceOpen ? "rotated" : ""} />
             </button>
             {sourceOpen && (
@@ -329,7 +333,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
 
         <label className="add-plugin-allow">
           <input type="checkbox" checked={allowIncompatible} onChange={(event) => setAllowIncompatible(event.target.checked)} />
-          允许安装不完全兼容的插件（可能装载后不生效）
+          {t("plugins.allowIncompatible", "允许安装不完全兼容的插件（可能装载后不生效）")}
         </label>
 
         {error && <div className="plugins-message bad"><AlertTriangle size={14} /> <span>{error}</span></div>}
@@ -339,7 +343,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
             <div className="plugins-compat-head">
               {compat.verdict === "runnable" ? <Check size={14} /> : <AlertTriangle size={14} />}
               <strong>{compat.name}{compat.version ? `@${compat.version}` : ""}</strong>
-              <span>{VERDICT_LABEL[compat.verdict] || compat.verdict}</span>
+              <span>{getVerdictLabel(compat.verdict)}</span>
             </div>
             <ul>{compat.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
           </div>
@@ -347,10 +351,10 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
 
         <div className="add-plugin-actions">
           <button className="plugins-text-button" onClick={() => void check()} disabled={!target || Boolean(busy)}>
-            {busy === "check" ? <Loader2 size={14} className="spin" /> : null} 检查兼容性
+            {busy === "check" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.checkCompat", "检查兼容性")}
           </button>
           <button className="add-plugin-submit" onClick={() => void install()} disabled={!target || Boolean(busy)}>
-            {busy === "install" ? <Loader2 size={14} className="spin" /> : null} 安装
+            {busy === "install" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.installAction", "安装")}
           </button>
         </div>
         </>

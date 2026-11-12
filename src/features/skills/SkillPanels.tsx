@@ -2,6 +2,7 @@ import { ArrowUpRight, FileCode2, FolderOpen, LoaderCircle, Pencil, Plus, Refres
 import { useEffect, useMemo, useState } from "react";
 import { defaultSettings } from "../../lib/settings";
 import type { ProviderSettings, SkillLibraryConfig, SkillLibrarySearchResult, SkillRecord } from "../../types";
+import { t } from "../../i18n";
 
 // 「总结为工作模板」的草稿确认对话框：模型生成初稿，用户可改，确认后写入技能库
 export function SkillDraftDialog({
@@ -205,16 +206,16 @@ export function SkillsPanel({
       <div className="skill-management-head skill-management-head-enhanced">
         <div>
           <div className="skill-management-title">
-            <strong>已安装技能</strong>
+            <strong>{t("skills.installedTitle", "已安装技能")}</strong>
             <span className="skill-count-badge">{items.length}</span>
           </div>
-          <small>自动读取用户目录与当前工作区中的 SKILL.md</small>
+          <small>{t("skills.installedDesc", "自动读取用户目录与当前工作区中的 SKILL.md")}</small>
         </div>
         <div className="skill-management-actions">
-        <button type="button" className="button-primary" onClick={onCreate}><Plus size={13} />创建技能</button>
+        <button type="button" className="button-primary" onClick={onCreate}><Plus size={13} />{t("skills.create", "创建技能")}</button>
         <button type="button" className="button-secondary" onClick={onRefresh}>
           <RefreshCw size={13} />
-          刷新技能
+          {t("skills.refresh", "刷新技能")}
         </button>
         </div>
       </div>
@@ -222,34 +223,34 @@ export function SkillsPanel({
         <Search size={14} />
         <input
           value={query}
-          aria-label="搜索已安装技能"
-          placeholder="搜索名称、用途或路径"
+          aria-label={t("skills.searchPlaceholder", "搜索已安装技能")}
+          placeholder={t("skills.searchPlaceholder", "搜索名称、用途或路径")}
           onChange={(event) => setQuery(event.target.value)}
         />
         {query && (
-          <button type="button" className="skill-search-clear" onClick={() => setQuery("")} aria-label="清除技能搜索">
+          <button type="button" className="skill-search-clear" onClick={() => setQuery("")} aria-label={t("skills.clearSearch", "清除技能搜索")}>
             <X size={13} />
           </button>
         )}
       </div>
       {items.length > 0 && (
         <div className="skill-list-summary">
-          <span>{query.trim() ? `找到 ${filteredItems.length} 个技能` : `共 ${items.length} 个技能`}</span>
-          <span>{items.filter((skill) => skill.enabled).length} 个已启用</span>
+          <span>{query.trim() ? t("skills.foundCount", "找到 {count} 个技能").replace("{count}", String(filteredItems.length)) : t("skills.totalCount", "共 {count} 个技能").replace("{count}", String(items.length))}</span>
+          <span>{t("skills.enabledCount", "{count} 个已启用").replace("{count}", String(items.filter((skill) => skill.enabled).length))}</span>
         </div>
       )}
       {!items.length ? (
         <div className="skill-empty-state">
           <FileCode2 size={18} />
-          <strong>还没有发现技能</strong>
-          <p>可放在 ~/.agents/skills、~/.agent/skills、~/.codex/skills，或当前工作区对应的技能目录中。</p>
+          <strong>{t("skills.emptyTitle", "还没有发现技能")}</strong>
+          <p>{t("skills.emptyDesc", "可放在用户目录或当前工作区对应的技能目录中。")}</p>
         </div>
       ) : !filteredItems.length ? (
         <div className="skill-empty-state">
           <Search size={18} />
-          <strong>没有匹配的技能</strong>
-          <p>换个名称、用途关键词，或清除搜索条件。</p>
-          <button type="button" className="button-secondary" onClick={() => setQuery("")}>清除搜索</button>
+          <strong>{t("skills.noMatchTitle", "没有匹配的技能")}</strong>
+          <p>{t("skills.noMatchDesc", "换个名称、用途关键词，或清除搜索条件。")}</p>
+          <button type="button" className="button-secondary" onClick={() => setQuery("")}>{t("skills.clearSearch", "清除搜索")}</button>
         </div>
       ) : (
         <div className="panel-list skill-list">
@@ -259,11 +260,11 @@ export function SkillsPanel({
                 <div className="skill-name-block">
                   <div className="skill-title-row">
                     <strong title={skill.description}>{skill.name}</strong>
-                    <span className={`skill-source-badge ${skill.source || "saved"}`}>{skill.sourceLabel || "本地模板"}</span>
+                    <span className={`skill-source-badge ${skill.source || "saved"}`}>{skill.sourceLabel || t("skills.localTemplate", "本地模板")}</span>
                   </div>
                   {skill.description && <p className="skill-desc" title={skill.description}>{skill.description}</p>}
                 </div>
-                <label className="skill-switch" title={skill.availabilityReason || (skill.enabled ? "点击停用" : "点击启用")}>
+                <label className="skill-switch" title={skill.availabilityReason || (skill.enabled ? t("skills.clickDisable", "点击停用") : t("skills.clickEnable", "点击启用"))}>
                   <input type="checkbox" checked={skill.enabled} disabled={Boolean(skill.availabilityReason)} onChange={(event) => onToggle(skill.id, event.target.checked)} />
                 </label>
               </div>
@@ -366,44 +367,44 @@ export function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
     <div className="skill-libraries-panel">
       <div className="skill-library-intro">
         <div>
-          <span className="dialog-kicker">资源中心</span>
-          <h3>发现新技能</h3>
+          <span className="dialog-kicker">{t("skills.resourceCenter", "资源中心")}</span>
+          <h3>{t("skills.discoverSkills", "发现新技能")}</h3>
         </div>
-        <p>从技能库查找可复用能力，安装后会出现在“技能”列表中。</p>
+        <p>{t("skills.discoverDesc", "从技能库查找可复用能力，安装后会出现在“技能”列表中。")}</p>
       </div>
-      <div className="dialog-section-title">技能库来源</div>
+      <div className="dialog-section-title">{t("skills.sourcesTitle", "技能库来源")}</div>
       <div className="panel-list skill-library-list">
         {libraries.map((library) => (
           <div className={`skill-library-row ${library.enabled ? "" : "disabled"}`} key={library.id}>
-            <label className="skill-switch" title={library.enabled ? "点击停用" : "点击启用"}>
+            <label className="skill-switch" title={library.enabled ? t("skills.clickDisable", "点击停用") : t("skills.clickEnable", "点击启用")}>
               <input
                 type="checkbox"
                 checked={library.enabled}
                 disabled={saving}
                 onChange={(event) => void saveLibraries(
                   libraries.map((item) => item.id === library.id ? { ...item, enabled: event.target.checked } : item),
-                  `${library.name}已${event.target.checked ? "启用" : "停用"}`,
+                  `${library.name}${event.target.checked ? t("skills.enabledSuffix", "已启用") : t("skills.disabledSuffix", "已停用")}`,
                 )}
               />
             </label>
             <span className="mcp-server-name skill-library-name">
               <strong>{library.name}</strong>
-              <small>{library.description || "未填写说明"}</small>
+              <small>{library.id === "skillhub" ? t("skills.skillhubDesc", library.description) : (library.description || t("skills.noDesc", "未填写说明"))}</small>
             </span>
-            {library.websiteUrl && <a className="skill-library-link" href={library.websiteUrl} target="_blank" rel="noreferrer">打开官网 <ArrowUpRight size={12} /></a>}
+            {library.websiteUrl && <a className="skill-library-link" href={library.websiteUrl} target="_blank" rel="noreferrer">{t("skills.openWebsite", "打开官网")} <ArrowUpRight size={12} /></a>}
           </div>
         ))}
       </div>
 
-      <div className="dialog-section-title">搜索并安装</div>
-      <p className="dialog-note">当前接入 SkillHub。需要先在本机安装 SkillHub CLI；安装时会写入用户技能目录，DYWorker 刷新后即可识别。</p>
+      <div className="dialog-section-title">{t("skills.searchAndInstall", "搜索并安装")}</div>
+      <p className="dialog-note">{t("skills.hubNotice", "当前接入技能库。安装时写入用户目录，刷新后即可使用。")}</p>
       <div className="skill-library-search-form">
         <div className="skill-search-field">
           <Search size={14} />
           <input
             value={query}
-            aria-label="搜索技能库"
-            placeholder="搜索技能名称或用途，例如：PDF、网页自动化"
+            aria-label={t("skills.searchAndInstall", "搜索技能库")}
+            placeholder={t("skills.hubSearchPlaceholder", "搜索技能名称或用途，例如：PDF、网页自动化")}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -413,23 +414,23 @@ export function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
             }}
           />
           {query && (
-            <button type="button" className="skill-search-clear" onClick={() => { setQuery(""); void search(""); }} aria-label="清除技能库搜索">
+            <button type="button" className="skill-search-clear" onClick={() => { setQuery(""); void search(""); }} aria-label={t("skills.clearSearch", "清除技能库搜索")}>
               <X size={13} />
             </button>
           )}
         </div>
         <button type="button" className="button-secondary" onClick={() => void search()} disabled={searching}>
           {searching ? <LoaderCircle size={13} className="spin" /> : <Search size={13} />}
-          搜索
+          {t("skills.searchBtn", "搜索")}
         </button>
       </div>
       {warnings.map((warning) => <p className="skill-library-message" key={warning}>{warning}</p>)}
       <div className="skill-library-results-head">
         <div>
-          <strong>{query.trim() ? "搜索结果" : "技能列表"}</strong>
-          <small>{searching ? "正在加载…" : results.length ? `显示 ${results.length} 个，可直接安装` : "暂时没有可显示的技能"}</small>
+          <strong>{query.trim() ? t("skills.searchResults", "搜索结果") : t("skills.listTitle", "技能列表")}</strong>
+          <small>{searching ? t("skills.loading", "正在加载…") : results.length ? t("skills.showingCount", "显示 {count} 个，可直接安装").replace("{count}", String(results.length)) : t("skills.noDisplayable", "暂时没有可显示的技能")}</small>
         </div>
-        <button type="button" className="icon-button subtle tiny" onClick={() => void search()} disabled={searching} aria-label="刷新技能列表" title="刷新技能列表">
+        <button type="button" className="icon-button subtle tiny" onClick={() => void search()} disabled={searching} aria-label={t("skills.refreshList", "刷新技能列表")} title={t("skills.refreshList", "刷新技能列表")}>
           <RefreshCw size={13} className={searching ? "spin" : ""} />
         </button>
       </div>
@@ -450,7 +451,7 @@ export function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
                 </div>
                 <button type="button" className="button-secondary" onClick={() => void install(result)} disabled={Boolean(installingSlug)}>
                   {installing ? <LoaderCircle size={13} className="spin" /> : <Plus size={13} />}
-                  {installing ? "安装中…" : "安装"}
+                  {installing ? t("skills.installing", "安装中…") : t("skills.install", "安装")}
                 </button>
               </div>
             );
@@ -459,8 +460,8 @@ export function SkillLibrariesPanel({ value, onSave, onRefreshSkills }: {
       ) : !searching ? (
         <div className="skill-library-empty">
           <Sparkles size={18} />
-          <strong>{query.trim() ? "没有找到匹配技能" : "暂时没有技能列表"}</strong>
-          <p>{query.trim() ? "换个关键词再试试。" : "请确认 SkillHub CLI 已安装，并检查网络连接。"}</p>
+          <strong>{query.trim() ? t("skills.noHubMatch", "没有找到匹配技能") : t("skills.noHubSkills", "暂时没有技能列表")}</strong>
+          <p>{query.trim() ? t("skills.tryOtherKeywords", "换个关键词再试试。") : t("skills.checkCliNetwork", "请确认 SkillHub CLI 已安装，并检查网络连接。")}</p>
         </div>
       ) : null}
     </div>

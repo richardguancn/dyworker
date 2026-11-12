@@ -1,5 +1,5 @@
 import { BarChart3, Bell, Check, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, UserRound } from "lucide-react";
-import { CSSProperties, FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { beginSession, discardSession } from "../../appearance/controller";
 import { hasConfiguredModel } from "../../../electron/host/dsh-runtime/model-settings.mts";
 import { matchProvider, providerPresets } from "../../providers";
@@ -16,42 +16,56 @@ import { UsageStatsPanel } from "../usage/UsagePanels";
 import { ChannelsPanel, HooksPanel, IdentitySettingsPanel, TelemetrySettingsSection } from "./SettingsSubPanels";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
-import type { ApprovalMode, AppUpdateStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus, ScheduleRecord, SettingsTab, SkillRecord, TtsLocalStatus, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow } from "../../types";
+import type { ApprovalMode, AppUpdateStatus, DecisionLocalStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus, ScheduleRecord, SettingsTab, SkillRecord, TtsLocalStatus, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow } from "../../types";
 import { blobToWavMono } from "../../lib/audio";
 import { settingsWithProfile } from "../../lib/settings";
+import { t, useLocale } from "../../i18n";
 
 export type { SettingsTab } from "../../types";
 
 // 图标既可能是 lucide 的，也可能是应用内自绘的（如插件图标），只要求接受 size
 export type SettingsNavIcon = (props: { size?: number; className?: string }) => ReactNode;
 
+// 本地模型下载进度归一：按 modelId 更新 models 列表与当前 model 概要（voice/tts/decision 共用）
+function withModelDownloadProgress<T extends { model: { id: string; sizeBytes: number; expectedBytes: number }; models: Array<{ id: string; sizeBytes: number; expectedBytes: number }> }>(current: T, progress: { modelId?: string; received: number; total: number }): T {
+  const models = current.models.map((model) => (
+    model.id === progress.modelId
+      ? { ...model, sizeBytes: progress.received, expectedBytes: progress.total }
+      : model
+  ));
+  const model = current.model.id === progress.modelId
+    ? { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total }
+    : current.model;
+  return { ...current, model, models };
+}
+
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
-const settingsNav: { group: string; items: { id: SettingsTab; label: string; icon: SettingsNavIcon; keywords?: string[] }[] }[] = [
-  { group: "服务", items: [
-    { id: "model", label: "模型服务", icon: Settings },
-    { id: "voice", label: "语音转写", icon: Mic },
-    { id: "search", label: "搜索", icon: Search },
-    { id: "channels", label: "消息渠道", icon: MessagesSquare },
+export const getSettingsNav = (): { group: string; items: { id: SettingsTab; label: string; icon: SettingsNavIcon; keywords?: string[] }[] }[] => [
+  { group: t("nav.group.services", "基础服务"), items: [
+    { id: "model", label: t("nav.model.label", "AI模型"), icon: Settings },
+    { id: "voice", label: t("nav.voice.label", "语音声音"), icon: Mic },
+    { id: "search", label: t("nav.search.label", "联网搜索"), icon: Search },
+    { id: "channels", label: t("nav.channels.label", "消息连接"), icon: MessagesSquare, keywords: ["消息渠道", "微信", "飞书", "QQ"] },
   ] },
-  { group: "偏好", items: [
-    { id: "identity", label: "助手身份", icon: UserRound },
-    { id: "appearance", label: "外观", icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "theme", "font"] },
-    { id: "power", label: "电源", icon: Moon },
-    { id: "updates", label: "应用更新", icon: RefreshCw },
-    { id: "about", label: "关于", icon: Info, keywords: ["开发者", "管灯余", "GitHub", "邮箱"] },
+  { group: t("nav.group.preferences", "偏好设置"), items: [
+    { id: "identity", label: t("nav.identity.label", "角色设定"), icon: UserRound },
+    { id: "appearance", label: t("nav.appearance.label", "外观显示"), icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "语言", "language", "theme", "font"] },
+    { id: "power", label: t("nav.power.label", "休眠控制"), icon: Moon },
+    { id: "updates", label: t("nav.updates.label", "软件更新"), icon: RefreshCw },
+    { id: "about", label: t("nav.about.label", "关于软件"), icon: Info, keywords: ["开发者", "管灯余", "GitHub", "邮箱"] },
   ] },
-  { group: "资源", items: [
-    { id: "plugins", label: "插件", icon: PluginIcon, keywords: ["MCP", "mcpb", "DSH", "Claude Mods"] },
-    { id: "memories", label: "记忆", icon: History },
-    { id: "knowledge", label: "知识库", icon: Network, keywords: ["知识图谱", "关系图谱", "资料"] },
-    { id: "skills", label: "技能", icon: FileCode2 },
-    { id: "skill-libraries", label: "技能库", icon: Globe },
-    { id: "plans", label: "定时计划", icon: ListTodo },
+  { group: t("nav.group.resources", "能力扩展"), items: [
+    { id: "plugins", label: t("nav.plugins.label", "插件"), icon: PluginIcon, keywords: ["扩展", "MCP", "mcpb", "DSH", "Claude Mods"] },
+    { id: "memories", label: t("nav.memories.label", "长期记忆"), icon: History },
+    { id: "knowledge", label: t("nav.knowledge.label", "资料库"), icon: Network, keywords: ["知识图谱", "关系图谱", "资料"] },
+    { id: "skills", label: t("nav.skills.label", "快捷技能"), icon: FileCode2 },
+    { id: "skill-libraries", label: t("nav.skill-libraries.label", "技能市场"), icon: Globe },
+    { id: "plans", label: t("nav.plans.label", "定时任务"), icon: ListTodo },
   ] },
-  { group: "高级", items: [
-    { id: "usage", label: "用量统计", icon: BarChart3 },
-    { id: "telemetry", label: "统计与消息", icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"] },
-    { id: "hooks", label: "权限规则", icon: ShieldAlert },
+  { group: t("nav.group.advanced", "高级设置"), items: [
+    { id: "usage", label: t("nav.usage.label", "用量明细"), icon: BarChart3 },
+    { id: "telemetry", label: t("nav.telemetry.label", "通知反馈"), icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"] },
+    { id: "hooks", label: t("nav.hooks.label", "安全授权"), icon: ShieldAlert },
   ] },
 ];
 
@@ -130,6 +144,8 @@ export function SettingsDialog({
   appUpdate: AppUpdateStatus;
   onCheckUpdate: () => void;
 }) {
+  const [locale] = useLocale();
+  const settingsNav = useMemo(() => getSettingsNav(), [locale]);
   const [draft, setDraft] = useState(value);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
   const [saving, setSaving] = useState(false);
@@ -140,13 +156,18 @@ export function SettingsDialog({
     (value.profiles || []).find((item) => item.endpoint === value.endpoint && item.model === value.model)?.id || ""
   ));
   const profiles = draft.profiles || [];
-  const activeLabel = settingsNav.flatMap((group) => group.items).find((item) => item.id === tab)?.label || "设置";
+  const activeLabel = settingsNav.flatMap((group) => group.items).find((item) => item.id === tab)?.label || t("common.save", "设置");
   const preset = providerPresets.find((item) => item.id === providerId) || providerPresets[providerPresets.length - 1];
   const modelComplete = hasConfiguredModel(draft);
   // 内置本地审核模型：状态与下载进度（模型 tab 打开时才拉取）
   const [reviewerLocal, setReviewerLocal] = useState<ReviewerLocalStatus | null>(null);
   const [reviewerDownloading, setReviewerDownloading] = useState(false);
   const [reviewerDownloadError, setReviewerDownloadError] = useState("");
+  // 本地托管决策模型：状态、下载阶段（runtime:* / model）与进度（模型 tab 打开时才拉取）
+  const [decisionLocal, setDecisionLocal] = useState<DecisionLocalStatus | null>(null);
+  const [decisionDownloading, setDecisionDownloading] = useState(false);
+  const [decisionDownloadPhase, setDecisionDownloadPhase] = useState("");
+  const [decisionDownloadError, setDecisionDownloadError] = useState("");
   // 凭证预检：保存前先验证服务地址/模型/密钥可用性，避免任务运行时才发现配错
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -248,27 +269,49 @@ export function SettingsDialog({
   useEffect(() => {
     if (tab !== "model") return;
     const dyworker = window.dyworker;
-    if (!dyworker?.getReviewerLocalStatus) return;
-    dyworker.getReviewerLocalStatus().then((status) => setReviewerLocal(status)).catch(() => { });
-    return dyworker.onReviewerLocalDownloadProgress((progress) => {
-      setReviewerLocal((current) => (current ? { ...current, sizeBytes: progress.received, expectedBytes: progress.total } : current));
-    });
+    if (!dyworker) return;
+    // 本地审核模型与本地决策模型共用一个订阅：状态各拉一次，进度各自归账
+    void dyworker.getReviewerLocalStatus().then((status) => setReviewerLocal(status)).catch(() => { });
+    void dyworker.getDecisionLocalStatus().then((status) => setDecisionLocal(status)).catch(() => { });
+    const cleanups = [
+      dyworker.onReviewerLocalDownloadProgress((progress) => {
+        setReviewerLocal((current) => (current ? { ...current, sizeBytes: progress.received, expectedBytes: progress.total } : current));
+      }),
+      dyworker.onDecisionLocalDownloadProgress((progress) => {
+        // 决策下载的运行时阶段（Python/venv/pip 依赖）没有整体字节口径：只展示阶段
+        setDecisionDownloadPhase(String(progress.phase || ""));
+        if (String(progress.phase || "").startsWith("runtime:")) return;
+        setDecisionLocal((current) => (current ? withModelDownloadProgress(current, progress) : current));
+      }),
+    ];
+    return () => cleanups.forEach((unsubscribe) => unsubscribe());
   }, [tab]);
 
-  const startReviewerLocalDownload = async () => {
-    if (reviewerDownloading) return;
-    setReviewerDownloading(true);
-    setReviewerDownloadError("");
+  // 审核模型与决策模型的本地下载共用一套启动/报错/状态回填；决策多一个阶段文案复位
+  const startLocalModelDownload = async (kind: "reviewer" | "decision") => {
+    const downloading = kind === "reviewer" ? reviewerDownloading : decisionDownloading;
+    if (downloading) return;
+    const setActive = kind === "reviewer" ? setReviewerDownloading : setDecisionDownloading;
+    const setError = kind === "reviewer" ? setReviewerDownloadError : setDecisionDownloadError;
+    const setStatus = (kind === "reviewer" ? setReviewerLocal : setDecisionLocal) as (status: typeof reviewerLocal | typeof decisionLocal) => void;
+    setActive(true);
+    setError("");
     try {
-      const result = await window.dyworker?.downloadReviewerLocalModel();
-      if (result?.status) setReviewerLocal(result.status);
-      if (result?.ok === false) setReviewerDownloadError(result.error || "下载失败，请重试");
+      const result = kind === "reviewer"
+        ? await window.dyworker?.downloadReviewerLocalModel()
+        : await window.dyworker?.downloadDecisionLocalModel({ modelId: draft.decisionLocalModel });
+      if (result?.status) setStatus(result.status);
+      if (result?.ok === false) setError(result.error || "下载失败，请重试");
     } catch (error) {
-      setReviewerDownloadError(error instanceof Error ? error.message : String(error));
+      setError(error instanceof Error ? error.message : String(error));
     } finally {
-      setReviewerDownloading(false);
+      setActive(false);
+      if (kind === "decision") setDecisionDownloadPhase("");
     }
   };
+  const startReviewerLocalDownload = () => startLocalModelDownload("reviewer");
+
+  const startDecisionLocalDownload = () => startLocalModelDownload("decision");
 
   // 内置本地语音转写（可选模型 + llama-server）：状态与下载进度（voice tab 打开时才拉取）
   const [voiceLocal, setVoiceLocal] = useState<VoiceLocalStatus | null>(null);
@@ -281,19 +324,7 @@ export function SettingsDialog({
     if (!dyworker?.getVoiceLocalStatus) return;
     dyworker.getVoiceLocalStatus().then((status) => setVoiceLocal(status)).catch(() => { });
     return dyworker.onVoiceLocalDownloadProgress((progress) => {
-      setVoiceLocal((current) => {
-        if (!current) return current;
-        // 进度按 modelId 归到对应模型：更新 models 列表与当前保存的 model 概要
-        const models = current.models.map((model) => (
-          model.id === progress.modelId
-            ? { ...model, sizeBytes: progress.received, expectedBytes: progress.total }
-            : model
-        ));
-        const model = current.model.id === progress.modelId
-          ? { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total }
-          : current.model;
-        return { ...current, model, models };
-      });
+      setVoiceLocal((current) => (current ? withModelDownloadProgress(current, progress) : current));
     });
   }, [tab]);
 
@@ -327,19 +358,7 @@ export function SettingsDialog({
       // 引擎（与转写共用）与模型两阶段字节口径不同：引擎阶段只展示状态，模型阶段更新整体进度
       setTtsDownloadPhase(String(progress.phase || ""));
       if (String(progress.phase || "").startsWith("runtime:")) return;
-      // 进度按 modelId 归到对应模型：更新 models 列表与当前保存的 model 概要
-      setTtsLocal((current) => {
-        if (!current) return current;
-        const models = current.models.map((model) => (
-          model.id === progress.modelId
-            ? { ...model, sizeBytes: progress.received, expectedBytes: progress.total }
-            : model
-        ));
-        const model = current.model.id === progress.modelId
-          ? { ...current.model, sizeBytes: progress.received, expectedBytes: progress.total }
-          : current.model;
-        return { ...current, model, models };
-      });
+      setTtsLocal((current) => (current ? withModelDownloadProgress(current, progress) : current));
     });
   }, [tab]);
 
@@ -524,7 +543,7 @@ export function SettingsDialog({
     const nextDraft = tab === "model" ? saveCurrentModel(draft) : draft;
     const saved = await onSave(
       nextDraft,
-      tab === "model" ? "模型服务已保存并启用" : "设置已保存",
+      tab === "model" ? t("common.modelSaved", "AI 模型已保存并启用") : t("common.saved", "设置已保存"),
     );
     setSaving(false);
     if (!saved) {
@@ -539,18 +558,18 @@ export function SettingsDialog({
       );
       setProfileId(active?.id || "");
     }
-    flashSaveStatus(tab === "model" ? "模型服务已保存并启用" : "设置已保存");
+    flashSaveStatus(tab === "model" ? t("common.modelSaved", "AI 模型已保存并启用") : t("common.saved", "设置已保存"));
   };
 
   return (
-    <section className="settings-page" aria-label="设置" style={{ "--settings-sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
+    <section className="settings-page" aria-label={t("nav.settings", "设置")} style={{ "--settings-sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <div className="settings-dialog settings-v2">
-        <aside className="settings-nav" aria-label="设置导航">
+        <aside className="settings-nav" aria-label={t("nav.settingsNav", "设置导航")}>
           {/* 不再放关闭按钮：Esc 与左侧图标栏都能退出设置。 */}
-          <div className="settings-nav-heading"><h1>设置</h1></div>
+          <div className="settings-nav-heading"><h1>{t("nav.settings", "设置")}</h1></div>
           <div className="settings-nav-search">
             <Search size={13} />
-            <input aria-label="搜索设置" value={navQuery} placeholder="搜索设置…" onChange={(event) => setNavQuery(event.target.value)} />
+            <input aria-label="搜索设置" value={navQuery} placeholder={t("nav.searchPlaceholder", "搜索设置…")} onChange={(event) => setNavQuery(event.target.value)} />
           </div>
           <div className="settings-nav-scroll">
           {settingsNav.map((group) => {
@@ -594,7 +613,7 @@ export function SettingsDialog({
           />
         ) : tab === "about" ? (
           <dl className="settings-about">
-            <div><dt>开发者</dt><dd>管灯余</dd></div>
+            <div><dt>{t("about.developer", "开发者")}</dt><dd>{t("about.authorName", "管灯余")}</dd></div>
             <div><dt>GitHub</dt><dd><a href="http://github.com/richardguancn/" target="_blank" rel="noreferrer"
               onClick={(event) => {
                 if (window.dyworker?.openBrowserExternal) {
@@ -602,7 +621,7 @@ export function SettingsDialog({
                   void window.dyworker.openBrowserExternal("http://github.com/richardguancn/");
                 }
               }}>github.com/richardguancn</a></dd></div>
-            <div><dt>邮箱</dt><dd>guandengyu@gmail.com</dd></div>
+            <div><dt>{t("about.email", "邮箱")}</dt><dd>guandengyu@gmail.com</dd></div>
           </dl>
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
@@ -635,36 +654,41 @@ export function SettingsDialog({
             reviewerDownloading={reviewerDownloading}
             reviewerDownloadError={reviewerDownloadError}
             startReviewerLocalDownload={startReviewerLocalDownload}
+            decisionLocal={decisionLocal}
+            decisionDownloading={decisionDownloading}
+            decisionDownloadPhase={decisionDownloadPhase}
+            decisionDownloadError={decisionDownloadError}
+            startDecisionLocalDownload={startDecisionLocalDownload}
           />
         )}
         {tab === "power" && (<>
-        <div className="dialog-section-title">电源</div>
+        <div className="dialog-section-title">{t("power.title", "休眠控制")}</div>
         <label>
-          防止电脑休眠
+          {t("power.preventSleep", "防休眠模式")}
           <select
             value={draft.preventSleep}
             onChange={(event) => setDraft({ ...draft, preventSleep: event.target.value as ProviderSettings["preventSleep"] })}
           >
-            <option value="off">关闭</option>
-            <option value="tasks">仅任务运行期间（推荐）</option>
-            <option value="always">始终保持唤醒</option>
+            <option value="off">{t("power.off", "不阻止")}</option>
+            <option value="tasks">{t("power.tasks", "仅任务运行期间（推荐）")}</option>
+            <option value="always">{t("power.always", "始终唤醒")}</option>
           </select>
         </label>
-        <p className="dialog-note">只阻止系统挂起，屏幕照常关闭、照常锁定，锁屏安全不受影响；长任务（持续执行、/goal、定时计划）跑到一半电脑睡着时可开启。无人值守的机器建议选「仅任务运行期间」，「始终保持唤醒」请确认符合单位安全规定。Linux 依赖 systemd-logind，个别桌面环境可能不支持。</p>
+        <p className="dialog-note">{t("power.note", "保持电脑清醒，长任务不中断；锁屏照常生效。")}</p>
         </>)}
         {tab === "updates" && (<>
-        <div className="dialog-section-title">应用更新</div>
+        <div className="dialog-section-title">{t("updates.title", "软件更新")}</div>
         <div className="settings-update-row">
           <span className="settings-update-status">
-            当前版本 {appUpdate.currentVersion || "未知"}
-            {appUpdate.state === "available" && ` · 发现新版本 ${appUpdate.version || ""}`}
-            {appUpdate.state === "downloaded" && " · 更新已下载，可安装"}
-            {appUpdate.state === "downloading" && ` · 正在下载 ${Math.round(appUpdate.percent || 0)}%`}
-            {appUpdate.state === "checking" && " · 正在检查…"}
-            {appUpdate.state === "not-available" && " · 已是最新"}
+            {t("updates.currentVersion", "当前版本")} {appUpdate.currentVersion || t("common.unknown", "未知")}{/* 当前版本 {appUpdate.currentVersion} */}
+            {appUpdate.state === "available" && ` · ${t("updates.newFound", "发现新版本")} ${appUpdate.version || ""}`}
+            {appUpdate.state === "downloaded" && ` · ${t("updates.downloaded", "更新已下载，可安装")}`}
+            {appUpdate.state === "downloading" && ` · ${t("updates.downloading", "正在下载")} ${Math.round(appUpdate.percent || 0)}%`}
+            {appUpdate.state === "checking" && ` · ${t("updates.checking", "正在检查…")}`}
+            {appUpdate.state === "not-available" && ` · ${t("updates.latest", "已是最新")}`}
           </span>
           <button type="button" className="settings-update-check" onClick={onCheckUpdate}>
-            {appUpdate.state === "downloaded" ? "安装更新" : appUpdate.state === "available" ? "查看更新" : "检查更新"}
+            {appUpdate.state === "downloaded" ? t("updates.install", "安装更新") : appUpdate.state === "available" ? t("updates.view", "查看更新") : t("updates.check", "检查更新")}
           </button>
         </div>
         {draft.updateUrl && (
@@ -673,49 +697,49 @@ export function SettingsDialog({
             className="app-update-latest-link"
             onClick={() => void window.dyworker?.openBrowserExternal?.(`${draft.updateUrl}/releases/latest`)}
           >
-            在浏览器中下载最新版本
+            {t("updates.browserDownload", "在浏览器中下载最新版本")}
           </button>
         )}
-        <div className="dialog-section-title">应用更新来源</div>
+        <div className="dialog-section-title">{t("updates.sourceTitle", "更新来源")}</div>
         <label>
-          更新地址
+          {t("updates.sourceUrl", "更新地址")}
           <input
             type="url"
             value={draft.updateUrl}
-            placeholder="https://github.com/组织名/仓库名"
+            placeholder={t("updates.urlPlaceholder", "https://github.com/组织名/仓库名")}
             onChange={(event) => setDraft({ ...draft, updateUrl: event.target.value })}
           />
         </label>
-        <p className="dialog-note">默认使用 DYWorker 的 GitHub 仓库。你也可以改成自己的 GitHub 仓库；应用会按 v + 版本号的标签检查发布版本，例如 v0.1.17。</p>
+        <p className="dialog-note">{t("updates.note", "默认使用官方仓库，按发布版本检查自动更新。")}</p>
         </>)}
         {tab === "telemetry" && (
           <TelemetrySettingsSection draft={draft} setDraft={setDraft} />
         )}
         {tab === "search" && (<>
-        <div className="dialog-section-title">搜索（可选）</div>
+        <div className="dialog-section-title">{t("search.title", "联网搜索")}</div>
         <label>
-          DeepSeek 搜索密钥
+          {t("search.deepseekKey", "默认搜索密钥")}
           <input
             value={draft.deepseekSearchApiKey}
             type="password"
-            placeholder="platform.deepseek.com 申请；非 DeepSeek 模型时的默认搜索后端"
+            placeholder={t("search.deepseekPlaceholder", "platform.deepseek.com 申请；非 DeepSeek 模型时的默认搜索后端")}
             onChange={(event) => setDraft({ ...draft, deepseekSearchApiKey: event.target.value })}
           />
         </label>
         <label>
-          博查 API 密钥
+          {t("search.bochaKey", "博查 API 密钥")}
           <input
             value={draft.bochaApiKey}
             type="password"
-            placeholder="AI 搜索服务，结果带摘要，调研类任务更稳（bochaai.com）"
+            placeholder={t("search.bochaPlaceholder", "AI 搜索服务，结果带摘要，调研类任务更稳（bochaai.com）")}
             onChange={(event) => setDraft({ ...draft, bochaApiKey: event.target.value })}
           />
         </label>
         <label>
-          SearXNG 服务地址
+          {t("search.searxng", "SearXNG 服务地址")}
           <input
             value={draft.searxngEndpoint}
-            placeholder="自建开源搜索，如 http://192.168.1.10:8080；留空用国内引擎"
+            placeholder={t("search.searxngPlaceholder", "自建开源搜索，如 http://192.168.1.10:8080；留空用国内引擎")}
             onChange={(event) => setDraft({ ...draft, searxngEndpoint: event.target.value })}
           />
         </label>
@@ -725,9 +749,9 @@ export function SettingsDialog({
             checked={draft.domesticSearchOnly}
             onChange={(event) => setDraft({ ...draft, domesticSearchOnly: event.target.checked })}
           />
-          仅使用境内搜索（推荐敏感单位开启：跳过必应，查询不发送给外企服务）
+          {t("search.domesticOnly", "仅使用境内搜索（查询不出境）")}
         </label>
-        <p className="dialog-note">搜索按模型厂商路由：Kimi 开放平台用 Kimi 官方搜索（公式 web_search，按次计费）；DeepSeek 模型用 DeepSeek 服务端搜索（复用会话密钥，每次搜索计一次模型调用）；GLM（智谱）模型用智谱 Web Search API（复用会话密钥，按次计费，境内引擎）；其他模型默认也用 DeepSeek 搜索（需在此配置密钥）。以上都不可用时回退：博查 API → 自建 SearXNG → 必应国内版（带摘要）→ 360 / 搜狗抓取。涉密信息请勿使用任何联网搜索；政策法规建议用 gov_search 官方接口。自建 SearXNG 请只挂境内引擎后端，查询才不出境。</p>
+        <p className="dialog-note">{t("search.note", "配置联网搜索密钥，为大模型提供实时网络检索。")}</p>
         </>)}
         {tab === "voice" && (
           <VoiceSettingsPanel
@@ -749,10 +773,10 @@ export function SettingsDialog({
         )}
         <div className="dialog-actions">
           <span className={`settings-save-status${saveStatus?.failed ? " error" : ""}`} role="status">{saveStatus?.text || ""}</span>
-          <button type="button" className="button-secondary" onClick={onClose}>取消</button>
+          <button type="button" className="button-secondary" onClick={onClose}>{t("common.cancel", "取消")}</button>
           <button type="submit" className="button-primary" disabled={saving || (tab === "model" && !modelComplete)}>
             {saving ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}
-            {tab === "model" ? "保存并使用" : "保存设置"}
+            {tab === "model" ? t("common.saveAndUse", "保存并使用") : t("common.save", "保存设置")}
           </button>
         </div>
           </form>
@@ -776,7 +800,7 @@ export function SettingsDialog({
           <>
             <UsageStatsPanel records={usageRecords} />
             <div className="dialog-actions">
-              <button type="button" className="button-secondary" onClick={onClearUsage}>清空记录</button>
+              <button type="button" className="button-secondary" onClick={onClearUsage}>{t("usage.clearRecords", "清空记录")}</button>
             </div>
           </>
         ) : tab === "hooks" ? (
