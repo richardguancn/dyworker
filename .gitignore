@@ -27,3 +27,6 @@ qa-tmp/
 .playwright-mcp/
 .dyworker/
 docs/product/
+docs/copyright/
+__pycache__/
+*.pyc
