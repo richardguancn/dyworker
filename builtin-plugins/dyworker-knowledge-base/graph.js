@@ -1,3 +1,5 @@
+import { localSourcePath } from './local-source.js';
+
 // 内容关联是可解释的候选关系；不会把词面相近当作事实关系，也不据此删除记忆。
 const genericCategories = new Set(['', '未分类', '默认', '常用信息', '用户偏好', '个人记忆', '项目', '项目规则', '项目事实', '偏好', '规则', '事实', '经验', '用户画像', '用户禁忌', '技术', '办公', '其他', '资料', '文档', '个人', '工作', '通用规则', '经验教训']);
 const stopWords = new Set(['用户', '需要', '可以', '使用', '进行', '相关', '内容', '这个', '一个', '我们', '时候', '必须', '不要', '默认', '以后', '当前', '通过', '以及', '或者', '对于', '支持', '应该', 'the', 'and', 'for', 'with', 'that', 'this']);
@@ -39,7 +41,7 @@ export function knowledgeNodes(memories, documents) {
   for (const item of documents) {
     const source = item.source || `条目 ${item.id}`;
     const id = documentNodeId(source);
-    if (!files.has(id)) files.set(id, { id, kind: 'document', name: source,
+    if (!files.has(id)) files.set(id, { id, kind: 'document', name: localSourcePath(source),
       category: item.category, content: '', source, scope: 'global', workspacePath: '', tags: [], chunks: 0 });
     const node = files.get(id);
     node.content += `${node.content ? '\n\n' : ''}${typeof item.payload === 'string' ? item.payload : item.summary || ''}`;

@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isLocalSource } from '../../local-source.js';
 //#region lib/types/kb.js
 /**
 * dsh-knowledge-base — SQLite 知识库核心（通用）。
@@ -127,12 +128,18 @@ function upsertEntry(db, input) {
 }
 /** 更新条目的分类与标签（同步 FTS：tags 变化）。 */
 function updateEntry(db, id, category, tags) {
+	assertEditableEntry(db, id);
 	db.prepare("UPDATE kb SET category = ?, tags = ?, updated_at = datetime('now') WHERE id = ?").run(category, JSON.stringify(tags ?? []), id);
 	const row = db.prepare("SELECT name, summary, payload FROM kb WHERE id = ?").get(id);
 	if (row !== void 0) {
 		ftsDelete(db, id);
 		ftsInsert(db, id, row.name, row.summary, row.payload, JSON.stringify(tags ?? []));
 	}
+}
+
+function assertEditableEntry(db, id) {
+	const row = db.prepare('SELECT source FROM kb WHERE id = ?').get(id);
+	if (isLocalSource(row?.source)) throw new Error('请在本地目录中编辑文件，然后更新知识库');
 }
 /** 列出条目（可按 category 过滤，按更新时间倒序）。 */
 function listEntries(db, category) {
@@ -148,12 +155,13 @@ function listEntries(db, category) {
 }
 /**
 * 关键词检索：优先 FTS5（trigram，中文 3 字滑窗子串匹配 + BM25 相关度排序）；
-* 查询词不足 3 字符或 FTS 异常/无结果时回退 LIKE 子串匹配。可按 category 过滤。
+* 短查询或 FTS 无结果时回退子串匹配；原文件名也参与匹配。
 */
 function searchKb(db, args) {
 	const q = args.query.trim();
 	if (q === "") return [];
 	const category = args.category !== void 0 && args.category !== "" ? args.category : void 0;
+	let ranked = [];
 	if (q.length >= 3) try {
 		const match = `"${q.replaceAll("\"", "\"\"")}"`;
 		const sql = category !== void 0 ? `
@@ -168,24 +176,29 @@ function searchKb(db, args) {
           ORDER BY bm25(kb_fts)
           LIMIT 50`;
 		const params = category !== void 0 ? [category, match] : [match];
-		const rows = db.prepare(sql).all(...params);
-		if (rows.length > 0) return rows.map(rowToKbRow);
+		ranked = db.prepare(sql).all(...params);
 	} catch {}
-	const like = `%${q}%`;
-	const where = category !== void 0 ? "category = ? AND (name LIKE ? OR summary LIKE ? OR payload LIKE ? OR tags LIKE ?)" : "(name LIKE ? OR summary LIKE ? OR payload LIKE ? OR tags LIKE ?)";
+	const like = `%${q.replace(/[!%_]/g, "!$&")}%`;
+	const fields = ranked.length ? ["source"] : ["source", "name", "summary", "payload", "tags"];
+	const matches = fields.map(field => `${field} LIKE ? ESCAPE '!'`).join(" OR ");
+	const where = category !== void 0 ? `category = ? AND (${matches})` : matches;
 	const params = [];
 	if (category !== void 0) params.push(category);
-	params.push(like, like, like, like);
-	return db.prepare(`
+	params.push(...fields.map(() => like));
+	const fallback = db.prepare(`
     SELECT id, category, name, summary, payload, tags, source, updated_at
     FROM kb
     WHERE ${where}
     ORDER BY updated_at DESC, id DESC
     LIMIT 50
-  `).all(...params).map(rowToKbRow);
+  `).all(...params);
+	const rows = new Map();
+	for (const row of [...ranked, ...fallback]) rows.set(row.id, row);
+	return [...rows.values()].slice(0, 50).map(rowToKbRow);
 }
 /** 删除条目（同步 FTS）。 */
 function deleteEntry(db, id) {
+	assertEditableEntry(db, id);
 	db.prepare("DELETE FROM kb WHERE id = ?").run(id);
 	ftsDelete(db, id);
 }
@@ -266,11 +279,13 @@ function renameCustomCategory(db, oldName, newName) {
 	}
 }
 /** 删除整个文件（该 source 下所有条目）。@returns 删除条目数。 */
-function deleteFile(db, source) {
-	const ids = db.prepare("SELECT id FROM kb WHERE source = ?").all(source);
-	const deleted = Number(db.prepare("DELETE FROM kb WHERE source = ?").run(source).changes);
-	for (const { id } of ids) ftsDelete(db, id);
-	return deleted;
+function deleteFile(db, source, { removeIndexedTerms = false } = {}) {
+	if (removeIndexedTerms) {
+		const rows = db.prepare("SELECT id, name, summary, payload, tags FROM kb WHERE source = ?").iterate(source);
+		const removeIndex = db.prepare("INSERT INTO kb_fts(kb_fts, rowid, name, summary, payload, tags) VALUES ('delete', ?, ?, ?, ?, ?)");
+		for (const row of rows) removeIndex.run(row.id, row.name, row.summary, row.payload, row.tags);
+	}
+	return Number(db.prepare("DELETE FROM kb WHERE source = ?").run(source).changes);
 }
 //#endregion
 //#region lib/types/parse.js
@@ -362,21 +377,22 @@ async function extractPdfWithPdfjs(filePath) {
 	}
 }
 /** 按标题/段落切块。块上限约 2000 字符，超限硬切。 */
-function chunkText(text, sourceName) {
+function chunkText(text, sourceName, splitLongLines = false) {
 	const lines = text.split(/\r?\n/);
 	const chunks = [];
 	let current = [];
 	let currentTitle;
 	const flush = () => {
 		const body = current.join("\n").trim();
-		if (body === "") return;
-		const title = currentTitle ?? firstMeaningfulLine(body);
-		const label = title.length > 40 ? `${title.slice(0, 40)}…` : title;
-		chunks.push({
-			name: `${sourceName} · ${label}`,
-			summary: body.slice(0, 120).replace(/\s+/g, " ").trim(),
-			payload: body
-		});
+		if (body !== "") {
+			const title = currentTitle ?? firstMeaningfulLine(body);
+			const label = title.length > 40 ? `${title.slice(0, 40)}…` : title;
+			chunks.push({
+				name: `${sourceName} · ${label}`,
+				summary: body.slice(0, 120).replace(/\s+/g, " ").trim(),
+				payload: body
+			});
+		}
 		current = [];
 		currentTitle = void 0;
 	};
@@ -385,10 +401,21 @@ function chunkText(text, sourceName) {
 		if (heading !== null) {
 			flush();
 			currentTitle = (heading[2] ?? "").trim();
-			current.push(line);
-			continue;
+			if (!splitLongLines) {
+				current.push(line);
+				continue;
+			}
 		}
-		current.push(line);
+		let start = 0;
+		while (splitLongLines && line.length - start > CHUNK_MAX) {
+			let end = start + CHUNK_MAX;
+			const last = line.charCodeAt(end - 1);
+			if (last >= 0xd800 && last <= 0xdbff) end--;
+			current.push(line.slice(start, end));
+			flush();
+			start = end;
+		}
+		current.push(line.slice(start));
 		if (current.join("\n").length >= CHUNK_MAX) flush();
 	}
 	flush();
@@ -418,13 +445,14 @@ function mergeSmallChunks(chunks, sourceName) {
 	return merged;
 }
 /** 解析并切块一个文件。 */
-async function parseDocument(filePath) {
+async function parseDocument(filePath, { maxTextLength = Infinity, splitLongLines = false } = {}) {
 	const source = basename(filePath);
 	const text = await readTextFile(filePath);
+	if (text.length > maxTextLength) throw new Error('提取出的文字过多，请拆成多个文件');
 	if (extname(filePath).toLowerCase() === '.pdf' && !text.trim()) throw new Error('PDF 没有可提取的文字，扫描件请先识别文字后再导入');
 	return {
 		source,
-		chunks: chunkText(text, source)
+		chunks: chunkText(text, source, splitLongLines)
 	};
 }
 /**

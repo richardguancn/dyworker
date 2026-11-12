@@ -4,11 +4,14 @@ import { Readable } from 'node:stream';
 import * as upstream from './upstream/lib/index.js';
 import * as upstreamWeb from './upstream/lib/web.js';
 import { mountGraph } from './graph-api.js';
+import { mountLocalFolders } from './local-folders.js';
 
 export const name = 'dyworker-knowledge-base';
 export const inject = ['tools', 'storage', 'connection', 'memory'];
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const readRoutes = new Set(['/api/kb/list', '/api/kb/search', '/api/kb/files']);
+const editRoutes = new Set(['/api/kb/move-file', '/api/kb/rename-file', '/api/kb/delete-file',
+  '/api/kb/delete-category']);
 
 function workspaceFile(workspace, value) {
   if (!workspace || typeof value !== 'string' || !value.trim()) throw new Error('需要工作文件夹中的文件路径');
@@ -47,7 +50,8 @@ function adaptRoute(handler, request) {
 export function apply(ctx) {
   const dataDir = ctx.storage.resolve('knowledge-base');
   fs.mkdirSync(dataDir, { recursive: true });
-  const config = { categories: [], dataDir };
+  const localFolders = mountLocalFolders(ctx, dataDir);
+  const config = { categories: [], dataDir, onRenameCategory: localFolders.renameCategory };
   const graph = mountGraph(ctx, dataDir);
   const definitions = [];
   const closeTools = upstream.apply({ tools: { register: definition => definitions.push(definition) } }, config);
@@ -105,9 +109,11 @@ export function apply(ctx) {
     ctx.effect(() => ctx.connection.fetch.register({
       path: route.path, methods: [readRoutes.has(route.path) ? 'GET' : 'POST'],
       fetch: async request => {
-        const rename = route.path === '/api/kb/rename-file' ? await request.clone().json() : null;
+        const edit = editRoutes.has(route.path) ? await request.clone().json().catch(() => null) : null;
+        const error = edit && localFolders.editError(route.path, edit);
+        if (error) return Response.json({ error }, { status: 400 });
         const response = await adaptRoute(route.handler, request);
-        if (response.ok && rename) await graph.renameSource(rename.source, rename.newSource);
+        if (response.ok && edit && route.path === '/api/kb/rename-file') await graph.renameSource(edit.source, edit.newSource);
         return response;
       },
     }));

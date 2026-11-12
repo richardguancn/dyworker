@@ -106,8 +106,14 @@ function apply(ctx, config) {
 		kind: "exact",
 		path: "/api/kb/list",
 		handler: async (req, res) => {
-			const category = new URL(req.url ?? "/", "http://localhost").searchParams.get("category") ?? void 0;
-			const rows = listEntries(db, category);
+			const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+			const category = params.get('category') ?? void 0;
+			const source = params.get('source');
+			const offset = Math.max(0, Math.min(Number(params.get('offset')) || 0, Number.MAX_SAFE_INTEGER));
+			const rows = source === null ? listEntries(db, category) : db.prepare(`
+				SELECT id, category, name, summary, source, updated_at AS updatedAt, tags
+				FROM kb WHERE source IS ? AND (? IS NULL OR category = ?) ORDER BY id LIMIT 100 OFFSET ?
+			`).all(source || null, category ?? null, category ?? null, Math.floor(offset)).map(row => ({ ...row, tags: JSON.parse(row.tags || '[]') }));
 			sendJson(res, 200, {
 				matched: rows.length,
 				categories: allCategories(db, config.categories),
@@ -161,8 +167,14 @@ function apply(ctx, config) {
 				const newCategory = String(body.newCategory ?? "").trim();
 				if (oldCategory === "" || newCategory === "") return sendJson(res, 400, { error: "oldCategory 与 newCategory 必填" });
 				if (oldCategory === newCategory) return sendJson(res, 200, { renamed: 0 });
-				const changed = renameCategory(db, oldCategory, newCategory);
-				renameCustomCategory(db, oldCategory, newCategory);
+				let changed;
+				db.exec('BEGIN IMMEDIATE');
+				try {
+					config.onRenameCategory?.(db, oldCategory, newCategory);
+					changed = renameCategory(db, oldCategory, newCategory);
+					renameCustomCategory(db, oldCategory, newCategory);
+					db.exec('COMMIT');
+				} catch (error) { db.exec('ROLLBACK'); throw error; }
 				return sendJson(res, 200, {
 					renamed: changed,
 					from: oldCategory,
@@ -285,8 +297,8 @@ function apply(ctx, config) {
 		path: "/api/kb/files",
 		handler: async (_req, res) => {
 			sendJson(res, 200, {
-				files: db.prepare("SELECT source, category, COUNT(*) AS n, MAX(updated_at) AS t FROM kb GROUP BY source ORDER BY t DESC").all().map((r) => {
-					const first = db.prepare("SELECT summary FROM kb WHERE source = ? ORDER BY id LIMIT 1").get(r.source);
+				files: db.prepare("SELECT source, category, COUNT(*) AS n, MAX(updated_at) AS t, MIN(id) AS first_id FROM kb GROUP BY source, category ORDER BY t DESC, first_id DESC").all().map((r) => {
+					const first = db.prepare("SELECT summary FROM kb WHERE id = ?").get(r.first_id);
 					return {
 						source: r.source,
 						category: r.category,

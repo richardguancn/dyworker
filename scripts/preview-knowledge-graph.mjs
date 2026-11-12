@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { createHost, disposeHost } from '../electron/host/context.mts';
 import { knowledgeExportIpcPlugin } from '../electron/host/plugins/knowledge-export-ipc.mts';
+import { knowledgeFoldersIpcPlugin } from '../electron/host/plugins/knowledge-folders-ipc.mts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dyworker-graph-preview-'));
@@ -13,6 +14,13 @@ const builtins = path.join(dir, 'builtins'); await fs.mkdir(builtins);
 await fs.symlink(path.join(root, 'builtin-plugins/dyworker-knowledge-base'), path.join(builtins, 'dyworker-knowledge-base'), 'dir');
 const host = await createHost({ userDataDir: path.join(dir, 'data'), builtinPluginsDir: builtins, mountPlugins: true });
 const previewHandlers = new Map();
+const localFolder = path.join(dir, '本地验收资料');
+await fs.mkdir(path.join(localFolder, '项目手册'), { recursive: true });
+await fs.writeFile(path.join(localFolder, '项目手册', '交付说明.md'), '交付验收后登记项目识别码。');
+for (let i = 1; i <= 50; i++) await fs.writeFile(path.join(localFolder, `现场记录-${i}.txt`), `现场记录第 ${i} 项。`);
+await fs.writeFile(path.join(localFolder, '照片.png'), '');
+await host.plugin(knowledgeFoldersIpcPlugin({ trustedHandle: (name, handler) => previewHandlers.set(name, handler),
+  dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [localFolder] }) }, getMainWindow: () => null }));
 await host.plugin(knowledgeExportIpcPlugin({ trustedHandle: (name, handler) => previewHandlers.set(name, handler),
   dialog: { showSaveDialog: async (_window, options) => ({ canceled: false, filePath: path.join(dir, path.basename(options.defaultPath)) }) },
   app: { getPath: () => dir }, fs, path, getMainWindow: () => null }));
@@ -57,8 +65,9 @@ const server = await createServer({ root, optimizeDeps: { entries: ['tests/fixtu
       if (!req.url?.startsWith('/api/kb/')) return next();
       try {
         let body = ''; for await (const chunk of req) body += chunk;
-        if (req.url === '/api/kb/preview-export') {
-          const result = await previewHandlers.get('knowledge:export')(null, JSON.parse(body));
+        const channel = { '/api/kb/preview-export': 'knowledge:export', '/api/kb/preview-folders': 'knowledge:local-folders' }[req.url];
+        if (channel) {
+          const result = await previewHandlers.get(channel)(null, JSON.parse(body));
           res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result)); return;
         }
         const result = await host.connection.dispatch({ path: req.url, method: req.method, body });

@@ -12,7 +12,16 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { KnowledgeGraph } from './KnowledgeGraph'
+import { isLocalSource, localSourcePath } from '../local-source.js'
 type ConvViewProps = Record<string, unknown>
+type LocalFoldersResult = Awaited<ReturnType<NonNullable<Window['dyworker']>['knowledgeLocalFolders']>>
+
+function t(key: string, fallback: string): string {
+  if (typeof window !== 'undefined') {
+    return (window as any).__dyworker_i18n__?.t(key, fallback) ?? fallback
+  }
+  return fallback
+}
 
 interface KbEntry {
   id: number
@@ -31,6 +40,31 @@ interface MemoryEntry {
   content: string
   scope: 'global' | 'workspace'
   workspacePath: string
+}
+
+type SearchEntry = KbEntry & { detail?: unknown }
+
+interface SearchResults {
+  keyword: string
+  entries: SearchEntry[]
+  memories: MemoryEntry[]
+  error: string
+}
+
+function searchExcerpt(entry: SearchEntry, keyword: string): ReactNode {
+  if (typeof entry.detail !== 'string') return entry.summary
+  const body = entry.detail.replace(/\s+/g, ' ').trim()
+  const literal = keyword.replace(/\s+/g, ' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(literal, 'iu').exec(body)
+  if (!match) return entry.summary
+
+  const before = Array.from(body.slice(0, match.index))
+  const after = Array.from(body.slice(match.index + match[0].length))
+  return <>
+    {before.length > 36 ? '…' : ''}{before.slice(-36).join('')}
+    <strong style={{ color: 'var(--ink, #374151)' }}>{match[0]}</strong>
+    {after.slice(0, 84).join('')}{after.length > 84 ? '…' : ''}
+  </>
 }
 
 interface ImportResult {
@@ -58,9 +92,10 @@ interface FolderInfo {
 }
 
 interface FileInfo {
-  source: string
+  source: string | null
+  category: string
   updatedAt: string
-  chunks: number
+  count: number
 }
 
 /** 当前浏览位置（两级：根 → 分类；分类内直接展示文件分组与条目）。 */
@@ -76,7 +111,6 @@ type Editing = { kind: 'category' | 'file'; value: string } | null
 type Moving = { source: string } | null
 
 /** 文件分组折叠状态（默认展开，记录被折叠的文件）。 */
-type Collapsed = Set<string> | null
 
 const card: React.CSSProperties = {
   border: '1px solid var(--border, #e5e7eb)', borderRadius: 10, padding: '14px 16px',
@@ -135,7 +169,7 @@ const meta: React.CSSProperties = { fontSize: 11.5, color: 'var(--muted, #9ca3af
 
 const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border, #d1d5db)', borderRadius: 8, padding: '8px 12px',
-  fontSize: 13, outline: 'none', flex: 1,
+  fontSize: 13, outline: 'none', flex: '1 1 180px', minWidth: 0,
 }
 
 const button: React.CSSProperties = {
@@ -174,43 +208,11 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-/** 从扁平条目派生"分类 → 文件"结构。 */
-function buildFolders(entries: KbEntry[]): FolderInfo[] {
-  const byCategory = new Map<string, Map<string, number>>()
-  const metaOf = new Map<string, { updatedAt: string }>()
-  for (const entry of entries) {
-    const source = entry.source ?? '(无来源)'
-    let files = byCategory.get(entry.category)
-    if (files === undefined) {
-      files = new Map()
-      byCategory.set(entry.category, files)
-    }
-    files.set(source, (files.get(source) ?? 0) + 1)
-    const prev = metaOf.get(`${entry.category}\u0000${source}`)
-    if (prev === undefined || entry.updatedAt > prev.updatedAt) {
-      metaOf.set(`${entry.category}\u0000${source}`, { updatedAt: entry.updatedAt })
-    }
-  }
-  const folders: FolderInfo[] = []
-  for (const [category, files] of byCategory) {
-    const fileInfos: FileInfo[] = []
-    for (const [source, chunks] of files) {
-      fileInfos.push({ source, chunks, updatedAt: metaOf.get(`${category}\u0000${source}`)?.updatedAt ?? '' })
-    }
-    fileInfos.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-    folders.push({
-      category,
-      files: fileInfos,
-      count: fileInfos.reduce((n, f) => n + f.chunks, 0),
-    })
-  }
-  folders.sort((a, b) => (a.category < b.category ? -1 : 1))
-  return folders
-}
+const FILE_PAGE_SIZE = 50
 
 export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const [mode, setMode] = useState<'graph' | 'directory'>('graph')
-  const [entries, setEntries] = useState<KbEntry[]>([])
+  const [files, setFiles] = useState<FileInfo[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [importing, setImporting] = useState(false)
   const [importingLabel, setImportingLabel] = useState('导入中…')
@@ -219,12 +221,22 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   const [editing, setEditing] = useState<Editing>(null)
   const [moving, setMoving] = useState<Moving>(null)
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null)
-  const [collapsedFiles, setCollapsedFiles] = useState<Collapsed>(new Set())
+  const [openFile, setOpenFile] = useState<FileInfo | null>(null)
+  const [fileEntries, setFileEntries] = useState<KbEntry[]>([])
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState('')
+  const [filePage, setFilePage] = useState(0)
+  const fileRequest = useRef(0)
+  const [localFolders, setLocalFolders] = useState<NonNullable<LocalFoldersResult['folders']>>([])
+  const [localReport, setLocalReport] = useState<LocalFoldersResult['report']>()
+  const [localBusy, setLocalBusy] = useState(false)
+  const [localError, setLocalError] = useState('')
   const [creatingCategory, setCreatingCategory] = useState(false)
   const [query, setQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<KbEntry[] | null>(null)
+  const [searchResults, setSearchResults] = useState<SearchResults | null>(null)
+  const [searching, setSearching] = useState(false)
+  const searchRequest = useRef(0)
   const [memories, setMemories] = useState<MemoryEntry[]>([])
-  const [memoryResults, setMemoryResults] = useState<MemoryEntry[]>([])
   const [memoryError, setMemoryError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportMessage, setExportMessage] = useState('')
@@ -248,8 +260,8 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
 
   const refresh = useCallback(async () => {
     try {
-      const data = await getJson<{ rows: KbEntry[]; categories: string[] }>('/api/kb/list')
-      setEntries(data.rows)
+      const data = await getJson<{ files: FileInfo[]; categories: string[] }>('/api/kb/files')
+      setFiles(data.files)
       setCategories(data.categories)
     } catch (error) {
       console.error('knowledge-base: list failed', error)
@@ -261,6 +273,63 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  const refreshLocalFolders = useCallback(async () => {
+    if (!window.dyworker?.knowledgeLocalFolders) return
+    try {
+      const result = await window.dyworker.knowledgeLocalFolders({ action: 'list' })
+      if (!result.ok) throw new Error(result.error || '本地目录读取失败')
+      setLocalFolders(result.folders ?? [])
+    } catch (error) { setLocalError(error instanceof Error ? error.message : String(error)) }
+  }, [])
+
+  useEffect(() => { void refreshLocalFolders() }, [refreshLocalFolders])
+
+  const loadFileEntries = async (file: FileInfo, offset = 0) => {
+    const request = ++fileRequest.current
+    if (!offset) setFileEntries([])
+    setFileLoading(true)
+    setFileError('')
+    try {
+      const params = new URLSearchParams({ source: file.source ?? '', category: file.category, offset: String(offset) })
+      const { rows } = await getJson<{ rows: KbEntry[] }>(`/api/kb/list?${params}`)
+      if (request === fileRequest.current) setFileEntries(previous => offset ? [...previous, ...rows] : rows)
+    } catch {
+      if (request === fileRequest.current) setFileError('读取文件条目失败，请重试。')
+    } finally { if (request === fileRequest.current) setFileLoading(false) }
+  }
+
+  const changeView = (next: View) => {
+    setView(next)
+    setOpenFile(null)
+    setFilePage(0)
+  }
+
+  const clearSearchResults = () => {
+    searchRequest.current++
+    setSearching(false)
+    setSearchResults(null)
+  }
+
+  const manageLocalFolder = async (action: 'connect' | 'refresh' | 'disconnect', id?: string) => {
+    const bridge = window.dyworker
+    if (!bridge?.knowledgeLocalFolders) return
+    if (action === 'disconnect' && !window.confirm('断开后，此目录的资料会从知识库移除，本地文件会保留。确定断开吗？')) return
+    setLocalBusy(true)
+    setLocalReport(undefined)
+    setLocalError('')
+    try {
+      const result = await bridge.knowledgeLocalFolders({ action, id, category: view.kind === 'category' ? view.category : undefined })
+      if (result.canceled) return
+      if (result.folders) setLocalFolders(result.folders)
+      await refresh()
+      clearSearchResults()
+      setOpenFile(null)
+      if (!result.ok) throw new Error(result.error || '本地目录更新失败')
+      setLocalReport(result.report)
+    } catch (error) { setLocalError(error instanceof Error ? error.message : String(error)) }
+    finally { setLocalBusy(false) }
+  }
 
   // 编辑框自动聚焦。
   useEffect(() => {
@@ -296,24 +365,26 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     }
   }, [refresh])
 
-  const importFile = useCallback(async (file: File): Promise<ImportResult> => {
+  const importFile = useCallback(async (file: File, category?: string): Promise<ImportResult> => {
     if (file.size > 20 * 1024 * 1024) throw new Error('单个文件不能超过 20 MB')
     const contentBase64 = await fileToBase64(file)
-    const result = await postJson<ImportResult>('/api/kb/import', { name: file.name, contentBase64 })
+    const result = await postJson<ImportResult>('/api/kb/import', { name: file.name, contentBase64, category })
     return result
   }, [])
 
   /** 批量导入：逐个上传（顺序执行，避免并发打爆端点），显示进度。 */
-  const importFiles = useCallback(async (files: File[]) => {
+  const importFiles = useCallback(async (files: File[], category?: string) => {
     if (files.length === 0) return
     setImporting(true)
+    setImportingLabel('导入中…')
+    setLastImport(null)
     const total = files.length
     let done = 0
     let failed = 0
     let lastOk: ImportResult | null = null
     for (const file of files) {
       try {
-        lastOk = await importFile(file)
+        lastOk = await importFile(file, category)
       } catch (error) {
         failed++
         console.error(`knowledge-base: import failed: ${file.name}`, error)
@@ -324,7 +395,6 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     setImporting(false)
     if (lastOk !== null) {
       setLastImport(lastOk)
-      setView({ kind: 'root' })
     }
     await refresh()
     if (failed > 0) {
@@ -360,7 +430,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
       const s = suggestions[i]
       if (s === undefined || s.error !== undefined) continue
       try {
-        const currentCat = entries.find((e) => e.source === s.source)?.category
+        const currentCat = files.find((file) => file.source === s.source)?.category
         // 分类变化 → 移动
         if (currentCat !== undefined && s.category !== undefined && s.category !== '' && s.category !== currentCat) {
           await postJson('/api/kb/move-file', { source: s.source, category: s.category })
@@ -379,7 +449,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     setSuggestions(null)
     await refresh()
     if (failed > 0) window.alert(`整理完成：成功 ${ok} 个，失败 ${failed} 个`)
-  }, [accepted, suggestions, entries, refresh])
+  }, [accepted, suggestions, files, refresh])
 
   /** 提交重命名（分类或文件）。分类改名后回根视图；文件改名留在当前分类视图。 */
   const submitRename = useCallback(async (value: string) => {
@@ -391,15 +461,19 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     try {
       if (target.kind === 'category') {
         await postJson('/api/kb/rename-category', { oldCategory: target.value, newCategory: name })
+        await refreshLocalFolders()
         setView({ kind: 'root' })
+        setOpenFile(null)
+        setFilePage(0)
       } else {
         await postJson('/api/kb/rename-file', { source: target.value, newSource: name })
+        setOpenFile(null)
       }
       await refresh()
     } catch (error) {
       window.alert(`重命名失败：${error instanceof Error ? error.message : String(error)}`)
     }
-  }, [editing, refresh])
+  }, [editing, refresh, refreshLocalFolders])
 
   /** 移动文件到目标分类；留在当前分类视图（文件从列表消失）。 */
   const moveTo = useCallback(async (source: string, category: string) => {
@@ -413,20 +487,18 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
   }, [refresh])
 
   /** 折叠/展开文件分组。 */
-  const toggleFile = useCallback((source: string) => {
-    setCollapsedFiles((prev) => {
-      const next = new Set(prev ?? [])
-      if (next.has(source)) next.delete(source)
-      else next.add(source)
-      return next
-    })
-  }, [])
+  const toggleFile = (file: FileInfo) => {
+    if (openFile?.source === file.source) { setOpenFile(null); return }
+    setOpenFile(file)
+    void loadFileEntries(file)
+  }
 
   /** 删除整个文件（该文件所有条目）。 */
   const deleteFile = useCallback(async (source: string) => {
     if (!window.confirm(`删除文件「${source}」？其所有条目将一并删除。`)) return
     try {
       await postJson('/api/kb/delete-file', { source })
+      setOpenFile(null)
       await refresh()
     } catch (error) {
       window.alert(`删除失败：${error instanceof Error ? error.message : String(error)}`)
@@ -438,62 +510,84 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     if (!window.confirm('删除这条内容？')) return
     try {
       await postJson('/api/kb/delete-entry', { id })
+      setFileEntries(previous => previous.filter(entry => entry.id !== id))
       await refresh()
     } catch (error) {
       window.alert(`删除失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }, [refresh])
 
-  const runSearch = useCallback(async () => {
-    if (query.trim() === '') { setSearchResults(null); return }
-    try {
-      const data = await getJson<{ rows: KbEntry[] }>(`/api/kb/search?q=${encodeURIComponent(query.trim())}`)
-      const memoryData = await getJson<{ rows: MemoryEntry[] }>('/api/kb/memories')
-      const keyword = query.trim().toLowerCase()
-      setMemories(memoryData.rows)
-      setMemoryResults(memoryData.rows.filter(item => `${item.name} ${item.category} ${item.content}`.toLowerCase().includes(keyword)))
-      setMemoryError('')
-      setSearchResults(data.rows)
-    } catch (error) {
-      console.error('knowledge-base: search failed', error)
-      setMemoryError('检索失败，请稍后重试。')
-    }
-  }, [query])
+  const runSearch = async () => {
+    const keyword = query.trim()
+    if (!keyword) return
+    const request = ++searchRequest.current
+    setSearching(true)
+    const [documents, personalMemories] = await Promise.allSettled([
+      getJson<{ rows: SearchEntry[] }>(`/api/kb/search?q=${encodeURIComponent(keyword)}`),
+      getJson<{ rows: MemoryEntry[] }>('/api/kb/memories'),
+    ])
+    if (request !== searchRequest.current) return
 
-  const folders = buildFolders(entries)
-  // 补齐配置中存在但尚无条目的空分类，并按配置顺序排列；不在配置中的分类（如重命名产生）追加在后。
-  const fullFolders: FolderInfo[] = []
-  for (const category of categories) {
-    const existing = folders.find((f) => f.category === category)
-    fullFolders.push(existing ?? { category, files: [], count: 0 })
+    const matchingKeyword = keyword.toLowerCase()
+    const matchingMemories = personalMemories.status === 'fulfilled'
+      ? personalMemories.value.rows.filter(item => `${item.name} ${item.category} ${item.content}`.toLowerCase().includes(matchingKeyword))
+      : []
+    if (personalMemories.status === 'fulfilled') {
+      setMemories(personalMemories.value.rows)
+      setMemoryError('')
+    }
+    let error = ''
+    if (documents.status === 'rejected') error = '资料检索失败，请重试。'
+    if (personalMemories.status === 'rejected') {
+      error = error ? '检索失败，请重试。' : '个人记忆检索失败，请重试。'
+    }
+    setSearchResults({
+      keyword,
+      entries: documents.status === 'fulfilled' ? documents.value.rows : [],
+      memories: matchingMemories,
+      error,
+    })
+    setSearching(false)
   }
-  for (const f of folders) {
-    if (!categories.includes(f.category)) fullFolders.push(f)
+
+  const folders = new Map<string, FolderInfo>(categories.map(category => [category, { category, files: [], count: 0 }]))
+  for (const file of files) {
+    const folder = folders.get(file.category) ?? { category: file.category, files: [], count: 0 }
+    folder.files.push(file)
+    folder.count += file.count
+    folders.set(file.category, folder)
   }
+  const fullFolders = [...folders.values()]
   // 面包屑不含根级：根视图（知识库首页）不显示面包屑，从分类级开始。
   const breadcrumbs: Array<{ label: string; onClick: () => void; current: boolean }> = []
   if (view.kind === 'category') {
     breadcrumbs.push({
       label: view.category,
-      onClick: () => setView({ kind: 'category', category: view.category }),
+      onClick: () => changeView({ kind: 'category', category: view.category }),
       current: true,
     })
   }
 
   // 当前视图数据
   const currentFiles = view.kind === 'category'
-    ? fullFolders.find((f) => f.category === view.category)?.files ?? []
+    ? folders.get(view.category)?.files ?? []
     : []
-  // 当前分类下全部条目（按文件分组展示）
-  const categoryEntries = view.kind === 'category'
-    ? entries.filter((e) => e.category === view.category)
-    : []
+  const lastPage = Math.max(0, Math.ceil(currentFiles.length / FILE_PAGE_SIZE) - 1)
+  const currentPage = Math.min(filePage, lastPage)
+  const visibleLocalFolders = localFolders.filter(folder => view.kind !== 'category' || folder.category === view.category)
   const isRoot = view.kind === 'root'
+
+  const [, setLocaleTick] = useState(0)
+  useEffect(() => {
+    const handler = () => setLocaleTick((v) => v + 1)
+    window.addEventListener('dyworker:locale-change', handler)
+    return () => window.removeEventListener('dyworker:locale-change', handler)
+  }, [])
 
   const tabs = <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
     <div style={{ marginRight: 'auto' }} />
-    <button style={mode === 'graph' ? primaryButton : button} aria-pressed={mode === 'graph'} onClick={() => setMode('graph')}>关系图谱</button>
-    <button style={mode === 'directory' ? primaryButton : button} aria-pressed={mode === 'directory'} onClick={() => { setMode('directory'); void refresh() }}>资料目录</button>
+    <button style={mode === 'graph' ? primaryButton : button} aria-pressed={mode === 'graph'} onClick={() => setMode('graph')}>{t('kb.tabGraph', '关系图谱')}</button>
+    <button style={mode === 'directory' ? primaryButton : button} aria-pressed={mode === 'directory'} onClick={() => { setMode('directory'); void refresh() }}>{t('kb.tabDirectory', '资料目录')}</button>
   </div>
   if (mode === 'graph') return <div style={{ width: '100%', maxWidth: 1600, margin: '0 auto', padding: '20px 24px', boxSizing: 'border-box' }}>{tabs}<div style={{ border: '1px solid var(--border, #e8ebef)', borderRadius: 12, overflow: 'hidden', background: 'var(--card, #fff)' }}><KnowledgeGraph /></div></div>
 
@@ -502,34 +596,68 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
     <div style={{ maxWidth: 'var(--dsh-chat-content-width)', width: '100%', margin: '0 auto', padding: '20px 24px' }}>
       {tabs}
       <div style={{ ...card, marginBottom: 14 }}>
-        <h3 style={heading}>知识库</h3>
-        <p style={sub}>支持 md / txt / json / yml / docx / pdf；单个文件不超过 20 MB，同名文件重新导入会更新内容。</p>
-        <p style={sub}>个人记忆与导入资料可一起检索。记忆内容在「记忆」中管理，项目记忆仅供对应项目使用。</p>
+        <h3 style={heading}>{t('kb.title', '知识库')}</h3>
+        <p style={sub}>{t('kb.memoryIntegration', '个人记忆与导入资料可一起检索。记忆内容在「记忆」中管理，项目记忆仅供对应项目使用。')}</p>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-          <button style={button} disabled={exporting} onClick={() => void exportKnowledge()}>{exporting ? '导出中…' : '导出资料'}</button>
-          <span style={{ ...sub, margin: 0 }}>导出解析后的资料内容，不包含原始上传文件。</span>
+          <button style={button} disabled={exporting} onClick={() => void exportKnowledge()}>{exporting ? t('kb.exporting', '导出中…') : t('kb.exportKnowledge', '导出资料')}</button>
+          <span style={{ ...sub, margin: 0 }}>{t('kb.exportNote', '导出解析后的资料内容，不包含原始上传文件。')}</span>
         </div>
         {exportMessage && <p role="status" style={sub}>{exportMessage}</p>}
 
-        <div
-          style={dropZone}
+        <button
+          type="button"
+          disabled={importing}
+          style={{ ...dropZone, width: '100%' }}
           onClick={() => fileInput.current?.click()}
         >
-          {importing ? importingLabel : '点击选择文件（可多选）'}
-        </div>
+          {importing ? importingLabel : t('kb.dropZone', '点击选择文件（可多选）')}
+        </button>
         <input
           ref={fileInput} type="file" multiple style={{ display: 'none' }}
           onChange={(e) => {
             const files = Array.from(e.target.files ?? [])
-            if (files.length > 0) void importFiles(files)
+            if (files.length > 0) void importFiles(files, view.kind === 'category' ? view.category : undefined)
             e.target.value = ''
           }}
         />
+        <p style={{ ...sub, marginTop: 8 }}>{t('kb.formatDesc', '支持 md / txt / json / yml / docx / pdf；单个文件不超过 20 MB，同名文件重新导入会更新内容。')}</p>
 
         {lastImport !== null && lastImport.imported > 0 && (
           <div style={{ marginTop: 10, fontSize: 12.5, color: '#16a34a', background: 'var(--sidebar-active, #ecfdf3)', borderRadius: 8, padding: '8px 12px' }}>
             ✓ 已导入《{lastImport.source}》：{lastImport.imported} 个条目，分类「{lastImport.category}」（可在目录中重命名 / 移动）
           </div>
+        )}
+
+        {window.dyworker?.knowledgeLocalFolders && view.kind !== 'memories' && (
+          <section aria-label="本地资料目录" style={{ borderTop: '1px solid var(--border, #e8ebef)', marginTop: 16, paddingTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <h4 style={{ ...heading, fontSize: 14, margin: 0 }}>本地资料目录</h4>
+              <button style={button} disabled={localBusy || importing} onClick={() => void manageLocalFolder('connect')}>连接本地目录</button>
+            </div>
+            <p style={sub}>原文件留在本地，应用读取目录及子目录供检索。文件有变动时，点击「更新」。</p>
+            <p style={sub}>本地目录中的文本文件每个最多 50 MB，PDF 和 Word 文档每个最多 20 MB。</p>
+            {visibleLocalFolders.map(folder => (
+              <div key={folder.id} style={{ ...row, gap: 8, flexWrap: 'wrap', cursor: 'default' }}>
+                <div style={{ minWidth: 0, flex: '1 1 200px' }}>
+                  <div style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{folder.path}</div>
+                  {isRoot && <div style={meta}>{folder.category}</div>}
+                </div>
+                <button style={smallBtn} disabled={localBusy || importing} onClick={() => void manageLocalFolder('refresh', folder.id)}>更新</button>
+                <button style={smallBtn} disabled={localBusy || importing} onClick={() => void manageLocalFolder('disconnect', folder.id)}>断开</button>
+              </div>
+            ))}
+            {localBusy && <p role="status" style={sub}>正在处理本地目录，文件较多时可能需要一些时间…</p>}
+            {localError && <p role="alert" style={sub}>{localError}</p>}
+            {localReport && <div style={{ marginTop: 8 }}>
+              <p role="status" style={sub}>更新 {localReport.updated} 个，未变化 {localReport.unchanged} 个，移除 {localReport.removed} 个，跳过 {localReport.skipped} 个，失败 {localReport.failed} 个。</p>
+              {!!localReport.issues.length && <details style={sub}>
+                <summary>查看跳过或失败的文件</summary>
+                <ul>{localReport.issues.map(issue => <li key={issue.path} style={{ overflowWrap: 'anywhere' }}>{issue.path} · {issue.reason}</li>)}</ul>
+                {localReport.issues.length < localReport.skipped + localReport.failed && <p>显示前 {localReport.issues.length} 项。</p>}
+                <p>文件无法更新时，知识库会保留已有内容。</p>
+              </details>}
+            </div>}
+          </section>
         )}
 
       </div>
@@ -538,7 +666,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
       {suggestions !== null && (
         <div style={{ ...card, border: '1px solid #bfdbfe', background: 'var(--sidebar-active, #eff6ff)', marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                🤖 AI 建议（只建议，不改动；勾选后点"应用"）
+                {t('kb.aiSuggestionsTitle', '🤖 AI 建议（只建议，不改动；勾选后点"应用"）')}
               </div>
               {suggestions.map((s, i) => (
                 <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #dbeafe', fontSize: 12.5 }}>
@@ -571,36 +699,39 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                 </div>
               ))}
               <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                <button style={primaryBtn} onClick={() => void applySuggestions()}>应用选中（{accepted.size}）</button>
-                <button style={smallBtn} onClick={() => setSuggestions(null)}>取消</button>
+                <button style={primaryBtn} onClick={() => void applySuggestions()}>{t('kb.applySelected', '应用选中（{count}）').replace('{count}', String(accepted.size))}</button>
+                <button style={smallBtn} onClick={() => setSuggestions(null)}>{t('kb.cancel', '取消')}</button>
               </div>
         </div>
       )}
 
       {/* 检索 */}
       <div style={{ ...card, marginBottom: 14 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input
-            style={inputStyle} placeholder="检索知识库…（如：ISO9001、参数、安装）"
+            style={inputStyle} placeholder={t('kb.searchPlaceholder', '检索知识库…（如：ISO9001、参数、安装）')}
+            aria-label={t('kb.searchBtn', '检索')}
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setSearchResults(null) }}
-            onKeyDown={(e) => { if (e.key === 'Enter') void runSearch() }}
+            onChange={(e) => { setQuery(e.target.value); clearSearchResults() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void runSearch() }}
           />
-          <button style={primaryButton} onClick={() => void runSearch()}>检索</button>
-          {searchResults !== null && (
-            <button style={button} onClick={() => { setQuery(''); setSearchResults(null) }}>返回目录</button>
+          <button style={primaryButton} onClick={() => void runSearch()}>{t('kb.searchBtn', '检索')}</button>
+          {(searching || searchResults !== null) && (
+            <button style={button} onClick={() => { setQuery(''); clearSearchResults() }}>{t('kb.backToDirectory', '返回目录')}</button>
           )}
         </div>
       </div>
 
       {/* 目录浏览器 */}
       <div style={card}>
-        {memoryError && <p role="alert" style={{ color: '#b91c1c', fontSize: 13 }}>{memoryError} <button style={smallBtn} onClick={() => void refresh()}>重试</button></p>}
-        {searchResults === null ? (
+        {searching ? (
+          <p role="status" style={sub}>正在检索…</p>
+        ) : searchResults === null ? (
           <>
+            {memoryError && <p role="alert" style={{ color: '#b91c1c', fontSize: 13 }}>{memoryError} <button style={smallBtn} onClick={() => void refresh()}>{t('common.retry', '重试')}</button></p>}
             {/* 面包屑 + 返回（根视图无面包屑） */}
             <div style={breadcrumb}>
-              {!isRoot && <button style={backBtn} onClick={() => setView({ kind: 'root' })}>← 上一级</button>}
+              {!isRoot && <button style={backBtn} onClick={() => changeView({ kind: 'root' })}>{t('kb.parentDir', '← 上一级')}</button>}
               {breadcrumbs.length > 0 && <span style={{ color: 'var(--muted, #9ca3af)' }}>/</span>}
               {breadcrumbs.map((c, i) => (
                 <span key={i} style={c.current ? crumbCurrent : crumb} onClick={c.onClick}>{c.label}</span>
@@ -610,7 +741,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                   style={{ ...smallBtn, marginLeft: 'auto' }}
                   onClick={() => setEditing({ kind: 'category', value: view.category })}
                 >
-                  重命名分类
+                  {t('kb.renameCategory', '重命名分类')}
                 </button>
               )}
             </div>
@@ -627,16 +758,16 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                   }}
                   onBlur={(e) => void submitRename(e.target.value)}
                 />
-                <button style={primaryBtn} onClick={(e) => void submitRename((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement ? ((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement).value : '')}>确定</button>
-                <button style={smallBtn} onClick={() => setEditing(null)}>取消</button>
+                <button style={primaryBtn} onClick={(e) => void submitRename((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement ? ((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement).value : '')}>{t('kb.confirm', '确定')}</button>
+                <button style={smallBtn} onClick={() => setEditing(null)}>{t('kb.cancel', '取消')}</button>
               </div>
             )}
 
             {/* 根视图：分类目录（列表样式：图标 + 目录名，含空目录） */}
             {isRoot && (
               <>
-                <button style={{ ...button, width: '100%', textAlign: 'left', marginBottom: 12 }} onClick={() => { void refresh(); setView({ kind: 'memories' }) }}>
-                  个人记忆 · {memories.length} 条
+                <button style={{ ...button, width: '100%', textAlign: 'left', marginBottom: 12 }} onClick={() => { void refresh(); changeView({ kind: 'memories' }) }}>
+                  {t('kb.personalMemory', '个人记忆 · {count} 条').replace('{count}', String(memories.length))}
                 </button>
                 {/* 新建目录：按钮 + 内联输入框 */}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '0 0 10px' }}>
@@ -645,22 +776,22 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                       <input
                         ref={createInput}
                         style={renameInput}
-                        placeholder="输入新目录名称，回车创建"
+                        placeholder={t('kb.newFolderPlaceholder', '输入新目录名称，回车创建')}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') void createCategory((e.target as HTMLInputElement).value)
                           if (e.key === 'Escape') setCreatingCategory(false)
                         }}
                         onBlur={(e) => void createCategory(e.target.value)}
                       />
-                      <button style={primaryBtn} onClick={(e) => void createCategory((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement ? ((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement).value : '')}>创建</button>
-                      <button style={smallBtn} onClick={() => setCreatingCategory(false)}>取消</button>
+                      <button style={primaryBtn} onClick={(e) => void createCategory((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement ? ((e.target as HTMLButtonElement).previousElementSibling as HTMLInputElement).value : '')}>{t('kb.create', '创建')}</button>
+                      <button style={smallBtn} onClick={() => setCreatingCategory(false)}>{t('kb.cancel', '取消')}</button>
                     </>
                   ) : (
-                    <button style={smallBtn} onClick={() => setCreatingCategory(true)}>＋ 新建目录</button>
+                    <button style={smallBtn} onClick={() => setCreatingCategory(true)}>{t('kb.newFolder', '＋ 新建目录')}</button>
                   )}
                 </div>
                 {fullFolders.length === 0
-                  ? <p style={{ ...sub, padding: '8px 0' }}>暂无导入的文件，先导入一个文件，或新建一个目录。</p>
+                  ? <p style={{ ...sub, padding: '8px 0' }}>{t('kb.emptyFolderHint', '暂无导入的文件，先导入一个文件，或新建一个目录。')}</p>
                   : <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {fullFolders.map((folder) => (
                         <div
@@ -674,7 +805,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                             cursor: 'pointer', background: hoveredFolder === folder.category ? 'var(--surface, #f9fafb)' : 'transparent',
                             transition: 'border-color .15s, background .15s', position: 'relative',
                           }}
-                          onClick={() => setView({ kind: 'category', category: folder.category })}
+                          onClick={() => changeView({ kind: 'category', category: folder.category })}
                           onMouseEnter={() => setHoveredFolder(folder.category)}
                           onMouseLeave={() => setHoveredFolder(null)}
                         >
@@ -695,7 +826,7 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                               >
                                 ✏️ 重命名
                               </button>
-                              {folder.files.length === 0 && (
+                              {folder.files.length === 0 && !localFolders.some(local => local.category === folder.category) && (
                                 <button
                                   style={{ ...smallBtn, border: '1px solid #fecaca', background: 'var(--card, #fff)', borderRadius: 6, padding: '1px 8px', fontSize: 12, cursor: 'pointer', color: '#dc2626' }}
                                   onClick={() => void deleteCategory(folder.category)}
@@ -728,42 +859,43 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
               currentFiles.length === 0
                 ? <p style={{ ...sub, padding: '8px 0' }}>该分类为空。</p>
                 : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 }}>
-                    {currentFiles.map((file) => {
-                      const fileChunks = categoryEntries.filter((e) => (e.source ?? '(无来源)') === file.source)
-                      const collapsed = collapsedFiles?.has(file.source) ?? false
+                    {currentFiles.slice(currentPage * FILE_PAGE_SIZE, (currentPage + 1) * FILE_PAGE_SIZE).map((file) => {
+                      const { source } = file
+                      const editable = !!source && !isLocalSource(source)
+                      const collapsed = openFile?.source !== source
                       return (
-                        <div key={file.source} style={{ border: '1px solid #f0f1f4', borderRadius: 10 }}>
+                        <div key={source ?? ''} style={{ border: '1px solid var(--border, #f0f1f4)', borderRadius: 10 }}>
                           {/* 文件分组头：可折叠 + 重命名 + 移动到 */}
                           <div
                             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer', borderRadius: 10 }}
-                            onClick={() => toggleFile(file.source)}
+                            onClick={() => toggleFile(file)}
                             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface, #f9fafb)' }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                           >
                             <span style={{ fontSize: 11, color: 'var(--muted, #9ca3af)', width: 12, flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
                             <span style={iconSize}>📄</span>
-                            <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--ink, #1f2937)' }}>{file.source}</span>
-                            <span style={meta}>{fileChunks.length} 块 · {file.updatedAt}</span>
-                            <div style={rowActions} onClick={(e) => e.stopPropagation()}>
+                            <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--ink, #1f2937)', minWidth: 0, overflowWrap: 'anywhere' }}>{localSourcePath(source ?? '无来源')}</span>
+                            <span style={meta}>{file.count} 块 · {file.updatedAt}</span>
+                            {editable && <div style={rowActions} onClick={(e) => e.stopPropagation()}>
                               {moving?.source === file.source && (
                                 <select
                                   autoFocus
                                   style={{ border: '1px solid var(--accent, #2563eb)', borderRadius: 6, padding: '2px 6px', fontSize: 11.5 }}
                                   value=""
-                                  onChange={(e) => { if (e.target.value !== '') void moveTo(file.source, e.target.value) }}
+                                  onChange={(e) => { if (e.target.value !== '') void moveTo(source, e.target.value) }}
                                   onBlur={() => setMoving(null)}
                                 >
                                   <option value="" disabled>移动到…</option>
                                   {categories.filter((c) => c !== view.category).map((c) => <option key={c} value={c}>{c}</option>)}
                                 </select>
                               )}
-                              <button style={smallBtn} onClick={() => setMoving({ source: file.source })}>移动到…</button>
-                              <button style={smallBtn} onClick={() => setEditing({ kind: 'file', value: file.source })}>✏️ 重命名</button>
-                              <button style={{ ...smallBtn, color: '#dc2626', borderColor: '#fecaca' }} onClick={() => void deleteFile(file.source)}>🗑 删除</button>
-                            </div>
+                              <button style={smallBtn} onClick={() => setMoving({ source })}>移动到…</button>
+                              <button style={smallBtn} onClick={() => setEditing({ kind: 'file', value: source })}>✏️ 重命名</button>
+                              <button style={{ ...smallBtn, color: '#dc2626', borderColor: '#fecaca' }} onClick={() => void deleteFile(source)}>🗑 删除</button>
+                            </div>}
                           </div>
                           {/* 文件内容：切块条目直接展示 */}
-                          {!collapsed && fileChunks.map((entry) => (
+                          {!collapsed && fileEntries.map((entry) => (
                             <div key={entry.id} style={{ ...row, cursor: 'default', paddingLeft: 34, borderTop: '1px solid #f5f6f8', borderRadius: 0 }}>
                               <span style={{ fontSize: 12, color: 'var(--border-strong, #cbd5e1)' }}>·</span>
                               {/* 文本容器：flex 布局保证超长内容省略号截断 */}
@@ -778,39 +910,53 @@ export function KnowledgePanel(_props: ConvViewProps): ReactNode {
                                   <span key={tag} style={{ display: 'inline-block', fontSize: 11, color: 'var(--ink, #374151)', background: 'var(--surface, #f3f4f6)', borderRadius: 999, padding: '1px 8px', flexShrink: 0 }}>{tag}</span>
                                 ))}
                               </div>
-                              <button
+                              {!isLocalSource(source) && <button
                                 style={{ ...smallBtn, color: 'var(--muted, #9ca3af)', borderColor: 'transparent', fontSize: 13, padding: '1px 6px', flexShrink: 0 }}
                                 title="删除这条内容"
                                 onClick={(e) => { e.stopPropagation(); void deleteEntry(entry.id) }}
                               >
                                 ✕
-                              </button>
+                              </button>}
                             </div>
                           ))}
+                          {!collapsed && (fileLoading || fileError || fileEntries.length < file.count) && <div style={{ padding: '8px 34px' }}>
+                            {fileLoading ? <span role="status" style={sub}>正在读取条目…</span> : (
+                              <>
+                                {fileError && <span role="alert" style={{ ...sub, marginRight: 8 }}>{fileError}</span>}
+                                <button style={smallBtn} onClick={() => void loadFileEntries(file, fileEntries.length)}>{fileError ? '重试' : '加载更多条目'}</button>
+                              </>
+                            )}
+                          </div>}
                         </div>
                       )
                     })}
+                    {lastPage > 0 && <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, paddingTop: 8 }}>
+                      <button style={smallBtn} disabled={currentPage === 0} onClick={() => { setOpenFile(null); setFilePage(currentPage - 1) }}>上一页</button>
+                      <span style={sub}>{currentPage + 1} / {lastPage + 1}</span>
+                      <button style={smallBtn} disabled={currentPage === lastPage} onClick={() => { setOpenFile(null); setFilePage(currentPage + 1) }}>下一页</button>
+                    </div>}
                   </div>
             )}
           </>
         ) : (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <h3 style={{ ...heading, fontSize: 14 }}>检索结果（{searchResults.length + memoryResults.length}）</h3>
-              <button style={button} onClick={() => { setQuery(''); setSearchResults(null) }}>返回目录</button>
-            </div>
-            {searchResults.map((entry) => (
-              <div key={entry.id} style={{ ...row, cursor: 'default' }}>
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                  <span style={{ color: 'var(--ink, #374151)', flex: '0 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.name}</span>
-                  <span style={{ color: 'var(--muted, #9ca3af)', fontSize: 11.5, flexShrink: 0 }}>
-                    {entry.category} / {entry.source ?? ''}
-                  </span>
+            <h3 style={{ ...heading, fontSize: 14 }}>检索结果（{searchResults.entries.length + searchResults.memories.length}）</h3>
+            {searchResults.error && (
+              <p role="alert" style={{ color: '#b91c1c', fontSize: 13 }}>{searchResults.error} <button style={smallBtn} onClick={() => void runSearch()}>{t('common.retry', '重试')}</button></p>
+            )}
+            {!searchResults.error && searchResults.entries.length === 0 && searchResults.memories.length === 0 && (
+              <p role="status" style={{ ...sub, marginTop: 10 }}>未找到匹配的资料或个人记忆。</p>
+            )}
+            {searchResults.entries.map((entry) => (
+              <article key={entry.id} style={{ padding: '10px', borderTop: '1px solid var(--border, #f0f1f4)', overflowWrap: 'anywhere' }}>
+                <h4 style={{ ...heading, fontSize: 13, color: 'var(--ink, #374151)' }}>{entry.name}</h4>
+                <div style={{ color: 'var(--muted, #6b7280)', fontSize: 11.5 }}>
+                  {entry.category}{entry.source ? ` / ${localSourcePath(entry.source)}` : ''}
                 </div>
-                <div style={{ color: 'var(--muted, #6b7280)', fontSize: 12, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.summary}</div>
-              </div>
+                <p style={{ ...sub, fontSize: 12, margin: '4px 0 0' }}>{searchExcerpt(entry, searchResults.keyword)}</p>
+              </article>
             ))}
-            {memoryResults.map(item => <div key={`memory-${item.id}`} style={{ padding: '10px', borderTop: '1px solid #f0f1f4', fontSize: 13 }}>
+            {searchResults.memories.map(item => <div key={`memory-${item.id}`} style={{ padding: '10px', borderTop: '1px solid var(--border, #f0f1f4)', fontSize: 13, overflowWrap: 'anywhere' }}>
               <strong>{item.name || item.category}</strong>
               <span style={{ color: 'var(--muted, #6b7280)', marginLeft: 8 }}>个人记忆 · {item.scope === 'workspace' ? `项目：${item.workspacePath}` : '个人'}</span>
               <div style={{ marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</div>

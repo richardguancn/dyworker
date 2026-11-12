@@ -23,16 +23,16 @@ function apply(ctx, config) {
 	const db = openKb(config.dataDir);
 	ctx.tools.register(defineTool({
 		name: "kb_query",
-		description: "检索知识库（kb = Knowledge Base，知识库）。按关键词在名称/摘要/内容/标签上匹配，可按分类过滤。知识库内容来自 kb_import 或 Web 界面导入的文档。典型用法：回答业务问题前先查知识库是否有相关资料。",
+		description: "检索知识库（kb = Knowledge Base，知识库）。按关键词在文件名、条目名称、摘要、正文、标签中匹配。知识库包含已导入的文档和已连接的本地目录资料。典型用法：回答业务问题前先查知识库是否有相关资料。",
 		parameters: {
 			query: {
 				type: "string",
 				required: true,
-				description: "检索关键词"
+				description: "使用资料中可能出现的短关键词或文件名。需要尝试多个关键词时分别查询。"
 			},
 			category: {
 				type: "string",
-				description: `按分类过滤（可选）：${config.categories.length > 0 ? config.categories.join(" / ") : "未配置分类"}`
+				description: "可选。填入资料目录的准确名称可限定范围；省略则搜索所有目录，包括「未分类」。"
 			}
 		},
 		output: {

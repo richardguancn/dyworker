@@ -5,6 +5,13 @@ import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Search, RefreshCw, RotateCcw, ZoomIn, ZoomOut, Maximize2, X, Network, History, Link2, Unlink, LoaderCircle, Download } from 'lucide-react';
 
+function t(key: string, fallback: string): string {
+  if (typeof window !== 'undefined') {
+    return (window as any).__dyworker_i18n__?.t(key, fallback) ?? fallback;
+  }
+  return fallback;
+}
+
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
 
 interface Origin { id: string; name?: string; content: string; originSessionId?: string; createdAt?: string }
@@ -71,6 +78,12 @@ export function KnowledgeGraph() {
   const [historyOpen, setHistoryOpen] = useState(false), [history, setHistory] = useState<HistoryRow[]>([]);
   const [linkTarget, setLinkTarget] = useState(''), [linkLabel, setLinkLabel] = useState('相关');
   const [themeVersion, setThemeVersion] = useState(0);
+  const [, setLocaleTick] = useState(0);
+  useEffect(() => {
+    const handler = () => setLocaleTick(v => v + 1);
+    window.addEventListener('dyworker:locale-change', handler);
+    return () => window.removeEventListener('dyworker:locale-change', handler);
+  }, []);
   const canvas = useRef<HTMLDivElement>(null), chart = useRef<echarts.ECharts | null>(null);
   const renderedIds = useRef('');
   const onSelect = useRef(setSelectedId);
@@ -189,56 +202,56 @@ export function KnowledgeGraph() {
   return <div className="kg">
     <style>{styles}</style>
     <div className="kg-toolbar">
-      <label className="kg-search"><Search size={15} /><input aria-label="搜索图谱" placeholder="搜索记忆或资料…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <select className="kg-select" aria-label="图谱范围" value={scope} onChange={event => setScope(event.target.value)}>
-        <option value="all">全部范围</option><option value="global">个人与通用资料</option>
-        {workspaces.map(value => <option key={value} value={value}>项目：{value.split(/[\\/]/).filter(Boolean).pop()}</option>)}
+      <label className="kg-search"><Search size={15} /><input aria-label={t("kg.searchPlaceholder", "搜索图谱")} placeholder={t("kg.searchPlaceholder", "搜索记忆或资料…")} value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <select className="kg-select" aria-label={t("kg.scopeLabel", "图谱范围")} value={scope} onChange={event => setScope(event.target.value)}>
+        <option value="all">{t("kg.scopeAll", "全部范围")}</option><option value="global">{t("kg.scopeGlobal", "个人与通用资料")}</option>
+        {workspaces.map(value => <option key={value} value={value}>{t("kg.scopeProjectPrefix", "项目：")}{value.split(/[\\/]/).filter(Boolean).pop()}</option>)}
       </select>
-      <select className="kg-select" aria-label="内容类型" value={kind} onChange={event => setKind(event.target.value)}><option value="all">全部内容</option><option value="memory">仅记忆</option><option value="document">仅资料</option></select>
-      <button className="kg-btn" disabled={busy || loading} onClick={() => void perform(() => api('/api/kb/organize-memories', {}))}>{busy ? <LoaderCircle size={14} className="kg-spin" /> : <Network size={14} />}整理记忆</button>
-      <button className={`kg-btn ${historyOpen ? 'active' : ''}`} onClick={() => setHistoryOpen(value => !value)}><History size={14} />整理记录</button>
-      <button className="kg-btn" disabled={busy || loading} onClick={() => void exportGraph('graph')} title="导出完整图谱，包含所有节点和关联"><Download size={14} />导出完整图谱</button>
-      <button className="kg-btn" disabled={busy || loading} onClick={() => void exportGraph('image')} title="导出当前筛选和缩放下的图谱画面"><Download size={14} />导出当前图片</button>
-      <button className="kg-btn" aria-label="刷新图谱" disabled={loading || busy} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'kg-spin' : ''} /></button>
+      <select className="kg-select" aria-label={t("kg.kindLabel", "内容类型")} value={kind} onChange={event => setKind(event.target.value)}><option value="all">{t("kg.kindAll", "全部内容")}</option><option value="memory">{t("kg.kindMemory", "仅记忆")}</option><option value="document">{t("kg.kindDoc", "仅资料")}</option></select>
+      <button className="kg-btn" disabled={busy || loading} onClick={() => void perform(() => api('/api/kb/organize-memories', {}))}>{busy ? <LoaderCircle size={14} className="kg-spin" /> : <Network size={14} />}{t("kg.organizeMemories", "整理记忆")}</button>
+      <button className={`kg-btn ${historyOpen ? 'active' : ''}`} onClick={() => setHistoryOpen(value => !value)}><History size={14} />{t("kg.organizeHistory", "整理记录")}</button>
+      <button className="kg-btn" disabled={busy || loading} onClick={() => void exportGraph('graph')} title={t("kg.exportFullGraphTip", "导出完整图谱，包含所有节点和关联")}><Download size={14} />{t("kg.exportFullGraph", "导出完整图谱")}</button>
+      <button className="kg-btn" disabled={busy || loading} onClick={() => void exportGraph('image')} title={t("kg.exportCurrentImgTip", "导出当前筛选和缩放下的图谱画面")}><Download size={14} />{t("kg.exportCurrentImg", "导出当前图片")}</button>
+      <button className="kg-btn" aria-label={t("kg.refreshGraph", "刷新图谱")} disabled={loading || busy} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? 'kg-spin' : ''} /></button>
     </div>
-    {(notice || error) && <div role={error ? 'alert' : 'status'} className={`kg-note ${error ? 'kg-error' : ''}`}>{error || notice}{error && <button className="kg-btn" style={{ marginLeft: 10 }} disabled={loading || busy} onClick={() => void refresh()}>重试</button>}</div>}
+    {(notice || error) && <div role={error ? 'alert' : 'status'} className={`kg-note ${error ? 'kg-error' : ''}`}>{error || notice}{error && <button className="kg-btn" style={{ marginLeft: 10 }} disabled={loading || busy} onClick={() => void refresh()}>{t("kg.retry", "重试")}</button>}</div>}
     <div className="kg-body">
       <div className="kg-stage">
-        <div className="kg-meta" aria-live="polite">{loading ? '正在读取知识…' : `${visible.length} 个节点 · ${links.length} 条关联${topic ? ' · 已按主题筛选' : ''}`}</div>
-        <div ref={canvas} className="kg-canvas" role="img" aria-label="知识关系图谱，相近内容以相同颜色显示。也可通过右侧列表选择内容。" />
-        {!loading && !visible.length && <div className="kg-empty"><Network size={30} strokeWidth={1.2} /><strong>{graph.nodes.length ? '没有符合条件的内容' : '你的知识，会在这里慢慢连接起来'}</strong><span>{graph.nodes.length ? '清除搜索或调整筛选条件后重试。' : '导入资料，或让助手记住有用的信息，再来看看。'}</span></div>}
-        <div className="kg-tools"><button title="放大" aria-label="放大图谱" onClick={() => zoom(1.3)}><ZoomIn size={16} /></button><button title="缩小" aria-label="缩小图谱" onClick={() => zoom(1 / 1.3)}><ZoomOut size={16} /></button><button title="重置视图和筛选" aria-label="重置图谱" onClick={() => { clearFilters(); setSelectedId(''); chart.current?.dispatchAction({ type: 'restore' }); }}><Maximize2 size={16} /></button><button className={showLinks ? 'active' : ''} title={showLinks ? '隐藏连线' : '显示连线'} aria-label={showLinks ? '隐藏连线' : '显示连线'} aria-pressed={showLinks} onClick={() => setShowLinks(value => !value)}><Link2 size={16} /></button></div>
-        <span className="kg-hint">{visible.length > 35 ? '内容较多，悬停节点显示名称 · ' : ''}滚轮缩放 · 拖动画布 · 点击节点查看</span>
+        <div className="kg-meta" aria-live="polite">{loading ? t("kg.readingKnowledge", "正在读取知识…") : `${t("kg.metaInfo", "{nodes} 个节点 · {links} 条关联").replace("{nodes}", String(visible.length)).replace("{links}", String(links.length))}${topic ? ' · ' + t("kg.filteredByTopic", "已按主题筛选") : ''}`}</div>
+        <div ref={canvas} className="kg-canvas" role="img" aria-label={t("kg.canvasAria", "知识关系图谱，相近内容以相同颜色显示。也可通过右侧列表选择内容。")} />
+        {!loading && !visible.length && <div className="kg-empty"><Network size={30} strokeWidth={1.2} /><strong>{graph.nodes.length ? t("kg.emptyFiltered", "没有符合条件的内容") : t("kg.emptyTotal", "你的知识，会在这里慢慢连接起来")}</strong><span>{graph.nodes.length ? t("kg.emptyFilteredHint", "清除搜索或调整筛选条件后重试。") : t("kg.emptyTotalHint", "导入资料，或让助手记住有用的信息，再来看看。")}</span></div>}
+        <div className="kg-tools"><button title={t("kg.zoomIn", "放大")} aria-label={t("kg.zoomIn", "放大图谱")} onClick={() => zoom(1.3)}><ZoomIn size={16} /></button><button title={t("kg.zoomOut", "缩小")} aria-label={t("kg.zoomOut", "缩小图谱")} onClick={() => zoom(1 / 1.3)}><ZoomOut size={16} /></button><button title={t("kg.resetView", "重置视图和筛选")} aria-label={t("kg.resetView", "重置图谱")} onClick={() => { clearFilters(); setSelectedId(''); chart.current?.dispatchAction({ type: 'restore' }); }}><Maximize2 size={16} /></button><button className={showLinks ? 'active' : ''} title={showLinks ? t("kg.hideLinks", "隐藏连线") : t("kg.showLinks", "显示连线")} aria-label={showLinks ? t("kg.hideLinks", "隐藏连线") : t("kg.showLinks", "显示连线")} aria-pressed={showLinks} onClick={() => setShowLinks(value => !value)}><Link2 size={16} /></button></div>
+        <span className="kg-hint">{visible.length > 35 ? t("kg.hintHover", "内容较多，悬停节点显示名称 · ") : ''}{t("kg.canvasHint", "滚轮缩放 · 拖动画布 · 点击节点查看")}</span>
       </div>
-      <aside className="kg-side" aria-label="图谱详情">
+      <aside className="kg-side" aria-label={t("kg.sideAria", "图谱详情")}>
         {selected ? <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><h3>{selected.name}</h3><button className="kg-btn" aria-label="关闭详情" style={{ alignSelf: 'start', padding: 4 }} onClick={() => { setSelectedId(''); setNeighborsOnly(false); }}><X size={14} /></button></div>
-          <span className="kg-tag">{selected.kind === 'memory' ? '记忆' : '资料'}</span><span className="kg-tag">{selected.category || '未分类'}</span>
-          <div className="kg-muted">{selected.scope === 'workspace' ? `仅用于项目：${selected.workspacePath}` : '个人与通用知识'}{selected.chunks ? ` · ${selected.chunks} 段内容` : ''}</div>
-          {detailLoading ? <p className="kg-muted">正在读取正文…</p> : detailError ? <p role="alert">{detailError}</p> : <div className="kg-content">{detail?.content || selected.content}</div>}
-          {selected.kind === 'memory' && <p className="kg-muted">可在设置中的「记忆」修改内容。</p>}
-          {!!detail?.origins?.length && <details><summary className="kg-muted" style={{ cursor: 'pointer' }}>来源与原文（{detail.origins.length}）</summary>{detail.origins.map(origin => <div className="kg-history-item" key={origin.id}>{origin.name && <strong>{origin.name}<br /></strong>}{origin.content}{origin.createdAt && <div className="kg-muted">{new Date(origin.createdAt).toLocaleString('zh-CN')}</div>}{origin.originSessionId && <div className="kg-muted">来自任务：{origin.originSessionId}</div>}</div>)}</details>}
-          <h4>关联内容</h4>
-          <label className="kg-muted" style={{ display: 'flex', gap: 6 }}><input type="checkbox" checked={neighborsOnly} onChange={event => setNeighborsOnly(event.target.checked)} />只看这条内容及其关联</label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}><h3>{selected.name}</h3><button className="kg-btn" aria-label={t("kg.closeDetail", "关闭详情")} style={{ alignSelf: 'start', padding: 4 }} onClick={() => { setSelectedId(''); setNeighborsOnly(false); }}><X size={14} /></button></div>
+          <span className="kg-tag">{selected.kind === 'memory' ? t("kg.tagMemory", "记忆") : t("kg.tagDocument", "资料")}</span><span className="kg-tag">{selected.category || t("kg.tagUncategorized", "未分类")}</span>
+          <div className="kg-muted">{selected.scope === 'workspace' ? `${t("kg.scopeProjectOnly", "仅用于项目：")}${selected.workspacePath}` : t("kg.scopeGeneral", "个人与通用知识")}{selected.chunks ? ` · ${selected.chunks} ${t("kg.chunksCount", "段内容")}` : ''}</div>
+          {detailLoading ? <p className="kg-muted">{t("kg.loadingContent", "正在读取正文…")}</p> : detailError ? <p role="alert">{detailError}</p> : <div className="kg-content">{detail?.content || selected.content}</div>}
+          {selected.kind === 'memory' && <p className="kg-muted">{t("kg.editMemoryTip", "可在设置中的「记忆」修改内容。")}</p>}
+          {!!detail?.origins?.length && <details><summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.originsTitle", "来源与原文")}（{detail.origins.length}）</summary>{detail.origins.map(origin => <div className="kg-history-item" key={origin.id}>{origin.name && <strong>{origin.name}<br /></strong>}{origin.content}{origin.createdAt && <div className="kg-muted">{new Date(origin.createdAt).toLocaleString()}</div>}{origin.originSessionId && <div className="kg-muted">{t("kg.originSessionPrefix", "来自任务：")}{origin.originSessionId}</div>}</div>)}</details>}
+          <h4>{t("kg.relationsTitle", "关联内容")}</h4>
+          <label className="kg-muted" style={{ display: 'flex', gap: 6 }}><input type="checkbox" checked={neighborsOnly} onChange={event => setNeighborsOnly(event.target.checked)} />{t("kg.neighborsOnly", "只看这条内容及其关联")}</label>
           {graph.links.filter(link => link.source === selectedId || link.target === selectedId).map(link => {
             const other = graph.nodes.find(node => node.id === (link.source === selectedId ? link.target : link.source));
-            return other && <div className="kg-link" key={`${link.source}:${link.target}`}><span className="kg-dot" style={{ background: other.color, marginTop: 5 }} /><button className="kg-link-open" onClick={() => setSelectedId(other.id)}>{other.name}<div className="kg-muted">{link.label} · {link.kind === 'manual' ? '已确认' : '自动发现'}</div>{link.reason && <div className="kg-muted">{link.reason}</div>}</button><button className="kg-btn" style={{ padding: 4 }} aria-label={`解除与${other.name}的关联`} disabled={busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: other.id, remove: true }))}><Unlink size={12} /></button></div>;
+            return other && <div className="kg-link" key={`${link.source}:${link.target}`}><span className="kg-dot" style={{ background: other.color, marginTop: 5 }} /><button className="kg-link-open" onClick={() => setSelectedId(other.id)}>{other.name}<div className="kg-muted">{link.label} · {link.kind === 'manual' ? t("kg.linkManual", "已确认") : t("kg.linkAuto", "自动发现")}</div>{link.reason && <div className="kg-muted">{link.reason}</div>}</button><button className="kg-btn" style={{ padding: 4 }} aria-label={`${t("kg.unlinkPrefix", "解除与")}${other.name}${t("kg.unlinkSuffix", "的关联")}`} disabled={busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: other.id, remove: true }))}><Unlink size={12} /></button></div>;
           })}
-          {!neighbors.size && <p className="kg-muted">暂未发现关联，可以手动连接相关内容。</p>}
-          <h4>添加关联</h4>
-          <select className="kg-select" style={{ width: '100%', maxWidth: '100%' }} aria-label="选择要关联的内容" value={linkTarget} onChange={event => setLinkTarget(event.target.value)}><option value="">选择另一条内容…</option>{graph.nodes.filter(node => node.id !== selectedId && !(node.scope === 'workspace' && selected.scope === 'workspace' && node.workspacePath !== selected.workspacePath)).map(node => <option key={node.id} value={node.id}>{node.name}</option>)}</select>
-          <input className="kg-select" style={{ width: '100%', boxSizing: 'border-box', margin: '8px 0', maxWidth: '100%' }} aria-label="关联说明" placeholder="关联说明，如：补充说明" value={linkLabel} maxLength={80} onChange={event => setLinkLabel(event.target.value)} />
-          <button className="kg-btn" disabled={!linkTarget || busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: linkTarget, label: linkLabel }))}><Link2 size={13} />保存关联</button>
+          {!neighbors.size && <p className="kg-muted">{t("kg.noNeighbors", "暂未发现关联，可以手动连接相关内容。")}</p>}
+          <h4>{t("kg.addRelationTitle", "添加关联")}</h4>
+          <select className="kg-select" style={{ width: '100%', maxWidth: '100%' }} aria-label={t("kg.chooseTargetAria", "选择要关联的内容")} value={linkTarget} onChange={event => setLinkTarget(event.target.value)}><option value="">{t("kg.chooseAnother", "选择另一条内容…")}</option>{graph.nodes.filter(node => node.id !== selectedId && !(node.scope === 'workspace' && selected.scope === 'workspace' && node.workspacePath !== selected.workspacePath)).map(node => <option key={node.id} value={node.id}>{node.name}</option>)}</select>
+          <input className="kg-select" style={{ width: '100%', boxSizing: 'border-box', margin: '8px 0', maxWidth: '100%' }} aria-label={t("kg.relationNoteAria", "关联说明")} placeholder={t("kg.relationNotePlaceholder", "关联说明，如：补充说明")} value={linkLabel} maxLength={80} onChange={event => setLinkLabel(event.target.value)} />
+          <button className="kg-btn" disabled={!linkTarget || busy} onClick={() => void perform(() => api('/api/kb/graph/relation', { source: selectedId, target: linkTarget, label: linkLabel }))}><Link2 size={13} />{t("kg.saveRelation", "保存关联")}</button>
         </> : <>
-          <h3>内容的联系，一眼可见</h3><p className="kg-muted">相近内容使用相同颜色。点击节点查看正文，沿着连线发现相关知识。</p>
-          <div className="kg-muted">实线：手动确认的关联<br />虚线：依据共同内容自动发现</div>
-          <h4>内容主题 · {graph.topics.length}</h4>
-          <div className="kg-topics"><button className={`kg-topic ${!topic ? 'active' : ''}`} onClick={() => setTopic('')}><span className="kg-topic-name">全部主题</span><span className="kg-count">{graph.nodes.length}</span></button>{graph.topics.map(item => <button key={item.id} className={`kg-topic ${topic === item.id ? 'active' : ''}`} onClick={() => setTopic(value => value === item.id ? '' : item.id)}><span className="kg-dot" style={{ background: item.color }} /><span className="kg-topic-name">{item.label}</span><span className="kg-count">{item.count}</span></button>)}</div>
+          <h3>{t("kg.sideHeading", "内容的联系，一眼可见")}</h3><p className="kg-muted">{t("kg.sideDesc", "相近内容使用相同颜色。点击节点查看正文，沿着连线发现相关知识。")}</p>
+          <div className="kg-muted">{t("kg.sideSolidLine", "实线：手动确认的关联")}<br />{t("kg.sideDashedLine", "虚线：依据共同内容自动发现")}</div>
+          <h4>{t("kg.sideTopics", "内容主题 · {count}").replace("{count}", String(graph.topics.length))}</h4>
+          <div className="kg-topics"><button className={`kg-topic ${!topic ? 'active' : ''}`} onClick={() => setTopic('')}><span className="kg-topic-name">{t("kg.sideAllTopics", "全部主题")}</span><span className="kg-count">{graph.nodes.length}</span></button>{graph.topics.map(item => <button key={item.id} className={`kg-topic ${topic === item.id ? 'active' : ''}`} onClick={() => setTopic(value => value === item.id ? '' : item.id)}><span className="kg-dot" style={{ background: item.color }} /><span className="kg-topic-name">{item.label}</span><span className="kg-count">{item.count}</span></button>)}</div>
         </>}
-        <details style={{ marginTop: 22 }}><summary className="kg-muted" style={{ cursor: 'pointer' }}>浏览当前内容（{visible.length}）</summary>{visible.map(node => <button key={node.id} className="kg-topic" onClick={() => setSelectedId(node.id)}><span className="kg-dot" style={{ background: node.color }} /><span className="kg-topic-name">{node.name}</span></button>)}</details>
-        {(query || scope !== 'all' || kind !== 'all' || topic || neighborsOnly) && <button className="kg-btn" style={{ marginTop: 18 }} onClick={clearFilters}>清除筛选</button>}
+        <details style={{ marginTop: 22 }}><summary className="kg-muted" style={{ cursor: 'pointer' }}>{t("kg.sideBrowseCurrent", "浏览当前内容（{count}）").replace("{count}", String(visible.length))}</summary>{visible.map(node => <button key={node.id} className="kg-topic" onClick={() => setSelectedId(node.id)}><span className="kg-dot" style={{ background: node.color }} /><span className="kg-topic-name">{node.name}</span></button>)}</details>
+        {(query || scope !== 'all' || kind !== 'all' || topic || neighborsOnly) && <button className="kg-btn" style={{ marginTop: 18 }} onClick={clearFilters}>{t("kg.sideClearFilters", "清除筛选")}</button>}
       </aside>
     </div>
-    {historyOpen && <section className="kg-history" aria-label="记忆整理记录"><h3 style={{ margin: '0 0 8px', fontSize: 15 }}>整理记录</h3><p className="kg-muted">保留最近 10 次整理，可对照合并前后的内容。整理后已有新增或修改时，恢复入口会关闭，避免丢失后来的内容。</p>{!history.length && <p className="kg-muted">还没有整理记录。</p>}{history.map(record => <details key={record.id}><summary>{new Date(record.createdAt).toLocaleString('zh-CN')} · {record.undone ? '已撤销' : `合并 ${record.merged} 条`}{record.conflicts.length ? ` · ${record.conflicts.length} 组待确认` : ''}</summary><p className="kg-muted">{record.message}</p>{record.merges.map((merge, index) => <div className="kg-history-item" key={index}><div className="kg-muted">{merge.reason}</div><div className="kg-before">合并前：{merge.before.map(item => item.content).join('\n')}</div><div className="kg-after">合并后：{merge.after?.content}</div></div>)}{record.conflicts.map((conflict, index) => <div className="kg-history-item" key={`conflict:${index}`}><strong>待确认：{conflict.reason}</strong>{conflict.memories.map(item => <div key={item.id}>{item.content}</div>)}</div>)}{record.canUndo && <button className="kg-btn" disabled={busy} onClick={() => void perform(() => api('/api/kb/undo-memory-organization', { id: record.id }))}><RotateCcw size={13} />恢复整理前的记忆</button>}</details>)}</section>}
+    {historyOpen && <section className="kg-history" aria-label={t("kg.organizeHistory", "记忆整理记录")}><h3 style={{ margin: '0 0 8px', fontSize: 15 }}>{t("kg.organizeHistory", "整理记录")}</h3><p className="kg-muted">{t("kg.historyDesc", "保留最近 10 次整理，可对照合并前后的内容。")}</p>{!history.length && <p className="kg-muted">{t("kg.noHistory", "还没有整理记录。")}</p>}{history.map(record => <details key={record.id}><summary>{new Date(record.createdAt).toLocaleString()} · {record.undone ? t("kg.undoneStatus", "已撤销") : `${t("kg.mergedPrefix", "合并 ")}${record.merged} ${t("kg.countSuffix", "条")}`}{record.conflicts.length ? ` · ${record.conflicts.length} ${t("kg.conflictCount", "组待确认")}` : ''}</summary><p className="kg-muted">{record.message}</p>{record.merges.map((merge, index) => <div className="kg-history-item" key={index}><div className="kg-muted">{merge.reason}</div><div className="kg-before">{t("kg.beforeMerge", "合并前：")}{merge.before.map(item => item.content).join('\n')}</div><div className="kg-after">{t("kg.afterMerge", "合并后：")}{merge.after?.content}</div></div>)}{record.conflicts.map((conflict, index) => <div className="kg-history-item" key={`conflict:${index}`}><strong>{t("kg.pendingConfirm", "待确认：")}{conflict.reason}</strong>{conflict.memories.map(item => <div key={item.id}>{item.content}</div>)}</div>)}{record.canUndo && <button className="kg-btn" disabled={busy} onClick={() => void perform(() => api('/api/kb/undo-memory-organization', { id: record.id }))}><RotateCcw size={13} />{t("kg.undoOrganize", "恢复整理前的记忆")}</button>}</details>)}</section>}
   </div>;
 }

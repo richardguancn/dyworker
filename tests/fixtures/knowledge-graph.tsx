@@ -2,4 +2,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { KnowledgePanel } from '../../builtin-plugins/dyworker-knowledge-base/src/KnowledgePanel';
+window.dyworker = {
+  ...window.dyworker,
+  knowledgeLocalFolders: async payload => (await fetch('/api/kb/preview-folders', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+  })).json(),
+} as NonNullable<Window['dyworker']>;
 createRoot(document.getElementById('root')!).render(<KnowledgePanel />);
