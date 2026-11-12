@@ -250,6 +250,34 @@ function stubAgentResolvers(overrides = {}) {
   };
 }
 
+test('网页等待人工处理时目标循环暂停，不能继续自动执行或标记完成', async (t) => {
+  const dir = await makeTmpDir(t);
+  const route = async () => ({ ok: true, result: '等待用户处理' });
+  route.hasPendingHumanHandoff = () => true;
+  route.dispose = () => {};
+  let abortReason = '';
+  const ctx = await createHost({ userDataDir: dir, safeStorage: fakeSafeStorage(),
+    agentResolvers: stubAgentResolvers({ createExtraToolRouter: (_settings, _workspace, options) => {
+      options.signal.addEventListener('abort', () => { abortReason = options.signal.reason?.message || ''; }, { once: true });
+      return route;
+    } }), startBackgroundTask: p => p });
+  try {
+    const calls = [];
+    const result = await ctx.agent.run({
+      settings: { endpoint: 'http://mock.local/v1/chat/completions', model: 'mock-model', apiKey: 'k' },
+      workspacePath: dir, sessionId: 'handoff-goal', approvalMode: 'interactive', goal: '完成目标',
+      loop: { enabled: true, iteration: 1, maximum: 3 },
+      conversation: [{ role: 'user', content: '完成目标' }], emit: () => {},
+      fetchImpl: mockChatFetch([{ role: 'assistant', content: '等待人工处理。' }], calls),
+    });
+    assert.equal(result.status, 'paused');
+    assert.equal(result.goalAchieved, false);
+    assert.match(result.reason, /等待人工处理/);
+    assert.equal(calls.length, 1);
+    assert.equal(abortReason, '任务已结束');
+  } finally { await disposeHost(ctx); }
+});
+
 test("tools/pre-execute 事件：策略监听器经 ctx.agent.run 阻止工具执行", async (t) => {
   const dir = await makeTmpDir(t);
   const ctx = await createHost({

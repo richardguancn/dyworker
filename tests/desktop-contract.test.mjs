@@ -693,8 +693,8 @@ test("浏览器更多菜单支持导入 Cookie 和密码（含国产 Linux 浏�
   assert.match(browserImportIpcSource, /trustedHandle\("browser-import:history"/);
   assert.match(preload, /browser-import:history/);
   assert.match(app, /browser-history-suggestions/);
-  // 只导入浏览记录时不触发密钥链（不解析解密密钥）
-  assert.match(browserImport, /wantCookies \|\| wantPasswords/);
+  // 只导入浏览记录或无需解密时不触发密钥链（按需解析解密密钥）
+  assert.match(browserImport, /if \(!material\) \{\s*material = await resolveKeyMaterial/);
   assert.match(styles, /\.browser-more-menu/);
   assert.match(styles, /\.browser-import-dialog/);
   assert.match(styles, /\.browser-import-kinds/);
@@ -777,7 +777,7 @@ test("内置浏览器可以多开标签页：⌘T/+ 菜单/工具栏 + 都新开
   // 主进程把切换/关闭指令发给渲染端并等上报，不自己推断面板状态
   assert.match(main, /function activateBrowserPanelTab\(renderer, tabId/);
   assert.match(main, /function closeBrowserPanelTab\(renderer, tabId/);
-  assert.match(main, /activateTab: \(tabId, ownerSessionId\) => activateBrowserPanelTab\(renderer, tabId, \{ ownerSessionId \}\)/);
+  assert.match(main, /activateTab: \(tabId, ownerSessionId(?:, credential)?\) => activateBrowserPanelTab\(renderer, tabId, \{ ownerSessionId(?:, token: credential\?\.token)? \}\)/);
   assert.match(main, /closeTab: \(tabId, ownerSessionId\) => closeBrowserPanelTab\(renderer, tabId, \{ ownerSessionId \}\)/);
   // 助手的标签页工具是真的：list 给全量标签页，activate 切过去并重新接管，close 关指定标签页
   assert.match(browserSource, /listTabs;\s*\nactivateTab;\s*\ncloseTab;/);
@@ -1044,7 +1044,7 @@ test("开启完全访问权限前必须经过明确确认", () => {
 test("Codex skills are refreshed for the active workspace and managed in settings", () => {
   assert.match(preload, /listSkills: \(workspacePath\)/);
   assert.match(app, /listSkills\?\.\(workspacePath\)/);
-  assert.match(app, /label: "技能"/);
+  assert.match(app, /(?:id:\s*"skills",\s*label:|label:\s*"技能")/);
   assert.match(app, /skill-source-badge/);
   assert.match(app, /刷新技能/);
   assert.match(app, /搜索已安装技能/);
@@ -1092,7 +1092,7 @@ test("技能库设置贯通配置、主进程和渲染端", () => {
   assert.match(skillsIpcSource, /trustedHandle\("skill-libraries:search"/);
   assert.match(skillsIpcSource, /trustedHandle\("skill-libraries:install"/);
   assert.match(skillsIpcSource, /inject: \["skills", "settings"\]/);
-  assert.match(app, /label: "技能库"/);
+  assert.match(app, /(?:id:\s*"skill-libraries",\s*label:|label:\s*"技能库")/);
   assert.match(app, /searchSkillLibraries\(text\)/);
   assert.match(app, /search\(""\)/);
   assert.match(app, /技能列表/);
@@ -1108,7 +1108,7 @@ test("Computer Use 作为 macOS 基础能力自动接入，不需要用户重复
   assert.match(main, /app\.on\("before-quit"/);
   assert.match(main, /event\.preventDefault\(\)/);
   // 先关闭宿主和 MCP 客户端，再释放商店版文件授权，最后退出。
-  assert.match(main, /await closeAllMcpClients\(\);\s*await macStoreFileAccess\.dispose\(\);\s*app\.quit\(\)/);
+  assert.match(main, /await closeAllMcpClients\(\);\s*await backgroundBrowserHandoffs\.dispose\(\);\s*await macStoreFileAccess\.dispose\(\);\s*app\.quit\(\)/);
   assert.match(main, /if \(deps\.mcpShuttingDown\) throw new Error/);
   // 合并取消信号：入口信号 + 全局退出信号在服务里汇合
   assert.match(main, /isCancelled: \(\) => agentState\.cancelled/);
@@ -1234,7 +1234,8 @@ test("linux 隐藏系统标题栏，保留桌面阴影且不扩大窗口输入�
   assert.doesNotMatch(layout, /platform-linux \.window-controls[^}]*display: none/);
   assert.match(layout, /:is\(\.platform-win32, \.platform-linux\) \.tool-panel-tabs \{ padding-right: 218px/);
   assert.doesNotMatch(styles, /html\.window-shadow/);
-  assert.doesNotMatch(main, /setIgnoreMouseEvents\(true/);
+  // 主窗口不能穿透鼠标；独立的隐藏后台浏览器必须忽略鼠标，两者不能混为一谈。
+  assert.doesNotMatch(main, /(?:deps\.)?mainWindow\??\.setIgnoreMouseEvents\(true/);
   assert.doesNotMatch(app, /setIgnoreMouse\??\./);
 });
 
@@ -1498,6 +1499,80 @@ test("codex alignment surfaces are wired end to end", () => {
   assert.match(agent, /isAuthorized\(relativePath\)/);
   assert.match(agent, /批准后本次任务内有效；批准的是目录时，其子路径同样有效/);
   assert.match(agent, /persistExternalAuthorization/);
+});
+
+test("决策模型（Intern-Decision）的审批分档与工具组预路由贯穿设置、审核与主循环", () => {
+  const review = readModuleSource(new URL("../electron/agent/review.mts", import.meta.url));
+  const decisionClient = readModuleSource(new URL("../electron/agent/decision-client.mts", import.meta.url));
+  const modelPanel = readSource(new URL("../src/features/settings/ModelSettingsPanel.tsx", import.meta.url));
+  // 设置三端：审核来源下拉含 decision 选项，阈值字段进出渲染端与存储层
+  assert.match(modelPanel, /value="decision"/);
+  assert.match(modelPanel, /draft\.decisionEndpoint/);
+  assert.match(modelPanel, /reviewerDecisionThreshold/);
+  assert.match(modelPanel, /toolsetRouteThreshold/);
+  assert.match(settingsStorage, /normalizeDecisionThreshold/);
+  assert.match(settingsStorage, /v === "decision"/);
+  // 审核分档：decision 后端走决策客户端按阈值映射，界面操作跳过，故障 fail-closed 转人工
+  assert.match(review, /backend === "decision" && !isStatefulUiOperation\(action\.kind\)/);
+  assert.match(review, /requestDecisionReview\(/);
+  assert.match(review, /mapDecisionApproval\(distribution, settings\?\.reviewerDecisionThreshold\)/);
+  assert.match(review, /决策模型服务不可用/);
+  // 审计标签标明决策模型来源；主循环首轮前预路由、静默降级
+  assert.match(agent, /决策模型\(Intern-Decision\)/);
+  assert.match(agent, /requestToolsetRoute\(/);
+  assert.match(agent, /工具组预路由（决策模型）/);
+  // 决策客户端：端点归一化、不可达负缓存、输入容量上限、noul 预路由
+  assert.match(decisionClient, /normalizeDecisionEndpoint/);
+  assert.match(decisionClient, /markUnreachable/);
+  assert.match(decisionClient, /DECISION_MAX_TOKENS = 8192/);
+  assert.match(decisionClient, /export async function requestToolsetRoute/);
+});
+
+test("决策模型本地托管贯穿下载、运行时、服务托管与设置 UI", () => {
+  const localDecision = readModuleSource(new URL("../electron/local-decision.mts", import.meta.url));
+  const decisionServer = readModuleSource(new URL("../electron/local-decision-server.mts", import.meta.url));
+  const localModelsIpc = readModuleSource(new URL("../electron/host/plugins/local-models-ipc.mts", import.meta.url));
+  const mainSource = readModuleSource(new URL("../electron/main.mts", import.meta.url));
+  const preload = readModuleSource(new URL("../electron/preload.cjs", import.meta.url));
+  const settingsDialog = readSource(new URL("../src/features/settings/SettingsDialog.tsx", import.meta.url));
+  const modelPanel = readSource(new URL("../src/features/settings/ModelSettingsPanel.tsx", import.meta.url));
+  // 注册表：官方仓库整包（权重 + inference.py + requirements.txt），带字节数与 sha256
+  assert.match(localDecision, /Shanghai_AI_Laboratory\/Intern-Decision-2B/);
+  assert.match(localDecision, /inference\.py/);
+  assert.match(localDecision, /requirements\.txt/);
+  assert.match(localDecision, /sha256/);
+  // 运行时：系统 Python（3.12–3.14）→ venv → 官方 requirements 安装，marker 幂等
+  assert.match(localDecision, /PYTHON_MIN_MINOR = 12/);
+  assert.match(localDecision, /"runtime:venv"/);
+  assert.match(localDecision, /pip", "install", "-r"/);
+  assert.match(localDecision, /\.dyw-deps-ready/);
+  // 服务托管：waitForHealth 轮询 /health、空闲停、stderr 尾巴，官方 DecisionEngine 包装仅听 127.0.0.1
+  assert.match(decisionServer, /\/health/);
+  assert.match(decisionServer, /IDLE_STOP_MS/);
+  assert.match(decisionServer, /stderrTail/);
+  assert.match(decisionServer, /decision_server\.py/);
+  const serverScript = readModuleSource(new URL("../electron/scripts/decision_server.py", import.meta.url));
+  assert.match(serverScript, /127\.0\.0\.1/);
+  assert.match(serverScript, /from inference import DecisionEngine/);
+  // IPC 四件套与 voice-local 同构；下载完成即后台预热
+  assert.match(localModelsIpc, /decision-local:status/);
+  assert.match(localModelsIpc, /decision-local:download/);
+  assert.match(localModelsIpc, /decision-local:download-progress/);
+  assert.match(localModelsIpc, /decision-local:choose-dir/);
+  assert.match(localModelsIpc, /ensureDecisionRuntime/);
+  assert.match(localModelsIpc, /ensureLocalDecisionServer/);
+  // 壳层：目录注入 + 保存后预热 + 退出清理 + 设置归一化
+  assert.match(mainSource, /configureLocalDecision/);
+  assert.match(mainSource, /warmDecisionService/);
+  assert.match(mainSource, /stopLocalDecisionServer/);
+  assert.match(settingsStorage, /normalizeDecisionService/);
+  // 渲染端：服务方式下拉（remote/local）+ 分阶段进度；preload 桥接四件套
+  assert.match(modelPanel, /draft\.decisionService/);
+  assert.match(modelPanel, /value="local"/);
+  assert.match(modelPanel, /decisionPhaseRuntime/);
+  assert.match(settingsDialog, /getDecisionLocalStatus/);
+  assert.match(settingsDialog, /decisionDownloadPhase/);
+  assert.match(preload, /decision-local:download-progress/);
 });
 
 test("openworker 移植机制端到端接线(风险分级/常驻规则/收件箱/自我唤醒/留痕/审计)", () => {

@@ -18,10 +18,15 @@ import { saveClipboardImage } from "./clipboard-image.mts";
 import { providerMessageContent, describeAttachment, attachmentType } from "./desktop/attachments.mts";
 import { transcribeAudio, buildWavFromPcm, transcribeQqVoice } from "./desktop/audio.mts";
 import { createAutomationRuntime } from "./desktop/automation-runtime.mts";
+import { createBackgroundBrowserAgent } from "./desktop/background-browser.mts";
+import { loadSiteSession } from "./browser-import.mts";
+import { BackgroundBrowserHandoffs } from "./desktop/background-browser-handoff.mts";
 import { createBrowserRuntime } from "./desktop/browser-runtime.mts";
+import { TaskBrowserRouter } from "./desktop/task-browser-router.mts";
 import { createChannelRuntime } from "./desktop/channel-runtime.mts";
 import { createMcpRuntime } from "./desktop/mcp-runtime.mts";
 import { createWindowRuntime } from "./desktop/window-runtime.mts";
+import { needsMainWindow, onlyBackgroundWindowsRemain } from "./desktop/window-lifecycle.mts";
 import { filePreviewToolDefinitions,requestFilePreview } from "./file-preview.mts";
 import { gitCommitDiff } from "./git.mts";
 import { queuedGoalPayload,settledStoredGoal } from "./goal.mts";
@@ -47,6 +52,7 @@ import { inboxIpcPlugin } from "./host/plugins/inbox-ipc.mts";
 import { localModelsIpcPlugin } from "./host/plugins/local-models-ipc.mts";
 import { memoriesIpcPlugin } from "./host/plugins/memories-ipc.mts";
 import { knowledgeExportIpcPlugin } from "./host/plugins/knowledge-export-ipc.mts";
+import { knowledgeFoldersIpcPlugin } from "./host/plugins/knowledge-folders-ipc.mts";
 import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
 import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
 import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
@@ -70,6 +76,8 @@ import { configureLocalAsr } from "./local-asr.mts";
 import { localImagePathFromSource,registerLocalImageIpc } from "./local-image.mts";
 import { configureLocalReviewer,resetLocalReviewerEngine } from "./local-reviewer.mts";
 import { configureLocalTts,normalizeTtsModelId } from "./local-tts.mts";
+import { configureLocalDecision,localDecisionModelStatus,normalizeDecisionModelId } from "./local-decision.mts";
+import { ensureLocalDecisionServer,localDecisionServerState,stopLocalDecisionServer } from "./local-decision-server.mts";
 import { enforceDirTotalSize,halveFileIfOversized } from "./log-rotation.mts";
 import { importMcpBundle } from "./mcp-bundle.mts";
 import { extractExplicitMemoryInstructions } from "./memory.mts";
@@ -77,7 +85,7 @@ import { createRemoteMessagesManager } from "./remote-messages.mts";
 import { isTrustedAppRendererUrl } from "./renderer-origin.mts";
 import { SessionQueue } from "./session-queue.mts";
 import { handleSessionTool,SESSION_TOOL_NAMES,sessionToolDefinitions } from "./session-tools.mts";
-import { countUndecryptableSecrets,decryptChannelSecret,encryptChannelSecret,normalizeApprovalMode,normalizePreventSleep } from "./settings.mts";
+import { countUndecryptableSecrets,decryptChannelSecret,encryptChannelSecret,normalizeApprovalMode,normalizeDecisionService,normalizePreventSleep } from "./settings.mts";
 import { installSkillFromLibrary,searchSkillLibraries } from "./skill-libraries.mts";
 import { createTelemetryController } from "./telemetry.mts";
 import { createDockIconController,createWindowIconController } from "./theme-icons.mts";
@@ -157,6 +165,12 @@ const rendererEntryUrl = isDevelopment
   ? process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173"
   : pathToFileURL(path.join(here, "../client/index.html")).href;
 let mainWindow;
+const backgroundBrowserHandoffs = new BackgroundBrowserHandoffs({ openFileDialog: options => {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('主窗口已关闭。');
+  return dialog.showOpenDialog(mainWindow, options);
+}, notify: entries => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('background-browser-handoff:state', entries);
+} });
 let appUpdater;
 let appUpdateTimer = null;
 let appUpdateInterval = null;
@@ -317,7 +331,7 @@ const ctx = await createHost({
     getWebContents: () => BrowserWindow.getAllWindows().map((win) => win.webContents),
     dialog, shell, clipboard, nativeImage, nativeTheme,
   },
-  settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings],
+  settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings, applyDecisionSettings],
   // 代理服务的领域解析器：记忆/技能/唤醒/MCP 领域函数仍是本模块实现，
   // 逐域插件化后改为 ctx.<domain> 直连
   agentResolvers: {
@@ -485,6 +499,40 @@ function applyTtsSettings(saved) {
   return modelId;
 }
 
+// ---- 本地决策模型（Intern-Decision，Python venv + 官方推理）----
+// 服务方式 remote 时本地引擎完全不参与；local 时权重存 userData/models/decision/，
+// venv 在 userData/bin/decision-venv/（与 ASR 的 llama.cpp 运行时目录同级）。
+const defaultDecisionModelDir = path.join(app.getPath("userData"), "models", "decision");
+const defaultDecisionVenvDir = path.join(app.getPath("userData"), "bin", "decision-venv");
+let decisionModelDirApplied = "";
+let decisionModelIdApplied = "";
+configureLocalDecision({ modelDir: defaultDecisionModelDir, venvDir: defaultDecisionVenvDir });
+decisionModelDirApplied = defaultDecisionModelDir;
+
+function applyDecisionSettings(saved) {
+  const modelDir = String(saved?.decisionModelDir || "").trim() || defaultDecisionModelDir;
+  const modelId = normalizeDecisionModelId(saved?.decisionLocalModel);
+  if (modelDir !== decisionModelDirApplied || modelId !== decisionModelIdApplied) {
+    // 目录或所选模型变更后旧进程还指着旧权重：停掉，下次判定按新配置冷启
+    stopLocalDecisionServer();
+    configureLocalDecision({ modelDir, venvDir: defaultDecisionVenvDir });
+    decisionModelDirApplied = modelDir;
+    decisionModelIdApplied = modelId;
+  }
+  return modelId;
+}
+
+// 保存设置后的后台预热：决策后端 + 本地托管 + 权重已下载才起服务。
+// 不阻塞保存，冷启动失败静默（首次判定会按需再启，单飞合并并发启动）。
+function warmDecisionService(saved) {
+  if (String(saved?.reviewerBackend || "") !== "decision") return;
+  if (normalizeDecisionService(saved?.decisionService) !== "local") return;
+  const modelId = normalizeDecisionModelId(saved?.decisionLocalModel);
+  if (!localDecisionModelStatus(modelId).downloaded) return;
+  if (localDecisionServerState().running) return;
+  void ensureLocalDecisionServer({ modelId }).catch(() => {});
+}
+
 
 
 
@@ -650,6 +698,9 @@ const windowRuntime = createWindowRuntime({
   isTrustedRendererUrl,
   get isDevelopment() { return isDevelopment; },
   get rendererEntryUrl() { return rendererEntryUrl; },
+  onMainWindowClosed: () => {
+    if (process.platform !== 'darwin' && !mcpShutdownStarted && onlyBackgroundWindowsRemain(BrowserWindow.getAllWindows())) app.quit();
+  },
 });
 const { installApplicationMenu, createWindow } = windowRuntime;
 
@@ -1071,16 +1122,26 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     closePanel: renderer ? () => requestCloseEmbeddedBrowser(renderer, sessionId) : undefined,
     getContents: (ownerSessionId) => activeEmbeddedBrowserContents({ forOwnerSessionId: ownerSessionId }),
     listTabs: (ownerSessionId) => browserPanelTabsFor(ownerSessionId),
-    activateTab: (tabId, ownerSessionId) => activateBrowserPanelTab(renderer, tabId, { ownerSessionId }),
+    activateTab: (tabId, ownerSessionId, credential) => activateBrowserPanelTab(renderer, tabId, { ownerSessionId, token: credential?.token }),
     closeTab: (tabId, ownerSessionId) => closeBrowserPanelTab(renderer, tabId, { ownerSessionId }),
     controlManager: browserControlManager,
   });
   browserAgent.setContext({ ownerSessionId: sessionId, runId });
   browserAgent.setWorkspace(workspacePath);
+  const taskBrowser = new TaskBrowserRouter({
+    visible: browserAgent, ownerSessionId: sessionId, runId,
+    handoffs: backgroundBrowserHandoffs, allowHandoff: Boolean(renderer) && !channel,
+    claimedBackground: backgroundBrowserHandoffs.claim(sessionId, runId, workspacePath),
+    createBackground: () => createBackgroundBrowserAgent({ ownerSessionId: sessionId, runId, workspacePath, createWindow: options => new BrowserWindow(options),
+      loadSiteSession: options => loadSiteSession({ ...options, builtinSession: session.fromPartition("persist:dyworker-browser"), appDataDir: app.getPath("userData") }) }),
+  });
+  const onBrowserAbort = () => taskBrowser.abort({
+    preserveHandoff: signal?.reason?.message === '任务已结束',
+    recoverClaim: taskBrowser.claimed && (signal?.reason?.message !== '任务已结束' || taskBrowser.executionResult?.status !== 'done'),
+  });
   if (signal) {
-    signal.addEventListener("abort", () => {
-      browserControlManager.pause({ reason: "任务已取消或中断" });
-    });
+    if (signal.aborted) onBrowserAbort();
+    else signal.addEventListener("abort", onBrowserAbort, { once: true });
   }
   const route = async (name, args) => {
     if (name === "open_file") return requestFilePreview(args, { workspacePath, sessionId, renderer });
@@ -1096,7 +1157,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
         defaultOpenId: channel === "feishu" ? String(channelUserId || "") : "",
       });
     }
-    if (name.startsWith("browser__")) return browserAgent.handle(name, args);
+    if (name.startsWith("browser__")) return taskBrowser.handle(name, args);
     // 插件工具：经 ctx.tools 派发（内部做风险闸门与审计留痕）
     if (ctx.tools.owns(name)) {
       const executed = await ctx.tools.execute(name, args, { sessionId, runId, source: "agent", signal, workspacePath });
@@ -1105,7 +1166,15 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     }
     return callMcpTool(settings, name, args, { signal });
   };
-  route.dispose = async () => { await ctx.plugins.stopRun(sessionId, runId); await ctx.linuxComputerUse.stopRun(sessionId, runId); await browserAgent.dispose(); };
+  route.hasPendingHumanHandoff = () => backgroundBrowserHandoffs.owns(taskBrowser.background);
+  route.setExecutionResult = result => { taskBrowser.executionResult = result; };
+  route.dispose = async () => {
+    signal?.removeEventListener('abort', onBrowserAbort);
+    await taskBrowser.dispose();
+    const results = await Promise.allSettled([ctx.plugins.stopRun(sessionId, runId), ctx.linuxComputerUse.stopRun(sessionId, runId)]);
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  };
   return route;
 }
 
@@ -1549,6 +1618,7 @@ ctx.plugin(skillsIpcPlugin({ trustedHandle, searchSkillLibraries, installSkillFr
 // memories:*：领域在 ctx.memory（记忆队列 + wiki 页面与整合）
 ctx.plugin(memoriesIpcPlugin({ trustedHandle }));
 ctx.plugin(knowledgeExportIpcPlugin({ trustedHandle, dialog, app, fs, path, getMainWindow: () => mainWindow }));
+ctx.plugin(knowledgeFoldersIpcPlugin({ trustedHandle, dialog, getMainWindow: () => mainWindow }));
 
 // inbox:*：领域在 ctx.inbox（无人值守审批/提问的挂起与决议）
 ctx.plugin(inboxIpcPlugin({ trustedHandle }));
@@ -1604,6 +1674,8 @@ const shellDeps = {
   applyAsrSettings,
   asrSettingsFrom,
   applyTtsSettings,
+  applyDecisionSettings,
+  warmDecisionService,
   getAsrServerPath: () => asrServerPathApplied,
   transcribeAudio,
   buildWavFromPcm,
@@ -1622,6 +1694,7 @@ const shellDeps = {
   browserPasswordStorePath,
   safeStorage: safeStorageForHost,
   browserControlManager,
+  backgroundBrowserHandoffs,
   getEmbeddedBrowserContents: (id) => embeddedBrowserContentsById.get(id),
   // 桌面会话任务入口的壳层状态与执行函数（运行期 Map/队列 + 任务执行）
   isShuttingDown: () => mcpShuttingDown,
@@ -2268,7 +2341,7 @@ app.whenReady().then(async () => {
   // IM 渠道(QQ/微信)按设置启动;失败不影响主程序
   void reconcileChannels().catch(() => { });
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (needsMainWindow(mainWindow)) createWindow();
   });
 });
 
@@ -2292,6 +2365,9 @@ app.on("before-quit", (event) => {
   if (appUpdateInterval) clearInterval(appUpdateInterval);
   appUpdateTimer = null;
   appUpdateInterval = null;
+  // 本地决策模型进程占着约 4GB 内存，退出时立即停掉（语音引擎未分离也会随主进程退出，
+  // 但 python 子进程不能赌这个：显式杀）
+  stopLocalDecisionServer();
   for (const agentState of activeAgents.values()) {
     agentState.cancelled = true;
     for (const resolve of agentState.pending.values()) resolve(false);
@@ -2315,6 +2391,7 @@ app.on("before-quit", (event) => {
         }),
       ]);
       await closeAllMcpClients();
+      await backgroundBrowserHandoffs.dispose();
       await macStoreFileAccess.dispose();
       app.quit();
     });

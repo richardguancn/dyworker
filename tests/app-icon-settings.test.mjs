@@ -23,8 +23,14 @@ for (const platform of ['linux', 'win32', 'darwin']) {
         capabilities: { platform, backdropFilter: true, systemBackdrop: { available: false } } }),
       useResolvedTheme: () => 'dark',
     };
+    const i18nMock = {
+      t: (key, fallback) => fallback || key,
+      useLocale: () => ['zh-CN', () => {}],
+      SUPPORTED_LOCALES: [{ id: 'zh-CN', label: '简体中文', nativeLabel: '简体中文' }],
+    };
     vm.runInNewContext(js, { exports, URL, require: name => name === './controller' ? controller :
-      name === './tokens' ? require('../src/appearance/tokens.ts') : require(name) });
+      name === './tokens' ? require('../src/appearance/tokens.ts') :
+      name === '../i18n' ? i18nMock : require(name) });
     const html = renderToStaticMarkup(createElement(exports.AppearanceSettingsPanel));
     const title = platform === 'darwin' ? 'Dock 图标' : '应用图标';
     assert.match(html, new RegExp(`aria-label="浅色 ${title}"[^>]*aria-checked="true"`));

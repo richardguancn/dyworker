@@ -62,10 +62,18 @@ export class PluginRouteRegistry {
 /** 每个宿主拥有自己的注册表；服务包装对象只读取这个稳定对象，不替换实例字段。 */
 export class ConnectionService extends Service {
   readonly registry = new PluginRouteRegistry();
+  private readonly desktopRegistry = new PluginRouteRegistry();
   constructor(ctx: any) {
     super(ctx, "connection");
     ctx.effect(() => () => this.registry.clear());
+    ctx.effect(() => () => this.desktopRegistry.clear());
   }
+  registerDesktop(route: PluginRoute) {
+    const dispose = this.desktopRegistry.register(route, this.ctx.fiber);
+    this.ctx.effect(() => dispose);
+    return dispose;
+  }
+  dispatchDesktop(input: Parameters<PluginRouteRegistry["dispatch"]>[0]) { return this.desktopRegistry.dispatch(input); }
   get fetch() { return { register: (route: PluginRoute) => this.register(route), unregister: (routePath: string) => this.unregister(routePath) }; }
   get routes() { return [...new Set(this.registry.entries.values())].map(e => e.route); }
   register(route: PluginRoute) {

@@ -12,6 +12,7 @@ export function mcpToolLabel(name) {
 const browserToolLabels = {
   browser__open: "打开网页",
   browser__observe: "观察网页",
+  browser__inspect: "核对网页当前状态",
   browser__act: "操作网页",
   browser__wait: "等待网页",
   browser__read: "读取网页内容",
@@ -34,8 +35,11 @@ const computerUseToolLabels = {
   launch_app: "启动本机应用",
   get_app_state: "查看应用界面",
   click: "点击应用界面",
+  hover: "悬停应用界面",
   perform_secondary_action: "执行应用菜单操作",
   set_value: "填写应用控件",
+  replace_text: "替换应用内文字",
+  insert_text: "在应用选区插入文字",
   select_text: "选择应用内文字",
   scroll: "滚动应用界面",
   drag: "拖动应用界面",
@@ -149,17 +153,22 @@ export function toolSummary(name, args) {
       return label;
     }
     default:
+      if (name.startsWith('plugin__dyworker_linux_computer_use__') && args.use_shared_desktop === true) {
+        return '操作 Linux 当前桌面（可能切换前台并占用鼠标键盘）';
+      }
       if (isComputerUseTool(name)) {
         const action = computerUseAction(name);
         const label = computerUseToolLabels[action] || "操作本机应用";
         const app = String(args.app || "").trim();
         const windowTitle = String(args.window_title || "").trim();
         const target = String(args.target_control || "").trim();
+        const foreground = args.background === false ? "（可能切换前台并占用鼠标键盘）" : "";
         return app
-          ? `${label}：${app}${windowTitle ? ` / ${windowTitle}` : ""}${target ? ` / ${target}` : ""}`
-          : label;
+          ? `${label}：${app}${windowTitle ? ` / ${windowTitle}` : ""}${target ? ` / ${target}` : ""}${foreground}`
+          : `${label}${foreground}`;
       }
       if (name.startsWith("browser__")) {
+        if (name === 'browser__act' && args.action?.type === 'upload') return `上传网页附件：${(args.action.files || []).map(file => String(file).split(/[\\/]/).pop()).join('、')}`;
         const label = browserToolLabels[name] || "浏览器操作";
         const target = args.url || args.path || (args.ref != null ? `元素 ${args.ref}` : "");
         return target ? `${label}：${String(target).slice(0, 60)}` : label;

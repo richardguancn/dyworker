@@ -256,6 +256,52 @@ test("checkDueSchedules：其他任务运行时仍触发；同一计划不重复
   }
 });
 
+test("回归：计划等待审批时不重复启动，其他计划和下一轮照常执行", async (t) => {
+  const start = new Date("2026-11-09T22:00:00.000Z");
+  const dir = await makeTmpDir(t);
+  await fs.writeFile(path.join(dir, "schedules.json"), JSON.stringify([
+    { id: "news", recurrence: "daily", nextRun: start.toISOString(), enabled: true },
+    { id: "other", recurrence: "once", nextRun: start.toISOString(), enabled: true },
+  ]), "utf8");
+
+  const { ctx, scheduler, calls, setNow } = await makeScheduler(t, { dir, now: () => start });
+  const waiting = Promise.withResolvers();
+  const approval = Promise.withResolvers();
+  scheduler.hooks.runScheduledTask = async ({ id }) => {
+    calls.scheduled.push(id);
+    if (calls.scheduled.length === 1) {
+      // 壳层等待审批时让出全局调度，但当前会话仍在运行。
+      waiting.resolve();
+      await approval.promise;
+    }
+    await scheduler.markFinished(id, true, "已完成");
+  };
+
+  const firstRun = scheduler.checkDueSchedules();
+  try {
+    await waiting.promise;
+    assert.equal((await scheduler.triggerNow("news")).ok, false);
+    setNow(new Date(start.getTime() + 10_000));
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["news", "other"]);
+    setNow(new Date(start.getTime() + 20_000));
+    assert.equal(await scheduler.checkDueSchedules({ awaitRun: false }), null);
+
+    approval.resolve();
+    await firstRun;
+    const news = (await scheduler.list()).find(({ id }) => id === "news");
+    assert.equal(news.lastStatus, "success");
+    assert.equal(news.nextRun, "2026-11-10T22:00:00.000Z");
+    setNow(new Date(news.nextRun));
+    await scheduler.checkDueSchedules();
+    assert.deepEqual(calls.scheduled, ["news", "other", "news"]);
+  } finally {
+    approval.resolve();
+    await firstRun;
+    await disposeHost(ctx);
+  }
+});
+
 // 回归：一个真实事故。计划执行中主动挂起等待长任务（3677 帧 ffmpeg 渲染），
 // 挂起路径在壳层提前 return、不经过 markFinished，于是 nextRun 永远停在过去，
 // 10s tick 每轮都判定"到期"并新建一个会话跑同一任务 —— 7 分钟内派生出 8 个并发会话。

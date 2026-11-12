@@ -66,7 +66,7 @@ test("插件页是「页面」而不是「弹窗」：无遮罩层，渲染在�
   assert.ok(!panel.includes("plugins-overlay"), "不应再使用遮罩弹窗");
   assert.ok(!panel.includes("createPortal"), "不应挂在 portal 上");
   assert.match(app, /tab === "plugins" \? \([\s\S]{0,250}<PluginsPage/, "插件页在设置内容区内");
-  assert.match(app, /id: "plugins", label: "插件"/, "设置菜单应提供插件入口");
+  assert.match(app, /id: "plugins",\s*label:.*插件/, "设置菜单应提供插件入口");
   assert.doesNotMatch(app, /id: "mcp", label: "MCP 工具"/, "MCP 合并进插件页");
   // 版式：行式卡片 + 开关（对齐 DSH）
   assert.match(panel, /plugin-card-icon/, "行首应有图标块");

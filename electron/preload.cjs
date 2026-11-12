@@ -96,6 +96,17 @@ contextBridge.exposeInMainWorld("dyworker", {
   resumeBrowserControl: (payload) => ipcRenderer.invoke("browser-control:resume", payload),
   stopBrowserControl: () => ipcRenderer.invoke("browser-control:stop"),
   getBrowserControlStatus: () => ipcRenderer.invoke("browser-control:status"),
+  validateBrowserSwitch: (request) => ipcRenderer.invoke('browser-control:validate-switch', request),
+  listBackgroundBrowserHandoffs: () => ipcRenderer.invoke('background-browser-handoff:list'),
+  showBackgroundBrowserHandoff: (id) => ipcRenderer.invoke('background-browser-handoff:show', id),
+  readyBackgroundBrowserHandoff: (id) => ipcRenderer.invoke('background-browser-handoff:ready', id),
+  chooseBackgroundBrowserFile: (id) => ipcRenderer.invoke('background-browser-handoff:choose-file', id),
+  discardBackgroundBrowserHandoff: (id) => ipcRenderer.invoke('background-browser-handoff:discard', id),
+  onBackgroundBrowserHandoffs: (callback) => {
+    const listener = (_event, entries) => callback(entries);
+    ipcRenderer.on('background-browser-handoff:state', listener);
+    return () => ipcRenderer.removeListener('background-browser-handoff:state', listener);
+  },
   onBrowserControlState: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on("browser-control:state", listener);
@@ -161,6 +172,14 @@ contextBridge.exposeInMainWorld("dyworker", {
     ipcRenderer.on("tts-local:download-progress", listener);
     return () => ipcRenderer.removeListener("tts-local:download-progress", listener);
   },
+  getDecisionLocalStatus: () => ipcRenderer.invoke("decision-local:status"),
+  downloadDecisionLocalModel: (payload) => ipcRenderer.invoke("decision-local:download", payload),
+  chooseDecisionLocalDir: () => ipcRenderer.invoke("decision-local:choose-dir"),
+  onDecisionLocalDownloadProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("decision-local:download-progress", listener);
+    return () => ipcRenderer.removeListener("decision-local:download-progress", listener);
+  },
   getAppUpdateStatus: () => ipcRenderer.invoke("app-update:status"),
   checkForAppUpdate: () => ipcRenderer.invoke("app-update:check"),
   downloadAppUpdate: () => ipcRenderer.invoke("app-update:download"),
@@ -219,6 +238,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   clearUsageStats: () => ipcRenderer.invoke("usage:clear"),
   deleteMemory: (id) => ipcRenderer.invoke("memories:delete", id),
   exportKnowledge: (payload) => ipcRenderer.invoke("knowledge:export", payload),
+  knowledgeLocalFolders: (payload) => ipcRenderer.invoke("knowledge:local-folders", payload),
   updateMemory: (payload) => ipcRenderer.invoke("memories:update", payload),
   lintMemories: () => ipcRenderer.invoke("memories:lint"),
   listSkills: (workspacePath) => ipcRenderer.invoke("skills:list", workspacePath),

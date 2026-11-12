@@ -10,6 +10,7 @@ args;
 env;
 cwd;
 requestTimeoutMs;
+shutdownGraceMs;
 process;
 buffer;
 stderrTail;
@@ -17,12 +18,13 @@ nextId;
 pending;
 tools;
 serverInfo;
-constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_MS } = {} as any) {
+constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_MS, shutdownGraceMs = 1000 } = {} as any) {
     this.command = command;
     this.args = args;
     this.env = env;
     this.cwd = cwd;
     this.requestTimeoutMs = Math.max(1, Number(requestTimeoutMs) || REQUEST_TIMEOUT_MS);
+    this.shutdownGraceMs = Math.min(10000, Math.max(1000, Number(shutdownGraceMs) || 1000));
     this.process = null;
     this.buffer = "";
     this.stderrTail = "";
@@ -125,8 +127,10 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
       const timer = effectiveTimeout > 0
         ? setTimeout(() => {
           const entry = this.pending.get(id);
+          if (!entry) return;
           this.pending.delete(id);
           entry?.signal?.removeEventListener("abort", entry.onAbort);
+          this.notify("notifications/cancelled", { requestId: id, reason: "请求超时" });
           reject(new Error(`MCP 请求超时：${method}`));
         }, effectiveTimeout)
         : null;
@@ -189,10 +193,12 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
     if (child.exitCode != null || child.signalCode != null) return;
     const exited = new Promise<any>((resolve) => child.once("exit", resolve));
     child.kill("SIGTERM");
+    let shutdownTimer: ReturnType<typeof setTimeout>;
     const graceful = await Promise.race([
       exited.then(() => true),
-      new Promise<any>((resolve) => setTimeout(() => resolve(false), 1_000)),
+      new Promise<any>((resolve) => { shutdownTimer = setTimeout(() => resolve(false), this.shutdownGraceMs); }),
     ]);
+    clearTimeout(shutdownTimer);
     if (!graceful && child.exitCode == null && child.signalCode == null) {
       child.kill("SIGKILL");
       await Promise.race([

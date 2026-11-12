@@ -255,8 +255,8 @@ export class SchedulerService extends Service {
     item.updatedAt = now.toISOString();
     // 挂起 = 本轮已交棒给自我唤醒机制，本轮到期额度必须在此消耗掉。
     //
-    // 不变量：到期判定是 `enabled && nextRun <= now`（见 checkDueSchedules），因此
-    // "本轮已结束"的唯一表达方式就是推进 nextRun。此前推进 nextRun 只发生在
+    // 挂起记录消失后，计划仍会按 nextRun 判断是否到期，所以挂起时必须推进 nextRun。
+    // 此前推进 nextRun 只发生在
     // markFinished 里，而挂起路径在壳层提前 return、永不经过 markFinished
     // （main.mts 的 runScheduledTask：status === "sleeping" 时直接 return），
     // 于是 nextRun 永远停在过去 → 每 10s tick 都判定"到期" → 每轮再新建一个会话
@@ -475,6 +475,8 @@ export class SchedulerService extends Service {
       );
       due = items.find((item) =>
         item.enabled
+        // 等待审批或回答时会让出全局调度，但本轮仍在运行。
+        && item.lastStatus !== "running"
         && item.nextRun
         && new Date(item.nextRun) <= now
         && !(item.lastStatus === "sleeping" && suspendedScheduleIds.has(String(item.id)))) || null;
