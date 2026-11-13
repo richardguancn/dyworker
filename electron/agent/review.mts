@@ -15,6 +15,7 @@ import { requestAuxiliaryModel } from "./context.mts";
 import { estimateTextTokens,messageText } from "./messages.mts";
 import { normalizeModelEndpoint } from "./model-discovery.mts";
 import { requestModel } from "./model-request.mts";
+import { summarizationSettings } from "./model-settings.mts";
 import { isModelTransportError,isRetryableStatusError,waitModelRetry } from "./model-transport.mts";
 import { evaluateApproval,needsApproval } from "./permissions.mts";
 import { READ_ONLY_TOOLS,clipped,moduleDir } from "./shared.mts";
@@ -510,12 +511,15 @@ async function performApprovalReview({ settings, action = {}, context = "", cont
         : reviewText,
     },
   ];
+  const reviewSettings = isStatefulUiOperation(action.kind)
+    ? summarizationSettings(effectiveSettings)
+    : { ...effectiveSettings, reasoningEffort: "off" };
   const requestReview = async (messages) => {
     // 只在暂时性故障时完整重发一次，包含响应正文断线；关闭底层长退避，避免多层重试叠加。
     for (let attempt = 0; ; attempt++) {
       signal?.throwIfAborted();
       try {
-        return await requestAuxiliaryModel({ settings: { ...effectiveSettings, reasoningEffort: 'off' }, messages, fetchImpl, signal, tools: false, onUsage,
+        return await requestAuxiliaryModel({ settings: reviewSettings, messages, fetchImpl, signal, tools: false, onUsage,
           retryLimit: 0, statusRetryLimit: 0 });
       } catch (error) {
         if (signal?.aborted || attempt >= 1 || (!isModelTransportError(error) && !isRetryableStatusError(error?.status))) throw error;

@@ -4342,6 +4342,116 @@ test("Computer Use 新状态没有截图时不会沿用上一张旧图", async (
   '完整执行记录也不能让已经失效的截图在下一轮重新出现');
 });
 
+test("继续桌面任务首轮恢复工具，重复更新计划提示执行真实观察", async () => {
+  const root = await makeWorkspace();
+  const requests = [], reads = [], events = [];
+  const name = "mcp__computer-use__get_app_state";
+  const app = "com.apple.Safari";
+  const steps = [{ title: "核对韩语页面", status: "in_progress" }];
+  const oldRead = toolCall("historical-state", name, { app });
+  const oldPlan = toolCall("historical-plan", "update_plan", { steps });
+  const plan = id => ({ role: "assistant", content: null, tool_calls: [toolCall(id, "update_plan", { steps })] });
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: sanitizeToolCalls([
+      { role: "user", content: "在 Safari 检查 App Store Connect" },
+      { role: "assistant", content: null, tool_calls: [oldRead] },
+      { role: "tool", tool_call_id: oldRead.id, content: "成功\n上一轮的界面" },
+      { role: "user", content: "这是刚刚读取到的本机应用界面截图\n[此前界面截图已移除]" },
+      { role: "assistant", content: null, tool_calls: [oldPlan] },
+      { role: "tool", tool_call_id: oldPlan.id, content: "成功\n计划已更新" },
+      { role: "user", content: "继续剩余语言" },
+      { role: "assistant", content: "重复更新计划后已暂停。", executedMessages: [
+        { role: "assistant", content: null, tool_calls: [oldPlan] },
+        { role: "tool", tool_call_id: oldPlan.id, content: "成功\n计划已更新" },
+      ] },
+      { role: "user", content: "继续完成其他语言" },
+    ]),
+    extraTools: [{ type: "function", function: { name, description: "读取当前界面", parameters: { type: "object", properties: {} } } }],
+    onExtraTool: async (tool, args) => {
+      reads.push([tool, args]);
+      return { ok: true, result: "当前页面：菜单只提供「添加韩语」。" };
+    },
+    emit: event => events.push(event),
+    fetchImpl: mockFetch([
+      plan("p1"),
+      plan("p2"),
+      { role: "assistant", content: null, tool_calls: [toolCall("read-live", name, { app })] },
+      { role: "assistant", content: "已读取。菜单只提供「添加韩语」。" },
+    ], requests),
+  });
+  assert.ok(requests[0].tools.some(tool => tool.function.name === name));
+  assert.match(requests[2].messages.find(m => m.tool_call_id === "p2").content, /计划没有变化[\s\S]*get_app_state/);
+  assert.equal(events.filter(event => event.type === "plan-update").length, 1);
+  assert.deepEqual(reads, [[name, { app }]]);
+  assert.equal(result.status, "done");
+});
+
+test("Computer Use 只向模型重复发送每个应用最近两次完整观察，存档与独立工具保留原文", async () => {
+  const root = await makeWorkspace();
+  const requests = [];
+  const observe = "mcp__computer-use__get_app_state";
+  const note = "mcp__example__lookup";
+  const request = (id, name, args) => ({ role: "assistant", content: null, tool_calls: [toolCall(id, name, args)] });
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "检查 Safari 和便笺的界面" }],
+    approvalMode: "full-access",
+    extraTools: [observe, note].map(name => ({
+      type: "function", function: { name, description: name, parameters: { type: "object", properties: {} } },
+    })),
+    onExtraTool: async (name, { app, marker }) => ({
+      ok: true,
+      result: `观察编号：${marker}\nApp=${app} (pid 42)\nWindow: "${app}", App: ${app}.\n0 standard window\n\t1 text 正文-${marker}`,
+    }),
+    fetchImpl: mockFetch([
+      request("s1", observe, { app: "com.apple.Safari", marker: "s1" }),
+      request("t1", observe, { app: "com.apple.TextEdit", marker: "t1" }),
+      request("n1", note, { app: "com.apple.Safari", marker: "n1" }),
+      request("s2", observe, { app: "com.apple.Safari", marker: "s2" }),
+      request("s3", observe, { app: "com.apple.Safari", marker: "s3" }),
+      { role: "assistant", content: "已查看两个应用的当前界面。" },
+    ], requests),
+  });
+  assert.equal(result.status, "done");
+  const sent = Object.fromEntries(requests.at(-1).messages.filter(m => m.role === "tool").map(m => [m.tool_call_id, m.content]));
+  assert.match(sent.s1, /Safari[\s\S]*旧界面已省略/);
+  assert.doesNotMatch(sent.s1, /观察编号|正文-s1/);
+  for (const id of ["t1", "n1", "s2", "s3"]) assert.match(sent[id], new RegExp("正文-" + id));
+  assert.match(result.executedMessages.find(m => m.tool_call_id === "s1").content, /观察编号：s1[\s\S]*正文-s1/);
+});
+
+test("Computer Use 发出按键后不把动作前的截图继续送给模型", async () => {
+  const root = await makeWorkspace();
+  const requests = [];
+  const observe = "mcp__computer-use__get_app_state", key = "mcp__computer-use__press_key";
+  const app = "com.apple.Safari";
+  const result = await runAgent({
+    settings,
+    workspacePath: root,
+    conversation: [{ role: "user", content: "按回车后确认" }],
+    approvalMode: "full-access",
+    extraTools: [observe, key].map(name => ({
+      type: "function", function: { name, description: name, parameters: { type: "object", properties: {} } },
+    })),
+    onExtraTool: async name => name === observe
+      ? { ok: true, result: "观察编号：first", images: [{ data: "AAAA", mimeType: "image/png" }] }
+      : { ok: true, result: "操作已发送，请重新读取界面" },
+    fetchImpl: mockFetch([
+      { role: "assistant", content: null, tool_calls: [toolCall("observe", observe, { app })] },
+      { role: "assistant", content: null, tool_calls: [toolCall("press", key, { app, observation_id: "first", key: "Return" })] },
+      { role: "assistant", content: "已按回车。" },
+    ], requests),
+  });
+  const hasImage = req => req.messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"));
+  assert.equal(result.status, "done");
+  assert.equal(hasImage(requests[1]), true);
+  assert.equal(hasImage(requests.at(-1)), false);
+  assert.match(requests.at(-1).messages.find(m => m.tool_call_id === "press").content, /操作已发送/);
+});
+
 test("当前模型不支持截图时自动改用无障碍文字继续", async () => {
   const root = await makeWorkspace();
   const calls = [];

@@ -12,9 +12,10 @@ import { externalPathsForTool,isAutoApprovableCommand,isDevAutoApprovableCommand
 import { compactConversation,isContextOverflowError,limitWorkingContext,mergeWorkingContext,pruneOldToolResults,remainingWorkingContext } from "./agent/context.mts";
 import { pickDeliveryText,verifyTaskEvidence } from "./agent/delivery.mts";
 import { builtinHooks,evaluateHooks } from "./agent/hooks.mts";
-import { estimateMessagesTokens,estimateTextTokens,hasInterfaceImages,messageText,messagesForDebug,omitHistoricalToolImage,replaceInterfaceImagesWithText,sanitizeToolCalls } from "./agent/messages.mts";
+import { compactDesktopObservations,estimateMessagesTokens,estimateTextTokens,hasInterfaceImages,messageText,messagesForDebug,omitHistoricalToolImage,replaceInterfaceImagesWithText,sanitizeToolCalls } from "./agent/messages.mts";
 import { requestModel } from "./agent/model-request.mts";
-import { resolveSubAgentSettings } from "./agent/model-settings.mts";
+import { resolveSubAgentSettings, summarizationSettings } from "./agent/model-settings.mts";
+import { notepadApp, notepadReplace } from "./desktop/notepad-replace.mts";
 import { isModelTransportError,modelTransportError,waitModelRetry } from "./agent/model-transport.mts";
 import { calculateWorkdays,checkOfficialDocument,currentDatetime,exportExcelWorkbook,exportWordDocument,runOcrFile,scanSensitiveInfo,sliceLines } from "./agent/office-tools.mts";
 import { approvalDecision,needsApproval } from "./agent/permissions.mts";
@@ -198,6 +199,8 @@ export async function runAgent({
     messages.push({ role: "system", content: `相关长期记忆（个人知识库页面）如下（仅作背景，以用户当前要求为准）：\n\n${clipped(sections, 2200)}` });
   }
   const lastUserIndex = conversation.reduce((index, message, currentIndex) => message?.role === "user" ? currentIndex : index, -1);
+  const isInterfaceContext = (message) => message?.role === "user"
+    && /^这是刚刚读取到的(?:本机应用界面|右侧内置浏览器页面)截图/.test(messageText(message));
   const textModelWithoutVision = isTextModelWithoutVisionService(settings);
   const appendConversationMessage = (message, index) => {
     messages.push(textModelWithoutVision && index < lastUserIndex ? omitHistoricalToolImage(message) : message);
@@ -593,6 +596,38 @@ export async function runAgent({
   // 先调 load_toolset 的一轮往返。3 秒超时，服务未启动/不可达/超时一律静默降级，
   // 保持现状（主模型仍可随时显式调用 load_toolset），绝不阻塞首轮。
   const decisionQuery = messageText({ content: latestQuery }).trim();
+  const activateGroups = (groups: string[]) => {
+    for (const tool of activateToolsets(toolsetDiscovery.deferredByGroup, groups).tools) {
+      const toolName = tool.function.name;
+      if (!visibleTools.some(item => item?.function?.name === toolName)) visibleTools.push(tool);
+      toolSchemas.set(toolName, tool.function.parameters);
+    }
+  };
+  // Resuming a UI task requires a new observation, so make the same toolset
+  // available immediately. Historical tool results never authorize actions.
+  if (/^(?:请\s*)?(?:继续|接着|接著|续跑)|^(?:please\s+)?(?:continue|resume|carry on)\b/i.test(decisionQuery)) {
+    // Desktop IPC flattens executedMessages, while the wakeup path can pass
+    // nested history. Consecutive plan-only turns should not hide the UI work.
+    const turnCalls = [];
+    for (const message of conversation.slice(0, lastUserIndex).reverse()) {
+      if (message?.role === "assistant") {
+        turnCalls.push(...(message.executedMessages || [message]).flatMap(entry => entry.tool_calls || []).reverse());
+        continue;
+      }
+      if (message?.role !== "user" || isInterfaceContext(message)) continue;
+      const latestUi = turnCalls.find(call => {
+        const name = call?.function?.name;
+        return isComputerUseTool(name) || String(name || "").startsWith("browser__");
+      });
+      if (latestUi) {
+        activateGroups([isComputerUseTool(latestUi.function.name) ? "desktop" : "browser"]);
+        break;
+      }
+      // An unrelated task with actual tool work ends the search.
+      if (turnCalls.some(call => !["update_plan", "load_toolset", "finish_task"].includes(call?.function?.name))) break;
+      turnCalls.length = 0;
+    }
+  }
   if (settings?.decisionEndpoint && toolsetDiscovery.availableGroups.length > 0 && decisionQuery) {
     const routedGroups = await requestToolsetRoute({
       settings,
@@ -608,12 +643,7 @@ export async function runAgent({
       fetchImpl,
       signal: cancellationSignal,
     }).catch(() => []);
-    for (const tool of activateToolsets(toolsetDiscovery.deferredByGroup, routedGroups).tools) {
-      const toolName = tool?.function?.name;
-      if (toolName && !visibleTools.some((item) => item?.function?.name === toolName)) visibleTools.push(tool);
-      if (toolName && !effectiveTools.some((item) => item?.function?.name === toolName)) effectiveTools.push(tool);
-      if (toolName) toolSchemas.set(toolName, tool.function.parameters);
-    }
+    activateGroups(routedGroups);
   }
   let approvalChain = Promise.resolve();
   // action 可传工厂函数：审批卡出队时才生成，返回 null 表示排队期间情况已变（如先行授权
@@ -740,6 +770,7 @@ export async function runAgent({
       if (isCancelled() || cancellationSignal?.aborted) return withChanges({ status: "cancelled", finalText });
       // 先保存上一轮原始结果，再允许缩短本次请求携带的旧内容。
       captureExecutionMessages();
+    compactDesktopObservations(messages);
       const thinkingStartTime = Date.now();
       let currentRoundThinking = "";
       const thinkingId = startActivity("thinking", "思考过程", "");
@@ -810,8 +841,14 @@ export async function runAgent({
         ? reviewContextFingerprint(`${getApprovalMode?.() || approvalMode}\n${reviewerContext()}`, inlinePolicy?.hash || '') : '';
       // 端点不回 usage 时退化为本地估算（estimated: true），统计与上下文环都保持可用
       let usageSeen = false;
+      const lastAction = executedTools.at(-1);
+      const choosingNotepadReplace = !settings.reasoningEffort && /替换|\breplace\b/i.test(decisionQuery)
+        && lastAction?.name === "mcp__computer-use__get_app_state" && lastAction.status === "success"
+        && lastAction.args?.app === notepadApp && lastAction.args?.controls_only !== true
+        && sentTools.some(tool => tool.function?.name === `mcp__computer-use__${notepadReplace}`);
+      const requestSettings = choosingNotepadReplace ? summarizationSettings(settings) : settings;
       const requestCurrentModelOnce = () => withModelTimeout((signal) => requestModel({
-          settings,
+          settings: requestSettings,
           messages,
           fetchImpl,
           signal,
@@ -1407,6 +1444,13 @@ export async function runAgent({
               if (steps.filter((step) => step.status === "in_progress").length > 1) {
                 throw new Error("同一时间只能有一个进行中的步骤");
               }
+              if (steps.length === planSteps?.length && steps.every((step, index) =>
+                step.title === planSteps[index].title && step.status === planSteps[index].status)) {
+                const desktopReady = visibleTools.some(tool => tool?.function?.name === "mcp__computer-use__get_app_state");
+                result = "计划没有变化。请执行当前步骤，有新进展时再更新计划。"
+                  + (desktopReady ? "若当前步骤需要查看桌面应用，请先用 get_app_state 读取当前界面。" : "");
+                break;
+              }
               // 稳定步骤 id（process-chain）：与上轮同位置的同名步骤保持同一 id，用于把活动挂到具体步骤下
               planSteps = steps.map((step, index) => {
                 const previous = planSteps?.[index];
@@ -1873,7 +1917,8 @@ export async function runAgent({
             content: `${ok ? "成功" : "失败"}\n${result}`,
           },
           supplementalMessages,
-          invalidateInterfaceImages: isComputerUseTool(name) && ["get_app_state", "get_shared_app_state"].includes(computerUseAction(name)),
+          invalidateInterfaceImages: isComputerUseTool(name)
+            && !["list_apps", "check_permissions"].includes(computerUseAction(name)),
         };
       };
 

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { COMPUTER_USE_TOOL_PREFIX, computerUseAction } from "../computer-use.mts";
+import { COMPUTER_USE_TOOL_PREFIX, computerUseAction, computerUseKeyReceipt } from "../computer-use.mts";
 import { McpClient } from "../mcp.mts";
+import { notepadApp, notepadReplace, planNotepadReplace, replaceNotepadText } from "./notepad-replace.mts";
 import { validateDesktopClick } from "./click-parameters.mts";
+import { isNavigationClick, macControlEvidence, macObservationText, navigationObservation } from "./macos-observation.mts";
 
 const nativeActions = new Set([
   "click", "drag", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text",
@@ -25,11 +27,23 @@ function modelTool(tool, platform: string) {
     window_placement, click_method, key_method, ...nativeProperties
   } = input.properties || {};
   const properties = { ...nativeProperties };
-  const action = nativeActions.has(tool.name);
-  if ("app" in properties) properties.app = { type: "string", description: platform === "darwin"
+  if ("text_limit" in properties && (tool.name === "get_app_state" || tool.name === sharedObservation)) {
+    properties.text_limit = {
+      ...properties.text_limit,
+      description: "通常省略，使用默认文字长度。只有要读取较长正文时才传正整数或 max。",
+    };
+  }
+  const action = nativeActions.has(tool.name) || tool.name === notepadReplace;
+  if ("app" in properties && tool.name !== notepadReplace) properties.app = { type: "string", description: platform === "darwin"
     ? "list_apps 返回的正在运行的应用标识，如 com.apple.TextEdit。"
     : "list_apps 返回的目标应用的进程号 PID，使用数字字符串。" };
   if (action) properties.observation_id = observationProperty;
+  if (platform === "darwin" && tool.name === "get_app_state") {
+    properties.controls_only = {
+      type: "boolean",
+      description: "定位标签页时设为 true，仅返回窗口和导航控件，省略正文、选区和截图。确认目标后重新读取正文。",
+    };
+  }
   if (action && platform === "linux") {
     properties.background = {
       type: "boolean",
@@ -48,13 +62,15 @@ function modelTool(tool, platform: string) {
   };
 }
 
+type ReviewedAction = Parameters<typeof macControlEvidence>[1];
+
 export function createComputerUseRuntime(
   server: ReturnType<typeof import("../computer-use.mts").discoverComputerUseServer>,
   newClient = (options: object) => new McpClient(options),
 ) {
   type Run = {
     client: McpClient, connected: Promise<void>, closed: boolean,
-    observation?: { id: string, args: Record<string, any>, result: Awaited<ReturnType<McpClient["callTool"]>> },
+    observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, result: Awaited<ReturnType<McpClient["callTool"]>> },
     closing?: Promise<void>,
   };
   const runs = new Map<string, Run>();
@@ -77,6 +93,14 @@ export function createComputerUseRuntime(
             description: "截取 Linux 当前桌面上目标窗口所在区域，可能含有遮住它的其他窗口。仅在用户明确允许使用当前桌面且确认目标窗口可见时使用。" });
         }
         if (server.platform === "darwin") tools.push({
+          name: notepadReplace,
+          description: "Notepad-- 当前文档的文字替换首选。确认正文后一次提交，通过应用的普通查找/替换只改唯一匹配并复读。参数 old_text 只传要替换的文字，保留周围引号等原文。不会保存文件，也不使用系统鼠标、键盘或剪贴板。",
+          inputSchema: { type: "object", properties: {
+            app: { type: "string", enum: [notepadApp] },
+            old_text: { type: "string", description: "需要精确替换的原文。" },
+            new_text: { type: "string", description: "替换后的文字。" },
+          }, required: ["app", "old_text", "new_text"] },
+        }, {
           name: checkPermissions,
           description: "只查询 Open Computer Use 的 macOS 辅助功能与屏幕录制权限。",
           inputSchema: { type: "object", properties: {} },
@@ -114,8 +138,8 @@ export function createComputerUseRuntime(
   }
 
   async function call(fullName: string, args: Record<string, any> = {}, {
-    sessionId = "", runId = "", signal, review = false,
-  }: { sessionId?: string, runId?: string, signal?: AbortSignal, review?: boolean } = {}) {
+    sessionId = "", runId = "", signal, review = false, reviewAction,
+  }: { sessionId?: string, runId?: string, signal?: AbortSignal, review?: boolean, reviewAction?: ReviewedAction } = {}) {
     const name = computerUseAction(fullName);
     if (!server || disposed) return failure("当前系统没有可用的本机应用操作程序。");
     if (!sessionId || !runId || signal?.aborted) return failure("本机操作需要有效的任务。");
@@ -168,12 +192,34 @@ export function createComputerUseRuntime(
       }
 
       const previous = current.observation;
+      if (name === notepadReplace || (review && reviewAction?.name === notepadReplace)) {
+        if (!isMac || app !== notepadApp) return failure("此替换入口用于 macOS 的 Notepad--。");
+        if (!previous || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
+          return failure("请先读取 Notepad-- 的目标正文，并携带这次观察编号。");
+        }
+        const observe = () => invoke("get_app_state", { ...previous.args, include_ax: true, include_screenshot: false, text_limit: "max" });
+        const latest = await observe();
+        if (latest.isError) return format(latest);
+        const plan = planNotepadReplace(previous.result.text, latest.text, review ? reviewAction!.args : args);
+        if ("error" in plan) return failure(plan.error);
+        if (review) return {
+          ok: true,
+          result: `${plan.document.window}\n已核对正文，目标文字唯一匹配。拟将「${plan.oldText}」替换为「${plan.newText}」，范围仅限当前文档，完成后复读，不保存。`,
+          images: [],
+        };
+        current.observation = undefined;
+        const result = await replaceNotepadText(plan, observe, invoke);
+        return result.error ? failure(result.error) : { ok: true, result: result.text };
+      }
       if (review) {
         if (previous?.id !== args.observation_id || previous?.args.app !== app) return failure("当前观察已失效，请重新读取目标窗口。");
-        const fresh = await invoke("get_app_state", previous.args);
+        const evidence = isMac && reviewAction ? macControlEvidence(previous.result.text, reviewAction) : undefined;
+        const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
         if (fresh.isError) return format(fresh);
-        if (fresh.text !== previous.result.text) return failure("目标窗口或控件已发生变化，请重新观察。");
-        return format(fresh);
+        const matches = evidence ? macControlEvidence(fresh.text, reviewAction!) === evidence : fresh.text === previous.result.text;
+        if (!matches) return failure("目标窗口或控件已发生变化，请重新观察。");
+        if (previous.controlsOnly) return { ok: true, result: navigationObservation(fresh.text), images: [] };
+        return evidence ? { ...format(fresh), images: [] } : format(fresh);
       }
       if (name === "get_app_state" || name === sharedObservation) {
         current.observation = undefined;
@@ -186,10 +232,13 @@ export function createComputerUseRuntime(
           });
           if (!running) return failure("请先打开目标应用，再读取界面。");
         }
+        const controlsOnly = isMac && args.controls_only === true;
+        const textLimit = typeof args.text_limit === "string" && /^\d+$/.test(args.text_limit)
+          ? Number(args.text_limit) : args.text_limit;
         const observationArgs = {
-          app, text_limit: args.text_limit, max_tree_nodes: args.max_tree_nodes, max_tree_depth: args.max_tree_depth,
-          include_ax: args.include_ax !== false,
-          include_screenshot: server.platform === "linux" ? name === sharedObservation : args.include_screenshot !== false,
+          app, text_limit: textLimit, max_tree_nodes: args.max_tree_nodes, max_tree_depth: args.max_tree_depth,
+          include_ax: controlsOnly || args.include_ax !== false,
+          include_screenshot: server.platform === "linux" ? name === sharedObservation : !controlsOnly && args.include_screenshot !== false,
         };
         const result = await invoke("get_app_state", observationArgs);
         if (result.isError) return format(result);
@@ -198,8 +247,9 @@ export function createComputerUseRuntime(
           return failure("返回的窗口无法与目标应用核对，请重新列出应用。");
         }
         const id = randomUUID();
-        current.observation = { id, args: observationArgs, result };
-        return { ...format(result), result: `观察编号：${id}\n${result.text}` };
+        current.observation = { id, args: observationArgs, controlsOnly, result };
+        const visible = controlsOnly ? navigationObservation(result.text) : result.text;
+        return { ...format(result), result: `观察编号：${id}\n${visible}`, images: controlsOnly ? [] : result.images };
       }
 
       if (!previous || previous.id !== args.observation_id || previous.args.app !== app) {
@@ -239,17 +289,34 @@ export function createComputerUseRuntime(
         if (name === "press_key" || name === "type_text") nativeArgs.key_method = "sky_key";
       }
 
-      // Refresh the same process immediately before dispatch. Never retarget a
-      // queued action to the new control occupying an old element index.
+      const action = { name, args };
+      if (previous.controlsOnly) {
+        if (!isNavigationClick(previous.result.text, action)) return failure("当前观察仅用于导航，请先重新读取目标界面。");
+        nativeArgs.click_method = "accessibility";
+      }
+      // Preserve the target and relevant UI state at the same native index.
+      // Coordinate actions still require the complete matching observation.
+      const evidence = isMac && !coordinate ? macControlEvidence(previous.result.text, action) : undefined;
       current.observation = undefined;
-      const fresh = await invoke("get_app_state", previous.args);
+      const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
       if (fresh.isError) return format(fresh);
-      if (fresh.text !== previous.result.text || (coordinate &&
-        fresh.images[0]?.data !== previous.result.images[0]?.data)) {
+      const matches = evidence ? macControlEvidence(fresh.text, action) === evidence : fresh.text === previous.result.text;
+      if (!matches || (coordinate && fresh.images[0]?.data !== previous.result.images[0]?.data)) {
         return failure("窗口或控件已发生变化。请重新读取界面，再选择操作目标。");
       }
+      if (evidence && name === "click" && macObservationText(fresh.text) !== macObservationText(previous.result.text)) {
+        nativeArgs.click_method = "accessibility";
+      }
       const result = await invoke(name, nativeArgs);
-      return result.isError ? format(result) : { ...format(result), result: `${result.text}\n请重新读取界面，确认操作结果。` };
+      if (isMac && result.isError && /^set_value could not verify/.test(result.text)) {
+        return failure(`${result.text} 请先复读。正文没有变化时，优先使用应用自带的「查找/替换」或其他适用的编辑入口；不要重复同一次写入。`);
+      }
+      if (result.isError) return format(result);
+      // Native key actions can return a snapshot without a usable observation ID.
+      const receipt = computerUseKeyReceipt(name, result.text);
+      return receipt
+        ? { ok: true, result: receipt, images: [] }
+        : { ...format(result), result: `${result.text}\n请重新读取界面，确认操作结果。` };
     }).catch(async (error: any) => {
       await closeRun(current);
       if (runs.get(key) === current && !signal?.aborted) runs.delete(key);

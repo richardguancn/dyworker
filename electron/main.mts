@@ -1168,7 +1168,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
       return pluginToolResult(executed.result);
     }
     const toolSignal = AbortSignal.any([desktopLifetime.signal, ...[desktopRun.signal, context.signal].filter(Boolean)]);
-    return callMcpTool(settings, name, args, { ...desktopRun, signal: toolSignal, review: context.review === true });
+    return callMcpTool(settings, name, args, { ...desktopRun, signal: toolSignal, review: context.review === true, reviewAction: context.reviewAction });
   };
   route.setExecutionContext = (context) => { desktopRun = context; };
   route.hasPendingHumanHandoff = () => backgroundBrowserHandoffs.owns(taskBrowser.background);

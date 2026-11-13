@@ -24,7 +24,7 @@ function functionTool(name, description, properties, required) {
 // 不传设置时返回完整目录；模型调用传入设置，避免提供当前无法使用的厂商工具。
 export function toolDefinitions(settings = null) {
   return [
-    functionTool("update_plan", "维护多步任务计划（2-8 步），每完成一步更新列表。",
+    functionTool("update_plan", "建立多步任务计划（2-8 步），实际进展或步骤变化时才更新。计划建立后，先调用当前步骤所需的工具。",
       {
         steps: {
           type: "array",

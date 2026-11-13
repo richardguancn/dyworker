@@ -52,6 +52,16 @@ export function computerUseAction(name) {
   return isComputerUseTool(name) ? String(name).slice(COMPUTER_USE_TOOL_PREFIX.length) : "";
 }
 
+export function computerUseWindowHeader(text: string) {
+  return /^App=[^\r\n]+ \(pid \d+\)\r?\nWindow: [^\r\n]+/.exec(text)?.[0];
+}
+
+export function computerUseKeyReceipt(action: string, text: string) {
+  if (action !== "press_key" && action !== "type_text") return;
+  const header = computerUseWindowHeader(text);
+  if (header) return `操作已发送。\n${header}\n请重新读取界面，确认操作结果。`;
+}
+
 // Protect historical rules for the removed built-in plugin as well.
 export function isLinuxSharedDesktopTool(name) {
   return String(name || "").startsWith("plugin__dyworker_linux_computer_use__");

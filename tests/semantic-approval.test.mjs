@@ -301,3 +301,52 @@ test("机器人正常任务按真实用户要求审核，不依赖陌生工具�
   assert.equal(reviews, 1); assert.equal(asks, 0);
   assert.equal(isStatefulUiOperation("browser__open"), false); assert.equal(isStatefulUiOperation(click), true);
 });
+
+test('GLM 5.3 的界面审核使用模型支持的轻量档', async () => {
+  const settings = { endpoint: 'https://open.bigmodel.cn/api/v1/responses', model: 'GLM-5.3-Flash', apiKey: 'mock' };
+  const name = 'mcp__computer-use__replace_document_text';
+  const result = await reviewApproval({
+    settings,
+    action: { kind: name, args: { app: 'www.itdp.cn', old_text: '待替换', new_text: '已通过' },
+      observation: { available: true, text: 'New 6 的原文唯一匹配，范围仅限当前文档。' } },
+    context: '用户要求只替换当前测试文档的指定文本。',
+    fetchImpl: async (_url, opts) => {
+      assert.equal(JSON.parse(opts.body).reasoning.effort, 'low');
+      return { ok: true, json: async () => ({ output: [{ type: 'message', role: 'assistant',
+        content: [{ type: 'output_text', text: '{"decision":"allow","reason":"范围已确认"}' }] }] }) };
+    },
+  });
+  assert.equal(result.decision, 'allow', result.reason);
+});
+
+test('Notepad-- 读完正文后，默认轻量选工具并保留用户指定档位', async t => {
+  const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-notepad-model-'));
+  t.after(() => fs.rm(workspacePath, { recursive: true, force: true }));
+  const replace = 'mcp__computer-use__replace_document_text';
+  for (const reasoningEffort of ['', 'high']) {
+    let request = 0;
+    const result = await runAgent({
+      settings: { endpoint: 'https://open.bigmodel.cn/api/v1/responses', model: 'GLM-5.3-Flash', apiKey: 'mock', reasoningEffort },
+      workspacePath,
+      conversation: [{ role: 'user', content: '替换 Notepad-- 当前文档的指定文字，不保存。' }],
+      extraTools: [state, replace].map(name => ({
+        type: 'function', function: { name, description: name, parameters: { type: 'object', properties: { app: { type: 'string' } } } },
+      })),
+      onExtraTool: async name => {
+        assert.equal(name, state);
+        return { ok: true, result: 'New 6 正文是「待替换」。' };
+      },
+      fetchImpl: async (_url, opts) => {
+        const payload = JSON.parse(opts.body);
+        request++;
+        const output = request === 1 ? { type: 'function_call', name: 'load_toolset', call_id: 'load', arguments: '{"groups":["desktop"]}' }
+          : request === 2 ? { type: 'function_call', name: state, call_id: 'observe', arguments: '{"app":"www.itdp.cn"}' }
+          : { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '已读取目标文档。' }] };
+        if (request === 3) assert.equal(payload.reasoning.effort, reasoningEffort || 'low');
+        return { ok: true, json: async () => ({ output: [output] }) };
+      },
+    });
+    assert.equal(result.status, 'done');
+    assert.equal(request, 3);
+  }
+});

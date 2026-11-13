@@ -39,6 +39,7 @@ const computerUseToolLabels = {
   hover: "悬停应用界面",
   perform_secondary_action: "执行应用菜单操作",
   set_value: "填写应用控件",
+  replace_document_text: "替换 Notepad-- 当前文档中的文字",
   replace_text: "替换应用内文字",
   insert_text: "在应用选区插入文字",
   select_text: "选择应用内文字",

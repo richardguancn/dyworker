@@ -1,5 +1,6 @@
 // 模型消息整理、图片上下文和用量估算。
 import { detectProvider } from "../providers.mts";
+import { computerUseWindowHeader, isComputerUseTool } from "../computer-use.mts";
 import { bareModelName } from "./model-discovery.mts";
 import { imagePartFromContent } from "./vision.mts";
 
@@ -185,6 +186,35 @@ export function replaceInterfaceImagesWithText(messages, keepLatest = false) {
     replaced += images.length;
   }
   return replaced;
+}
+
+// Keep two complete desktop snapshots per app for comparisons. Older control
+// IDs are already unusable and must not be supplied as current evidence.
+export function compactDesktopObservations(messages) {
+  const desktopCalls = new Set<string>();
+  for (const message of messages) {
+    for (const call of message?.tool_calls || []) {
+      if (isComputerUseTool(call.function?.name)) desktopCalls.add(call.id);
+    }
+  }
+  const retained = new Map<string, number>();
+  const omitted = "[旧界面已省略，操作前请重新读取。]";
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "tool" || !desktopCalls.has(message.tool_call_id)
+      || typeof message.content !== "string" || !message.content.startsWith("成功\n")
+      || message.content.endsWith(omitted)) continue;
+    const snapshot = message.content.slice("成功\n".length).replace(/^观察编号：[^\r\n]+\r?\n/, "");
+    const header = computerUseWindowHeader(snapshot);
+    if (!header || snapshot.length <= header.length) continue;
+    const app = header.split("\n", 1)[0].replace(/ \(pid \d+\)\r?$/, "");
+    const count = retained.get(app) || 0;
+    if (count < 2) {
+      retained.set(app, count + 1);
+      continue;
+    }
+    message.content = `成功\n${header}\n${omitted}`;
+  }
 }
 
 export function messagesForDebug(messages) {

@@ -159,7 +159,8 @@ export async function readReviewObservation({ name, args = {}, availableNames = 
       return { available: false, text: verdict.message || "当前界面读取受到用户规则限制" };
     }
     const extra: any = await Promise.race([
-      execute(reader, readArgs, { review: isComputerUseTool(name), signal }),
+      execute(reader, readArgs, { review: isComputerUseTool(name), signal,
+        reviewAction: isComputerUseTool(name) ? { name: computerUseAction(name), args } : undefined }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("读取当前界面超时")), timeoutMs); timer.unref?.(); }),
       new Promise((_, reject) => {
         abort = () => reject(signal.reason || new Error("任务已停止"));
