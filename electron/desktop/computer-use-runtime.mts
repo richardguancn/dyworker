@@ -6,6 +6,8 @@ import { McpClient } from "../mcp.mts";
 import { notepadApp, notepadReplace, planNotepadReplace, replaceNotepadText } from "./notepad-replace.mts";
 import { validateDesktopClick } from "./click-parameters.mts";
 import { isNavigationClick, macControlEvidence, macObservationText, navigationObservation } from "./macos-observation.mts";
+import { browserFillForm, browserFillReview, browserFormFields, browserFormHint, browserFormObservation, browserFormWindow,
+  browserTextShortcut, fillBrowserForm, hasBrowserPage, isBrowserFormField, planBrowserFill, readBrowserForm, verifiedBrowserChromeFocus } from "./browser-fill-form.mts";
 
 const nativeActions = new Set([
   "click", "drag", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text",
@@ -33,7 +35,7 @@ function modelTool(tool, platform: string) {
       description: "通常省略，使用默认文字长度。只有要读取较长正文时才传正整数或 max。",
     };
   }
-  const action = nativeActions.has(tool.name) || tool.name === notepadReplace;
+  const action = nativeActions.has(tool.name) || tool.name === notepadReplace || tool.name === browserFillForm;
   if ("app" in properties && tool.name !== notepadReplace) properties.app = { type: "string", description: platform === "darwin"
     ? "list_apps 返回的正在运行的应用标识，如 com.apple.TextEdit。"
     : "list_apps 返回的目标应用的进程号 PID，使用数字字符串。" };
@@ -44,6 +46,8 @@ function modelTool(tool, platform: string) {
       description: "定位标签页时设为 true，仅返回窗口和导航控件，省略正文、选区和截图。确认目标后重新读取正文。",
     };
   }
+  const guidance = platform === "darwin" && ["click", "set_value", "press_key", "type_text"].includes(tool.name)
+    ? " macOS 网页表单优先使用 fill_form，把本页待改字段一次传入。" : "";
   if (action && platform === "linux") {
     properties.background = {
       type: "boolean",
@@ -56,7 +60,7 @@ function modelTool(tool, platform: string) {
     type: "function",
     function: {
       name: `${COMPUTER_USE_TOOL_PREFIX}${tool.name}`,
-      description: `【本机应用操作】${tool.description || tool.name}${action ? " 动作后重新读取界面并确认结果。" : ""}`,
+      description: `【本机应用操作】${tool.description || tool.name}${action && tool.name !== browserFillForm ? " 动作后重新读取界面并确认结果。" : ""}${guidance}`,
       parameters: { ...input, type: "object", properties, ...(required.length ? { required } : {}) },
     },
   };
@@ -70,7 +74,8 @@ export function createComputerUseRuntime(
 ) {
   type Run = {
     client: McpClient, connected: Promise<void>, closed: boolean,
-    observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, result: Awaited<ReturnType<McpClient["callTool"]>> },
+    observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, browserWindow?: string, result: Awaited<ReturnType<McpClient["callTool"]>> },
+    observedBrowsers: Set<string>,
     closing?: Promise<void>,
   };
   const runs = new Map<string, Run>();
@@ -105,7 +110,26 @@ export function createComputerUseRuntime(
           description: "只查询 Open Computer Use 的 macOS 辅助功能与屏幕录制权限。",
           inputSchema: { type: "object", properties: {} },
         });
-        return tools.map(tool => modelTool(tool, server.platform));
+        if (server.platform === "darwin" && ["get_app_state", "click", "set_value", "press_key", "type_text"]
+          .every(name => tools.some(tool => tool.name === name)) && probe.tools.some(tool => tool.name === "query")) {
+          tools.push({
+            name: browserFillForm,
+            description: "在 macOS 浏览器已打开的网页中一次替换一个或多个文字输入框。先读取并确认页面及输入框编号。工具逐项替换并读回，遇到变化即停止。保存或提交须另行操作。",
+            inputSchema: { type: "object", properties: {
+              app: { type: "string" },
+              fields: browserFormFields,
+            }, required: ["app", "fields"] },
+          });
+        }
+        const definitions = tools.map(tool => modelTool(tool, server.platform));
+        if (tools.some(tool => tool.name === browserFillForm)) {
+          const state = definitions.find(tool => tool.function.name === COMPUTER_USE_TOOL_PREFIX + "get_app_state");
+          state.function.parameters.properties.form_only = {
+            type: "boolean",
+            description: "网页填表时设为 true。返回当前网页、表单范围和可填写的文字输入框编号，省略截图与正文。随后用 fill_form。",
+          };
+        }
+        return definitions;
       } finally {
         await probe.close();
       }
@@ -162,7 +186,7 @@ export function createComputerUseRuntime(
     let run = runs.get(key);
     if (!run) {
       const client = newClient(server);
-      run = { client, connected: client.connect(), closed: false };
+      run = { client, connected: client.connect(), closed: false, observedBrowsers: new Set() };
       void run.connected.catch(() => {});
       runs.set(key, run);
     }
@@ -192,6 +216,23 @@ export function createComputerUseRuntime(
       }
 
       const previous = current.observation;
+      const browserFormAvailable = isMac && available.some(tool => tool.function.name === COMPUTER_USE_TOOL_PREFIX + browserFillForm);
+      if (name === browserFillForm || (review && reviewAction?.name === browserFillForm)) {
+        if (!isMac || !previous?.browserWindow || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
+          return failure("请先读取浏览器中的目标网页，并携带这次观察编号。");
+        }
+        const observe = async () => readBrowserForm(app, await invoke("get_app_state", {
+          ...previous.args, include_ax: true, include_screenshot: false, text_limit: "max",
+          max_tree_nodes: Math.max(previous.args.max_tree_nodes || 0, 2400),
+        }), invoke);
+        const latest = await observe();
+        if (latest.isError) return failure(latest.text);
+        const plan = planBrowserFill(app, previous.result.text, previous.browserWindow, latest, (review ? reviewAction!.args : args).fields);
+        if ("error" in plan) return failure(plan.error);
+        if (review) return { ok: true, result: browserFillReview(plan), images: [] };
+        current.observation = undefined;
+        return await fillBrowserForm(plan, observe, invoke);
+      }
       if (name === notepadReplace || (review && reviewAction?.name === notepadReplace)) {
         if (!isMac || app !== notepadApp) return failure("此替换入口用于 macOS 的 Notepad--。");
         if (!previous || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
@@ -232,13 +273,15 @@ export function createComputerUseRuntime(
           });
           if (!running) return failure("请先打开目标应用，再读取界面。");
         }
-        const controlsOnly = isMac && args.controls_only === true;
+        const formOnly = browserFormAvailable && args.form_only === true;
+        const controlsOnly = isMac && !formOnly && args.controls_only === true;
         const textLimit = typeof args.text_limit === "string" && /^\d+$/.test(args.text_limit)
           ? Number(args.text_limit) : args.text_limit;
         const observationArgs = {
-          app, text_limit: textLimit, max_tree_nodes: args.max_tree_nodes, max_tree_depth: args.max_tree_depth,
-          include_ax: controlsOnly || args.include_ax !== false,
-          include_screenshot: server.platform === "linux" ? name === sharedObservation : !controlsOnly && args.include_screenshot !== false,
+          app, text_limit: formOnly ? "max" : textLimit,
+          max_tree_nodes: formOnly ? 2400 : args.max_tree_nodes, max_tree_depth: formOnly ? 96 : args.max_tree_depth,
+          include_ax: formOnly || controlsOnly || args.include_ax !== false,
+          include_screenshot: server.platform === "linux" ? name === sharedObservation : !formOnly && !controlsOnly && args.include_screenshot !== false,
         };
         const result = await invoke("get_app_state", observationArgs);
         if (result.isError) return format(result);
@@ -247,13 +290,28 @@ export function createComputerUseRuntime(
           return failure("返回的窗口无法与目标应用核对，请重新列出应用。");
         }
         const id = randomUUID();
-        current.observation = { id, args: observationArgs, controlsOnly, result };
-        const visible = controlsOnly ? navigationObservation(result.text) : result.text;
-        return { ...format(result), result: `观察编号：${id}\n${visible}`, images: controlsOnly ? [] : result.images };
+        const form = formOnly ? await readBrowserForm(app, result, invoke) : undefined;
+        const summary = form && browserFormObservation(form);
+        if (formOnly && !summary) return failure("无法从当前网页核对可填写的表单。请确认目标标签页和字段是否已加载。");
+        const browserWindow = form ? form.form?.windowKey : browserFormAvailable && !controlsOnly
+          ? await browserFormWindow(app, result.text, invoke) : undefined;
+        current.observation = { id, args: observationArgs, controlsOnly, browserWindow, result };
+        const visible = summary || (controlsOnly ? navigationObservation(result.text) : result.text);
+        if (browserFormAvailable && hasBrowserPage(result.text)) current.observedBrowsers.add(app);
+        const hint = !controlsOnly && !summary && current.observedBrowsers.has(app) ? `${browserFormHint}\n` : "";
+        return { ...format(result), result: `观察编号：${id}\n${hint}${visible}`, images: controlsOnly || formOnly ? [] : result.images };
       }
 
       if (!previous || previous.id !== args.observation_id || previous.args.app !== app) {
         return failure("当前观察已失效，请先读取目标窗口并携带最新观察编号。");
+      }
+      const protectBrowserInput = browserFormAvailable && browserTextShortcut(name, args);
+      const unsafeBrowserInput = "当前网页无法核对文字输入的目标。请用 get_app_state 的 form_only=true 读取表单，再用 fill_form 一次填写本页待改字段。若要输入浏览器地址或搜索词，请先聚焦对应输入栏并重新观察。";
+      if (browserFormAvailable && name === "set_value" && isBrowserFormField(app, previous.result.text, args.element_index)) {
+        return failure(browserFormHint);
+      }
+      if (protectBrowserInput && current.observedBrowsers.has(app) && !verifiedBrowserChromeFocus(previous.result.text)) {
+        return failure(unsafeBrowserInput);
       }
       const nativeArgs = Object.fromEntries(Object.entries(args).filter(([field]) =>
         Object.hasOwn(toolDefinition.parameters.properties, field)
@@ -300,6 +358,9 @@ export function createComputerUseRuntime(
       current.observation = undefined;
       const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
       if (fresh.isError) return format(fresh);
+      if (protectBrowserInput && (current.observedBrowsers.has(app) || hasBrowserPage(fresh.text)) && !verifiedBrowserChromeFocus(fresh.text)) {
+        return failure(unsafeBrowserInput);
+      }
       const matches = evidence ? macControlEvidence(fresh.text, action) === evidence : fresh.text === previous.result.text;
       if (!matches || (coordinate && fresh.images[0]?.data !== previous.result.images[0]?.data)) {
         return failure("窗口或控件已发生变化。请重新读取界面，再选择操作目标。");

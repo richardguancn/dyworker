@@ -47,6 +47,7 @@ function harness(platform = 'linux') {
     tool('press_key', ['app', 'key', 'key_method'], ['app', 'key']),
     tool('type_text', ['app', 'text', 'key_method'], ['app', 'text']),
     tool('set_value', ['app', 'element_index', 'value'], ['app', 'element_index', 'value']),
+    tool('query', ['app', 'role'], ['app']),
     tool('js', [], []),
   ];
   const calls = [];
@@ -55,11 +56,12 @@ function harness(platform = 'linux') {
     const client = { tools, closed: false, connect: async () => {}, close: async () => { client.closed = true; },
       callTool: async (name, args) => {
         calls.push({ name, args, client });
-        if (name === 'list_apps') return { text: '文本编辑 — com.example.editor [running]', images: [] };
+        if (name === 'list_apps') return { text: fixture.apps ?? '文本编辑 — com.example.editor [running]', images: [] };
         if (name === 'get_app_state') return {
           text: fixture.snapshot ?? `App=com.example.editor (pid 123)\nWindow: "便笺", App: 文本编辑.\n0 button ${fixture.target}`,
           images: args.include_screenshot ? [{ mimeType: 'image/png', data: 'AAAA' }] : [],
         };
+        if (fixture.handleAction) return fixture.handleAction(name, args);
         return fixture.actionResult ?? { text: 'ok', images: [] };
       } };
     clients.push(client);
@@ -88,6 +90,247 @@ test('Linux 默认只读控件，只派发明确的后台点击，变更界面�
   fixture.target = '删除';
   assert.match((await call('click', { ...args, observation_id: idOf(next) })).result, /已发生变化/);
   assert.equal(calls.filter(call => call.name === 'click').length, 1);
+});
+
+const safari = 'com.apple.Safari';
+const fill = 'fill_form';
+const safariFields = [
+  { element_index: '93', value: '한국어 홍보 문구' },
+  { element_index: '101', value: '한국어 설명\n\n둘째 줄' },
+  { element_index: '119', value: '' },
+];
+
+async function browserForm(t, { afterAction, duplicate = false, directWrite = false, chromium = false } = {}) {
+  const { calls, fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  const app = chromium ? 'com.example.chromium' : safari;
+  const appName = chromium ? 'Chromium Browser' : 'Safari浏览器';
+  fixture.apps = `${appName} — ${app} [running]`;
+  const labels = ['推广文本', '描述', '关键词'];
+  const form = { values: ['旧推广文本', '旧描述\n第二行', '旧关键词'], indexes: ['93', '101', '119'],
+    language: '韩语', focused: -1, selected: false, showFocus: true, windowId: 4321 };
+  const render = () => {
+    const value = text => text.replaceAll('\n', '\\n');
+    fixture.snapshot = [
+      `App=${app} (pid 1306)`,
+      `Window: "App Store Connect", App: ${appName}.`,
+      chromium ? '0 standard window App Store Connect, Secondary Actions: Raise'
+        : '0 标准窗口 App Store Connect ID: SafariWindow?IsSecure=true&UUID=test-window, Secondary Actions: Raise',
+      `\t6 ${chromium ? 'HTML content' : 'HTML内容'} App Store Connect, URL: https://appstoreconnect.apple.com/test`,
+      '\t\t71 标题 产品页面信息 Value: 3',
+      `\t\t74 弹出式按钮 ${form.language}`,
+      ...labels.map((label, i) => {
+        const kind = chromium ? (i === 2 ? 'text field' : 'text entry area') : (i === 2 ? '文本栏' : '文本输入区');
+        const separator = chromium && i < 2 ? ' ' : ' Value: ';
+        return `\t\t${form.indexes[i]} ${kind} (settable, string) ${label}${form.values[i] ? separator + value(form.values[i]) : ''}`;
+      }),
+      ...(duplicate ? ['\t\t121 文本栏 (settable, string) 关键词 Value: 另一个关键词'] : []),
+      '\t\t130 按钮 保存',
+      '\t211 标签 App Store Connect ID: TabBarTab?isActive=true, Value: on',
+      ...(form.focused < 0 || !form.showFocus ? [] : [`The focused UI element is ${form.indexes[form.focused]} editable.`]),
+      ...(form.selected ? [`Selected text: [${value(form.values[form.focused])}]`] : []),
+    ].join('\n');
+  };
+  fixture.handleAction = (name, args) => {
+    assert.equal(args.app, app);
+    if (name === 'query') {
+      const matches = args.role === 'AXWebArea' ? [{ title: 'App Store Connect' }]
+        : labels.slice(0, 2).map((title, index) => ({ title, value: form.values[index] }));
+      return { text: JSON.stringify({ window_id: form.windowId, truncated: false, matches }), images: [] };
+    }
+    if (name === 'click') {
+      assert.equal(args.click_method, 'sky_click');
+      form.focused = form.indexes.indexOf(args.element_index);
+      form.selected = false;
+    } else if (name === 'set_value') {
+      if (!directWrite) return { isError: true, text: 'set_value could not verify', images: [] };
+      form.values[form.indexes.indexOf(args.element_index)] = args.value;
+    } else if (name === 'press_key' && args.key === 'cmd+a') {
+      assert.equal(args.key_method, 'sky_key');
+      form.selected = true;
+    } else if (name === 'type_text' || (name === 'press_key' && args.key === 'backspace')) {
+      assert.equal(args.key_method, 'sky_key');
+      form.values[form.focused] = args.text ?? '';
+      form.selected = false;
+      // A changed character counter can shift the rest of the tree.
+      form.indexes = form.indexes.map(index => String(Number(index) + 1));
+    } else assert.fail(`Unexpected form action: ${name}`);
+    afterAction?.(form, name, args);
+    render();
+    return { text: 'ok', images: [] };
+  };
+  render();
+  const observation = await call('get_app_state', { app, include_screenshot: false });
+  assert.equal(observation.ok, true, observation.result);
+  return {
+    call, calls, form, render, runtime,
+    args: { app, observation_id: idOf(observation), fields: safariFields },
+    mutations: () => calls.filter(({ name }) => ['click', 'press_key', 'type_text', 'set_value'].includes(name)),
+  };
+}
+
+test('Safari 一次填写三项，核对韩语、换行、清空和变动后的控件编号', async t => {
+  const { call, args, calls, form, mutations, runtime } = await browserForm(t);
+  const tool = (await runtime.definitions()).find(tool => tool.function.name === prefix + fill);
+  assert.deepEqual(tool.function.parameters.required, ['app', 'fields', 'observation_id']);
+  assert.equal(evaluateApproval({ approvalMode: 'deny-changes', name: prefix + fill, args }), 'deny');
+  const review = await readReviewObservation({
+    name: prefix + fill, args, availableNames: [prefix + 'get_app_state'],
+    execute: (name, input, context) => runtime.call(name, input, { ...scope, ...context }),
+  });
+  assert.equal(review.available, true, review.text);
+  assert.match(review.text, /推广文本[\s\S]*描述[\s\S]*关键词/);
+  assert.match(review.text, /弹出式按钮 韩语/);
+  assert.deepEqual(mutations(), []);
+  const result = await call(fill, args);
+  assert.equal(result.ok, true, result.result);
+  assert.match(result.result, /已核对 3 个输入框：推广文本、描述、关键词/);
+  assert.deepEqual(form.values, safariFields.map(field => field.value));
+  assert.deepEqual(mutations().filter(({ name }) => name === 'click').map(({ args }) => args.element_index), ['93', '102', '121']);
+  assert.ok(calls.filter(({ name }) => name === 'get_app_state').every(({ args }) => !args.include_screenshot));
+  assert.equal((await call(fill, args)).ok, false);
+});
+
+test('同一个批量工具可填 Chromium 控件，并能区分同名窗口', async t => {
+  const { call, args, form, mutations } = await browserForm(t, { chromium: true, directWrite: true });
+  form.windowId++;
+  const refused = await call(fill, args);
+  assert.match(refused.result, /无法核对当前浏览器窗口和表单/);
+  assert.deepEqual(mutations(), []);
+  form.windowId--;
+  const result = await call(fill, args);
+  assert.equal(result.ok, true, result.result);
+  assert.deepEqual(form.values, safariFields.map(field => field.value));
+});
+
+test('网页表单观察直接交给批量填写，拦截逐字段键入及无焦点的全选', async t => {
+  const { call, args, calls, form, mutations } = await browserForm(t, { directWrite: true });
+  const { app } = args;
+  const observed = await call('get_app_state', { app, form_only: true, text_limit: 20, max_tree_depth: 3, max_tree_nodes: 10 });
+  assert.equal(observed.ok, true, observed.result);
+  assert.match(observed.result, /韩语[\s\S]*93 多行输入框「推广文本」[\s\S]*101 多行输入框「描述」[\s\S]*119 单行输入框「关键词」[\s\S]*fill_form/);
+  assert.doesNotMatch(observed.result, /旧推广文本|旧描述|旧关键词/);
+  const nativeRead = calls.findLast(call => call.name === 'get_app_state').args;
+  assert.deepEqual([nativeRead.text_limit, nativeRead.max_tree_depth, nativeRead.max_tree_nodes, nativeRead.include_screenshot], ['max', 96, 2400, false]);
+  const target = { app, observation_id: idOf(observed) };
+  assert.match((await call('set_value', { ...target, element_index: '101', value: '法语长描述' })).result, /fill_form/);
+  assert.match((await call('press_key', { ...target, key: 'cmd+a' })).result, /fill_form/);
+  assert.match((await call('type_text', { ...target, text: '法语长描述' })).result, /fill_form/);
+  assert.deepEqual(mutations(), []);
+  const result = await call(fill, { ...target, fields: args.fields });
+  assert.equal(result.ok, true, result.result);
+  assert.deepEqual(form.values, args.fields.map(field => field.value));
+});
+
+test('网页只返回浅层快照且焦点未知时，拦截会写入旧焦点的键入', async t => {
+  const { call, args, calls, mutations } = await browserForm(t);
+  const client = calls.findLast(call => call.name === 'get_app_state').client;
+  const invoke = client.callTool;
+  client.callTool = (name, input) => name === 'get_app_state' ? Promise.resolve({
+    text: [
+      `App=${args.app} (pid 1306)`,
+      'Window: "P — App Store Connect", App: Safari浏览器.',
+      '0 标准窗口 P — App Store Connect ID: SafariWindow?IsSecure=true&UUID=test-window, Secondary Actions: Raise',
+      '\t1 分离组',
+      '[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]',
+    ].join('\n'), images: [],
+  }) : invoke(name, input);
+  const observed = await call('get_app_state', { app: args.app, max_tree_depth: 3 });
+  assert.match(observed.result, /form_only=true/);
+  assert.match((await call('type_text', { app: args.app, observation_id: idOf(observed), text: '法语长描述' })).result, /无法核对文字输入的目标/);
+  assert.deepEqual(mutations(), []);
+});
+
+test('网页打开时仍可向已经核对焦点的浏览器地址栏输入', async t => {
+  const { call, args, calls } = await browserForm(t, { chromium: true });
+  const client = calls.findLast(call => call.name === 'get_app_state').client;
+  const invoke = client.callTool;
+  client.callTool = async (name, input) => {
+    if (name === 'type_text') return { text: 'ok', images: [] };
+    const result = await invoke(name, input);
+    return name === 'get_app_state' ? {
+      ...result, text: result.text + '\n\t200 text field (settable, string) Address and search bar\nThe focused UI element is 200 text field.',
+    } : result;
+  };
+  const observed = await call('get_app_state', { app: args.app, include_screenshot: false });
+  const result = await call('type_text', { app: args.app, observation_id: idOf(observed), text: 'https://example.com' });
+  assert.equal(result.ok, true, result.result);
+});
+
+test('Safari 表单切换语言、字段重名或请求重复时，批量填写不会开始', async t => {
+  await t.test('同一网址切换语言', async t => {
+    const { call, args, form, render, mutations } = await browserForm(t);
+    form.language = '法语';
+    render();
+    assert.match((await call(fill, args)).result, /无法核对当前浏览器窗口和表单/);
+    assert.deepEqual(mutations(), []);
+  });
+  await t.test('重名字段', async t => {
+    const { call, args, mutations } = await browserForm(t, { duplicate: true });
+    assert.match((await call(fill, args)).result, /无法唯一核对输入框 119/);
+    assert.deepEqual(mutations(), []);
+  });
+  await t.test('重复编号', async t => {
+    const { call, args, mutations } = await browserForm(t);
+    assert.equal((await call(fill, { ...args, fields: [safariFields[0], safariFields[0]] })).ok, false);
+    assert.deepEqual(mutations(), []);
+  });
+});
+
+test('Safari 焦点跑到已填字段时停止，保留明确的进度', async t => {
+  const { call, args, form, mutations } = await browserForm(t, {
+    afterAction(state, name) {
+      if (name === 'click' && state.focused === 1) state.focused = 0;
+    },
+  });
+  const result = await call(fill, args);
+  assert.equal(result.ok, false);
+  assert.match(result.result, /未能确认「描述」的写入结果或焦点[\s\S]*已核对：推广文本/);
+  assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key', 'type_text', 'click', 'set_value']);
+  assert.deepEqual(form.values, ['한국어 홍보 문구', '旧描述\n第二行', '旧关键词']);
+});
+
+test('Safari 后台未报告焦点时，按控件写入并读回，不发送键盘输入', async t => {
+  const { call, args, form, mutations } = await browserForm(t, {
+    directWrite: true,
+    afterAction(state) { state.focused = 0; state.showFocus = false; },
+  });
+  const result = await call(fill, args);
+  assert.equal(result.ok, true, result.result);
+  assert.deepEqual(form.values, safariFields.map(field => field.value));
+  assert.deepEqual(mutations().map(action => action.name), [
+    'click', 'set_value', 'click', 'set_value', 'click', 'set_value',
+  ]);
+});
+
+test('Safari 填写过程中换了语言，停在已经核对的字段', async t => {
+  const { call, args, mutations } = await browserForm(t, {
+    directWrite: true,
+    afterAction(state, name) { if (name === 'click' && state.focused === 1) state.language = '法语'; },
+  });
+  const result = await call(fill, args);
+  assert.equal(result.ok, false);
+  assert.match(result.result, /点击「描述」后无法核对原表单[\s\S]*已核对：推广文本/);
+  assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'click']);
+});
+
+test('Safari 未全选时不输入，网页截断新值时不填写后续字段', async t => {
+  await t.test('选区失效', async t => {
+    const { call, args, mutations } = await browserForm(t, {
+      afterAction(state, name) { if (name === 'press_key') state.selected = false; },
+    });
+    assert.match((await call(fill, args)).result, /原文已完整选中/);
+    assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key']);
+  });
+  await t.test('新值只写入一部分', async t => {
+    const { call, args, mutations } = await browserForm(t, {
+      afterAction(state, name) { if (name === 'type_text') state.values[0] = state.values[0].slice(0, 2); },
+    });
+    const result = await call(fill, args);
+    assert.equal(result.ok, false);
+    assert.match(result.result, /已核对：无[\s\S]*「推广文本」可能已变化/);
+    assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key', 'type_text']);
+  });
 });
 
 test('macOS 按运行中的应用标识定位，用新观察核对进程后定向输入', async t => {
