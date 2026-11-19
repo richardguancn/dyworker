@@ -1128,7 +1128,7 @@ export async function runAgent({
         }
         if (hookVerdict?.action === "block") {
           const reason = hookVerdict.message || "该操作被用户或工作区配置的钩子规则禁止";
-          auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "blocked", detail: reason });
+          auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "blocked", detail: reason });
           const activityId = startActivity(name, summary, reason, { args });
           finishActivity(activityId, "error", "已被钩子规则阻止");
           debugLog("tool-result", `工具 ${name} 被钩子阻止`, reason);
@@ -1161,10 +1161,10 @@ export async function runAgent({
         const autoApproved = readOnlyAutoApproved || (decision === "allow" && name === "run_command"
           && (isDevAutoApprovableCommand(args.command)
             || (effectiveApprovalMode() === "reviewer" && isReviewerAutoApprovableCommand(args.command))));
-        const consequential = needsApproval(approvalToolName);
+        const consequential = needsApproval(approvalToolName, process.platform, args);
         if (decision === "allow" && consequential) {
           auditRecord({
-            tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
+            tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk,
             decision: ruleAllowed ? "rule-allowed" : "auto-allowed",
           });
         }
@@ -1177,7 +1177,7 @@ export async function runAgent({
           let approvalSource = "user";
           let reviewerReason = "";
           let reviewerPolicyHash = "";
-          const reviewerModelLabel = settings?.reviewerBackend === "local" && isStatefulUiOperation(approvalToolName)
+          const reviewerModelLabel = settings?.reviewerBackend === "local" && isStatefulUiOperation(approvalToolName, args)
             ? `当前模型(${settings?.model || ""})（界面审核）` : configuredReviewerModelLabel;
           if (decision === "ask") {
             const details = approvalDetails(approvalToolName, displayArgs);
@@ -1261,11 +1261,11 @@ export async function runAgent({
                 check: async (reader, readArgs) => evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], 'before_tool', reader, readArgs)
                   || await beforeToolExecute?.({ name: reader, args: readArgs }), signal: cancellationSignal });
               const processTargets = name === 'run_command' ? await inspectProcessTargets(String(args.command || ''), workspace.root, cancellationSignal) : null;
-              const missingFacts = Boolean(entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName)
+              const missingFacts = Boolean(entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName, args)
                 || inlinePolicy?.hash !== loadReviewerPolicy().hash
                 || inlineAuthorizationVersion !== reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewerContext()}`, inlinePolicy?.hash || ''));
               if (inlineApproval?.decision === 'deny') {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: 'reviewer-denied', detail: inlineApproval.reason });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-denied', detail: inlineApproval.reason });
                 return { message: { role: 'tool', tool_call_id: toolCall.id, content: `失败\n本次操作未执行：${inlineApproval.reason}` } };
               }
               if (!missingFacts && inlineApproval?.decision === 'allow') {
@@ -1318,10 +1318,10 @@ export async function runAgent({
                   } });
               reviewerState.total += 1;
               if (review.needsEvidence) {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: 'reviewer-needs-evidence', detail: review.reason });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-needs-evidence', detail: review.reason });
                 return { message: { role: 'tool', tool_call_id: toolCall.id, content: reviewerEvidenceMessage(review.reason) } };
               } else if (review.unavailable) {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-unavailable", detail: review.reason });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "reviewer-unavailable", detail: review.reason });
                 return { message: { role: "tool", tool_call_id: toolCall.id,
                   content: reviewerUnavailableMessage(review.reason) } };
               } else if (review.decision === "allow") {
@@ -1332,7 +1332,7 @@ export async function runAgent({
                 reviewerPolicyHash = review.policyHash || "";
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：放行`, `${summary}\n${review.reason}`);
               } else if (review.decision === "deny") {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "reviewer-denied", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：拒绝`, `${summary}\n${review.reason}`);
                 return {
                   message: {
@@ -1342,7 +1342,7 @@ export async function runAgent({
                   },
                 };
               } else {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "reviewer-escalated", detail: review.reason, model: reviewerModelLabel, policyHash: review.policyHash });
                 debugLog("tool-result", `审核助手（${reviewerModelLabel}）：转人工`, `${summary}\n${review.reason}`);
                 approved = await askApproval(review.reason);
               }
@@ -1360,7 +1360,7 @@ export async function runAgent({
             const denyReason = decision === "deny"
               ? "当前任务以只读方式运行，不允许修改文件或运行命令"
               : "用户拒绝了这次操作";
-            auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk, decision: "denied", detail: denyReason });
+            auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "denied", detail: denyReason });
             const activityId = startActivity(name, summary, denyReason, { args });
             finishActivity(activityId, "error", "未执行");
             return {
@@ -1373,7 +1373,7 @@ export async function runAgent({
           }
           if (consequential) {
             auditRecord({
-              tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
+              tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk,
               decision: approvalSource === "mode" ? "auto-allowed" : approvalSource === "reviewer" ? "reviewer-allowed" : "approved",
               ...(approvalSource === "reviewer" ? { detail: reviewerReason, model: reviewerModelLabel, policyHash: reviewerPolicyHash } : {}),
             });
@@ -1907,7 +1907,7 @@ export async function runAgent({
         finishActivity(activityId, ok ? "success" : "error", name === "view_image" && ok ? result : clipped(autoNote ? `${autoNote}\n${result}` : result, 500));
         if (consequential) {
           auditRecord({
-            tool: approvalToolName, summary, riskClass: classify(approvalToolName).risk,
+            tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk,
             decision: ok ? "executed" : "failed",
             detail: ok ? "" : String(result),
           });

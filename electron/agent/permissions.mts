@@ -5,8 +5,8 @@ import { isAutoApprovableCommand,isDevAutoApprovableCommand,isLowRiskCommand,isR
 import { matchStandingRule } from "./standing-rules.mts";
 
 // 浏览器只读集合与本机界面变更判定（computerUseActionNeedsApproval）在 risk.mjs 定义、顶部 re-export。
-export function needsApproval(name, platform = process.platform) {
-  return classify(name, {}, { platform }).consequential;
+export function needsApproval(name, platform = process.platform, args = {}) {
+  return classify(name, args, { platform }).consequential;
 }
 
 
@@ -22,7 +22,7 @@ export function evaluateApproval({
   platform = process.platform,
   standingRules = [],
 } = {} as any) {
-  const normallyNeedsApproval = needsApproval(name, platform);
+  const normallyNeedsApproval = needsApproval(name, platform, args);
   const computerUseMutation = isComputerUseTool(name) && normallyNeedsApproval;
   if (approvalMode === "deny-changes" && normallyNeedsApproval) return "deny";
   // 钩子强制审批永远压过常驻规则（保守：用户可用钩子撤销"始终允许"的效果）

@@ -360,15 +360,19 @@ export function verifyTaskEvidence({
   // “A已上传但B尚未上传”两侧分别核对，未完成的 B 不能掩盖虚报的 A
   const clauses = text.split(/[，,；;。！!\n\r]+|但(?:是)?|然而|不过|却/).map((s) => s.trim()).filter(Boolean);
   // 「推送/发送/转发」有歧义（git push 不是平台发布）：只有整段回复处在内容平台语境里才按发布声明
-  // 处理；本次调用过上传/发布类工具，同样说明处在发布语境
-  const platformContext = /(?:公众号|服务号|订阅号|视频号|草稿箱|草稿|素材库|发布平台|内容平台|后台|朋友圈|企业微信|抖音|小红书|微博|知乎|bilibili|文章|图文|稿件)/i.test(text)
+  // 处理；本次调用过上传/发布类工具，同样说明处在发布语境；纯邮件/邮件草稿语境不按内容发布平台误判
+  const explicitPlatformContext = /(?:公众号|服务号|订阅号|视频号|素材库|发布平台|内容平台|后台|朋友圈|企业微信|抖音|小红书|微博|知乎|bilibili|文章|图文|稿件)/i.test(text)
     || executedTools.some((tool) => /(?:^|[_-])(?:upload|publish|post|draft|material)(?:[_-]|$)/i.test(String(tool?.name || "")));
+  const pureEmailDraftContext = !explicitPlatformContext && /(?:QQ邮箱|电子邮箱|发一封邮件|这封邮件|邮件|收件人|邮件正文)/i.test(text);
+  const platformContext = explicitPlatformContext || (!pureEmailDraftContext && /草稿(?:箱)?/.test(text));
   const isPositiveUploadClause = (clause) => {
+    // 先剥离引号内不超过 12 字的状态类界面栏目名（如「已发送」「已发布」），避免「在『已发送』里核对」被误判
+    const normalizedClause = clause.replace(/[「“【\[](?:已发送|已发布|已发表|已同步|已推送|已转发|草稿|草稿箱)[」”】\]]/g, "栏目");
     // 「已发表的文章页」这类定语用法不是完成声明：实测「2. 或者已发表的文章页里手动转发到视频号」
     // 会被当成助手「已发表」，把纯咨询类交付误判成虚报上传。先把定语形式的上传动词剥掉再判声明，
     // 这样既不会误判定语，也不会因为句子以「可以/请/如需」开头就漏掉真正的完成声明。
-    const stripped = clause.replace(/已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)(?:的|过的)/g, "");
-    const hasAttributive = stripped !== clause;
+    const stripped = normalizedClause.replace(/已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)(?:的|过的)/g, "");
+    const hasAttributive = stripped !== normalizedClause;
     // 「尝试/准备/开始入库」是打算，不是完成；整句按意图处理，避免「均已尝试入库」被算成入库成功
     const attemptOnly = /(?:尝试|准备|打算|开始|即将|计划)[^。！？\n]{0,4}(?:入库|上传|发布|发表|同步|发送|推送)/.test(stripped);
     const hasPos = !attemptOnly && /(?:已(?:经)?(?:成功)?(?:全部)?(?:上传|发布|发表|同步)|(?:全部)?(?:上传|发布|发表|同步)(?:成功|完成)|全部(?:上传|发布|同步)|已(?:经)?(?:全部|均|都)?入(?:库|仓)|(?:均已|都已|全部|都|均)(?!\s*(?:尝试|准备|打算|开始|即将|计划))[^。！？\n]{0,6}入库|入库(?:成功|完成|完毕)|已进入草稿箱|(?:已经?|都|均|全部|成功)[^。！？\n]{0,3}进[^。！？\n]{0,3}草稿箱|已存为草稿|已加入草稿|成功存入草稿箱)/i.test(stripped);

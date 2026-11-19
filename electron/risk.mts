@@ -65,6 +65,23 @@ export function classify(name, args = {} as any, { platform = process.platform }
     return { risk: RISK.READ, consequential: false, computerUseMutation: false, internet: false };
   }
   if (name.startsWith("browser__")) {
+    if (name === "browser__tabs") {
+      const action = String(args?.action || "list").trim();
+      if (action === "list" || action === "activate" || action === "close") {
+        return { risk: RISK.READ, consequential: false, computerUseMutation: false, internet: false };
+      }
+      return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: action === "open" };
+    }
+    if (name === "browser__connect") {
+      const action = String(args?.action || "status").trim();
+      if (action === "discover" || action === "status" || action === "disconnect") {
+        return { risk: RISK.READ, consequential: false, computerUseMutation: false, internet: false };
+      }
+      return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: false };
+    }
+    if (name === "browser__cdp") {
+      return { risk: RISK.EXTERNAL, consequential: true, computerUseMutation: false, internet: false };
+    }
     if (browserReadOnlyTools.has(name)) {
       return { risk: RISK.READ, consequential: false, computerUseMutation: false, internet: false };
     }

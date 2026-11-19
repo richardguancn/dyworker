@@ -32,14 +32,14 @@ async function fixture(t) {
 }
 
 test('进程信号可以送审但不能保存成永久允许，明确规则和其他危险命令仍生效', () => {
-  for (const command of ['kill 123 2>/dev/null; rm -rf ./.gradle-home', 'pkill -f "build tool" 2>&1', 'killall node']) {
+  for (const command of ['kill 123 2>/dev/null; rm -rf ./.gradle-home', 'pkill -f "build tool" 2>&1', 'killall node', 'rm -rf existing']) {
     const input = { name: 'run_command', args: { command }, approvalMode: 'reviewer' };
     assert.equal(planTaskApproval(input), 'review');
     assert.equal(suggestStandingRule('run_command', input.args), null);
     assert.equal(planTaskApproval({ ...input, hookRequiresApproval: true, hook: { action: 'require_approval' } }), 'confirm');
     assert.equal(planTaskApproval({ ...input, approvalMode: 'deny-changes' }), 'deny');
   }
-  for (const command of ['sudo tool', 'rm -rf existing', 'git reset --hard HEAD', 'shutdown now']) {
+  for (const command of ['sudo tool', 'rm -rf /', 'git reset --hard HEAD', 'shutdown now']) {
     assert.notEqual(planTaskApproval({ name: 'run_command', args: { command }, approvalMode: 'reviewer' }), 'review');
   }
 });

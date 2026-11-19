@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, runAgent } from "../electron/agent.mts";
+import { builtinHooks, evaluateHooks, evaluateApproval, isReviewerEligible, runAgent, suggestStandingRule } from "../electron/agent.mts";
 import { unattendedApprovalMode, wakeApprovalMode } from "../electron/settings.mts";
 
 const exec = promisify(execFile);
@@ -160,4 +160,62 @@ test("实际任务拒绝审批后保留远程配置、分支名称和提交位�
       });
     }
   }
+});
+
+test("常规 rm/rmdir/unlink 允许进入替我审批语义审核，灾难性删除与非 reviewer 模式仍拦截或人工确认", async (t) => {
+  for (const command of [
+    "rm tmp.txt",
+    "rm -rf ./build",
+    "/bin/rm -f .dyworker/tmp/a.log",
+    "rmdir empty_dir",
+    "unlink foo.txt",
+  ]) {
+    assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command } }), true, command);
+    assert.equal(isReviewerEligible({ approvalMode: "allow-writes", name: "run_command", args: { command } }), false, command);
+    assert.equal(evaluateApproval({ approvalMode: "interactive", name: "run_command", args: { command } }), "ask", command);
+    assert.equal(suggestStandingRule("run_command", { command }), null, `不可为删除命令生成常驻允许规则：${command}`);
+  }
+  for (const dangerous of [
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "rm -rf /Users",
+    "rm --no-preserve-root -rf /",
+    "rm -rf C:\\",
+    "cd / && rm -rf *",
+    "sudo rm -rf ./tmp",
+  ]) {
+    assert.equal(isReviewerEligible({ approvalMode: "reviewer", name: "run_command", args: { command: dangerous } }), false, `灾难性或提权删除不能走语义审核：${dangerous}`);
+  }
+
+  if (process.platform === "win32") return;
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-rm-reviewer-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.writeFile(path.join(root, "temp.txt"), "disposable");
+  let reviews = 0;
+  let asks = 0;
+  let step = 0;
+  const result = await runAgent({
+    settings: { endpoint: "http://mock.local/v1/chat/completions", model: "mock-model", apiKey: "test" },
+    workspacePath: root,
+    approvalMode: "reviewer",
+    conversation: [{ role: "user", content: "清理掉 temp.txt 临时文件" }],
+    requestApproval: async () => { asks += 1; return false; },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(body.messages?.[0]?.content || "").includes("安全审核助手")) {
+        reviews += 1;
+        return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: '{"decision":"allow","reason":"清理用户明确指定的临时文件"}' } }] }) };
+      }
+      const message = step++ === 0
+        ? { role: "assistant", content: null, tool_calls: [{ id: "rm-1", type: "function", function: { name: "run_command", arguments: JSON.stringify({ command: "rm -f temp.txt" }) } }] }
+        : { role: "assistant", content: "已清理 temp.txt。" };
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+  assert.equal(result.status, "done");
+  assert.equal(reviews, 1);
+  assert.equal(asks, 0);
+  await assert.rejects(fs.access(path.join(root, "temp.txt")), { code: "ENOENT" });
 });

@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RISK, classify, isConsequential } from "../electron/risk.mts";
+import { isStatefulUiOperation } from "../electron/approval-context.mts";
 import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, toolDefinitions } from "../electron/agent.mts";
 
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
@@ -107,6 +108,18 @@ test("classify 风险分级矩阵", () => {
   assert.equal(classify("mcp__computer-use__get_app_state", {}, { platform: "linux" }).consequential, false);
   assert.equal(isConsequential("read_file"), false);
   assert.equal(isConsequential("write_file"), true);
+
+  for (const action of ["list", "activate", "close"]) {
+    const info = classify("browser__tabs", { action });
+    assert.equal(info.risk, RISK.READ, `browser__tabs ${action} 应为只读分类`);
+    assert.equal(info.consequential, false, `browser__tabs ${action} 不应强制走高危变更审批`);
+    assert.equal(isStatefulUiOperation("browser__tabs", { action }), false);
+  }
+  const openTabInfo = classify("browser__tabs", { action: "open", url: "https://example.com" });
+  assert.equal(openTabInfo.risk, RISK.EXTERNAL);
+  assert.equal(openTabInfo.consequential, true);
+  assert.equal(openTabInfo.internet, true);
+  assert.equal(isStatefulUiOperation("browser__tabs", { action: "open", url: "https://example.com" }), false);
 });
 
 test("evaluateApproval 与历史 approvalDecision 全矩阵等价（无常驻规则）", () => {

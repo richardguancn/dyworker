@@ -552,4 +552,34 @@ test("场景 13：跨轮传递 executedMessages 时，模型下一轮请求中�
   assert.match(toolMessage.content, /2026-09-26 23:55:00/);
 });
 
+test("邮件发送中止的如实汇报（含「草稿」与「已发送」界面词）不误报未检测到上传操作", () => {
+  const check = verifyTaskEvidence({
+    finalText:
+      "抱歉，这封邮件**还没发出去**。本轮自动化运行时长已经达到上限，被系统中止了。\n\n"
+      + "- 已打开 QQ 邮箱并登录成功，账号为 example@qq.com\n"
+      + "- 在「草稿」里已留下两封草稿，但正文尚未填写，也没有点击发送\n"
+      + "- 下一步可重走一遍完整流程，并在「已发送」里核对（或后续在已发送列表确认）。",
+    executedTools: [
+      { name: "browser__open", status: "success", isReadOnly: false, result: "ok" },
+      { name: "browser__act", status: "success", isReadOnly: false, result: "ok" },
+    ],
+    fileChanges: [],
+    planSteps: null,
+    isExplicitFinish: false,
+  });
+  assert.equal(check.verified, true);
+
+  const checkWithFolderAndCount = verifyTaskEvidence({
+    finalText:
+      "这封邮件尚未发送，可在「已发送」里确认是否有 1 封邮件发送成功，同时可在已上传的附件说明或「草稿」中补充正文。",
+    executedTools: [
+      { name: "browser__open", status: "success", isReadOnly: false, result: "ok" },
+    ],
+    fileChanges: [],
+    planSteps: null,
+    isExplicitFinish: false,
+  });
+  assert.equal(checkWithFolderAndCount.verified, true);
+});
+
 
