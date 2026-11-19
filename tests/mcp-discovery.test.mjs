@@ -11,5 +11,6 @@ test('大型工具集支持检索、分页，系统操作工具保持可用', ()
  assert.equal(discoverMcpTools(prepared.deferred, 'tool_17', 0).tools[0].function.name, 'mcp__sample__tool_17');
  assert.equal(discoverMcpTools(prepared.deferred, '', 8).tools.length, 8);
  assert.equal(discoverMcpTools(prepared.deferred, '不存在', 0).total, 0);
- assert.equal(prepareMcpDiscovery(tools.slice(0, 2)).deferred.length, 0);
+ assert.equal(prepareMcpDiscovery(tools.slice(0, 7)).deferred.length, 0);
+ assert.equal(prepareMcpDiscovery(tools.slice(0, 8)).deferred.length, 8);
 });

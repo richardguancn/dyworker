@@ -45,8 +45,8 @@ export async function readFilePreview(workspacePath, filePath) {
 export function filePreviewToolDefinitions() {
   return [{ type: "function", function: {
     name: "open_file",
-    description: "在用户当前会话的右侧文件面板直接预览工作目录内的本地文件。支持 HTML 排版预览、图片、PDF、Markdown、文本和办公文档文字预览。HTML 仅显示静态内容和内联样式，不执行脚本或加载外部资源。展示本地图片或文档时优先使用此工具，不要为预览启动 Python/HTTP 服务或改用浏览器网址。此工具只向用户展示文件，不会把图像内容返回给模型；需要分析文字请用 read_file。",
-    parameters: { type: "object", properties: { path: { type: "string", description: "工作目录内的相对或绝对文件路径" } }, required: ["path"], additionalProperties: false },
+    description: "在右侧文件面板预览工作目录内本地文件（HTML 静态排版、图片、PDF、Markdown、文本与办公文档）。不返回图像内容给模型，读文字请用 read_file。",
+    parameters: { type: "object", properties: { path: { type: "string", description: "工作目录内文件路径" } }, required: ["path"], additionalProperties: false },
   } }];
 }
 

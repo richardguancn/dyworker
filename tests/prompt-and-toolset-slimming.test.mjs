@@ -3,7 +3,8 @@ import test from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { runAgent } from '../electron/agent.mts';
+import { runAgent, estimateTextTokens } from '../electron/agent.mts';
+import { systemPrompt } from '../electron/agent/prompt.mts';
 import { prepareToolsetDiscovery, activateToolsets } from '../electron/host/toolset-discovery.mts';
 import { VISUAL_SKILL_ID } from '../electron/host/chart-guidance.mts';
 import { dshNativeSkills } from '../electron/host/dsh-runtime/native-skills.mts';
@@ -69,6 +70,13 @@ test('电脑与浏览器工具说明包含观察编号和 Linux 共享桌面要�
   const loaded = activateToolsets(discovery.deferredByGroup, ['desktop']);
   assert.match(loaded.text, /动作携带最新 observation_id/);
   assert.match(loaded.text, /Linux 共享桌面截图和系统输入需要用户明确允许/);
+  assert.doesNotMatch(loaded.text, /Notepad--|fill_form|form_only|周期自动保存/);
+});
+
+test('首轮 systemPrompt 保持精简与泛化，不包含未激活场景特化细则', () => {
+  const prompt = systemPrompt('/tmp/work', { enabled: false }, false, '', 'general', 'zh-CN');
+  assert.doesNotMatch(prompt, /Notepad--|fill_form|form_only|周期自动保存|replace_document_text/);
+  assert.ok(estimateTextTokens(prompt) < 1800, `首轮 systemPrompt 应精简（实际估算 ${estimateTextTokens(prompt)} tokens）`);
 });
 
 test('runAgent 首轮仅暴露精简工具与精准自审参数，load_toolset 与 builtin-visual-output 按需生效', async t => {

@@ -24,11 +24,11 @@ function functionTool(name, description, properties, required) {
 // 不传设置时返回完整目录；模型调用传入设置，避免提供当前无法使用的厂商工具。
 export function toolDefinitions(settings = null) {
   return [
-    functionTool("update_plan", "建立多步任务计划（2-8 步），实际进展或步骤变化时才更新。计划建立后，先调用当前步骤所需的工具。",
+    functionTool("update_plan", "建立/更新多步任务计划（2-8 步），实际进展变化时调用。",
       {
         steps: {
           type: "array",
-          description: "完整步骤，最多一步为 in_progress",
+          description: "完整步骤（最多 1 个 in_progress）",
           items: {
             type: "object",
             properties: {
@@ -92,21 +92,21 @@ export function toolDefinitions(settings = null) {
       ["source", "target"]),
     functionTool("delete_file", "删除单个文件（不可恢复）。",
       { path: stringProperty("文件路径") }, ["path"]),
-    functionTool("run_command", "在工作区运行程序或脚本。" + (process.platform === 'win32' ? 'Windows 使用 cmd.exe 语法；PowerShell 须显式调用 powershell.exe -File。' : '通过 /bin/bash -lc 执行。') + "读文件内容用 read_file（不要 cat），找/改文件优先用专用工具；长驻服务设 background: true。",
+    functionTool("run_command", "运行程序或脚本（" + (process.platform === 'win32' ? 'Windows 用 cmd.exe；PowerShell 显式调 powershell.exe -File' : '/bin/bash -lc') + "）。读文件内容用 read_file（不要 cat），找/改文件优先用专用工具；长驻服务设 background: true。",
       {
         command: stringProperty("完整命令"),
         background: { type: "boolean", description: "后台运行长驻服务" },
       },
       ["command"]),
-    functionTool("save_memory", "保存长期有用的稳定偏好、规则、禁忌、事实或经验（勿存密钥或临时状态）。",
+    functionTool("save_memory", "保存长期稳定偏好、规则、禁忌或事实（勿存密钥/临时状态）。",
       {
-        category: stringProperty("分类（如用户偏好、项目规则、用户画像）"),
+        category: stringProperty("分类（如用户画像、项目规则）"),
         content: stringProperty("简洁独立的长期事实"),
         name: stringProperty("简称（30 字内，可空）"),
         kind: { type: "string", enum: ["preference", "rule", "taboo", "fact", "experience"], description: "类型" },
         scope: { type: "string", enum: ["global", "workspace", "session"], description: "作用域" },
         relation: { type: "string", enum: ["extends", "refines", "supersedes"], description: "与旧记忆关系" },
-        related_memory_id: stringProperty("关联旧记忆编号，可空"),
+        related_memory_id: stringProperty("关联旧记忆编号"),
       },
       ["category", "content", "kind", "scope"]),
     functionTool("search_history", "搜索过往任务消息，返回任务编号与消息位置。",
@@ -209,10 +209,10 @@ export function toolDefinitions(settings = null) {
         reason: stringProperty("原因"),
       },
       ["reason"]),
-    functionTool("finish_task", "完成目标与检查后结束任务，指定正式回答来源。",
+    functionTool("finish_task", "完成目标与检查后结束任务。",
       {
         answer_source: { type: "string", enum: ["current_reply", "previous_reply", "summary"], description: "正式回答来源" },
-        summary: stringProperty("交付结论（多项内容按主题分段或用列表）"),
+        summary: stringProperty("交付结论"),
         evidence: stringProperty("已执行的验证说明"),
         goalAchieved: { type: "boolean", description: "长期目标已达成时为 true" }
       },

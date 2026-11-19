@@ -1,7 +1,7 @@
 // 扩展工具组按需激活：首轮只向模型暴露高频核心工具与薄索引 load_toolset，
 // 停用或未接入的分组不出现在索引中；激活后工具保留原名与原有审批边界。
 
-import { browserUseGuidance } from './computer-use-guidance.mts';
+import { browserUseGuidance, desktopUseGuidance } from './computer-use-guidance.mts';
 
 const OFFICE_TOOLS = new Set([
   'gov_search',
@@ -29,24 +29,24 @@ const FILE_AND_WAKE_TOOLS = new Set([
 
 const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
   desktop: {
-    summary: '查看和操作本机桌面应用（控件、截图、点击、输入与按键）',
-    guidance: '先用 list_apps 确认目标应用，再用 get_app_state 读取界面。动作携带最新 observation_id，完成后重新读取确认。Linux 共享桌面截图和系统输入需要用户明确允许。',
+    summary: '桌面应用操作（控件、截图、点击与输入）',
+    guidance: desktopUseGuidance,
   },
   browser: {
-    summary: '任务独立后台浏览器或右侧可见浏览器（网页、标签页、表单、上传、下载、观察与人工接管）；已有外部浏览器用 desktop',
+    summary: '任务独立后台浏览器或右侧面板（网页、表单、上传、接管与外部调试连接）',
     guidance: browserUseGuidance,
   },
   office: {
-    summary: '政务与办公专项（gov.cn 政策检索、公文格式检查、工作日推算、导出 Word/Excel、敏感信息扫描、OCR）',
+    summary: '政务与办公（政策检索、公文检查、工作日、Word/Excel、脱敏、OCR）',
   },
   history_and_skills: {
-    summary: '跨会话历史检索与工作模板管理（搜索/读取过往会话、列出/保存/更新技能模板）',
+    summary: '历史会话检索与技能模板管理',
   },
   file_and_wake: {
-    summary: '扩展文件操作与定时唤醒（新建目录、追加/复制/移动/删除文件、获取当前时间、挂起任务 sleep_until）',
+    summary: '扩展文件操作（新建目录、追加/复制/移动/删除）、当前时间与定时唤醒',
   },
   feishu: {
-    summary: '飞书云文档、多维表格与电子表格检索及读写',
+    summary: '飞书云文档、多维表格与电子表格读写',
   },
 };
 

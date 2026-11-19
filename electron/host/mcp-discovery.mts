@@ -4,7 +4,7 @@ export function prepareMcpDiscovery(extraTools: any[]) {
     const name = String(tool?.function?.name || '');
     return name.startsWith('mcp__') && !name.startsWith('mcp__computer-use__');
   });
-  if (deferred.length < 20) return { initial: extraTools, deferred: [] as any[] };
+  if (deferred.length < 8) return { initial: extraTools, deferred: [] as any[] };
   const services = [...new Set(deferred.map(tool => /^【MCP:([^】]+)】/.exec(tool.function.description || '')?.[1]).filter(Boolean))];
   const discovery = { type: 'function', function: {
     name: 'discover_mcp_tools',

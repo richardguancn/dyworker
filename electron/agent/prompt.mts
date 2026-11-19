@@ -3,7 +3,6 @@ import { workspaceFileGuidance } from '../active-permissions.mts';
 import { chartGuidance } from '../host/chart-guidance.mts';
 import { communicationGuidance } from '../host/communication-guidance.mts';
 import { commandGuidance } from '../host/command-guidance.mts';
-import { computerUseGuidance } from '../host/computer-use-guidance.mts';
 import { getPromptDefinition } from './prompt-locales.mts';
 
 export { getPromptDefinition } from './prompt-locales.mts';
@@ -36,7 +35,6 @@ export function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", id
     def.discipline,
     toolsSection,
     commandGuidance(),
-    computerUseGuidance,
     def.applicationSafety,
     ...governmentSections,
     def.memory,
