@@ -38,8 +38,10 @@ jobs:
           - name: macOS
             os: macos-latest
             command: npx electron-builder --mac dmg zip --publish never
+          # 固定 24.04：ubuntu-latest 已切换到 26.04，其 Landlock 沙箱探测行为变化
+          # 会让进程审核链路（kill 送达宿主进程）失败，待沙箱适配 26.04 后再跟进。
           - name: Linux ARM64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             command: npx electron-builder --linux AppImage deb --arm64 --publish never
     runs-on: ${{ matrix.os }}
     steps:

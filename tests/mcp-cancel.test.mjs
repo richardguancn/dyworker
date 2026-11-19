@@ -18,7 +18,9 @@ test('请求超时时通知服务停止执行', async () => {
   assert.equal(client.pending.size, 0);
 });
 
-test('关闭本机操作服务时等待已开始的清理', async t => {
+// Windows 上 Node 的 SIGTERM 等同 TerminateProcess 强杀，子进程注册的
+// SIGTERM 清理处理器根本不会执行；优雅退出契约只在 POSIX 成立。
+test('关闭本机操作服务时等待已开始的清理', { skip: process.platform === 'win32' }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-mcp-close-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const ready = path.join(root, 'ready'), cleaned = path.join(root, 'cleaned');

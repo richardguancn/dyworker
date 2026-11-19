@@ -137,7 +137,8 @@ test('实际连续流程：批量匹配查清后精确停止本任务、清理�
       return response('测试程序已停止，任务缓存已清理。');
     } });
   assert.equal(reviews, 1);
-  await new Promise(resolve => setTimeout(resolve, 50));
+  // 固定短睡眠在慢 runner 上不稳定：轮询等待目标退出，同时确认其他项目进程仍存活。
+  for (let i = 0; i < 100 && owned.signalCode === null; i++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(owned.signalCode, 'SIGTERM'); assert.equal(other.signalCode, null); process.kill(other.pid, 0);
   await assert.rejects(fs.stat(path.join(f.workspacePath, 'temporary-cache')), { code: 'ENOENT' });
   assert.match(JSON.stringify(result.executedMessages), /task-cleaned/);
