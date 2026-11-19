@@ -59,8 +59,12 @@
   flex-direction: column;
   overflow: hidden;
   background: #fff;
-  padding-bottom: 64px;
+  padding-bottom: 0;
   box-sizing: border-box;
+}
+
+.browser-content.has-control-overlay {
+  padding-bottom: 64px;
 }
 
 .browser-webview {
@@ -200,6 +204,22 @@
 
 .browser-control-title {
   font-weight: 600;
+}
+
+.browser-control-cdp-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 2px;
+  border-radius: 6px;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  font-size: calc(10.5px * var(--font-ui-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex: 0 0 auto;
 }
 
 .browser-control-separator {
@@ -344,6 +364,11 @@
 .browser-toolbar-button:hover {
   background: rgba(72, 74, 68, 0.07);
   color: #4e534b;
+}
+
+.browser-toolbar-button.active {
+  background: rgba(47, 111, 237, 0.11);
+  color: var(--accent, #2f6fed);
 }
 
 .browser-new-tab {

@@ -44,7 +44,7 @@ import { detectTrigger } from './pluginRuntime/vendor/dsh-input-controller/index
 import { PluginSlotView } from "./PluginSlotView";
 import { modelContextLimit } from "./providers";
 import { useAnnotationRuntime } from "./state/annotationRuntime";
-import { activateBrowserTabById,activeBrowserWebview,applyBrowserDevice,browserWebviewRefFor,browserZoomPercent,captureBrowserScreenshot,changeBrowserZoom,closeBrowserFind,closeBrowserTabById,dismissBrowserPasswordPrompt,fillSavedPassword,openBrowserExternal,openBrowserFind,openBrowserTab,openBrowserUrl,patchBrowserTab,printBrowserPage,reportActiveBrowserContents,reportBrowserTabState,resetBrowserZoom,rotateBrowserDevice,runBrowserFind,saveBrowserPasswordPrompt } from "./state/browserActions";
+import { activateBrowserTabById,activeBrowserWebview,browserWebviewRefFor,browserZoomPercent,captureBrowserScreenshot,changeBrowserZoom,closeBrowserFind,closeBrowserTabById,closeBrowserViewportBar,dismissBrowserPasswordPrompt,fillSavedPassword,openBrowserExternal,openBrowserFind,openBrowserTab,openBrowserUrl,patchBrowserTab,printBrowserPage,reportActiveBrowserContents,reportBrowserTabState,resetBrowserZoom,rotateBrowserViewport,runBrowserFind,saveBrowserPasswordPrompt,selectBrowserViewportPreset,syncBrowserWebviewZoom,toggleBrowserAutoFitDesktop,toggleBrowserViewportBar,updateBrowserViewport } from "./state/browserActions";
 import { useBrowserStore } from "./state/browserStore";
 import { applyMention,chooseAttachments,chooseWorkspace,handleComposerDragLeave,handleComposerDragOver,handleComposerDrop,handleComposerPaste,handleConversationMouseUp,handleMessageContextMenu,insertFileToken,openContextMenu,openReferencedFile,pasteComposerText,resolveTokenFile,resolveTokenSession } from "./state/composerActions";
 import { useComposerStore } from "./state/composerStore";
@@ -1534,8 +1534,14 @@ export function App() {
         printBrowserPage={printBrowserPage}
         captureBrowserScreenshot={captureBrowserScreenshot}
         openBrowserExternal={openBrowserExternal}
-        applyBrowserDevice={applyBrowserDevice}
-        rotateBrowserDevice={rotateBrowserDevice}
+        onOpenCdpSettings={() => { setSettingsTab("hooks"); setSettingsOpen(true); }}
+        toggleBrowserViewportBar={toggleBrowserViewportBar}
+        updateBrowserViewport={updateBrowserViewport}
+        selectBrowserViewportPreset={selectBrowserViewportPreset}
+        rotateBrowserViewport={rotateBrowserViewport}
+        closeBrowserViewportBar={closeBrowserViewportBar}
+        toggleBrowserAutoFitDesktop={toggleBrowserAutoFitDesktop}
+        syncBrowserWebviewZoom={syncBrowserWebviewZoom}
         runBrowserFind={runBrowserFind}
         closeBrowserFind={closeBrowserFind}
         saveBrowserPasswordPrompt={saveBrowserPasswordPrompt}

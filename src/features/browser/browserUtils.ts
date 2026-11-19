@@ -24,6 +24,7 @@ export type BrowserWebviewElement = HTMLElement & {
   findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => Promise<unknown>;
   stopFindInPage?: (action?: "clearSelection" | "keepSelection") => void;
   setZoomLevel?: (level: number) => void;
+  setZoomFactor?: (factor: number) => void;
   capturePage?: () => Promise<{ toDataURL: () => string }>;
   print?: () => void;
   setUserAgent?: (userAgent: string) => void;

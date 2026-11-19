@@ -5,6 +5,12 @@
 // 函数体、文案与行为均保持不变，供 App 的浏览器工具栏与 IPC 订阅运行时调用。
 import { BROWSER_MOBILE_UA, browserPasswordFillScript, browserTabTitleOf, normalizeBrowserInput } from "../features/browser/browserUtils";
 import type { BrowserWebviewElement } from "../features/browser/browserUtils";
+import {
+  BROWSER_VIEWPORT_PRESETS,
+  clampZoomFactor,
+  createDefaultBrowserViewport,
+  type BrowserViewportState,
+} from "../features/browser/browserViewport";
 import { copyImageToClipboard } from "../ImageAttachment";
 import { useLayoutStore } from "./layoutStore";
 import type { ToolPanelTab } from "./layoutStore";
@@ -16,6 +22,40 @@ import { openToolPanelTab, updateToolPanelTab } from "./toolPanelActions";
 
 // 设备视图模拟：首个 webview 的默认 UA 留作关闭模拟时还原
 let browserDefaultUserAgent = "";
+// 各标签页目标缩放因子（用于导航/attach 后自动重放，避免 Chromium 重置为 1）
+const browserTargetZoomFactors = new Map<string, number>();
+
+const reapplyBrowserWebviewZoom = (tabId: string, webview: BrowserWebviewElement) => {
+  const targetFactor = browserTargetZoomFactors.get(tabId);
+  if (typeof targetFactor === "number") {
+    try {
+      webview.setZoomFactor?.(targetFactor);
+    } catch {
+      // webview 未就绪时忽略，等待下次事件重放
+    }
+    return;
+  }
+  const zoom = toolPanelTabsRef.current.find((tab) => tab.id === tabId)?.zoom ?? 0;
+  if (zoom) {
+    try {
+      webview.setZoomLevel?.(zoom);
+    } catch {
+      // ignore
+    }
+  }
+};
+
+export const syncBrowserWebviewZoom = (tabId: string, factor: number) => {
+  const normalized = Math.round(clampZoomFactor(factor) * 10000) / 10000;
+  browserTargetZoomFactors.set(tabId, normalized);
+  const webview = browserWebviewsRef.current.get(tabId);
+  if (!webview) return;
+  try {
+    webview.setZoomFactor?.(normalized);
+  } catch {
+    // webview 尚未完成 attach，将在 did-attach / dom-ready 时重放
+  }
+};
 
 // 当前活动标签页：与 App.tsx 里 activeToolPanelTab 的推导完全一致
 const activeToolPanelTabOf = () => {
@@ -186,8 +226,9 @@ export const bindBrowserWebview = (tabId: string, webview: BrowserWebviewElement
   };
   webview.addEventListener("did-start-loading", () => patchBrowserTab(tabId, { loading: true, loadError: "" }));
   webview.addEventListener("did-stop-loading", () => patchBrowserTab(tabId, { loading: false, ...readWebviewNavState(webview) }));
-  webview.addEventListener("did-navigate", () => { navSync(); rememberInHistory(); });
-  webview.addEventListener("did-navigate-in-page", () => { navSync(); rememberInHistory(); });
+  webview.addEventListener("did-navigate", () => { navSync(); rememberInHistory(); reapplyBrowserWebviewZoom(tabId, webview); });
+  webview.addEventListener("did-navigate-in-page", () => { navSync(); rememberInHistory(); reapplyBrowserWebviewZoom(tabId, webview); });
+  webview.addEventListener("dom-ready", () => reapplyBrowserWebviewZoom(tabId, webview));
   webview.addEventListener("page-title-updated", ((event: Event & { title: string }) => {
     const title = event.title || "";
     if (!title) return;
@@ -212,8 +253,7 @@ export const bindBrowserWebview = (tabId: string, webview: BrowserWebviewElement
       : current);
   }) as EventListener);
   webview.addEventListener("did-attach", () => {
-    const zoom = toolPanelTabsRef.current.find((tab) => tab.id === tabId)?.zoom ?? 0;
-    if (zoom) webview.setZoomLevel?.(zoom);
+    reapplyBrowserWebviewZoom(tabId, webview);
     if (tabId === activeToolPanelTabIdRef.current) reportActiveBrowserContents();
   });
   // 客页面报告的登录表单提交（webview-preload.cjs 经 sendToHost 发来）：弹出保存密码提示
@@ -246,6 +286,7 @@ export const browserWebviewRefFor = (tabId: string) => {
         bindBrowserWebview(tabId, node);
       } else {
         browserWebviewsRef.current.delete(tabId);
+        browserTargetZoomFactors.delete(tabId);
         if (activeToolPanelTabIdRef.current === tabId) window.dyworker?.setActiveBrowserContents?.(0, activeIdRef.current);
       }
     };
@@ -330,20 +371,18 @@ export const closeBrowserFind = () => {
   setBrowserFind(null);
 };
 
-// ===== 缩放（1.2 的幂次，与 Chromium 缩放步进一致）=====
+// ===== 缩放（1.2 的幂次，与 Chromium 缩放步进一致；实际 zoomFactor 由 ToolPanel 统一同步）=====
 export const browserZoomPercent = (tab: ToolPanelTab | undefined) => Math.round(100 * 1.2 ** (tab?.zoom ?? 0));
 export const changeBrowserZoom = (delta: number) => {
   const tab = activeToolPanelTabOf();
   if (!tab || tab.kind !== "browser") return;
   const level = Math.min(8, Math.max(-5, (tab.zoom ?? 0) + delta));
   updateToolPanelTab(tab.id, { zoom: level });
-  activeBrowserWebview()?.setZoomLevel?.(level);
 };
 export const resetBrowserZoom = () => {
   const tab = activeToolPanelTabOf();
   if (!tab || tab.kind !== "browser") return;
   updateToolPanelTab(tab.id, { zoom: 0 });
-  activeBrowserWebview()?.setZoomLevel?.(0);
 };
 
 // ===== 截图到剪贴板 =====
@@ -430,24 +469,124 @@ export const fillSavedPassword = async () => {
 // ===== 打印 =====
 export const printBrowserPage = () => activeBrowserWebview()?.print?.();
 
-// ===== 设备视图（手机/平板模拟）=====
-export const applyBrowserDevice = async (tab: ToolPanelTab, device: { name: string; width: number; height: number } | null) => {
-  const webview = browserWebviewsRef.current.get(tab.id);
-  updateToolPanelTab(tab.id, { device: device ? { ...device } : undefined });
+// ===== 响应式视口与设备视图（仅切换 Mobile UA + 关闭旧 device emulation；缩放由 setZoomFactor 驱动）=====
+export const applyBrowserViewportUa = async (tabId: string, mobile: boolean) => {
+  const webview = browserWebviewsRef.current.get(tabId);
   if (!webview) return;
   try {
     if (!browserDefaultUserAgent && webview.getUserAgent) browserDefaultUserAgent = webview.getUserAgent();
-    if (device && webview.setUserAgent) webview.setUserAgent(BROWSER_MOBILE_UA);
-    else if (!device && browserDefaultUserAgent && webview.setUserAgent) webview.setUserAgent(browserDefaultUserAgent);
-    await window.dyworker?.emulateDevice?.(webview.getWebContentsId?.() || 0, device ? device.width : 0, device ? device.height : 0);
+    if (mobile && webview.setUserAgent) webview.setUserAgent(BROWSER_MOBILE_UA);
+    else if (!mobile && browserDefaultUserAgent && webview.setUserAgent) webview.setUserAgent(browserDefaultUserAgent);
+    // 清除历史 enableDeviceEmulation 状态，避免 scale 偏移破坏 CDP 点击坐标映射
+    await window.dyworker?.emulateDevice?.(webview.getWebContentsId?.() || 0, 0, 0);
   } catch {
-    // 模拟失败时仅保留容器尺寸，页面照常显示
+    // UA 切换失败时不阻断页面展示
   }
 };
-export const rotateBrowserDevice = () => {
+
+export const toggleBrowserViewportBar = () => {
   const tab = activeToolPanelTabOf();
-  if (!tab?.device) return;
-  void applyBrowserDevice(tab, { ...tab.device, width: tab.device.height, height: tab.device.width });
+  if (!tab || tab.kind !== "browser") return;
+  const currentlyOpen = Boolean(tab.viewport?.open);
+  if (currentlyOpen) {
+    updateToolPanelTab(tab.id, {
+      viewport: { ...(tab.viewport || createDefaultBrowserViewport()), open: false },
+      device: undefined,
+    });
+    void applyBrowserViewportUa(tab.id, false);
+    return;
+  }
+  const next = tab.viewport ? { ...tab.viewport, open: true } : createDefaultBrowserViewport();
+  updateToolPanelTab(tab.id, { viewport: next, device: undefined });
+  void applyBrowserViewportUa(tab.id, Boolean(next.mobile));
+};
+
+export const updateBrowserViewport = (tabId: string, patch: Partial<BrowserViewportState>) => {
+  const tab = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
+  if (!tab) return;
+  const current = tab.viewport || createDefaultBrowserViewport();
+  const next: BrowserViewportState = { ...current, ...patch };
+  updateToolPanelTab(tabId, { viewport: next });
+  if (typeof patch.mobile === "boolean" && patch.mobile !== Boolean(current.mobile)) {
+    void applyBrowserViewportUa(tabId, patch.mobile);
+  }
+};
+
+export const selectBrowserViewportPreset = (tabId: string, presetId: string) => {
+  const tab = toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser");
+  if (!tab) return;
+  const preset = BROWSER_VIEWPORT_PRESETS.find((item) => item.id === presetId) || BROWSER_VIEWPORT_PRESETS[0];
+  const current = tab.viewport || createDefaultBrowserViewport();
+  const next: BrowserViewportState = {
+    ...current,
+    open: true,
+    preset: preset.id,
+    width: preset.width,
+    height: preset.height,
+    mobile: Boolean(preset.mobile),
+  };
+  updateToolPanelTab(tabId, { viewport: next, device: undefined });
+  void applyBrowserViewportUa(tabId, Boolean(preset.mobile));
+};
+
+export const rotateBrowserViewport = (tabId?: string) => {
+  const tab = tabId
+    ? toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser")
+    : activeToolPanelTabOf();
+  if (!tab || tab.kind !== "browser") return;
+  const current = tab.viewport || createDefaultBrowserViewport();
+  updateToolPanelTab(tab.id, {
+    viewport: {
+      ...current,
+      open: true,
+      width: current.height,
+      height: current.width,
+    },
+    device: undefined,
+  });
+};
+
+export const closeBrowserViewportBar = (tabId?: string) => {
+  const tab = tabId
+    ? toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser")
+    : activeToolPanelTabOf();
+  if (!tab || tab.kind !== "browser") return;
+  const current = tab.viewport || createDefaultBrowserViewport();
+  updateToolPanelTab(tab.id, {
+    viewport: { ...current, open: false },
+    device: undefined,
+  });
+  void applyBrowserViewportUa(tab.id, false);
+};
+
+export const toggleBrowserAutoFitDesktop = (tabId?: string) => {
+  const tab = tabId
+    ? toolPanelTabsRef.current.find((item) => item.id === tabId && item.kind === "browser")
+    : activeToolPanelTabOf();
+  if (!tab || tab.kind !== "browser") return;
+  updateToolPanelTab(tab.id, { autoFitDesktop: !(tab.autoFitDesktop !== false) });
+};
+
+// ===== 兼容旧调用的设备视图接口（内部统一收口到响应式视口）=====
+export const applyBrowserDevice = async (tab: ToolPanelTab, device: { name: string; width: number; height: number } | null) => {
+  if (!device) {
+    closeBrowserViewportBar(tab.id);
+    return;
+  }
+  const preset = device.name === "手机" ? "mobile" : device.name === "平板" ? "tablet" : "responsive";
+  const next: BrowserViewportState = {
+    open: true,
+    preset,
+    width: device.width,
+    height: device.height,
+    zoomMode: tab.viewport?.zoomMode ?? "auto",
+    mobile: true,
+  };
+  updateToolPanelTab(tab.id, { viewport: next, device: undefined });
+  await applyBrowserViewportUa(tab.id, true);
+};
+export const rotateBrowserDevice = () => {
+  rotateBrowserViewport();
 };
 
 // ===== 清除浏览数据 =====

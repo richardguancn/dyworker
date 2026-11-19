@@ -2,6 +2,7 @@
 // 从 App.tsx 的 useState 逐字段搬来，字段名与同名 setter 保持不变，
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
+import type { BrowserViewportState } from "../features/browser/browserViewport.ts";
 import { updateField, type Updater } from "./updateField.ts";
 
 export type ToolPanelTab = {
@@ -27,6 +28,10 @@ export type ToolPanelTab = {
   fillHint?: number;
   /** 设备模拟（手机/平板视图） */
   device?: { name: string; width: number; height: number };
+  /** 响应式/设备视口工具栏状态（Codex 风格） */
+  viewport?: BrowserViewportState;
+  /** 普通浏览态下，窄窗口是否自动缩放适配桌面宽度（缺省为 true） */
+  autoFitDesktop?: boolean;
 };
 
 export interface LayoutState {

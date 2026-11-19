@@ -3,9 +3,9 @@
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（focusToolPanelTab、closeToolPanelTab、
 // scrollToolPanelTabStrip、openToolPanelTab、浏览器工具函数、各种 useState/useEffect 等）
 // 仍留在 App.tsx，这里只通过 props 接收状态与回调。
-import { AlertTriangle, ArrowUpRight, ChevronLeft, ChevronRight, FileDiff, FileText, FolderOpen, Globe, History, KeyRound, MessageSquarePlus, Monitor, MoreVertical, Plus, RefreshCw, Search, SquarePlus, X } from "lucide-react";
-import { createElement, lazy, Suspense } from "react";
-import type { CSSProperties, Dispatch, ReactNode, RefObject, SetStateAction } from "react";
+import { AlertTriangle, ArrowUpRight, Check, ChevronLeft, ChevronRight, FileDiff, FileText, FolderOpen, Globe, History, KeyRound, MessageSquarePlus, MonitorSmartphone, MoreVertical, Plus, RefreshCw, Search, SquarePlus, X } from "lucide-react";
+import { createElement, lazy, Suspense, useEffect, useRef, useState } from "react";
+import type { Dispatch, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from "react";
 import { t } from "../../i18n";
 import { PanelRightIcon } from "../../app/icons";
 import { PluginSlotView } from "../../PluginSlotView";
@@ -15,7 +15,16 @@ import { SideChatPanel } from "../sessions/SideChatPanel";
 import { BackgroundTasksPanel } from "../../BackgroundTasksPanel";
 import { GitReviewPanel } from "../review/GitReviewPanel";
 import { ReviewPanel } from "../review/ReviewPanels";
-import { BROWSER_DEVICE_PRESETS, BROWSER_START_LINKS, type BrowserWebviewElement } from "../browser/browserUtils";
+import { BROWSER_START_LINKS, type BrowserWebviewElement } from "../browser/browserUtils";
+import { BrowserViewportBar } from "../browser/BrowserViewportBar";
+import {
+  BROWSER_VIEWPORT_PRESETS,
+  computeAutoFitZoomFactor,
+  computeResizedViewport,
+  computeStageViewportLayout,
+  type BrowserViewportState,
+  type ViewportResizeEdge,
+} from "../browser/browserViewport";
 import type { BrowserControlState, FileChange, ProviderSettings, SessionRecord, WorkspaceEntry } from "../../types";
 import type { ToolPanelTab } from "../../state/layoutStore";
 
@@ -87,8 +96,14 @@ export interface ToolPanelProps {
   printBrowserPage: () => void;
   captureBrowserScreenshot: () => Promise<void>;
   openBrowserExternal: () => Promise<void>;
-  applyBrowserDevice: (tab: ToolPanelTab, device: { name: string; width: number; height: number } | null) => Promise<void>;
-  rotateBrowserDevice: () => void;
+  onOpenCdpSettings: () => void;
+  toggleBrowserViewportBar: () => void;
+  updateBrowserViewport: (tabId: string, patch: Partial<BrowserViewportState>) => void;
+  selectBrowserViewportPreset: (tabId: string, presetId: string) => void;
+  rotateBrowserViewport: (tabId?: string) => void;
+  closeBrowserViewportBar: (tabId?: string) => void;
+  toggleBrowserAutoFitDesktop: (tabId?: string) => void;
+  syncBrowserWebviewZoom: (tabId: string, factor: number) => void;
   runBrowserFind: (forward: boolean, findNext: boolean) => void;
   closeBrowserFind: () => void;
   saveBrowserPasswordPrompt: () => Promise<void>;
@@ -105,6 +120,14 @@ export interface ToolPanelProps {
   shortcutLabel: (mac: string, other: string) => string;
 }
 
+const VIEWPORT_RESIZE_HANDLES: ReadonlyArray<{ edge: ViewportResizeEdge; ariaKey: string; fallbackAria: string }> = [
+  { edge: "left", ariaKey: "browserViewport.resizeLeft", fallbackAria: "调整左侧宽度" },
+  { edge: "right", ariaKey: "browserViewport.resizeRight", fallbackAria: "调整右侧宽度" },
+  { edge: "bottom", ariaKey: "browserViewport.resizeBottom", fallbackAria: "调整底部高度" },
+  { edge: "bottom-left", ariaKey: "browserViewport.resizeBottomLeft", fallbackAria: "调整左下角尺寸" },
+  { edge: "bottom-right", ariaKey: "browserViewport.resizeBottomRight", fallbackAria: "调整右下角尺寸" },
+];
+
 export function ToolPanel(props: ToolPanelProps) {
   const {
     activeToolPanelKind, toolPanelTabs, activeToolPanelTabId, activeToolPanelTab, toolPanelTabOverflow,
@@ -119,11 +142,132 @@ export function ToolPanel(props: ToolPanelProps) {
     setBrowserSuggestionsOpen, setBrowserSuggestionIndex, setBrowserUrlDraft, setBrowserFind, setBrowserMoreOpen,
     setBrowserSection, setBrowserPasswordsOpen, setImportDialogOpen, setError, setNotice, setToolPanelTabs,
     patchBrowserTab, openBrowserUrl, openBrowserTab, changeBrowserZoom, browserZoomPercent, resetBrowserZoom,
-    openBrowserFind, printBrowserPage, captureBrowserScreenshot, openBrowserExternal, applyBrowserDevice,
-    rotateBrowserDevice, runBrowserFind, closeBrowserFind, saveBrowserPasswordPrompt, dismissBrowserPasswordPrompt,
+    openBrowserFind, printBrowserPage, captureBrowserScreenshot, openBrowserExternal, onOpenCdpSettings,
+    toggleBrowserViewportBar, updateBrowserViewport, selectBrowserViewportPreset, rotateBrowserViewport,
+    closeBrowserViewportBar, toggleBrowserAutoFitDesktop, syncBrowserWebviewZoom,
+    runBrowserFind, closeBrowserFind, saveBrowserPasswordPrompt, dismissBrowserPasswordPrompt,
     fillSavedPassword, activeBrowserWebview, browserWebviewRefFor,
     choosePreviewFile, openFilePreview, insertFileToken, refreshWorkspace, openToolPanelTab, shortcutLabel,
   } = props;
+
+  const browserContentRef = useRef<HTMLDivElement | null>(null);
+  const [browserContentSize, setBrowserContentSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [resizingViewport, setResizingViewport] = useState<{
+    tabId: string;
+    edge: ViewportResizeEdge;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+    scale: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const el = browserContentRef.current;
+    if (!el || activeToolPanelKind !== "browser" || menuPageShown) return;
+    const measure = () => {
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      setBrowserContentSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [activeToolPanelKind, menuPageShown, activeToolPanelTabId]);
+
+  // 统一根据当前容器宽度或响应式视口，计算并同步 webview 缩放因子（避免与 setZoomLevel 打架）
+  useEffect(() => {
+    if (menuPageShown || activeToolPanelTab?.kind !== "browser" || !activeToolPanelTab.loadedUrl) return;
+    if (activeToolPanelTab.viewport?.open) {
+      const layout = computeStageViewportLayout(activeToolPanelTab.viewport, browserContentSize.width, browserContentSize.height);
+      syncBrowserWebviewZoom(activeToolPanelTab.id, layout.scale);
+    } else {
+      const factor = computeAutoFitZoomFactor(
+        browserContentSize.width,
+        activeToolPanelTab.zoom ?? 0,
+        activeToolPanelTab.autoFitDesktop !== false,
+      );
+      syncBrowserWebviewZoom(activeToolPanelTab.id, factor);
+    }
+  }, [
+    menuPageShown,
+    activeToolPanelTab?.id,
+    activeToolPanelTab?.kind,
+    activeToolPanelTab?.loadedUrl,
+    activeToolPanelTab?.zoom,
+    activeToolPanelTab?.autoFitDesktop,
+    activeToolPanelTab?.viewport,
+    browserContentSize.width,
+    browserContentSize.height,
+    syncBrowserWebviewZoom,
+  ]);
+
+  // 拖拽视口手柄调整宽高时全局捕获移动和抬起事件
+  useEffect(() => {
+    if (!resizingViewport) return;
+    const onPointerMove = (event: PointerEvent) => {
+      const deltaX = event.clientX - resizingViewport.startX;
+      const deltaY = event.clientY - resizingViewport.startY;
+      const next = computeResizedViewport(
+        { width: resizingViewport.startWidth, height: resizingViewport.startHeight },
+        resizingViewport.edge,
+        deltaX,
+        deltaY,
+        resizingViewport.scale,
+      );
+      updateBrowserViewport(resizingViewport.tabId, {
+        width: next.width,
+        height: next.height,
+        preset: "responsive",
+      });
+    };
+    const stopResizing = () => setResizingViewport(null);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopResizing);
+    window.addEventListener("pointercancel", stopResizing);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", stopResizing);
+      window.removeEventListener("pointercancel", stopResizing);
+    };
+  }, [resizingViewport, updateBrowserViewport]);
+
+  const startViewportResize = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    tabId: string,
+    viewport: BrowserViewportState,
+    scale: number,
+    edge: ViewportResizeEdge,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setResizingViewport({
+      tabId,
+      edge,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: viewport.width,
+      startHeight: viewport.height,
+      scale,
+    });
+  };
+
+  const hasControlOverlay = Boolean(
+    browserControlState
+    && browserControlState.status !== "idle"
+    && !(browserControlState.status === "stopped"
+      && browserControlState.inputReleaseState !== "pending"
+      && browserControlState.inputReleaseState !== "failed")
+    && (!browserControlState.tabId || browserControlState.tabId === activeToolPanelTabId),
+  );
+
+  const activeViewportLayout = activeToolPanelTab?.kind === "browser" && activeToolPanelTab.viewport?.open
+    ? computeStageViewportLayout(activeToolPanelTab.viewport, browserContentSize.width, browserContentSize.height)
+    : null;
+
   return (
       <aside className={`tool-panel ${activeToolPanelKind === "browser" ? "browser-mode" : ""}`} aria-label={t("toolpanel.sidebarAria", "右侧工具栏")}>
         <div className="tool-panel-tabs" role="tablist" aria-label={t("toolpanel.tabsAria", "打开的文件和网页")}>
@@ -314,6 +458,15 @@ export function ToolPanel(props: ToolPanelProps) {
                 >
                   <Plus size={17} />
                 </button>
+                <button
+                  className={`browser-toolbar-button${activeToolPanelTab.viewport?.open ? " active" : ""}`}
+                  aria-label={t("browserViewport.toggleTitle", "响应式视口 / 设备预览")}
+                  title={t("browserViewport.toggleTitle", "响应式视口 / 设备预览")}
+                  aria-pressed={Boolean(activeToolPanelTab.viewport?.open)}
+                  onClick={toggleBrowserViewportBar}
+                >
+                  <MonitorSmartphone size={16} />
+                </button>
                 <div className="browser-more-wrap" data-menu-root>
                   <button
                     className={`browser-toolbar-more ${browserMoreOpen ? "active" : ""}`}
@@ -340,21 +493,37 @@ export function ToolPanel(props: ToolPanelProps) {
                       <button role="menuitem" disabled={!activeToolPanelTab.loadedUrl} onClick={() => { setBrowserMoreOpen(false); void captureBrowserScreenshot(); }}>截取屏幕截图</button>
                       <button role="menuitem" disabled={!activeToolPanelTab.url} onClick={() => { setBrowserMoreOpen(false); void openBrowserExternal(); }}>在系统浏览器打开</button>
                       <div className="browser-more-sep" />
-                      <div className="browser-more-zoom" aria-label="设备工具栏">
-                        <span className="browser-more-label">设备视图</span>
+                      <button
+                        role="menuitemcheckbox"
+                        aria-checked={activeToolPanelTab.autoFitDesktop !== false}
+                        className="browser-more-toggle-item"
+                        onClick={() => toggleBrowserAutoFitDesktop(activeToolPanelTab.id)}
+                      >
+                        <span>{t("browserViewport.autoFitDesktop", "小窗口自动缩放适配")}</span>
+                        <span className={`browser-more-check${activeToolPanelTab.autoFitDesktop !== false ? " on" : ""}`} aria-hidden="true">
+                          {activeToolPanelTab.autoFitDesktop !== false && <Check size={14} />}
+                        </span>
+                      </button>
+                      <div className="browser-more-zoom" aria-label={t("browserViewport.deviceViewAria", "设备视图")}>
+                        <span className="browser-more-label">{t("browserViewport.deviceViewLabel", "设备视图")}</span>
                         <span className="browser-more-zoom-controls">
-                          {BROWSER_DEVICE_PRESETS.map((preset) => (
-                            <button
-                              key={preset.name}
-                              role="menuitem"
-                              className={activeToolPanelTab.device?.name === preset.name ? "active" : ""}
-                              title={`${preset.name}视图（${preset.width}×${preset.height}）`}
-                              onClick={() => {
-                                setBrowserMoreOpen(false);
-                                void applyBrowserDevice(activeToolPanelTab, activeToolPanelTab.device?.name === preset.name ? null : preset);
-                              }}
-                            >{preset.name}</button>
-                          ))}
+                          {BROWSER_VIEWPORT_PRESETS.filter((preset) => ["responsive", "mobile", "tablet"].includes(preset.id)).map((preset) => {
+                            const selected = Boolean(activeToolPanelTab.viewport?.open && activeToolPanelTab.viewport.preset === preset.id);
+                            const label = t(preset.labelKey, preset.fallbackLabel);
+                            return (
+                              <button
+                                key={preset.id}
+                                role="menuitem"
+                                className={selected ? "active" : ""}
+                                title={`${label}（${preset.width}×${preset.height}）`}
+                                onClick={() => {
+                                  setBrowserMoreOpen(false);
+                                  if (selected) closeBrowserViewportBar(activeToolPanelTab.id);
+                                  else selectBrowserViewportPreset(activeToolPanelTab.id, preset.id);
+                                }}
+                              >{label}</button>
+                            );
+                          })}
                         </span>
                       </div>
                       <div className="browser-more-sep" />
@@ -366,6 +535,13 @@ export function ToolPanel(props: ToolPanelProps) {
                       <div className="browser-more-sep" />
                       <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setBrowserPasswordsOpen(true); }}>密码和自动填充…</button>
                       <button role="menuitem" onClick={() => { setBrowserMoreOpen(false); setImportDialogOpen(true); }}>导入 Cookie 和密码…</button>
+                      <div className="browser-more-sep" />
+                      <button role="menuitem" className="browser-more-cdp-item" onClick={() => { setBrowserMoreOpen(false); onOpenCdpSettings(); }}>
+                        <span>{t("cdpAccess.title", "完整 CDP 访问权限")}</span>
+                        <span className={`browser-more-cdp-status${settings.fullCdpAccess ? " on" : ""}`}>
+                          {settings.fullCdpAccess ? t("cdpAccess.statusOn", "已开启") : t("cdpAccess.statusOff", "未开启")}
+                        </span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -396,13 +572,15 @@ export function ToolPanel(props: ToolPanelProps) {
                   <button aria-label="关闭查找" title="关闭（Esc）" onClick={closeBrowserFind}><X size={14} /></button>
                 </div>
               )}
-              {activeToolPanelTab.device && (
-                <div className="browser-device-bar">
-                  <Monitor size={13} />
-                  <span>{activeToolPanelTab.device.name}视图 · {activeToolPanelTab.device.width}×{activeToolPanelTab.device.height}</span>
-                  <button onClick={rotateBrowserDevice} title="横竖屏切换">旋转</button>
-                  <button onClick={() => void applyBrowserDevice(activeToolPanelTab, null)} title="退出设备视图">退出</button>
-                </div>
+              {activeToolPanelTab.viewport?.open && (
+                <BrowserViewportBar
+                  viewport={activeToolPanelTab.viewport}
+                  effectiveZoomPercent={activeViewportLayout?.zoomPercent ?? 100}
+                  onChange={(patch) => updateBrowserViewport(activeToolPanelTab.id, patch)}
+                  onSelectPreset={(presetId) => selectBrowserViewportPreset(activeToolPanelTab.id, presetId)}
+                  onRotate={() => rotateBrowserViewport(activeToolPanelTab.id)}
+                  onClose={() => closeBrowserViewportBar(activeToolPanelTab.id)}
+                />
               )}
               {activeToolPanelTab.loading && <div className="browser-progress" aria-hidden="true" />}
               {browserPasswordPrompt && browserPasswordPrompt.tabId === activeToolPanelTab.id && (
@@ -415,11 +593,13 @@ export function ToolPanel(props: ToolPanelProps) {
                   <button onClick={dismissBrowserPasswordPrompt}>不保存</button>
                 </div>
               )}
-              <div className="browser-content">
+              <div ref={browserContentRef} className={`browser-content${hasControlOverlay ? " has-control-overlay" : ""}`}>
                 <BrowserControlOverlay
                   controlState={browserControlState}
                   activeTabId={activeToolPanelTabId}
+                  fullCdpAccess={Boolean(settings.fullCdpAccess)}
                 />
+                {resizingViewport && <div className="browser-viewport-drag-shield" aria-hidden="true" />}
                 {activeToolPanelTab.fillHint && !activeToolPanelTab.loading && activeToolPanelTab.loadedUrl && (
                   <button className="browser-fill-chip" onClick={() => void fillSavedPassword()} title="自动填写此站点已保存的用户名和密码">
                     <KeyRound size={12} />
@@ -445,27 +625,53 @@ export function ToolPanel(props: ToolPanelProps) {
                       </div>
                     ) : null;
                   }
+                  const isViewportOpen = Boolean(tab.viewport?.open);
+                  const stageLayout = isViewportOpen && tab.viewport
+                    ? computeStageViewportLayout(tab.viewport, browserContentSize.width, browserContentSize.height)
+                    : null;
                   return (
                     <div
                       key={tab.id}
-                      className={`browser-tab-page${isActive ? " active" : ""}${tab.device ? " emulated" : ""}`}
+                      className={`browser-tab-page${isActive ? " active" : ""}${isViewportOpen ? " viewport-stage" : ""}`}
                       aria-hidden={!isActive}
-                      style={tab.device ? { "--device-width": `${tab.device.width}px`, "--device-height": `${tab.device.height}px` } as CSSProperties : undefined}
                     >
-                      {createElement("webview", {
-                        key: tab.id,
-                        ref: browserWebviewRefFor(tab.id),
-                        className: "browser-webview",
-                        src: tab.loadedUrl,
-                        partition: "persist:dyworker-browser",
-                        title: tab.title,
-                        // 页面里 target=_blank / window.open 的链接要交给我们处理成
-                        // 面板内的新标签页（主进程 setWindowOpenHandler 一律 deny，
-                        // 不会真的弹原生窗口）：不允许弹窗时这些请求根本不会上报，
-                        // 表现就是点了没反应的链接。React 对未知标签只认字符串属性，
-                        // 传布尔 true 不会落到 DOM 属性上（实测拿不到），故用空串。
-                        allowpopups: "",
-                      })}
+                      <div className="browser-viewport-stage-inner">
+                        <div
+                          className="browser-viewport-frame"
+                          style={stageLayout ? { width: `${stageLayout.displayWidth}px`, height: `${stageLayout.displayHeight}px` } : undefined}
+                        >
+                          {createElement("webview", {
+                            key: tab.id,
+                            ref: browserWebviewRefFor(tab.id),
+                            className: "browser-webview",
+                            src: tab.loadedUrl,
+                            partition: "persist:dyworker-browser",
+                            title: tab.title,
+                            // 页面里 target=_blank / window.open 的链接要交给我们处理成
+                            // 面板内的新标签页（主进程 setWindowOpenHandler 一律 deny，
+                            // 不会真的弹原生窗口）：不允许弹窗时这些请求根本不会上报，
+                            // 表现就是点了没反应的链接。React 对未知标签只认字符串属性，
+                            // 传布尔 true 不会落到 DOM 属性上（实测拿不到），故用空串。
+                            allowpopups: "",
+                          })}
+                          {isViewportOpen && tab.viewport && VIEWPORT_RESIZE_HANDLES.map((handle) => (
+                            <button
+                              key={handle.edge}
+                              type="button"
+                              className={`browser-viewport-handle edge-${handle.edge}`}
+                              data-resize-edge={handle.edge}
+                              aria-label={t(handle.ariaKey, handle.fallbackAria)}
+                              onPointerDown={(event) => startViewportResize(
+                                event,
+                                tab.id,
+                                tab.viewport!,
+                                stageLayout?.scale ?? 1,
+                                handle.edge,
+                              )}
+                            />
+                          ))}
+                        </div>
+                      </div>
                       {isActive && tab.loadError && (
                         <div className="browser-error-state">
                           <AlertTriangle size={34} />
