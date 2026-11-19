@@ -67,6 +67,28 @@
   background: #c9cdc6;
 }
 
+.conversation-turn-load-more {
+  position: relative;
+  width: 24px;
+  height: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a6aba2;
+  cursor: pointer;
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.conversation-turn-load-more:hover,
+.conversation-turn-load-more.hovered {
+  color: #697067;
+  transform: translateY(-1px);
+}
+
 .conversation-turn-preview {
   position: absolute;
   top: 50%;
@@ -124,6 +146,66 @@
   z-index: 1;
   color: #afb2aa;
   font-size: calc(11px * var(--font-ui-scale, 1));
+}
+
+.conversation-load-more-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 22px;
+}
+
+.conversation-load-more-button,
+.conversation-load-more-collapse {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  box-shadow: var(--shadow-xs);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 540;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.conversation-load-more-button:hover,
+.conversation-load-more-collapse:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.conversation-load-more-collapse {
+  background: transparent;
+  box-shadow: none;
+  color: var(--quiet);
+}
+
+.conversation-load-more-meta {
+  color: var(--quiet);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.conversation-search-load-more {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.conversation-search-load-more:hover {
+  border-color: var(--border-strong);
+  color: var(--ink);
 }
 
 .user-bubble {

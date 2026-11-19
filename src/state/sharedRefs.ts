@@ -62,6 +62,9 @@ export const createTaskRef: { current: (targetWorkspacePath?: string) => void } 
 export const selectSessionRef: { current: (session: SessionRecord) => void } = { current: () => {} };
 // 会话内消息行的 DOM 引用：App 的 bindMessageRow 写入，jumpToConversationTurn 读取
 export const conversationTurnRefs: { current: Record<number, HTMLDivElement | null> } = { current: {} };
+// 向上懒加载历史轮次时的滚动锚定与贴底跟随暂停窗口
+export const conversationPrependAnchorRef: { current: { scrollHeight: number; scrollTop: number } | null } = { current: null };
+export const suppressStickUntilRef: { current: number } = { current: 0 };
 
 // 语音录制 / 朗读 / 播放的模块级 ref：App 的清理 effect 与 messageActions 的读写必须同一实例
 export const recorderRef: { current: MediaRecorder | null } = { current: null };

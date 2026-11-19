@@ -97,8 +97,8 @@ export interface LayoutState {
   setWorkspaceOpen: (value: Updater<boolean>) => void;
   workspaceGroupOpen: Record<string, boolean>;
   setWorkspaceGroupOpen: (value: Updater<Record<string, boolean>>) => void;
-  workspaceSessionsExpanded: Record<string, boolean>;
-  setWorkspaceSessionsExpanded: (value: Updater<Record<string, boolean>>) => void;
+  workspaceSessionVisibleCounts: Record<string, number>;
+  setWorkspaceSessionVisibleCounts: (value: Updater<Record<string, number>>) => void;
 
   terminalOpen: boolean;
   setTerminalOpen: (value: Updater<boolean>) => void;
@@ -181,8 +181,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setWorkspaceOpen: (value) => set((s) => updateField(s, "workspaceOpen", value)),
   workspaceGroupOpen: {},
   setWorkspaceGroupOpen: (value) => set((s) => updateField(s, "workspaceGroupOpen", value)),
-  workspaceSessionsExpanded: {},
-  setWorkspaceSessionsExpanded: (value) => set((s) => updateField(s, "workspaceSessionsExpanded", value)),
+  workspaceSessionVisibleCounts: {},
+  setWorkspaceSessionVisibleCounts: (value) => set((s) => updateField(s, "workspaceSessionVisibleCounts", value)),
 
   terminalOpen: false,
   setTerminalOpen: (value) => set((s) => updateField(s, "terminalOpen", value)),

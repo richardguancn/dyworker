@@ -26,6 +26,7 @@ import {
   sessionSaveMountedRef, sessionSaveRetryRef, messageRowRefs, conversationSearchInputRef,
   searchMatchRangesRef, searchScrollKeyRef, appShellRef, panelGeometryRef, panelResizeRef,
   composerRef, composerPastesRef, annotationsRef, lastActiveIdRef, browserPanelCommandsRef,
+  conversationPrependAnchorRef, suppressStickUntilRef,
 } from "./sharedRefs";
 import { useLayoutStore } from "./layoutStore";
 import { useSettingsStore } from "./settingsStore";
@@ -38,6 +39,7 @@ import { usePanelStore } from "./panelStore";
 export interface StartupRuntimeDeps {
   activeSession: SessionRecord | undefined;
   traceBuffer: ReturnType<typeof createTraceBuffer>;
+  conversationVisibleStartIndex?: number;
 }
 
 // 工作台布局按会话持久化的 localStorage 键前缀与保留条数上限
@@ -61,7 +63,7 @@ function keepSingleUnstartedSession(items: SessionRecord[]) {
 }
 
 export function useStartupRuntime(deps: StartupRuntimeDeps) {
-  const { activeSession, traceBuffer } = deps;
+  const { activeSession, traceBuffer, conversationVisibleStartIndex = 0 } = deps;
   const {
     setPluginsPageOpen, setBotTeamPageOpen, setViewportWidth, setSidebarOpen,
     setTerminalAvailable, setTerminalOpen, debugOpen,
@@ -392,7 +394,7 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
       searchScrollKeyRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationSearchOpen, conversationSearchQuery, conversationSearchMatchIndex, activeSession?.messages, activeId, collapsedActivities]);
+  }, [conversationSearchOpen, conversationSearchQuery, conversationSearchMatchIndex, activeSession?.messages, activeId, collapsedActivities, conversationVisibleStartIndex]);
 
   // 关闭搜索或切换会话时清掉残留高亮；换会话后命中序号失效，回到第一个
   useEffect(() => {
@@ -638,6 +640,12 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     const dist = () => viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
     const onScroll = () => {
       const d = dist();
+      if (performance.now() < suppressStickUntilRef.current) {
+        pinned = false;
+        lastDist = d;
+        lastHeight = viewport.scrollHeight;
+        return;
+      }
       if (viewport.scrollHeight === lastHeight && d > lastDist) {
         // 内容高度没变而距离变大：用户在上滚（滚动条拖动/按键），退出跟随
         pinned = false;
@@ -665,6 +673,12 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
       if (event.deltaY < 0) upGestureUntil = performance.now() + 400;
     };
     const stick = () => {
+      if (conversationPrependAnchorRef.current || performance.now() < suppressStickUntilRef.current) {
+        pinned = false;
+        lastHeight = viewport.scrollHeight;
+        lastDist = dist();
+        return;
+      }
       if (interacting || performance.now() < upGestureUntil) return;
       const growth = viewport.scrollHeight - lastHeight;
       const d = dist();

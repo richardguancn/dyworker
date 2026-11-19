@@ -5,6 +5,7 @@ import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle,
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginSlotView } from "../PluginSlotView";
+import { nextWorkspaceVisibleCount, resolveWorkspaceVisibleCount } from "../lib/pagination";
 import { WORKSPACE_SESSION_LIMIT, displayWorkspace } from "../lib/text";
 import { t } from "../i18n";
 import type { InboxItem, PendingWakeRecord, SessionRecord } from "../types";
@@ -30,8 +31,8 @@ export interface SidebarProps {
   workspaceSessionGroups: WorkspaceSessionGroups;
   workspacePath: string;
   activeId: string;
-  workspaceSessionsExpanded: Record<string, boolean>;
-  setWorkspaceSessionsExpanded: Dispatch<SetStateAction<Record<string, boolean>>>;
+  workspaceSessionVisibleCounts: Record<string, number>;
+  setWorkspaceSessionVisibleCounts: Dispatch<SetStateAction<Record<string, number>>>;
   workspaceMenuPath: string | null;
   setWorkspaceMenuPath: Dispatch<SetStateAction<string | null>>;
   sessionMenuId: string | null;
@@ -82,7 +83,7 @@ export function Sidebar(props: SidebarProps) {
     inboxOpen, setInboxOpen, setInboxItems, inboxPendingCount, systemMessagesUnread,
     query, setQuery,
     workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionGroups, workspacePath,
-    activeId, workspaceSessionsExpanded, setWorkspaceSessionsExpanded,
+    activeId, workspaceSessionVisibleCounts, setWorkspaceSessionVisibleCounts,
     workspaceMenuPath, setWorkspaceMenuPath, sessionMenuId, setSessionMenuId,
     renamingId, setRenamingId,
     pluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen, setPluginsPageOpen,
@@ -95,6 +96,15 @@ export function Sidebar(props: SidebarProps) {
     summarizeSessionToSkill, toggleWorkspacePin,
     openWorkspaceInFileManager, sessionPendingInboxCount,
   } = props;
+
+  const resetWorkspaceVisibleCount = (targetPath: string) => {
+    setWorkspaceSessionVisibleCounts((current) => {
+      if (!(targetPath in current)) return current;
+      const next = { ...current };
+      delete next[targetPath];
+      return next;
+    });
+  };
 
   const renderSessionItem = (session: SessionRecord) => {
     // 插件页打开时主内容区不是会话，会话列表就**不该再显示"当前选中"高亮**——
@@ -219,7 +229,11 @@ export function Sidebar(props: SidebarProps) {
           <section className="sidebar-section workspace-session-section">
             <div className="recent-section-toggle-row">
               <button className="recent-section-toggle" aria-expanded={workspaceGroupOpen.__projects__ !== false}
-                onClick={() => setWorkspaceGroupOpen(current => ({ ...current, __projects__: current.__projects__ === false }))}>
+                onClick={() => {
+                  const nextOpen = workspaceGroupOpen.__projects__ === false;
+                  setWorkspaceGroupOpen((current) => ({ ...current, __projects__: nextOpen }));
+                  if (!nextOpen) setWorkspaceSessionVisibleCounts({});
+                }}>
                 <span>{t("sidebar.projects", "工作区")}</span>{workspaceGroupOpen.__projects__ === false ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
               </button>
               <button
@@ -236,18 +250,25 @@ export function Sidebar(props: SidebarProps) {
                   const expanded = workspaceGroupOpen[group.path] ?? group.path === workspacePath;
                   const isSearching = query.trim() !== "";
                   const totalSessions = group.sessions.length;
-                  const hasActiveHiddenSession = group.sessions.slice(WORKSPACE_SESSION_LIMIT).some((session) => session.id === activeId);
-                  const isSessionsExpanded = isSearching || (workspaceSessionsExpanded[group.path] ?? (hasActiveHiddenSession ? true : false));
-                  const visibleGroupSessions = isSessionsExpanded || totalSessions <= WORKSPACE_SESSION_LIMIT
-                    ? group.sessions
-                    : group.sessions.slice(0, WORKSPACE_SESSION_LIMIT);
-                  const showToggle = totalSessions > WORKSPACE_SESSION_LIMIT && !isSearching;
+                  const visibleCount = resolveWorkspaceVisibleCount(
+                    totalSessions,
+                    workspaceSessionVisibleCounts[group.path],
+                    isSearching,
+                    WORKSPACE_SESSION_LIMIT,
+                  );
+                  const visibleGroupSessions = group.sessions.slice(0, visibleCount);
+                  const remainingSessions = totalSessions - visibleCount;
+                  const showPagination = totalSessions > WORKSPACE_SESSION_LIMIT && !isSearching;
                   return (
                     <div className={`workspace-session-group ${expanded ? "expanded" : ""} ${group.pinned ? "pinned" : ""}`} key={group.path} data-menu-root>
                       <div className="workspace-session-row">
                         <button
                           className="workspace-session-heading"
-                          onClick={() => setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: !expanded }))}
+                          onClick={() => {
+                            const nextExpanded = !expanded;
+                            setWorkspaceGroupOpen((current) => ({ ...current, [group.path]: nextExpanded }));
+                            if (!nextExpanded) resetWorkspaceVisibleCount(group.path);
+                          }}
                           aria-expanded={expanded}
                           title={group.path}
                         >
@@ -301,19 +322,42 @@ export function Sidebar(props: SidebarProps) {
                       {expanded && (
                         <div className="session-list workspace-session-items">
                           {visibleGroupSessions.map(renderSessionItem)}
-                          {showToggle && (
-                            <button
-                              type="button"
-                              className="workspace-sessions-toggle"
-                              onClick={() => {
-                                setWorkspaceSessionsExpanded((current) => ({
-                                  ...current,
-                                  [group.path]: !isSessionsExpanded,
-                                }));
-                              }}
-                            >
-                              {isSessionsExpanded ? "收起显示" : "展开显示"}
-                            </button>
+                          {showPagination && (
+                            <div className="workspace-sessions-actions">
+                              {remainingSessions > 0 ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="workspace-sessions-toggle"
+                                    onClick={() => {
+                                      setWorkspaceSessionVisibleCounts((current) => ({
+                                        ...current,
+                                        [group.path]: nextWorkspaceVisibleCount(totalSessions, visibleCount, WORKSPACE_SESSION_LIMIT),
+                                      }));
+                                    }}
+                                  >
+                                    {`展开更多（还有 ${remainingSessions} 条）`}
+                                  </button>
+                                  {visibleCount > WORKSPACE_SESSION_LIMIT && (
+                                    <button
+                                      type="button"
+                                      className="workspace-sessions-collapse"
+                                      onClick={() => resetWorkspaceVisibleCount(group.path)}
+                                    >
+                                      收起
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="workspace-sessions-toggle"
+                                  onClick={() => resetWorkspaceVisibleCount(group.path)}
+                                >
+                                  收起显示
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}

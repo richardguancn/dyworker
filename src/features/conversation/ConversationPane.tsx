@@ -3,9 +3,10 @@
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（sendMessage、updateComposer、beginPanelResize、
 // 各种 useEffect 等）仍留在 App.tsx，这里只通过 props 接收状态与回调。
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
-import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, RefObject, SetStateAction } from "react";
+import { useEffect, useState, type ClipboardEvent, type ComponentType, type Dispatch, type DragEvent, type KeyboardEvent, type MouseEvent, type RefObject, type SetStateAction } from "react";
 import { composerApprovalModes } from "../plans/PlansPanel";
 import { t } from "../../i18n";
+import type { LoadedConversationTurn, VisibleConversationMessage } from "../../lib/pagination";
 import { indexConversation } from "../../lib/text";
 import { ApprovalCard, QuestionCard } from "../message/Cards";
 import { ImageLightbox } from "../message/ImageLightbox";
@@ -89,6 +90,15 @@ export interface ConversationPaneProps {
 
   conversationIndex: ReturnType<typeof indexConversation>;
   conversationTurns: ReturnType<typeof indexConversation>["turns"];
+  visibleMessages: Array<VisibleConversationMessage<ChatMessage>>;
+  hasMoreTurns: boolean;
+  hiddenTurnCount: number;
+  canCollapseTurns: boolean;
+  railTurns: Array<LoadedConversationTurn<ReturnType<typeof indexConversation>["turns"][number]["preview"]>>;
+  earlierSearchMatchCount: number;
+  loadMoreConversationTurns: () => void;
+  loadAllConversationTurns: () => void;
+  collapseConversationTurns: () => void;
   hoveredTurnIndex: number | null;
   setHoveredTurnIndex: Dispatch<SetStateAction<number | null>>;
   jumpToConversationTurn: (turnIndex: number) => void;
@@ -268,7 +278,9 @@ export function ConversationPane(props: ConversationPaneProps) {
     conversationView, setConversationView, pluginConversationViews,
     conversationSearchOpen, setConversationSearchOpen, conversationSearchQuery, setConversationSearchQuery,
     conversationSearchMatchIndex, setConversationSearchMatchIndex, conversationMatchTotal, conversationSearchInputRef,
-    conversationIndex, conversationTurns, hoveredTurnIndex, setHoveredTurnIndex, jumpToConversationTurn,
+    conversationIndex, conversationTurns, visibleMessages, hasMoreTurns, hiddenTurnCount, canCollapseTurns,
+    railTurns, earlierSearchMatchCount, loadMoreConversationTurns, loadAllConversationTurns, collapseConversationTurns,
+    hoveredTurnIndex, setHoveredTurnIndex, jumpToConversationTurn,
     bindViewport, syncAtBottom, setSelectionQuote, handleConversationMouseUp,
     editingMessage, activeTaskRunning, streamingAssistantIndex,
     playingVoicePath, voiceLoadingPath, speakingMessageKey, speakingLoadingKey, collapsedActivities, queuedRunIds,
@@ -282,6 +294,10 @@ export function ConversationPane(props: ConversationPaneProps) {
     inboxOpen, setInboxOpen, inboxItems, inboxTab, systemMessageFocusId, setSystemMessageFocusId,
     imagePreview, closeImagePreview, imagePreviewIndex, imagePreviewPeers, navigateImagePreview, setNotice, setError,
   } = props;
+  const [railLoadMoreHovered, setRailLoadMoreHovered] = useState(false);
+  useEffect(() => {
+    setRailLoadMoreHovered(false);
+  }, [activeId, hasMoreTurns]);
   return (
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
         {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
@@ -355,6 +371,16 @@ export function ConversationPane(props: ConversationPaneProps) {
                   : "无匹配"
                 : ""}
             </span>
+            {earlierSearchMatchCount > 0 && (
+              <button
+                type="button"
+                className="conversation-search-load-more"
+                title="加载更早对话以显示全部匹配"
+                onClick={loadAllConversationTurns}
+              >
+                {`加载更早（${earlierSearchMatchCount}）`}
+              </button>
+            )}
             <button
               type="button"
               className="icon-button subtle tiny"
@@ -392,9 +418,44 @@ export function ConversationPane(props: ConversationPaneProps) {
 
         {conversationTurns.length > 5 && (
           <nav className="conversation-turn-rail" aria-label="对话回合导航">
-            {conversationTurns.map((turn, turnIndex) => {
+            {hasMoreTurns && (
+              <div className="conversation-turn-marker-wrap">
+                <button
+                  type="button"
+                  className={`conversation-turn-load-more${railLoadMoreHovered ? " hovered" : ""}`}
+                  aria-label={`加载更多：还有 ${hiddenTurnCount} 轮更早对话`}
+                  aria-describedby={railLoadMoreHovered ? "conversation-turn-preview-load-more" : undefined}
+                  onClick={loadMoreConversationTurns}
+                  onMouseEnter={() => {
+                    setHoveredTurnIndex(null);
+                    setRailLoadMoreHovered(true);
+                  }}
+                  onMouseLeave={() => setRailLoadMoreHovered(false)}
+                  onFocus={() => {
+                    setHoveredTurnIndex(null);
+                    setRailLoadMoreHovered(true);
+                  }}
+                  onBlur={() => setRailLoadMoreHovered(false)}
+                >
+                  <ChevronUp size={10} strokeWidth={2.4} />
+                </button>
+                {railLoadMoreHovered && (
+                  <div
+                    id="conversation-turn-preview-load-more"
+                    className="conversation-turn-preview"
+                    role="tooltip"
+                  >
+                    <strong>加载更多</strong>
+                    <span>{`还有 ${hiddenTurnCount} 轮更早对话`}</span>
+                    <small>点击向上加载</small>
+                  </div>
+                )}
+              </div>
+            )}
+            {railTurns.map((turn) => {
+              const turnIndex = turn.turnIndex;
               const turnActive = turnIndex === hoveredTurnIndex
-                || (hoveredTurnIndex === null && turnIndex === conversationTurns.length - 1);
+                || (hoveredTurnIndex === null && !railLoadMoreHovered && turnIndex === conversationTurns.length - 1);
               const waveDistance = hoveredTurnIndex === null
                 ? null
                 : Math.abs(turnIndex - hoveredTurnIndex);
@@ -407,9 +468,15 @@ export function ConversationPane(props: ConversationPaneProps) {
                     aria-current={turnActive ? "step" : undefined}
                     aria-describedby={hoveredTurnIndex === turnIndex ? `conversation-turn-preview-${turnIndex}` : undefined}
                     onClick={() => jumpToConversationTurn(turnIndex)}
-                    onMouseEnter={() => setHoveredTurnIndex(turnIndex)}
+                    onMouseEnter={() => {
+                      setRailLoadMoreHovered(false);
+                      setHoveredTurnIndex(turnIndex);
+                    }}
                     onMouseLeave={() => setHoveredTurnIndex(null)}
-                    onFocus={() => setHoveredTurnIndex(turnIndex)}
+                    onFocus={() => {
+                      setRailLoadMoreHovered(false);
+                      setHoveredTurnIndex(turnIndex);
+                    }}
                     onBlur={() => setHoveredTurnIndex(null)}
                   />
                   {hoveredTurnIndex === turnIndex && (
@@ -446,20 +513,49 @@ export function ConversationPane(props: ConversationPaneProps) {
                 <h1>{!props.ready ? t("common.loading", "正在加载…") : props.error && !activeSession ? t("common.unableToOpen", "暂时无法打开对话") : t("conversation.whatToWorkOn", "我们要完成什么？")}</h1>
               </div>
             ) : (
-              activeSession.messages.map((message, index) => {
-                // 排队消息不渲染在对话流里，继续展示在输入框上方的队列中。
-                if (message.runId && queuedRunIds.has(message.runId)) return null;
-                return <ConversationMessageRow
-                  key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
-                  message={message} index={index} turnIndex={conversationIndex.byMessageIndex.get(index) ?? -1}
-                  sessionId={activeSession.id} workspacePath={activeSession.workspacePath || workspacePath}
-                  isEditing={editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index}
-                  activeTaskRunning={message.role === "user" ? activeTaskRunning : index === streamingAssistantIndex} isStreamingMessage={index === streamingAssistantIndex}
-                  playingVoicePath={playingVoicePath} voiceLoadingPath={voiceLoadingPath}
-                  speakingMessageKey={speakingMessageKey} speakingLoadingKey={speakingLoadingKey}
-                  collapsedActivities={collapsedActivities} actions={messageRowActions}
-                />;
-              })
+              <>
+                {(hasMoreTurns || canCollapseTurns) && (
+                  <div className="conversation-load-more-bar">
+                    {hasMoreTurns && (
+                      <>
+                        <button
+                          type="button"
+                          className="conversation-load-more-button"
+                          onClick={loadMoreConversationTurns}
+                        >
+                          加载更多
+                        </button>
+                        <span className="conversation-load-more-meta">
+                          {`还有 ${hiddenTurnCount} 轮更早对话`}
+                        </span>
+                      </>
+                    )}
+                    {canCollapseTurns && (
+                      <button
+                        type="button"
+                        className="conversation-load-more-collapse"
+                        onClick={collapseConversationTurns}
+                      >
+                        收起早期
+                      </button>
+                    )}
+                  </div>
+                )}
+                {visibleMessages.map(({ message, index }) => {
+                  // 排队消息不渲染在对话流里，继续展示在输入框上方的队列中。
+                  if (message.runId && queuedRunIds.has(message.runId)) return null;
+                  return <ConversationMessageRow
+                    key={`${message.role}:${message.id || `${message.createdAt}-${index}`}`}
+                    message={message} index={index} turnIndex={conversationIndex.byMessageIndex.get(index) ?? -1}
+                    sessionId={activeSession.id} workspacePath={activeSession.workspacePath || workspacePath}
+                    isEditing={editingMessage?.sessionId === activeSession.id && editingMessage.messageIndex === index}
+                    activeTaskRunning={message.role === "user" ? activeTaskRunning : index === streamingAssistantIndex} isStreamingMessage={index === streamingAssistantIndex}
+                    playingVoicePath={playingVoicePath} voiceLoadingPath={voiceLoadingPath}
+                    speakingMessageKey={speakingMessageKey} speakingLoadingKey={speakingLoadingKey}
+                    collapsedActivities={collapsedActivities} actions={messageRowActions}
+                  />;
+                })}
+              </>
             )}
 
             {activeTaskRunning && (

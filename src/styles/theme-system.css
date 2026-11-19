@@ -112,6 +112,44 @@ html:not([data-theme]) .topbar {
   }
 
 
+  html:not([data-theme]) .conversation-turn-load-more {
+    color: #6f756c;
+  }
+
+
+  html:not([data-theme]) .conversation-turn-load-more:hover,
+  html:not([data-theme]) .conversation-turn-load-more.hovered {
+    color: #b8beb4;
+  }
+
+
+  html:not([data-theme]) .conversation-load-more-button,
+  html:not([data-theme]) .conversation-search-load-more {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: #b4b9af;
+  }
+
+
+  html:not([data-theme]) .conversation-load-more-button:hover,
+  html:not([data-theme]) .conversation-load-more-collapse:hover,
+  html:not([data-theme]) .conversation-search-load-more:hover {
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #e7e9e2;
+  }
+
+
+  html:not([data-theme]) .conversation-load-more-collapse {
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #848980;
+  }
+
+
+  html:not([data-theme]) .conversation-load-more-meta {
+    color: #7e837a;
+  }
+
+
   html:not([data-theme]) .tool-panel {
     border-left-color: rgba(255, 255, 255, 0.065);
     background: linear-gradient(180deg, #1b1c19 0%, var(--surface) 180px);
@@ -213,6 +251,12 @@ html:not([data-theme]) .browser-toolbar-button:hover {
   }
 
 
+  html:not([data-theme]) .browser-toolbar-button.active {
+    background: rgba(120, 160, 255, 0.16);
+    color: var(--accent);
+  }
+
+
   html:not([data-theme]) .browser-url-input {
     background: rgba(255, 255, 255, 0.045);
     color: #bfc3ba;
@@ -308,21 +352,83 @@ html:not([data-theme]) .browser-toolbar-more {
   }
 
 
-  html:not([data-theme]) .browser-tab-page.emulated {
-    background: #121310;
+  html:not([data-theme]) .browser-tab-page.viewport-stage {
+    background: #1a1b18;
   }
 
 
-  html:not([data-theme]) .browser-device-bar,
+  html:not([data-theme]) .browser-viewport-bar,
 html:not([data-theme]) .browser-password-bar {
     border-color: rgba(255, 255, 255, 0.065);
-    color: #8b9187;
+    color: #9ba096;
   }
 
 
-  html:not([data-theme]) .browser-device-bar button {
-    border-color: rgba(255, 255, 255, 0.1);
-    color: #a4a99f;
+  html:not([data-theme]) .browser-viewport-bar {
+    background: #20211e;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-select,
+html:not([data-theme]) .browser-viewport-zoom-select {
+    color: #d6d9d0;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-select:hover,
+html:not([data-theme]) .browser-viewport-zoom-select:hover,
+html:not([data-theme]) .browser-viewport-icon-btn:hover,
+html:not([data-theme]) .browser-viewport-close-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #eef0ea;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-dim-input {
+    background: rgba(255, 255, 255, 0.08);
+    color: #eceee8;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-dim-input:focus {
+    background: #2b2c28;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-handle {
+    background: #2b2c28;
+  }
+
+
+  html:not([data-theme]) .browser-viewport-handle:hover,
+html:not([data-theme]) .browser-viewport-handle:active {
+    background: #3b3c37;
+  }
+
+
+  html:not([data-theme]) .browser-more-check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #161815;
+  }
+
+
+  html:not([data-theme]) .browser-more-cdp-status {
+    background: rgba(255, 255, 255, 0.08);
+    color: #9ba096;
+  }
+
+
+  html:not([data-theme]) .browser-more-cdp-status.on {
+    background: rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+  }
+
+
+  html:not([data-theme]) .browser-control-cdp-badge {
+    border-color: rgba(251, 191, 36, 0.35);
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
   }
 
 
@@ -1305,8 +1411,36 @@ html:not([data-theme]) .identity-option.selected {
 
 
   html:not([data-theme]) .settings-nav-item.active,
-html:not([data-theme]) .hook-rule-row {
+html:not([data-theme]) .hook-rule-row,
+html:not([data-theme]) .cdp-access-card {
     background: #2b2c28;
+  }
+
+
+  html:not([data-theme]) .cdp-access-title-group strong {
+    color: #e4e6df;
+  }
+
+
+  html:not([data-theme]) .cdp-access-badge.off {
+    background: rgba(255, 255, 255, 0.08);
+    color: #9ba096;
+  }
+
+
+  html:not([data-theme]) .cdp-access-badge.on {
+    background: rgba(152, 103, 30, 0.28);
+    color: #fbbf24;
+  }
+
+
+  html:not([data-theme]) .cdp-switch {
+    background: #464840;
+  }
+
+
+  html:not([data-theme]) .cdp-switch.on {
+    background: #d97706;
   }
 
 

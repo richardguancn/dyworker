@@ -531,10 +531,17 @@ body.resizing-panels .app-shell {
   padding-left: 0;
 }
 
-.workspace-sessions-toggle {
+.workspace-sessions-actions {
   display: flex;
   align-items: center;
-  width: 100%;
+  gap: 4px;
+}
+
+.workspace-sessions-toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
   height: 34px;
   padding: 0 12px;
   border: 0;
@@ -549,6 +556,25 @@ body.resizing-panels .app-shell {
 }
 
 .workspace-sessions-toggle:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.workspace-sessions-collapse {
+  flex: none;
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--quiet);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-sessions-collapse:hover {
   background: var(--sidebar-hover);
   color: var(--ink);
 }

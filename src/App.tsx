@@ -10,7 +10,7 @@ SquarePen,
 SquarePlus,
 SquareTerminal
 } from "lucide-react";
-import { CSSProperties,KeyboardEvent,MouseEvent,useCallback,useEffect,useLayoutEffect,useMemo,useRef } from "react";
+import { CSSProperties,KeyboardEvent,MouseEvent,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState } from "react";
 import { hasConfiguredModel } from "../electron/host/dsh-runtime/model-settings.mts";
 import { getModelReasoningConfig,selectedReasoningEffort } from '../electron/model-reasoning.ts';
 import { resolvePanelShortcut,type PanelShortcut } from "../electron/panel-shortcuts";
@@ -30,6 +30,12 @@ import { composerApprovalModes } from "./features/plans/PlansPanel";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
 import { playCompletionSound } from "./lib/completionSound";
 import { formatMessageTime } from "./lib/format";
+import {
+CONVERSATION_TURN_PAGE_SIZE,
+countEarlierSearchMatches,
+sliceConversationWindow,
+sliceTurnRail
+} from "./lib/pagination";
 import {
 FILE_TOKEN_REGEX,
 SESSION_TOKEN_REGEX,
@@ -64,7 +70,7 @@ import { useSessionStore } from "./state/sessionStore";
 import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
 import { activateModelProfile,downloadAppUpdate,ensureComposerModels,saveProviderSettings,selectApprovalMode,switchComposerModel } from "./state/settingsActions";
 import { useSettingsStore } from "./state/settingsStore";
-import { activeIdRef,activeToolPanelTabIdRef,appShellRef,appendSessionTracesRef,bootstrapFailedRef,browserPanelCommandsRef,browserResumeGuardRef,conversationSearchInputRef,conversationTurnRefs,createTaskRef,debugLogFlushTimerRef,dismissedPluginMention,handleGoalActionRef,manualRunScheduleRef,mentionItemsRef,messageRowRefs,openFilePreviewRef,panelGeometryRef,panelResizeRef,pendingDebugLogsRef,queueDebugLogRef,recentDebugLogsRef,refreshMemoriesRef,refreshSkillsRef,runningRunIdsRef,selectSessionRef,sessionsRef,textareaRef,toolPanelTabsRef,tracePublishTimerRef,viewportRef,wakingSessionsRef,workspaceFilesRef } from "./state/sharedRefs";
+import { activeIdRef,activeToolPanelTabIdRef,appShellRef,appendSessionTracesRef,bootstrapFailedRef,browserPanelCommandsRef,browserResumeGuardRef,conversationPrependAnchorRef,conversationSearchInputRef,conversationTurnRefs,createTaskRef,debugLogFlushTimerRef,dismissedPluginMention,handleGoalActionRef,manualRunScheduleRef,mentionItemsRef,messageRowRefs,openFilePreviewRef,panelGeometryRef,panelResizeRef,pendingDebugLogsRef,queueDebugLogRef,recentDebugLogsRef,refreshMemoriesRef,refreshSkillsRef,runningRunIdsRef,searchScrollKeyRef,selectSessionRef,sessionsRef,suppressStickUntilRef,textareaRef,toolPanelTabsRef,tracePublishTimerRef,viewportRef,wakingSessionsRef,workspaceFilesRef } from "./state/sharedRefs";
 import { useStartupRuntime } from "./state/startupRuntime";
 import { clearWorkspace,closeFilePanelTabs,createTask,exportProjectPackage,exportSessionMarkdown,exportSessionPackage,forkSession,handleGoalAction,importSessionPackage,jumpToConversationTurn,openAnnotationList,scheduleCloseAnnotationList,sessionPendingInboxCount,summarizeSessionToSkill,toggleTerminal } from "./state/taskActions";
 import { choosePreviewFile,closeToolPanelTab,focusToolPanelTab,openFilePreview,openToolPanelTab } from "./state/toolPanelActions";
@@ -110,7 +116,7 @@ export function App() {
     botTeamAvailable, setBotTeamAvailable,
     conversationView, setConversationView, pluginConversationViews, setPluginConversationViews,
     showArchived, setShowArchived, workspaceOpen, setWorkspaceOpen,
-    workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionsExpanded, setWorkspaceSessionsExpanded,
+    workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionVisibleCounts, setWorkspaceSessionVisibleCounts,
     terminalOpen, setTerminalOpen, terminalMounted, setTerminalMounted, terminalAvailable, setTerminalAvailable,
     debugOpen, setDebugOpen, appUpdateDialogOpen, setAppUpdateDialogOpen,
   } = useLayoutStore();
@@ -181,12 +187,27 @@ export function App() {
     viewportNode, setViewportNode, composerDockNode, setComposerDockNode,
   } = useViewStore();
   const activeSession = newTaskDraft?.id === activeId ? newTaskDraft : sessions.find((session) => session.id === activeId) || sessions[0];
+  const effectiveSessionKey = activeSession?.id || activeId || "";
+  const [turnWindowState, setTurnWindowState] = useState<{ sessionId: string; count: number }>({
+    sessionId: "",
+    count: CONVERSATION_TURN_PAGE_SIZE,
+  });
+  const conversationIndex = useMemo(() => indexConversation(activeSession?.messages || []), [activeSession?.messages]);
+  const conversationTurns = conversationIndex.turns;
+  const loadedTurnCount = turnWindowState.sessionId === effectiveSessionKey
+    ? turnWindowState.count
+    : CONVERSATION_TURN_PAGE_SIZE;
+  const conversationWindow = useMemo(
+    () => sliceConversationWindow(activeSession?.messages || [], conversationTurns, loadedTurnCount),
+    [activeSession?.messages, conversationTurns, loadedTurnCount],
+  );
+  const turnRail = useMemo(() => sliceTurnRail(conversationWindow.loadedTurns), [conversationWindow.loadedTurns]);
 
   // 面板关闭时仅保存最近记录，不触发主界面更新；历史在控制台打开后按需读取。
   const traceBuffer = useMemo(() => createTraceBuffer(), []);
 
   // 启动 / 布局 / 订阅类 effect 已整块搬到 startupRuntime（保持 effect 相对顺序不变）
-  useStartupRuntime({ activeSession, traceBuffer });
+  useStartupRuntime({ activeSession, traceBuffer, conversationVisibleStartIndex: conversationWindow.startMessageIndex });
   // 夹取的是“生效宽度”而不是存储值：回到大窗口时用户拖出的宽度偏好自动恢复
   const appliedToolPanelWidth = Math.min(
     toolPanelWidth,
@@ -306,8 +327,100 @@ export function App() {
 
   // 历史轨迹由 TraceConsole 在打开时读取，不在每次切换普通会话时预装全部记录。
 
-  const conversationIndex = useMemo(() => indexConversation(activeSession?.messages || []), [activeSession?.messages]);
-  const conversationTurns = conversationIndex.turns;
+  const prevTurnWindowRef = useRef<{ sessionId: string; total: number }>({ sessionId: "", total: 0 });
+  const lastAnchoredSessionRef = useRef<string>(effectiveSessionKey);
+  useEffect(() => {
+    const sid = effectiveSessionKey;
+    const total = conversationTurns.length;
+    const prev = prevTurnWindowRef.current;
+    prevTurnWindowRef.current = { sessionId: sid, total };
+    if (prev.sessionId !== sid) {
+      setTurnWindowState((current) => (
+        current.sessionId === sid && current.count === CONVERSATION_TURN_PAGE_SIZE
+          ? current
+          : { sessionId: sid, count: CONVERSATION_TURN_PAGE_SIZE }
+      ));
+      return;
+    }
+    if (sid && total > prev.total) {
+      const delta = total - prev.total;
+      setTurnWindowState((current) => {
+        if (current.sessionId !== sid || current.count <= CONVERSATION_TURN_PAGE_SIZE) return current;
+        return { sessionId: sid, count: current.count + delta };
+      });
+    }
+  }, [effectiveSessionKey, conversationTurns.length]);
+
+  useLayoutEffect(() => {
+    if (lastAnchoredSessionRef.current !== effectiveSessionKey) {
+      lastAnchoredSessionRef.current = effectiveSessionKey;
+      conversationPrependAnchorRef.current = null;
+      return;
+    }
+    const anchor = conversationPrependAnchorRef.current;
+    if (!anchor) return;
+    conversationPrependAnchorRef.current = null;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const delta = viewport.scrollHeight - anchor.scrollHeight;
+    if (delta > 0) {
+      viewport.scrollTop = anchor.scrollTop + delta;
+    }
+  }, [effectiveSessionKey, conversationWindow.startMessageIndex]);
+
+  const captureConversationPrependAnchor = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    conversationPrependAnchorRef.current = {
+      scrollHeight: viewport.scrollHeight,
+      scrollTop: viewport.scrollTop,
+    };
+    suppressStickUntilRef.current = performance.now() + 600;
+  }, []);
+
+  const loadMoreConversationTurns = useCallback(() => {
+    if (!effectiveSessionKey || !conversationWindow.hasMore) return;
+    captureConversationPrependAnchor();
+    setTurnWindowState((current) => {
+      const base = current.sessionId === effectiveSessionKey ? current.count : CONVERSATION_TURN_PAGE_SIZE;
+      return {
+        sessionId: effectiveSessionKey,
+        count: Math.min(conversationTurns.length, base + CONVERSATION_TURN_PAGE_SIZE),
+      };
+    });
+  }, [captureConversationPrependAnchor, conversationTurns.length, conversationWindow.hasMore, effectiveSessionKey]);
+
+  const loadAllConversationTurns = useCallback(() => {
+    if (!effectiveSessionKey || !conversationWindow.hasMore) return;
+    captureConversationPrependAnchor();
+    searchScrollKeyRef.current = null;
+    setConversationSearchMatchIndex(0);
+    setTurnWindowState({
+      sessionId: effectiveSessionKey,
+      count: conversationTurns.length,
+    });
+  }, [captureConversationPrependAnchor, conversationTurns.length, conversationWindow.hasMore, effectiveSessionKey, setConversationSearchMatchIndex]);
+
+  const collapseConversationTurns = useCallback(() => {
+    if (!effectiveSessionKey) return;
+    conversationPrependAnchorRef.current = null;
+    suppressStickUntilRef.current = 0;
+    setTurnWindowState({
+      sessionId: effectiveSessionKey,
+      count: CONVERSATION_TURN_PAGE_SIZE,
+    });
+    requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      if (viewport) viewport.scrollTo({ top: viewport.scrollHeight });
+    });
+  }, [effectiveSessionKey]);
+
+  const earlierSearchMatchCount = useMemo(
+    () => conversationSearchOpen
+      ? countEarlierSearchMatches(activeSession?.messages || [], conversationWindow.startMessageIndex, conversationSearchQuery)
+      : 0,
+    [conversationSearchOpen, activeSession?.messages, conversationWindow.startMessageIndex, conversationSearchQuery],
+  );
   const activeTaskRunning = Boolean(activeSession?.id && runningSessionIds.has(activeSession.id));
   // 当前会话是否有待唤醒的挂起任务：有则禁止发送——挂起期间再起一轮会让老任务的到点续跑
   // 追到新任务的回复后面（同一会话两个线程），这正是"回复框串味"的来源
@@ -985,8 +1098,13 @@ export function App() {
       setReviewFocusChanges(changes); setRightPanelOpen(true); openToolPanelTab("review");
     },
     bindMessageRow(node: HTMLDivElement | null, index: number, turnIndex: number, user: boolean) {
-      messageRowRefs.current[index] = node;
-      if (user) conversationTurnRefs.current[turnIndex] = node;
+      if (node) {
+        messageRowRefs.current[index] = node;
+        if (user) conversationTurnRefs.current[turnIndex] = node;
+      } else {
+        delete messageRowRefs.current[index];
+        if (user) delete conversationTurnRefs.current[turnIndex];
+      }
     },
   });
 
@@ -1239,8 +1357,8 @@ export function App() {
         workspaceSessionGroups={workspaceSessionGroups}
         workspacePath={workspacePath}
         activeId={activeId}
-        workspaceSessionsExpanded={workspaceSessionsExpanded}
-        setWorkspaceSessionsExpanded={setWorkspaceSessionsExpanded}
+        workspaceSessionVisibleCounts={workspaceSessionVisibleCounts}
+        setWorkspaceSessionVisibleCounts={setWorkspaceSessionVisibleCounts}
         workspaceMenuPath={workspaceMenuPath}
         setWorkspaceMenuPath={setWorkspaceMenuPath}
         sessionMenuId={sessionMenuId}
@@ -1318,6 +1436,15 @@ export function App() {
         conversationSearchInputRef={conversationSearchInputRef}
         conversationIndex={conversationIndex}
         conversationTurns={conversationTurns}
+        visibleMessages={conversationWindow.visibleMessages}
+        hasMoreTurns={conversationWindow.hasMore}
+        hiddenTurnCount={conversationWindow.hiddenTurnCount}
+        canCollapseTurns={conversationWindow.canCollapse}
+        railTurns={turnRail.items}
+        earlierSearchMatchCount={earlierSearchMatchCount}
+        loadMoreConversationTurns={loadMoreConversationTurns}
+        loadAllConversationTurns={loadAllConversationTurns}
+        collapseConversationTurns={collapseConversationTurns}
         hoveredTurnIndex={hoveredTurnIndex}
         setHoveredTurnIndex={setHoveredTurnIndex}
         jumpToConversationTurn={jumpToConversationTurn}
