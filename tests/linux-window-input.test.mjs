@@ -76,7 +76,7 @@ for (const platform of ["linux", "darwin", "win32"]) {
       );
       assert.match(
         layoutStyles,
-        /html:has\(\.reference-layout\.platform-linux\) #root \{[\s\S]*?clip-path: inset\(0 round 14px\)/,
+        /html:has\(\.reference-layout\.platform-linux\) #root \{[\s\S]*?--window-corner-radius: 14px;[\s\S]*?clip-path: inset\(0 round var\(--window-corner-radius\)\)/,
         "Linux 页面必须裁出与窗口一致的圆角",
       );
       return;

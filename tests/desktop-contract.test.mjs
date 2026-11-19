@@ -821,11 +821,11 @@ test("内置浏览器补齐完整功能：密码/下载/清除数据/打印/设�
   assert.match(browserIpcSource, /trustedHandle\("browser:emulate-device"/);
   assert.match(browserIpcSource, /enableDeviceEmulation/);
   assert.match(app, /printBrowserPage/);
-  assert.match(app, /BROWSER_DEVICE_PRESETS/);
+  assert.match(app, /BROWSER_VIEWPORT_PRESETS/);
   assert.match(app, /BROWSER_MOBILE_UA/);
-  assert.match(app, /browser-device-bar/);
+  assert.match(app, /browser-viewport-bar/);
   assert.match(styles, /\.browser-password-bar/);
-  assert.match(styles, /\.browser-device-bar/);
+  assert.match(styles, /\.browser-viewport-bar/);
   assert.match(styles, /\.browser-fill-chip/);
   assert.match(styles, /\.browser-passwords-dialog/);
 });
@@ -1501,7 +1501,7 @@ test("决策模型（Intern-Decision）的审批分档与工具组预路由贯�
   assert.match(settingsStorage, /normalizeDecisionThreshold/);
   assert.match(settingsStorage, /v === "decision"/);
   // 审核分档：decision 后端走决策客户端按阈值映射，界面操作跳过，故障 fail-closed 转人工
-  assert.match(review, /backend === "decision" && !isStatefulUiOperation\(action\.kind\)/);
+  assert.match(review, /backend === "decision" && !isStatefulUiOperation\(action\.kind(?:,\s*action\.args)?\)/);
   assert.match(review, /requestDecisionReview\(/);
   assert.match(review, /mapDecisionApproval\(distribution, settings\?\.reviewerDecisionThreshold\)/);
   assert.match(review, /决策模型服务不可用/);
@@ -2045,4 +2045,27 @@ test("渲染端：过程思考项默认收起", () => {
   const block = app.slice(start, end);
   assert.match(block, /const \[open, setOpen\] = useState\(false\)/, "初始状态必须是收起");
   assert.doesNotMatch(block, /useState\(Boolean\(streaming\)\)/, "不得再按流式自动展开");
+});
+
+test("工作区会话默认展示最新5条，增量展开5条，收起后再展开重置为5条", () => {
+  assert.match(app, /workspaceSessionVisibleCounts/);
+  assert.match(app, /resolveWorkspaceVisibleCount/);
+  assert.match(app, /nextWorkspaceVisibleCount/);
+  assert.match(app, /resetWorkspaceVisibleCount\(group\.path\)/);
+  assert.match(app, /if \(!nextOpen\) setWorkspaceSessionVisibleCounts\(\{\}\)/);
+  assert.doesNotMatch(app, /hasActiveHiddenSession/);
+  assert.doesNotMatch(app, /workspaceSessionsExpanded/);
+});
+
+test("长会话按15轮从最新到最旧向上懒加载，加载更多保持滚动锚定且回合轨上限20条", () => {
+  assert.match(app, /CONVERSATION_TURN_PAGE_SIZE/);
+  assert.match(app, /sliceConversationWindow/);
+  assert.match(app, /sliceTurnRail/);
+  assert.match(app, /conversationPrependAnchorRef/);
+  assert.match(app, /suppressStickUntilRef/);
+  assert.match(app, /conversation-load-more-bar/);
+  assert.match(app, /conversation-load-more-button[\s\S]*>[\s\S]*加载更多/);
+  assert.match(app, /conversation-turn-load-more/);
+  assert.match(styles, /\.conversation-load-more-bar/);
+  assert.match(styles, /\.conversation-turn-load-more/);
 });

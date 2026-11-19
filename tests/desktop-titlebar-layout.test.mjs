@@ -28,8 +28,8 @@ test("收起侧栏与窄窗口沿用同一套标题栏排布", () => {
 
 test("窗口外框的细线收边只用于 Linux", () => {
   // Windows 有系统绘制的窗口外框与阴影，不需要再补一圈细线把窗口和桌面分开。
-  assert.match(layout, /html \.reference-layout\.platform-linux \{\s*outline: 1px solid/);
-  assert.doesNotMatch(layout, /:is\(\.platform-win32, \.platform-linux\)\s*\{\s*outline/);
+  assert.match(layout, /html:has\(\.reference-layout\.platform-linux\) #root::after \{[\s\S]*?border: 1px solid/);
+  assert.doesNotMatch(layout, /:is\(\.platform-win32, \.platform-linux\)[^{]*\{\s*(?:outline|border): 1px solid/);
 });
 
 test("窗口按钮独立于标题栏，拖动区域不覆盖按钮", () => {
