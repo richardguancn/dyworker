@@ -55,6 +55,7 @@ export default defineConfig({
           if (/\/node_modules\/(lexical|@lexical\/[^/]+)\//.test(moduleId)) return "draft-editor";
           if (/\/node_modules\/(@codemirror|@lezer)\//.test(moduleId)) return "codemirror";
           if (moduleId.includes("/src/pluginRuntime/") || moduleId.includes("/node_modules/@deepseek-ai/")) return "plugin-runtime";
+          if (moduleId.includes("/src/i18n/locales/")) return "i18n-locales";
           if (/\/node_modules\/(react-markdown|remark-[^/]+|rehype-[^/]+|highlight\.js|katex)\//.test(moduleId)) return "markdown";
         },
       },
