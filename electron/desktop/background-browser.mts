@@ -427,11 +427,12 @@ export class BackgroundBrowserSurface {
   }
 }
 
-export function createBackgroundBrowserAgent({ ownerSessionId, runId, workspacePath, createWindow, loadSiteSession = null }) {
+export function createBackgroundBrowserAgent({ ownerSessionId, runId, workspacePath, createWindow, loadSiteSession = null, isFullCdpAccessEnabled = () => false, isScreenLocked = () => false }) {
   const surface = new BackgroundBrowserSurface({ ownerSessionId, runId, createWindow, loadSiteSession });
   let agent;
   agent = new BrowserAgent({
     surfaceLabel: '后台浏览器', supportsHandoff: false,
+    isFullCdpAccessEnabled, isScreenLocked, protectedBackground: true,
     openPanel: (url, tabId, credential) => surface.open(url, tabId, {
       validate: () => !credential?.token || agent.controlManager.isOpenReservationValid(credential.token),
       sessionSource: credential?.sessionSource, profileId: credential?.profileId,

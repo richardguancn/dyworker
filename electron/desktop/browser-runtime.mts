@@ -9,6 +9,7 @@ export function createBrowserRuntime(deps: {
   mainWindow: import("electron").BrowserWindow | null;
   ctx: any;
   isTrustedRendererUrl: (url: unknown) => boolean;
+  isScreenLocked?: () => boolean;
 }) {
   const { isTrustedRendererUrl } = deps;
 
@@ -214,6 +215,7 @@ function closeBrowserPanelTab(renderer, tabId, { ownerSessionId = "" } = {} as a
 }
 
 const browserControlManager = new BrowserControlManager({
+  isScreenLocked: deps.isScreenLocked,
   onStateChange: (state) => {
     try {
       if (deps.mainWindow && !deps.mainWindow.isDestroyed()) {
@@ -228,6 +230,17 @@ const browserControlManager = new BrowserControlManager({
     );
   },
 });
+
+function isSameSiteUrl(a: string, b: string): boolean {
+  try {
+    const hostA = new URL(a).hostname.toLowerCase();
+    const hostB = new URL(b).hostname.toLowerCase();
+    if (!hostA || !hostB) return false;
+    return hostA === hostB || hostA.endsWith(`.${hostB}`) || hostB.endsWith(`.${hostA}`);
+  } catch {
+    return false;
+  }
+}
 
 function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId = "" } = {} as any) {
   return new Promise<any>((resolve) => {
@@ -328,9 +341,20 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
         } catch {
           return;
         }
-        if (currentUrl === url && !loading) {
-          finish({ ok: true, contents });
-          return;
+        if (currentUrl && currentUrl !== "about:blank" && !loading) {
+          if (currentUrl === url) {
+            finish({ ok: true, contents });
+            return;
+          }
+          const elapsed = Date.now() - startedAt;
+          if (elapsed > 1500 && currentUrl !== previousUrl) {
+            finish({ ok: true, contents });
+            return;
+          }
+          if (elapsed > 2500 && isSameSiteUrl(url, currentUrl)) {
+            finish({ ok: true, contents });
+            return;
+          }
         }
       }
       timer = setTimeout(poll, 50);

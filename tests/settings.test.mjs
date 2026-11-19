@@ -402,3 +402,16 @@ test("决策模型设置：端点与阈值往返保存，阈值越界夹取，de
   // 旧数据没有 reviewerBackend 时仍按自定义端点推断，不受新枚举影响
   assert.equal(serializeSettings({ reviewerEndpoint: "https://x.example/v1", reviewerModel: "m1" }, secretStorage).reviewerBackend, "custom");
 });
+
+test("fullCdpAccess 默认为 false，且序列化与反序列化往返保持一致", () => {
+  assert.equal(deserializeSettings({}, secretStorage).fullCdpAccess, false);
+  assert.equal(serializeSettings({}, secretStorage).fullCdpAccess, false);
+
+  const storedOn = serializeSettings({ fullCdpAccess: true }, secretStorage);
+  assert.equal(storedOn.fullCdpAccess, true);
+  assert.equal(deserializeSettings(storedOn, secretStorage).fullCdpAccess, true);
+
+  const storedOff = serializeSettings({ fullCdpAccess: false }, secretStorage);
+  assert.equal(storedOff.fullCdpAccess, false);
+  assert.equal(deserializeSettings(storedOff, secretStorage).fullCdpAccess, false);
+});

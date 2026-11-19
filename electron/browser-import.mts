@@ -255,8 +255,7 @@ async function scanDomesticBrowserDirs(found) {
   return extras;
 }
 
-// 列出本机可导入的浏览器及其用户画像
-export async function listImportableBrowsers() {
+async function discoverChromiumDirs() {
   const found = new Map();
   for (const browser of CHROMIUM_CATALOG) {
     const candidates = browser.dirs[process.platform] || [];
@@ -273,6 +272,18 @@ export async function listImportableBrowsers() {
   for (const extra of await scanGenericChromiumDirs(found)) {
     found.set(extra.userDataDir, extra);
   }
+  return found;
+}
+
+// 仅返回本机已发现的 Chromium 系浏览器目录列表（不读取 Cookie/密码，不触发钥匙串弹窗）
+export async function listChromiumBrowserDirs() {
+  const found = await discoverChromiumDirs();
+  return [...found.values()].map(({ id, name, userDataDir }) => ({ id, name, userDataDir }));
+}
+
+// 列出本机可导入的浏览器及其用户画像
+export async function listImportableBrowsers() {
+  const found = await discoverChromiumDirs();
   const browsers = [];
   for (const browser of found.values()) {
     browsers.push({

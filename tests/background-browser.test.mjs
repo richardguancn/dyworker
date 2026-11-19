@@ -739,3 +739,29 @@ test('读取子网站登录状态时排除父网站专用 Cookie，保留明确�
   assert.deepEqual(written.map(cookie => cookie.name), ['shared', 'exact']);
   await surface.dispose();
 });
+
+test('TaskBrowserRouter 继承右侧可见面板模式：接管恢复后第一步 observe 直达可见页面', async () => {
+  const calls = [];
+  const visible = {
+    handle: async (name) => {
+      calls.push(name);
+      return { ok: true, result: '可见页面最新观察' };
+    },
+    dispose() {},
+  };
+  const router = new TaskBrowserRouter({
+    visible,
+    ownerSessionId: 'resume-session',
+    runId: 'resume-run-2',
+    initialMode: 'visible',
+    createBackground: () => {
+      throw new Error('继承可见面板时不应回落新建后台浏览器');
+    },
+  });
+
+  const obs = await router.handle('browser__observe', {});
+  assert.equal(obs.ok, true);
+  assert.equal(obs.result, '可见页面最新观察');
+  assert.deepEqual(calls, ['browser__observe']);
+  await router.dispose();
+});

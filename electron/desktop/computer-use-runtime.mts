@@ -156,6 +156,7 @@ export function createComputerUseRuntime(
   newClient = defaultNewClient,
   deps: {
     inspectOcclusion?: (input: { pid: number, points: [number, number][], imageSize?: { width: number, height: number } }) => Promise<OcclusionVerdict>,
+    isScreenLocked?: () => boolean,
   } = {},
 ) {
   const inspectOcclusion = deps.inspectOcclusion ?? (
@@ -163,6 +164,7 @@ export function createComputerUseRuntime(
       ? createLinuxOcclusionChecker()
       : undefined
   );
+  const isScreenLocked = typeof deps.isScreenLocked === "function" ? deps.isScreenLocked : () => false;
   type Run = {
     client: McpClient, connected: Promise<void>, closed: boolean,
     observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, browserWindow?: string,
@@ -277,6 +279,9 @@ export function createComputerUseRuntime(
           : "请在「系统设置 → 隐私与安全性」中为 Open Computer Use 开启辅助功能和屏幕录制，再重试。";
         return { ok: true, result };
       } catch (error: any) { return failure(`检查权限失败：${error.message}`); }
+    }
+    if (isScreenLocked()) {
+      return failure("当前电脑屏幕已锁定，原生桌面操作暂不可用。请等待解锁后重试；网页任务可改用 browser__* 工具（支持锁屏期间运行）。");
     }
 
     const key = keyOf(sessionId, runId);

@@ -65,7 +65,7 @@ export const getSettingsNav = (): { group: string; items: { id: SettingsTab; lab
   { group: t("nav.group.advanced", "高级设置"), items: [
     { id: "usage", label: t("nav.usage.label", "用量明细"), icon: BarChart3 },
     { id: "telemetry", label: t("nav.telemetry.label", "通知反馈"), icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"] },
-    { id: "hooks", label: t("nav.hooks.label", "安全授权"), icon: ShieldAlert },
+    { id: "hooks", label: t("nav.hooks.label", "安全授权"), icon: ShieldAlert, keywords: ["权限", "钩子", "规则", "审计", "CDP", "Browser Use", "Chrome DevTools", "浏览器"] },
   ] },
 ];
 
@@ -804,7 +804,7 @@ export function SettingsDialog({
             </div>
           </>
         ) : tab === "hooks" ? (
-          <HooksPanel />
+          <HooksPanel value={value} onSave={onSave} />
         ) : tab === "channels" ? (
           <ChannelsPanel value={value} onSave={onSave} />
         ) : (

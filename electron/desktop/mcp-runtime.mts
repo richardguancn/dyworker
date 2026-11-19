@@ -10,6 +10,7 @@ import { estimateTextTokens } from "../agent/messages.mts";
 export function createMcpRuntime(deps: {
   mcpShuttingDown: boolean;
   resourcesPath?: string;
+  isScreenLocked?: () => boolean;
   getMainWindow?: () => { isDestroyed?: () => boolean; isVisible?: () => boolean; isMinimized?: () => boolean; isFocused?: () => boolean; getBounds?: () => { x: number; y: number; width: number; height: number } } | undefined;
 }) {
 
@@ -18,20 +19,23 @@ export function createMcpRuntime(deps: {
 
 const mcpClients = new Map();
 const mcpClientConnections = new Map();
-const computerUse = createComputerUseRuntime(discoverComputerUseServer({ resourcesPath: deps.resourcesPath }), undefined, process.platform === "linux" ? {
-  inspectOcclusion: createLinuxOcclusionChecker({
-    getMainWindowState: () => {
-      const win = deps.getMainWindow?.();
-      if (!win || win.isDestroyed?.()) return undefined;
-      return {
-        visible: win.isVisible?.(),
-        minimized: win.isMinimized?.(),
-        focused: win.isFocused?.(),
-        bounds: win.getBounds?.(),
-      };
-    },
-  }),
-} : {});
+const computerUse = createComputerUseRuntime(discoverComputerUseServer({ resourcesPath: deps.resourcesPath }), undefined, {
+  isScreenLocked: deps.isScreenLocked,
+  ...(process.platform === "linux" ? {
+    inspectOcclusion: createLinuxOcclusionChecker({
+      getMainWindowState: () => {
+        const win = deps.getMainWindow?.();
+        if (!win || win.isDestroyed?.()) return undefined;
+        return {
+          visible: win.isVisible?.(),
+          minimized: win.isMinimized?.(),
+          focused: win.isFocused?.(),
+          bounds: win.getBounds?.(),
+        };
+      },
+    }),
+  } : {}),
+});
 
 function mcpServersOf(settings) {
   const list = Array.isArray(settings?.mcpServers) ? settings.mcpServers : [];

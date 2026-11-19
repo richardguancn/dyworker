@@ -7,6 +7,7 @@ import type { BrowserControlState } from "./types";
 interface BrowserControlOverlayProps {
   controlState: BrowserControlState | null;
   activeTabId: string;
+  fullCdpAccess?: boolean;
   onTakeover?: () => void;
   onResume?: () => void;
   onStop?: () => void;
@@ -15,6 +16,7 @@ interface BrowserControlOverlayProps {
 export const BrowserControlOverlay: React.FC<BrowserControlOverlayProps> = ({
   controlState,
   activeTabId,
+  fullCdpAccess = false,
   onTakeover,
   onResume,
   onStop
@@ -121,6 +123,11 @@ export const BrowserControlOverlay: React.FC<BrowserControlOverlayProps> = ({
             <div className="browser-control-pulse-dot" aria-hidden="true" />
             <div className="browser-control-info">
               <span className="browser-control-title">{t("browserOverlay.assistantOperating", "助手正在操作")}</span>
+              {fullCdpAccess && (
+                <span className="browser-control-cdp-badge" title={t("cdpAccess.overlayTip", "已开启完整 CDP 访问权限")}>
+                  CDP
+                </span>
+              )}
               <span className="browser-control-separator">·</span>
               <span className="browser-control-timer">{formatTime(elapsedSeconds)}</span>
               {actionText && <span className="browser-control-action-text" title={actionText}>：{actionText}</span>}

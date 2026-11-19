@@ -43,10 +43,16 @@ export class SettingsService extends Service {
   safeStorage;
   migrators;
   approvalListeners = new Set<(mode: string) => void>();
+  fullCdpListeners = new Set<(enabled: boolean) => void>();
 
   onApprovalModeChange(listener: (mode: string) => void) {
     this.approvalListeners.add(listener);
     return () => { this.approvalListeners.delete(listener); };
+  }
+
+  onFullCdpAccessChange(listener: (enabled: boolean) => void) {
+    this.fullCdpListeners.add(listener);
+    return () => { this.fullCdpListeners.delete(listener); };
   }
 
   constructor(ctx, config = {} as any) {
@@ -84,6 +90,10 @@ export class SettingsService extends Service {
     const mode = normalizeApprovalMode(nextSettings.approvalMode);
     if (mode !== normalizeApprovalMode(stored?.approvalMode)) {
       for (const listener of this.approvalListeners) listener(mode);
+    }
+    const fullCdpAccess = nextSettings.fullCdpAccess === true;
+    if (fullCdpAccess !== (stored?.fullCdpAccess === true)) {
+      for (const listener of this.fullCdpListeners) listener(fullCdpAccess);
     }
     return updateUrl;
   }

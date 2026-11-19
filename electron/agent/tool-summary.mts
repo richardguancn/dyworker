@@ -24,6 +24,8 @@ const browserToolLabels = {
   browser__type: "在网页中输入文字",
   browser__screenshot: "保存网页截图",
   browser__close: "关闭浏览器",
+  browser__connect: "连接浏览器会话",
+  browser__cdp: "执行浏览器 CDP 协议命令",
 };
 
 const computerUseToolLabels = {
@@ -172,6 +174,19 @@ export function toolSummary(name, args) {
       }
       if (name.startsWith("browser__")) {
         if (name === 'browser__act' && args.action?.type === 'upload') return `上传网页附件：${(args.action.files || []).map(file => String(file).split(/[\\/]/).pop()).join('、')}`;
+        if (name === "browser__cdp") {
+          const action = String(args.action || "send");
+          return action === "events" ? "读取浏览器 CDP 事件"
+            : action === "clear_events" ? "清空浏览器 CDP 事件"
+            : `CDP：${String(args.method || "send").slice(0, 60)}`;
+        }
+        if (name === "browser__connect") {
+          const action = String(args.action || "status");
+          if (action === "discover") return "发现本机外部 Chromium 浏览器";
+          if (action === "connect") return `连接外部浏览器：${String(args.endpoint || args.browser || "自动选择").slice(0, 50)}`;
+          if (action === "disconnect") return "断开外部浏览器连接";
+          return "查看浏览器会话连接状态";
+        }
         const label = browserToolLabels[name] || "浏览器操作";
         const target = args.url || args.path || (args.ref != null ? `元素 ${args.ref}` : "");
         return target ? `${label}：${String(target).slice(0, 60)}` : label;

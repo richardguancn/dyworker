@@ -1,6 +1,7 @@
 // DYWorker 浏览器控制权管理器（BrowserControlManager）
 // 职责：四元组联合隔离 (ownerSessionId, runId, tabId, leaseEpoch)、接管抢占保护、在途与已完成 actionId 并发去重、断点挂起、运行限额与状态广播
 import { BrowserPageAdapter } from "./browser-page-adapter.mts";
+import { executeCdpTool } from "./browser-cdp-session.mts";
 
 export const CONTROL_STATUS = Object.freeze({
   IDLE: "idle",
@@ -21,14 +22,18 @@ const OPEN_RESERVATION_TTL_MS = 30000;
 
 export class BrowserControlManager {
   onStateChange;
+isScreenLocked;
+protectedBackground;
 session;
 actionQueue;
 inFlightActionIds;
 completedActionIds;
 openReservation;
 openTokenCounter;
-constructor({ onStateChange } = {} as any) {
+constructor({ onStateChange, isScreenLocked, protectedBackground = false } = {} as any) {
     this.onStateChange = onStateChange || (() => {});
+    this.isScreenLocked = typeof isScreenLocked === "function" ? isScreenLocked : () => false;
+    this.protectedBackground = Boolean(protectedBackground);
     this.session = null;
     this.actionQueue = Promise.resolve();
 
@@ -240,7 +245,7 @@ constructor({ onStateChange } = {} as any) {
     const leaseEpoch = (this.session?.leaseEpoch || 0) + 1;
     const controlSessionId = `ctrl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const abortController = new AbortController();
-    const adapter = new BrowserPageAdapter(webContents);
+    const adapter = new BrowserPageAdapter(webContents, { isScreenLocked: this.isScreenLocked });
 
     this.session = {
       controlSessionId,
@@ -636,6 +641,33 @@ constructor({ onStateChange } = {} as any) {
         return result;
       },
       { description: "正在等待页面就绪...", context }
+    );
+  }
+
+  /**
+   * 完整 CDP 访问执行（经由四元组隔离、串行队列、接管熔断与安全门控）
+   */
+  async cdp({ args = {}, isFullCdpAccessEnabled, protectedBackground, context = {} }: {
+    args?: Record<string, any>;
+    isFullCdpAccessEnabled: () => boolean;
+    protectedBackground?: boolean;
+    context?: Record<string, any>;
+  }) {
+    const action = String(args?.action || "send").trim();
+    const desc = action === "events"
+      ? "正在读取 CDP 事件..."
+      : action === "clear_events"
+        ? "正在清空 CDP 事件..."
+        : `正在执行 CDP：${String(args?.method || "").slice(0, 40)}`;
+    return this.runExclusive(
+      async (adapter, { signal, checkLease, session }) => executeCdpTool(adapter, args, {
+        isFullCdpAccessEnabled,
+        protectedBackground: protectedBackground ?? this.protectedBackground,
+        workspacePath: session.workspacePath,
+        signal,
+        checkLease,
+      }),
+      { description: desc, context, countsAsAction: true },
     );
   }
 

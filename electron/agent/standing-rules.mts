@@ -14,9 +14,11 @@ function ruleDomainOf(url) {
   }
 }
 
+const NO_STANDING_RULE_BROWSER_TOOLS = new Set(["browser__cdp", "browser__connect"]);
+
 export function matchStandingRule(rules, name, args = {} as any) {
   if (!Array.isArray(rules) || !rules.length) return false;
-  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name)) return false;
+  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name) || NO_STANDING_RULE_BROWSER_TOOLS.has(name)) return false;
   for (const rule of rules) {
     if (!rule || typeof rule !== "object") continue;
     if (rule.kind === "path-glob" && ruleEligiblePathTools.has(name) && rule.tool === name) {
@@ -50,7 +52,7 @@ export function matchStandingRule(rules, name, args = {} as any) {
 
 // 为一次审批请求生成可"始终允许"的规则建议；不可规则化时返回 null。
 export function suggestStandingRule(name, args = {} as any) {
-  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name)) return null;
+  if (isComputerUseTool(name) || isLinuxSharedDesktopTool(name) || NO_STANDING_RULE_BROWSER_TOOLS.has(name)) return null;
   if (name === "run_command") {
     const command = String(args.command || "").trim();
     const words = shellWords(command);

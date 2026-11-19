@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, ChevronRight, Download, FolderOpen, Globe, Landmark, LoaderCircle, RefreshCw, Sparkles, SquareTerminal, Trash2, UserRound, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Download, FolderOpen, Globe, Landmark, LoaderCircle, RefreshCw, ShieldAlert, Sparkles, SquareTerminal, Trash2, UserRound, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { MarkdownSnippet } from "../../InteractiveMessage";
 import { defaultSettings } from "../../lib/settings";
@@ -81,6 +81,78 @@ export function FullAccessDialog({ onClose, onConfirm }: { onClose: () => void; 
           <button type="button" className="full-access-confirm" onClick={() => void confirm()} disabled={saving}>
             <AlertTriangle size={17} aria-hidden="true" />
             {saving ? t("common.enabling", "开启中…") : t("common.confirm", "确认")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function FullCdpAccessDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => Promise<boolean> }) {
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose, saving]);
+
+  const confirm = async () => {
+    setSaving(true);
+    try {
+      const ok = await onConfirm();
+      if (ok) onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop full-access-backdrop" role="presentation" onMouseDown={() => !saving && onClose()}>
+      <div
+        className="full-access-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="full-cdp-access-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="full-access-title-row">
+          <AlertTriangle size={29} strokeWidth={2.2} aria-hidden="true" />
+          <h2 id="full-cdp-access-dialog-title">{t("cdpAccess.dialogTitle", "开启完整 CDP 访问权限？")}</h2>
+        </div>
+        <p className="full-access-intro">
+          {t("cdpAccess.dialogIntro", "在已连接的 Browser Use 会话中使用完整的 Chrome DevTools Protocol (CDP) 访问权限。完整 CDP 访问权限可让 DYWorker 检查并控制敏感的浏览器内部功能，可能使你的数据面临风险。")}
+        </p>
+        <div className="full-access-capabilities">
+          <div className="full-access-capability">
+            <SquareTerminal size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>{t("cdpAccess.capControl", "底层调试与脚本控制")}</strong>
+              <small>{t("cdpAccess.capControlDesc", "可执行任意 CDP 命令、注入脚本、修改页面 DOM 与拦截网络请求")}</small>
+            </span>
+          </div>
+          <div className="full-access-capability">
+            <Globe size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>{t("cdpAccess.capData", "敏感数据暴露风险")}</strong>
+              <small>{t("cdpAccess.capDataDesc", "可能读取已登录页面的 Cookie、本地存储与敏感会话信息")}</small>
+            </span>
+          </div>
+          <div className="full-access-capability">
+            <ShieldAlert size={31} strokeWidth={1.8} aria-hidden="true" />
+            <span>
+              <strong>{t("cdpAccess.capAudit", "审批与随时中断")}</strong>
+              <small>{t("cdpAccess.capAuditDesc", "每次调用均记录审计日志且不可设为始终允许，你可随时关闭或接管")}</small>
+            </span>
+          </div>
+        </div>
+        <div className="full-access-actions">
+          <button type="button" className="full-access-cancel" onClick={onClose} disabled={saving}>{t("common.cancel", "取消")}</button>
+          <button type="button" className="full-access-confirm" onClick={() => void confirm()} disabled={saving}>
+            <AlertTriangle size={17} aria-hidden="true" />
+            {saving ? t("common.enabling", "开启中…") : t("cdpAccess.confirmEnable", "确认开启")}
           </button>
         </div>
       </div>
@@ -356,9 +428,16 @@ function formatStandingRuleTitle(rule: StandingRule) {
   return rule.label || rule.pattern;
 }
 
-export function HooksPanel() {
+export function HooksPanel({ value, onSave }: {
+  value: ProviderSettings;
+  onSave: (value: ProviderSettings, successMessage?: string) => Promise<boolean>;
+}) {
   const [data, setData] = useState<{ builtin: HookRule[]; user: HookRule[]; userPath: string } | null>(null);
   const [rules, setRules] = useState<StandingRule[]>([]);
+  const [cdpConfirmOpen, setCdpConfirmOpen] = useState(false);
+  const [savingCdp, setSavingCdp] = useState(false);
+  const cdpEnabled = Boolean(value.fullCdpAccess);
+
   useEffect(() => {
     if (window.dyworker?.listHooks) void window.dyworker.listHooks().then(setData);
     if (window.dyworker?.listRules) void window.dyworker.listRules().then(setRules);
@@ -366,8 +445,52 @@ export function HooksPanel() {
   const deleteRule = (id: string) => {
     void window.dyworker?.deleteRule(id).then(() => window.dyworker?.listRules().then(setRules));
   };
+  const toggleFullCdp = async () => {
+    if (savingCdp) return;
+    if (!cdpEnabled) {
+      setCdpConfirmOpen(true);
+      return;
+    }
+    setSavingCdp(true);
+    try {
+      await onSave({ ...value, fullCdpAccess: false }, t("cdpAccess.disabledNotice", "已关闭完整 CDP 访问权限"));
+    } finally {
+      setSavingCdp(false);
+    }
+  };
   return (
     <div className="hooks-panel">
+      <div className="dialog-section-title">{t("cdpAccess.sectionTitle", "浏览器自动化权限")}</div>
+      <div className="cdp-access-card">
+        <div className="cdp-access-header">
+          <div className="cdp-access-title-group">
+            <strong>{t("cdpAccess.title", "完整 CDP 访问权限")}</strong>
+            <span className={`cdp-access-badge ${cdpEnabled ? "on" : "off"}`}>
+              {cdpEnabled ? t("cdpAccess.statusOn", "已开启") : t("cdpAccess.statusOff", "未开启")}
+            </span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={cdpEnabled}
+            aria-label={t("cdpAccess.title", "完整 CDP 访问权限")}
+            className={`cdp-switch${cdpEnabled ? " on" : ""}`}
+            disabled={savingCdp}
+            onClick={() => void toggleFullCdp()}
+          >
+            <span className="cdp-switch-thumb" aria-hidden="true" />
+          </button>
+        </div>
+        <p className="cdp-access-desc">
+          {t("cdpAccess.desc", "在已连接的 Browser Use 会话中使用完整的 Chrome DevTools Protocol (CDP) 访问权限。完整 CDP 访问权限可让 DYWorker 检查并控制敏感的浏览器内部功能，可能使你的数据面临风险。")}
+        </p>
+      </div>
+      {cdpConfirmOpen && (
+        <FullCdpAccessDialog
+          onClose={() => setCdpConfirmOpen(false)}
+          onConfirm={() => onSave({ ...value, fullCdpAccess: true }, t("cdpAccess.enabledNotice", "已开启完整 CDP 访问权限"))}
+        />
+      )}
       <div className="dialog-section-title">{t("hooks.standingRules", "免问授权（常用操作不再重复提示）")}</div>
       {rules.length ? rules.map((rule) => (
         <div className="hook-rule-row" key={rule.id}>

@@ -742,6 +742,8 @@ export interface ProviderSettings {
   enableWebSearchBuiltin: boolean;
   // 使用统计与运营消息设置：统计默认关闭；统计上传与消息订阅分别开关
   telemetry: TelemetrySettings;
+  // 是否在已连接的 Browser Use 会话中启用完整 Chrome DevTools Protocol (CDP) 访问权限，默认关闭
+  fullCdpAccess: boolean;
 }
 
 // ---- 使用统计与运营消息（方案《APP使用统计与消息推送实施方案-2026-09-24》）----

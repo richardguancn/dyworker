@@ -22,14 +22,38 @@ currentContext;
 reservedDownloadPaths;
 surfaceLabel;
 supportsHandoff;
-constructor({ openPanel, closePanel, getContents, listTabs, activateTab, closeTab, controlManager, onStateChange, surfaceLabel = '右侧浏览器面板', supportsHandoff = true } = {} as any) {
+isFullCdpAccessEnabled;
+protectedBackground;
+isScreenLocked;
+constructor({
+    openPanel,
+    closePanel,
+    getContents,
+    listTabs,
+    activateTab,
+    closeTab,
+    controlManager,
+    onStateChange,
+    surfaceLabel = '右侧浏览器面板',
+    supportsHandoff = true,
+    isFullCdpAccessEnabled = () => false,
+    protectedBackground = false,
+    isScreenLocked,
+  } = {} as any) {
     this.openPanel = openPanel;
     this.closePanel = closePanel;
     this.getContents = getContents;
     this.listTabs = listTabs;
     this.activateTab = activateTab;
     this.closeTab = closeTab;
-    this.controlManager = controlManager || new BrowserControlManager({ onStateChange });
+    this.isFullCdpAccessEnabled = typeof isFullCdpAccessEnabled === "function" ? isFullCdpAccessEnabled : () => false;
+    this.protectedBackground = Boolean(protectedBackground);
+    this.isScreenLocked = typeof isScreenLocked === "function" ? isScreenLocked : () => false;
+    this.controlManager = controlManager || new BrowserControlManager({
+      onStateChange,
+      isScreenLocked: this.isScreenLocked,
+      protectedBackground: this.protectedBackground,
+    });
     this.surfaceLabel = surfaceLabel;
     this.supportsHandoff = supportsHandoff;
     this.workspacePath = "";
@@ -714,6 +738,19 @@ constructor({ openPanel, closePanel, getContents, listTabs, activateTab, closeTa
         };
       }
 
+      case "browser__cdp": {
+        const session = await this.ensureActiveSession();
+        if (!session) {
+          return { ok: false, result: `${this.surfaceLabel}尚未打开网页，请先用 browser__open 打开或用 browser__connect 连接外部浏览器` };
+        }
+        return this.controlManager.cdp({
+          args,
+          isFullCdpAccessEnabled: this.isFullCdpAccessEnabled,
+          protectedBackground: this.protectedBackground,
+          context: this.currentContext,
+        });
+      }
+
       // --- 兼容旧工具别名 ---
       case "browser__snapshot": {
         const session = await this.ensureActiveSession();
@@ -961,5 +998,32 @@ export function browserToolDefinitions() {
       []
     ),
     tool("browser__screenshot", "将当前网页截图保存到工作区文件。", { path: stringArg("相对工作区的 .png 保存路径") }, []),
+    tool(
+      "browser__connect",
+      "发现或连接本机已开启远程调试端口的外部 Chromium 浏览器（Chrome、Edge 等），也可查询当前已连接的 Browser Use 会话与完整 CDP 权限状态。仅连接本机回环地址，断开不会关闭用户的浏览器。",
+      {
+        action: { type: "string", enum: ["discover", "connect", "disconnect", "status"], description: "操作类型：discover 扫描本机调试端口，connect 连接目标浏览器，disconnect 断开连接，status 查看当前会话状态" },
+        endpoint: stringArg("可选：本机调试地址（如 http://127.0.0.1:9222 或 ws://127.0.0.1:9222/...）"),
+        browser: stringArg("可选：按浏览器名称或 ID 匹配（如 chrome、edge）"),
+        targetId: stringArg("可选：指定要初始接管的标签页 targetId")
+      },
+      ["action"]
+    ),
+    tool(
+      "browser__cdp",
+      "在已连接的 Browser Use 会话（内置可见面板、后台独立页或已连接的外部 Chromium）中使用完整的 Chrome DevTools Protocol (CDP) 访问权限。需用户在「设置 → 安全授权」手动开启「完整 CDP 访问权限」后方可使用。",
+      {
+        action: { type: "string", enum: ["send", "events", "clear_events"], description: "默认 send 执行单条 CDP 命令；events 读取已开启域推送的协议事件；clear_events 清空事件缓冲" },
+        method: stringArg("send 时必填：CDP 命令名，如 Runtime.evaluate、Network.enable、DOM.getDocument、Page.printToPDF"),
+        params: { type: "object", description: "send 时可选：CDP 命令参数对象" },
+        sessionId: stringArg("send 时可选：平坦化子目标（如 iframe / worker）的 CDP sessionId"),
+        saveToPath: stringArg("send 时可选：若返回值含 base64 data 字段（如截图或 PDF），将其解码保存到工作区相对路径，避免占满上下文"),
+        timeoutMs: { type: "integer", minimum: 1, maximum: 60000, description: "send 时可选：超时毫秒，默认 15000，上限 60000" },
+        methodPrefix: stringArg("events 时可选：按事件名前缀过滤，如 Network.、Runtime.、Log."),
+        sinceSeq: { type: "integer", minimum: 0, description: "events 时可选：只返回序号大于 sinceSeq 的增量事件" },
+        limit: { type: "integer", minimum: 1, maximum: 200, description: "events 时可选：最多返回条数，默认 50" }
+      },
+      []
+    ),
   ];
 }

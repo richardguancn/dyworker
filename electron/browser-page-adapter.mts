@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { resolveBrowserUploadFiles, findObservedFileNode } from './browser-upload.mts';
 import { browserKeyDefinition } from './browser-keyboard.mts';
+import { CdpEventRingBuffer } from './browser-cdp-session.mts';
 
 const PAGE_TEXT_LIMIT = 8000;
 const SNAPSHOT_MAX_ELEMENTS = 120;
@@ -13,6 +14,63 @@ const SNAPSHOT_MAX_ELEMENTS = 120;
 // 报错返回，让模型能换页或换手段继续，而不是整轮任务一起卡死。
 const PAGE_SCRIPT_TIMEOUT_MS = 15000;
 const PAGE_SCREENSHOT_TIMEOUT_MS = 15000;
+
+let cachedNativeImage: any = null;
+async function getElectronNativeImage() {
+  if (cachedNativeImage !== null) return cachedNativeImage || null;
+  try {
+    const mod = await import("electron");
+    cachedNativeImage = mod?.nativeImage || false;
+  } catch {
+    cachedNativeImage = false;
+  }
+  return cachedNativeImage || null;
+}
+
+async function resizePngToCss(
+  buffer: Buffer,
+  targetCssSize?: { width: number; height: number },
+): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const isPng = buffer.length >= 24 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  const width = isPng ? buffer.readUInt32BE(16) : 0;
+  const height = isPng ? buffer.readUInt32BE(20) : 0;
+  const targetW = Math.round(Number(targetCssSize?.width) || 0);
+  const targetH = Math.round(Number(targetCssSize?.height) || 0);
+  if (targetW > 0 && targetH > 0 && (width !== targetW || height !== targetH)) {
+    try {
+      const nativeImage = await getElectronNativeImage();
+      if (nativeImage?.createFromBuffer) {
+        const img = nativeImage.createFromBuffer(buffer);
+        if (img && !img.isEmpty?.() && typeof img.resize === "function") {
+          const resized = img.resize({ width: targetW, height: targetH, quality: "good" });
+          const nextBuf = resized.toPNG();
+          const nextSize = resized.getSize?.();
+          return {
+            buffer: nextBuf,
+            width: nextSize?.width || targetW,
+            height: nextSize?.height || targetH,
+          };
+        }
+      }
+    } catch {
+      // 非 Electron 测试环境或缩放失败时退回原图尺寸
+    }
+  }
+  return { buffer, width, height };
+}
+
+function isSameInPageRoute(prevUrl: string, nextUrl: string): boolean {
+  try {
+    const prev = new URL(String(prevUrl || ""));
+    const next = new URL(String(nextUrl || ""));
+    return prev.origin === next.origin
+      && prev.pathname === next.pathname
+      && prev.search === next.search
+      && prev.hash.split("?")[0] === next.hash.split("?")[0];
+  } catch {
+    return false;
+  }
+}
 
 /** 给可能永远不返回的页面操作加超时；超时抛错，由调用方按页面异常处理。 */
 function withPageDeadline(operation: any, timeoutMs: number, message: string): Promise<any> {
@@ -93,13 +151,41 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
     return type === "password" || autocomplete.includes("password");
   };
 
-  const interactiveSelector = "a[href], button, input, textarea, select, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='menuitem'], [role='tab'], summary, [contenteditable='true'], [tabindex='0'], iframe";
+  const interactiveSelector = "a[href], button, input, textarea, select, [role='button'], [role='link'], [role='checkbox'], [role='radio'], [role='menuitem'], [role='tab'], summary, [contenteditable]:not([contenteditable='false']), [tabindex='0'], iframe";
 
   const allFoundNodes = [];
+  const collectedSet = new Set();
+
+  const isPointerCandidate = (node) => {
+    if (!node || collectedSet.has(node) || !node.tagName) return false;
+    if (/^(html|body|svg|path)$/i.test(node.tagName) || !visible(node)) return false;
+    const r = node.getBoundingClientRect();
+    if (r.width < 16 || r.height < 12 || r.width > 480 || r.height > 120) return false;
+    const style = window.getComputedStyle(node);
+    if (style.cursor !== "pointer") return false;
+    const label = (node.getAttribute("aria-label") || node.innerText || node.getAttribute("title") || "").replace(/\\s+/g, " ").trim();
+    return label.length >= 1 && label.length <= 50;
+  };
 
   function scanContainer(root, framePrefix = "", parentOffsetX = 0, parentOffsetY = 0) {
     if (!root) return;
     try {
+      // 同源 iframe 或启用了 designMode 的富文本正文编辑器，直接作为可编辑节点收集
+      if (root.body && (framePrefix || root.designMode === "on")) {
+        const bodyEl = root.body;
+        const bodyEditable = bodyEl.isContentEditable || bodyEl.getAttribute?.("contenteditable") === "true" || root.designMode === "on";
+        if (bodyEditable && visible(bodyEl) && !collectedSet.has(bodyEl)) {
+          collectedSet.add(bodyEl);
+          allFoundNodes.push({
+            node: bodyEl,
+            frame: framePrefix || "main",
+            isCrossDomainIframe: false,
+            offsetX: parentOffsetX,
+            offsetY: parentOffsetY
+          });
+        }
+      }
+
       const candidates = Array.from(root.querySelectorAll(interactiveSelector));
       for (const el of candidates) {
         if (!visible(el) && !(el.tagName.toLowerCase() === 'input' && el.type === 'file')) continue;
@@ -123,7 +209,8 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
           } catch (e) {
             hasAccess = false;
           }
-          if (!hasAccess) {
+          if (!hasAccess && !collectedSet.has(el)) {
+            collectedSet.add(el);
             allFoundNodes.push({
               node: el,
               frame: framePrefix || "main",
@@ -136,13 +223,29 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
           continue;
         }
 
-        allFoundNodes.push({
-          node: el,
-          frame: framePrefix || "main",
-          isCrossDomainIframe: false,
-          offsetX: parentOffsetX,
-          offsetY: parentOffsetY
-        });
+        // 过滤超大布局型 [tabindex='0'] 容器，避免侧栏/邮件列表整块淹没具体控件
+        const elTag = el.tagName.toLowerCase();
+        const isNative = /^(a|button|input|textarea|select|summary)$/.test(elTag);
+        const roleAttr = (el.getAttribute("role") || "").toLowerCase();
+        const hasInteractiveRole = ["button", "link", "checkbox", "radio", "menuitem", "tab"].includes(roleAttr);
+        const elEditable = el.isContentEditable || (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") || el.ownerDocument?.designMode === "on";
+        if (!isNative && !hasInteractiveRole && !elEditable) {
+          const elRect = el.getBoundingClientRect();
+          if (elRect.width * elRect.height > 150000 || (elRect.width > 300 && elRect.height > 180 && el.querySelector(interactiveSelector))) {
+            continue;
+          }
+        }
+
+        if (!collectedSet.has(el)) {
+          collectedSet.add(el);
+          allFoundNodes.push({
+            node: el,
+            frame: framePrefix || "main",
+            isCrossDomainIframe: false,
+            offsetX: parentOffsetX,
+            offsetY: parentOffsetY
+          });
+        }
 
         // 检查当前元素自带的开放 Shadow DOM
         if (el.shadowRoot) {
@@ -150,13 +253,37 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
         }
       }
 
-      // 穿透扫描所有容器级开放 Shadow DOM 宿主（如 Web Components 或普通 div 宿主）
+      // 穿透扫描所有容器级开放 Shadow DOM 宿主，并补充现代 SPA cursor:pointer 按钮/联想项
       try {
         const walker = document.createTreeWalker(root.body || root, NodeFilter.SHOW_ELEMENT, null);
         let curr = walker.nextNode();
         while (curr) {
           if (curr.shadowRoot && !curr.matches(interactiveSelector)) {
             scanContainer(curr.shadowRoot, (framePrefix ? framePrefix + " > " : "") + "shadow", parentOffsetX, parentOffsetY);
+          }
+          if (isPointerCandidate(curr)) {
+            const hasInteractiveChild = Boolean(curr.querySelector(interactiveSelector));
+            let hasPointerChild = false;
+            if (!hasInteractiveChild && curr.children && curr.children.length > 0 && curr.children.length <= 8) {
+              for (const ch of curr.children) {
+                try {
+                  if (isPointerCandidate(ch)) {
+                    hasPointerChild = true;
+                    break;
+                  }
+                } catch {}
+              }
+            }
+            if (!hasInteractiveChild && !hasPointerChild) {
+              collectedSet.add(curr);
+              allFoundNodes.push({
+                node: curr,
+                frame: framePrefix || "main",
+                isCrossDomainIframe: false,
+                offsetX: parentOffsetX,
+                offsetY: parentOffsetY
+              });
+            }
           }
           curr = walker.nextNode();
         }
@@ -188,9 +315,9 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
     const rect = el.getBoundingClientRect();
     const tag = el.tagName.toLowerCase();
     const type = (el.getAttribute("type") || el.type || "").toLowerCase();
-    const role = el.getAttribute("role") || tag;
     const isPw = isPassword(el);
-    const isEditable = el.isContentEditable || el.getAttribute("contenteditable") === "true";
+    const isEditable = el.isContentEditable || (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") || el.ownerDocument?.designMode === "on";
+    const role = el.getAttribute("role") || (isEditable ? "textbox" : tag);
 
     // 严密防御：如果是密码输入框，绝对禁止读取 el.value！
     let name = "";
@@ -201,7 +328,8 @@ const buildExtractScript = (obsId, offset = 0) => `((obsId) => {
     } else if (item.isCrossDomainIframe) {
       name = "跨域内嵌页面 (" + (item.src || "未知来源") + ")";
     } else if (isEditable) {
-      name = (el.innerText || el.textContent || "富文本编辑区").replace(/\\s+/g, " ").trim().slice(0, 60);
+      const editableText = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.innerText || "").replace(/\\s+/g, " ").trim();
+      name = (editableText || "富文本编辑区").slice(0, 60);
     } else {
       name = (
         el.getAttribute("aria-label") ||
@@ -387,7 +515,10 @@ taskClipboard;
 inputReleases;
 inputReleaseFailed;
 inputReleaseTimeoutMs;
-constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTimeoutMs = PAGE_SCREENSHOT_TIMEOUT_MS, inputReleaseTimeoutMs = 3000 } = {} as any) {
+isScreenLocked;
+cdpEventBuffer;
+cdpEventListener;
+constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTimeoutMs = PAGE_SCREENSHOT_TIMEOUT_MS, inputReleaseTimeoutMs = 3000, isScreenLocked } = {} as any) {
     this.contents = contents;
     this.debuggerAttached = false;
     this.ownsDebugger = false;
@@ -400,6 +531,9 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     this.inputReleases = new Set();
     this.inputReleaseFailed = false;
     this.inputReleaseTimeoutMs = inputReleaseTimeoutMs;
+    this.isScreenLocked = typeof isScreenLocked === "function" ? isScreenLocked : () => false;
+    this.cdpEventBuffer = new CdpEventRingBuffer();
+    this.cdpEventListener = null;
 
     // 双代次机制：导航代次与视口代次
     this.documentEpoch = 1;
@@ -426,10 +560,28 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       this.currentObservation = null;
     };
 
-    this.contents.on("did-start-navigation", onNavigated);
-    this.contents.on("did-navigate", onNavigated);
-    this.contents.on("did-navigate-in-page", onNavigated);
-    this.contents.on("did-frame-finish-load", onNavigated);
+    this.contents.on("did-start-navigation", (_event: any, url?: string, isInPlace?: boolean, isMainFrame?: boolean) => {
+      if (isMainFrame === false) return;
+      if (isInPlace === true && typeof url === "string" && url && this.currentObservation?.url && isSameInPageRoute(this.currentObservation.url, url)) {
+        return;
+      }
+      onNavigated();
+    });
+    this.contents.on("did-navigate", () => {
+      onNavigated();
+    });
+    this.contents.on("did-navigate-in-page", (_event: any, url?: string, isMainFrame?: boolean) => {
+      if (isMainFrame === false) return;
+      if (typeof url === "string" && url && this.currentObservation?.url && isSameInPageRoute(this.currentObservation.url, url)) {
+        this.currentObservation.url = url;
+        return;
+      }
+      onNavigated();
+    });
+    this.contents.on("did-frame-finish-load", (_event: any, isMainFrame?: boolean) => {
+      if (isMainFrame === false) return;
+      onNavigated();
+    });
   }
 
   invalidateViewport() {
@@ -461,6 +613,12 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       } else {
         this.debuggerAttached = true;
       }
+      if (!this.cdpEventListener && typeof this.contents.debugger.on === "function") {
+        this.cdpEventListener = (_event: any, method: string, params: unknown, sessionId?: string) => {
+          if (method) this.cdpEventBuffer.push(method, params, sessionId);
+        };
+        this.contents.debugger.on("message", this.cdpEventListener);
+      }
       return true;
     } catch {
       this.debuggerAttached = false;
@@ -471,7 +629,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
   /**
    * 发送 CDP 命令
    */
-  async sendCDP(method, params = {} as any, { signal, checkLease, onDispatch } = {} as any) {
+  async sendCDP(method, params = {} as any, { signal, checkLease, onDispatch, sessionId, timeoutMs } = {} as any) {
     if (method.startsWith('Input.') && !(await this.waitForInputRelease({ signal }))) {
       throw new Error('INPUT_RELEASE_FAILED: 无法确认先前输入已释放，请停止并重新打开页面');
     }
@@ -492,17 +650,74 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     if (!this.debuggerAttached || !this.contents.debugger?.sendCommand) {
       throw new Error("CDP_UNAVAILABLE: 调试协议不可用");
     }
+    const deadlineMs = Math.max(100, Number(timeoutMs) || this.pageScriptTimeoutMs);
     try {
       return await waitForProbe(() => {
         if (signal?.aborted || checkLease?.() === false || this.currentLeaseChecker?.() === false) throw new Error('LEASE_REVOKED: 动作已中止');
         if (typeof onDispatch === 'function') onDispatch();
-        return this.contents.debugger.sendCommand(method, params);
-      }, this.pageScriptTimeoutMs, signal);
+        return sessionId
+          ? this.contents.debugger.sendCommand(method, params, sessionId)
+          : this.contents.debugger.sendCommand(method, params);
+      }, deadlineMs, signal);
     } catch (error: any) {
       if (signal?.aborted || checkLease?.() === false || String(error?.message).includes('WAIT_ABORTED')) throw new Error('LEASE_REVOKED: 动作已中止');
       if (String(error?.message).includes('WAIT_PROBE_TIMEOUT')) throw new Error('CDP_TIMEOUT: 页面操作未及时响应');
       throw error;
     }
+  }
+
+  readCdpEvents(options = {}) {
+    return this.cdpEventBuffer.query(options);
+  }
+
+  clearCdpEvents() {
+    this.cdpEventBuffer.clear();
+  }
+
+  async captureScreenshotViaCDP({ signal, checkLease, targetCssSize } = {} as any): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+    try {
+      const res = await this.sendCDP(
+        "Page.captureScreenshot",
+        { format: "png", fromSurface: true },
+        { signal, checkLease, timeoutMs: this.pageScreenshotTimeoutMs },
+      );
+      const base64 = typeof res?.data === "string" ? res.data : "";
+      if (!base64) return null;
+      const buffer = Buffer.from(base64, "base64");
+      if (!buffer.length) return null;
+      return await resizePngToCss(buffer, targetCssSize);
+    } catch {
+      return null;
+    }
+  }
+
+  async captureScreenImage(targetCssSize?: { width: number; height: number }): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+    if (!this.isScreenLocked() && typeof this.contents.capturePage === "function") {
+      try {
+        let nativeImg = await withPageDeadline(
+          () => this.contents.capturePage(),
+          this.pageScreenshotTimeoutMs,
+          `网页截图超过 ${this.pageScreenshotTimeoutMs / 1000} 秒未返回`,
+        );
+        if (nativeImg && !nativeImg.isEmpty()) {
+          let imgSize = nativeImg.getSize();
+          const targetW = Math.round(Number(targetCssSize?.width) || 0);
+          const targetH = Math.round(Number(targetCssSize?.height) || 0);
+          if (targetW > 0 && targetH > 0 && (imgSize.width !== targetW || imgSize.height !== targetH) && typeof nativeImg.resize === "function") {
+            nativeImg = nativeImg.resize({ width: targetW, height: targetH, quality: "good" });
+            imgSize = nativeImg.getSize();
+          }
+          return {
+            buffer: nativeImg.toPNG(),
+            width: imgSize.width,
+            height: imgSize.height,
+          };
+        }
+      } catch {
+        // 常规截图失败或返回空图时，回退至 CDP Page.captureScreenshot
+      }
+    }
+    return await this.captureScreenshotViaCDP({ targetCssSize });
   }
 
   /**
@@ -626,40 +841,35 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     const url = snapshot.url || this.contents.getURL?.() || "";
     const title = snapshot.title || this.contents.getTitle?.() || "";
 
-    // 2. 截图
+    // 2. 截图（锁屏或常规截图不可用时自动走 CDP Page.captureScreenshot 回退）
     let images = [];
     let imageWidth = snapshot.viewport.cssWidth;
     let imageHeight = snapshot.viewport.cssHeight;
 
-    if (captureScreenshot && typeof this.contents.capturePage === "function") {
-      try {
-        const nativeImg = await withPageDeadline(
-          () => this.contents.capturePage(),
-          this.pageScreenshotTimeoutMs,
-          `网页截图超过 ${this.pageScreenshotTimeoutMs / 1000} 秒未返回`,
-        );
-        if (!nativeImg.isEmpty()) {
-          const imgSize = nativeImg.getSize();
-          imageWidth = imgSize.width;
-          imageHeight = imgSize.height;
-          const pngBuffer = nativeImg.toPNG();
-          images = [{
-            mimeType: "image/png",
-            data: pngBuffer.toString("base64")
-          }];
+    if (captureScreenshot) {
+      const captured = await this.captureScreenImage({
+        width: snapshot.viewport.cssWidth,
+        height: snapshot.viewport.cssHeight,
+      });
+      if (captured) {
+        if (captured.width > 0 && captured.height > 0) {
+          imageWidth = captured.width;
+          imageHeight = captured.height;
+        }
+        images = [{
+          mimeType: "image/png",
+          data: captured.buffer.toString("base64")
+        }];
 
-          if (workspacePath) {
-            try {
-              const debugFilePath = path.join(workspacePath, "下载", `.browser-${observationId}.png`);
-              await fs.mkdir(path.dirname(debugFilePath), { recursive: true });
-              await fs.writeFile(debugFilePath, pngBuffer);
-            } catch {
-              // 忽略留存写入错误
-            }
+        if (workspacePath) {
+          try {
+            const debugFilePath = path.join(workspacePath, "下载", `.browser-${observationId}.png`);
+            await fs.mkdir(path.dirname(debugFilePath), { recursive: true });
+            await fs.writeFile(debugFilePath, captured.buffer);
+          } catch {
+            // 忽略留存写入错误
           }
         }
-      } catch (screenshotErr: any) {
-        // 忽略截图错误
       }
     }
 
@@ -680,13 +890,18 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       return `${el.ref} [${el.tag}${typeStr}] ${el.name}${stateStr}${frameStr}${hrefStr} (${el.rect.x}, ${el.rect.y}, ${el.rect.width}×${el.rect.height})`;
     });
 
+    const coordsMatched = viewport.imageWidth === viewport.cssWidth && viewport.imageHeight === viewport.cssHeight;
+    const viewportLine = coordsMatched
+      ? `视口尺寸：${viewport.cssWidth}×${viewport.cssHeight}（截图与 CSS 坐标 1:1 一致，point 与元素坐标通用）`
+      : `视口尺寸：${viewport.cssWidth}×${viewport.cssHeight}，截图尺寸：${viewport.imageWidth}×${viewport.imageHeight}（点击 point 须传截图像素坐标 0..${viewport.imageWidth}×0..${viewport.imageHeight}）`;
+
     const truncated = snapshot.totalCount > snapshot.elements.length;
     // 关键：【观察编号】置于首行，使模型能明确获取并必须在后续动作中回传 (F7)
     const textSummary = [
       `【观察编号】：${observationId}`,
       `页面标题：${title}`,
       `网址：${url}`,
-      `视口尺寸：${viewport.cssWidth}×${viewport.cssHeight} (DPR: ${viewport.devicePixelRatio})`,
+      viewportLine,
       `\n可操作元素列表（通过编号 ref 调用）：`,
       elementLines.length ? elementLines.join("\n") : "（没有检测到可见交互元素）",
       truncated ? `\n共 ${snapshot.totalCount} 个元素，当前从 ${offset} 开始展示；browser__observe 可传 offset 分段查看（下一段 ${offset + snapshot.elements.length}）。` : ""
@@ -720,10 +935,8 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     const result = await this.readPageText();
     if (!result.ok) return result;
     const images = [];
-    try {
-      const image = await withPageDeadline(() => this.contents.capturePage(), this.pageScreenshotTimeoutMs, '核对截图超时');
-      if (!image.isEmpty()) images.push({ mimeType: 'image/png', data: image.toPNG().toString('base64') });
-    } catch { /* 正文仍可用于核对，明确标注图片缺失。 */ }
+    const captured = await this.captureScreenImage();
+    if (captured) images.push({ mimeType: 'image/png', data: captured.buffer.toString('base64') });
     const previous = this.currentObservation?.summary;
     return { ok: true, result: result.result + (previous ? `\n\n最近一次观察（目标仍须在动作前核验）：\n${previous}` : '')
       + (!images.length ? '\n当前未取得截图。' : ''), images };
@@ -746,9 +959,9 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     if (this.currentObservation.viewportEpoch !== this.viewportEpoch) {
       return { ok: false, error: "STALE_OBSERVATION: 页面视口或缩放已变化，原观察已失效，请重新观察" };
     }
-    // 核对当前实际 URL 与观察时是否一致
+    // 核对当前实际 URL 与观察时是否一致；允许同页 hash 查询参数微调
     const currentUrl = this.contents.getURL?.() || "";
-    if (currentUrl !== this.currentObservation.url) {
+    if (currentUrl !== this.currentObservation.url && !isSameInPageRoute(this.currentObservation.url, currentUrl)) {
       return { ok: false, error: `STALE_NAVIGATION: 页面已离开原观察网址（当前: ${currentUrl}），请重新观察` };
     }
     return { ok: true, observation: this.currentObservation };
@@ -833,12 +1046,13 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       // 语义核验：比对元素实际名称，严禁 cloneNode 或篡改文本后冒充原控件 (F3_replaced_node / 补充要求 3)
       const isPw = (el.getAttribute("type") || el.type || "").toLowerCase() === "password" ||
         (el.getAttribute("autocomplete") || "").toLowerCase().includes("password");
-      const isEditable = el.isContentEditable || el.getAttribute("contenteditable") === "true";
+      const isEditable = el.isContentEditable || (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") || el.ownerDocument?.designMode === "on";
       let currentName = "";
       if (isPw) {
         currentName = el.getAttribute("aria-label") || el.placeholder || el.getAttribute("title") || "密码输入框";
       } else if (isEditable) {
-        currentName = (el.innerText || el.textContent || "富文本编辑区").replace(/\\s+/g, " ").trim().slice(0, 60);
+        const editableText = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.innerText || "").replace(/\\s+/g, " ").trim();
+        currentName = (editableText || "富文本编辑区").slice(0, 60);
       } else {
         currentName = (
           el.getAttribute("aria-label") ||
@@ -850,7 +1064,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
         ).replace(/\\s+/g, " ").trim().slice(0, 80);
       }
       const expectedName = ${JSON.stringify(expected.name || "")};
-      if (expectedName && currentName !== expectedName) {
+      if (expectedName && currentName !== expectedName && !isEditable) {
         return { ok: false, reason: "SEMANTIC_CHANGED", detail: "期望语义: " + expectedName + ", 当前语义: " + currentName };
       }
 
@@ -994,6 +1208,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
           return await this.dispatchTypeAction(action, obs, { signal, checkLease });
         }
 
+        case "press":
         case "keypress": {
           const key = String(action?.key || "");
           if (!key) return { ok: false, result: "缺少 key 参数" };
@@ -1203,15 +1418,16 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
         }
 
         el.focus();
-        const isEditable = el.isContentEditable || el.getAttribute("contenteditable") === "true";
+        const EventCtor = el.ownerDocument?.defaultView?.Event || Event;
+        const isEditable = el.isContentEditable || (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") || el.ownerDocument?.designMode === "on";
         if (isEditable) {
           if (${JSON.stringify(mode)} === "replace") {
             el.innerText = ${JSON.stringify(text)};
           } else {
             el.innerText = (el.innerText || "") + ${JSON.stringify(text)};
           }
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new EventCtor("input", { bubbles: true }));
+          el.dispatchEvent(new EventCtor("change", { bubbles: true }));
           return { ok: true, value: el.innerText };
         }
 
@@ -1514,6 +1730,10 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
 
   dispose() {
     try {
+      if (this.cdpEventListener && this.contents?.debugger?.removeListener) {
+        this.contents.debugger.removeListener("message", this.cdpEventListener);
+      }
+      this.cdpEventListener = null;
       if (this.contents && !this.isDestroyed()) {
         try {
           if (this.ownsDebugger && this.contents.debugger?.isAttached?.()) {
@@ -1532,5 +1752,6 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     this.currentObservation = null;
     this.taskClipboard = null;
     this.observationHistory.clear();
+    this.cdpEventBuffer.clear();
   }
 }

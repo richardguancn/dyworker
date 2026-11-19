@@ -11,6 +11,7 @@ import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } fro
 import { collectOrphanAssets,commitStagedImage,defaultAppearance,normalizeAppearance,readAppearance,removeAppearanceImage,saveAppearance } from "./appearance.mts";
 import { createBackgroundTasksManager } from "./background-tasks.mts";
 import { BrowserAgent,browserToolDefinitions } from "./browser.mts";
+import { createExternalBrowserAgent } from "./browser-cdp-external.mts";
 import { FEISHU_DOC_TOOL_NAMES,feishuDocToolDefinitions,handleFeishuDocTool } from "./channels/feishu-docs.mts";
 import { CHANNEL_LABELS,createChannelManager } from "./channels/manager.mts";
 import { parseApprovalReply } from "./channels/qq-bot.mts";
@@ -556,6 +557,8 @@ function warmDecisionService(saved) {
 let sleepBlockerId = null;
 let sleepBlockMode = "tasks";
 let runningTaskCount = 0;
+let screenLocked = false;
+let currentFullCdpAccess = false;
 
 function updateSleepBlocker() {
   const shouldBlock = sleepBlockMode === "always" || (sleepBlockMode === "tasks" && runningTaskCount > 0);
@@ -641,6 +644,7 @@ async function readSettings() {
 async function saveSettings(settings) {
   // 落盘与 updateUrl 规范化在服务内完成；appUpdater 联动属于壳层反应，留在 main
   const updateUrl = await ctx.settings.write(settings);
+  currentFullCdpAccess = settings?.fullCdpAccess === true;
   if (appUpdater && appUpdater.getUpdateUrl() !== updateUrl) appUpdater.configure(updateUrl);
   return updateUrl;
 }
@@ -723,6 +727,7 @@ const browserRuntime = createBrowserRuntime({
   set mainWindow(value) { mainWindow = value; },
   get ctx() { return ctx; },
   isTrustedRendererUrl,
+  isScreenLocked: () => screenLocked,
 });
 const { waitForEmbeddedBrowser, browserControlManager, requestCloseEmbeddedBrowser, activeEmbeddedBrowserContents, browserPanelTabsFor, activateBrowserPanelTab, closeBrowserPanelTab, embeddedBrowserContentsById } = browserRuntime;
 
@@ -1087,6 +1092,7 @@ async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4
 const mcpRuntime = createMcpRuntime({
   resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
   getMainWindow: () => mainWindow,
+  isScreenLocked: () => screenLocked,
   get mcpShuttingDown() { return mcpShuttingDown; },
   set mcpShuttingDown(value) { mcpShuttingDown = value; },
 });
@@ -1128,15 +1134,36 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
     activateTab: (tabId, ownerSessionId, credential) => activateBrowserPanelTab(renderer, tabId, { ownerSessionId, token: credential?.token }),
     closeTab: (tabId, ownerSessionId) => closeBrowserPanelTab(renderer, tabId, { ownerSessionId }),
     controlManager: browserControlManager,
+    isFullCdpAccessEnabled: () => currentFullCdpAccess,
+    isScreenLocked: () => screenLocked,
   });
   browserAgent.setContext({ ownerSessionId: sessionId, runId });
   browserAgent.setWorkspace(workspacePath);
+  const activeVisibleSession = browserControlManager.session;
+  const inheritVisiblePanel = Boolean(
+    renderer
+    && !channel
+    && activeVisibleSession
+    && activeVisibleSession.ownerSessionId === sessionId
+    && !activeVisibleSession.webContents?.isDestroyed?.()
+    && ["running", "acquiring", "human_control", "paused"].includes(activeVisibleSession.status),
+  );
   const taskBrowser = new TaskBrowserRouter({
     visible: browserAgent, ownerSessionId: sessionId, runId,
+    initialMode: inheritVisiblePanel ? "visible" : "",
+    isFullCdpAccessEnabled: () => currentFullCdpAccess,
     handoffs: backgroundBrowserHandoffs, allowHandoff: Boolean(renderer) && !channel,
     claimedBackground: backgroundBrowserHandoffs.claim(sessionId, runId, workspacePath),
     createBackground: () => createBackgroundBrowserAgent({ ownerSessionId: sessionId, runId, workspacePath, createWindow: options => new BrowserWindow(options),
+      isFullCdpAccessEnabled: () => currentFullCdpAccess, isScreenLocked: () => screenLocked,
       loadSiteSession: options => loadSiteSession({ ...options, builtinSession: session.fromPartition("persist:dyworker-browser"), appDataDir: app.getPath("userData") }) }),
+    createExternal: () => createExternalBrowserAgent({
+      ownerSessionId: sessionId,
+      runId,
+      workspacePath,
+      isFullCdpAccessEnabled: () => currentFullCdpAccess,
+      isScreenLocked: () => screenLocked,
+    }),
   });
   const onBrowserAbort = () => taskBrowser.abort({
     preserveHandoff: signal?.reason?.message === '任务已结束',
@@ -2268,6 +2295,8 @@ app.whenReady().then(async () => {
   // 旧扁平记忆列表一次性迁移成 wiki 页面（迁移前自动备份 memory.json）
   void ctx.memory.wikiReady().catch((error) => console.log(`[memory-wiki] 迁移失败：${error?.message || error}`));
   const storedSettings = await readSettings();
+  currentFullCdpAccess = storedSettings.fullCdpAccess === true;
+  ctx.settings.onFullCdpAccessChange?.((enabled) => { currentFullCdpAccess = enabled === true; });
   sleepBlockMode = storedSettings.preventSleep;
   updateSleepBlocker();
   // 外观先读取再建窗，窗口底色/主题从启动即与用户选择一致，避免默认色闪烁
@@ -2344,12 +2373,17 @@ app.whenReady().then(async () => {
   if (typeof powerMonitor?.on === "function") {
     powerMonitor.on("suspend", () => ctx.telemetryController?.noteSuspend());
     powerMonitor.on("resume", () => {
+      screenLocked = false;
       ctx.telemetryController?.noteResume();
       ctx.remoteMessages?.noteOnline();
     });
     // lock-screen/unlock-screen 仅 macOS/Windows 支持；Linux 靠窗口状态与输入超时保守处理
-    powerMonitor.on("lock-screen", () => ctx.telemetryController?.noteLocked());
+    powerMonitor.on("lock-screen", () => {
+      screenLocked = true;
+      ctx.telemetryController?.noteLocked();
+    });
     powerMonitor.on("unlock-screen", () => {
+      screenLocked = false;
       ctx.telemetryController?.noteUnlocked();
       ctx.remoteMessages?.noteOnline();
     });

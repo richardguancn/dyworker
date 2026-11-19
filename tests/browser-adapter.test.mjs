@@ -700,3 +700,82 @@ test("BrowserPageAdapter: webContents 已销毁时 dispose、releaseInputState �
   assert.equal(adapter.contents, null);
   assert.equal(adapter.debuggerAttached, false);
 });
+
+test("BrowserPageAdapter: capturePage 支持 resize 时归一化为 1× CSS 尺寸并标注 1:1 坐标", async () => {
+  const mockContents = createMockWebContents();
+  let resizedArgs = null;
+  mockContents.capturePage = async () => ({
+    isEmpty: () => false,
+    getSize: () => ({ width: 2048, height: 1536 }),
+    toPNG: () => Buffer.from("orig_2x_png"),
+    resize: (opts) => {
+      resizedArgs = opts;
+      return {
+        isEmpty: () => false,
+        getSize: () => ({ width: opts.width, height: opts.height }),
+        toPNG: () => Buffer.from("resized_1x_png"),
+      };
+    },
+  });
+
+  const adapter = new BrowserPageAdapter(mockContents);
+  const obs = await adapter.observe();
+  assert.deepEqual(resizedArgs, { width: 1024, height: 768, quality: "good" });
+  assert.equal(obs.viewport.imageWidth, 1024);
+  assert.equal(obs.viewport.imageHeight, 768);
+  assert.ok(obs.summary.includes("1:1 一致"));
+  assert.equal(Buffer.from(obs.images[0].data, "base64").toString("utf8"), "resized_1x_png");
+
+  adapter.dispose();
+});
+
+test("BrowserPageAdapter: 同页 hash 查询参数变更及子 iframe 加载不误清空观察，跨路由仍作废", async () => {
+  const { EventEmitter } = await import("node:events");
+  let currentUrl = "https://wx.mail.qq.com/home/index#/compose";
+  const base = createMockWebContents({ url: currentUrl });
+  const emitter = new EventEmitter();
+  const contents = Object.assign(emitter, base, { getURL: () => currentUrl });
+  const adapter = new BrowserPageAdapter(contents);
+
+  const obs = await adapter.observe();
+  assert.equal(adapter.validateObservation(obs.observationId).ok, true);
+
+  // 子 iframe 加载完成：不应使主观察过期
+  emitter.emit("did-frame-finish-load", {}, false);
+  assert.equal(adapter.validateObservation(obs.observationId).ok, true);
+
+  // 自动存草稿追加 mailid 查询参数（同路径同 hash 路由）：不应使观察过期
+  currentUrl = "https://wx.mail.qq.com/home/index#/compose?mailid=abc";
+  emitter.emit("did-start-navigation", {}, currentUrl, true, true);
+  emitter.emit("did-navigate-in-page", {}, currentUrl, true);
+  assert.equal(adapter.validateObservation(obs.observationId).ok, true);
+  assert.equal(obs.url, currentUrl);
+
+  // 普通 query (?mailid=...) 若发生变化，跨页导航应使观察失效
+  currentUrl = "https://wx.mail.qq.com/home/index?folder=sent#/compose?mailid=abc";
+  assert.equal(adapter.validateObservation(obs.observationId).ok, false);
+
+  // 重置观察后验证跨 hash 路由跳转（#/compose -> #/list/1）立即作废
+  currentUrl = "https://wx.mail.qq.com/home/index#/compose";
+  const obs2 = await adapter.observe();
+  currentUrl = "https://wx.mail.qq.com/home/index#/list/1";
+  emitter.emit("did-navigate-in-page", {}, currentUrl, true);
+  assert.equal(adapter.validateObservation(obs2.observationId).ok, false);
+
+  adapter.dispose();
+});
+
+test("BrowserPageAdapter: act 支持 type=press 作为 keypress 别名兼容", async () => {
+  const mockContents = createMockWebContents();
+  const adapter = new BrowserPageAdapter(mockContents);
+  const obs = await adapter.observe();
+
+  const pressRes = await adapter.act({
+    observationId: obs.observationId,
+    action: { type: "press", key: "Enter" },
+  });
+  assert.equal(pressRes.ok, true);
+  assert.ok(mockContents.sentCDPCommands.some((c) => c.method === "Input.dispatchKeyEvent" && c.params.key === "Enter"));
+
+  adapter.dispose();
+});

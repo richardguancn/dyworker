@@ -405,6 +405,7 @@ export function deserializeSettings(stored, secretStorage) {
     nativeToolsDisabled: Array.isArray(source.nativeToolsDisabled) ? source.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(source.telemetry),
+    fullCdpAccess: source.fullCdpAccess === true,
     locale: String(source.locale || "").trim() || undefined,
   };
 }
@@ -465,6 +466,7 @@ export function serializeSettings(settings, secretStorage) {
     nativeToolsDisabled: Array.isArray(settings?.nativeToolsDisabled) ? settings.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: settings?.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(settings?.telemetry),
+    fullCdpAccess: settings?.fullCdpAccess === true,
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
   const visionSecret = encryptSecret(normalized.visionApiKey, secretStorage);
@@ -526,6 +528,7 @@ export function serializeSettings(settings, secretStorage) {
     nativeToolsDisabled: normalized.nativeToolsDisabled,
     enableWebSearchBuiltin: normalized.enableWebSearchBuiltin,
     telemetry: normalized.telemetry,
+    fullCdpAccess: normalized.fullCdpAccess,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,
     profileStoreVersion: 1,

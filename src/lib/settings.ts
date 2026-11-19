@@ -53,6 +53,7 @@ export const defaultSettings: ProviderSettings = {
     quietHours: "",
     dailyPopupLimit: 3,
   },
+  fullCdpAccess: false,
   approvalMode: "reviewer",
   preventSleep: "tasks",
   updateUrl: "https://github.com/richardguancn/dyworker",
