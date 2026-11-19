@@ -1,6 +1,7 @@
 // 从桌面入口拆出的工具服务器连接与调用。
 import { COMPUTER_USE_SERVER_ID,discoverComputerUseServer,isComputerUseTool } from "../computer-use.mts";
 import { createComputerUseRuntime } from "./computer-use-runtime.mts";
+import { createLinuxOcclusionChecker } from "./linux-screen-check.mts";
 import { resolveMcpServer } from "../mcp-config.mts";
 import { HttpMcpClient } from "../mcp-http.mts";
 import { McpClient } from "../mcp.mts";
@@ -9,6 +10,7 @@ import { estimateTextTokens } from "../agent/messages.mts";
 export function createMcpRuntime(deps: {
   mcpShuttingDown: boolean;
   resourcesPath?: string;
+  getMainWindow?: () => { isDestroyed?: () => boolean; isVisible?: () => boolean; isMinimized?: () => boolean; isFocused?: () => boolean; getBounds?: () => { x: number; y: number; width: number; height: number } } | undefined;
 }) {
 
 
@@ -16,7 +18,20 @@ export function createMcpRuntime(deps: {
 
 const mcpClients = new Map();
 const mcpClientConnections = new Map();
-const computerUse = createComputerUseRuntime(discoverComputerUseServer({ resourcesPath: deps.resourcesPath }));
+const computerUse = createComputerUseRuntime(discoverComputerUseServer({ resourcesPath: deps.resourcesPath }), undefined, process.platform === "linux" ? {
+  inspectOcclusion: createLinuxOcclusionChecker({
+    getMainWindowState: () => {
+      const win = deps.getMainWindow?.();
+      if (!win || win.isDestroyed?.()) return undefined;
+      return {
+        visible: win.isVisible?.(),
+        minimized: win.isMinimized?.(),
+        focused: win.isFocused?.(),
+        bounds: win.getBounds?.(),
+      };
+    },
+  }),
+} : {});
 
 function mcpServersOf(settings) {
   const list = Array.isArray(settings?.mcpServers) ? settings.mcpServers : [];

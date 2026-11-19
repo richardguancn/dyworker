@@ -113,11 +113,7 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
 }
 .reference-layout .sidebar-primary-row .sidebar-brand-actions { display: flex; }
 .reference-layout .sidebar-primary-row .icon-button { flex: none; }
-/* 仅 Linux：窗口没有原生边框与阴影，用一圈细线收边并把内侧圆角收紧。 */
-html .reference-layout.platform-linux {
-  outline: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
-  outline-offset: -1px;
-}
+/* Linux 窗口内侧的面板使用更小的圆角。 */
 .reference-layout.platform-linux .sidebar { border-radius: 6px 0 0 6px; }
 .reference-layout.platform-linux .main-panel { border-radius: 0; }
 .reference-layout.platform-linux.right-panel-collapsed .main-panel { border-radius: 0 6px 6px 0; }
@@ -216,13 +212,15 @@ html .reference-layout.platform-linux {
 .reference-layout .empty-session:not(.conversation-view-open) .topbar,
 .reference-layout .empty-session:not(.conversation-view-open) .conversation-tabs { display: none; }
 .reference-layout .empty-session:not(.conversation-view-open) .conversation-viewport { inset: 0; }
+.reference-layout .empty-session .conversation-column:has(> .empty-conversation:only-child) { padding: 0; }
+/* 欢迎区使用输入区上方的空间，附件、项目栏和提示增高时一起让位。 */
 .reference-layout .empty-session .empty-conversation {
   position: absolute;
-  left: 50%;
-  top: 39%;
-  transform: translate(-50%, -50%);
-  width: calc(100% - 48px);
+  inset: 0 0 var(--composer-height, 172px);
   min-height: 0;
+  padding-inline: 24px;
+  overflow: clip;
+  container: welcome / size;
 }
 .reference-layout .empty-conversation .empty-mark {
   width: 48px;
@@ -235,6 +233,12 @@ html .reference-layout.platform-linux {
   color: var(--quiet);
 }
 .reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
+@container welcome (max-height: 180px) {
+  .reference-layout .empty-conversation .empty-mark { display: none; }
+}
+@container welcome (max-height: 84px) {
+  .reference-layout .empty-conversation h1 { display: none; }
+}
 .reference-layout .composer-dock { padding: 0 0 16px; }
 .reference-layout .composer-card { container: composer / inline-size; width: var(--chat-width); min-height: 104px; padding: 12px 12px 8px; border-radius: 24px; background: var(--card-raised, var(--card)); box-shadow: 0 2px 8px rgba(0,0,0,.025), 0 16px 40px rgba(0,0,0,.035); }
 .reference-layout .composer-card:focus-within { box-shadow: var(--shadow-sm); }
@@ -301,7 +305,7 @@ html .reference-layout.platform-linux {
 .queue-card-images .attachment-preview-image:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .reference-layout .queue-card-text { color: var(--ink); }
 .reference-layout .queue-card-actions { gap: 8px; }
-.reference-layout .queue-card-steer { gap: 5px; padding-inline: 5px; }
+.reference-layout .queue-card-steer { gap: 5px; padding-inline: 5px; white-space: nowrap; }
 .reference-layout .queue-card-actions .icon-button { width: 26px; height: 28px; }
 @container pending (max-width: 480px) {
   .reference-layout .queue-card-row { flex-wrap: nowrap; }
@@ -392,6 +396,10 @@ html .reference-layout.platform-linux {
 
 .reference-layout .dsh-input-queue-item > textarea { height: 48px; min-height: 48px; }
 .reference-layout .dsh-composer-input { min-height: 48px; }
+/* 附件和长正文各自滚动，为项目栏、操作按钮和提示留出空间。 */
+.reference-layout .empty-session .composer-body:has(> .attachment-strip) :is(.composer-input-wrap > textarea, .dsh-composer-input) {
+  max-height: min(420px, 32vh);
+}
 
 /* 按输入区实际宽度响应，左右面板展开时同样保持操作完整。 */
 @container composer (max-width: 460px) {
@@ -401,7 +409,6 @@ html .reference-layout.platform-linux {
 }
 @container composer (max-width: 300px) {
   .reference-layout .composer-actions { flex-wrap: wrap; }
-  .reference-layout .attachment-strip .composer-input-wrap { min-width: 0; flex-basis: 100%; }
 }
 
 .reference-layout.sidebar-collapsed .sidebar,
@@ -674,11 +681,22 @@ html:has(.reference-layout.platform-linux),
 html:has(.reference-layout.platform-linux) body,
 html:has(.reference-layout.platform-linux) #root { background: transparent !important; }
 html:has(.reference-layout.platform-linux) #root {
-  border-radius: 14px;
-  clip-path: inset(0 round 14px);
+  --window-corner-radius: 14px;
+  border-radius: var(--window-corner-radius);
+  clip-path: inset(0 round var(--window-corner-radius));
+}
+/* 边框贴合窗口裁切轮廓，覆盖内容但不占布局或拦截点击。 */
+html:has(.reference-layout.platform-linux) #root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
 }
 html.window-maximized:has(.reference-layout.platform-linux) #root {
-  border-radius: 0;
+  --window-corner-radius: 0px;
   clip-path: none;
 }
 /* 消息滚到标题栏下方时渐隐；遮罩随视口固定，不拦截点击和滚动。 */

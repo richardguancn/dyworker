@@ -480,6 +480,8 @@
   "composer.queuedTitle": "送信待ち",
   "composer.queuedCountUnit": "件",
   "composer.queuedHint": "現在のタスク完了後に順次実行",
+  "composer.queuedRunNow": "今すぐ実行",
+  "composer.queuedRunNowHint": "現在のタスクを停止して、このメッセージをすぐに実行します",
   "reasoning.title": "思考",
   "reasoning.manage": "レベル設定…",
   "reasoning.default": "デフォルト",

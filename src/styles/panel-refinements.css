@@ -157,7 +157,7 @@
 .mods-page details { margin:8px 0; font-size:13px; line-height:1.7; }
 .mods-page summary { cursor:pointer; color:var(--muted); }
 .mods-page .plugins-market-search { flex:0 0 auto; width:100%; max-width:440px; min-height:42px; box-sizing:border-box; }
-.attachment-strip > .mods-panels { flex:0 0 100%; min-width:0; max-height:180px; overflow:auto; overflow-wrap:anywhere; }
+.composer-body > .mods-panels { min-width:0; max-height:180px; overflow:auto; overflow-wrap:anywhere; }
 .mods-page details { margin:8px 0; }
 .mods-page details p { margin:6px 0; }
 

@@ -100,7 +100,7 @@ const safariFields = [
   { element_index: '119', value: '' },
 ];
 
-async function browserForm(t, { afterAction, duplicate = false, directWrite = false, chromium = false } = {}) {
+async function browserForm(t, { afterAction, duplicate = false, directWrite = false, chromium = false, needsClick = false } = {}) {
   const { calls, fixture, runtime, call } = harness('darwin');
   t.after(() => runtime.stopAll());
   const app = chromium ? 'com.example.chromium' : safari;
@@ -108,7 +108,7 @@ async function browserForm(t, { afterAction, duplicate = false, directWrite = fa
   fixture.apps = `${appName} — ${app} [running]`;
   const labels = ['推广文本', '描述', '关键词'];
   const form = { values: ['旧推广文本', '旧描述\n第二行', '旧关键词'], indexes: ['93', '101', '119'],
-    language: '韩语', focused: -1, selected: false, showFocus: true, windowId: 4321 };
+    language: '韩语', focused: -1, selected: false, showFocus: true, windowId: 4321, saveIndex: '130', saved: false };
   const render = () => {
     const value = text => text.replaceAll('\n', '\\n');
     fixture.snapshot = [
@@ -125,7 +125,7 @@ async function browserForm(t, { afterAction, duplicate = false, directWrite = fa
         return `\t\t${form.indexes[i]} ${kind} (settable, string) ${label}${form.values[i] ? separator + value(form.values[i]) : ''}`;
       }),
       ...(duplicate ? ['\t\t121 文本栏 (settable, string) 关键词 Value: 另一个关键词'] : []),
-      '\t\t130 按钮 保存',
+      `\t\t${form.saveIndex} 按钮 ${form.saved ? '(disabled) ' : ''}保存`,
       '\t211 标签 App Store Connect ID: TabBarTab?isActive=true, Value: on',
       ...(form.focused < 0 || !form.showFocus ? [] : [`The focused UI element is ${form.indexes[form.focused]} editable.`]),
       ...(form.selected ? [`Selected text: [${value(form.values[form.focused])}]`] : []),
@@ -139,11 +139,18 @@ async function browserForm(t, { afterAction, duplicate = false, directWrite = fa
       return { text: JSON.stringify({ window_id: form.windowId, truncated: false, matches }), images: [] };
     }
     if (name === 'click') {
-      assert.equal(args.click_method, 'sky_click');
-      form.focused = form.indexes.indexOf(args.element_index);
-      form.selected = false;
+      if (args.element_index === form.saveIndex) {
+        assert.equal(args.click_method, 'accessibility');
+        form.saved = true;
+      } else {
+        assert.equal(args.click_method, 'sky_click');
+        form.focused = form.indexes.indexOf(args.element_index);
+        form.selected = false;
+      }
     } else if (name === 'set_value') {
-      if (!directWrite) return { isError: true, text: 'set_value could not verify', images: [] };
+      if (!directWrite || (needsClick && form.focused !== form.indexes.indexOf(args.element_index))) {
+        return { isError: true, text: 'set_value could not verify', images: [] };
+      }
       form.values[form.indexes.indexOf(args.element_index)] = args.value;
     } else if (name === 'press_key' && args.key === 'cmd+a') {
       assert.equal(args.key_method, 'sky_key');
@@ -201,6 +208,60 @@ test('同一个批量工具可填 Chromium 控件，并能区分同名窗口', a
   const result = await call(fill, args);
   assert.equal(result.ok, true, result.result);
   assert.deepEqual(form.values, safariFields.map(field => field.value));
+});
+
+test('批量读回返回保存入口，编号变化后仍只点击一次并核对保存状态', async t => {
+  const { call, args, form, render, mutations, runtime } = await browserForm(t, { directWrite: true });
+  const filled = await call(fill, args);
+  assert.equal(filled.ok, true, filled.result);
+  assert.match(filled.result, /新值已逐项读回一致[\s\S]*130 按钮「保存」（可用）/);
+  assert.equal(form.saved, false);
+  form.saveIndex = '131';
+  render();
+  const save = { app: args.app, observation_id: idOf(filled), element_index: '130' };
+  const review = await readReviewObservation({
+    name: prefix + 'click', args: save, availableNames: [prefix + 'get_app_state'],
+    execute: (name, input, context) => runtime.call(name, input, { ...scope, ...context }),
+  });
+  assert.equal(review.available, true, review.text);
+  assert.match(review.text, /131 按钮「保存」（可用）/);
+  assert.equal(form.saved, false);
+  const result = await call('click', save);
+  assert.equal(result.ok, true, result.result);
+  assert.match(result.result, /保存按钮已变为不可用[\s\S]*131 按钮「保存」（不可用）/);
+  assert.deepEqual(mutations().filter(action => action.name === 'click').map(action => action.args.element_index), ['131']);
+  assert.equal((await call('click', save)).ok, false);
+});
+
+test('填写后语言或字段已变化时不会点击保存', async t => {
+  const { call, args, form, render, mutations } = await browserForm(t, { directWrite: true });
+  const filled = await call(fill, args);
+  assert.equal(filled.ok, true, filled.result);
+  const save = { app: args.app, observation_id: idOf(filled), element_index: '130' };
+  form.language = '西班牙语';
+  render();
+  assert.equal((await call('click', save)).ok, false);
+  form.language = '韩语';
+  form.values[1] = '外部改过描述';
+  render();
+  assert.equal((await call('click', save)).ok, false);
+  assert.equal(mutations().some(action => action.name === 'click'), false);
+});
+
+test('切换语言后短暂没有表单，一次观察等待到目标字段出现', async t => {
+  const { call, args, calls } = await browserForm(t);
+  const client = calls.findLast(call => call.name === 'get_app_state').client;
+  const invoke = client.callTool;
+  let reads = 0;
+  client.callTool = async (name, input) => {
+    const result = await invoke(name, input);
+    if (name === 'get_app_state' && ++reads <= 2) return { ...result, text: result.text.split('\n').slice(0, 4).join('\n') };
+    return result;
+  };
+  const observed = await call('get_app_state', { app: args.app, form_only: true });
+  assert.equal(observed.ok, true, observed.result);
+  assert.match(observed.result, /101 多行输入框「描述」/);
+  assert.equal(reads, 3);
 });
 
 test('网页表单观察直接交给批量填写，拦截逐字段键入及无焦点的全选', async t => {
@@ -286,7 +347,9 @@ test('Safari 焦点跑到已填字段时停止，保留明确的进度', async t
   const result = await call(fill, args);
   assert.equal(result.ok, false);
   assert.match(result.result, /未能确认「描述」的写入结果或焦点[\s\S]*已核对：推广文本/);
-  assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key', 'type_text', 'click', 'set_value']);
+  assert.deepEqual(mutations().map(action => action.name), [
+    'set_value', 'click', 'set_value', 'press_key', 'type_text', 'set_value', 'click', 'set_value',
+  ]);
   assert.deepEqual(form.values, ['한국어 홍보 문구', '旧描述\n第二行', '旧关键词']);
 });
 
@@ -298,20 +361,35 @@ test('Safari 后台未报告焦点时，按控件写入并读回，不发送键�
   const result = await call(fill, args);
   assert.equal(result.ok, true, result.result);
   assert.deepEqual(form.values, safariFields.map(field => field.value));
-  assert.deepEqual(mutations().map(action => action.name), [
-    'click', 'set_value', 'click', 'set_value', 'click', 'set_value',
-  ]);
+  assert.deepEqual(mutations().map(action => action.name), ['set_value', 'set_value', 'set_value']);
+});
+
+test('切换德语后的长描述按字段写入，避免点击引起的页面变化', async t => {
+  const { call, args, form, render, mutations } = await browserForm(t, {
+    directWrite: true,
+    afterAction(state, name) { if (name === 'click') state.language = '法语'; },
+  });
+  form.language = '德语';
+  render();
+  const observed = await call('get_app_state', { app: args.app, form_only: true });
+  const description = Array.from({ length: 8 }, () => 'DYWorker ist ein intelligenter Arbeitsplatz-Assistent für macOS.').join('\n');
+  const result = await call(fill, { ...args, observation_id: idOf(observed), fields: [
+    { element_index: '101', value: description }, { element_index: '119', value: 'Produktivität,Workflow' },
+  ] });
+  assert.equal(result.ok, true, result.result);
+  assert.deepEqual(form.values, ['旧推广文本', description, 'Produktivität,Workflow']);
+  assert.deepEqual(mutations().map(action => action.name), ['set_value', 'set_value']);
 });
 
 test('Safari 填写过程中换了语言，停在已经核对的字段', async t => {
   const { call, args, mutations } = await browserForm(t, {
-    directWrite: true,
+    directWrite: true, needsClick: true,
     afterAction(state, name) { if (name === 'click' && state.focused === 1) state.language = '法语'; },
   });
   const result = await call(fill, args);
   assert.equal(result.ok, false);
   assert.match(result.result, /点击「描述」后无法核对原表单[\s\S]*已核对：推广文本/);
-  assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'click']);
+  assert.deepEqual(mutations().map(action => action.name), ['set_value', 'click', 'set_value', 'set_value', 'click']);
 });
 
 test('Safari 未全选时不输入，网页截断新值时不填写后续字段', async t => {
@@ -320,7 +398,7 @@ test('Safari 未全选时不输入，网页截断新值时不填写后续字段'
       afterAction(state, name) { if (name === 'press_key') state.selected = false; },
     });
     assert.match((await call(fill, args)).result, /原文已完整选中/);
-    assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key']);
+    assert.deepEqual(mutations().map(action => action.name), ['set_value', 'click', 'set_value', 'press_key']);
   });
   await t.test('新值只写入一部分', async t => {
     const { call, args, mutations } = await browserForm(t, {
@@ -329,7 +407,7 @@ test('Safari 未全选时不输入，网页截断新值时不填写后续字段'
     const result = await call(fill, args);
     assert.equal(result.ok, false);
     assert.match(result.result, /已核对：无[\s\S]*「推广文本」可能已变化/);
-    assert.deepEqual(mutations().map(action => action.name), ['click', 'set_value', 'press_key', 'type_text']);
+    assert.deepEqual(mutations().map(action => action.name), ['set_value', 'click', 'set_value', 'press_key', 'type_text']);
   });
 });
 
@@ -379,13 +457,33 @@ test('键盘动作只回报已发送，重新读取才返回完整界面和新�
   assert.deepEqual(typed, sent);
 });
 
-test('共享桌面截图和键鼠操作需要人工确认', () => {
-  for (const approvalMode of ['interactive', 'reviewer', 'full-access', 'auto']) {
-    for (const [action, args] of [['get_shared_app_state', {}], ['press_key', { background: false }]]) {
-      assert.equal(evaluateApproval({ approvalMode, name: prefix + action, args }), 'ask');
-      assert.equal(planTaskApproval({ approvalMode, name: prefix + action, args }), 'confirm');
-    }
+test('共享桌面截图与键鼠操作的审批路由在各模式下确定且服从用户钩子', () => {
+  for (const approvalMode of ['deny-changes', 'interactive', 'auto', 'allow-writes', 'reviewer', 'full-access']) {
+    assert.equal(evaluateApproval({ approvalMode, name: prefix + 'get_shared_app_state', args: {} }), 'allow');
+    assert.equal(planTaskApproval({ approvalMode, name: prefix + 'get_shared_app_state', args: {} }), 'execute');
   }
+  assert.equal(planTaskApproval({ approvalMode: 'full-access', name: prefix + 'get_shared_app_state', args: {}, hook: { action: 'block' } }), 'deny');
+  assert.equal(planTaskApproval({ approvalMode: 'reviewer', name: prefix + 'get_shared_app_state', args: {}, hookRequiresApproval: true, hook: { action: 'require_approval' } }), 'confirm');
+
+  for (const [approvalMode, expectedDecision, expectedRoute] of [
+    ['deny-changes', 'deny', 'deny'],
+    ['interactive', 'ask', 'confirm'],
+    ['auto', 'ask', 'confirm'],
+    ['allow-writes', 'ask', 'confirm'],
+    ['reviewer', 'ask', 'review'],
+    ['full-access', 'allow', 'execute'],
+  ]) {
+    for (const args of [{}, { background: false }]) {
+      assert.equal(evaluateApproval({ approvalMode, name: prefix + 'press_key', args }), expectedDecision, `${approvalMode}: ${JSON.stringify(args)}`);
+      assert.equal(planTaskApproval({ approvalMode, name: prefix + 'press_key', args }), expectedRoute, `${approvalMode}: ${JSON.stringify(args)}`);
+    }
+    assert.equal(
+      planTaskApproval({ approvalMode, name: prefix + 'install_dependencies', args: {} }),
+      approvalMode === 'deny-changes' ? 'deny' : 'confirm',
+    );
+  }
+  assert.equal(planTaskApproval({ approvalMode: 'full-access', name: prefix + 'press_key', args: { background: false }, hookRequiresApproval: true, hook: { action: 'require_approval' } }), 'confirm');
+  assert.equal(planTaskApproval({ approvalMode: 'reviewer', name: prefix + 'press_key', args: { background: false }, hookRequiresApproval: true, hook: { action: 'require_approval' } }), 'confirm');
 });
 
 test('本机发布版能走 DYWorker 自己的入口启动并读取工具', async t => {

@@ -6,6 +6,7 @@ export const COMPUTER_USE_SERVER_ID = "computer-use";
 export const COMPUTER_USE_TOOL_PREFIX = `mcp__${COMPUTER_USE_SERVER_ID}__`;
 
 export function discoverComputerUseServer({
+  mas = process.mas === true,
   platform = process.platform,
   arch = process.arch,
   resourcesPath = "",
@@ -14,6 +15,7 @@ export function discoverComputerUseServer({
   pathExists = existsSync,
   hostEnv = process.env,
 } = {}) {
+  if (mas) return null;
   if (arch !== "arm64" && arch !== "x64") return null;
   const nativeArch = arch === "x64" ? "amd64" : arch;
   const relative = {

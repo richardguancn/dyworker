@@ -33,7 +33,7 @@
   【核心功能亮点】
   1. 自然语言任务助理：通过对话直观下达办公任务，自动完成多步骤业务拆解与执行。
   2. 智能文档协同与产物生成：实时生成结构化 Markdown 报告、专业表格及可视化图表，左侧对话交互，右侧成果物高保真协同预览。
-  3. 全链路透明可追溯：独创执行轨迹控制台（Trace Console），每一步检索、调用与计算均清晰可查，告别黑盒 AI。
+  3. 专业技能库与任务自动化：内置丰富的专业技能（Skills）与定时计划任务，赋能多维数据分析、文档处理与自动化交付。
   4. 丰富的能力扩展：内置丰富的生产力插件与 MCP 扩展生态，轻松连接本地工具与知识库。
   5. Mac 原生美学设计：深度契合 macOS 视觉规范，支持优雅毛玻璃、深色/浅色主题自适应与多语言快速切换。
 
@@ -58,7 +58,7 @@
   【核心功能特色】
   1. 自然語言任務助理：以直覺對話交辦任務，自動拆解並執行多步驟業務目標。
   2. 智慧文件協同與成果預覽：即時產生結構化 Markdown 報告、專業表格與視覺化看板，左側對話互動、右側成果物即時渲染。
-  3. 透明可追蹤的執行軌跡：獨創 Trace 軌跡控制台，每個工具呼叫、數據檢索與運算歷程皆清晰可考。
+  3. 專業技能庫與任務自動化：內建豐富的專業技能（Skills）與排程自動化，賦能多維數據分析、文件處理與自動化交付。
   4. 靈活的生態擴充：支援多元生產力外掛程式與 MCP Server 連接，賦能專屬辦公需求。
   5. macOS 原生細膩質感：完美相容 macOS 設計規範，提供優雅毛玻璃、暗黑與淺色外觀。
 
@@ -76,14 +76,14 @@
 * **Promotional Text (≤170 chars)**:
   Transform your Mac workflow with natural language. Organize workspaces, automate data analysis, and synthesize executive documents with strict local sandbox privacy.
 * **Keywords (≤100 chars, comma-separated)**:
-  AI assistant,workspace,productivity,data analytics,document summary,markdown,workflow,audit trace
+  AI assistant,workspace,productivity,analytics,document summary,markdown,workflow,skills,automation
 * **Description (≤4000 chars)**:
   DYWorker is a next-generation AI-powered desktop productivity assistant designed natively for macOS. Simply select a workspace folder and use natural language to analyze business data, summarize research, and synthesize publication-ready documents.
 
   KEY FEATURES:
   1. Natural Language Task Assistant: Describe goals naturally. DYWorker decomposes complex assignments into structured multi-step execution plans.
   2. Live Artifacts & Document Synergy: Generate high-fidelity Markdown reports, data tables, and structured summaries side-by-side with conversation.
-  3. Transparent Execution Trace: Inspect every reasoning step, tool invocation, and sandbox read through the integrated Trace Console. Total clarity without black-box surprises.
+  3. Skills Hub & Automation: Rich ecosystem of built-in and custom Skills, coupled with scheduled automations for streamlined report synthesis and continuous workflows.
   4. Extensible Ecosystem: Connect custom plugins and Model Context Protocol (MCP) servers to tailor tools to your specific enterprise workflows.
   5. Native macOS Experience: Built with exquisite macOS design principles, featuring fluid vibrancy, Dark and Light appearances, and responsive layouts.
 
@@ -108,7 +108,7 @@
   【主な特徴】
   1. 自然言語でのタスク実行：対話を通じて複雑な業務指示を直感的に伝達。ステップごとの計画を自動生成して実行します。
   2. リアルタイム文書プレビュー：高品位な Markdown 形式のレポートや表組みを即座に出力。左側の対話と右側の成果物プレビューが連動します。
-  3. 透明性の高いトレース記録：Trace コンソールにより、AI の思考過程、ファイル参照、ツール呼び出し履歴をすべて可視化。
+  3. スキルハブと自動化：豊富な組み込みスキルとスケジュールタスクにより、データ分析から定型業務まで自動化を支援。
   4. プラグインと拡張機能：MCP（Model Context Protocol）サーバーや業務プラグインとシームレスに連携。
   5. 洗練された macOS ネイティブ UI：macOS のデザイン原則に準拠し、美しい半透明ガラス効果やダークモードに完全対応。
 
@@ -132,7 +132,7 @@
   [주요 기능]
   1. 자연어 업무 지시: 대화를 통해 다단계 비즈니스 분석 및 자동화 워크플로우를 직관적으로 수행합니다.
   2. 실시간 문서 및 결과물 뷰어: 정교한 Markdown 보고서와 표, 차트를 실시간으로 렌더링하여 협업 생산성을 극대화합니다.
-  3. 투명한 실행 추적(Trace Console): AI의 판단 과정과 파일 탐색, 도구 호출 기록을 한눈에 확인할 수 있습니다.
+  3. 스킬 허브 및 업무 자동화: 다양한 기본 전문 스킬(Skills)과 정기 예약 작업을 통해 데이터 분석 및 보고서 작성을 자동화합니다.
   4. 풍부한 확장 생태계: 맞춤형 플러그인과 MCP 서버 연결을 지원합니다.
   5. Mac 전용 프리미엄 디자인: 다크/라이트 모드, 블러 효과 등 macOS 감성을 담은 유려한 인터페이스를 제공합니다.
 
@@ -141,7 +141,7 @@
 ### 6. 法语 (French - fr-FR)
 
 * **Nom (≤30 car.)**: DYWorker
-* **Sous-titre (≤30 car.)**: Assistant IA et Analyse Document
+* **Sous-titre (≤30 car.)**: Assistant IA & Analyse Doc.
 * **Texte promotionnel (≤170 car.)**:
   Pilotez vos dossiers de travail en langage naturel. Analysez vos données d’entreprise et générez des synthèses professionnelles en toute confidentialité.
 * **Mots-clés (≤100 car., séparés par des virgules)**:
@@ -152,7 +152,7 @@
   FONCTIONNALITÉS :
   1. Assistant de tâches en langage naturel : Confiez vos missions complexes en toute simplicité.
   2. Aperçu synchronisé des documents : Génération instantanée de rapports Markdown haute fidélité.
-  3. Journal d'exécution transparent (Trace) : Suivez chaque étape de raisonnement et appel d'outil.
+  3. Bibliothèque de compétences (Skills) & automatisation : Écosystème riche de compétences métiers et planification de tâches récurrentes.
   4. Écosystème de plugins & MCP : Connectez des extensions métier selon vos exigences.
   5. Design macOS immersif : Intégration parfaite avec le mode sombre et le flou natif.
 
@@ -161,7 +161,7 @@
 ### 7. 德语 (German - de-DE)
 
 * **Name (≤30 Zeichen)**: DYWorker
-* **Untertitel (≤30 Zeichen)**: KI-Arbeitsplatz & Dokumentanalyse
+* **Untertitel (≤30 Zeichen)**: KI-Workspace & Dokumentanalyse
 * **Werbetext (≤170 Zeichen)**:
   Steuern Sie Ihre Arbeitsbereiche mit natürlicher Sprache. Automatisieren Sie Datenanalysen und erstellen Sie Management-Berichte mit sicherem lokalen Datenschutz.
 * **Schlüsselwörter (≤100 Zeichen, kommagetrennt)**:
@@ -172,7 +172,7 @@
   HAUPTMERKMALE:
   1. Aufgabenassistent mit natürlicher Sprache: Mehrstufige Arbeitsabläufe intuitiv steuern.
   2. Dokumentenvorschau & Artefakte: Hochauflösende Markdown-Berichte und strukturierte Tabellen synchron betrachten.
-  3. Vollständig transparenter Ausführungspfad: Mit der Trace-Konsole behalten Sie jeden Zwischenschritt im Blick.
+  3. Skills-Hub & Aufgabenautomatisierung: Umfassende Bibliothek nativer Skills und terminierter Aufgaben für effiziente Datenanalysen und Berichterstellung.
   4. Erweiterbare Plugins & MCP: Werkzeuge und Wissensdatenbanken flexibel integrieren.
   5. Elegantes macOS-Design: Perfekt optimiert für Dark- und Light-Themes mit nativer macOS-Ästhetik.
 
@@ -181,7 +181,7 @@
 ### 8. 西班牙语 (Spanish - es-ES)
 
 * **Nombre (≤30 caracteres)**: DYWorker
-* **Subtítulo (≤30 caracteres)**: Asistente IA y Análisis Documental
+* **Subtítulo (≤30 caracteres)**: Asistente IA y Análisis Doc.
 * **Texto promocional (≤170 caracteres)**:
   Potencie su flujo de trabajo con lenguaje natural. Organice carpetas, analice métricas de negocio y genere informes profesionales con privacidad local en sandbox.
 * **Palabras clave (≤100 caracteres, separadas por comas)**:
@@ -192,6 +192,6 @@
   CARACTERÍSTICAS PRINCIPALES:
   1. Asistente con lenguaje natural: Desglose y ejecute tareas comerciales complejas paso a paso.
   2. Generación y vista previa de documentos: Informes en Markdown enriquecido y tablas estructuradas en tiempo real.
-  3. Traza de auditoría transparente: Examine cada paso, invocación de herramientas y lectura de archivos mediante la consola Trace.
+  3. Centro de habilidades (Skills) y automatización: Amplio ecosistema de habilidades especializadas y tareas programadas para la síntesis de informes.
   4. Ecosistema de extensiones y servidores MCP: Adapte herramientas personalizadas a sus flujos de trabajo.
   5. Diseño nativo macOS: Totalmente integrado con temas claro y oscuro y estilo visual refinado.

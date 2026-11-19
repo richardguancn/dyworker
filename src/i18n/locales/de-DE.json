@@ -480,6 +480,8 @@
   "composer.queuedTitle": "Warteschlange",
   "composer.queuedCountUnit": "Eintr.",
   "composer.queuedHint": "Wird nach aktueller Aufgabe ausgeführt",
+  "composer.queuedRunNow": "Jetzt ausführen",
+  "composer.queuedRunNowHint": "Die aktuelle Aufgabe stoppen und diese Nachricht sofort ausführen",
   "reasoning.title": "Denken",
   "reasoning.manage": "Stufen verwalten…",
   "reasoning.default": "Standard",

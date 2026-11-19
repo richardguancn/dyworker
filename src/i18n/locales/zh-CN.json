@@ -480,6 +480,8 @@
   "composer.queuedTitle": "待发送",
   "composer.queuedCountUnit": "条",
   "composer.queuedHint": "当前任务结束后依次执行",
+  "composer.queuedRunNow": "立即执行",
+  "composer.queuedRunNowHint": "停下当前任务，立即执行这条消息",
   "reasoning.title": "思考",
   "reasoning.manage": "管理档位…",
   "reasoning.default": "默认",

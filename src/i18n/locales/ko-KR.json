@@ -480,6 +480,8 @@
   "composer.queuedTitle": "대기 중",
   "composer.queuedCountUnit": "개",
   "composer.queuedHint": "현재 작업 완료 후 순서대로 실행됩니다",
+  "composer.queuedRunNow": "지금 실행",
+  "composer.queuedRunNowHint": "현재 작업을 중지하고 이 메시지를 즉시 실행합니다",
   "reasoning.title": "사고",
   "reasoning.manage": "수준 관리…",
   "reasoning.default": "기본값",

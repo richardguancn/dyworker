@@ -9,10 +9,10 @@ import { inspectProcessTargets } from "./process-review.mts";
 import path from "node:path";
 import { AgentLoopGuard } from "./agent-loop-guard.mts";
 import { externalPathsForTool,isAutoApprovableCommand,isDevAutoApprovableCommand,isLikelyBackgroundCommand,isReviewerAutoApprovableCommand } from "./agent/command-policy.mts";
-import { compactConversation,isContextOverflowError,limitWorkingContext,mergeWorkingContext,pruneOldToolResults,remainingWorkingContext } from "./agent/context.mts";
+import { compactConversation,isContextOverflowError,limitWorkingContext,mergeWorkingContext,omitTransientDesktopWorkingRecords,pruneOldToolResults,remainingWorkingContext } from "./agent/context.mts";
 import { pickDeliveryText,verifyTaskEvidence } from "./agent/delivery.mts";
 import { builtinHooks,evaluateHooks } from "./agent/hooks.mts";
-import { compactDesktopObservations,estimateMessagesTokens,estimateTextTokens,hasInterfaceImages,messageText,messagesForDebug,omitHistoricalToolImage,replaceInterfaceImagesWithText,sanitizeToolCalls } from "./agent/messages.mts";
+import { compactDesktopHistory,compactDesktopObservations,estimateMessagesTokens,estimateTextTokens,hasInterfaceImages,messageText,messagesForDebug,omitHistoricalToolImage,recoveredDesktopHistoryPrefix,replaceInterfaceImagesWithText,sanitizeToolCalls } from "./agent/messages.mts";
 import { requestModel } from "./agent/model-request.mts";
 import { resolveSubAgentSettings, summarizationSettings } from "./agent/model-settings.mts";
 import { notepadApp, notepadReplace } from "./desktop/notepad-replace.mts";
@@ -130,7 +130,7 @@ export async function runAgent({
   startBackgroundTask = null,
 }) {
   const workspace = new Workspace(workspacePath, { trustTempDirs, signal: cancellationSignal, isCancelled });
-  const priorWorkingContext = limitWorkingContext(String(workingContext || "").trim());
+  const priorWorkingContext = limitWorkingContext(omitTransientDesktopWorkingRecords(String(workingContext || "").trim()));
   const carriedWorkingContext = remainingWorkingContext(priorWorkingContext, conversation);
   // 本次任务内的自动放行规则：用户点一次「允许执行」后，同一任务里同类操作不再反复询问；
   // 只在本轮任务内存活、不落盘。用户批准的工作区外路径同样只在本次任务内记在
@@ -609,8 +609,10 @@ export async function runAgent({
     // Desktop IPC flattens executedMessages, while the wakeup path can pass
     // nested history. Consecutive plan-only turns should not hide the UI work.
     const turnCalls = [];
+    let recoveredDesktopTurn = false;
     for (const message of conversation.slice(0, lastUserIndex).reverse()) {
       if (message?.role === "assistant") {
+        recoveredDesktopTurn ||= messageText(message).startsWith(recoveredDesktopHistoryPrefix + "\n");
         turnCalls.push(...(message.executedMessages || [message]).flatMap(entry => entry.tool_calls || []).reverse());
         continue;
       }
@@ -621,6 +623,10 @@ export async function runAgent({
       });
       if (latestUi) {
         activateGroups([isComputerUseTool(latestUi.function.name) ? "desktop" : "browser"]);
+        break;
+      }
+      if (recoveredDesktopTurn) {
+        activateGroups(["desktop"]);
         break;
       }
       // An unrelated task with actual tool work ends the search.
@@ -686,7 +692,7 @@ export async function runAgent({
   const observeToolRound = (toolCalls, outcomes) => {
     const decision = loopGuard.observe(toolCalls, outcomes);
     if (decision === "warn") {
-      const detail = "连续三轮的操作及返回结果完全相同，目前没有观察到新进展。请先根据已有结果判断：若任务已完成，直接交付；若正在等待后台工作，请检查其运行状态或改用 sleep_until 间隔检查；若操作失败，请诊断原因并更换做法。不要只修改参数格式或旁白后原样重试。";
+      const detail = loopGuard.warning || "连续三轮的操作及返回结果完全相同，目前没有观察到新进展。请先根据已有结果判断：若任务已完成，直接交付；若正在等待后台工作，请检查其运行状态或改用 sleep_until 间隔检查；若操作失败，请诊断原因并更换做法。不要只修改参数格式或旁白后原样重试。";
       messages.push({ role: "system", content: detail });
       debugLog("tool-result", "重复操作提醒：尚未观察到新进展", detail);
     }
@@ -770,7 +776,9 @@ export async function runAgent({
       if (isCancelled() || cancellationSignal?.aborted) return withChanges({ status: "cancelled", finalText });
       // 先保存上一轮原始结果，再允许缩短本次请求携带的旧内容。
       captureExecutionMessages();
-    compactDesktopObservations(messages);
+      compactDesktopHistory(messages);
+      compactDesktopObservations(messages);
+      executionStart = messages.length;
       const thinkingStartTime = Date.now();
       let currentRoundThinking = "";
       const thinkingId = startActivity("thinking", "思考过程", "");
@@ -1819,7 +1827,7 @@ export async function runAgent({
               // 所有在 extraTools 里定义的工具（mcp__/browser__/send_media/text_to_speech 等）
               // 统一交给 onExtraTool 路由；不在 extraTools 里的名字才是未知工具
               if (onExtraTool && extraToolNames.has(name)) {
-                const extra = await onExtraTool(name, args);
+                const extra = await onExtraTool(name, args, { interfaceImagesSupported });
                 ok = extra.ok;
                 result = extra.result;
                 if (name.startsWith("plugin__") && extra.ok) {
@@ -1833,7 +1841,7 @@ export async function runAgent({
                     supplementalMessages = [...supplementalMessages, ...contexts];
                   }
                 }
-                const stateRead = isComputerUseTool(name) && ["get_app_state", "get_shared_app_state"].includes(computerUseAction(name));
+                const stateRead = isComputerUseTool(name) && ["get_app_state", "get_shared_app_state", "fill_form"].includes(computerUseAction(name));
                 if (stateRead && extra.ok) {
                   const returnedWindowId = String(result || "").match(/^(?:观察编号|窗口编号)：(.+)$/m)?.[1]?.trim().toLocaleLowerCase()
                     || String(args.window_id || "").trim().toLocaleLowerCase();
@@ -1842,7 +1850,7 @@ export async function runAgent({
                     if (oldKey.startsWith(`${key}:`)) computerUseControls.delete(oldKey);
                   }
                   for (const line of String(result || "").split(/\r?\n/)) {
-                    const match = line.match(/^\s*(?:\[(e\d+)\]|(\d+))\s+(.+)$/i);
+                  const match = line.match(/^\s*(?:\[(e\d+)\]|(\d+))\s+(.+)$/i);
                     if (!match) continue;
                     computerUseControls.set(
                       `${key}:${returnedWindowId}:${(match[1] || match[2]).toLocaleLowerCase()}`,
@@ -1875,6 +1883,8 @@ export async function runAgent({
                       })),
                     ],
                   }];
+                } else if (!interfaceImagesSupported && images.length && isComputerUseTool(name)) {
+                  result = `${result}\n（当前模型不支持图片输入，界面截图未传给模型；禁止按屏幕坐标点击或拖拽。）`;
                 }
               } else {
                 ok = false;
@@ -2054,7 +2064,7 @@ export async function runAgent({
       }
       replaceInterfaceImagesWithText(messages, true);
       if (loopDecision === "pause") {
-        return withChanges({ status: "paused", finalText, reason: "连续多轮重复同样的操作，返回结果也没有变化；提醒调整后仍未取得新进展，已暂停。已保留工作记录，可继续处理。" });
+        return withChanges({ status: "paused", finalText, reason: loopGuard.pauseReason || "连续多轮重复同样的操作，返回结果也没有变化；提醒调整后仍未取得新进展，已暂停。已保留工作记录，可继续处理。" });
       }
   }
 }

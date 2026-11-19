@@ -21,7 +21,9 @@ exports.default = async function afterPack(context) {
   const nativeArch = arch === 'x64' ? 'amd64' : arch;
   const appName = context.packager.appInfo.productFilename;
   const appPath = path.join(context.appOutDir, `${appName}.app`);
-  const isMac = context.electronPlatformName === "darwin";
+  const isMac = context.electronPlatformName === "darwin" || context.electronPlatformName === "mas";
+  // Mac App Store 沙箱版严禁夹带跨应用控制与提权组件（Open Computer Use.app），由运行期自动降级关闭。
+  if (context.electronPlatformName === "mas") return;
   const resources = isMac ? path.join(appPath, 'Contents', 'Resources') : path.join(context.appOutDir, 'resources');
   const computerUseRoot = path.join(resources, 'computer-use');
   const computerUseApp = path.join(computerUseRoot, 'Open Computer Use.app');
@@ -46,8 +48,7 @@ exports.default = async function afterPack(context) {
         timeout: 90000, stdio: 'inherit' });
     }
   }
-  if (context.electronPlatformName !== "darwin") return;
-  if (process.env.CSC_LINK || process.env.CSC_NAME) return;
+  if (!isMac || context.electronPlatformName === "mas" || process.env.CSC_LINK || process.env.CSC_NAME) return;
   const bundleId = context.packager.appInfo.id;
   const scratch = fs.mkdtempSync(path.join(context.appOutDir, '.ocu-sign-'));
   const signedApp = path.join(scratch, path.basename(computerUseApp));

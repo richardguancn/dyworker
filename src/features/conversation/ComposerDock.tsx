@@ -1,7 +1,7 @@
 // 输入区 dock：从 ConversationPane 抽出的 <div className="composer-dock"> 整段
 // （状态提示 toast、待发送列表、目标横幅、项目栏、粘贴折叠、注释条、附件条、
 // 输入框与镜像层、工具栏、模型/审批菜单、语音与发送按钮、回到底部按钮）。
-// 机械搬运，不改类名/文案/aria；所有状态与回调仍由 App 经 ConversationPane 传入。
+// 状态与回调由 App 经 ConversationPane 传入。
 import { ArrowDown, ArrowUp, AtSign, Check, ChevronDown, CornerDownRight, ListEnd, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
 import { ContextRing } from "../usage/UsagePanels";
 import { t, useLocale } from "../../i18n";
@@ -177,11 +177,10 @@ export function ComposerDock(props: ComposerDockProps) {
                           type="button"
                           className="queue-card-steer"
                           onClick={() => void runQueuedMessageNow(entry)}
-                          title="停下当前任务，立即执行这条消息"
-                          aria-label="引导：停下当前任务，立即执行这条消息"
+                          title={t("composer.queuedRunNowHint", "停下当前任务，立即执行这条消息")}
                         >
                           <CornerDownRight size={15} aria-hidden="true" />
-                          引导
+                          {t("composer.queuedRunNow", "立即执行")}
                         </button>
                         <button
                           type="button"
@@ -390,36 +389,35 @@ export function ComposerDock(props: ComposerDockProps) {
                 )}
               </div>
             )}
-            <div
-              className={`attachment-strip${attachments.length ? " has-refs" : ""}`}
-              aria-label={attachments.length ? `已选择 ${attachments.length} 项` : undefined}
-            >
+            <div className="composer-body">
               {/* 技能引用以 /技能名 内联 token 留在正文里（删 token 即移除），不再单独占一行 chip */}
-              {attachments.map((attachment) => (
-                <span
-                  className={`attachment-chip${attachment.isImage ? " image-attachment-chip" : " ref-attachment-chip"}`}
-                  key={attachment.path}
-                >
-                  {attachment.isImage
-                    ? (
-                      <ImageAttachmentThumb
-                        attachment={attachment}
-                        onPreview={(payload) => openImagePreview(payload, attachments.filter((item) => item.isImage))}
-                      />
-                    )
-                    : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}
-                  {!attachment.isImage && (
-                    <span title={attachment.path}>{attachment.isImage ? "图片" : attachment.name}</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setAttachments((current) => current.filter((item) => item.path !== attachment.path))}
-                    aria-label={`移除附件 ${attachment.name}`}
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              ))}
+              {attachments.length > 0 && (
+                <div className="attachment-strip" role="group" aria-label={`已选择 ${attachments.length} 项`}>
+                  {attachments.map((attachment) => (
+                    <span
+                      className={`attachment-chip${attachment.isImage ? " image-attachment-chip" : " ref-attachment-chip"}`}
+                      key={attachment.path}
+                    >
+                      {attachment.isImage
+                        ? (
+                          <ImageAttachmentThumb
+                            attachment={attachment}
+                            onPreview={(payload) => openImagePreview(payload, attachments.filter((item) => item.isImage))}
+                          />
+                        )
+                        : /\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={14} /> : <FileText size={14} />}
+                      {!attachment.isImage && <span title={attachment.path}>{attachment.name}</span>}
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((current) => current.filter((item) => item.path !== attachment.path))}
+                        aria-label={`移除附件 ${attachment.name}`}
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {activeSession && <ModsPanelView sessionId={activeSession.id} />}
               {activeSession?.runtime === 'dsh' && <div className="dsh-input-overlay">
                 <PluginSlotView key={activeSession.id} slot="conversation.input.overlay"

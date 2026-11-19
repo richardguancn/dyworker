@@ -36,6 +36,8 @@ export function computerUseActionNeedsApproval(name, platform = process.platform
     !action
     || action === "list_apps"
     || action === "get_app_state"
+    || action === "get_shared_app_state"
+    || action === "query"
     || action === "check_dependencies"
     || action === "check_permissions"
     || action === "prepare_dependency_install"

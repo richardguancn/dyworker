@@ -23,6 +23,18 @@ declare module "@deepseek-ai/cordis" {
 // 循环续跑的推进提示（原 desktop 入口逐字保留）
 const LOOP_CONTINUE_PROMPT = "请继续推进任务：实际检查结果，完成剩余工作，全部满足验收条件后再交付。";
 
+// 停止只改变本轮的结论。已经执行并收集的记录仍需交给会话存档，供下一轮接着做。
+function stoppedRunResult(result) {
+  const { finalText, dshTurns, executedMessages, workingContext, plan, changes } = result;
+  return { status: "cancelled", finalText: finalText || "",
+    ...(dshTurns ? { dshTurns } : {}),
+    ...(executedMessages ? { executedMessages } : {}),
+    ...(workingContext !== undefined ? { workingContext } : {}),
+    ...(plan ? { plan } : {}),
+    ...(changes ? { changes } : {}),
+  };
+}
+
 export class AgentService extends Service {
   resolvers;
   startBackgroundTask;
@@ -134,18 +146,19 @@ export class AgentService extends Service {
           requestUserInput: options.requestUserInput,
         });
         onExtraTool?.setExecutionResult?.(result);
-        await this.ctx.mods.dispatch(sessionId,'turn.complete',{turnId:options.runId||sessionId,answer:result.finalText||'',isAborted:isCancelled()},async()=>({}),signal.aborted?undefined:signal);
+        await this.ctx.mods.dispatch(sessionId,'turn.complete',{turnId:options.runId||sessionId,answer:result.finalText||'',isAborted:isCancelled() || signal.aborted},async()=>({}),signal.aborted?undefined:signal)
+          .catch(error => { if (!signal.aborted) throw error; });
         // 每轮任务结束前都做记忆复盘落盘（四个入口原行为一致）
         const memoryWorkspacePath = resolveWorkspacePath();
         for (const memory of this.resolvers.memoriesFromAgentResult(result)) {
-          if (isCancelled()) break;
+          if (isCancelled() || signal.aborted) break;
           await this.resolvers.appendMemory(memory, memoryWorkspacePath, sessionId);
         }
         if (isCancelled()) {
           await options.onCancelled?.();
-          return { status: "cancelled", finalText: result.finalText || "",
-            ...(result.dshTurns ? {dshTurns:result.dshTurns,executedMessages:result.executedMessages} : {}) };
+          return stoppedRunResult(result);
         }
+        if (signal.aborted || result.status === "cancelled") return stoppedRunResult(result);
         if (onExtraTool?.hasPendingHumanHandoff?.()) {
           return { ...result, status: 'paused', goalAchieved: false, reason: '网页等待人工处理，处理完成后可继续。' };
         }
@@ -161,10 +174,9 @@ export class AgentService extends Service {
             prompt,
             finalText: result.finalText,
           });
-          if (isCancelled()) {
+          if (isCancelled() || signal.aborted) {
             await options.onCancelled?.();
-            return { status: "cancelled", finalText: result.finalText || "",
-            ...(result.dshTurns ? {dshTurns:result.dshTurns,executedMessages:result.executedMessages} : {}) };
+            return stoppedRunResult(result);
           }
           // 唤醒登记后的入口收尾（定时计划标记 sleeping 等）
           await options.afterWakeRegister?.(result);

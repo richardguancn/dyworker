@@ -25,6 +25,7 @@ import { createBrowserRuntime } from "./desktop/browser-runtime.mts";
 import { TaskBrowserRouter } from "./desktop/task-browser-router.mts";
 import { createChannelRuntime } from "./desktop/channel-runtime.mts";
 import { createMcpRuntime } from "./desktop/mcp-runtime.mts";
+import { recoverInterruptedDesktopHistory } from "./desktop/interrupted-history.mts";
 import { createWindowRuntime } from "./desktop/window-runtime.mts";
 import { needsMainWindow, onlyBackgroundWindowsRemain } from "./desktop/window-lifecycle.mts";
 import { filePreviewToolDefinitions,requestFilePreview } from "./file-preview.mts";
@@ -1085,6 +1086,7 @@ async function readHistoryContext(sessionId, messageIndex, before = 4, after = 4
 }
 const mcpRuntime = createMcpRuntime({
   resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+  getMainWindow: () => mainWindow,
   get mcpShuttingDown() { return mcpShuttingDown; },
   set mcpShuttingDown(value) { mcpShuttingDown = value; },
 });
@@ -1168,7 +1170,7 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
       return pluginToolResult(executed.result);
     }
     const toolSignal = AbortSignal.any([desktopLifetime.signal, ...[desktopRun.signal, context.signal].filter(Boolean)]);
-    return callMcpTool(settings, name, args, { ...desktopRun, signal: toolSignal, review: context.review === true, reviewAction: context.reviewAction });
+    return callMcpTool(settings, name, args, { ...desktopRun, signal: toolSignal, review: context.review === true, reviewAction: context.reviewAction, interfaceImagesSupported: context.interfaceImagesSupported });
   };
   route.setExecutionContext = (context) => { desktopRun = context; };
   route.hasPendingHumanHandoff = () => backgroundBrowserHandoffs.owns(taskBrowser.background);
@@ -1273,7 +1275,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
   // 统一轨迹事件流（trace-console）：本 run 内所有 trace 记录先攒在内存，
   // 运行中分批追加到 userData/traces/<sessionId>.jsonl（append-only，可回放）
   const traceDir = path.join(app.getPath("userData"), "traces");
-  const traceFile = path.join(traceDir, `${String(sessionId).replace(/[^a-zA-Z0-9_-]/g, "") || "session"}.jsonl`);
+  const traceFile = path.join(traceDir, `${safeTraceSessionId(sessionId)}.jsonl`);
   const traceWriter = createTraceWriter(traceFile);
   // run 内统一重编号：子代理自带从 1 起的 seq，与主代理重叠，这里统一递增，
   // 保证 runId+seq 唯一（渲染端列表 key 与回放去重都依赖它），并同步重映射 parentSeq
@@ -1434,10 +1436,15 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       ? { enabled: true, iteration: 1, maximum: Math.min(Math.max(Number(payload.loop.maximum) || 5, 1), 20) }
       : { enabled: false, iteration: 1, maximum: 1 };
     // 附件（图片/文本）展开为模型可读的多模态内容，同时保留思考与工具执行链
+    const recoveredHistory = (payload?.runtime ?? ctx.sessions.get(sessionId)?.runtime) === "dsh"
+      ? new Map()
+      : await recoverInterruptedDesktopHistory(traceFile, conversation, abortController.signal);
     const agentConversation = [];
     for (const message of conversation) {
-      if (message?.role === "assistant" && Array.isArray(message.executedMessages) && message.executedMessages.length > 0) {
-        for (const m of message.executedMessages) {
+      const recovered = message?.role === "assistant" ? recoveredHistory.get(message.runId) : undefined;
+      const execution = message?.executedMessages?.length ? message.executedMessages : recovered?.executedMessages;
+      if (message?.role === "assistant" && Array.isArray(execution) && execution.length > 0) {
+        for (const m of execution) {
           agentConversation.push({
             role: m.role,
             content: m.content || "",
@@ -1445,6 +1452,9 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
             ...(Array.isArray(m.tool_calls) && m.tool_calls.length ? { tool_calls: m.tool_calls } : {}),
             ...(m.role === "tool" && m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
           });
+        }
+        if (message.taskStatus === "cancelled" || recovered) {
+          agentConversation.push({ role: "assistant", content: "本轮已停止。前面的工具结果是当时的进度；最后的行动计划不能视为已执行。" });
         }
       } else {
         const entry: any = {
@@ -1461,7 +1471,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
         if (message?.role === "tool" && message?.tool_call_id) {
           entry.tool_call_id = message.tool_call_id;
         }
-        agentConversation.push(entry);
+        agentConversation.push(recovered?.summary ? { role: "assistant", content: recovered.summary } : entry);
       }
     }
     const approvalMode = normalizeApprovalMode(payload?.approvalMode);

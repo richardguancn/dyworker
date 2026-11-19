@@ -228,19 +228,30 @@
   flex-wrap: wrap;
 }
 
-/* 引用 chip 与输入文字同一流式行：chip 在前，文本框占剩余宽度（Codex 风格） */
+.composer-body {
+  min-width: 0;
+  margin: 0 2px 4px;
+}
+
+/* 附件单独换行，超出两行缩略图的高度时只滚动附件区。 */
 .attachment-strip {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   align-items: flex-start;
   gap: 7px;
-  margin: 0 2px 2px;
-  padding-bottom: 2px;
+  max-height: min(144px, 24vh);
+  margin-bottom: 6px;
+  padding: 2px;
+  overflow: auto;
 }
 
-.attachment-strip .composer-input-wrap {
-  flex: 1 1 220px;
-  min-width: 220px;
+.attachment-strip .ref-attachment-chip {
+  max-width: min(260px, 100%);
+}
+
+.attachment-strip .ref-attachment-chip > :is(svg, button) {
+  flex: none;
 }
 
 /* 输入框内联引用：镜像层垫在 textarea 之下，给 @文件 token 画高亮底色。
@@ -248,6 +259,7 @@
 .composer-input-wrap {
   position: relative;
   display: flex;
+  min-width: 0;
 }
 
 .composer-input-wrap textarea {

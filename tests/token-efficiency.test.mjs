@@ -221,6 +221,46 @@ test('多轮真实装配中，工具原文不再与工作记录重复发送，�
   assert.equal(payloads[0].messages.filter(message => message.role === 'tool').length, 1);
 });
 
+test('续跑长桌面任务时归档旧操作，保留用户要求、读取资料及批量填写结果', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-desktop-history-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const old = Array.from({ length: 40 }, (_, index) => [
+    { role: 'assistant', content: index === 20 ? '法语已保存，接下来填写德语。' : '', tool_calls: [
+      call(`view-${index}`, 'mcp__computer-use__get_app_state', { app: 'com.apple.Safari' }),
+    ] },
+    { role: 'tool', tool_call_id: `view-${index}`, content: `成功\n观察编号：id-${index}\nApp=com.apple.Safari (pid 5)\nWindow: "测试页"\n旧页面${index}` },
+  ]).flat();
+  const fillResult = '已核对 2 个输入框：描述、关键词。';
+  old.splice(10, 0,
+    { role: 'assistant', content: '', tool_calls: [call('fill', 'mcp__computer-use__fill_form', {})] },
+    { role: 'tool', tool_call_id: 'fill', content: fillResult },
+    ...reading('需保留的原始资料'));
+  const original = structuredClone(old);
+  const payloads = [];
+  const result = await runAgent({
+    settings: { endpoint: 'http://mock.local/v1/chat/completions', model: 'test', apiKey: 'test' },
+    workspacePath: root,
+    conversation: [{ role: 'user', content: '填写德语，保存前核对。' },
+      { role: 'assistant', content: '继续处理。', executedMessages: old },
+      { role: 'user', content: '继续' }],
+    workingContext: '【查看应用界面：com.apple.Safari】\n旧备份页面正文\n\n【读取 其他.txt】\n独立备份资料',
+    fetchImpl: async (_url, init) => {
+      payloads.push(JSON.parse(init.body));
+      return chatResponse('已核对旧记录。');
+    },
+  });
+  assert.equal(result.status, 'done');
+  const payload = JSON.stringify(payloads[0].messages);
+  for (const text of ['填写德语，保存前核对', '需保留的原始资料', '独立备份资料', '法语已保存', fillResult, 'id-39']) {
+    assert.ok(payload.includes(text), text);
+  }
+  for (const text of ['view-0', 'id-20', '旧备份页面正文']) assert.ok(!payload.includes(text), text);
+  const calls = payloads[0].messages.flatMap(message => message.tool_calls || []);
+  assert.equal(calls.filter(tool => tool.function.name === 'mcp__computer-use__get_app_state').length, 10);
+  assert.equal(payloads[0].messages.filter(message => message.role === 'tool').length, calls.length);
+  assert.deepEqual(old, original);
+});
+
 test('不同服务的缓存和思考用量进入 DSH 与轨迹，零用量与缺项分别保留', async () => {
   const usage = { prompt_tokens: 100, completion_tokens: 20,
     prompt_tokens_details: { cached_tokens: 80, cache_write_tokens: 0 }, completion_tokens_details: { reasoning_tokens: 7 } };

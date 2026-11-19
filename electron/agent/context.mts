@@ -1,5 +1,5 @@
 // 工作记录、上下文压缩与溢出处理。
-import { contentForContext,estimateMessagesTokens,estimateTextTokens,messageText,sanitizeToolCalls } from "./messages.mts";
+import { contentForContext,estimateMessagesTokens,estimateTextTokens,isTransientDesktopTool,messageText,sanitizeToolCalls } from "./messages.mts";
 import { requestModel } from "./model-request.mts";
 import { summarizationSettings } from "./model-settings.mts";
 import { MODEL_NETWORK_RETRY_BASE_DELAY_MS,WORKING_CONTEXT_ITEM_LIMIT,WORKING_CONTEXT_LIMIT,clipped } from "./shared.mts";
@@ -12,7 +12,13 @@ export function limitWorkingContext(text) {
   return `${text.slice(0, headLength)}\n…（较早的工作记录已收缩）…\n${text.slice(-tailLength)}`;
 }
 
-function workingContextRecords(messages): string[] {
+const desktopWorkingRecord = /(^|\n\n)【(?:查看应用界面|截取 Linux 当前桌面上的窗口区域|点击应用界面|在应用中按键|在应用中输入文字|填写应用控件|滚动应用界面|拖动应用界面|选择应用内文字|执行应用菜单操作)：[^\n】]+】\n[\s\S]*?(?=\n\n【[^\n】]+】\n|$)/g;
+
+export function omitTransientDesktopWorkingRecords(text: string) {
+  return text.replace(desktopWorkingRecord, "").trim();
+}
+
+function workingContextRecords(messages, includeTransient = false): string[] {
   const toolNames = new Map();
   for (const message of messages || []) {
     if (message?.role !== "assistant") continue;
@@ -22,11 +28,13 @@ function workingContextRecords(messages): string[] {
       try {
         args = JSON.parse(String(call.function.arguments || "{}"));
       } catch { }
-      toolNames.set(String(call.id), toolSummary(String(call.function.name), args));
+      const name = String(call.function.name);
+      toolNames.set(String(call.id), !includeTransient && isTransientDesktopTool(name)
+        ? null : toolSummary(name, args));
     }
   }
   return (messages || [])
-    .filter((message) => message?.role === "tool")
+    .filter((message) => message?.role === "tool" && toolNames.get(String(message.tool_call_id || "")) !== null)
     .map((message) => {
       const name = toolNames.get(String(message.tool_call_id || "")) || "工具操作";
       const content = clipped(contentForContext(message.content), WORKING_CONTEXT_ITEM_LIMIT);
@@ -47,7 +55,7 @@ export function remainingWorkingContext(previous, conversation) {
     message?.role === "assistant" && message.executedMessages?.length ? message.executedMessages : [message]);
   let remaining = String(previous || "").trim();
   // 与最终请求采用相同的配对修复；孤立的工具结果不会发送，不能据此删除备份记录。
-  for (const record of new Set(workingContextRecords(sanitizeToolCalls(messages)))) {
+  for (const record of new Set(workingContextRecords(sanitizeToolCalls(messages), true))) {
     let start = 0;
     while ((start = remaining.indexOf(record, start)) !== -1) {
       const end = start + record.length;

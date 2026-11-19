@@ -1,6 +1,6 @@
 // 模型消息整理、图片上下文和用量估算。
 import { detectProvider } from "../providers.mts";
-import { computerUseWindowHeader, isComputerUseTool } from "../computer-use.mts";
+import { computerUseAction, computerUseWindowHeader, isComputerUseTool } from "../computer-use.mts";
 import { bareModelName } from "./model-discovery.mts";
 import { imagePartFromContent } from "./vision.mts";
 
@@ -146,6 +146,83 @@ function isInterfaceScreenshotMessage(message) {
         || String(part?.text || "").startsWith("这是刚刚读取到的右侧内置浏览器页面截图")));
 }
 
+function isDesktopScreenshotRecord(message) {
+  return message?.role === "user" && contentForContext(message.content)
+    .startsWith("这是刚刚读取到的本机应用界面截图");
+}
+
+const desktopInteractionSteps = new Set([
+  "get_app_state", "get_shared_app_state", "click", "press_key", "type_text", "set_value",
+  "scroll", "drag", "select_text", "perform_secondary_action",
+]);
+export const isTransientDesktopTool = (name: string) => desktopInteractionSteps.has(computerUseAction(name));
+const desktopHistoryPrefix = "[早前桌面操作记录]";
+export const recoveredDesktopHistoryPrefix = "[从该轮停止前的本地日志恢复的历史记录]";
+const desktopProgressPattern = /已(?:成功)?(?:保存|提交|上传|关联|添加|完成|核对|验证)|保存成功|提交成功|上传成功|saved|submitted|uploaded|verified/i;
+const verifiedDesktopSave = /^已点击「(?:保存|Save)」，页面上的保存按钮已变为不可用，已填写字段读回一致。/i;
+const desktopHistoryKeep = 10;
+
+// Collapse complete UI-only exchanges. Keep other tool work, user messages, and
+// explicit results (e.g. fill_form) as-is. This only edits the model's copy.
+export function compactDesktopHistory(messages) {
+  const groups: { start: number, end: number, notes: string[], count: number }[] = [];
+  let liveCount = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role === "assistant" && typeof message.content === "string"
+      && message.content.startsWith(desktopHistoryPrefix + "\n")) {
+      groups.push({ start: index, end: index + 1, count: 0, notes: message.content.split("\n").slice(2) });
+      continue;
+    }
+    const calls = message?.role === "assistant" && message.tool_calls;
+    if (!calls?.length || !calls.every(call => isTransientDesktopTool(call.function?.name))) continue;
+    const pending = new Set(calls.map(call => call.id));
+    let end = index + 1;
+    while (messages[end]?.role === "tool" && pending.delete(messages[end].tool_call_id)) end++;
+    if (pending.size) continue;
+    if (liveCount++ < desktopHistoryKeep) continue;
+    while (isDesktopScreenshotRecord(messages[end])) end++;
+    const notes = messageText(message).split("\n").map(line => line.trim()).filter(line => desktopProgressPattern.test(line));
+    // A verified save is evidence even if the model never described it before stopping.
+    const clickIds = new Set(calls.filter(call => computerUseAction(call.function?.name) === "click").map(call => call.id));
+    for (const reply of messages.slice(index + 1, end)) {
+      if (reply.role !== "tool" || !clickIds.has(reply.tool_call_id)) continue;
+      const lines = messageText(reply).split("\n");
+      if (lines[0] !== "成功" || !verifiedDesktopSave.test(lines[1] || "")) continue;
+      const scope = lines.filter(line => /^(?:Window:|标题 |heading |弹出式按钮 |pop[- ]up button )/i.test(line))
+        .map(line => line.split(" Value: ", 1)[0]);
+      notes.push(`${lines[1]} ${scope.slice(-8).join(" · ")}`.trim());
+    }
+    groups.push({ start: index, end, notes, count: calls.length });
+  }
+  if (!groups.some(group => group.count)) return;
+
+  // Process from the tail so earlier ranges keep their original offsets.
+  for (let index = 0; index < groups.length;) {
+    const newest = groups[index++];
+    let start = newest.start;
+    let changed = newest.count > 0;
+    const notes = [...newest.notes].reverse();
+    while (groups[index]?.end === start) {
+      const older = groups[index++];
+      start = older.start;
+      changed ||= older.count > 0;
+      notes.push(...[...older.notes].reverse());
+    }
+    if (!changed) continue;
+    const unique = [...new Set(notes.map(note => note.slice(0, verifiedDesktopSave.test(note) ? 280 : 180)))];
+    const verified = unique.filter(note => verifiedDesktopSave.test(note)).slice(0, 8);
+    const recent = [...verified.reverse(), ...unique.filter(note => !verifiedDesktopSave.test(note)).slice(0, 8).reverse()];
+    messages.splice(start, newest.end - start, {
+      role: "assistant",
+      content: [desktopHistoryPrefix,
+        "早前的界面、点击和键入步骤已归档。以下是当时的进度陈述，续跑须以当前页面核对。",
+        ...recent,
+      ].join("\n"),
+    });
+  }
+}
+
 export function omitHistoricalToolImage(message) {
   const localImage = message?.role === "user" && Array.isArray(message?.content)
     && message.content.some((part) => part?.type === "text"
@@ -204,7 +281,8 @@ export function compactDesktopObservations(messages) {
     if (message?.role !== "tool" || !desktopCalls.has(message.tool_call_id)
       || typeof message.content !== "string" || !message.content.startsWith("成功\n")
       || message.content.endsWith(omitted)) continue;
-    const snapshot = message.content.slice("成功\n".length).replace(/^观察编号：[^\r\n]+\r?\n/, "");
+    const snapshot = message.content.slice("成功\n".length).replace(/^观察编号：[^\r\n]+\r?\n/, "")
+      .replace(/^填写当前网页的文字输入框时，[^\n]+\n/, "");
     const header = computerUseWindowHeader(snapshot);
     if (!header || snapshot.length <= header.length) continue;
     const app = header.split("\n", 1)[0].replace(/ \(pid \d+\)\r?$/, "");

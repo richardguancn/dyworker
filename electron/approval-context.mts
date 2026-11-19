@@ -145,7 +145,21 @@ export function isStatefulUiOperation(name: string) {
 // 审核前重新观察真实目标。观察器只能使用宿主已经提供的只读工具，不能执行待审动作。
 export async function readReviewObservation({ name, args = {}, availableNames = [], execute, check, signal, timeoutMs = 15000 } = {} as any) {
   if (!isStatefulUiOperation(name)) return undefined;
-  const reader = isComputerUseTool(name) ? "mcp__computer-use__get_app_state"
+  const action = computerUseAction(name);
+  const useSharedDesktop = isComputerUseTool(name)
+    && availableNames.includes("mcp__computer-use__get_shared_app_state")
+    && (
+      args.background === false
+      || action === "drag"
+      || args.x !== undefined
+      || args.y !== undefined
+      || args.from_x !== undefined
+      || args.from_y !== undefined
+      || args.to_x !== undefined
+      || args.to_y !== undefined
+    );
+  const reader = isComputerUseTool(name)
+    ? (useSharedDesktop ? "mcp__computer-use__get_shared_app_state" : "mcp__computer-use__get_app_state")
     : ["browser__inspect", "browser__snapshot", "browser__observe"].find(value => availableNames.includes(value));
   if (!reader || !availableNames.includes(reader) || !execute) return { available: false, text: "没有可用的当前界面读取入口" };
   const readArgs = isComputerUseTool(name)

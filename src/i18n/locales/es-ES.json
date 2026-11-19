@@ -480,6 +480,8 @@
   "composer.queuedTitle": "En cola",
   "composer.queuedCountUnit": "msgs",
   "composer.queuedHint": "Se ejecutarán al terminar la tarea actual",
+  "composer.queuedRunNow": "Ejecutar ahora",
+  "composer.queuedRunNowHint": "Detener la tarea actual y ejecutar este mensaje ahora",
   "reasoning.title": "Razonamiento",
   "reasoning.manage": "Gestionar niveles…",
   "reasoning.default": "Predeterminado",

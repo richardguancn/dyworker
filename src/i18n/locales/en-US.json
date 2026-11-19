@@ -480,6 +480,8 @@
   "composer.queuedTitle": "Queued",
   "composer.queuedCountUnit": "items",
   "composer.queuedHint": "Executes after current task finishes",
+  "composer.queuedRunNow": "Run now",
+  "composer.queuedRunNowHint": "Stop the current task and run this message now",
   "reasoning.title": "Reasoning",
   "reasoning.manage": "Manage Levels…",
   "reasoning.default": "Default",

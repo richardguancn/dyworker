@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { COMPUTER_USE_TOOL_PREFIX, computerUseAction, computerUseKeyReceipt } from "../computer-use.mts";
 import { McpClient } from "../mcp.mts";
 import { notepadApp, notepadReplace, planNotepadReplace, replaceNotepadText } from "./notepad-replace.mts";
 import { validateDesktopClick } from "./click-parameters.mts";
 import { isNavigationClick, macControlEvidence, macObservationText, navigationObservation } from "./macos-observation.mts";
-import { browserFillForm, browserFillReview, browserFormFields, browserFormHint, browserFormObservation, browserFormWindow,
-  browserTextShortcut, fillBrowserForm, hasBrowserPage, isBrowserFormField, planBrowserFill, readBrowserForm, verifiedBrowserChromeFocus } from "./browser-fill-form.mts";
+import { createLinuxOcclusionChecker, verifyLinuxTargetRegion, type OcclusionVerdict } from "./linux-screen-check.mts";
+import { browserFillForm, browserFillReview, browserFormFields, browserFormHint, browserFormObservation, browserFormSave,
+  browserFormUnavailable, browserFormWindow, browserInputUnverified, browserTextShortcut, fillBrowserForm, hasBrowserPage,
+  isBrowserFormField, matchBrowserFormSave, planBrowserFill, readBrowserForm, verifiedBrowserChromeFocus } from "./browser-fill-form.mts";
 
 const nativeActions = new Set([
   "click", "drag", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text",
@@ -22,13 +25,90 @@ const isPid = (value: string) => /^[1-9][0-9]{0,9}$/.test(value);
 const failure = (result: string) => ({ ok: false, result });
 const pidOf = (text: string) => /^App=.* \(pid (\d+)\)\s*$/m.exec(text.split("\n")[0])?.[1];
 
+const toolDescriptions: Record<string, string> = {
+  list_apps: "列出可操作应用（运行中优先）及 ID/PID。",
+  get_app_state: "读取目标窗口的控件树（非 Linux 含截图）并生成观察编号。",
+  click: "点击目标控件（element_index）或坐标（x, y）。",
+  drag: "按起始与结束坐标拖拽。",
+  scroll: "滚动目标界面（可指定坐标与 delta_x/delta_y）。",
+  press_key: "发送按键或组合键。",
+  type_text: "输入文字到当前焦点或指定位置。",
+  set_value: "设置可编辑控件的字符串值。",
+  select_text: "按偏移选中可编辑控件中的文字。",
+  perform_secondary_action: "触发控件的次要辅助功能动作。",
+};
+const paramDescriptions: Record<string, string> = {
+  element_index: "最新观察中的数字控件编号。",
+  x: "相对窗口左上角的横向像素坐标。",
+  y: "相对窗口左上角的纵向像素坐标。",
+  from_x: "拖拽起点横向坐标。",
+  from_y: "拖拽起点纵向坐标。",
+  to_x: "拖拽终点横向坐标。",
+  to_y: "拖拽终点纵向坐标。",
+  mouse_button: "鼠标按键：left、right 或 middle。",
+  click_count: "点击次数，默认 1。",
+  key: "按键或组合键名（如 Return、cmd+a、Tab）。",
+  text: "要输入的文字内容。",
+  value: "要写入的新字符串值。",
+  delta_x: "水平滚动距离。",
+  delta_y: "垂直滚动距离。",
+  max_tree_nodes: "控件树最大节点数（默认 1200）。",
+  max_tree_depth: "控件树最大深度（默认 64）。",
+  include_ax: "是否采集无障碍控件树，默认 true。",
+  include_screenshot: "是否截取窗口图像，默认 true。",
+  start_offset: "选区起始字符偏移。",
+  end_offset: "选区结束字符偏移。",
+  action: "要执行的次要动作名。",
+};
+
+function formatListApps(text: string) {
+  const lines = text.split("\n");
+  const entry = / — \S+ \[([^\]]*)\]$/;
+  const running = lines.filter(line => {
+    const match = entry.exec(line);
+    return match && match[1].split(", ").includes("running");
+  });
+  if (!running.length) return text;
+  const filtered = lines.filter(line => !entry.test(line) || running.includes(line));
+  return filtered.length < lines.length
+    ? `${filtered.join("\n")}\n（仅显示当前正在运行的应用。）`
+    : text;
+}
+
+function formatObservationForModel(text: string, { hasImages = false, linuxNoControls = false } = {}) {
+  const cleaned = text
+    .split("\n")
+    .map(line => {
+      let next = line.replace(/(?:, )?Secondary Actions: Raise(?=,|$)/g, "");
+      if (line.startsWith("\t")) next = next.replace(/, ID: [A-Za-z0-9_?&=.-]{16,}(?=,|$)/g, "");
+      return next.replace(/,\s*$/, "");
+    })
+    .join("\n")
+    .replace(hasImages ? /\n?（同时获取到 \d+ 张界面截图。）(?=\n|$)/g : /$^/, "");
+  return linuxNoControls
+    ? `${cleaned}\n提示：当前窗口未暴露内部无障碍控件，请改用 get_shared_app_state 获取当前桌面窗口截图后再操作。`
+    : cleaned;
+}
+
+const isBareLinuxWindow = (text: string) =>
+  /^0 (?:frame|window|dialog)\b/m.test(text) && !/^\t+\d+ /m.test(text);
+
 function modelTool(tool, platform: string) {
   const schema = tool.inputSchema || {};
   const { $schema, ...input } = schema;
   const {
     window_placement, click_method, key_method, ...nativeProperties
   } = input.properties || {};
-  const properties = { ...nativeProperties };
+  if (platform === "linux" && (tool.name === "get_app_state" || tool.name === sharedObservation)) {
+    delete nativeProperties.include_screenshot;
+  }
+  const properties: Record<string, any> = {};
+  for (const [field, prop] of Object.entries(nativeProperties)) {
+    const compact = paramDescriptions[field];
+    properties[field] = compact && prop && typeof prop === "object"
+      ? { ...prop, description: compact }
+      : prop;
+  }
   if ("text_limit" in properties && (tool.name === "get_app_state" || tool.name === sharedObservation)) {
     properties.text_limit = {
       ...properties.text_limit,
@@ -51,16 +131,17 @@ function modelTool(tool, platform: string) {
   if (action && platform === "linux") {
     properties.background = {
       type: "boolean",
-      description: "默认后台控件操作。只有用户明确允许使用当前桌面和键鼠时才可传 false。",
+      description: "默认后台控件操作。需要操作共享桌面键鼠或坐标时传 false。",
     };
   }
   const required = [...(input.required || []), ...(action ? ["observation_id"] : [])];
   delete input.required;
+  const summaryDesc = toolDescriptions[tool.name] || tool.description || tool.name;
   return {
     type: "function",
     function: {
       name: `${COMPUTER_USE_TOOL_PREFIX}${tool.name}`,
-      description: `【本机应用操作】${tool.description || tool.name}${action && tool.name !== browserFillForm ? " 动作后重新读取界面并确认结果。" : ""}${guidance}`,
+      description: `【本机应用操作】${summaryDesc}${action && tool.name !== browserFillForm ? " 动作后重新读取界面并确认结果。" : ""}${guidance}`,
       parameters: { ...input, type: "object", properties, ...(required.length ? { required } : {}) },
     },
   };
@@ -68,13 +149,25 @@ function modelTool(tool, platform: string) {
 
 type ReviewedAction = Parameters<typeof macControlEvidence>[1];
 
+const defaultNewClient = (options: object) => new McpClient(options);
+
 export function createComputerUseRuntime(
   server: ReturnType<typeof import("../computer-use.mts").discoverComputerUseServer>,
-  newClient = (options: object) => new McpClient(options),
+  newClient = defaultNewClient,
+  deps: {
+    inspectOcclusion?: (input: { pid: number, points: [number, number][], imageSize?: { width: number, height: number } }) => Promise<OcclusionVerdict>,
+  } = {},
 ) {
+  const inspectOcclusion = deps.inspectOcclusion ?? (
+    newClient === defaultNewClient && server?.platform === "linux" && process.platform === "linux"
+      ? createLinuxOcclusionChecker()
+      : undefined
+  );
   type Run = {
     client: McpClient, connected: Promise<void>, closed: boolean,
-    observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, browserWindow?: string, result: Awaited<ReturnType<McpClient["callTool"]>> },
+    observation?: { id: string, args: Record<string, any>, controlsOnly: boolean, browserWindow?: string,
+      result: Pick<Awaited<ReturnType<McpClient["callTool"]>>, "text" | "images">,
+      filled?: { snapshot: Awaited<ReturnType<typeof readBrowserForm>>, labels: string[] } },
     observedBrowsers: Set<string>,
     closing?: Promise<void>,
   };
@@ -162,15 +255,19 @@ export function createComputerUseRuntime(
   }
 
   async function call(fullName: string, args: Record<string, any> = {}, {
-    sessionId = "", runId = "", signal, review = false, reviewAction,
-  }: { sessionId?: string, runId?: string, signal?: AbortSignal, review?: boolean, reviewAction?: ReviewedAction } = {}) {
+    sessionId = "", runId = "", signal, review = false, reviewAction, interfaceImagesSupported = true,
+  }: { sessionId?: string, runId?: string, signal?: AbortSignal, review?: boolean, reviewAction?: ReviewedAction, interfaceImagesSupported?: boolean } = {}) {
     const name = computerUseAction(fullName);
+    const visionEnabled = interfaceImagesSupported !== false;
     if (!server || disposed) return failure("当前系统没有可用的本机应用操作程序。");
     if (!sessionId || !runId || signal?.aborted) return failure("本机操作需要有效的任务。");
     const available = await definitions();
     const toolDefinition = available.find(tool => tool.function.name === fullName)?.function;
     if (!toolDefinition) return failure("当前平台未提供这项本机操作。");
     if (signal?.aborted || disposed) return failure("任务已停止。");
+    if (name === sharedObservation && !visionEnabled) {
+      return failure("当前模型不支持识别界面图片，无法使用共享桌面截图；请改用带控件树的应用操作或切换支持视觉的模型。");
+    }
 
     if (name === checkPermissions) {
       try {
@@ -208,7 +305,10 @@ export function createComputerUseRuntime(
       };
       const format = (result: Awaited<ReturnType<McpClient["callTool"]>>) =>
         ({ ok: !result.isError, result: result.text, images: result.images });
-      if (name === "list_apps") return format(await invoke(name, {}));
+      if (name === "list_apps") {
+        const listed = await invoke(name, {});
+        return listed.isError ? format(listed) : { ...format(listed), result: formatListApps(listed.text) };
+      }
       const app = String(args.app || "");
       const isMac = server.platform === "darwin";
       if (!(isMac ? /^[a-z0-9][a-z0-9.-]+\.[a-z0-9-]+$/i.test(app) : isPid(app))) {
@@ -217,21 +317,63 @@ export function createComputerUseRuntime(
 
       const previous = current.observation;
       const browserFormAvailable = isMac && available.some(tool => tool.function.name === COMPUTER_USE_TOOL_PREFIX + browserFillForm);
+      const formArgs = (input: Record<string, any>) => ({
+        ...input, app, include_ax: true, include_screenshot: false, text_limit: "max",
+        max_tree_nodes: Math.max(input.max_tree_nodes || 0, 2400),
+        max_tree_depth: Math.max(input.max_tree_depth || 0, 96),
+      });
+      const observeForm = async (input: Record<string, any>) => readBrowserForm(app, await invoke("get_app_state", formArgs(input)), invoke);
       if (name === browserFillForm || (review && reviewAction?.name === browserFillForm)) {
         if (!isMac || !previous?.browserWindow || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
           return failure("请先读取浏览器中的目标网页，并携带这次观察编号。");
         }
-        const observe = async () => readBrowserForm(app, await invoke("get_app_state", {
-          ...previous.args, include_ax: true, include_screenshot: false, text_limit: "max",
-          max_tree_nodes: Math.max(previous.args.max_tree_nodes || 0, 2400),
-        }), invoke);
+        const observe = () => observeForm(previous.args);
         const latest = await observe();
         if (latest.isError) return failure(latest.text);
         const plan = planBrowserFill(app, previous.result.text, previous.browserWindow, latest, (review ? reviewAction!.args : args).fields);
         if ("error" in plan) return failure(plan.error);
         if (review) return { ok: true, result: browserFillReview(plan), images: [] };
         current.observation = undefined;
-        return await fillBrowserForm(plan, observe, invoke);
+        const result = await fillBrowserForm(plan, latest, observe, invoke);
+        if (!result.ok || !("snapshot" in result) || !result.snapshot.form) return failure(result.result);
+        const id = randomUUID();
+        const snapshot = result.snapshot;
+        current.observation = { id, args: formArgs(previous.args), controlsOnly: false,
+          browserWindow: snapshot.form.windowKey, result: { text: snapshot.text, images: [] },
+          filled: { snapshot, labels: result.verified } };
+        const saves = snapshot.form.saves;
+        const next = saves.length === 1
+          ? `${saves[0].index} 按钮「${saves[0].label}」${saves[0].disabled ? "（不可用）" : "（可用）"}`
+          : "当前未识别到唯一的「保存」按钮。";
+        return { ok: true, result: `${result.result}\n观察编号：${id}\n${next}\n如需保存，使用此观察和按钮单独点击；不必再读取字段正文。`, images: [] };
+      }
+      const clickArgs = review && reviewAction?.name === "click" ? reviewAction.args : name === "click" ? args : undefined;
+      const filled = previous?.filled;
+      const save = filled && clickArgs && previous.id === args.observation_id && previous.args.app === app
+        && clickArgs.x === undefined && clickArgs.y === undefined
+        && (clickArgs.mouse_button ?? "left") === "left" && (clickArgs.click_count ?? 1) === 1
+        && browserFormSave(filled.snapshot, clickArgs.element_index);
+      if (save) {
+        const fresh = await observeForm(previous.args);
+        const target = matchBrowserFormSave(filled.snapshot, fresh, save, filled.labels);
+        if (!target || target.disabled) return failure("当前表单、字段或保存按钮已变化，请重新核对。");
+        if (review) return { ok: true, result: browserFormObservation(fresh), images: [] };
+        current.observation = undefined;
+        const action = await invoke("click", { app, element_index: target.index, click_method: "accessibility" });
+        if (action.isError) return failure("保存操作未获确认，请读取当前表单状态。");
+        for (const wait of [0, 180, 360, 700]) {
+          if (wait) await delay(wait, undefined, { signal });
+          const after = await observeForm(previous.args);
+          const button = matchBrowserFormSave(filled.snapshot, after, save, filled.labels);
+          if (after.form && !button) break;
+          if (button?.disabled) {
+            const id = randomUUID();
+            current.observation = { id, args: formArgs(previous.args), controlsOnly: false,
+              browserWindow: after.form.windowKey, result: { text: after.text, images: [] } };
+            return { ok: true, result: `已点击「${save.label}」，页面上的保存按钮已变为不可用，已填写字段读回一致。\n观察编号：${id}\n${browserFormObservation(after)}`, images: [] };
+          }
+        }
+        return { ok: true, result: `已点击「${save.label}」，尚未核对保存结果。请先读取当前表单状态，避免再次点击保存。`, images: [] };
       }
       if (name === notepadReplace || (review && reviewAction?.name === notepadReplace)) {
         if (!isMac || app !== notepadApp) return failure("此替换入口用于 macOS 的 Notepad--。");
@@ -252,13 +394,54 @@ export function createComputerUseRuntime(
         const result = await replaceNotepadText(plan, observe, invoke);
         return result.error ? failure(result.error) : { ok: true, result: result.text };
       }
+      const pointsOf = (actionName: string, actionArgs: Record<string, any>): [number, number][] | undefined => {
+        if (actionName === "drag") return [[actionArgs.from_x, actionArgs.from_y], [actionArgs.to_x, actionArgs.to_y]];
+        const hasIdx = typeof actionArgs.element_index === "string" && /^\d+$/.test(actionArgs.element_index);
+        if (actionName === "click" && !hasIdx) return [[actionArgs.x, actionArgs.y]];
+      };
+      const verifyCoordinateState = async (
+        fresh: Awaited<ReturnType<McpClient["callTool"]>>,
+        points: [number, number][],
+      ): Promise<string | undefined> => {
+        if (!visionEnabled) {
+          return "当前模型不支持识别界面截图，禁止按屏幕坐标点击或拖拽。请改用控件编号操作，或切换支持视觉的模型。";
+        }
+        if (server.platform === "linux") {
+          const region = verifyLinuxTargetRegion({
+            previousImage: previous!.result.images[0],
+            freshImage: fresh.images[0],
+            points,
+          });
+          if (!region.ok) return "reason" in region ? region.reason : "目标区域画面已发生变化，请重新读取界面。";
+          if (inspectOcclusion) {
+            const verdict = await inspectOcclusion({ pid: Number(app), points, imageSize: region.imageSize });
+            if (verdict.status === "occluded") {
+              const who = verdict.isSelf ? "（DYWorker 主窗口）" : verdict.occluderTitle ? `「${verdict.occluderTitle}」` : "";
+              return `目标位置 (${Math.round(verdict.point[0])}, ${Math.round(verdict.point[1])}) 当前被上层窗口${who}遮挡。请将目标窗口置于前台并移开遮挡后再重新读取界面。`;
+            }
+            if (verdict.status === "unknown") {
+              return `无法确认目标位置未被其他窗口遮挡（${verdict.reason}），请确认目标窗口在前台可见后重新读取界面。`;
+            }
+          }
+          return undefined;
+        }
+        if (fresh.images[0]?.data !== previous!.result.images[0]?.data) {
+          return "窗口或控件已发生变化。请重新读取界面，再选择操作目标。";
+        }
+        return undefined;
+      };
       if (review) {
         if (previous?.id !== args.observation_id || previous?.args.app !== app) return failure("当前观察已失效，请重新读取目标窗口。");
-        const evidence = isMac && reviewAction ? macControlEvidence(previous.result.text, reviewAction) : undefined;
+        const reviewPoints = reviewAction ? pointsOf(reviewAction.name, reviewAction.args) : undefined;
+        const evidence = isMac && !reviewPoints && reviewAction ? macControlEvidence(previous.result.text, reviewAction) : undefined;
         const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
         if (fresh.isError) return format(fresh);
         const matches = evidence ? macControlEvidence(fresh.text, reviewAction!) === evidence : fresh.text === previous.result.text;
         if (!matches) return failure("目标窗口或控件已发生变化，请重新观察。");
+        if (reviewPoints) {
+          const coordError = await verifyCoordinateState(fresh, reviewPoints);
+          if (coordError) return failure(coordError);
+        }
         if (previous.controlsOnly) return { ok: true, result: navigationObservation(fresh.text), images: [] };
         return evidence ? { ...format(fresh), images: [] } : format(fresh);
       }
@@ -281,37 +464,68 @@ export function createComputerUseRuntime(
           app, text_limit: formOnly ? "max" : textLimit,
           max_tree_nodes: formOnly ? 2400 : args.max_tree_nodes, max_tree_depth: formOnly ? 96 : args.max_tree_depth,
           include_ax: formOnly || controlsOnly || args.include_ax !== false,
-          include_screenshot: server.platform === "linux" ? name === sharedObservation : !formOnly && !controlsOnly && args.include_screenshot !== false,
+          include_screenshot: !visionEnabled
+            ? false
+            : (server.platform === "linux" ? name === sharedObservation : !formOnly && !controlsOnly && args.include_screenshot !== false),
         };
-        const result = await invoke("get_app_state", observationArgs);
+        let result = await invoke("get_app_state", observationArgs);
+        let form = formOnly ? await readBrowserForm(app, result, invoke) : undefined;
+        let summary = form && browserFormObservation(form);
+        if (formOnly) {
+          for (const wait of [160, 360, 700]) {
+            if (summary || result.isError) break;
+            await delay(wait, undefined, { signal });
+            result = await invoke("get_app_state", observationArgs);
+            form = await readBrowserForm(app, result, invoke);
+            summary = browserFormObservation(form);
+          }
+        }
         if (result.isError) return format(result);
         const pid = pidOf(result.text);
         if (!pid || (isMac ? !result.text.startsWith(`App=${app} (pid `) : pid !== app)) {
           return failure("返回的窗口无法与目标应用核对，请重新列出应用。");
         }
         const id = randomUUID();
-        const form = formOnly ? await readBrowserForm(app, result, invoke) : undefined;
-        const summary = form && browserFormObservation(form);
-        if (formOnly && !summary) return failure("无法从当前网页核对可填写的表单。请确认目标标签页和字段是否已加载。");
+        if (formOnly && !summary) {
+          const visibleFallback = formatObservationForModel(result.text, { hasImages: false });
+          current.observation = { id, args: observationArgs, controlsOnly: false, browserWindow: undefined, result };
+          if (hasBrowserPage(result.text)) current.observedBrowsers.add(app);
+          return {
+            ...format(result),
+            ok: true,
+            result: `观察编号：${id}\n${browserFormUnavailable}\n以下为当前窗口的最新界面内容：\n${visibleFallback}`,
+            images: [],
+          };
+        }
         const browserWindow = form ? form.form?.windowKey : browserFormAvailable && !controlsOnly
           ? await browserFormWindow(app, result.text, invoke) : undefined;
         current.observation = { id, args: observationArgs, controlsOnly, browserWindow, result };
-        const visible = summary || (controlsOnly ? navigationObservation(result.text) : result.text);
+        const hasImages = visionEnabled && !controlsOnly && !formOnly && result.images.length > 0;
+        const bareLinux = server.platform === "linux" && name === "get_app_state" && isBareLinuxWindow(result.text);
+        const visible = summary || (controlsOnly
+          ? navigationObservation(result.text)
+          : formatObservationForModel(result.text, { hasImages, linuxNoControls: bareLinux && visionEnabled }));
+        const noVisionLinuxNote = bareLinux && !visionEnabled
+          ? "\n注意：当前模型不支持图片输入，且该窗口未暴露内部无障碍控件；请切换支持视觉的模型后重试。"
+          : "";
         if (browserFormAvailable && hasBrowserPage(result.text)) current.observedBrowsers.add(app);
         const hint = !controlsOnly && !summary && current.observedBrowsers.has(app) ? `${browserFormHint}\n` : "";
-        return { ...format(result), result: `观察编号：${id}\n${hint}${visible}`, images: controlsOnly || formOnly ? [] : result.images };
+        return {
+          ...format(result),
+          result: `观察编号：${id}\n${hint}${visible}${noVisionLinuxNote}`,
+          images: controlsOnly || formOnly || !visionEnabled ? [] : result.images,
+        };
       }
 
       if (!previous || previous.id !== args.observation_id || previous.args.app !== app) {
         return failure("当前观察已失效，请先读取目标窗口并携带最新观察编号。");
       }
       const protectBrowserInput = browserFormAvailable && browserTextShortcut(name, args);
-      const unsafeBrowserInput = "当前网页无法核对文字输入的目标。请用 get_app_state 的 form_only=true 读取表单，再用 fill_form 一次填写本页待改字段。若要输入浏览器地址或搜索词，请先聚焦对应输入栏并重新观察。";
       if (browserFormAvailable && name === "set_value" && isBrowserFormField(app, previous.result.text, args.element_index)) {
         return failure(browserFormHint);
       }
       if (protectBrowserInput && current.observedBrowsers.has(app) && !verifiedBrowserChromeFocus(previous.result.text)) {
-        return failure(unsafeBrowserInput);
+        return failure(browserInputUnverified);
       }
       const nativeArgs = Object.fromEntries(Object.entries(args).filter(([field]) =>
         Object.hasOwn(toolDefinition.parameters.properties, field)
@@ -323,9 +537,12 @@ export function createComputerUseRuntime(
       const hasElement = typeof args.element_index === "string" && /^\d+$/.test(args.element_index);
       const shared = args.background === false;
       const coordinate = name === "drag" || (name === "click" && !hasElement);
+      if (coordinate && !visionEnabled) {
+        return failure("当前模型不支持识别界面截图，禁止按屏幕坐标点击或拖拽。请改用控件编号操作，或切换支持视觉的模型。");
+      }
       if (coordinate && !previous.result.images.length) return failure("坐标操作需要最新的窗口截图。");
       if (coordinate) {
-        const points = name === "drag" ? [[args.from_x, args.from_y], [args.to_x, args.to_y]] : [[args.x, args.y]];
+        const points = pointsOf(name, args)!;
         // Both Linux and Windows return PNG. The signed Mac runtime checks its own image bounds.
         const png = previous.result.images[0].mimeType === "image/png" ? Buffer.from(previous.result.images[0].data, "base64") : undefined;
         const width = png?.length >= 24 ? png.readUInt32BE(16) : Infinity;
@@ -340,7 +557,7 @@ export function createComputerUseRuntime(
           return failure("此操作可能使用当前桌面的鼠标或键盘，须经用户明确同意后使用 background=false。");
         }
         if (simpleClick) nativeArgs.click_method = "accessibility";
-        if (shared && !previous.args.include_screenshot && coordinate) return failure("请先确认当前桌面的截图范围。");
+        if (shared && !previous.args.include_screenshot && coordinate) return failure("请先使用 get_shared_app_state 截取当前窗口并确认坐标目标。");
       }
       if (server.platform === "darwin") {
         if (name === "click" && !hasElement && (args.mouse_button ?? "left") === "left") nativeArgs.click_method = "sky_click";
@@ -353,17 +570,21 @@ export function createComputerUseRuntime(
         nativeArgs.click_method = "accessibility";
       }
       // Preserve the target and relevant UI state at the same native index.
-      // Coordinate actions still require the complete matching observation.
+      // Coordinate actions still check target patch pixels and Linux X11 window stacking occlusion.
       const evidence = isMac && !coordinate ? macControlEvidence(previous.result.text, action) : undefined;
       current.observation = undefined;
       const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
       if (fresh.isError) return format(fresh);
       if (protectBrowserInput && (current.observedBrowsers.has(app) || hasBrowserPage(fresh.text)) && !verifiedBrowserChromeFocus(fresh.text)) {
-        return failure(unsafeBrowserInput);
+        return failure(browserInputUnverified);
       }
       const matches = evidence ? macControlEvidence(fresh.text, action) === evidence : fresh.text === previous.result.text;
-      if (!matches || (coordinate && fresh.images[0]?.data !== previous.result.images[0]?.data)) {
+      if (!matches) {
         return failure("窗口或控件已发生变化。请重新读取界面，再选择操作目标。");
+      }
+      if (coordinate) {
+        const coordError = await verifyCoordinateState(fresh, pointsOf(name, args)!);
+        if (coordError) return failure(coordError);
       }
       if (evidence && name === "click" && macObservationText(fresh.text) !== macObservationText(previous.result.text)) {
         nativeArgs.click_method = "accessibility";

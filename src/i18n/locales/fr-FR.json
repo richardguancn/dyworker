@@ -480,6 +480,8 @@
   "composer.queuedTitle": "En attente",
   "composer.queuedCountUnit": "msgs",
   "composer.queuedHint": "S'exécute après la tâche en cours",
+  "composer.queuedRunNow": "Exécuter maintenant",
+  "composer.queuedRunNowHint": "Arrêter la tâche en cours et exécuter ce message maintenant",
   "reasoning.title": "Raisonnement",
   "reasoning.manage": "Gérer niveaux…",
   "reasoning.default": "Par défaut",

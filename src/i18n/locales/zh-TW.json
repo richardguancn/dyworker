@@ -480,6 +480,8 @@
   "composer.queuedTitle": "待發送",
   "composer.queuedCountUnit": "則",
   "composer.queuedHint": "目前任務結束後依序執行",
+  "composer.queuedRunNow": "立即執行",
+  "composer.queuedRunNowHint": "停止目前任務，立即執行這則訊息",
   "reasoning.title": "思考",
   "reasoning.manage": "管理檔位…",
   "reasoning.default": "預設",

@@ -7,8 +7,14 @@ module.exports = {
   extends: null,
   forceCodeSigning: true,
   publish: null,
+  extraResources: [],
   directories: { ...build.directories, output: 'output/mac-app-store' },
-  mac: { ...build.mac, target: ['mas'] },
+  mac: {
+    ...build.mac,
+    extraResources: [],
+    signIgnore: (build.mac.signIgnore || []).filter((pattern) => !pattern.includes('Open Computer Use')),
+    target: ['mas'],
+  },
   mas: {
     type: 'distribution',
     hardenedRuntime: false,
