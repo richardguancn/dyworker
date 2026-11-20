@@ -35,9 +35,14 @@ jobs:
           - name: Windows x64
             os: windows-latest
             command: npx electron-builder --win nsis --x64 --publish never
-          - name: macOS
+          - name: macOS ARM64
             os: macos-latest
             command: npx electron-builder --mac dmg zip --publish never
+          # Intel runner 上原生构建 x64：arm64 runner 交叉打包会把 arm64 原生模块
+          #（koffi/sharp/canvas/node-pty 等）打进 x64 包。
+          - name: macOS x64
+            os: macos-15-intel
+            command: npx electron-builder --mac dmg zip --x64 --publish never
           # 固定 24.04：ubuntu-latest 已切换到 26.04，其 Landlock 沙箱探测行为变化
           # 会让进程审核链路（kill 送达宿主进程）失败，待沙箱适配 26.04 后再跟进。
           - name: Linux ARM64
@@ -103,6 +108,9 @@ jobs:
       - name: 提取当前版本的更新说明
         shell: bash
         run: node electron/scripts/extract-release-notes.mjs "${GITHUB_REF_NAME#v}" RELEASE_NOTES.md > release-notes-current.md
+      - name: 合并 macOS 双架构更新清单
+        shell: bash
+        run: node electron/scripts/merge-mac-latest.mjs release-assets
       - name: 把更新说明写入 latest*.yml
         shell: bash
         run: |
