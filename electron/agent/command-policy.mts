@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { isContainerHeaderReadCommand } from "../container-read-check.mts";
 import { workspaceWriteTools } from "../risk.mts";
-import { shellCommandSegments,shellWords } from "../shell-syntax.mts";
+import { literalShellFileWrite,shellCommandSegments,shellWords } from "../shell-syntax.mts";
 import { isSafePublicUrl } from "./web-tools.mts";
 import { isSkillPath } from "./workspace.mts";
 
@@ -112,6 +112,8 @@ export function basenameOf(word) {
 }
 
 function commandPathCandidates(command, workspace) {
+  const write = literalShellFileWrite(command);
+  command = write?.outerCommand ?? command;
   const candidates = [];
   let directories = [workspace.root];
   let skippedDirectories = [];
@@ -133,7 +135,8 @@ function commandPathCandidates(command, workspace) {
     }
     // 只读段（ls/cat/grep 等受信只读程序）查看可执行根目录不算访问数据——
     // 系统 bin 与版本管理器目录里没有隐私数据，查看它们是正常开发操作
-    const readOnlySegment = headIndex < words.length && trustedReadOnlyPrograms.has(basenameOf(words[headIndex]));
+    const readOnlySegment = headIndex < words.length && trustedReadOnlyPrograms.has(basenameOf(words[headIndex]))
+      && !(write && segment.includes("<<"));
     for (let index = 0; index < words.length; index += 1) {
       const word = words[index];
       // 环境赋值取等号右侧；PATH=a:b:c 这类值按分隔符拆开逐项判断，
@@ -538,9 +541,10 @@ function splitReviewerLiteralCommand(text) {
 // 替我审批（reviewer）模式不再用它直接放行：程序清单永远列不全，未知工具
 // （npm 全局安装、第三方 CLI、任意二进制）会被它静默放行。reviewer 只对可证明只读
 // 的命令走快速通道（isReviewerAutoApprovableCommand），其余交审核助手结合用户原话判断。
+export const privilegeChangePrograms = new Set(["sudo", "su", "doas", "pkexec"]);
 const dangerousCommandPrograms = new Set([
   "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "fdisk", "parted",
-  "mount", "umount", "sudo", "su", "doas", "pkexec",
+  "mount", "umount", ...privilegeChangePrograms,
   "kill", "killall", "pkill", "passwd", "crontab",
   "chown", "chgrp", "useradd", "usermod", "userdel", "groupadd", "groupmod", "groupdel",
   "iptables", "ip6tables", "firewall-cmd", "systemctl", "launchctl", "scutil", "diskutil",
@@ -715,7 +719,7 @@ export const ruleDevProgramWidths = {
 export const ruleNeverAllowCommands = new Set([
   "rm", "rmdir", "unlink", "dd", "shutdown", "reboot", "halt", "poweroff",
   "mkfs", "mkfs.ext4", "fdisk", "parted", "mount", "umount", "swapoff",
-  "sudo", "su", "pkexec", "doas", "kill", "killall", "pkill", "passwd",
+  ...privilegeChangePrograms, "kill", "killall", "pkill", "passwd",
   "chown", "chgrp", "useradd", "usermod", "userdel", "groupadd", "groupmod",
   "groupdel", "iptables", "ip6tables", "firewall-cmd", "systemctl",
   "launchctl", "scutil", "diskutil",

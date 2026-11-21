@@ -21,7 +21,7 @@ import { calculateWorkdays,checkOfficialDocument,currentDatetime,exportExcelWork
 import { approvalDecision,needsApproval } from "./agent/permissions.mts";
 import { getPromptDefinition, memoriesAsPagesFallback,systemPrompt } from "./agent/prompt.mts";
 import { readUsageExtras } from "./agent/responses.mts";
-import { externalApprovalDetails,isImpactSummaryEligible,loadReviewerPolicy,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewerBoundaryNote,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
+import { externalApprovalDetails,isImpactSummaryEligible,loadReviewerPolicy,needsIndependentCommandReview,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewerBoundaryNote,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
 import { MODEL_IDLE_TIMEOUT_MS,MODEL_NETWORK_RETRY_BASE_DELAY_MS,MODEL_NETWORK_RETRY_LIMIT,MODEL_STATUS_RETRY_BASE_DELAY_MS,MODEL_STATUS_RETRY_LIMIT,MODEL_TIMEOUT_MS,MODEL_TIMEOUT_RETRY_LIMIT,MODEL_TRANSPORT_RETRY_BASE_DELAY_MS,READ_ONLY_TOOLS,clipped } from "./agent/shared.mts";
 import { suggestStandingRule } from "./agent/standing-rules.mts";
 import { parseArguments,validateToolArguments } from "./agent/tool-arguments.mts";
@@ -1261,7 +1261,7 @@ export async function runAgent({
                 check: async (reader, readArgs) => evaluateHooks([...builtinHooks, ...(Array.isArray(hooks) ? hooks : [])], 'before_tool', reader, readArgs)
                   || await beforeToolExecute?.({ name: reader, args: readArgs }), signal: cancellationSignal });
               const processTargets = name === 'run_command' ? await inspectProcessTargets(String(args.command || ''), workspace.root, cancellationSignal) : null;
-              const missingFacts = Boolean(entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName, args)
+              const missingFacts = Boolean(needsIndependentCommandReview(approvalToolName, args.command) || entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName, args)
                 || inlinePolicy?.hash !== loadReviewerPolicy().hash
                 || inlineAuthorizationVersion !== reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewerContext()}`, inlinePolicy?.hash || ''));
               if (inlineApproval?.decision === 'deny') {
@@ -1274,13 +1274,15 @@ export async function runAgent({
                 reviewerReason = inlineApproval.reason;
                 reviewerPolicyHash = inlinePolicy?.hash || '';
                 runSeparateReview = false;
-              } else if (!missingFacts && inlineApproval?.decision === 'ask') {
+              } else if (!missingFacts && inlineApproval?.decision === 'ask' && approvalToolName !== 'run_command') {
                 approved = await askApproval(inlineApproval.reason);
                 runSeparateReview = false;
               }
             }
             if (runSeparateReview) {
               // 每次核对当前授权、实际事实与入口脚本，不复用较早允许。
+              const initialConcern = approvalToolName === 'run_command' && inlineApproval?.decision === 'ask'
+                ? inlineApproval.reason : '';
               const reviewContext = reviewerContext() + relatedReviewToolEvidence(executedTools, displayArgs.command);
               const entryScripts = await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs,
                 preparedFiles: executedTools.filter(item => item.name === "write_file" && item.status === "success").map(item => item.args),
@@ -1305,7 +1307,8 @@ export async function runAgent({
                 input: {
                     settings, contextLimit,
                     action: { kind: approvalToolName, title: summary, args: displayArgs, command: displayArgs.command, workspacePath: workspace.root,
-                      details: reviewerBoundaryNote(workspace, approvalToolName, args) + reviewActionDetails(approvalToolName, displayArgs) + entryScripts, observation,
+                      details: reviewerBoundaryNote(workspace, approvalToolName, args) + reviewActionDetails(approvalToolName, displayArgs) + entryScripts,
+                      initialConcern, observation,
                       toolDefinition: reviewToolDefinition(effectiveTools, name), accessCheck: hookVerdict?.message },
                     context: reviewContext,
                     fetchImpl,

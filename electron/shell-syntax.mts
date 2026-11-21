@@ -1,4 +1,27 @@
 // 共享的 shell 词与复合段解析。只解析文本，不运行命令。
+const literalPath = /(?:[\w./-]+|'[^'\r\n]+'|"[^"$`\\\r\n]+")/.source;
+const fileWriteHeader = new RegExp(
+  `^[ \\t]*(?:cd[ \\t]+${literalPath}[ \\t]*&&[ \\t]*)?cat[ \\t]*>[ \\t]*(${literalPath})`
+  + `[ \\t]*<<[ \\t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\\2[ \\t]*$`,
+);
+
+// 只识别独占一行的 cat 文件写入，可前置一次 cd。引用结束标记意味着
+// 正文不会被本机 shell 展开。其他语法（包括管道、未引用标记）沿用完整命令检查。
+export function literalShellFileWrite(command: unknown) {
+  if (process.platform === "win32" || typeof command !== "string" || !command.includes("<<")) return null;
+  const newline = command.indexOf("\n");
+  if (newline < 0) return null;
+  const header = command.slice(0, newline);
+  const match = fileWriteHeader.exec(header);
+  if (!match) return null;
+  const lines = command.slice(newline + 1).split("\n");
+  const end = lines.indexOf(match[3]);
+  if (end < 0) return null;
+  const tail = lines.slice(end + 1).join("\n");
+  return { target: shellWords(match[1])[0], body: lines.slice(0, end).join("\n"), tail,
+    outerCommand: header + "\n" + tail };
+}
+
 export function shellWords(command) {
   const words = [];
   let current = "";

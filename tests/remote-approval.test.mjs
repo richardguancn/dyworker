@@ -3,8 +3,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { buildReviewContext, withReviewApprovals } from '../electron/approval-context.mts';
-import { Workspace, externalPathsForTool, readReviewEntryScripts, relatedReviewToolEvidence, reviewApproval, runAgent, summarizeApprovalImpact, summarizeCommandEffects } from '../electron/agent.mts';
+import { buildReviewContext, requiresFullParameterReview, withReviewApprovals } from '../electron/approval-context.mts';
+import { Workspace, externalPathsForTool, planTaskApproval, readReviewEntryScripts, relatedReviewToolEvidence, reviewApproval, runAgent, summarizeApprovalImpact, summarizeCommandEffects } from '../electron/agent.mts';
 import { findSensitiveReference } from '../electron/host/plugins/sensitive-path-guard.mts';
 import { chunkText, formatChannelApproval } from '../electron/channels/shared.mts';
 import { createDshApproval } from '../electron/host/dsh-runtime/approval.mts';
@@ -19,6 +19,70 @@ async function fixture(t) {
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   return root;
 }
+
+test('写入带引号的脚本正文与后续执行分别检查，本机命令和强制确认仍受保护', { skip: process.platform === 'win32' }, async t => {
+  const workspace = new Workspace(await fixture(t), { trustTempDirs: false });
+  const body = 'umount /data && echo ok\nmount /data\nsystemctl daemon-reload';
+  const write = `cd "${workspace.root}" && cat > check.sh <<'EOS'\n${body}\nEOS`;
+  const route = (command, options = {}) => planTaskApproval({ approvalMode: 'reviewer', name: 'run_command', args: { command }, ...options });
+  const command = write + '\n./remote.sh check.sh > check.log';
+  assert.equal(route(command), 'review');
+  assert.equal(route(command, { approvalMode: 'interactive' }), 'confirm');
+  assert.equal(route(command, { approvalMode: 'deny-changes' }), 'deny');
+  assert.equal(route(command, { hook: { action: 'require_approval' } }), 'confirm');
+  assert.equal(route(command.replace(body, body + '\nrm -rf /')), 'confirm');
+  for (const local of ['umount /data', 'mount /data', 'systemctl daemon-reload']) assert.equal(route(write + '\n' + local), 'review');
+  const withDeletion = write.replace(body, 'rm -rf /');
+  assert.equal(route(withDeletion), 'review');
+  for (const other of [withDeletion.replace("'EOS'", 'EOS'), withDeletion.replace('cat > check.sh', 'bash'), withDeletion.slice(0, -3)]) {
+    assert.equal(route(other), 'confirm');
+  }
+  assert.equal(requiresFullParameterReview({ kind: 'run_command', args: { command } }), true);
+  const paths = value => externalPathsForTool(workspace, 'run_command', { command: value });
+  assert.deepEqual(paths(command), []);
+  assert.ok(paths(command + '\ncat /etc/fstab').includes('/etc/fstab'));
+  assert.ok(paths(command.replace('> check.sh', '> /etc/example.conf')).includes('/etc/example.conf'));
+  assert.doesNotMatch(summarizeCommandEffects(write.replace(body, 'rm /data/.mount_probe')), /删除/);
+});
+
+test('模拟两次部署请求经过独立审核，允许后才调用入口，拒绝后不写文件', { skip: process.platform === 'win32' }, async t => {
+  const root = await fixture(t);
+  const wrapper = "fixture transport: record calls only";
+  await fs.writeFile(path.join(root, 'remote.sh'), `#!/bin/sh\n# ${wrapper}\necho called >> calls.log\n`, { mode: 0o700 });
+  const payloads = [
+    'printf "example" >> /etc/fstab\nsystemctl daemon-reload && echo reload_ok',
+    'echo probe > /data/.mount_probe\numount /data && echo umount_ok\nmount /data\nrm -f /data/.mount_probe',
+  ];
+  const names = ['fstab', 'verify', 'denied'];
+  const commands = names.map((name, i) => [
+    `cd "${root}" && cat > ${name}.sh <<'EOS'`, payloads[i % 2], 'EOS',
+    `B64=$(base64 < ${name}.sh) && ./remote.sh "echo $B64 | base64 -d | bash" > ${name}.log`,
+  ].join('\n'));
+  let asks = 0, reviews = 0, step = 0;
+  const result = await runAgent({ workspacePath: root, settings: { ...settings, reviewerBackend: 'main' }, approvalMode: 'reviewer',
+    conversation: [{ role: 'user', content: '用模拟入口验证两次部署调用，禁止第三次写入。' }],
+    requestApproval: async () => { asks++; return false; },
+    fetchImpl: async (_url, options) => {
+      const { messages, tools } = JSON.parse(options.body);
+      if (messages[0].content.includes('安全审核助手') && !tools?.length) {
+        const text = messages.at(-1).content;
+        assert.ok(text.includes(commands[reviews]));
+        assert.ok(text.includes(wrapper));
+        assert.ok(text.includes('禁止第三次写入'));
+        reviews++;
+        return reply(decision(reviews === 3 ? 'deny' : 'allow'));
+      }
+      if (step === commands.length) return reply('结束');
+      const args = { command: commands[step], __dyworker_approval: { decision: step === 2 ? 'allow' : 'ask', reason: '待结合入口核对' } };
+      return reply(tool('deploy-' + step++, 'run_command', args));
+    } });
+  assert.equal(result.status, 'done');
+  assert.equal(reviews, 3);
+  assert.equal(asks, 0);
+  assert.equal(await fs.readFile(path.join(root, 'calls.log'), 'utf8'), 'called\ncalled\n');
+  for (const [i, name] of names.slice(0, 2).entries()) assert.equal(await fs.readFile(path.join(root, name + '.sh'), 'utf8'), payloads[i] + '\n');
+  await assert.rejects(fs.access(path.join(root, 'denied.sh')), { code: 'ENOENT' });
+});
 
 test('四十次长操作批准不会挤掉原始禁止要求，省略正文不能成为更宽的授权', () => {
   const approvals = Array.from({ length: 40 }, (_, i) => ({ tool: 'write_file', args: { path: `audit-${i}.sh`, content: '# audit\n' + 'x'.repeat(10935) } }));

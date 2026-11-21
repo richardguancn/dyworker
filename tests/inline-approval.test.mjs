@@ -9,10 +9,58 @@ import { isReviewerEligible } from '../electron/agent/review.mts';
 const settings = { endpoint: 'http://mock.local/v1/chat/completions', model: 'mock', apiKey: 'test', reviewerBackend: 'main' };
 const call = args => ({ id: 'delete', type: 'function', function: { name: 'delete_file', arguments: JSON.stringify(args) } });
 
-test('服务状态查询可交审核，服务修改仍须人工确认', () => {
+test('服务查询和变更都交审核助手，仅凭程序名不能批准本次操作', () => {
   const eligible = command => isReviewerEligible({ name: 'run_command', args: { command }, approvalMode: 'reviewer' });
   assert.equal(eligible('launchctl print gui/$(id -u)/com.example.service 2>&1 | head -40'), true);
-  assert.equal(eligible('launchctl bootout gui/501/com.example.service'), false);
+  assert.equal(eligible('launchctl bootout gui/501/com.example.service'), true);
+});
+
+test('服务排障连续八步由独立助手按单次授权审批，超出授权和明确禁止仍能中止', { skip: process.platform === 'win32' }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-service-review-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  // 所有调用都只执行临时目录里的替身，不接触系统服务、进程和私人日志。
+  await fs.writeFile(path.join(root, 'launchctl'), '#!/bin/sh\necho "$*" >> calls.log\necho "123 example running"\n', { mode: 0o700 });
+  await fs.writeFile(path.join(root, 'future-diagnostic'), '#!/bin/sh\necho checked > checked.txt\n', { mode: 0o700 });
+  const commands = [
+    './launchctl list | grep example',
+    './launchctl print-disabled gui/$(id -u) | grep example',
+    './launchctl bootstrap gui/$(id -u) example.plist; ./launchctl print gui/$(id -u)/example',
+    './launchctl bootstrap gui/$(id -u) example.plist; echo "$?"',
+    './launchctl print gui/$(id -u); ./launchctl list | grep example',
+    './launchctl load example.plist; ./launchctl list',
+    'sleep 0; ./launchctl list | grep example',
+    'P1=$(./launchctl list | grep example); P2=$(./launchctl list | grep example); test "$P1" = "$P2"',
+    './future-diagnostic', './launchctl load another.plist', './launchctl load forbidden.plist',
+  ];
+  const context = '检查并恢复 example 测试服务。其他服务变更需单独授权，禁止更改 forbidden。';
+  let step = 0, reviews = 0, approvals = 0;
+  await runAgent({ settings: { ...settings, reviewerProbability: true }, workspacePath: root, approvalMode: 'reviewer',
+    conversation: [{ role: 'user', content: context }],
+    requestApproval: async action => { approvals++; assert.match(action.details, /another/); return false; },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const reply = message => ({ ok: true, json: async () => ({ choices: [{ message }] }) });
+      if (body.messages[0].content.includes('安全审核助手') && !body.tools?.length) {
+        const command = commands[reviews++];
+        const input = body.messages.at(-1).content;
+        assert.ok(input.includes(context) && input.includes(command));
+        if (command === './future-diagnostic') assert.match(input, /初步判断/);
+        assert.notEqual(body.logprobs, true);
+        const decision = command.includes('forbidden') ? 'deny' : command.includes('another') ? 'ask' : 'allow';
+        return reply({ role: 'assistant', content: JSON.stringify({ decision, reason: '按本次任务指定的服务范围判断' }) });
+      }
+      if (step === commands.length) return reply({ role: 'assistant', content: '结束' });
+      const command = commands[step++];
+      return reply({ role: 'assistant', content: null, tool_calls: [{ id: 'step-' + step, type: 'function',
+        function: { name: 'run_command', arguments: JSON.stringify({ command,
+          __dyworker_approval: { decision: step <= 9 ? 'ask' : 'allow', reason: '初步判断' } }) } }] });
+    } });
+  assert.equal(reviews, 11);
+  assert.equal(await fs.readFile(path.join(root, 'checked.txt'), 'utf8'), 'checked\n');
+  assert.equal(approvals, 1);
+  const log = await fs.readFile(path.join(root, 'calls.log'), 'utf8');
+  assert.equal(log.trim().split('\n').length, 12);
+  assert.doesNotMatch(log, /another|forbidden/);
 });
 
 for (const [label, opinion, approved, expected] of [

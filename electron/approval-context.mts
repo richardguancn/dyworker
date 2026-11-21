@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { computerUseAction, isComputerUseTool, isLinuxSharedDesktopTool } from "./computer-use.mts";
 import { classify } from "./risk.mts";
+import { literalShellFileWrite } from "./shell-syntax.mts";
 
 const clip = (value: unknown, limit: number) => {
   const text = String(value || "");
@@ -106,6 +107,7 @@ function extractActionArgs(action: any): Record<string, any> {
 export function requiresFullParameterReview(action: any) {
   const kind = String(action?.kind || "").replace(/^dsh__/, "");
   const args = extractActionArgs(action);
+  if (kind === "run_command" && literalShellFileWrite(args.command ?? action.command ?? action.details)) return true;
   if (isStatefulUiOperation(kind, args) || isLinuxSharedDesktopTool(kind)) return true;
   if (isComputerUseTool(kind) && args.background === false) return true;
   if (kind === "browser__cdp") return true;
