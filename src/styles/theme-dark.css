@@ -977,7 +977,8 @@ html[data-theme="dark"] .tool-summary-header.clickable:hover {
   }
 
 
-  html[data-theme="dark"] .code-block-wrap .code-copy-button {
+  html[data-theme="dark"] .code-block-wrap .code-copy-button,
+  html[data-theme="dark"] .mermaid-zoom-hint {
     border-color: rgba(255, 255, 255, 0.14);
     color: #a4a89f;
     background: rgba(32, 33, 30, 0.88);

@@ -7,6 +7,7 @@ import {
   Copy,
   Gauge,
   ListChecks,
+  Maximize2,
   SlidersHorizontal,
 } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactElement, type ReactNode } from "react";
@@ -18,6 +19,7 @@ import hljs from "highlight.js/lib/common";
 import { isPreviewableExtension } from "../electron/file-preview-formats.mts";
 import { localImagePathFromSource } from "../electron/local-image-path.mts";
 import { useResolvedTheme } from "./appearance/controller";
+import { MermaidLightbox } from "./features/message/MermaidLightbox";
 import { getComposerWorkspacePath } from "./state/sessionStore";
 import { openFilePreviewRef } from "./state/sharedRefs";
 
@@ -279,17 +281,19 @@ function mermaidForTheme(isDark: boolean) {
 
 // mermaid 图表渲染：流式输出期间语法尚未完整时静默等待，收尾后重渲染出图
 function MermaidDiagram({ code }: { code: string }) {
-  const [state, setState] = useState<{ status: "loading" } | { status: "done"; svg: string } | { status: "error"; message: string }>({ status: "loading" });
+  const [state, setState] = useState<{ status: "loading" } | { status: "done"; id: string; svg: string } | { status: "error"; message: string }>({ status: "loading" });
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const resolvedTheme = useResolvedTheme();
   useEffect(() => {
     let active = true;
     // 流式期间 code 每个 token 都变，mermaid.render 一次上百毫秒：
     // 等输入稳定 400ms 再渲染，避免逐 token 反复解析半截语法
     const timer = window.setTimeout(() => {
+      const renderId = `dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`;
       mermaidForTheme(resolvedTheme === "dark")
-        .then((mermaid) => mermaid.default.render(`dyworker-mermaid-${crypto.randomUUID().slice(0, 8)}`, code))
+        .then((mermaid) => mermaid.default.render(renderId, code))
         .then((result) => {
-          if (active) setState({ status: "done", svg: result.svg });
+          if (active) setState({ status: "done", id: renderId, svg: result.svg });
         })
         .catch((renderError) => {
           if (active) setState({ status: "error", message: renderError instanceof Error ? renderError.message : String(renderError) });
@@ -309,7 +313,38 @@ function MermaidDiagram({ code }: { code: string }) {
       </div>
     );
   }
-  return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: state.svg }} />;
+  return (
+    <>
+      <div
+        className="mermaid-diagram mermaid-ready"
+        role="button"
+        tabIndex={0}
+        aria-label="放大查看图表"
+        title="点击放大查看"
+        onClick={() => setLightboxOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setLightboxOpen(true);
+          }
+        }}
+      >
+        <div className="mermaid-diagram-svg" dangerouslySetInnerHTML={{ __html: state.svg }} />
+        <span className="mermaid-zoom-hint" aria-hidden="true">
+          <Maximize2 size={12} />
+          <span>放大</span>
+        </span>
+      </div>
+      {lightboxOpen && (
+        <MermaidLightbox
+          svg={state.svg}
+          renderId={state.id}
+          theme={resolvedTheme}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
+    </>
+  );
 }
 
 // echarts 图表渲染：与 mermaid 同样的流式策略——等输入稳定 400ms 再解析渲染。

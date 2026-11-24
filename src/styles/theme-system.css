@@ -978,7 +978,8 @@ html:not([data-theme]) .tool-summary-header.clickable:hover {
   }
 
 
-  html:not([data-theme]) .code-block-wrap .code-copy-button {
+  html:not([data-theme]) .code-block-wrap .code-copy-button,
+  html:not([data-theme]) .mermaid-zoom-hint {
     border-color: rgba(255, 255, 255, 0.14);
     color: #a4a89f;
     background: rgba(32, 33, 30, 0.88);
