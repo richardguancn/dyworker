@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { localImagePathFromSource, readLocalImageData, registerLocalImageIpc } from "../electron/local-image.mts";
+import {
+  compressImageBufferForModel,
+  localImagePathFromSource,
+  readLocalImageData,
+  readLocalImageForModel,
+  registerLocalImageIpc,
+} from "../electron/local-image.mts";
 
 test("助手回复可以识别 macOS、Linux 和 Windows 的本地图片地址", () => {
   const windowsSpacedPath = "C:\\Users\\demo\\现场 照片.png";
@@ -92,4 +98,79 @@ test("桌面窗口可以通过受控入口读取本地图片", async (context) =
   assert.match(result.dataUrl, /^data:image\/png;base64,/);
   assert.equal(rejected.ok, false);
   assert.match(rejected.error, /不允许/);
+});
+
+test("readLocalImageForModel 对小图原样返回且不重编码", async (context) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-local-image-model-"));
+  context.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const imagePath = path.join(directory, "tiny.png");
+  const tinyPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await fs.writeFile(imagePath, tinyPng);
+
+  let decoderCalled = false;
+  const result = await readLocalImageForModel(imagePath, {
+    nativeImageImpl: {
+      createFromBuffer() {
+        decoderCalled = true;
+        return null;
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compressed, false);
+  assert.equal(result.mimeType, "image/png");
+  assert.equal(result.dataUrl, `data:image/png;base64,${tinyPng.toString("base64")}`);
+  assert.equal(decoderCalled, false);
+});
+
+test("compressImageBufferForModel 对超大分辨率图按长边缩放并渐进转为 JPEG 压缩", async () => {
+  const resizeCalls = [];
+  const jpegCalls = [];
+  const makeFakeImage = (width, height) => ({
+    isEmpty: () => false,
+    getSize: () => ({ width, height }),
+    resize: ({ width: nextW, height: nextH }) => {
+      resizeCalls.push({ width: nextW, height: nextH });
+      return makeFakeImage(nextW, nextH);
+    },
+    toPNG: () => Buffer.alloc(3_000_000, 0x11),
+    toJPEG: (quality) => {
+      jpegCalls.push({ width, height, quality });
+      if (width > 1600 && quality >= 72) return Buffer.alloc(1_800_000, 0x22);
+      return Buffer.alloc(450_000, 0x33);
+    },
+  });
+
+  const oversizedPng = Buffer.alloc(4_000_000, 0xaa);
+  const result = await compressImageBufferForModel(oversizedPng, "image/png", {
+    maxEdge: 2048,
+    targetBytes: 1_200_000,
+    hardMaxBytes: 2_600_000,
+    nativeImageImpl: {
+      createFromBuffer: () => makeFakeImage(3840, 2486),
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compressed, true);
+  assert.equal(result.mimeType, "image/jpeg");
+  assert.ok(result.buffer.length <= 1_200_000);
+  assert.deepEqual(resizeCalls[0], { width: 2048, height: 1326 });
+  assert.ok(jpegCalls.some((call) => call.width === 1600 && call.quality === 72));
+});
+
+test("compressImageBufferForModel 无 nativeImage 且超过硬上限时返回可读错误", async () => {
+  const huge = Buffer.alloc(3_000_000, 0xff);
+  const result = await compressImageBufferForModel(huge, "image/png", {
+    targetBytes: 1_200_000,
+    hardMaxBytes: 2_600_000,
+    nativeImageImpl: null,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error || "", /图片体积过大/);
 });

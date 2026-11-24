@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { readLocalImageForModel } from "../local-image.mts";
 
 const textExtensions = new Set([
   ".c", ".cc", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".html", ".ini", ".java", ".js", ".json",
@@ -60,12 +61,16 @@ export async function providerMessageContent(message) {
       const stat = await fs.stat(filePath);
       const mimeType = attachmentType(filePath);
       if (mimeType.startsWith("image/")) {
-        if (stat.size > 12 * 1024 * 1024) {
-          text += `\n\n[图片 ${path.basename(filePath)} 超过 12 MB，未发送]`;
+        if (stat.size > 32 * 1024 * 1024) {
+          text += `\n\n[图片 ${path.basename(filePath)} 超过 32 MB，未发送]`;
           continue;
         }
-        const encoded = (await fs.readFile(filePath)).toString("base64");
-        imageBlocks.push({ type: "image_url", image_url: { url: `data:${mimeType};base64,${encoded}` } });
+        const image = await readLocalImageForModel(filePath);
+        if (!image.ok || !image.dataUrl) {
+          text += `\n\n[图片 ${path.basename(filePath)} ${image.error || "过大或无法压缩"}，未发送]`;
+          continue;
+        }
+        imageBlocks.push({ type: "image_url", image_url: { url: image.dataUrl } });
       } else if (textExtensions.has(path.extname(filePath).toLowerCase())) {
         if (stat.size > 2 * 1024 * 1024) {
           text += `\n\n[文本附件 ${path.basename(filePath)} 超过 2 MB，未展开]`;

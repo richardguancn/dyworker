@@ -1,5 +1,5 @@
 // 工作记录、上下文压缩与溢出处理。
-import { contentForContext,estimateMessagesTokens,estimateTextTokens,isTransientDesktopTool,messageText,sanitizeToolCalls } from "./messages.mts";
+import { contentForContext,estimateMessagesTokens,estimateTextTokens,isSyntheticToolImageContext,isTransientDesktopTool,messageText,sanitizeToolCalls } from "./messages.mts";
 import { requestModel } from "./model-request.mts";
 import { summarizationSettings } from "./model-settings.mts";
 import { MODEL_NETWORK_RETRY_BASE_DELAY_MS,WORKING_CONTEXT_ITEM_LIMIT,WORKING_CONTEXT_LIMIT,clipped } from "./shared.mts";
@@ -135,7 +135,9 @@ export async function compactConversation({ messages, settings, fetchImpl, signa
   while (cut > prefix && (messages[cut]?.role === "tool" || (messages[cut - 1]?.role === "assistant" && messages[cut - 1]?.tool_calls?.length))) cut -= 1;
   if (cut <= prefix) return false;
   const old = messages.slice(prefix, cut);
-  const protectedMessages = old.filter(message => ['user', 'system', 'developer'].includes(message?.role));
+  const protectedMessages = old.filter(
+    (message) => ["user", "system", "developer"].includes(message?.role) && !isSyntheticToolImageContext(message),
+  );
   const workMessages = old.filter(message => !protectedMessages.includes(message));
   if (!workMessages.length) return false;
   const serialized = clipped(workMessages.map((message) => {
@@ -184,4 +186,14 @@ export function isContextOverflowError(error) {
   if ([401, 403, 404, 429].includes(status)) return false;
   const text = error instanceof Error ? error.message : String(error || "");
   return CONTEXT_OVERFLOW_PATTERN.test(text);
+}
+
+const PAYLOAD_OR_MULTIMODAL_TOO_LARGE_PATTERN = /request[_ ]?too[_ ]?large|request body too large|payload.*too large|entity too large|multimodal.*too large|file size.*too large|image.*too large|image size.*exceed|media.*too large|请求体过大|图片过大|多模态.*过大/i;
+
+export function isPayloadOrMultimodalTooLargeError(error) {
+  const status = Number(error?.status);
+  if ([401, 403, 404, 429].includes(status)) return false;
+  const text = error instanceof Error ? error.message : String(error || "");
+  if (isContextOverflowError(error) && !PAYLOAD_OR_MULTIMODAL_TOO_LARGE_PATTERN.test(text)) return false;
+  return status === 413 || PAYLOAD_OR_MULTIMODAL_TOO_LARGE_PATTERN.test(text);
 }

@@ -1,6 +1,7 @@
 // 模型消息整理、图片上下文和用量估算。
 import { detectProvider } from "../providers.mts";
 import { computerUseAction, computerUseWindowHeader, isComputerUseTool } from "../computer-use.mts";
+import { MODEL_IMAGE_DATA_URL_MAX_CHARS, MODEL_TOTAL_IMAGES_MAX_CHARS, compressImageDataUrlForModel } from "../local-image.mts";
 import { bareModelName } from "./model-discovery.mts";
 import { imagePartFromContent } from "./vision.mts";
 
@@ -136,14 +137,39 @@ export function contentForContext(content) {
   }).filter(Boolean).join("\n");
 }
 
+const VIEW_IMAGE_INTRO_PREFIX = "这是 view_image 实际读取的图片。";
+const INTERFACE_SCREENSHOT_PREFIXES = [
+  "这是刚刚读取到的本机应用界面截图",
+  "这是刚刚读取到的右侧内置浏览器页面截图",
+];
+
 function isInterfaceScreenshotMessage(message) {
   if (message?.role !== "user" || !Array.isArray(message?.content)) return false;
   const parts = message.content;
-  return parts.some((part) => part?.type === "image_url")
+  return parts.some((part) => imagePartFromContent(part))
     && parts.some((part) =>
       part?.type === "text"
-      && (String(part?.text || "").startsWith("这是刚刚读取到的本机应用界面截图")
-        || String(part?.text || "").startsWith("这是刚刚读取到的右侧内置浏览器页面截图")));
+      && INTERFACE_SCREENSHOT_PREFIXES.some((prefix) => String(part?.text || "").startsWith(prefix)));
+}
+
+export function isViewImageMessage(message) {
+  if (message?.role !== "user" || !Array.isArray(message?.content)) return false;
+  const parts = message.content;
+  return parts.some((part) => imagePartFromContent(part))
+    && parts.some((part) =>
+      part?.type === "text"
+      && String(part?.text || "").startsWith(VIEW_IMAGE_INTRO_PREFIX));
+}
+
+export function isToolImageMessage(message) {
+  return isInterfaceScreenshotMessage(message) || isViewImageMessage(message);
+}
+
+export function isSyntheticToolImageContext(message) {
+  if (message?.role !== "user") return false;
+  const text = contentForContext(message.content).trimStart();
+  return text.startsWith(VIEW_IMAGE_INTRO_PREFIX)
+    || INTERFACE_SCREENSHOT_PREFIXES.some((prefix) => text.startsWith(prefix));
 }
 
 function isDesktopScreenshotRecord(message) {
@@ -226,7 +252,7 @@ export function compactDesktopHistory(messages) {
 export function omitHistoricalToolImage(message) {
   const localImage = message?.role === "user" && Array.isArray(message?.content)
     && message.content.some((part) => part?.type === "text"
-      && String(part.text || "").startsWith("这是 view_image 实际读取的图片。"));
+      && String(part.text || "").startsWith(VIEW_IMAGE_INTRO_PREFIX));
   if (!localImage && !isInterfaceScreenshotMessage(message)) return message;
   // 只改本次模型输入，不改会话存档；已有识别文字与工具结果继续保留。
   return { ...message, content: message.content.map((part) => imagePartFromContent(part)
@@ -235,7 +261,11 @@ export function omitHistoricalToolImage(message) {
 }
 
 export function hasInterfaceImages(messages) {
-  return messages.some(isInterfaceScreenshotMessage);
+  return (messages || []).some(isInterfaceScreenshotMessage);
+}
+
+export function hasToolImages(messages) {
+  return (messages || []).some(isToolImageMessage);
 }
 
 export function replaceInterfaceImagesWithText(messages, keepLatest = false) {
@@ -252,7 +282,7 @@ export function replaceInterfaceImagesWithText(messages, keepLatest = false) {
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (index === latestIndex || !isInterfaceScreenshotMessage(message)) continue;
-    const images = message.content.filter((part) => part?.type === "image_url");
+    const images = message.content.filter((part) => imagePartFromContent(part));
     if (!images.length) continue;
     const text = message.content
       .filter((part) => part?.type === "text")
@@ -263,6 +293,190 @@ export function replaceInterfaceImagesWithText(messages, keepLatest = false) {
     replaced += images.length;
   }
   return replaced;
+}
+
+export function replaceViewImagesWithText(messages, keepLatestCount = 0) {
+  const keepIndexes = new Set<number>();
+  const limit = Math.max(0, Math.floor(Number(keepLatestCount) || 0));
+  if (limit > 0) {
+    for (let index = messages.length - 1; index >= 0 && keepIndexes.size < limit; index -= 1) {
+      if (isViewImageMessage(messages[index])) keepIndexes.add(index);
+    }
+  }
+  let replaced = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (keepIndexes.has(index) || !isViewImageMessage(message)) continue;
+    const images = message.content.filter((part) => imagePartFromContent(part));
+    if (!images.length) continue;
+    const text = message.content
+      .filter((part) => part?.type === "text")
+      .map((part) => String(part?.text || ""))
+      .filter(Boolean)
+      .join("\n");
+    message.content = `${text}${text ? "\n" : ""}[此前通过 view_image 查看的图片已省略；如需重新查看，请再次调用 view_image]`;
+    replaced += images.length;
+  }
+  return replaced;
+}
+
+export function replaceAllToolImagesWithText(messages) {
+  return replaceInterfaceImagesWithText(messages, false) + replaceViewImagesWithText(messages, 0);
+}
+
+export function replaceOlderUserImagesWithText(messages, keepLatestUserMessage = true) {
+  let latestUserIndex = -1;
+  if (keepLatestUserMessage) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === "user" && !isSyntheticToolImageContext(message)) {
+        latestUserIndex = index;
+        break;
+      }
+    }
+  }
+  let replaced = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (index === latestUserIndex || !Array.isArray(message?.content)) continue;
+    if (!message.content.some((part) => imagePartFromContent(part))) continue;
+    let countInMessage = 0;
+    message.content = message.content.map((part) => {
+      if (!imagePartFromContent(part)) return part;
+      countInMessage += 1;
+      return { type: "text", text: "[较早历史消息中的图片已省略以控制请求体积]" };
+    });
+    replaced += countInMessage;
+  }
+  return replaced;
+}
+
+function partImageUrl(part) {
+  if (part?.type === "image_url") {
+    return typeof part.image_url === "string" ? part.image_url : String(part.image_url?.url || "");
+  }
+  if (part?.type === "input_image") {
+    return String(part.image_url || "");
+  }
+  return "";
+}
+
+function measureTotalImageChars(messages) {
+  let total = 0;
+  for (const message of messages || []) {
+    if (!Array.isArray(message?.content)) continue;
+    for (const part of message.content) {
+      if (imagePartFromContent(part)) total += partImageUrl(part).length;
+    }
+  }
+  return total;
+}
+
+export async function enforceModelImageBudget(
+  messages,
+  options: {
+    maxViewImages?: number;
+    maxSingleImageChars?: number;
+    maxTotalImageChars?: number;
+    compressImageDataUrl?: (dataUrl: string) => Promise<string | null>;
+  } = {},
+) {
+  const maxViewImages = Math.max(0, Math.floor(options.maxViewImages ?? 2));
+  const maxSingleImageChars = Math.max(1024, Math.floor(options.maxSingleImageChars ?? MODEL_IMAGE_DATA_URL_MAX_CHARS));
+  const maxTotalImageChars = Math.max(maxSingleImageChars, Math.floor(options.maxTotalImageChars ?? MODEL_TOTAL_IMAGES_MAX_CHARS));
+  const compressImageDataUrl = options.compressImageDataUrl ?? compressImageDataUrlForModel;
+
+  let pruned = replaceViewImagesWithText(messages, maxViewImages);
+  let compressed = 0;
+
+  for (const message of messages || []) {
+    if (!Array.isArray(message?.content)) continue;
+    let changed = false;
+    const nextContent = [];
+    for (const part of message.content) {
+      if (!imagePartFromContent(part)) {
+        nextContent.push(part);
+        continue;
+      }
+      const url = partImageUrl(part);
+      if (url.length <= maxSingleImageChars) {
+        nextContent.push(part);
+        continue;
+      }
+      const compressedUrl = await compressImageDataUrl(url);
+      if (compressedUrl && compressedUrl.length <= maxSingleImageChars) {
+        changed = true;
+        compressed += 1;
+        if (part.type === "input_image") {
+          nextContent.push({ ...part, image_url: compressedUrl });
+        } else {
+          const imageUrlObj = typeof part.image_url === "object" && part.image_url
+            ? { ...part.image_url, url: compressedUrl }
+            : { url: compressedUrl };
+          nextContent.push({ ...part, image_url: imageUrlObj });
+        }
+      } else {
+        changed = true;
+        pruned += 1;
+        nextContent.push({
+          type: "text",
+          text: "[图片体积超出模型单图限制，已省略；如需查看请压缩图片后重试]",
+        });
+      }
+    }
+    if (changed) message.content = nextContent;
+  }
+
+  let totalChars = measureTotalImageChars(messages);
+  if (totalChars > maxTotalImageChars) {
+    for (const message of messages || []) {
+      if (totalChars <= maxTotalImageChars) break;
+      if (!isToolImageMessage(message)) continue;
+      const imageParts = message.content.filter((part) => imagePartFromContent(part));
+      if (!imageParts.length) continue;
+      const removedChars = imageParts.reduce((sum, part) => sum + partImageUrl(part).length, 0);
+      const text = message.content
+        .filter((part) => part?.type === "text")
+        .map((part) => String(part?.text || ""))
+        .filter(Boolean)
+        .join("\n");
+      const notice = isViewImageMessage(message)
+        ? "[此前通过 view_image 查看的图片已省略以控制请求体积；如需重新查看，请再次调用 view_image]"
+        : "[此前界面截图已移除，请以最新状态为准]";
+      message.content = `${text}${text ? "\n" : ""}${notice}`;
+      pruned += imageParts.length;
+      totalChars = Math.max(0, totalChars - removedChars);
+    }
+  }
+
+  if (totalChars > maxTotalImageChars) {
+    let latestUserIndex = -1;
+    for (let index = (messages?.length || 0) - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.role === "user" && !isSyntheticToolImageContext(message)) {
+        latestUserIndex = index;
+        break;
+      }
+    }
+    for (let index = 0; index < (messages?.length || 0); index += 1) {
+      if (totalChars <= maxTotalImageChars) break;
+      if (index === latestUserIndex) continue;
+      const message = messages[index];
+      if (!Array.isArray(message?.content) || !message.content.some((part) => imagePartFromContent(part))) continue;
+      let changed = false;
+      const nextContent = message.content.map((part) => {
+        if (!imagePartFromContent(part) || totalChars <= maxTotalImageChars) return part;
+        const len = partImageUrl(part).length;
+        changed = true;
+        pruned += 1;
+        totalChars = Math.max(0, totalChars - len);
+        return { type: "text", text: "[较早历史消息中的图片已省略以控制请求体积]" };
+      });
+      if (changed) message.content = nextContent;
+    }
+  }
+
+  return { pruned, compressed, totalChars };
 }
 
 // Keep two complete desktop snapshots per app for comparisons. Older control
