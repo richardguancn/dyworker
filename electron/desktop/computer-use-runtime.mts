@@ -10,7 +10,8 @@ import { isNavigationClick, macControlEvidence, macObservationText, navigationOb
 import { createLinuxOcclusionChecker, verifyLinuxTargetRegion, type OcclusionVerdict } from "./linux-screen-check.mts";
 import { browserFillForm, browserFillReview, browserFormFields, browserFormHint, browserFormObservation, browserFormSave,
   browserFormUnavailable, browserFormWindow, browserInputUnverified, browserTextShortcut, fillBrowserForm, hasBrowserPage,
-  isBrowserFormField, matchBrowserFormSave, planBrowserFill, readBrowserForm, verifiedBrowserChromeFocus } from "./browser-fill-form.mts";
+  isFillableBrowserFormField, matchBrowserFormSave, planBrowserFill, readBrowserForm, verifiedBrowserChromeFocus,
+  verifiedUnfillableBrowserEditableFocus } from "./browser-fill-form.mts";
 
 const nativeActions = new Set([
   "click", "drag", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text",
@@ -23,6 +24,7 @@ const observationProperty = {
 };
 const isPid = (value: string) => /^[1-9][0-9]{0,9}$/.test(value);
 const failure = (result: string) => ({ ok: false, result });
+const preflightFailure = (result: string) => ({ ok: false, preflightFailed: true, result });
 const pidOf = (text: string) => /^App=.* \(pid (\d+)\)\s*$/m.exec(text.split("\n")[0])?.[1];
 
 const toolDescriptions: Record<string, string> = {
@@ -328,15 +330,16 @@ export function createComputerUseRuntime(
         max_tree_depth: Math.max(input.max_tree_depth || 0, 96),
       });
       const observeForm = async (input: Record<string, any>) => readBrowserForm(app, await invoke("get_app_state", formArgs(input)), invoke);
+      const replyFailure = review ? preflightFailure : failure;
       if (name === browserFillForm || (review && reviewAction?.name === browserFillForm)) {
         if (!isMac || !previous?.browserWindow || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
-          return failure("请先读取浏览器中的目标网页，并携带这次观察编号。");
+          return replyFailure("请先读取浏览器中的目标网页，并携带这次观察编号。");
         }
         const observe = () => observeForm(previous.args);
         const latest = await observe();
-        if (latest.isError) return failure(latest.text);
+        if (latest.isError) return replyFailure(latest.text);
         const plan = planBrowserFill(app, previous.result.text, previous.browserWindow, latest, (review ? reviewAction!.args : args).fields);
-        if ("error" in plan) return failure(plan.error);
+        if ("error" in plan) return replyFailure(plan.error);
         if (review) return { ok: true, result: browserFillReview(plan), images: [] };
         current.observation = undefined;
         const result = await fillBrowserForm(plan, latest, observe, invoke);
@@ -361,7 +364,7 @@ export function createComputerUseRuntime(
       if (save) {
         const fresh = await observeForm(previous.args);
         const target = matchBrowserFormSave(filled.snapshot, fresh, save, filled.labels);
-        if (!target || target.disabled) return failure("当前表单、字段或保存按钮已变化，请重新核对。");
+        if (!target || target.disabled) return replyFailure("当前表单、字段或保存按钮已变化，请重新核对。");
         if (review) return { ok: true, result: browserFormObservation(fresh), images: [] };
         current.observation = undefined;
         const action = await invoke("click", { app, element_index: target.index, click_method: "accessibility" });
@@ -381,15 +384,15 @@ export function createComputerUseRuntime(
         return { ok: true, result: `已点击「${save.label}」，尚未核对保存结果。请先读取当前表单状态，避免再次点击保存。`, images: [] };
       }
       if (name === notepadReplace || (review && reviewAction?.name === notepadReplace)) {
-        if (!isMac || app !== notepadApp) return failure("此替换入口用于 macOS 的 Notepad--。");
+        if (!isMac || app !== notepadApp) return replyFailure("此替换入口用于 macOS 的 Notepad--。");
         if (!previous || previous.id !== args.observation_id || previous.args.app !== app || previous.controlsOnly) {
-          return failure("请先读取 Notepad-- 的目标正文，并携带这次观察编号。");
+          return replyFailure("请先读取 Notepad-- 的目标正文，并携带这次观察编号。");
         }
         const observe = () => invoke("get_app_state", { ...previous.args, include_ax: true, include_screenshot: false, text_limit: "max" });
         const latest = await observe();
-        if (latest.isError) return format(latest);
+        if (latest.isError) return review ? { ...format(latest), preflightFailed: true } : format(latest);
         const plan = planNotepadReplace(previous.result.text, latest.text, review ? reviewAction!.args : args);
-        if ("error" in plan) return failure(plan.error);
+        if ("error" in plan) return replyFailure(plan.error);
         if (review) return {
           ok: true,
           result: `${plan.document.window}\n已核对正文，目标文字唯一匹配。拟将「${plan.oldText}」替换为「${plan.newText}」，范围仅限当前文档，完成后复读，不保存。`,
@@ -411,41 +414,64 @@ export function createComputerUseRuntime(
         if (!visionEnabled) {
           return "当前模型不支持识别界面截图，禁止按屏幕坐标点击或拖拽。请改用控件编号操作，或切换支持视觉的模型。";
         }
-        if (server.platform === "linux") {
-          const region = verifyLinuxTargetRegion({
-            previousImage: previous!.result.images[0],
-            freshImage: fresh.images[0],
-            points,
-          });
-          if (!region.ok) return "reason" in region ? region.reason : "目标区域画面已发生变化，请重新读取界面。";
-          if (inspectOcclusion) {
-            const verdict = await inspectOcclusion({ pid: Number(app), points, imageSize: region.imageSize });
-            if (verdict.status === "occluded") {
-              const who = verdict.isSelf ? "（DYWorker 主窗口）" : verdict.occluderTitle ? `「${verdict.occluderTitle}」` : "";
-              return `目标位置 (${Math.round(verdict.point[0])}, ${Math.round(verdict.point[1])}) 当前被上层窗口${who}遮挡。请将目标窗口置于前台并移开遮挡后再重新读取界面。`;
-            }
-            if (verdict.status === "unknown") {
-              return `无法确认目标位置未被其他窗口遮挡（${verdict.reason}），请确认目标窗口在前台可见后重新读取界面。`;
-            }
+        const region = verifyLinuxTargetRegion({
+          previousImage: previous!.result.images[0],
+          freshImage: fresh.images[0],
+          points,
+        });
+        if (!region.ok) return "reason" in region ? region.reason : "目标区域画面已发生变化，请重新读取界面。";
+        if (server.platform === "linux" && inspectOcclusion) {
+          const verdict = await inspectOcclusion({ pid: Number(app), points, imageSize: region.imageSize });
+          if (verdict.status === "occluded") {
+            const who = verdict.isSelf ? "（DYWorker 主窗口）" : verdict.occluderTitle ? `「${verdict.occluderTitle}」` : "";
+            return `目标位置 (${Math.round(verdict.point[0])}, ${Math.round(verdict.point[1])}) 当前被上层窗口${who}遮挡。请将目标窗口置于前台并移开遮挡后再重新读取界面。`;
           }
-          return undefined;
-        }
-        if (fresh.images[0]?.data !== previous!.result.images[0]?.data) {
-          return "窗口或控件已发生变化。请重新读取界面，再选择操作目标。";
+          if (verdict.status === "unknown") {
+            return `无法确认目标位置未被其他窗口遮挡（${verdict.reason}），请确认目标窗口在前台可见后重新读取界面。`;
+          }
         }
         return undefined;
       };
       if (review) {
-        if (previous?.id !== args.observation_id || previous?.args.app !== app) return failure("当前观察已失效，请重新读取目标窗口。");
-        const reviewPoints = reviewAction ? pointsOf(reviewAction.name, reviewAction.args) : undefined;
+        if (!previous || previous.id !== args.observation_id || previous.args.app !== app) {
+          return preflightFailure("当前观察已失效，请重新读取目标窗口。");
+        }
+        const actionName = reviewAction?.name || "";
+        const actionArgs = reviewAction?.args || args;
+        const protectReviewBrowserInput = browserFormAvailable && reviewAction && browserTextShortcut(actionName, actionArgs);
+        if (browserFormAvailable && actionName === "set_value" && isFillableBrowserFormField(app, previous.result.text, actionArgs.element_index)) {
+          return preflightFailure(browserFormHint);
+        }
+        if (protectReviewBrowserInput && current.observedBrowsers.has(app)
+          && !verifiedBrowserChromeFocus(previous.result.text)
+          && !verifiedUnfillableBrowserEditableFocus(app, previous.result.text)) {
+          return preflightFailure(browserInputUnverified);
+        }
+        if (previous.controlsOnly && reviewAction && !isNavigationClick(previous.result.text, reviewAction)) {
+          return preflightFailure("当前观察仅用于导航，请先重新读取目标界面。");
+        }
+        const reviewPoints = reviewAction ? pointsOf(actionName, actionArgs) : undefined;
+        if (reviewPoints) {
+          if (!visionEnabled) {
+            return preflightFailure("当前模型不支持识别界面截图，禁止按屏幕坐标点击或拖拽。请改用控件编号操作，或切换支持视觉的模型。");
+          }
+          if (!previous.result.images.length) {
+            return preflightFailure("坐标操作需要最新的窗口截图。");
+          }
+        }
         const evidence = isMac && !reviewPoints && reviewAction ? macControlEvidence(previous.result.text, reviewAction) : undefined;
         const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
-        if (fresh.isError) return format(fresh);
+        if (fresh.isError) return { ...format(fresh), preflightFailed: true };
+        if (protectReviewBrowserInput && (current.observedBrowsers.has(app) || hasBrowserPage(fresh.text))
+          && !verifiedBrowserChromeFocus(fresh.text)
+          && !verifiedUnfillableBrowserEditableFocus(app, fresh.text)) {
+          return preflightFailure(browserInputUnverified);
+        }
         const matches = evidence ? macControlEvidence(fresh.text, reviewAction!) === evidence : fresh.text === previous.result.text;
-        if (!matches) return failure("目标窗口或控件已发生变化，请重新观察。");
+        if (!matches) return preflightFailure("目标窗口或控件已发生变化，请重新观察。");
         if (reviewPoints) {
           const coordError = await verifyCoordinateState(fresh, reviewPoints);
-          if (coordError) return failure(coordError);
+          if (coordError) return preflightFailure(coordError);
         }
         if (previous.controlsOnly) return { ok: true, result: navigationObservation(fresh.text), images: [] };
         return evidence ? { ...format(fresh), images: [] } : format(fresh);
@@ -526,10 +552,12 @@ export function createComputerUseRuntime(
         return failure("当前观察已失效，请先读取目标窗口并携带最新观察编号。");
       }
       const protectBrowserInput = browserFormAvailable && browserTextShortcut(name, args);
-      if (browserFormAvailable && name === "set_value" && isBrowserFormField(app, previous.result.text, args.element_index)) {
+      if (browserFormAvailable && name === "set_value" && isFillableBrowserFormField(app, previous.result.text, args.element_index)) {
         return failure(browserFormHint);
       }
-      if (protectBrowserInput && current.observedBrowsers.has(app) && !verifiedBrowserChromeFocus(previous.result.text)) {
+      if (protectBrowserInput && current.observedBrowsers.has(app)
+        && !verifiedBrowserChromeFocus(previous.result.text)
+        && !verifiedUnfillableBrowserEditableFocus(app, previous.result.text)) {
         return failure(browserInputUnverified);
       }
       const nativeArgs = Object.fromEntries(Object.entries(args).filter(([field]) =>
@@ -580,7 +608,9 @@ export function createComputerUseRuntime(
       current.observation = undefined;
       const fresh = await invoke("get_app_state", evidence ? { ...previous.args, include_screenshot: false } : previous.args);
       if (fresh.isError) return format(fresh);
-      if (protectBrowserInput && (current.observedBrowsers.has(app) || hasBrowserPage(fresh.text)) && !verifiedBrowserChromeFocus(fresh.text)) {
+      if (protectBrowserInput && (current.observedBrowsers.has(app) || hasBrowserPage(fresh.text))
+        && !verifiedBrowserChromeFocus(fresh.text)
+        && !verifiedUnfillableBrowserEditableFocus(app, fresh.text)) {
         return failure(browserInputUnverified);
       }
       const matches = evidence ? macControlEvidence(fresh.text, action) === evidence : fresh.text === previous.result.text;

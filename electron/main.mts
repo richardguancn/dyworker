@@ -1141,20 +1141,33 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
   browserAgent.setContext({ ownerSessionId: sessionId, runId });
   browserAgent.setWorkspace(workspacePath);
   const activeVisibleSession = browserControlManager.session;
+  const claimedBackground = backgroundBrowserHandoffs.claim(sessionId, runId, workspacePath);
+  const activePanelContents = renderer && !channel && !claimedBackground
+    ? activeEmbeddedBrowserContents({ forOwnerSessionId: sessionId })
+    : null;
+  const hasLoadedVisiblePanelTab = Boolean(
+    activePanelContents
+    && !activePanelContents.isDestroyed?.()
+    && browserPanelTabsFor(sessionId).some((tab) => tab.active && /^https?:\/\//i.test(String(tab.url || ""))),
+  );
   const inheritVisiblePanel = Boolean(
     renderer
     && !channel
-    && activeVisibleSession
-    && activeVisibleSession.ownerSessionId === sessionId
-    && !activeVisibleSession.webContents?.isDestroyed?.()
-    && ["running", "acquiring", "human_control", "paused"].includes(activeVisibleSession.status),
+    && !claimedBackground
+    && (
+      (activeVisibleSession
+        && activeVisibleSession.ownerSessionId === sessionId
+        && !activeVisibleSession.webContents?.isDestroyed?.()
+        && ["running", "acquiring", "human_control", "paused"].includes(activeVisibleSession.status))
+      || hasLoadedVisiblePanelTab
+    ),
   );
   const taskBrowser = new TaskBrowserRouter({
     visible: browserAgent, ownerSessionId: sessionId, runId,
     initialMode: inheritVisiblePanel ? "visible" : "",
     isFullCdpAccessEnabled: () => currentFullCdpAccess,
     handoffs: backgroundBrowserHandoffs, allowHandoff: Boolean(renderer) && !channel,
-    claimedBackground: backgroundBrowserHandoffs.claim(sessionId, runId, workspacePath),
+    claimedBackground,
     createBackground: () => createBackgroundBrowserAgent({ ownerSessionId: sessionId, runId, workspacePath, createWindow: options => new BrowserWindow(options),
       isFullCdpAccessEnabled: () => currentFullCdpAccess, isScreenLocked: () => screenLocked,
       loadSiteSession: options => loadSiteSession({ ...options, builtinSession: session.fromPartition("persist:dyworker-browser"), appDataDir: app.getPath("userData") }) }),
@@ -1190,7 +1203,9 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
         defaultOpenId: channel === "feishu" ? String(channelUserId || "") : "",
       });
     }
-    if (name.startsWith("browser__")) return taskBrowser.handle(name, args);
+    if (name.startsWith("browser__")) {
+      return taskBrowser.handle(name, args, { allowExternalPath: context.allowExternalPath });
+    }
     // 插件工具：经 ctx.tools 派发（内部做风险闸门与审计留痕）
     if (ctx.tools.owns(name)) {
       const executed = await ctx.tools.execute(name, args, { sessionId, runId, source: "agent", signal, workspacePath });

@@ -530,7 +530,7 @@ constructor({
     return { ok: true, result: `已关闭标签页 ${tabId}` };
   }
 
-  async handle(name, args = {} as any) {
+  async handle(name, args = {} as any, toolContext: Record<string, any> = {}) {
     // 关键检查点：后台无宿主 Agent 或空身份禁止控制浏览器 (F2_background_no_renderer)
     if (!this.currentContext.ownerSessionId && !this.openPanel) {
       return {
@@ -570,7 +570,10 @@ constructor({
       case "browser__inspect": {
         const session = await this.ensureActiveSession();
         if (!session) return { ok: false, result: `${this.surfaceLabel}尚未打开网页` };
-        return this.controlManager.inspect({ context: this.currentContext });
+        return this.controlManager.inspect({
+          observationId: typeof args?.observationId === "string" ? args.observationId : "",
+          context: this.currentContext,
+        });
       }
 
       case "browser__act": {
@@ -613,6 +616,7 @@ constructor({
           observationId: obsId,
           actionId,
           action,
+          allowExternalPath: toolContext?.allowExternalPath,
           context: this.currentContext
         });
         if (!actRes.ok) return actRes;

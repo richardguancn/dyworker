@@ -256,6 +256,7 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
     }
     let observedContents = null;
     let timer = null;
+    let settleTimer = null;
     let settled = false;
 
     // 打开请求可能携带取消凭据：预占被接管、停止、过期或被新请求接替后，
@@ -266,6 +267,7 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (settleTimer) clearTimeout(settleTimer);
       if (observedContents) {
         try {
           observedContents.removeListener("did-stop-loading", onStop);
@@ -276,6 +278,28 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
         }
       }
       resolve(result);
+    };
+    const scheduleFinish = (contents) => {
+      if (settled || settleTimer) return;
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        if (settled) return;
+        if (!stillValid()) {
+          finish({ ok: false, result: "打开请求已过期或已被新任务接替，自动跳转已取消" });
+          return;
+        }
+        if (!contents || contents.isDestroyed()) return;
+        let currentUrl = "";
+        let loading = false;
+        try {
+          currentUrl = contents.getURL();
+          loading = typeof contents.isLoading === "function" ? Boolean(contents.isLoading()) : false;
+        } catch {
+          return;
+        }
+        if (loading || !currentUrl || currentUrl === "about:blank") return;
+        finish({ ok: true, contents });
+      }, 180);
     };
     const onStop = () => {
       const contents = observedContents;
@@ -291,9 +315,10 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
         return;
       }
       if (!currentUrl || currentUrl === "about:blank" || currentUrl === previousUrl) return;
-      finish({ ok: true, contents });
+      scheduleFinish(contents);
     };
-    const onFail = (_event, errorCode, errorDescription) => {
+    const onFail = (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (isMainFrame === false || errorCode === -3) return;
       finish({ ok: false, result: `网页加载失败：${errorDescription || errorCode}` });
     };
     const onDestroyed = () => {
@@ -326,8 +351,8 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
         if (observedContents !== contents) {
           observedContents = contents;
           try {
-            contents.once("did-stop-loading", onStop);
-            contents.once("did-fail-load", onFail);
+            contents.on("did-stop-loading", onStop);
+            contents.on("did-fail-load", onFail);
             contents.once("destroyed", onDestroyed);
           } catch {
             // 忽略
@@ -343,17 +368,14 @@ function waitForEmbeddedBrowser(sender, url, tabId, { validate, ownerSessionId =
         }
         if (currentUrl && currentUrl !== "about:blank" && !loading) {
           if (currentUrl === url) {
-            finish({ ok: true, contents });
-            return;
-          }
-          const elapsed = Date.now() - startedAt;
-          if (elapsed > 1500 && currentUrl !== previousUrl) {
-            finish({ ok: true, contents });
-            return;
-          }
-          if (elapsed > 2500 && isSameSiteUrl(url, currentUrl)) {
-            finish({ ok: true, contents });
-            return;
+            scheduleFinish(contents);
+          } else {
+            const elapsed = Date.now() - startedAt;
+            if (elapsed > 1500 && currentUrl !== previousUrl) {
+              scheduleFinish(contents);
+            } else if (elapsed > 2500 && isSameSiteUrl(url, currentUrl)) {
+              scheduleFinish(contents);
+            }
           }
         }
       }

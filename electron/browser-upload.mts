@@ -2,19 +2,35 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 // 文件路径只在主进程解析，不将本地内容或路径嵌入网页脚本。
-export async function resolveBrowserUploadFiles(files: unknown, workspacePath: string) {
+export async function resolveBrowserUploadFiles(
+  files: unknown,
+  workspacePath: string,
+  { allowExternalPath }: { allowExternalPath?: (targetPath: string) => boolean } = {},
+) {
   if (!Array.isArray(files) || !files.length || files.length > 20
     || files.some(file => typeof file !== 'string' || !file.trim() || file.includes('\0'))) {
     throw new Error('上传需要 1–20 个有效本地文件路径');
   }
-  if (!workspacePath) throw new Error('上传前请选择文件所在的工作文件夹');
-  const root = await fs.realpath(workspacePath);
+  const canCheckExternal = typeof allowExternalPath === 'function';
+  if (!workspacePath && !canCheckExternal) throw new Error('上传前请选择文件所在的工作文件夹');
+  const root = workspacePath ? await fs.realpath(workspacePath) : '';
   const resolved = [];
   for (const file of files) {
-    const absolute = await fs.realpath(path.resolve(root, file));
-    const relative = path.relative(root, absolute);
-    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error(`上传文件在工作区之外，请先将该文件放入当前工作文件夹：${file}`);
+    if (!root && !path.isAbsolute(file)) throw new Error('上传前请选择文件所在的工作文件夹');
+    const candidate = root ? path.resolve(root, file) : path.resolve(file);
+    const lstat = await fs.lstat(candidate);
+    const absolute = await fs.realpath(candidate);
+    const relative = root ? path.relative(root, absolute) : '';
+    const outside = !root || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    if (outside) {
+      const authorized = canCheckExternal && (
+        lstat.isSymbolicLink()
+          ? allowExternalPath(absolute) === true
+          : (allowExternalPath(absolute) === true || allowExternalPath(candidate) === true)
+      );
+      if (!authorized) {
+        throw new Error(`上传文件在工作区之外，请先将该文件放入当前工作文件夹：${file}`);
+      }
     }
     const stat = await fs.stat(absolute);
     if (!stat.isFile()) throw new Error(`上传目标不是普通文件：${file}`);

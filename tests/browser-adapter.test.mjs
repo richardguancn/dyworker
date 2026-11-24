@@ -779,3 +779,63 @@ test("BrowserPageAdapter: act 支持 type=press 作为 keypress 别名兼容", a
 
   adapter.dispose();
 });
+
+test("BrowserPageAdapter: 提示跨域登录区交接、scroll/keypress 免受视口高度微调误杀且 inspect 支持本地预检", async () => {
+  let currentInnerHeight = 453;
+  const base = createMockWebContents({ url: "https://channels.weixin.qq.com/login.html", title: "视频号助手" });
+  const mockContents = {
+    ...base,
+    executeJavaScript: async (script) => {
+      if (typeof script === "string" && script.trim().startsWith("({ width: window.innerWidth")) {
+        return { width: 1024, height: currentInnerHeight };
+      }
+      if (typeof script === "string" && script.includes("NOT_FOUND_OR_REPLACED")) {
+        return { ok: true, coords: { x: 140, y: 215 }, isContentEditable: false };
+      }
+      if (typeof script === "string" && script.includes("innerText") && !script.includes("data-dyworker-obs")) {
+        return { title: "视频号助手", url: "https://channels.weixin.qq.com/login.html", content: "视频号助手登录页" };
+      }
+      return {
+        title: "视频号助手",
+        url: "https://channels.weixin.qq.com/login.html",
+        totalCount: 1,
+        elements: [
+          {
+            ref: 0,
+            tag: "iframe",
+            type: "",
+            role: "iframe",
+            name: "跨域内嵌页面 (https://open.weixin.qq.com/connect/qrconnect?appid=wx20d84d087938fd46)",
+            href: "",
+            enabled: true,
+            checked: false,
+            rect: { x: 750, y: 86, width: 208, height: 208 }
+          }
+        ],
+        viewport: { cssWidth: 1024, cssHeight: 453, devicePixelRatio: 2 }
+      };
+    }
+  };
+  const adapter = new BrowserPageAdapter(mockContents);
+  const obs = await adapter.observe();
+  assert.match(obs.summary, /browser__handoff/);
+
+  // 刚打开面板自动缩放导致高度由 453 -> 721 时：scroll 与 keypress 仍可执行，坐标点击则按原机制拦截
+  currentInnerHeight = 721;
+  const scrollRes = await adapter.act({ observationId: obs.observationId, action: { type: "scroll", deltaY: 300 } });
+  assert.equal(scrollRes.ok, true);
+  const keyRes = await adapter.act({ observationId: obs.observationId, action: { type: "keypress", key: "PageDown" } });
+  assert.equal(keyRes.ok, true);
+  const pointClickRes = await adapter.act({ observationId: obs.observationId, action: { type: "click", point: { x: 100, y: 100 } } });
+  assert.equal(pointClickRes.ok, false);
+  assert.equal(pointClickRes.errorCode, "STALE_OBSERVATION");
+
+  // inspect 传入过期 observationId 时直接返回 preflightFailed
+  const staleInspect = await adapter.inspect({ observationId: "obs_expired" });
+  assert.equal(staleInspect.ok, false);
+  assert.equal(staleInspect.preflightFailed, true);
+  const validInspect = await adapter.inspect({ observationId: obs.observationId });
+  assert.equal(validInspect.ok, true);
+
+  adapter.dispose();
+});

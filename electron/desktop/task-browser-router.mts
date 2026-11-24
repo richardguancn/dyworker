@@ -168,7 +168,7 @@ export class TaskBrowserRouter {
     return { ok: false, errorCode: 'INVALID_ARGUMENT', result: `未知的连接操作：${action}` };
   }
 
-  async handle(name, args = {} as any) {
+  async handle(name, args = {} as any, context: Record<string, any> = {}) {
     if (this.stopped) return { ok: false, errorCode: 'TASK_STOPPED', result: '任务已停止，不能继续操作浏览器。' };
     if (this.busy) return { ok: false, errorCode: 'BROWSER_BUSY', result: '上一个浏览器操作尚未结束，请等待后重试。' };
     this.busy = true;
@@ -184,7 +184,7 @@ export class TaskBrowserRouter {
     }
     if (desired === 'external') {
       if (!this.external) return { ok: false, errorCode: 'TARGET_UNAVAILABLE', result: '外部浏览器会话尚未连接，请先调用 browser__connect。' };
-      const result = await this.external.agent.handle(name, args);
+      const result = await this.external.agent.handle(name, args, context);
       if ((name === 'browser__close' || (name === 'browser__tabs' && args.action === 'close' && !args.tabId)) && result?.ok) {
         this.external.agent.dispose();
         await this.external.surface.dispose();
@@ -205,7 +205,7 @@ export class TaskBrowserRouter {
     if (desired === 'background' && name === 'browser__handoff' && this.allowHandoff && this.handoffs) {
       return this.handoffs.request({ ownerSessionId: this.ownerSessionId, runId: this.runId, background: this.background, reason: args.reason });
     }
-    const result = await agent.handle(name, args);
+    const result = await agent.handle(name, args, context);
     if (name === 'browser__open' && result?.ok) this.mode = desired;
     if (name === 'browser__close' && result?.ok) this.mode = '';
     if (name === 'browser__tabs' && args.action === 'close' && !args.tabId && result?.ok) this.mode = '';

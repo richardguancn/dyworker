@@ -4,6 +4,116 @@ import { BrowserAgent } from '../browser.mts';
 import { cookieMatchesHost, toCookieSetDetails } from '../browser-import.mts';
 import { markBackgroundWindow, unmarkBackgroundWindow } from './window-lifecycle.mts';
 
+function isAbortedNavigationError(error: any): boolean {
+  if (!error) return false;
+  if (error?.code === 'ERR_ABORTED' || error?.errno === -3) return true;
+  return /ERR_ABORTED|\(-3\)/.test(String(error?.message || error || ''));
+}
+
+async function loadUrlSettlingAborts(contents: any, targetUrl: string, timeoutMs: number, valid: () => boolean) {
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 20000);
+  try {
+    await withDeadline(contents.loadURL(targetUrl), Math.max(1, deadline - Date.now()), '网页加载超时');
+    return;
+  } catch (error: any) {
+    if (!isAbortedNavigationError(error)) throw error;
+  }
+
+  // SPA 客户端跳转（如未登录跳去 /login.html）会让首跳 loadURL 抛出 ERR_ABORTED (-3)，等待随后的实际跳转落定
+  if (!valid()) throw new Error('打开请求已取消');
+  if (!contents || contents.isDestroyed?.()) throw new Error('后台页面已关闭');
+
+  const isLoading = () => (typeof contents.isLoading === 'function' ? Boolean(contents.isLoading()) : false);
+  const currentUrl = () => {
+    try { return String(contents.getURL?.() || ''); } catch { return ''; }
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    let finished = false;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null; }
+      try {
+        contents.removeListener?.('did-stop-loading', onReadyEvent);
+        contents.removeListener?.('did-finish-load', onReadyEvent);
+        contents.removeListener?.('did-fail-load', onFail);
+        contents.removeListener?.('destroyed', onDestroyed);
+      } catch {
+        // 忽略清理异常
+      }
+    };
+    const doneResolve = () => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      resolve();
+    };
+    const doneReject = (err: Error) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(err);
+    };
+    const scheduleSettle = () => {
+      if (finished || settleTimer) return;
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        if (finished) return;
+        if (!valid()) { doneReject(new Error('打开请求已取消')); return; }
+        if (!contents || contents.isDestroyed?.()) { doneReject(new Error('后台页面已关闭')); return; }
+        const url = currentUrl();
+        if (!isLoading() && url && url !== 'about:blank') {
+          doneResolve();
+        }
+      }, 150);
+    };
+    const onReadyEvent = () => {
+      if (finished) return;
+      if (!valid()) { doneReject(new Error('打开请求已取消')); return; }
+      if (!isLoading()) {
+        const url = currentUrl();
+        if (url && url !== 'about:blank') scheduleSettle();
+      }
+    };
+    const onFail = (_event: any, errorCode: number, errorDescription?: string, _validatedUrl?: string, isMainFrame?: boolean) => {
+      if (isMainFrame === false || errorCode === -3) return;
+      doneReject(new Error(errorDescription || `ERR_${errorCode}`));
+    };
+    const onDestroyed = () => doneReject(new Error('后台页面已关闭'));
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      doneReject(new Error('网页加载超时'));
+      return;
+    }
+
+    contents.on?.('did-stop-loading', onReadyEvent);
+    contents.on?.('did-finish-load', onReadyEvent);
+    contents.on?.('did-fail-load', onFail);
+    contents.on?.('destroyed', onDestroyed);
+
+    timeoutTimer = setTimeout(() => doneReject(new Error('网页加载超时')), remainingMs);
+    pollTimer = setInterval(() => {
+      if (finished) return;
+      if (!valid()) { doneReject(new Error('打开请求已取消')); return; }
+      if (!contents || contents.isDestroyed?.()) { doneReject(new Error('后台页面已关闭')); return; }
+      const url = currentUrl();
+      if (!isLoading() && url && url !== 'about:blank') scheduleSettle();
+    }, 80);
+
+    // 若触发 catch 时页面实际上已经非 loading 且落定到非 blank URL，立即排期二次确认
+    const initialUrl = currentUrl();
+    if (!isLoading() && initialUrl && initialUrl !== 'about:blank') {
+      scheduleSettle();
+    }
+  });
+}
+
 async function withDeadline(promise, timeoutMs, message) {
   let timer;
   try {
@@ -266,7 +376,7 @@ export class BackgroundBrowserSurface {
       if (!seeded.ok) { if (created) this.closeTab(id); return { ok: false, result: seeded.result }; }
       try {
         if (!valid()) { if (created) this.closeTab(id); return { ok: false, result: '打开请求已取消' }; }
-        await withDeadline(record.contents.loadURL(check.url.toString()), timeoutMs, '网页加载超时');
+        await loadUrlSettlingAborts(record.contents, check.url.toString(), timeoutMs, valid);
       } finally {
         if (seeded.scriptId && !record.contents.isDestroyed()) {
           try {

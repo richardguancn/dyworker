@@ -561,14 +561,20 @@ constructor({ onStateChange, isScreenLocked, protectedBackground = false } = {} 
     );
   }
 
-  async inspect({ context = {} } = {} as any) {
-    return this.runExclusive(adapter => adapter.inspect(), { description: "正在核对当前页面...", context });
+  async inspect({ observationId = "", context = {} }: { observationId?: string; context?: any } = {}) {
+    return this.runExclusive(adapter => adapter.inspect({ observationId }), { description: "正在核对当前页面...", context });
   }
 
   /**
    * 执行交互动作（包含在途与已完成 actionId 并发去重，修复 F7 / 补充要求 5）
    */
-  async act({ observationId, actionId, action, context = {} }) {
+  async act({ observationId, actionId, action, allowExternalPath = undefined, context = {} }: {
+    observationId: string;
+    actionId?: string;
+    action: any;
+    allowExternalPath?: (targetPath: string) => boolean;
+    context?: any;
+  }) {
     // 强制要求 observationId，严禁回退缓存 (F7)
     if (!observationId || typeof observationId !== "string") {
       return { ok: false, errorCode: "STALE_OBSERVATION", result: "必须提供有效的 observationId 参数" };
@@ -598,7 +604,10 @@ constructor({ onStateChange, isScreenLocked, protectedBackground = false } = {} 
 
     const taskPromise = this.runExclusive(
       async (adapter, { signal, checkLease, session }) => {
-        const result = await adapter.act({ observationId, action }, { signal, checkLease, workspacePath: session.workspacePath });
+        const result = await adapter.act(
+          { observationId, action },
+          { signal, checkLease, workspacePath: session.workspacePath, allowExternalPath }
+        );
         return result;
       },
       { description: actionDesc, context, countsAsAction: true }

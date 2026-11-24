@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveBrowserUploadFiles, findObservedFileNode } from '../electron/browser-upload.mts';
+import { externalPathsForTool } from '../electron/agent/command-policy.mts';
+import { Workspace } from '../electron/agent/workspace.mts';
 import { readReviewObservation, requiresFullParameterReview, reviewActionFacts } from '../electron/approval-context.mts';
 import { matchStandingRule, suggestStandingRule } from '../electron/agent/standing-rules.mts';
 import { isReviewerEligible, planTaskApproval, reviewApproval } from '../electron/agent/review.mts';
@@ -130,4 +132,40 @@ test('常驻规则不静默放行 Linux 共享桌面工具，且不影响替我�
   assert.equal(requests.length, 1);
   assert.equal(requests[0].logprobs, undefined);
   assert.match(String(requests[0].messages?.[1]?.content || ''), /当前可见桌面会话/);
+});
+
+test('browser__act(upload) 支持经只读授权的工作区外本地文件并拒绝未授权符号链接', async t => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cu-ext-upload-')));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const work = path.join(root, 'work');
+  const downloads = path.join(root, 'downloads');
+  await fs.mkdir(work);
+  await fs.mkdir(downloads);
+  const video = path.join(downloads, 'demo.mp4');
+  const secret = path.join(downloads, 'secret.mp4');
+  const workSymlink = path.join(work, 'link-secret.mp4');
+  const outsideSymlink = path.join(downloads, 'outside-link.mp4');
+  await fs.writeFile(video, 'video-bytes');
+  await fs.writeFile(secret, 'secret-bytes');
+  await fs.symlink(secret, workSymlink);
+  await fs.symlink(secret, outsideSymlink);
+
+  // 未传 allowExternalPath 时默认严格拒绝工作区外文件
+  await assert.rejects(resolveBrowserUploadFiles([video], work), /工作区之外/);
+
+  const workspace = new Workspace(work, { trustTempDirs: false });
+  const uploadArgs = { observationId: 'obs-1', actionId: 'up-1', action: { type: 'upload', ref: 0, files: [video] } };
+  assert.deepEqual(externalPathsForTool(workspace, 'browser__act', uploadArgs), [video]);
+
+  const release = workspace.authorizeExternalPaths([video], { persist: false });
+  assert.deepEqual(externalPathsForTool(workspace, 'browser__act', uploadArgs), []);
+  const allowExternalPath = (targetPath) => workspace.isAuthorized(targetPath, { forWrite: false });
+
+  assert.deepEqual(await resolveBrowserUploadFiles([video], work, { allowExternalPath }), [video]);
+  await assert.rejects(resolveBrowserUploadFiles([secret], work, { allowExternalPath }), /工作区之外/);
+  await assert.rejects(resolveBrowserUploadFiles([workSymlink], work, { allowExternalPath }), /工作区之外/);
+  await assert.rejects(resolveBrowserUploadFiles([outsideSymlink], work, { allowExternalPath }), /工作区之外/);
+
+  release();
+  await assert.rejects(resolveBrowserUploadFiles([video], work, { allowExternalPath }), /工作区之外/);
 });

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import test from 'node:test';
+import { deflateSync } from 'node:zlib';
 import { discoverComputerUseServer, isComputerUseTool } from '../electron/computer-use.mts';
 import { createComputerUseRuntime } from '../electron/desktop/computer-use-runtime.mts';
 import { evaluateApproval } from '../electron/agent/permissions.mts';
 import { planTaskApproval } from '../electron/agent/review.mts';
 import { readReviewObservation } from '../electron/approval-context.mts';
+import { runAgent } from '../electron/agent.mts';
 
 const prefix = 'mcp__computer-use__';
 const scope = { sessionId: 'session', runId: 'run' };
@@ -744,4 +748,297 @@ test('Notepad-- 一次审批后用应用内替换，保留原文引号并复读'
   const autoSave = await call('get_app_state', { app });
   assert.match((await call('replace_document_text', { ...args, observation_id: idOf(autoSave) })).result, /周期自动保存/);
   assert.equal(calls.filter(([name, args]) => name === 'click' && args.element_index === '18').length, 1);
+});
+
+test('中文 Safari 识别相邻文本与 Placeholder 表单字段，并可一次性 fill_form 填写视频号', async t => {
+  const { calls, fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  fixture.apps = `Safari浏览器 — ${safari} [running]`;
+  const state = { desc: '', title: '' };
+  const encode = (v) => v.replaceAll('\n', '\\n');
+  const render = () => {
+    fixture.snapshot = [
+      `App=${safari} (pid 695)`,
+      'Window: "视频号助手", App: Safari浏览器.',
+      '0 标准窗口 视频号助手 ID: SafariWindow?IsSecure=true&UUID=win-wx, Secondary Actions: Raise',
+      '\t1 分离组',
+      '\t\t3 标签页组',
+      '\t\t\t4 container ID: BrowserView?IsPageLoaded=true',
+      '\t\t\t\t5 滚动区',
+      '\t\t\t\t\t6 HTML内容 视频号助手, URL: https://channels.weixin.qq.com/platform/post/create?',
+      '\t\t\t\t\t\t33 按钮 支持上传 8 小时以内视频',
+      '\t\t\t\t\t\t34 文本 视频描述',
+      `\t\t\t\t\t\t35 文本输入区 (settable, string)${state.desc ? ' Value: ' + encode(state.desc) : ''}`,
+      '\t\t\t\t\t\t\t36 文本 添加描述',
+      '\t\t\t\t\t\t37 container #话题 @视频号',
+      '\t\t\t\t\t\t38 文本 短标题',
+      `\t\t\t\t\t\t39 文本栏 (settable, string)${state.title ? ' Value: ' + encode(state.title) + ',' : ''} Placeholder: 填写短标题有机会获得更多流量`,
+      '\t\t\t\t\t\t63 按钮 发表',
+    ].join('\n');
+  };
+  fixture.handleAction = (name, args) => {
+    if (name === 'set_value') {
+      if (args.element_index === '35') state.desc = args.value;
+      else if (args.element_index === '39') state.title = args.value;
+      else return { isError: true, text: 'set_value could not verify', images: [] };
+      render();
+      return { text: 'ok', images: [] };
+    }
+    return { text: 'ok', images: [] };
+  };
+  render();
+
+  const observed = await call('get_app_state', { app: safari, form_only: true });
+  assert.equal(observed.ok, true, observed.result);
+  assert.match(observed.result, /35 多行输入框「视频描述」/);
+  assert.match(observed.result, /39 单行输入框「短标题」/);
+
+  const fillRes = await call(fill, {
+    app: safari,
+    observation_id: idOf(observed),
+    fields: [
+      { element_index: '35', value: '黎曼猜想正文\n#科技 #AI' },
+      { element_index: '39', value: '黎曼猜想被AI证明了？' },
+    ],
+  });
+  assert.equal(fillRes.ok, true, fillRes.result);
+  assert.match(fillRes.result, /已核对 2 个输入框：视频描述、短标题/);
+  assert.equal(state.desc, '黎曼猜想正文\n#科技 #AI');
+  assert.equal(state.title, '黎曼猜想被AI证明了？');
+  assert.equal(calls.filter(c => c.name === 'set_value').length, 2);
+});
+
+test('现代网页无法被 fill_form 唯一命名时放行 set_value 及聚焦后键入，避免三路死锁', async t => {
+  const { calls, fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  fixture.apps = `Safari浏览器 — ${safari} [running]`;
+  const render = (focused = '') => {
+    fixture.snapshot = [
+      `App=${safari} (pid 695)`,
+      'Window: "自定义编辑器", App: Safari浏览器.',
+      '0 标准窗口 自定义编辑器 ID: SafariWindow?IsSecure=true&UUID=win-ed',
+      '\t6 HTML内容 编辑器, URL: https://editor.example.com/post',
+      '\t\t12 文本输入区 (settable, string)',
+      '\t\t13 文本输入区 (settable, string)',
+      focused ? `The focused UI element is ${focused}` : '',
+    ].filter(Boolean).join('\n');
+  };
+  render();
+
+  // 无独特标签的重复输入区，fill_form 无法唯一定位，因此直接放行 set_value
+  const obs1 = await call('get_app_state', { app: safari, include_screenshot: false });
+  const setRes = await call('set_value', { app: safari, observation_id: idOf(obs1), element_index: '12', value: '直接写入' });
+  assert.equal(setRes.ok, true, setRes.result);
+
+  // 未聚焦可编辑控件时仍拦截盲打
+  const obsUnfocused = await call('get_app_state', { app: safari, include_screenshot: false });
+  const blockedType = await call('type_text', { app: safari, observation_id: idOf(obsUnfocused), text: '未聚焦盲打' });
+  assert.equal(blockedType.ok, false);
+  assert.match(blockedType.result, /无法核对文字输入的目标/);
+
+  // 确认焦点已落在无名输入区 12 后，放行 type_text 与 Cmd+V 粘贴
+  render('12 文本输入区 (settable, string).');
+  const obsFocused = await call('get_app_state', { app: safari, include_screenshot: false });
+  const typeRes = await call('type_text', { app: safari, observation_id: idOf(obsFocused), text: 'Hello Safari' });
+  assert.equal(typeRes.ok, true, typeRes.result);
+  const obsFocused2 = await call('get_app_state', { app: safari, include_screenshot: false });
+  const pasteRes = await call('press_key', { app: safari, observation_id: idOf(obsFocused2), key: 'cmd+v' });
+  assert.equal(pasteRes.ok, true, pasteRes.result);
+  assert.ok(calls.some(c => c.name === 'type_text' && c.args.text === 'Hello Safari'));
+  assert.ok(calls.some(c => c.name === 'press_key' && c.args.key === 'cmd+v'));
+});
+
+test('中文 macOS 适配：controls_only 保留中文按钮与标签，无索引 press_key 不触发 null[3] 崩溃', async t => {
+  const { calls, fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  fixture.apps = `Safari浏览器 — ${safari} [running]`;
+  fixture.snapshot = [
+    `App=${safari} (pid 695)`,
+    'Window: "视频号助手", App: Safari浏览器.',
+    '0 标准窗口 视频号助手 ID: SafariWindow?IsSecure=true&UUID=win-zh',
+    '\t31 按钮 写信',
+    '\t77 按钮 (disabled) 前进',
+    '\t211 标签 视频号助手 Value: on',
+    '\t300 文本输入区 (settable, string) 私密正文',
+  ].join('\n');
+
+  const navObs = await call('get_app_state', { app: safari, controls_only: true });
+  assert.equal(navObs.ok, true);
+  assert.match(navObs.result, /31 按钮 写信/);
+  assert.match(navObs.result, /211 标签 视频号助手/);
+  assert.doesNotMatch(navObs.result, /私密正文/);
+
+  // controls_only 观察上按 press_key（没有 element_index）应安全提示，不能抛 Cannot read properties of null (reading '3')
+  const keyOnNav = await call('press_key', { app: safari, observation_id: idOf(navObs), key: 'Return' });
+  assert.equal(keyOnNav.ok, false);
+  assert.match(keyOnNav.result, /仅用于导航/);
+  assert.doesNotMatch(keyOnNav.result, /Cannot read properties/);
+
+  // disabled 的中文按钮同样不得以 navigation click 放行
+  const navObs2 = await call('get_app_state', { app: safari, controls_only: true });
+  const clickDisabled = await call('click', { app: safari, observation_id: idOf(navObs2), element_index: '77' });
+  assert.equal(clickDisabled.ok, false);
+  assert.match(clickDisabled.result, /仅用于导航/);
+
+  // 正常中文导航标签允许点击
+  const navObs3 = await call('get_app_state', { app: safari, controls_only: true });
+  const clickTab = await call('click', { app: safari, observation_id: idOf(navObs3), element_index: '211' });
+  assert.equal(clickTab.ok, true);
+  assert.equal(calls.at(-1).args.click_method, 'accessibility');
+});
+
+function buildSolidPngBase64(width, height, paint) {
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    crcTable[n] = c >>> 0;
+  }
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, 4, 'ascii');
+    const crcBuf = Buffer.concat([head.subarray(4), data]);
+    let c = 0xffffffff;
+    for (let i = 0; i < crcBuf.length; i++) c = crcTable[(c ^ crcBuf[i]) & 0xff] ^ (c >>> 8);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((c ^ 0xffffffff) >>> 0, 0);
+    return Buffer.concat([head, data, crc]);
+  };
+  const stride = width * 4 + 1;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) {
+    raw[y * stride] = 0;
+    for (let x = 0; x < width; x++) {
+      const [r, g, b, a = 255] = paint(x, y);
+      const idx = y * stride + 1 + x * 4;
+      raw[idx] = r; raw[idx + 1] = g; raw[idx + 2] = b; raw[idx + 3] = a;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64');
+}
+
+test('macOS 局部图像比对与网页动态上传进度文本容忍：不因局部外进度条变化误阻断点击', async t => {
+  const { calls, clients, fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  fixture.apps = `Safari浏览器 — ${safari} [running]`;
+  const renderPage = (progressText) => [
+    `App=${safari} (pid 695)`,
+    'Window: "视频号助手", App: Safari浏览器.',
+    '0 标准窗口 视频号助手 ID: SafariWindow?IsSecure=true&UUID=win-prog',
+    '\t6 HTML内容 视频号助手, URL: https://channels.weixin.qq.com/platform/post/create',
+    `\t\t40 文本 ${progressText}`,
+    '\t\t63 按钮 发表',
+  ].join('\n');
+
+  let pngData = buildSolidPngBase64(120, 120, () => [20, 40, 200, 255]);
+  fixture.snapshot = renderPage('上传中 37%');
+  await call('list_apps', {});
+  const client = clients.at(-1);
+  const baseCall = client.callTool;
+  client.callTool = async (name, args, opts) => {
+    if (name === 'get_app_state') {
+      return { text: fixture.snapshot, images: args.include_screenshot ? [{ mimeType: 'image/png', data: pngData }] : [] };
+    }
+    return baseCall(name, args, opts);
+  };
+
+  // 1. 目标控件点击不受浏览器中上传百分比变化阻断
+  const obs1 = await call('get_app_state', { app: safari, include_screenshot: false });
+  fixture.snapshot = renderPage('上传中 68%');
+  const clickBtn = await call('click', { app: safari, observation_id: idOf(obs1), element_index: '63' });
+  assert.equal(clickBtn.ok, true, clickBtn.result);
+
+  // 2. 坐标点击 (20, 20)：仅右下角进度条 (95..115, 95..115) 像素变化时应放行
+  const obs2 = await call('get_app_state', { app: safari, include_screenshot: true });
+  pngData = buildSolidPngBase64(120, 120, (x, y) => (x >= 95 && y >= 95) ? [220, 20, 20, 255] : [20, 40, 200, 255]);
+  const clickCoord = await call('click', { app: safari, observation_id: idOf(obs2), x: 20, y: 20 });
+  assert.equal(clickCoord.ok, true, clickCoord.result);
+
+  // 3. 目标局部像素 (20, 20) 发生变化时仍应拦截
+  const obs3 = await call('get_app_state', { app: safari, include_screenshot: true });
+  pngData = buildSolidPngBase64(120, 120, (x, y) => (x >= 10 && x <= 30 && y >= 10 && y <= 30) ? [0, 200, 50, 255] : [20, 40, 200, 255]);
+  const blockedCoord = await call('click', { app: safari, observation_id: idOf(obs3), x: 20, y: 20 });
+  assert.equal(blockedCoord.ok, false);
+  assert.match(blockedCoord.result, /点击目标区域画面已发生变化/);
+  assert.equal(calls.filter(c => c.name === 'click').length, 2);
+});
+
+test('本地预检未通过（过期观察 / 无截图坐标点击）标记 preflightFailed，runAgent 短路跳过远程审核', async t => {
+  const { fixture, runtime, call } = harness('darwin');
+  t.after(() => runtime.stopAll());
+  const noImage = await call('get_app_state', { app: 'com.example.editor', include_screenshot: false });
+  const missingImgReview = await readReviewObservation({
+    name: prefix + 'click',
+    args: { app: 'com.example.editor', observation_id: idOf(noImage), x: 10, y: 10 },
+    availableNames: [prefix + 'get_app_state'],
+    execute: (name, input, context) => runtime.call(name, input, { ...scope, ...context }),
+  });
+  assert.equal(missingImgReview.available, false);
+  assert.equal(missingImgReview.preflightFailed, true);
+
+  const staleReview = await readReviewObservation({
+    name: prefix + 'click',
+    args: { app: 'com.example.editor', observation_id: 'expired-id', element_index: '0' },
+    availableNames: [prefix + 'get_app_state'],
+    execute: (name, input, context) => runtime.call(name, input, { ...scope, ...context }),
+  });
+  assert.equal(staleReview.available, false);
+  assert.equal(staleReview.preflightFailed, true);
+
+  // runAgent 端到端验证：过期 observation_id 直接返回失败提示，不请求远程审核助手
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'cu-preflight-agent-'));
+  t.after(() => fs.rm(work, { recursive: true, force: true }));
+  fixture.snapshot = 'App=com.example.editor (pid 123)\nWindow: "便笺", App: 文本编辑.\n0 button 保存';
+  const extraTools = await runtime.definitions();
+  const modelReplies = [
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'call_stale_click',
+        type: 'function',
+        function: {
+          name: prefix + 'click',
+          arguments: JSON.stringify({ app: 'com.example.editor', observation_id: 'expired-obs', element_index: '0' }),
+        },
+      }],
+    },
+    { role: 'assistant', content: '检测到观察已过期，已中止本次无效点击。' },
+  ];
+  let modelCalls = 0;
+  let reviewCalls = 0;
+  const agentRes = await runAgent({
+    settings: { endpoint: 'http://mock.local/v1/chat/completions', model: 'mock-model', apiKey: 'k' },
+    workspacePath: work,
+    approvalMode: 'reviewer',
+    extraTools,
+    conversation: [{ role: 'user', content: '点击保存按钮' }],
+    onExtraTool: (name, args, context) => runtime.call(name, args, { ...scope, ...context }),
+    requestApproval: async () => false,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(body.messages?.[0]?.content || '').includes('安全审核助手')) {
+        reviewCalls += 1;
+        return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: '{"decision":"allow","reason":"allow"}' } }] }) };
+      }
+      if (modelCalls === 1) {
+        const toolReply = body.messages.find(m => m.role === 'tool' && m.tool_call_id === 'call_stale_click');
+        assert.match(String(toolReply?.content || ''), /^失败\n当前观察已失效/);
+      }
+      const message = modelReplies[modelCalls++];
+      return { ok: true, json: async () => ({ choices: [{ message }] }) };
+    },
+  });
+
+  assert.equal(agentRes.status, 'done');
+  assert.equal(reviewCalls, 0);
+  assert.equal(modelCalls, 2);
 });

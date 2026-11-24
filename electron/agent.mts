@@ -1872,7 +1872,10 @@ export async function runAgent({
               // 所有在 extraTools 里定义的工具（mcp__/browser__/send_media/text_to_speech 等）
               // 统一交给 onExtraTool 路由；不在 extraTools 里的名字才是未知工具
               if (onExtraTool && extraToolNames.has(name)) {
-                const extra = await onExtraTool(name, args, { interfaceImagesSupported });
+                const extra = await onExtraTool(name, args, {
+                  interfaceImagesSupported,
+                  allowExternalPath: (targetPath) => workspace.isAuthorized(targetPath, { forWrite: false }),
+                });
                 ok = extra.ok;
                 result = extra.result;
                 if (name.startsWith("plugin__") && extra.ok) {

@@ -19,7 +19,10 @@ export const browserFormFields = {
 type NativeResult = { text: string, isError?: boolean };
 type Invoke = (name: string, input: Record<string, unknown>) => Promise<NativeResult>;
 type Field = { index: string, multiline: boolean, label: string, value: string };
-type FormRow = { index: string, multiline: boolean, text: string };
+type FormRow = {
+  index: string, multiline: boolean, text: string,
+  placeholder?: string, nearbyLabel?: string, childPlaceholder?: string,
+};
 type SaveControl = { index: string, label: string, disabled: boolean };
 type Form = {
   app: string, window: string, windowKey: string, page: string, document: string, context: string[], tabs: string[],
@@ -34,8 +37,25 @@ const nodeLine = /^(\t*)(\d+) (.+)$/;
 const webPage = /^(?:HTML内容|HTML 内容|HTML content|web area) (.+), URL: ((?:https?|file):\/\/\S+)$/i;
 const input = /^(text entry area|text field|文本输入区|文本栏) \(settable, string\)(?: (.*))?$/i;
 const metadata = /, (?:Placeholder|Help|ID|Secondary Actions): /;
+const metaLabelPrefix = /^(?:Placeholder|Help|ID|Secondary Actions): /;
+const staticTextNode = /^(?:text|文本) (.+)$/i;
+const plainContainerNode = /^(?:container|group|组合)(?: ID: \S+)?$/i;
 const serialized = (value: string) => value.replace(/\n/g, "\\n");
 const focusLine = /^The focused UI element is (\d+)(?= |\.|$)/m;
+
+function extractPlaceholder(rest: string): string {
+  const match = /(?:^|, )Placeholder: (.+?)(?=, (?:Value|Help|ID|Secondary Actions):|$)/.exec(rest);
+  return (match?.[1] || "").replace(/,\s*$/, "").trim();
+}
+
+function cleanNearbyLabel(raw: string): string {
+  const stripped = raw.split(metadata, 1)[0].trim().replace(/[:：]\s*$/, "").trim();
+  if (!stripped || stripped.length > 24) return "";
+  if (/^(?:https?:|\/\/)/i.test(stripped) || /^\d+\s*\/\s*\d+$/.test(stripped) || /©|\d{4}-\d{4}/.test(stripped)) {
+    return "";
+  }
+  return stripped;
+}
 
 export const browserFormHint = "填写当前网页的文字输入框时，用 fill_form 一次传入本页所有待改字段。可用 get_app_state 的 form_only=true 只读取表单。";
 export const browserFormUnavailable = "无法从当前网页核对可填写的表单。请确认目标标签页和字段是否已加载。";
@@ -59,6 +79,47 @@ export function browserTextShortcut(name: string, args: Record<string, any>) {
 
 export function isBrowserFormField(app: string, text: string, index: string) {
   return readForm(app, text)?.rows.some(row => row.index === index) === true;
+}
+
+function resolveFieldsSync(form: Form): Field[] {
+  return form.rows.flatMap(row => {
+    const field = readField(row);
+    return field ? [field] : [];
+  });
+}
+
+// 仅当目标确实能被 fill_form 唯一命名填写（或树残缺 / Chromium 隐式多行需通过 form_only 补读）时才要求走 fill_form；
+// 现代 SPA 中确实无法解析命名的输入框直接放行 set_value，避免死锁。
+export function isFillableBrowserFormField(app: string, text: string, index: string) {
+  const form = readForm(app, text);
+  if (!form) return false;
+  const row = form.rows.find(item => item.index === index);
+  if (!row) return false;
+  if (form.incomplete) return true;
+  if (row.multiline && row.text && !/(?:^| )Value: /.test(row.text) && !metaLabelPrefix.test(row.text)) {
+    return true;
+  }
+  const fields = resolveFieldsSync(form);
+  const parsed = readField(row);
+  return Boolean(parsed && findField(fields, parsed));
+}
+
+export function verifiedUnfillableBrowserEditableFocus(app: string, text: string) {
+  if (/^\[(?:Accessibility tree truncated|.*nodes omitted)/im.test(text)) return false;
+  const focus = focusLine.exec(text)?.[1];
+  if (!focus) return false;
+  let pageDepth = -1;
+  for (const line of text.split("\n")) {
+    const node = nodeLine.exec(line);
+    if (!node) continue;
+    const depth = node[1].length;
+    if (depth <= pageDepth) pageDepth = -1;
+    if (webPage.test(node[3])) pageDepth = depth;
+    if (node[2] === focus) {
+      return pageDepth >= 0 && input.test(node[3]) && !isFillableBrowserFormField(app, text, focus);
+    }
+  }
+  return false;
 }
 
 export function verifiedBrowserChromeFocus(text: string) {
@@ -92,12 +153,13 @@ function readForm(appId: string, text: string): Form | undefined {
   let document = "";
   let pageDepth = -1;
   let controlDepth = -1;
+  let lastLabel: { depth: number; text: string } | undefined;
   for (const line of lines) {
     const node = nodeLine.exec(line);
     if (!node) continue;
     const [, indent, index, description] = node;
     const depth = indent.length;
-    if (depth <= pageDepth) pageDepth = -1;
+    if (depth <= pageDepth) { pageDepth = -1; lastLabel = undefined; }
     if (depth <= controlDepth) controlDepth = -1;
     if (pageDepth < 0) {
       if (/^(?:tab|标签)(?: |$)/i.test(description)) tabs.push(description);
@@ -105,21 +167,48 @@ function readForm(appId: string, text: string): Form | undefined {
       if (!webPage.test(description)) continue;
       pageDepth = depth;
       pages.push({ app: appId, window: [app, title, root].join("\n"), windowKey, page: description,
-        document, context: [], tabs, rows: [], saves: [], incomplete: /^\[Accessibility tree truncated/im.test(text) });
+        document, context: [], tabs, rows: [], saves: [], incomplete: /^\[(?:Accessibility tree truncated|.*nodes omitted)/im.test(text) });
       continue;
     }
-    if (controlDepth >= 0) continue;
     const form = pages.at(-1)!;
+    if (controlDepth >= 0) {
+      const currentRow = form.rows.at(-1);
+      const childTextMatch = currentRow && !currentRow.childPlaceholder ? staticTextNode.exec(description) : null;
+      if (currentRow && childTextMatch) {
+        const cleaned = cleanNearbyLabel(childTextMatch[1]);
+        if (cleaned) currentRow.childPlaceholder = cleaned;
+      }
+      continue;
+    }
     const save = /^(?:button|按钮) (\(disabled\) )?(Save|保存)(?=$|,? (?:Help|ID|Description|Secondary Actions):)/i.exec(description);
     if (save) form.saves.push({ index, label: save[2], disabled: Boolean(save[1]) });
     if (/^(?:heading|标题|pop up button|pop-up button|弹出式按钮)(?: |$)/i.test(description)) {
       form.context.push(description.replace(/ \(disabled\)/i, ""));
     }
     const field = input.exec(description);
-    if (!field) continue;
+    if (!field) {
+      const textMatch = staticTextNode.exec(description);
+      if (textMatch) {
+        const cleaned = cleanNearbyLabel(textMatch[1]);
+        lastLabel = cleaned ? { depth, text: cleaned } : undefined;
+      } else if (!plainContainerNode.test(description)) {
+        lastLabel = undefined;
+      }
+      continue;
+    }
     controlDepth = depth;
-    form.rows.push({ index, multiline: /^(?:text entry area|文本输入区)$/i.test(field[1]),
-      text: (field[2] || "").split(metadata, 1)[0].replace(/^Description: /, "") });
+    const rest = field[2] || "";
+    const nearbyLabel = lastLabel && depth >= lastLabel.depth && depth - lastLabel.depth <= 1
+      ? lastLabel.text : undefined;
+    lastLabel = undefined;
+    const placeholder = extractPlaceholder(rest);
+    form.rows.push({
+      index,
+      multiline: /^(?:text entry area|文本输入区)$/i.test(field[1]),
+      text: rest.split(metadata, 1)[0].replace(/^Description: /, ""),
+      ...(placeholder ? { placeholder } : {}),
+      ...(nearbyLabel ? { nearbyLabel } : {}),
+    });
   }
   if (pages.length !== 1) return;
   const [form] = pages;
@@ -227,6 +316,7 @@ function readField(row: FormRow, controls?: QueryResult): Field | undefined {
   const parts = /^(?:(.*?) )?Value: (.*)$/.exec(row.text);
   let label = (parts ? parts[1] || "" : row.text).replace(/,$/, "").trim();
   let value = parts?.[2] ?? "";
+  if (metaLabelPrefix.test(label)) label = "";
   // Chromium may concatenate a multiline field's label and value without a separator.
   if (row.multiline && !parts && label) {
     if (!controls || controls.truncated || !Array.isArray(controls.matches)) return;
@@ -237,7 +327,8 @@ function readField(row: FormRow, controls?: QueryResult): Field | undefined {
     if (matches.length !== 1) return;
     ({ label, value } = matches[0]);
   }
-  if (!label || /^(?:Placeholder|Help|ID|Secondary Actions): /.test(label)) return;
+  if (!label) label = row.nearbyLabel || row.placeholder || row.childPlaceholder || "";
+  if (!label || metaLabelPrefix.test(label)) return;
   return { index: row.index, multiline: row.multiline, label, value };
 }
 
@@ -247,7 +338,7 @@ export async function readBrowserForm(app: string, result: NativeResult, invoke:
   const windowKey = form.windowKey || await browserFormWindow(app, result.text, invoke);
   if (!windowKey) return { ...result, fields: [] };
   form.windowKey = windowKey;
-  const implicit = form.rows.some(row => row.multiline && row.text && !/(?:^| )Value: /.test(row.text));
+  const implicit = form.rows.some(row => row.multiline && row.text && !/(?:^| )Value: /.test(row.text) && !metaLabelPrefix.test(row.text));
   const controls = !form.incomplete && implicit ? await queryControls(invoke, app, "AXTextArea", 100,
     /^\d+$/.test(windowKey) ? Number(windowKey) : undefined) : undefined;
   const fields = form.rows.flatMap(row => {
@@ -316,13 +407,22 @@ export function planBrowserFill(app: string, observed: string, windowKey: string
   const fields: PlannedField[] = [];
   for (const { element_index: index, value } of requested) {
     const original = before.rows.find(row => row.index === index);
+    const parsedBefore = original ? readField(original) : undefined;
     const candidates = original ? current.fields.filter(field => field.multiline === original.multiline
       && (original.text === (field.value ? `${field.label} Value: ${field.value}` : field.label)
         || original.text === (field.value ? `${field.label}, Value: ${field.value}` : field.label)
-        || (field.multiline && original.text === (field.value ? `${field.label} ${field.value}` : field.label)))) : [];
+        || (field.multiline && original.text === (field.value ? `${field.label} ${field.value}` : field.label))
+        || (parsedBefore && field.label === parsedBefore.label && field.value === parsedBefore.value))) : [];
     const target = candidates.length === 1 && findField(current.fields, candidates[0]);
-    if (!target || before.rows.filter(row => row.multiline === original.multiline && row.text === original.text).length !== 1
-      || fields.some(field => field.index === target.index)) {
+    const duplicateInBefore = original ? before.rows.filter(row => {
+      if (row.multiline !== original.multiline) return false;
+      if (parsedBefore) {
+        const other = readField(row);
+        if (other) return other.label === parsedBefore.label && other.value === parsedBefore.value;
+      }
+      return row.text === original.text;
+    }).length !== 1 : true;
+    if (!target || duplicateInBefore || fields.some(field => field.index === target.index)) {
       return { error: `无法唯一核对输入框 ${index} 或其原值已变化。请重新读取并确认目标字段。` };
     }
     if (!target.multiline && /[\r\n]/.test(value)) {

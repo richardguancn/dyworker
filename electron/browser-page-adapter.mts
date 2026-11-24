@@ -895,6 +895,9 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       ? `视口尺寸：${viewport.cssWidth}×${viewport.cssHeight}（截图与 CSS 坐标 1:1 一致，point 与元素坐标通用）`
       : `视口尺寸：${viewport.cssWidth}×${viewport.cssHeight}，截图尺寸：${viewport.imageWidth}×${viewport.imageHeight}（点击 point 须传截图像素坐标 0..${viewport.imageWidth}×0..${viewport.imageHeight}）`;
 
+    const hasCrossOriginLoginIframe = snapshot.elements.some((el) =>
+      el.tag === "iframe" && /跨域内嵌页面.*(?:qrconnect|oauth|login|passport|auth)/i.test(String(el.name || ""))
+    );
     const truncated = snapshot.totalCount > snapshot.elements.length;
     // 关键：【观察编号】置于首行，使模型能明确获取并必须在后续动作中回传 (F7)
     const textSummary = [
@@ -904,6 +907,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
       viewportLine,
       `\n可操作元素列表（通过编号 ref 调用）：`,
       elementLines.length ? elementLines.join("\n") : "（没有检测到可见交互元素）",
+      hasCrossOriginLoginIframe ? "\n提示：当前页面包含跨域登录验证区（如扫码或快捷登录），无法直接穿透点击；如需登录请直接调用 browser__handoff 交由用户完成。" : "",
       truncated ? `\n共 ${snapshot.totalCount} 个元素，当前从 ${offset} 开始展示；browser__observe 可传 offset 分段查看（下一段 ${offset + snapshot.elements.length}）。` : ""
     ].filter(Boolean).join("\n");
 
@@ -931,7 +935,11 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
   }
 
   // 审核不能重新盖观察印章，否则即将执行的合法动作会被审核本身作废。
-  async inspect() {
+  async inspect({ observationId = "" } = {} as any) {
+    if (observationId) {
+      const validation = this.validateObservation(observationId);
+      if (!validation.ok) return { ok: false, preflightFailed: true, result: validation.error };
+    }
     const result = await this.readPageText();
     if (!result.ok) return result;
     const images = [];
@@ -1149,7 +1157,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
   /**
    * 执行原子交互动作
    */
-  async act({ observationId, action }, { signal, checkLease, workspacePath = "" } = {} as any) {
+  async act({ observationId, action }, { signal, checkLease, workspacePath = "", allowExternalPath = undefined } = {} as any) {
     if (this.isDestroyed()) throw new Error("TARGET_UNAVAILABLE: 目标页面已销毁");
 
     // 动作执行前首先检查中断和租约
@@ -1169,30 +1177,35 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
 
     const obs = validation.observation;
 
+    const actionType = action?.type;
+    const isViewportInvariantAction = ["scroll", "keypress", "press", "back", "forward", "reload"].includes(actionType)
+      && !action?.point;
+
     // 关键校验 (F3_coordinate_resize / 补充要求 3)：
     // 无论 ref 还是 point 动作，执行前均核实当前视口尺寸，窗口缩放或拖拽面板宽度后旧操作必须失效！
-    try {
-      const curViewport = await this.contents.executeJavaScript(
-        "({ width: window.innerWidth, height: window.innerHeight })",
-        true
-      );
-      if (
-        curViewport &&
-        typeof curViewport.width === "number" &&
-        typeof curViewport.height === "number" &&
-        (curViewport.width !== obs.viewport.cssWidth || curViewport.height !== obs.viewport.cssHeight)
-      ) {
-        return {
-          ok: false,
-          errorCode: "STALE_OBSERVATION",
-          result: "STALE_OBSERVATION: 视口尺寸或面板宽度已发生变化，原坐标与观察已失效，请重新观察"
-        };
+    // 不依赖坐标的动作（scroll/keypress/navigation）免受面板初始自动缩放高度微调误杀
+    if (!isViewportInvariantAction) {
+      try {
+        const curViewport = await this.contents.executeJavaScript(
+          "({ width: window.innerWidth, height: window.innerHeight })",
+          true
+        );
+        if (
+          curViewport &&
+          typeof curViewport.width === "number" &&
+          typeof curViewport.height === "number" &&
+          (curViewport.width !== obs.viewport.cssWidth || curViewport.height !== obs.viewport.cssHeight)
+        ) {
+          return {
+            ok: false,
+            errorCode: "STALE_OBSERVATION",
+            result: "STALE_OBSERVATION: 视口尺寸或面板宽度已发生变化，原坐标与观察已失效，请重新观察"
+          };
+        }
+      } catch {
+        // 忽略
       }
-    } catch {
-      // 忽略
     }
-
-    const actionType = action?.type;
 
     try {
       switch (actionType) {
@@ -1229,7 +1242,7 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
 
         case "upload": {
           if (!Number.isInteger(action.ref)) throw new Error('upload 必须指定文件输入框 ref');
-          const files = await resolveBrowserUploadFiles(action.files, workspacePath);
+          const files = await resolveBrowserUploadFiles(action.files, workspacePath, { allowExternalPath });
           const target = await this.verifyTargetElement(action.ref, obs, { fileInput: true });
           if (files.length > 1 && !target.multiple) throw new Error('目标文件输入框只允许选择一个文件');
           const { root } = await this.sendCDP('DOM.getDocument', { depth: -1, pierce: true }, { signal, checkLease });

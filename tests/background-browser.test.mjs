@@ -765,3 +765,79 @@ test('TaskBrowserRouter 继承右侧可见面板模式：接管恢复后第一�
   assert.deepEqual(calls, ['browser__observe']);
   await router.dispose();
 });
+
+test('SPA 重定向触发 ERR_ABORTED (-3) 时等待最终安全页落定，主框架真实错误仍销毁页面', async () => {
+  const base = factory();
+  const windows = [];
+  const surface = new BackgroundBrowserSurface({
+    ...base,
+    ownerSessionId: 'spa-redirect',
+    runId: 'run-spa',
+    createWindow: (options) => {
+      const win = base.createWindow(options);
+      let loading = false;
+      let loadMode = 'spa-abort';
+      win.webContents.isLoading = () => loading;
+      win.webContents.setMode = (m) => { loadMode = m; };
+      win.webContents.loadURL = async (targetUrl) => {
+        if (targetUrl === 'about:blank') {
+          win.webContents.url = targetUrl;
+          return;
+        }
+        if (loadMode === 'spa-abort') {
+          win.webContents.url = targetUrl;
+          loading = true;
+          setTimeout(() => {
+            win.webContents.url = 'https://channels.weixin.qq.com/login.html';
+            loading = false;
+            win.webContents.emit('did-stop-loading');
+          }, 30);
+          const err = new Error(`ERR_ABORTED (-3) loading 'https://channels.weixin.qq.com/login.html'`);
+          err.code = 'ERR_ABORTED';
+          err.errno = -3;
+          throw err;
+        }
+        if (loadMode === 'real-fail') {
+          const err = new Error('ERR_NAME_NOT_RESOLVED');
+          err.code = 'ERR_NAME_NOT_RESOLVED';
+          throw err;
+        }
+        win.webContents.url = targetUrl;
+      };
+      windows.push(win);
+      return win;
+    },
+  });
+
+  const okRes = await surface.open('https://channels.weixin.qq.com/platform/post/create');
+  assert.equal(okRes.ok, true, okRes.result);
+  assert.equal(surface.getContents()?.getURL(), 'https://channels.weixin.qq.com/login.html');
+
+  const closed = surface.closeTab(okRes.tabId);
+  assert.equal(closed.ok, true);
+
+  const failSurface = new BackgroundBrowserSurface({
+    ...base,
+    ownerSessionId: 'real-fail-session',
+    runId: 'run-fail',
+    createWindow: (options) => {
+      const win = base.createWindow(options);
+      win.webContents.loadURL = async (targetUrl) => {
+        if (targetUrl === 'about:blank') {
+          win.webContents.url = targetUrl;
+          return;
+        }
+        throw new Error('ERR_NAME_NOT_RESOLVED');
+      };
+      windows.push(win);
+      return win;
+    },
+  });
+  const failRes = await failSurface.open('https://nonexistent.invalid/test');
+  assert.equal(failRes.ok, false);
+  assert.match(failRes.result, /ERR_NAME_NOT_RESOLVED/);
+  assert.equal(failSurface.listTabs().length, 0);
+
+  await surface.dispose();
+  await failSurface.dispose();
+});
