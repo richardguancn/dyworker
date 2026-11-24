@@ -19,14 +19,15 @@
   position: relative;
   width: 32px;
   height: 10px;
-  flex: 0 0 10px;
+  min-height: 4px;
+  flex: 0 1 10px;
   pointer-events: auto;
 }
 
 .conversation-turn-marker {
   position: relative;
   width: 32px;
-  height: 10px;
+  height: 100%;
   display: block;
   padding: 0;
   border: 0;
@@ -37,13 +38,14 @@
 
 .conversation-turn-marker::before {
   position: absolute;
-  top: 4px;
+  top: 50%;
   left: 0;
   width: 6px;
   height: 2px;
   content: "";
   border-radius: 999px;
   background: #d5d7d0;
+  transform: translateY(-50%);
   transition: width 140ms ease, background 140ms ease;
 }
 
@@ -65,28 +67,6 @@
 .conversation-turn-marker.wave-distance-3::before {
   width: 10px;
   background: #c9cdc6;
-}
-
-.conversation-turn-load-more {
-  position: relative;
-  width: 24px;
-  height: 10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #a6aba2;
-  cursor: pointer;
-  transition: color 140ms ease, transform 140ms ease;
-}
-
-.conversation-turn-load-more:hover,
-.conversation-turn-load-more.hovered {
-  color: #697067;
-  transform: translateY(-1px);
 }
 
 .conversation-turn-preview {

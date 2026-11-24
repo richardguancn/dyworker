@@ -2,20 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   CONVERSATION_TURN_PAGE_SIZE,
-  CONVERSATION_TURN_RAIL_MAX,
   WORKSPACE_SESSION_PAGE_SIZE,
   countEarlierSearchMatches,
   nextWorkspaceVisibleCount,
   resolveWorkspaceVisibleCount,
   sliceConversationWindow,
-  sliceTurnRail,
 } from '../src/lib/pagination.ts';
 import { createConversationIndex } from '../src/performanceCache.ts';
 
-test('分页默认常量符合工作区5条、会话15轮、回合轨20条上限', () => {
+test('分页默认常量符合工作区5条、会话15轮', () => {
   assert.equal(WORKSPACE_SESSION_PAGE_SIZE, 5);
   assert.equal(CONVERSATION_TURN_PAGE_SIZE, 15);
-  assert.equal(CONVERSATION_TURN_RAIL_MAX, 20);
 });
 
 test('工作区会话支持5条增量展开、搜索全量展示以及收起后重置为5条', () => {
@@ -76,13 +73,15 @@ test('长会话轮次按15轮从最新到最旧向上切片并保留原始下标
   assert.equal(page1.visibleMessages[0].index, 35);
   assert.equal(page1.visibleMessages[0].message.content, '问题 17');
 
-  // 向上加载更多 15 轮（共 30 轮，第 2..31 轮）
+  // 向上加载更多 15 轮（共 30 轮，第 2..31 轮，全部纳入导轨）
   const page2 = sliceConversationWindow(messages, index.turns, 30);
   assert.equal(page2.startTurnIndex, 2);
   assert.equal(page2.hiddenTurnCount, 2);
   assert.equal(page2.hasMore, true);
   assert.equal(page2.canCollapse, true);
+  assert.equal(page2.loadedTurns.length, 30);
   assert.equal(page2.loadedTurns[0].turnIndex, 2);
+  assert.equal(page2.loadedTurns[29].turnIndex, 31);
   assert.equal(page2.visibleMessages[0].index, 5);
   assert.equal(page2.visibleMessages[0].message.content, '问题 2');
 
@@ -93,23 +92,10 @@ test('长会话轮次按15轮从最新到最旧向上切片并保留原始下标
   assert.equal(page3.hiddenTurnCount, 0);
   assert.equal(page3.hasMore, false);
   assert.equal(page3.canCollapse, true);
+  assert.equal(page3.loadedTurns.length, 32);
+  assert.equal(page3.loadedTurns[0].turnIndex, 0);
   assert.equal(page3.visibleMessages.length, 65);
   assert.equal(page3.visibleMessages[0].message.content, '系统开场');
-});
-
-test('左侧回合轨限制最多显示20条最新轮次', () => {
-  const turns = Array.from({ length: 30 }, (_, i) => ({ turnIndex: i }));
-  const within = sliceTurnRail(turns.slice(0, 15));
-  assert.equal(within.clippedCount, 0);
-  assert.equal(within.items.length, 15);
-
-  const clipped = sliceTurnRail(turns);
-  assert.equal(clipped.clippedCount, 10);
-  assert.equal(clipped.items.length, 20);
-  assert.equal(clipped.items[0].turnIndex, 10);
-  assert.equal(clipped.items[19].turnIndex, 29);
-
-  assert.deepEqual(sliceTurnRail(turns, 0), { items: [], clippedCount: 30 });
 });
 
 test('未加载历史消息搜索命中统计仅计算边界之前的消息', () => {

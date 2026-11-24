@@ -111,17 +111,6 @@ html[data-theme="dark"] .topbar {
   }
 
 
-  html[data-theme="dark"] .conversation-turn-load-more {
-    color: #6f756c;
-  }
-
-
-  html[data-theme="dark"] .conversation-turn-load-more:hover,
-  html[data-theme="dark"] .conversation-turn-load-more.hovered {
-    color: #b8beb4;
-  }
-
-
   html[data-theme="dark"] .conversation-load-more-button,
   html[data-theme="dark"] .conversation-search-load-more {
     border-color: rgba(255, 255, 255, 0.12);

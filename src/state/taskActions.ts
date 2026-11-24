@@ -20,7 +20,7 @@ import { cancelSleepingTask, makeSession, showSessionError, showSessionNotice, u
 import { useSessionStore } from "./sessionStore";
 import { sendMessage } from "./sendMessageActions";
 import { useSettingsStore } from "./settingsStore";
-import { activeIdRef, conversationTurnRefs, runningRunIdsRef, selectSessionRef, sessionDraftsRef, sessionsRef, shouldScrollToBottomRef, textareaRef } from "./sharedRefs";
+import { activeIdRef, conversationTurnRefs, runningRunIdsRef, selectSessionRef, sessionDraftsRef, sessionsRef, shouldScrollToBottomRef, suppressStickUntilRef, textareaRef, viewportRef } from "./sharedRefs";
 import { useViewStore } from "./viewStore";
 
 // hover 弹层延迟关闭计时器：随这组开关函数从 App.tsx 的 useRef 挪到模块级
@@ -222,9 +222,14 @@ export const handleGoalAction = async (sessionId: string, action: 'pause' | 'res
   } finally { goalActionsRef.current.delete(sessionId); }
 };
 
-export const jumpToConversationTurn = (turnIndex: number) => {
+export const jumpToConversationTurn = (turnIndex: number, options?: { scrollToTop?: boolean }) => {
   const { setHoveredTurnIndex } = useViewStore.getState();
   setHoveredTurnIndex(turnIndex);
+  suppressStickUntilRef.current = Math.max(suppressStickUntilRef.current, performance.now() + 600);
+  if (options?.scrollToTop && viewportRef.current) {
+    viewportRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
   conversationTurnRefs.current[turnIndex]?.scrollIntoView({ behavior: "smooth", block: "start" });
 };
 

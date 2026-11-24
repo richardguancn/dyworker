@@ -112,17 +112,6 @@ html:not([data-theme]) .topbar {
   }
 
 
-  html:not([data-theme]) .conversation-turn-load-more {
-    color: #6f756c;
-  }
-
-
-  html:not([data-theme]) .conversation-turn-load-more:hover,
-  html:not([data-theme]) .conversation-turn-load-more.hovered {
-    color: #b8beb4;
-  }
-
-
   html:not([data-theme]) .conversation-load-more-button,
   html:not([data-theme]) .conversation-search-load-more {
     border-color: rgba(255, 255, 255, 0.12);

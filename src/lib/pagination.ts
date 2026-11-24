@@ -1,6 +1,5 @@
 export const WORKSPACE_SESSION_PAGE_SIZE = 5;
 export const CONVERSATION_TURN_PAGE_SIZE = 15;
-export const CONVERSATION_TURN_RAIL_MAX = 20;
 
 export function resolveWorkspaceVisibleCount(
   total: number,
@@ -72,19 +71,6 @@ export function sliceConversationWindow<Message, Preview>(
       message,
       index: startMessageIndex + offset,
     })),
-  };
-}
-
-export function sliceTurnRail<T>(
-  loadedTurns: T[],
-  maxItems = CONVERSATION_TURN_RAIL_MAX,
-): { items: T[]; clippedCount: number } {
-  if (maxItems <= 0) return { items: [], clippedCount: loadedTurns.length };
-  if (loadedTurns.length <= maxItems) return { items: loadedTurns, clippedCount: 0 };
-  const clippedCount = loadedTurns.length - maxItems;
-  return {
-    items: loadedTurns.slice(clippedCount),
-    clippedCount,
   };
 }
 

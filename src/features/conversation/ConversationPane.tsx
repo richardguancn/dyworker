@@ -3,7 +3,7 @@
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（sendMessage、updateComposer、beginPanelResize、
 // 各种 useEffect 等）仍留在 App.tsx，这里只通过 props 接收状态与回调。
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
-import { useEffect, useState, type ClipboardEvent, type ComponentType, type Dispatch, type DragEvent, type KeyboardEvent, type MouseEvent, type RefObject, type SetStateAction } from "react";
+import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, RefObject, SetStateAction } from "react";
 import { composerApprovalModes } from "../plans/PlansPanel";
 import { t } from "../../i18n";
 import type { LoadedConversationTurn, VisibleConversationMessage } from "../../lib/pagination";
@@ -101,7 +101,7 @@ export interface ConversationPaneProps {
   collapseConversationTurns: () => void;
   hoveredTurnIndex: number | null;
   setHoveredTurnIndex: Dispatch<SetStateAction<number | null>>;
-  jumpToConversationTurn: (turnIndex: number) => void;
+  jumpToConversationTurn: (turnIndex: number, options?: { scrollToTop?: boolean }) => void;
 
   bindViewport: (node: HTMLDivElement | null) => void;
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -294,10 +294,6 @@ export function ConversationPane(props: ConversationPaneProps) {
     inboxOpen, setInboxOpen, inboxItems, inboxTab, systemMessageFocusId, setSystemMessageFocusId,
     imagePreview, closeImagePreview, imagePreviewIndex, imagePreviewPeers, navigateImagePreview, setNotice, setError,
   } = props;
-  const [railLoadMoreHovered, setRailLoadMoreHovered] = useState(false);
-  useEffect(() => {
-    setRailLoadMoreHovered(false);
-  }, [activeId, hasMoreTurns]);
   return (
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
         {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
@@ -418,44 +414,11 @@ export function ConversationPane(props: ConversationPaneProps) {
 
         {conversationTurns.length > 5 && (
           <nav className="conversation-turn-rail" aria-label="对话回合导航">
-            {hasMoreTurns && (
-              <div className="conversation-turn-marker-wrap">
-                <button
-                  type="button"
-                  className={`conversation-turn-load-more${railLoadMoreHovered ? " hovered" : ""}`}
-                  aria-label={`加载更多：还有 ${hiddenTurnCount} 轮更早对话`}
-                  aria-describedby={railLoadMoreHovered ? "conversation-turn-preview-load-more" : undefined}
-                  onClick={loadMoreConversationTurns}
-                  onMouseEnter={() => {
-                    setHoveredTurnIndex(null);
-                    setRailLoadMoreHovered(true);
-                  }}
-                  onMouseLeave={() => setRailLoadMoreHovered(false)}
-                  onFocus={() => {
-                    setHoveredTurnIndex(null);
-                    setRailLoadMoreHovered(true);
-                  }}
-                  onBlur={() => setRailLoadMoreHovered(false)}
-                >
-                  <ChevronUp size={10} strokeWidth={2.4} />
-                </button>
-                {railLoadMoreHovered && (
-                  <div
-                    id="conversation-turn-preview-load-more"
-                    className="conversation-turn-preview"
-                    role="tooltip"
-                  >
-                    <strong>加载更多</strong>
-                    <span>{`还有 ${hiddenTurnCount} 轮更早对话`}</span>
-                    <small>点击向上加载</small>
-                  </div>
-                )}
-              </div>
-            )}
-            {railTurns.map((turn) => {
+            {railTurns.map((turn, railIndex) => {
               const turnIndex = turn.turnIndex;
+              const isFirstLoadedMessage = railIndex === 0 && turn.messageIndex === visibleMessages[0]?.index;
               const turnActive = turnIndex === hoveredTurnIndex
-                || (hoveredTurnIndex === null && !railLoadMoreHovered && turnIndex === conversationTurns.length - 1);
+                || (hoveredTurnIndex === null && turnIndex === conversationTurns.length - 1);
               const waveDistance = hoveredTurnIndex === null
                 ? null
                 : Math.abs(turnIndex - hoveredTurnIndex);
@@ -467,16 +430,10 @@ export function ConversationPane(props: ConversationPaneProps) {
                     aria-label={`第 ${turnIndex + 1} 轮对话：${turn.preview.title}`}
                     aria-current={turnActive ? "step" : undefined}
                     aria-describedby={hoveredTurnIndex === turnIndex ? `conversation-turn-preview-${turnIndex}` : undefined}
-                    onClick={() => jumpToConversationTurn(turnIndex)}
-                    onMouseEnter={() => {
-                      setRailLoadMoreHovered(false);
-                      setHoveredTurnIndex(turnIndex);
-                    }}
+                    onClick={() => jumpToConversationTurn(turnIndex, isFirstLoadedMessage ? { scrollToTop: true } : undefined)}
+                    onMouseEnter={() => setHoveredTurnIndex(turnIndex)}
                     onMouseLeave={() => setHoveredTurnIndex(null)}
-                    onFocus={() => {
-                      setRailLoadMoreHovered(false);
-                      setHoveredTurnIndex(turnIndex);
-                    }}
+                    onFocus={() => setHoveredTurnIndex(turnIndex)}
                     onBlur={() => setHoveredTurnIndex(null)}
                   />
                   {hoveredTurnIndex === turnIndex && (

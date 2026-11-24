@@ -2057,15 +2057,15 @@ test("工作区会话默认展示最新5条，增量展开5条，收起后再展
   assert.doesNotMatch(app, /workspaceSessionsExpanded/);
 });
 
-test("长会话按15轮从最新到最旧向上懒加载，加载更多保持滚动锚定且回合轨上限20条", () => {
+test("长会话按15轮从最新到最旧向上懒加载，加载更多保持滚动锚定且导轨同步已加载轮次", () => {
   assert.match(app, /CONVERSATION_TURN_PAGE_SIZE/);
   assert.match(app, /sliceConversationWindow/);
-  assert.match(app, /sliceTurnRail/);
+  assert.match(app, /railTurns=\{conversationWindow\.loadedTurns\}/);
+  assert.match(app, /scrollToTop/);
   assert.match(app, /conversationPrependAnchorRef/);
   assert.match(app, /suppressStickUntilRef/);
   assert.match(app, /conversation-load-more-bar/);
   assert.match(app, /conversation-load-more-button[\s\S]*>[\s\S]*加载更多/);
-  assert.match(app, /conversation-turn-load-more/);
+  assert.doesNotMatch(app, /conversation-turn-load-more/);
   assert.match(styles, /\.conversation-load-more-bar/);
-  assert.match(styles, /\.conversation-turn-load-more/);
 });

@@ -33,8 +33,7 @@ import { formatMessageTime } from "./lib/format";
 import {
 CONVERSATION_TURN_PAGE_SIZE,
 countEarlierSearchMatches,
-sliceConversationWindow,
-sliceTurnRail
+sliceConversationWindow
 } from "./lib/pagination";
 import {
 FILE_TOKEN_REGEX,
@@ -201,7 +200,6 @@ export function App() {
     () => sliceConversationWindow(activeSession?.messages || [], conversationTurns, loadedTurnCount),
     [activeSession?.messages, conversationTurns, loadedTurnCount],
   );
-  const turnRail = useMemo(() => sliceTurnRail(conversationWindow.loadedTurns), [conversationWindow.loadedTurns]);
 
   // 面板关闭时仅保存最近记录，不触发主界面更新；历史在控制台打开后按需读取。
   const traceBuffer = useMemo(() => createTraceBuffer(), []);
@@ -1441,7 +1439,7 @@ export function App() {
         hasMoreTurns={conversationWindow.hasMore}
         hiddenTurnCount={conversationWindow.hiddenTurnCount}
         canCollapseTurns={conversationWindow.canCollapse}
-        railTurns={turnRail.items}
+        railTurns={conversationWindow.loadedTurns}
         earlierSearchMatchCount={earlierSearchMatchCount}
         loadMoreConversationTurns={loadMoreConversationTurns}
         loadAllConversationTurns={loadAllConversationTurns}
