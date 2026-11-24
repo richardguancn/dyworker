@@ -360,7 +360,7 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
 .reference-layout .composer-actions { flex-wrap: nowrap; flex: 0 0 auto; }
 .reference-layout .composer-send-actions { margin-left: auto; flex: 1 1 0; justify-content: flex-end; }
 .reference-layout .composer-send-actions > .model-menu-wrap { flex: 0 1 auto; min-width: 0; }
-.reference-layout .composer-mode { color: var(--ink); width: auto; max-width: 210px; }
+.reference-layout .composer-mode { color: var(--ink); width: auto; max-width: min(210px, 100%); }
 .reference-layout .composer-actions > .icon-button,
 .reference-layout .composer-actions > .send-button,
 .reference-layout .composer-actions > .context-ring { flex: 0 0 auto; }
@@ -371,7 +371,7 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
 /* Native lights now belong to the separate titlebar, so plugin pages need no left inset. */
 .reference-layout.platform-darwin.sidebar-collapsed .plugins-page.plugins-formats { padding-left: 24px; }
 @media (max-width: 1120px) {
-  .reference-layout .composer-mode { max-width: 150px; }
+  .reference-layout .composer-mode { max-width: min(150px, 100%); }
   .reference-layout .composer-project-branch { display: none; }
 }
 @media (max-width: 820px) {
@@ -385,7 +385,7 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
   .reference-layout .tool-panel { grid-row: auto; grid-column: auto; top: var(--titlebar-height); bottom: var(--frame-gap); height: auto; width: min(var(--tool-panel-width), calc(100% - var(--rail-width) - 12px)); }
   html .reference-layout { --chat-width: calc(100% - 28px); }
   .reference-layout .composer-project-bar { width: calc(100% - 44px); gap: 12px; }
-  .reference-layout .composer-mode { max-width: 110px; }
+  .reference-layout .composer-mode { max-width: min(110px, 100%); }
   .reference-layout .context-ring-wrap { display: none; }
   .reference-layout .composer-project-button span { max-width: 130px; }
   .reference-layout .empty-conversation h1 { font-size: calc(24px * var(--font-ui-scale)); }
@@ -399,16 +399,6 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
 /* 附件和长正文各自滚动，为项目栏、操作按钮和提示留出空间。 */
 .reference-layout .empty-session .composer-body:has(> .attachment-strip) :is(.composer-input-wrap > textarea, .dsh-composer-input) {
   max-height: min(420px, 32vh);
-}
-
-/* 按输入区实际宽度响应，左右面板展开时同样保持操作完整。 */
-@container composer (max-width: 460px) {
-  .reference-layout .composer-toolbar > .composer-actions { flex: 1 1 100%; }
-  .reference-layout .composer-send-actions { justify-content: flex-end; }
-  .reference-layout .composer-mode { max-width: min(210px, 100%); }
-}
-@container composer (max-width: 300px) {
-  .reference-layout .composer-actions { flex-wrap: wrap; }
 }
 
 .reference-layout.sidebar-collapsed .sidebar,
@@ -464,7 +454,7 @@ html .reference-layout .titlebar-conversation .topbar {
 .reference-layout .conversation-viewport { scrollbar-gutter: stable both-edges; }
 .reference-layout:not(.has-conversation-views) .main-panel { --conversation-tabs-height: 0px; }
 .reference-layout:not(.has-conversation-views) .conversation-tabs { display: none; }
-/* 依据输入框实际宽度收紧控件；侧栏挤窄输入区时也保持同一行。 */
+/* 依据输入框实际宽度收紧控件；侧栏挤窄输入区时也保持同一行，仅在极窄时才拆行。 */
 @container composer (max-width: 520px) {
   .reference-layout .composer-toolbar { gap: 4px; }
   .reference-layout .composer-actions { gap: 2px; }
@@ -478,8 +468,13 @@ html .reference-layout .titlebar-conversation .topbar {
   .reference-layout .approval-mode-menu { width: min(390px, 100%); min-width: 0; }
   .reference-layout .approval-mode-button span { display: none; }
 }
-@container composer (max-width: 340px) {
-  .reference-layout .composer-mode { max-width: 96px; }
+@container composer (max-width: 260px) {
+  .reference-layout .composer-toolbar > .composer-actions { flex: 1 1 100%; }
+  .reference-layout .composer-send-actions { justify-content: flex-end; }
+  .reference-layout .composer-mode { max-width: min(210px, 100%); }
+}
+@container composer (max-width: 220px) {
+  .reference-layout .composer-actions { flex-wrap: wrap; }
 }
 .reference-layout.settings-page-open .sidebar,
 .reference-layout.settings-page-open .main-panel,
