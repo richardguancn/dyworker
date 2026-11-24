@@ -1,4 +1,4 @@
-import { reviewTaskAction } from '../../approval-policy.mts';
+import { ApprovalNeedsReview, pendingApprovalDecision, reviewerDenialMessage, reviewerRevisionMessage, reviewTaskAction } from '../../approval-policy.mts';
 // 机器人（ds-bot）继承 DYWorker 桌面任务的工具能力。
 //
 // 设计约束：
@@ -13,7 +13,7 @@ import {
   exportWordDocument, exportExcelWorkbook, calculateWorkdays, currentDatetime,
   webSearch, govSearch, fetchPublicPage, runOcrFile,
   builtinHooks, evaluateHooks, externalPathsForTool,
-  planTaskApproval, reviewApproval, reviewerUnavailableMessage, reviewerEvidenceMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
+  planTaskApproval, reviewApproval, reviewInterruption, reviewerEvidenceMessage, readReviewEntryScripts, toolSummary, htmlToText, isLikelyBackgroundCommand,
 } from '../../agent.mts';
 import { dshNativeSkills } from './native-skills.mts';
 import { randomUUID } from 'node:crypto';
@@ -51,7 +51,7 @@ export function createBotApproval(options: any) {
   const audit = (item: any) => options.audit?.(item);
   const resolved = async (value: any) => (typeof value === 'function' ? await value() : value) || [];
   return (tool: any) => {
-    const operation = queue.then(async () => {
+    const operation = queue.then(async function checkCurrentApproval() {
       const { name, args = {}, signal } = tool;
       signal?.throwIfAborted();
       const workspace = tool.workspace || options.workspace;
@@ -68,7 +68,7 @@ export function createBotApproval(options: any) {
       const evaluate = () => { const updated = planTaskApproval({ name, args, approvalMode: mode(),
         hasExternalPaths: externalPaths.length > 0, hookRequiresApproval: hook?.action === 'require_approval',
         standingRules, hook, workspacePath });
-        return updated === 'execute' ? 'allow' : updated === 'deny' ? 'deny' : 'ask'; };
+        return pendingApprovalDecision(updated, route); };
       const route = planTaskApproval({ name, args, approvalMode: mode(), workspacePath, standingRules,
         hasExternalPaths: externalPaths.length > 0, hook, hookRequiresApproval: hook?.action === 'require_approval' });
       const decision = route === 'execute' ? 'allow' : route === 'deny' ? 'deny' : 'ask';
@@ -96,16 +96,21 @@ export function createBotApproval(options: any) {
             toolDefinition: reviewToolDefinition([...(await resolved(options.extraToolDefinitions)), ...toolDefinitions()], name), accessCheck: hook?.message },
           context, onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal?.throwIfAborted();
+        if (review.decision === 'revise') {
+          detail('reviewer-revise', review.reason);
+          throw new Error(reviewerRevisionMessage(review.reason));
+        }
         if (review.needsEvidence) {
           detail('reviewer-needs-evidence', review.reason);
           throw new Error(reviewerEvidenceMessage(review.reason));
         }
         if (review.unavailable) {
-          detail('reviewer-unavailable', review.reason);
-          throw new Error(reviewerUnavailableMessage(review.reason));
+          const interruption = reviewInterruption(review);
+          detail(interruption.decision, review.reason);
+          throw new Error(interruption.message);
         }
         if (review.decision === 'allow') { tool.executionMode = review.execution === 'host' ? 'danger-full-access' : 'workspace-write'; detail('reviewer-allowed', review.reason); return true; }
-        if (review.decision === 'deny') { tool.denialReason = `审核助手拒绝了这次操作：${review.reason}。不要通过改写命令或间接执行绕过拒绝。`; detail('reviewer-denied', review.reason); return false; }
+        if (review.decision === 'deny') { tool.denialReason = reviewerDenialMessage(review.reason); detail('reviewer-denied', review.reason); return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const id = String(tool.callId || randomUUID());
@@ -113,7 +118,7 @@ export function createBotApproval(options: any) {
         ? `工作区外路径（批准后本次调用有效）：\n${externalPaths.join('\n')}` : '', reason,
         `执行内容：\n${text(args)}`].filter(Boolean).join('\n\n');
       const pending = options.requestApproval?.({ id, kind: name, title: `机器人要执行：${toolSummary(name, args)}`,
-        details, approvalReason: reason, sessionId: tool.sessionId, tool: name, signal });
+        details, approvalReason: reason, sessionId: tool.sessionId, tool: name, signal }, evaluate);
       if (!pending) { detail('denied', '没有可用的确认入口'); return false; }
       let abort: any;
       try {
@@ -123,8 +128,12 @@ export function createBotApproval(options: any) {
           if (signal?.aborted) abort();
         })]);
         if (allowed === true) { tool.executionMode = 'danger-full-access'; const key = tool.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
-        detail(allowed === true ? 'approved' : 'denied', allowed === null ? '按更新后的权限自动放行' : '');
+        if (allowed === null) tool.executionMode = mode() === 'full-access' ? 'danger-full-access' : 'workspace-write';
+        detail(allowed === null ? 'auto-allowed' : allowed === true ? 'approved' : 'denied');
         return allowed === true || allowed === null;
+      } catch (error) {
+        if (error instanceof ApprovalNeedsReview) return checkCurrentApproval();
+        throw error;
       } finally { signal?.removeEventListener?.('abort', abort); }
     });
     queue = operation.then(() => {}, () => {});

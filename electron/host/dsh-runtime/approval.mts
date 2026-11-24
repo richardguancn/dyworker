@@ -1,7 +1,7 @@
 import { isComputerUseTool } from '../../computer-use.mts';
 import { toolSummary } from '../../agent/tool-summary.mts';
-import { reviewTaskAction } from '../../approval-policy.mts';
-import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewerUnavailableMessage, reviewerEvidenceMessage, readReviewEntryScripts } from '../../agent.mts';
+import { ApprovalNeedsReview, pendingApprovalDecision, reviewerDenialMessage, reviewerRevisionMessage, reviewTaskAction } from '../../approval-policy.mts';
+import { Workspace, toolDefinitions, builtinHooks, evaluateHooks, planTaskApproval, reviewApproval, reviewInterruption, reviewerEvidenceMessage, readReviewEntryScripts } from '../../agent.mts';
 import { randomUUID } from 'node:crypto';
 import { buildReviewContext, readReviewObservation, withReviewApprovals, reviewToolDefinition, reviewContextFingerprint } from '../../approval-context.mts';
 
@@ -10,7 +10,7 @@ export function createDshApproval(options: any) {
   let queue = Promise.resolve();
   const approvals = new Map<string, any[]>();
   return (tool: any) => {
-    const operation = queue.then(async () => {
+    const operation = queue.then(async function checkCurrentApproval() {
       const { name, args = {}, signal } = tool;
       signal.throwIfAborted();
       const hook = evaluateHooks(builtinHooks, 'before_tool', 'write_file', args)
@@ -28,7 +28,7 @@ export function createDshApproval(options: any) {
       const currentMode = () => options.getApprovalMode?.() || options.approvalMode;
       const evaluate = () => { const updated = planTaskApproval({ name: publicName, args, approvalMode: currentMode(),
         standingRules: options.standingRules || [], hookRequiresApproval: hook?.action === 'require_approval', hook, workspacePath: tool.workspacePath || options.workspacePath || '' });
-        return updated === 'execute' ? 'allow' : updated === 'deny' ? 'deny' : 'ask'; };
+        return pendingApprovalDecision(updated, route); };
       const route = planTaskApproval({ name: publicName, args, approvalMode: currentMode(), workspacePath: tool.workspacePath || options.workspacePath || '',
         standingRules: options.standingRules || [], hook, hookRequiresApproval: hook?.action === 'require_approval' });
       const decision = route === 'execute' ? 'allow' : route === 'deny' ? 'deny' : 'ask';
@@ -58,17 +58,22 @@ export function createDshApproval(options: any) {
             toolDefinition: reviewToolDefinition([...(options.extraTools || []), ...toolDefinitions()], name), accessCheck: hook?.message }, context,
           onUsage: options.onUsage, contextLimit: options.contextLimit } });
         signal.throwIfAborted();
+        if (review.decision === 'revise') {
+          audit('reviewer-revise', review.reason);
+          throw new Error(reviewerRevisionMessage(review.reason));
+        }
         if (review.needsEvidence) {
           audit('reviewer-needs-evidence', review.reason);
           throw new Error(reviewerEvidenceMessage(review.reason));
         }
         if (review.unavailable) {
-          audit('reviewer-unavailable', review.reason);
-          throw new Error(reviewerUnavailableMessage(review.reason));
+          const interruption = reviewInterruption(review);
+          audit(interruption.decision, review.reason);
+          throw new Error(interruption.message);
         }
         audit(`reviewer-${review.decision === 'ask' ? 'escalated' : review.decision === 'allow' ? 'allowed' : 'denied'}`, review.reason);
         if (review.decision === 'allow') { return true; }
-        if (review.decision === 'deny') { tool.denialReason = `审核助手拒绝了这次操作：${review.reason}。不要通过改写命令或间接执行绕过拒绝。`; return false; }
+        if (review.decision === 'deny') { tool.denialReason = reviewerDenialMessage(review.reason); return false; }
         reason = `审核助手无法定夺，转人工确认：${review.reason}`;
       }
       const pending = options.requestApproval?.({ id: tool.callId || randomUUID(), kind: name,
@@ -84,6 +89,9 @@ export function createDshApproval(options: any) {
         signal.throwIfAborted();
         if (allowed === true) { const key = tool.sessionId || options.sessionId || ''; const records = approvals.get(key) || []; records.push({ tool: name, args: structuredClone(args) }); approvals.set(key, records); }
         audit(allowed === null ? 'auto-allowed' : allowed === true ? 'approved' : 'denied'); return allowed === true || allowed === null;
+      } catch (error) {
+        if (error instanceof ApprovalNeedsReview) return checkCurrentApproval();
+        throw error;
       } finally { signal.removeEventListener('abort', abort); }
     });
     queue = operation.then(() => {}, () => {});

@@ -10,6 +10,7 @@ import { skillContextSummary } from '../../skills.mts';
 import { selectWikiPages } from '../../memory-wiki.mts';
 import { normalizeApprovalMode } from '../../settings.mts';
 import { createBotApproval, createBotHarnessTools } from '../dsh-runtime/bot-harness.mts';
+import { activePermissions } from '../../active-permissions.mts';
 import { buildReviewContext } from '../../approval-context.mts';
 
 // 机器人自己不做第二套权限判断：审批模式沿用应用设置，人工确认落到「机器人团队」面板。
@@ -98,7 +99,16 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
   const approve = createBotApproval({ workspace: botWorkspace, workspacePath, getApprovalMode: approvalMode,
     hooks: async () => (typeof resolvers.readHooks === 'function' ? await resolvers.readHooks(workspacePath) : []),
     standingRules: async () => (typeof resolvers.readStandingRules === 'function' ? await resolvers.readStandingRules() : []),
-    settings: () => appSettings, requestApproval,
+    settings: refreshSettings,
+    requestApproval: async (action, reevaluate) => {
+      const signal = action.signal ? AbortSignal.any([action.signal, lifetime.signal]) : lifetime.signal;
+      const permissions = activePermissions(approvalMode(), listener => host?.settings?.onApprovalModeChange(next => {
+        appSettings = { ...appSettings, approvalMode: next };
+        listener(next);
+      }), (card, cardSignal) => requestApproval({ ...card, signal: cardSignal }), signal);
+      try { return await permissions.request(action, reevaluate); }
+      finally { permissions.dispose(); }
+    },
     extraToolNames: async () => (await resolvers.mcpExtraTools?.(appSettings) || []).map((value: any) => (value.function || value).name),
     extraToolDefinitions: async () => (await resolvers.mcpExtraTools?.(appSettings) || []),
     onExtraTool: (name: string, args: any, tool: any) => routeFor(tool.sessionId)?.(name, args, tool),

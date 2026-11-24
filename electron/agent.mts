@@ -21,7 +21,7 @@ import { calculateWorkdays,checkOfficialDocument,currentDatetime,exportExcelWork
 import { approvalDecision,needsApproval } from "./agent/permissions.mts";
 import { getPromptDefinition, memoriesAsPagesFallback,systemPrompt } from "./agent/prompt.mts";
 import { readUsageExtras } from "./agent/responses.mts";
-import { externalApprovalDetails,isImpactSummaryEligible,loadReviewerPolicy,needsIndependentCommandReview,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewerBoundaryNote,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
+import { externalApprovalDetails,isImpactSummaryEligible,loadReviewerPolicy,needsIndependentCommandReview,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewInterruption,reviewerBoundaryNote,reviewerEvidenceMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
 import { MODEL_IDLE_TIMEOUT_MS,MODEL_NETWORK_RETRY_BASE_DELAY_MS,MODEL_NETWORK_RETRY_LIMIT,MODEL_STATUS_RETRY_BASE_DELAY_MS,MODEL_STATUS_RETRY_LIMIT,MODEL_TIMEOUT_MS,MODEL_TIMEOUT_RETRY_LIMIT,MODEL_TRANSPORT_RETRY_BASE_DELAY_MS,READ_ONLY_TOOLS,clipped } from "./agent/shared.mts";
 import { suggestStandingRule } from "./agent/standing-rules.mts";
 import { parseArguments,validateToolArguments } from "./agent/tool-arguments.mts";
@@ -31,7 +31,7 @@ import { isTextModelWithoutVisionService } from "./agent/vision.mts";
 import { fetchPublicPage,govSearch,htmlToText,webSearch } from "./agent/web-tools.mts";
 import { Workspace,diffLineCounts,loadProjectInstructions,unifiedDiff } from "./agent/workspace.mts";
 import { buildReviewContext,delegatedReviewContext,isStatefulUiOperation,readReviewObservation,reviewActionDetails,reviewContextFingerprint,reviewToolDefinition } from "./approval-context.mts";
-import { reviewTaskAction } from "./approval-policy.mts";
+import { ApprovalNeedsReview, pendingApprovalDecision, reviewerDenialMessage, reviewerRevisionMessage, reviewTaskAction } from "./approval-policy.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
 import { computerUseAction,isComputerUseTool } from "./computer-use.mts";
 import { compressImageBufferForModel,readLocalImageForModel } from "./local-image.mts";
@@ -51,7 +51,7 @@ export { parseModelJson,sanitizeEndpointUrl } from "./agent/model-transport.mts"
 export { addWorkdays,calculateWorkdays,checkOfficialDocument,checkOfficialDocumentText,currentDatetime,exportExcelWorkbook,exportWordDocument,runOcrFile,scanSensitiveInfo,sliceLines,workdaysBetween } from "./agent/office-tools.mts";
 export { approvalDecision,evaluateApproval } from "./agent/permissions.mts";
 export { readUsageExtras,responsesInput } from "./agent/responses.mts";
-export { REVIEWER_POLICY,isImpactSummaryEligible,isReviewerEligible,isReviewerProtectedPath,loadReviewerPolicy,parseReviewerDecision,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewerBoundaryNote,reviewerCacheKey,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
+export { REVIEWER_POLICY,isImpactSummaryEligible,isReviewerEligible,isReviewerProtectedPath,loadReviewerPolicy,parseReviewerDecision,planTaskApproval,readReviewEntryScripts,relatedReviewToolEvidence,reviewApproval,reviewInterruption,reviewerBoundaryNote,reviewerCacheKey,reviewerEvidenceMessage,reviewerUnavailableMessage,summarizeApprovalImpact,summarizeCommandEffects } from "./agent/review.mts";
 export { READ_ONLY_TOOLS,isSafeRelativePath } from "./agent/shared.mts";
 export { matchStandingRule,suggestStandingRule } from "./agent/standing-rules.mts";
 export { toolDefinitions,toolDefinitionsWith } from "./agent/tool-definitions.mts";
@@ -1259,7 +1259,7 @@ export async function runAgent({
                 const updated = planTaskApproval({ ...decisionInput, approvalMode: effectiveApprovalMode(),
                   hasExternalPaths: externalPathsForTool(workspace, name, args).length > 0,
                   standingRules: [...standingRules, ...sessionRules], hook: hookVerdict, workspacePath: workspace.root });
-                return updated === 'execute' ? 'allow' : updated === 'deny' ? 'deny' : 'ask';
+                return pendingApprovalDecision(updated, route);
               });
               // null 表示出队重评估时已无需审批（被先行授权覆盖），不算用户本人批准
               if (userDecision === null) { approvalSource = "mode"; return true; }
@@ -1285,9 +1285,13 @@ export async function runAgent({
               const missingFacts = Boolean(needsIndependentCommandReview(approvalToolName, args.command) || entryScripts || processTargets || externalPaths.length || hookVerdict || isStatefulUiOperation(approvalToolName, args)
                 || inlinePolicy?.hash !== loadReviewerPolicy().hash
                 || inlineAuthorizationVersion !== reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewerContext()}`, inlinePolicy?.hash || ''));
+              if (inlineApproval?.decision === 'revise') {
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-revise', detail: inlineApproval.reason });
+                return { message: { role: 'tool', tool_call_id: toolCall.id, content: reviewerRevisionMessage(inlineApproval.reason) } };
+              }
               if (inlineApproval?.decision === 'deny') {
                 auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-denied', detail: inlineApproval.reason });
-                return { message: { role: 'tool', tool_call_id: toolCall.id, content: `失败\n本次操作未执行：${inlineApproval.reason}` } };
+                return { message: { role: 'tool', tool_call_id: toolCall.id, content: `失败\n${reviewerDenialMessage(inlineApproval.reason)}` } };
               }
               if (!missingFacts && inlineApproval?.decision === 'allow') {
                 approved = true;
@@ -1295,14 +1299,11 @@ export async function runAgent({
                 reviewerReason = inlineApproval.reason;
                 reviewerPolicyHash = inlinePolicy?.hash || '';
                 runSeparateReview = false;
-              } else if (!missingFacts && inlineApproval?.decision === 'ask' && approvalToolName !== 'run_command') {
-                approved = await askApproval(inlineApproval.reason);
-                runSeparateReview = false;
               }
             }
             if (runSeparateReview) {
               // 每次核对当前授权、实际事实与入口脚本，不复用较早允许。
-              const initialConcern = approvalToolName === 'run_command' && inlineApproval?.decision === 'ask'
+              const initialConcern = inlineApproval?.decision === 'ask'
                 ? inlineApproval.reason : '';
               const reviewContext = reviewerContext() + relatedReviewToolEvidence(executedTools, displayArgs.command);
               const entryScripts = await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs,
@@ -1318,6 +1319,17 @@ export async function runAgent({
                   || await beforeToolExecute?.({ name: reader, args: readArgs }),
                 signal: cancellationSignal,
               });
+              if (observation?.preflightFailed === true) {
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "preflight-failed", detail: observation.text });
+                debugLog("tool-result", "本地前置核验未通过（跳过远程审核）", `${summary}\n${observation.text}`);
+                return {
+                  message: {
+                    role: "tool",
+                    tool_call_id: toolCall.id,
+                    content: `失败\n${observation.text}`,
+                  },
+                };
+              }
               const reviewVersion = reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewContext}\n${entryScripts}`, loadReviewerPolicy().hash);
               const review = await reviewTaskAction({ version: reviewVersion, signal: cancellationSignal,
                 currentVersion: async () => reviewContextFingerprint(`${effectiveApprovalMode()}\n${reviewerContext() + relatedReviewToolEvidence(executedTools, displayArgs.command)}\n${await readReviewEntryScripts({ workspace, name: approvalToolName, args: displayArgs, signal: cancellationSignal,
@@ -1341,13 +1353,18 @@ export async function runAgent({
                     },
                   } });
               reviewerState.total += 1;
+              if (review.decision === 'revise') {
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-revise', detail: review.reason });
+                return { message: { role: 'tool', tool_call_id: toolCall.id, content: reviewerRevisionMessage(review.reason) } };
+              }
               if (review.needsEvidence) {
                 auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: 'reviewer-needs-evidence', detail: review.reason });
                 return { message: { role: 'tool', tool_call_id: toolCall.id, content: reviewerEvidenceMessage(review.reason) } };
               } else if (review.unavailable) {
-                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: "reviewer-unavailable", detail: review.reason });
+                const interruption = reviewInterruption(review);
+                auditRecord({ tool: approvalToolName, summary, riskClass: classify(approvalToolName, args).risk, decision: interruption.decision, detail: review.reason });
                 return { message: { role: "tool", tool_call_id: toolCall.id,
-                  content: reviewerUnavailableMessage(review.reason) } };
+                  content: interruption.message } };
               } else if (review.decision === "allow") {
                 approved = true;
                 reviewedExecution = review.execution || "workspace";
@@ -1362,7 +1379,7 @@ export async function runAgent({
                   message: {
                     role: "tool",
                     tool_call_id: toolCall.id,
-                    content: `失败\n审核助手拒绝了这次操作：${review.reason}。不要用变通方式重试同样的操作，改用文字说明或询问用户。`,
+                    content: `失败\n${reviewerDenialMessage(review.reason)}`,
                   },
                 };
               } else {
@@ -1371,7 +1388,11 @@ export async function runAgent({
                 approved = await askApproval(review.reason);
               }
             } else if (!reviewable) {
-              approved = await askApproval();
+              try { approved = await askApproval(); }
+              catch (error) {
+                if (error instanceof ApprovalNeedsReview) return executeCoreToolCall(toolCall);
+                throw error;
+              }
             }
             // 允许执行后记住本次任务的同类操作；外部路径与不可规则化操作保持逐次确认
             if (approvedByUser && suggestedRule && !externalPaths.length) {

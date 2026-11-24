@@ -98,15 +98,16 @@ export function fitsDecisionInput(text: unknown) {
   return estimateTextTokens(String(text || "")) <= DECISION_MAX_TOKENS - DECISION_INPUT_RESERVE_TOKENS;
 }
 
-// 审批分档：一道 choice 题（allow/ask/deny），criteria 顺序即符号映射顺序，须保持稳定。
+// 审批分档：一道 choice 题（allow/ask/deny/revise），criteria 顺序即符号映射顺序，须保持稳定。
 export const DECISION_APPROVAL_QUESTIONS = {
   decision: {
     type: "choice",
     instructions: "根据以上用户授权、审核政策与待审操作，判断应如何处理当前操作。",
     criteria: {
       allow: "事实充分、影响符合已有授权且不触犯禁止边界，可以执行",
-      ask: "事实不足、需要新增授权或须由用户本人确认",
+      ask: "原任务必须由用户决定或新增授权，改变做法仍不能满足原目标",
       deny: "应拒绝：外发秘密、削弱安全保护、破坏性不可逆或绕过用户明确禁止",
+      revise: "当前步骤引入非必要影响，可以在既有授权内更换做法并完成原目标",
     },
   },
 };
@@ -124,10 +125,11 @@ function toApprovalDistribution(dist: Record<string, number>) {
     allow: Number(dist.allow ?? 0),
     ask: Number(dist.ask ?? 0),
     deny: Number(dist.deny ?? 0),
+    revise: Number(dist.revise ?? 0),
   };
 }
 
-// 审批分档请求：state = 审核政策 + 组合好的授权材料；返回 allow/ask/deny 的概率分布。
+// 审批分档请求：state = 审核政策 + 组合好的授权材料；返回 allow/ask/deny/revise 的概率分布。
 // 远程：端点未配置、最近不可达、超容量、服务故障或答案不可读都返回 null，由调用方 fail-closed。
 // 本地：进程自管不查不可达负缓存；启动/请求失败向上抛具体原因（review.mts 会带出文案）。
 export async function requestDecisionReview({ settings, policy = "", reviewText = "", fetchImpl = fetch, signal = null } = {} as any) {
@@ -155,9 +157,11 @@ export function mapDecisionApproval(distribution: any, threshold: number) {
   const allow = Number(distribution?.allow ?? 0);
   const ask = Number(distribution?.ask ?? 0);
   const deny = Number(distribution?.deny ?? 0);
+  const revise = Number(distribution?.revise ?? 0);
   const probability = { ...distribution, threshold: t };
-  const summary = `决策模型判定：allow ${formatProbability(allow)}、ask ${formatProbability(ask)}、deny ${formatProbability(deny)}（阈值 ${Math.round(t * 100)}%；校准概率非实测准确率）`;
-  if (allow >= t) return { decision: "allow", reason: `${summary}；支持在既有授权范围内执行当前操作`, probability };
+  const summary = `决策模型判定：allow ${formatProbability(allow)}、ask ${formatProbability(ask)}、deny ${formatProbability(deny)}、revise ${formatProbability(revise)}（阈值 ${Math.round(t * 100)}%；校准概率非实测准确率）`;
+  if (revise >= t && revise > allow && revise > deny && revise > ask) return { decision: "revise", reason: "本次操作引入非必要影响，请在原任务授权内改选验证或实施方式", probability };
+  if (allow >= t && allow > revise) return { decision: "allow", reason: `${summary}；支持在既有授权范围内执行当前操作`, probability };
   if (deny >= t) return { decision: "deny", reason: `${summary}；当前操作未执行`, probability };
   return { decision: "ask", reason: `${summary}；置信不足转人工确认`, probability };
 }

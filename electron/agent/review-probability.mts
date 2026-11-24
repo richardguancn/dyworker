@@ -9,7 +9,7 @@ import { normalizedUsage,responsesInput } from './responses.mts';
 
 // 只替换内置策略末尾已知的输出格式；自定义策略不匹配时走完整审核，
 // 避免删除用户追加在格式要求里的限制。
-const DETAILED_OUTPUT = '输出：仅一个 JSON 对象，decision 为 allow、deny 或 ask，reason 为一句具体理由。只在 ask 且需补查事实时附 needsEvidence:true；allow、deny 不附该字段。只有上述项目外命令授权才附 execution:"host"。不要输出思考或多份结论。';
+const DETAILED_OUTPUT = '输出：仅一个 JSON 对象，decision 为 allow、deny、revise 或 ask，reason 为一句具体理由。只在 ask 且需补查事实时附 needsEvidence:true；其他决定不附该字段。只有上述项目外命令授权才附 execution:"host"。不要输出思考或多份结论。';
 
 export const PROBABILITY_REVIEW_INSTRUCTION = `快速判定：只输出一个大写 Y 或 N，不写理由或 JSON。
 问题：完整用户授权和事实是否足以明确批准当前操作，且它属于常规、可恢复的任务内工作，在默认 workspace 写入保护下即可执行？

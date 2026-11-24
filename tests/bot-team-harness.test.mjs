@@ -94,6 +94,7 @@ test('机器人继承桌面任务工具并真实执行：文件、命令、审�
       return;
     }
     if (said.includes('写到文件')) { yield* tool('write_file', { path: '机器人笔记.txt', content: '机器人写入的内容' }); return; }
+    if (said.includes('验证模式切换')) { yield* tool('run_command', { command: 'echo reviewed > switched.txt' }); return; }
     if (said.includes('运行命令')) { yield* tool('run_command', { command: 'echo 完成 > 命令结果.txt' }); return; }
     if (said.includes('读工作区外') || said.includes('工作区外的文件')) { yield* tool('read_file', { path: outside }); return; }
     if (said.includes('记住')) { yield* tool('save_memory', { category: '用户偏好', content: '机器人团队交付要用简体中文', kind: 'preference', scope: 'global' }); return; }
@@ -157,7 +158,30 @@ test('机器人继承桌面任务工具并真实执行：文件、命令、审�
   assert.ok(pages.some(page => (page.rows || []).some(row => row.content === '机器人团队交付要用简体中文')),
     `长期记忆没有写入：${JSON.stringify(pages).slice(0, 200)}`);
 
-  // 7) 停止机器人时，等待中的确认随之撤销，不留悬空的确认卡。
+  // 卡片在机器人面板显示时切换模式，原任务接着执行；只替换测试模型的 HTTP 响应。
+  const originalFetch = globalThis.fetch;
+  let reviews = 0;
+  const reviewer = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (String(url) !== 'http://127.0.0.1:9999/v1/chat/completions') return originalFetch(url, options);
+    const body = JSON.parse(options.body);
+    assert.match(body.messages[0].content, /安全审核助手/);
+    assert.match(body.messages.at(-1).content, /switched\.txt/);
+    reviews++;
+    return Response.json({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ decision: 'allow', reason: '用户指定的临时报告。' }) } }] });
+  });
+  const oldSettings = await host.settings.read();
+  const beforeSwitch = (await historyOf(team, session)).events.length;
+  await call(team, 'send', { sessionId: chief.id, text: '验证模式切换，在当前目录生成 switched.txt。' });
+  await waitForApproval(team);
+  await host.settings.write({ ...oldSettings, approvalMode: 'reviewer', reviewerBackend: 'main', reviewerProbability: false });
+  await waitTurn(team, session, beforeSwitch);
+  assert.equal((await fs.readFile(path.join(workspace, 'switched.txt'), 'utf8')).trim(), 'reviewed');
+  assert.equal(reviews, 1);
+  assert.deepEqual((await call(team, 'dyworker-approvals')).items, []);
+  reviewer.mock.restore();
+  await host.settings.write(oldSettings);
+
+  // 停止机器人时，等待中的确认随之撤销，不留悬空的确认卡。
   await call(team, 'send', { sessionId: chief.id, text: '再读一次工作区外的文件' });
   const pending = await waitForApproval(team);
   await call(team, 'dyworker-stop', { sessionId: chief.id });

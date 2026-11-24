@@ -15,6 +15,11 @@ const call = (id, name, args) => ({ role: 'assistant', content: null, tool_calls
 const evidence = { decision: 'ask', needsEvidence: true, reason: '先读取 helper.mjs，核对被调用程序的实际输出和影响' };
 
 test('模型可明确要求补查，错误组合和伪造字段不能成为允许', () => {
+  const revise = { decision: 'revise', reason: '在隔离目录中验证' };
+  assert.equal(reviewOutcome(parseReviewerDecision(JSON.stringify(revise))).status, 'revision_required');
+  for (const invalid of [{ ...revise, execution: 'host' }, { ...revise, needsEvidence: true }, { ...revise, reason: {} }]) {
+    assert.equal(parseReviewerDecision(JSON.stringify(invalid)).unavailable, true);
+  }
   assert.equal(reviewOutcome(parseReviewerDecision(JSON.stringify(evidence))).status, 'needs_evidence');
   for (const value of [
     { ...evidence, decision: 'allow' }, { ...evidence, decision: 'deny' },
@@ -51,6 +56,9 @@ for (const [label, create] of [['DSH', createDshApproval], ['机器人', createB
       fetchImpl: async () => reply(JSON.stringify(result)) });
     const tool = () => ({ name: 'run_command', args: { command: 'node check.mjs' }, signal: new AbortController().signal });
     await assert.rejects(approve(tool()), /先读取 helper.mjs/);
+    assert.equal(asks, 0);
+    result = { decision: 'revise', reason: '使用隔离目录完成测试' };
+    await assert.rejects(approve(tool()), /使用隔离目录完成测试/);
     assert.equal(asks, 0);
     result = { decision: 'allow', reason: '完整内容已核对，属于当前任务' };
     assert.equal(await approve(tool()), true);
@@ -126,4 +134,43 @@ test('必须人工确认时，影响说明也读取文件尾部完整内容，�
     } });
   assert.equal(result.status, 'done'); assert.equal(asks, 1); assert.equal(summarySawTail, true);
   await assert.rejects(fs.access(path.join(root, 'check.mjs')), { code: 'ENOENT' });
+});
+
+test('退回额外写入和移动在用目录后，助手在隔离目录完成验证', async t => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-approval-revise-')));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const workspace = path.join(root, 'workspace'), logs = path.join(root, 'service', 'logs');
+  await fs.mkdir(workspace);
+  await fs.mkdir(logs, { recursive: true });
+  await fs.writeFile(path.join(logs, 'active.log'), 'running');
+  const existing = path.join(root, 'probe.txt');
+  await fs.writeFile(existing, 'original');
+  const revision = '保留原文件和在用日志。在项目内另建隔离目录进行验证。';
+  const steps = [
+    call('probe', 'run_command', { command: `echo x > "${existing}"` }),
+    call('move', 'move_file', { source: logs, target: 'old-logs' }),
+    call('isolated', 'run_command', { command: `node -e "const fs=require('fs');fs.mkdirSync('isolated');fs.writeFileSync('isolated/probe.txt','checked')"` }),
+    { role: 'assistant', content: '已验证隔离目录写入。' },
+  ];
+  let step = 0, asks = 0, reviews = 0;
+  const audits = [];
+  await runAgent({ workspacePath: workspace, trustTempDirs: false, settings, approvalMode: 'reviewer',
+    conversation: [{ role: 'user', content: '完成安装验证。' }], audit: row => audits.push(row),
+    requestApproval: async () => { asks++; return false; },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.messages[0].content.includes('安全审核助手')) {
+        reviews++;
+        return reply(JSON.stringify(reviews <= 2 ? { decision: 'revise', reason: revision } : { decision: 'allow', reason: '新操作位于隔离目录' }));
+      }
+      if (step === 1 || step === 2) assert.ok(body.messages.some(message => message.role === 'tool' && message.content.includes(revision)));
+      return reply(steps[step++]);
+    } });
+  assert.equal(asks, 0);
+  assert.equal(reviews, 3);
+  assert.equal(audits.filter(row => row.decision === 'reviewer-revise').length, 2);
+  assert.equal(await fs.readFile(existing, 'utf8'), 'original');
+  assert.equal(await fs.readFile(path.join(logs, 'active.log'), 'utf8'), 'running');
+  await assert.rejects(fs.stat(path.join(workspace, 'old-logs')), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(path.join(workspace, 'isolated/probe.txt'), 'utf8'), 'checked');
 });

@@ -10,7 +10,7 @@ import { buildReviewContext } from '../electron/approval-context.mts';
 
 const settings = { endpoint: 'http://mock.local/v1/chat/completions', model: 'mock', apiKey: 'test' };
 const response = message => ({ ok: true, json: async () => ({ choices: [{ message: typeof message === 'string' ? { role: 'assistant', content: message } : message }] }) });
-const call = (name, args) => ({ role: 'assistant', tool_calls: [{ id: 'call', type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+const call = (name, args, id = 'call') => ({ role: 'assistant', tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
 async function fixture(t, base = os.tmpdir()) {
   const root = await fs.realpath(await fs.mkdtemp(path.join(base, '.dyw-approval-test-')));
   t.after(() => fs.rm(root, { recursive: true, force: true })); return root;
@@ -39,7 +39,11 @@ for (const [label, create] of [['DSH', createDshApproval], ['机器人', createB
           else await fs.writeFile(path.join(root, 'inspect.py'), 'print("new")');
           return { decision: 'allow', reason: '旧资料下的结论' }; },
         requestApproval: async () => { asks++; return true; } });
-      await assert.rejects(approve({ name: 'run_command', args: { command: 'python3 inspect.py' }, signal: new AbortController().signal }), /旧结论已作废/);
+      await assert.rejects(approve({ name: 'run_command', args: { command: 'python3 inspect.py' }, signal: new AbortController().signal }), error => {
+        assert.match(error.message, /旧结论已作废/);
+        assert.doesNotMatch(error.message, /审核服务暂时不可用/);
+        return true;
+      });
       assert.equal(asks, 0);
     }
   });
@@ -51,6 +55,41 @@ for (const [label, create] of [['DSH', createDshApproval], ['机器人', createB
     assert.equal(reviewed, 2);
   });
 }
+
+test('桌面任务在审核期间缩小范围：旧稿不写，剩余文件仍可重新审核并完成', async t => {
+  const root = await fixture(t);
+  const conversation = [{ role: 'user', content: '请更新甲稿和乙稿。' }];
+  const oldFile = path.join(root, 'a.txt'), currentFile = path.join(root, 'b.txt');
+  await fs.writeFile(oldFile, '原甲稿');
+  await fs.writeFile(currentFile, '原乙稿');
+  const steps = [
+    call('write_file', { path: 'a.txt', content: '新甲稿' }),
+    call('write_file', { path: 'b.txt', content: '新乙稿' }, 'second'),
+    '已按最新要求只更新乙稿。',
+  ];
+  let round = 0, reviews = 0, cards = 0;
+  const audit = [];
+  const result = await runAgent({ settings, conversation, workspacePath: root, approvalMode: 'reviewer',
+    audit: item => audit.push(item), requestApproval: async () => { cards++; return false; },
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      if (body.messages[0].content.includes('安全审核助手')) {
+        if (++reviews === 1) conversation.push({ role: 'user', content: '甲稿保留原样，现在只更新乙稿。' });
+        else assert.match(body.messages.at(-1).content, /现在只更新乙稿/);
+        return response('{"decision":"allow","reason":"基于收到的请求作出判断"}');
+      }
+      return response(steps[round++]);
+    } });
+  assert.equal(result.status, 'done');
+  assert.equal(reviews, 2);
+  assert.equal(cards, 0);
+  assert.equal(await fs.readFile(oldFile, 'utf8'), '原甲稿');
+  assert.equal(await fs.readFile(currentFile, 'utf8'), '新乙稿');
+  const invalidated = result.executedMessages.find(m => m.role === 'tool' && m.content.includes('旧结论已作废'));
+  assert.ok(invalidated);
+  assert.doesNotMatch(invalidated.content, /审核服务暂时不可用/);
+  assert.ok(audit.some(item => item.decision === 'reviewer-stale'));
+});
 
 test('文件工具审核要求新增授权时不会被原有自动放行分支跳过', async t => {
   const root = await fixture(t); let asks = 0, step = 0;

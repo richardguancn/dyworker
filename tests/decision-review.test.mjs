@@ -48,6 +48,7 @@ test('answers 只接受概率分布形状，并按总质量归一', () => {
 test('审批阈值映射：达标放行/拒绝，其余转人工（ask 而非 unavailable）', () => {
   const allow = mapDecisionApproval({ allow: 0.95, ask: 0.04, deny: 0.01 }, 0.9);
   assert.equal(allow.decision, 'allow'); assert.equal(allow.probability.threshold, 0.9);
+  assert.equal(mapDecisionApproval({ allow: 0, ask: 0.02, deny: 0, revise: 0.98 }, 0.9).decision, 'revise');
   const deny = mapDecisionApproval({ allow: 0.03, ask: 0.05, deny: 0.92 }, 0.9);
   assert.equal(deny.decision, 'deny');
   const uncertain = mapDecisionApproval({ allow: 0.5, ask: 0.3, deny: 0.2 }, 0.9);
@@ -75,7 +76,7 @@ test('实际审核路径：达到阈值自动放行，材料包含审核政策�
   assert.match(result.reason, /决策模型/);
   assert.match(request.state, /审核助手/);
   assert.match(request.state, /write_file/);
-  assert.deepEqual(Object.keys(request.questions.decision.criteria), ['allow', 'ask', 'deny']);
+  assert.deepEqual(Object.keys(request.questions.decision.criteria), ['allow', 'ask', 'deny', 'revise']);
 });
 
 test('达到拒绝阈值自动拒绝；置信不足转人工确认', async () => {

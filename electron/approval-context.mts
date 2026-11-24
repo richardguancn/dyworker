@@ -13,7 +13,7 @@ const messageText = (message: any) => Array.isArray(message?.content)
 
 // 人类原话与工具/网页事实分别标注。不能把助手的计划、网页指令或图片说明升级为授权。
 export function buildReviewContext({ conversation = [], prompt = "", goal = "", workingContext = "", projectInstructions = "", approvals = [], replies = [], recentTools = [] } = {} as any) {
-  const users = conversation.filter((message: any) => message?.role === "user");
+  const users = conversation.filter((message: any) => message?.role === "user" && message.origin !== 'automatic-wake');
   // 有来源、按发生顺序保存原文。版本只由真实授权材料决定，助手事实不能授予权限。
   const events = users.map((message: any, index: number) => ({ sequence: index + 1,
     source: 'human-instruction', text: messageText(message) }));
@@ -153,7 +153,14 @@ export function isStatefulUiOperation(name: string, args: any = {}) {
 }
 
 // 审核前重新观察真实目标。观察器只能使用宿主已经提供的只读工具，不能执行待审动作。
-export async function readReviewObservation({ name, args = {}, availableNames = [], execute, check, signal, timeoutMs = 15000 } = {} as any) {
+export async function readReviewObservation({ name, args = {}, availableNames = [], execute, check, signal, timeoutMs = 15000 } = {} as any): Promise<{
+  available: boolean;
+  text: string;
+  images?: any[];
+  reader?: string;
+  args?: any;
+  preflightFailed?: boolean;
+} | undefined> {
   if (!isStatefulUiOperation(name, args)) return undefined;
   const action = computerUseAction(name);
   const useSharedDesktop = isComputerUseTool(name)
@@ -174,7 +181,7 @@ export async function readReviewObservation({ name, args = {}, availableNames = 
   if (!reader || !availableNames.includes(reader) || !execute) return { available: false, text: "没有可用的当前界面读取入口" };
   const readArgs = isComputerUseTool(name)
     ? { app: args.app, ...(args.observation_id ? { observation_id: args.observation_id } : {}), ...(args.window_id ? { window_id: args.window_id } : {}), ...(args.window_title ? { window_title: args.window_title } : {}) }
-    : {};
+    : (reader === "browser__inspect" && args?.observationId ? { observationId: args.observationId } : {});
   let timer: ReturnType<typeof setTimeout>, abort: () => void;
   try {
     signal?.throwIfAborted();
@@ -193,7 +200,13 @@ export async function readReviewObservation({ name, args = {}, availableNames = 
       }),
     ]);
     signal?.throwIfAborted();
-    if (!extra?.ok) return { available: false, text: clip(extra?.result || "当前界面读取失败", 1000) };
+    if (!extra?.ok) {
+      return {
+        available: false,
+        text: clip(extra?.result || "当前界面读取失败", 1000),
+        ...(extra?.preflightFailed ? { preflightFailed: true } : {}),
+      };
+    }
     const text = clip(extra.result, 6000);
     const images = (Array.isArray(extra.images) ? extra.images : []).filter((image: any) =>
       typeof image?.data === "string" && image.data.length > 0 && image.data.length <= 20000000

@@ -1,3 +1,5 @@
+import { ApprovalNeedsReview } from './approval-policy.mts';
+
 // 只接受宿主设置服务的变更；任务明确只读时，不允许全局设置扩大权限。
 export function activePermissions(initialMode: string, subscribe: any, request: any, signal: AbortSignal) {
   let mode = initialMode;
@@ -11,36 +13,45 @@ export function activePermissions(initialMode: string, subscribe: any, request: 
     getMode: () => mode,
     dispose: () => unsubscribe?.(),
     async request(action: any, reevaluate?: () => string) {
-      signal.throwIfAborted();
-      const decision = reevaluate?.();
-      if (decision === 'allow' || decision === 'deny') return decision === 'allow' ? null : false;
-      const controller = new AbortController();
-      const pendingSignal = AbortSignal.any([signal, controller.signal]);
-      let refresh: () => void;
-      let abort: () => void;
-      const changed = new Promise<boolean | null>((resolve, reject) => {
-        refresh = () => {
-          const next = reevaluate?.();
-          if (next === 'allow' || next === 'deny') resolve(next === 'allow' ? null : false);
-        };
-        abort = () => reject(signal.reason);
-        waiting.add(refresh);
-        signal.addEventListener('abort', abort, { once: true });
-      });
-      let pending: Promise<boolean>;
-      let answer: boolean | null;
-      try {
-        pending = Promise.resolve(request?.(action, pendingSignal)).then(value => value === true);
-        answer = await Promise.race([pending, changed]);
-      } finally {
-        waiting.delete(refresh);
-        signal.removeEventListener('abort', abort);
-        controller.abort(new Error('权限已更新或审批已结束，此审批已撤回'));
-        // 入口须处理撤回信号；等其清除聊天的审批登记，避免旧审批的收尾清掉下一张卡。
-        await pending?.catch(() => {});
+      while (true) {
+        signal.throwIfAborted();
+        const decision = reevaluate?.();
+        if (decision === 'review') throw new ApprovalNeedsReview();
+        if (decision === 'allow' || decision === 'deny') return decision === 'allow' ? null : false;
+        const controller = new AbortController();
+        const pendingSignal = AbortSignal.any([signal, controller.signal]);
+        let refresh: () => void;
+        let abort: () => void;
+        const changed = new Promise<'changed'>((resolve, reject) => {
+          refresh = () => {
+            const next = reevaluate?.();
+            if (next === 'allow' || next === 'deny' || next === 'review') resolve('changed');
+          };
+          abort = () => reject(signal.reason);
+          waiting.add(refresh);
+          signal.addEventListener('abort', abort, { once: true });
+        });
+        let pending: Promise<boolean>;
+        let answer: boolean | 'changed';
+        try {
+          pending = Promise.resolve(request?.(action, pendingSignal)).then(value => value === true);
+          answer = await Promise.race([pending, changed]);
+        } finally {
+          waiting.delete(refresh);
+          signal.removeEventListener('abort', abort);
+          controller.abort(new Error('权限已更新或审批已结束，此审批已撤回'));
+          // 入口须处理撤回信号；等其清除聊天的审批登记，避免旧审批的收尾清掉下一张卡。
+          await pending?.catch(() => {});
+        }
+        signal.throwIfAborted();
+        if (answer === false) return false;
+        if (answer === true) {
+          const finalDecision = reevaluate?.();
+          if (finalDecision === 'review') throw new ApprovalNeedsReview();
+          return finalDecision !== 'deny';
+        }
+        // 卡片已撤回，按最终状态处理；若又切回请示，需要重新显示一张有效的卡。
       }
-      // 撤回卡片期间若用户再次收紧权限，不能使用上一次宽松设置的结果。
-      return answer === null && reevaluate?.() !== 'allow' ? false : answer;
     },
   };
 }

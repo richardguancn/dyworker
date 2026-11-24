@@ -67,6 +67,7 @@ for (const [label, opinion, approved, expected] of [
   ['同次允许', { decision: 'allow', reason: '用户明确要求删除此文件' }, false, false],
   ['缺少意见', undefined, false, true],
   ['需要确认', { decision: 'ask', reason: '范围待确认' }, false, true],
+  ['退回调整', { decision: 'revise', reason: '使用隔离的样本' }, false, true],
   ['同次拒绝', { decision: 'deny', reason: '用户禁止删除' }, false, true],
 ]) test(`同次审核：${label}`, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dyw-inline-'));
@@ -88,7 +89,7 @@ for (const [label, opinion, approved, expected] of [
     requestApproval: async action => { approvals.push(action); return approved; } });
   const exists = await fs.stat(path.join(root, 'sample.txt')).then(() => true, () => false);
   assert.equal(exists, expected);
-  assert.equal(requests.length, label === '缺少意见' ? 3 : 2);
+  assert.equal(requests.length, ['缺少意见', '需要确认'].includes(label) ? 3 : 2);
   assert.equal(approvals.length, ['缺少意见', '需要确认'].includes(label) ? 1 : 0);
   const runCmdSchema = requests[0].tools.find(item => item.function?.name === 'run_command').function.parameters;
   assert.ok(runCmdSchema.properties.__dyworker_approval);

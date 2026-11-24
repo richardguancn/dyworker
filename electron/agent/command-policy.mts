@@ -207,6 +207,9 @@ export function externalPathsForTool(workspace, name, args = {} as any) {
   if (pathArgumentTools.has(name) && args.path) candidates.push(args.path);
   if (name === "copy_file" || name === "move_file") candidates.push(args.source, args.target);
   if (name === "run_command") candidates.push(...commandPathCandidates(args.command, workspace));
+  if (name === "browser__act" && args?.action?.type === "upload" && Array.isArray(args.action.files)) {
+    candidates.push(...args.action.files);
+  }
   return [...new Set(candidates
     .map((value) => String(value || "").trim())
     .filter((value) => value && workspace.isOutside(value, { forWrite: isWrite }) && !workspace.isAuthorized(value, { forWrite: isWrite })))];
