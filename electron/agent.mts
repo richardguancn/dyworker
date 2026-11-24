@@ -34,16 +34,16 @@ import { buildReviewContext,delegatedReviewContext,isStatefulUiOperation,readRev
 import { reviewTaskAction } from "./approval-policy.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
 import { computerUseAction,isComputerUseTool } from "./computer-use.mts";
-import { readLocalImageData } from "./local-image.mts";
+import { compressImageBufferForModel,readLocalImageForModel } from "./local-image.mts";
 import { selectWikiPages } from "./memory-wiki.mts";
 import { KIMI_DEFAULT_DISABLED_TOOLS,KIMI_FORMULA_URIS,KIMI_WEB_SEARCH_DEFINITION,detectProvider,fetchKimiFormulaDefinitions,kimiFormulaBaseUrl,runKimiFormula } from "./providers.mts";
 import { classify } from "./risk.mts";
 import { formatSkillInstructions,skillContextSummary } from './skills.mts';
 export { externalPathsForTool,isAutoApprovableCommand,isDevAutoApprovableCommand,isExecutableRooted,isLikelyBackgroundCommand,isLowRiskCommand,isReviewerAutoApprovableCommand,isSafeCurlInvocation,isSafeWgetInvocation } from "./agent/command-policy.mts";
-export { compactConversation,isContextOverflowError,pruneOldToolResults,remainingWorkingContext } from "./agent/context.mts";
+export { compactConversation,isContextOverflowError,isPayloadOrMultimodalTooLargeError,pruneOldToolResults,remainingWorkingContext } from "./agent/context.mts";
 export { isIncompleteDeliveryEnding,pickDeliveryText,pointsElsewhereOnly,promisesDelivery,verifyTaskEvidence } from "./agent/delivery.mts";
 export { builtinHooks,evaluateHooks } from "./agent/hooks.mts";
-export { adaptMessagesForModel,estimateMessagesTokens,estimateTextTokens,sanitizeToolCalls } from "./agent/messages.mts";
+export { adaptMessagesForModel,enforceModelImageBudget,estimateMessagesTokens,estimateTextTokens,hasToolImages,replaceAllToolImagesWithText,replaceOlderUserImagesWithText,replaceViewImagesWithText,sanitizeToolCalls } from "./agent/messages.mts";
 export { bareModelName,isResponsesEndpoint,listServerModels,normalizeModelEndpoint,probeServerContextLimit } from "./agent/model-discovery.mts";
 export { requestModel } from "./agent/model-request.mts";
 export { reasoningRequestParams,resolveSubAgentSettings,summarizationSettings } from "./agent/model-settings.mts";
@@ -937,6 +937,7 @@ export async function runAgent({
         // 服务端上下文超限时的强制压缩重试：本地估算与端点实际上限可能不一致，
         // 超限 → 强制裁剪工具结果 + 压缩摘要 → 重试，一轮内最多 2 次，仍超限才报错
         let overflowRetries = 0;
+        let payloadImageRetries = 0;
         for (;;) {
           try {
             modelMessage = await requestCurrentModel();
@@ -2106,6 +2107,7 @@ export async function runAgent({
         for (const supplemental of outcome?.supplementalMessages || []) messages.push(supplemental);
       }
       replaceInterfaceImagesWithText(messages, true);
+      replaceViewImagesWithText(messages, 2);
       if (loopDecision === "pause") {
         return withChanges({ status: "paused", finalText, reason: loopGuard.pauseReason || "连续多轮重复同样的操作，返回结果也没有变化；提醒调整后仍未取得新进展，已暂停。已保留工作记录，可继续处理。" });
       }
