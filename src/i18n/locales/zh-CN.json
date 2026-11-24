@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "调整右侧宽度",
   "browserViewport.resizeBottom": "调整底部高度",
   "browserViewport.resizeBottomLeft": "调整左下角尺寸",
-  "browserViewport.resizeBottomRight": "调整右下角尺寸"
+  "browserViewport.resizeBottomRight": "调整右下角尺寸",
+  "model.contextLimit": "上下文上限",
+  "model.contextLimitPlaceholder": "自动（当前：{limit}）",
+  "model.contextLimitHint": "支持 1M、256K、131072 等写法；留空表示按服务返回或参考值自动判断。",
+  "model.contextLimitNeedModelHint": "填写接口地址和模型名称后，可按当前模型自定义上下文上限。",
+  "model.contextLimitInvalid": "格式无效：请输入 1M、256K 或不小于 1024 的整数，留空则自动判断。",
+  "model.contextLimitSuffixOverrideHint": "当前模型名称自带 [{limit}] 后缀，优先按 {limit} 生效；去掉后缀后将使用此处或自动判断的值。",
+  "model.visionSectionTitle": "图片识别",
+  "model.visionModeLabel": "图片处理方式",
+  "model.visionAutoNative": "自动判断（当前：模型原生支持图片）",
+  "model.visionAutoService": "自动判断（当前：使用外部视觉服务）",
+  "model.visionModeNative": "模型原生支持图片",
+  "model.visionModeService": "使用外部视觉服务",
+  "model.visionNativeNote": "当前按原生图片模式发送：附件图片会以 image_url 原样随请求发送给当前模型，无需配置外部视觉服务。若该模型不支持图片，可在上方改为“使用外部视觉服务”。",
+  "model.visionNativeDeepseekNote": "当前按原生图片模式发送：附件图片会原样随请求发送给 DeepSeek，无需配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。",
+  "model.visionServiceNote": "图片会先交给下方视觉服务识别为文字，再交给当前模型处理，原图不会发送给当前模型。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。若该模型已支持图片输入，可在上方改为“模型原生支持图片”。"
 }

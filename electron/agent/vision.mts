@@ -1,6 +1,7 @@
 // 模型视觉能力判断与图片描述。
 import { createHash } from "node:crypto";
-import { detectProvider,isGlmNativeVisionModel } from "../providers.mts";
+import { isGlmNativeVisionModel, resolveModelVisionConfig } from "../model-vision.ts";
+import { detectProvider } from "../providers.mts";
 import { bareModelName } from "./model-discovery.mts";
 import { parseModelJson,postChat } from "./model-transport.mts";
 
@@ -53,31 +54,61 @@ function isDeepSeekV4TextModel(settings) {
   return model === "deepseek-v4-flash" || model === "deepseek-v4-pro";
 }
 
-// DeepSeek 官方视觉模型（2026-08-21 上线）：原生处理 input_image / image_url 图片，
-// 无需再经外部视觉服务转文字，图片直接随请求发给 DeepSeek（含 Responses API 与 Chat Completions 两种格式）。
+// DeepSeek 官方视觉模型（2026-08-21 上线）及设为原生图片模式的 DeepSeek 模型：
+// 原生处理 input_image / image_url 图片并做角色消息清洗，无需再经外部视觉服务转文字。
 export function isDeepSeekNativeVisionModel(settings) {
-  return bareModelName(settings?.model).toLowerCase() === "deepseek-v4-flash-vision-exp";
+  const model = bareModelName(settings?.model).toLowerCase();
+  const config = resolveModelVisionConfig({
+    endpoint: settings?.endpoint,
+    model: settings?.model,
+    overrides: settings?.visionOverrides,
+  });
+  if (config.source === "custom" && config.mode === "service") return false;
+  if (model === "deepseek-v4-flash-vision-exp") return true;
+  if (detectProvider(settings?.endpoint) === "deepseek") return config.mode === "native";
+  return false;
 }
 
-// GLM 多模态模型（glm-5.3-flash、glm-4.5v、glm-4.1v 系、glm-4v 系）：原生处理
-// image_url，无需视觉服务改写（判定模式见 providers.mjs isGlmNativeVisionModel）。
+// GLM 多模态模型（glm-5.4 等新一代模型、glm-5.3-flash、glm-4.5v、glm-4.1v 系、glm-4v 系）：
+// 原生处理 image_url，无需视觉服务改写；也可通过 visionOverrides 显式指定。
 export function isGlmVisionModel(settings) {
+  const endpoint = settings?.endpoint;
+  if (endpoint && detectProvider(endpoint) === "glm") {
+    return resolveModelVisionConfig({
+      endpoint,
+      model: settings?.model,
+      overrides: settings?.visionOverrides,
+    }).mode === "native";
+  }
   return isGlmNativeVisionModel(bareModelName(settings?.model));
 }
 
-// GLM 纯文本模型（glm-5.3 / 5.2 / 5.1 / 4.6 / 4.5-air / 4-flash 等）：不接收 image_url，
-// 带图请求会被服务端 400 拒绝，需经视觉服务改写或提示改用多模态模型。
-// 仅对智谱云端端点生效：自建网关透传 GLM 权重（vLLM 等）时保持原样，不强制改写。
+// GLM 需经视觉服务转写的纯文本模型：默认仅涵盖智谱云端已知历史纯文本版
+// （glm-5.3 / 5.2 / 5.1 / 5 / 4.x 非 V 版），或由用户显式覆盖为外部视觉服务；
+// 自建网关透传或新一代模型（如 glm-5.4）默认原样直通。
 export function isGlmTextModelNeedingVisionRewrite(settings) {
   if (detectProvider(settings?.endpoint) !== "glm") return false;
   const model = bareModelName(settings?.model).toLowerCase();
-  return /^glm-/.test(model) && !isGlmNativeVisionModel(model);
+  if (!/^glm-/.test(model)) return false;
+  return resolveModelVisionConfig({
+    endpoint: settings?.endpoint,
+    model: settings?.model,
+    overrides: settings?.visionOverrides,
+  }).mode === "service";
+}
+
+function hasVisionServiceCredentials(settings) {
+  return [settings?.visionEndpoint, settings?.visionModel, settings?.visionApiKey]
+    .every((value) => String(value || "").trim());
 }
 
 export function isTextModelWithoutVisionService(settings) {
-  return (isDeepSeekV4TextModel(settings) || isGlmTextModelNeedingVisionRewrite(settings))
-    && ![settings?.visionEndpoint, settings?.visionModel, settings?.visionApiKey]
-      .every((value) => String(value || "").trim());
+  const visionConfig = resolveModelVisionConfig({
+    endpoint: settings?.endpoint,
+    model: settings?.model,
+    overrides: settings?.visionOverrides,
+  });
+  return visionConfig.mode === "service" && !hasVisionServiceCredentials(settings);
 }
 
 function imageUrlFromPart(part) {
@@ -158,17 +189,33 @@ async function describeImageForTextModel({ settings, endpoint, model, imageUrl, 
 }
 
 export async function rewriteImagesForTextModel({ settings, messages, fetchImpl, signal }) {
-  // 官方视觉模型原生处理图片，直接放行（DeepSeek 视觉模型、GLM 多模态模型）
-  if (isDeepSeekNativeVisionModel(settings) || isGlmVisionModel(settings)) return messages;
+  const visionConfig = resolveModelVisionConfig({
+    endpoint: settings?.endpoint,
+    model: settings?.model,
+    overrides: settings?.visionOverrides,
+  });
+  // 原生支持图片的模型直接放行；纯文本且无图片输入也不需要改写
+  if (visionConfig.mode !== "service" || !messagesHaveImages(messages)) return messages;
   const glmTextModel = isGlmTextModelNeedingVisionRewrite(settings);
-  if ((!isDeepSeekV4TextModel(settings) && !glmTextModel) || !messagesHaveImages(messages)) return messages;
+  const deepseekTextModel = isDeepSeekV4TextModel(settings);
   const endpoint = String(settings.visionEndpoint || "").trim();
   const model = String(settings.visionModel || "").trim();
   const apiKey = String(settings.visionApiKey || "").trim();
   if (!endpoint || !model || !apiKey) {
-    throw new Error(glmTextModel
-      ? "GLM 文本模型不能直接识别图片：请在设置中把模型换成多模态的 glm-5.3-flash，或配置视觉识别服务（地址、模型和密钥）后再试"
-      : "DeepSeek V4（Flash / Pro）需要先配置视觉识别服务（地址、模型和密钥）才能识别图片");
+    const modelLabel = bareModelName(settings?.model) || "当前模型";
+    if (glmTextModel) {
+      throw new Error(
+        `GLM 文本模型（${modelLabel}）未配置视觉识别服务：若该模型已支持图片输入（如 glm-5.4 / glm-5.3-flash），请在「设置 → AI模型」中将图片处理方式改为“模型原生支持图片”；否则请配置视觉服务（地址、模型和密钥）后再试`,
+      );
+    }
+    if (deepseekTextModel && visionConfig.source === "auto") {
+      throw new Error(
+        "DeepSeek V4（Flash / Pro）需要先配置视觉识别服务（地址、模型和密钥）才能识别图片；若模型已支持原生图片，可在「设置 → AI模型」中将图片处理方式改为“模型原生支持图片”",
+      );
+    }
+    throw new Error(
+      `${modelLabel} 当前设为使用外部视觉识别服务，请先配置视觉识别服务（地址、模型和密钥），或在「设置 → AI模型」中改为“模型原生支持图片”`,
+    );
   }
 
   const jobs = [];

@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "右側の幅を調整",
   "browserViewport.resizeBottom": "下側の高さを調整",
   "browserViewport.resizeBottomLeft": "左下のサイズを調整",
-  "browserViewport.resizeBottomRight": "右下のサイズを調整"
+  "browserViewport.resizeBottomRight": "右下のサイズを調整",
+  "model.contextLimit": "コンテキスト上限",
+  "model.contextLimitPlaceholder": "自動（現在：{limit}）",
+  "model.contextLimitHint": "1M、256K、131072 などを指定できます。空欄時はサーバー応答や既定値から自動判定します。",
+  "model.contextLimitNeedModelHint": "接続先とモデル名を入力すると、このモデルのコンテキスト上限を個別に設定できます。",
+  "model.contextLimitInvalid": "形式が無効です：1M、256K、または 1024 以上の整数を入力するか、空欄にしてください。",
+  "model.contextLimitSuffixOverrideHint": "モデル名の [{limit}] サフィックスが優先されます。サフィックスを外すとこの欄または自動判定が有効になります。",
+  "model.visionSectionTitle": "画像認識",
+  "model.visionModeLabel": "画像処理方式",
+  "model.visionAutoNative": "自動判定（現在：モデルのネイティブ画像対応）",
+  "model.visionAutoService": "自動判定（現在：外部ビジョンサービスを使用）",
+  "model.visionModeNative": "モデルのネイティブ画像対応",
+  "model.visionModeService": "外部ビジョンサービスを使用",
+  "model.visionNativeNote": "画像は外部ビジョンサービスを介さず、image_url として現在のモデルに直接送信されます。画像非対応の場合は上で「外部ビジョンサービスを使用」に切り替えてください。",
+  "model.visionNativeDeepseekNote": "画像は外部ビジョンサービスを介さず DeepSeek に直接送信されます。画像はユーザーメッセージでのみ許可されます（JPEG / PNG / GIF / WebP）。",
+  "model.visionServiceNote": "画像は下のビジョンサービスでテキスト化してから現在のモデルに渡されます（元画像は直接送信されません）。OpenAI 互換の Chat Completions と image_url に対応したサービスが必要です。モデルがネイティブ画像対応の場合は上で切り替えてください。"
 }

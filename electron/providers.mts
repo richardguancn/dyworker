@@ -317,14 +317,8 @@ export async function glmOcrFile(fetchImpl, { apiKey, file, startPage, endPage, 
   return { markdown, usage: payload?.usage || null };
 }
 
-// GLM 多模态模型（原生处理 image_url，无需视觉服务改写）：
-// GLM-5.3-Flash（原生多模态 VLM）、GLM-4.5V、GLM-4.1V 系（thinking）与
-// 历史 GLM-4V 系（4v / 4v-plus / 4v-flash）。纯文本模型（glm-5.3、glm-4.6 等）不在其列。
-const GLM_NATIVE_VISION_MODEL_PATTERN = /^glm-(5\.3-flash|4\.5v|4\.1v|4v)(?=[-_]|$)/i;
-
-export function isGlmNativeVisionModel(model) {
-  return GLM_NATIVE_VISION_MODEL_PATTERN.test(String(model || "").trim());
-}
+// GLM 多模态模型判定统一由 model-vision.ts 维护，保留再导出以兼容现有调用与测试。
+export { isGlmNativeVisionModel } from "./model-vision.ts";
 
 // 由 URI slug 推导 function.name（slug 用连字符，function.name 用下划线，如 web-search → web_search）
 export function kimiFormulaToolNameFor(uri) {

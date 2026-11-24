@@ -976,12 +976,12 @@ export function App() {
       && activeSession.contextEndpoint === composerSettings.endpoint) {
       return {
         used: activeSession.contextTokens,
-        limit: modelContextLimit(composerSettings.model, composerSettings.endpoint),
+        limit: modelContextLimit(composerSettings.model, composerSettings.endpoint, composerSettings.contextLimitOverrides),
         exact: Boolean(activeSession.contextTokensExact),
       };
     }
     const tokens = estimateSessionTokens(activeSession?.messages || [], activeSession?.workingContext || "");
-    return { used: tokens, limit: modelContextLimit(composerSettings.model, composerSettings.endpoint), exact: false };
+    return { used: tokens, limit: modelContextLimit(composerSettings.model, composerSettings.endpoint, composerSettings.contextLimitOverrides), exact: false };
   }, [
     activeSession?.messages,
     activeSession?.workingContext,
@@ -991,6 +991,7 @@ export function App() {
     activeSession?.contextEndpoint,
     composerSettings.model,
     composerSettings.endpoint,
+    composerSettings.contextLimitOverrides,
   ]);
   // 任务运行期间仍可发送：桌面版消息进入队列，等当前任务结束后自动执行
   // 例外一：挂起等待唤醒期间禁止发送（发送键变灰），必须先「立即继续」或「取消唤醒」

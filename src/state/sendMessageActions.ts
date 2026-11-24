@@ -597,7 +597,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
           runtime: updatedSession.runtime,
           workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath,
           sessionId: updatedSession.id,
-          contextLimit: modelContextLimit(settings.model, settings.endpoint),
+          contextLimit: modelContextLimit(settings.model, settings.endpoint, settings.contextLimitOverrides),
           workingContext: updatedSession.workingContext,
           goal: activeGoal(updatedSession),
           goalId: updatedSession.goalState?.id,

@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "Ajustar ancho derecho",
   "browserViewport.resizeBottom": "Ajustar altura inferior",
   "browserViewport.resizeBottomLeft": "Ajustar esquina inferior izquierda",
-  "browserViewport.resizeBottomRight": "Ajustar esquina inferior derecha"
+  "browserViewport.resizeBottomRight": "Ajustar esquina inferior derecha",
+  "model.contextLimit": "Límite de contexto",
+  "model.contextLimitPlaceholder": "Auto (actual: {limit})",
+  "model.contextLimitHint": "Admite 1M, 256K o 131072; déjelo vacío para detección automática.",
+  "model.contextLimitNeedModelHint": "Indique primero la dirección y el nombre del modelo para personalizar su límite de contexto.",
+  "model.contextLimitInvalid": "Formato no válido: introduzca 1M, 256K o un entero >= 1024, o déjelo vacío.",
+  "model.contextLimitSuffixOverrideHint": "El sufijo [{limit}] del nombre del modelo tiene prioridad; quítelo para usar este campo o la detección automática.",
+  "model.visionSectionTitle": "Reconocimiento de imagen",
+  "model.visionModeLabel": "Modo de imagen",
+  "model.visionAutoNative": "Auto (actual: visión nativa del modelo)",
+  "model.visionAutoService": "Auto (actual: servicio de visión externo)",
+  "model.visionModeNative": "Visión nativa del modelo",
+  "model.visionModeService": "Usar servicio de visión externo",
+  "model.visionNativeNote": "Las imágenes se envían directamente a este modelo mediante image_url sin servicio externo. Si el modelo no admite imágenes, cambie arriba a «Usar servicio de visión externo».",
+  "model.visionNativeDeepseekNote": "Las imágenes se envían directamente a DeepSeek sin servicio externo. Solo se permiten imágenes en mensajes de usuario (JPEG / PNG / GIF / WebP).",
+  "model.visionServiceNote": "El servicio de visión inferior transcribe las imágenes a texto antes de enviarlas al modelo. Requiere un endpoint Chat Completions compatible con OpenAI e image_url. Si este modelo admite visión nativa, cámbielo arriba."
 }

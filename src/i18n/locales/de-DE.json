@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "Breite rechts anpassen",
   "browserViewport.resizeBottom": "Höhe unten anpassen",
   "browserViewport.resizeBottomLeft": "Ecke unten links anpassen",
-  "browserViewport.resizeBottomRight": "Ecke unten rechts anpassen"
+  "browserViewport.resizeBottomRight": "Ecke unten rechts anpassen",
+  "model.contextLimit": "Kontextlimit",
+  "model.contextLimitPlaceholder": "Auto (aktuell: {limit})",
+  "model.contextLimitHint": "Unterstützt 1M, 256K oder 131072; leer lassen für automatische Erkennung.",
+  "model.contextLimitNeedModelHint": "Geben Sie zuerst Endpunkt und Modellname ein, um das Kontextlimit anzupassen.",
+  "model.contextLimitInvalid": "Ungültiges Format: 1M, 256K oder ganze Zahl >= 1024 eingeben oder leer lassen.",
+  "model.contextLimitSuffixOverrideHint": "Das Suffix [{limit}] im Modellnamen hat Vorrang; entfernen Sie es, um dieses Feld oder die Automatik zu nutzen.",
+  "model.visionSectionTitle": "Bilderkennung",
+  "model.visionModeLabel": "Bildverarbeitung",
+  "model.visionAutoNative": "Auto (aktuell: native Modell-Vision)",
+  "model.visionAutoService": "Auto (aktuell: externer Vision-Dienst)",
+  "model.visionModeNative": "Native Modell-Vision",
+  "model.visionModeService": "Externen Vision-Dienst verwenden",
+  "model.visionNativeNote": "Bilder werden direkt per image_url an dieses Modell gesendet, ohne externen Vision-Dienst. Falls das Modell keine Bilder unterstützt, wählen Sie oben „Externen Vision-Dienst verwenden“.",
+  "model.visionNativeDeepseekNote": "Bilder werden direkt an DeepSeek gesendet, ohne externen Vision-Dienst. Bilder sind nur in Benutzernachrichten zulässig (JPEG / PNG / GIF / WebP).",
+  "model.visionServiceNote": "Bilder werden vom Vision-Dienst unten in Text umgewandelt, bevor sie an dieses Modell gehen. Erfordert einen OpenAI-kompatiblen Chat-Completions-Endpunkt mit image_url. Wenn das Modell Bilder nativ unterstützt, oben umschalten."
 }

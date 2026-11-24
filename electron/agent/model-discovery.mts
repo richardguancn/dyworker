@@ -37,13 +37,22 @@ export function bareModelName(model) {
   return match ? match[1].trim() : raw;
 }
 
-// 服务器自报的上下文上限探测：OpenAI 兼容服务的 GET /models 通常带 max_model_len（vLLM 等）。
+// 服务器自报的上下文上限探测：OpenAI 兼容服务的 GET /models 通常带 max_model_len / context_length 等字段。
 // 本地/自建模型的实际上限往往远小于静态表的 128k 默认值（如 32k），按默认值累积上下文会把
 // 超出服务器能力的请求发出去——轻则 400，重则打垮引擎导致连接被批量重置（ECONNRESET）。
 // 按 endpoint+model 缓存（含失败结果），探测失败静默返回 null，调用方回退既有默认值。
 const serverContextLimitCache = new Map();
 const SERVER_CONTEXT_PROBE_TIMEOUT_MS = 5000;
 const SERVER_LIST_MODELS_TIMEOUT_MS = 15_000;
+
+function readServerContextLimit(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  for (const raw of [entry.max_model_len, entry.context_length, entry.context_window, entry.max_context_length]) {
+    const value = Number(raw);
+    if (Number.isFinite(value) && value > 0) return Math.floor(value);
+  }
+  return null;
+}
 
 function modelsUrlFromEndpoint(endpoint) {
   try {
@@ -80,10 +89,11 @@ export async function probeServerContextLimit({ endpoint, model, apiKey = "", fe
     }
     if (response?.ok) {
       const result = await response.json();
-      const item = (Array.isArray(result?.data) ? result.data : [])
-        .find((entry) => String(entry?.id || "") === name);
-      const value = Number(item?.max_model_len);
-      if (Number.isFinite(value) && value > 0) limit = Math.floor(value);
+      const rows = Array.isArray(result?.data) ? result.data
+        : Array.isArray(result?.models) ? result.models
+          : [];
+      const item = rows.find((entry) => String(entry?.id || String(entry?.name || "").replace(/^models\//, "")) === name);
+      limit = readServerContextLimit(item);
     }
   } catch {
     // 探测失败（端点不支持 /models、网络异常等）：静默回退，不影响任务
@@ -161,9 +171,9 @@ export async function listServerModels({ endpoint, apiKey = "", fetchImpl = fetc
     const id = String(row?.id || String(row?.name || "").replace(/^models\//, "")).trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    // vLLM 等会在列表里带 max_model_len，顺带提取给渲染端展示
-    const limit = Number(row?.max_model_len);
-    models.push({ id, ...(Number.isFinite(limit) && limit > 0 ? { contextLimit: Math.floor(limit) } : {}) });
+    // vLLM / OpenRouter / 兼容网关会在列表里带 max_model_len / context_length 等上限，顺带提取给渲染端展示
+    const limit = readServerContextLimit(row);
+    models.push({ id, ...(limit ? { contextLimit: limit } : {}) });
   }
   if (!models.length) {
     return { ok: false, error: "服务返回的模型列表为空：请确认该密钥名下有可用模型（如百炼需先开通对应模型服务）" };

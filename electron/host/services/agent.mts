@@ -11,6 +11,7 @@ import { runAgent } from "../../agent.mts";
 import { randomUUID } from "node:crypto";
 import { shouldContinueGoal } from "../../goal.mts";
 import { assertDshModelSettings } from "../dsh-runtime/model-settings.mts";
+import { resolveModelContextLimit } from "../../model-context.ts";
 import { activePermissions } from '../../active-permissions.mts';
 import "../events.mts";
 
@@ -81,8 +82,13 @@ export class AgentService extends Service {
           ...options.routerOptions, sessionId, runId: options.routerOptions?.runId || options.runId || randomUUID(), signal,
         });
       onExtraTool?.setExecutionContext?.({ sessionId, runId: options.runId || options.routerOptions?.runId || randomUUID(), signal });
+      const effectiveContextLimit = options.contextLimit ?? resolveModelContextLimit({
+        model: settings?.model,
+        endpoint: settings?.endpoint,
+        overrides: settings?.contextLimitOverrides,
+      });
       const emit = (agentEvent) => {
-        if (agentEvent?.type === 'token-usage') this.ctx.mods.recordUsage(sessionId,agentEvent,runtime==='dsh'?options.contextLimit:options.contextLimit||128000);
+        if (agentEvent?.type === 'token-usage') this.ctx.mods.recordUsage(sessionId, agentEvent, effectiveContextLimit);
         if (agentEvent?.type === "skill-saved" && !agentEvent.persisted) void this.resolvers.appendSkill(agentEvent.item);
         if (agentEvent?.type === "token-usage") void this.resolvers.appendUsageStat(agentEvent);
         options.emit?.(agentEvent);
@@ -97,13 +103,14 @@ export class AgentService extends Service {
         }
         const result = runtime === 'dsh'
           ? await this.ctx.dshRuntime.run({ ...options, settings, workspacePath, sessionId, approvalMode,
+            contextLimit: effectiveContextLimit,
             getApprovalMode: permissions.getMode, requestApproval: permissions.request,
             prompt: loop.iteration > 1 ? LOOP_CONTINUE_PROMPT : prompt, signal, emit, resolvers: this.resolvers,
             conversation: iterationMessages, extraTools, onExtraTool })
           : await runAgent({
           settings,
           workspacePath,
-          ...(options.contextLimit !== undefined ? { contextLimit: options.contextLimit } : {}),
+          contextLimit: effectiveContextLimit,
           ...(options.workingContext !== undefined ? { workingContext: options.workingContext } : {}),
           hooks: await this.resolvers.readHooks(workspacePath),
           ...(options.goal !== undefined ? { goal: options.goal } : {}),

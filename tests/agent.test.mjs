@@ -2619,6 +2619,15 @@ test("模型名 [1M] 上下文覆盖后缀：解析、探测与请求都剥离�
   });
   assert.equal(probed, 262144);
 
+  // 兼容 OpenRouter / 兼容网关常用的 context_length 与 context_window 字段
+  const fromContextLength = await probeServerContextLimit({
+    endpoint: "http://compat.local/v1/chat/completions",
+    model: "glm-5.4",
+    apiKey: "",
+    fetchImpl: async () => ({ ok: true, json: async () => ({ data: [{ id: "glm-5.4", context_length: 1048576 }] }) }),
+  });
+  assert.equal(fromContextLength, 1048576);
+
   // 请求：Chat Completions 的 body.model 不带后缀
   const calls = [];
   const result = await runAgent({

@@ -868,5 +868,20 @@
   "browserViewport.resizeRight": "오른쪽 너비 조절",
   "browserViewport.resizeBottom": "아래쪽 높이 조절",
   "browserViewport.resizeBottomLeft": "왼쪽 아래 모서리 크기 조절",
-  "browserViewport.resizeBottomRight": "오른쪽 아래 모서리 크기 조절"
+  "browserViewport.resizeBottomRight": "오른쪽 아래 모서리 크기 조절",
+  "model.contextLimit": "컨텍스트 한도",
+  "model.contextLimitPlaceholder": "자동 (현재: {limit})",
+  "model.contextLimitHint": "1M, 256K, 131072 형식을 지원합니다. 비워 두면 서버 응답 또는 기본값으로 자동 설정됩니다.",
+  "model.contextLimitNeedModelHint": "엔드포인트와 모델 이름을 입력하면 이 모델의 컨텍스트 한도를 개별 설정할 수 있습니다.",
+  "model.contextLimitInvalid": "형식이 잘못되었습니다: 1M, 256K 또는 1024 이상의 정수를 입력하거나 비워 두세요.",
+  "model.contextLimitSuffixOverrideHint": "모델 이름의 [{limit}] 접미사가 우선 적용됩니다. 접미사를 제거하면 이 입력란 또는 자동 판정이 적용됩니다.",
+  "model.visionSectionTitle": "이미지 인식",
+  "model.visionModeLabel": "이미지 처리 방식",
+  "model.visionAutoNative": "자동 판정 (현재: 모델 네이티브 이미지 지원)",
+  "model.visionAutoService": "자동 판정 (현재: 외부 비전 서비스 사용)",
+  "model.visionModeNative": "모델 네이티브 이미지 지원",
+  "model.visionModeService": "외부 비전 서비스 사용",
+  "model.visionNativeNote": "외부 비전 서비스 없이 첨부 이미지를 image_url로 모델에 직접 전송합니다. 이미지 미지원 모델이면 위에서 \"외부 비전 서비스 사용\"으로 변경하세요.",
+  "model.visionNativeDeepseekNote": "외부 비전 서비스 없이 이미지를 DeepSeek에 직접 전송합니다. 이미지는 사용자 메시지에만 포함할 수 있습니다 (JPEG / PNG / GIF / WebP).",
+  "model.visionServiceNote": "아래 비전 서비스가 이미지를 텍스트로 설명한 뒤 현재 모델에 전달합니다(원본 이미지는 직접 전송되지 않음). image_url을 지원하는 OpenAI 호환 Chat Completions 서비스가 필요합니다. 모델이 네이티브 이미지를 지원하면 위에서 전환하세요."
 }

@@ -5,6 +5,7 @@ import { appendFileSync,existsSync,promises as fs,readFileSync,statSync,writeFil
 import path from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
 import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls,summarizationSettings } from "./agent.mts";
+import { explicitModelContextLimit,resolveModelContextLimit } from "./model-context.ts";
 import { createUpdaterController,DEFAULT_UPDATE_URL } from "./app-updater.mts";
 import { createMacStoreFileAccess } from "./mac-store-file-access.mts";
 import { applyWindowBackdrop,getAppearanceCapabilities,windowBackgroundFor } from "./appearance-platform.mts";
@@ -1522,10 +1523,22 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       approvalMode,
       prompt: latestUserText,
       contextLimit: (() => {
-        // 渲染端按模型静态表或 k3[1M] 式显式覆盖报上来的值，不再设 30000 下限——
-        // 显式写小上下文（如 model[16K]）是用户意图，需原样尊重；未上报时回退 128k。
-        const requested = Number(payload?.contextLimit) || 128000;
-        return serverContextLimit ? Math.max(8000, Math.min(requested, serverContextLimit)) : requested;
+        const explicit = explicitModelContextLimit({
+          model: settings?.model,
+          endpoint: settings?.endpoint,
+          overrides: settings?.contextLimitOverrides,
+        });
+        const requested = explicit ?? (Number(payload?.contextLimit) || resolveModelContextLimit({
+          model: settings?.model,
+          endpoint: settings?.endpoint,
+          overrides: settings?.contextLimitOverrides,
+        }));
+        if (serverContextLimit) {
+          return explicit
+            ? Math.min(explicit, Math.max(8000, serverContextLimit))
+            : Math.max(8000, serverContextLimit);
+        }
+        return requested;
       })(),
       workingContext: String(payload?.workingContext || ""),
       goal: String(payload?.goal || "").trim(),

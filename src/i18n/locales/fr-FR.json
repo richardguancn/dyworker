@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "Redimensionner à droite",
   "browserViewport.resizeBottom": "Redimensionner en bas",
   "browserViewport.resizeBottomLeft": "Redimensionner en bas à gauche",
-  "browserViewport.resizeBottomRight": "Redimensionner en bas à droite"
+  "browserViewport.resizeBottomRight": "Redimensionner en bas à droite",
+  "model.contextLimit": "Limite de contexte",
+  "model.contextLimitPlaceholder": "Auto (actuel : {limit})",
+  "model.contextLimitHint": "Prend en charge 1M, 256K ou 131072 ; laisser vide pour détecter automatiquement.",
+  "model.contextLimitNeedModelHint": "Saisissez d'abord l'adresse et le nom du modèle pour personnaliser sa limite de contexte.",
+  "model.contextLimitInvalid": "Format invalide : saisissez 1M, 256K ou un entier >= 1024, ou laissez vide.",
+  "model.contextLimitSuffixOverrideHint": "Le suffixe [{limit}] dans le nom du modèle est prioritaire ; supprimez-le pour utiliser ce champ ou la détection automatique.",
+  "model.visionSectionTitle": "Reconnaissance d'image",
+  "model.visionModeLabel": "Traitement des images",
+  "model.visionAutoNative": "Auto (actuel : vision native du modèle)",
+  "model.visionAutoService": "Auto (actuel : service de vision externe)",
+  "model.visionModeNative": "Vision native du modèle",
+  "model.visionModeService": "Utiliser un service de vision externe",
+  "model.visionNativeNote": "Les images sont envoyées directement au modèle via image_url sans service externe. S'il ne gère pas les images, sélectionnez « Utiliser un service de vision externe » ci-dessus.",
+  "model.visionNativeDeepseekNote": "Les images sont envoyées directement à DeepSeek sans service externe. Elles ne sont autorisées que dans les messages utilisateur (JPEG / PNG / GIF / WebP).",
+  "model.visionServiceNote": "Les images sont décrites en texte par le service de vision ci-dessous avant envoi au modèle. Nécessite un point de terminaison Chat Completions compatible OpenAI prenant en charge image_url. Si ce modèle gère la vision nativement, changez l'option ci-dessus."
 }

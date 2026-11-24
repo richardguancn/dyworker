@@ -6,7 +6,9 @@ import { normalizeAsrModelId } from "./local-asr.mts";
 import { normalizeTtsModelId } from "./local-tts.mts";
 import { normalizeDecisionModelId } from "./local-decision.mts";
 import { parseQuietHours } from "./remote-messages.mts";
+import { normalizeContextLimitOverrides } from "./model-context.ts";
 import { normalizeReasoningOverrides } from "./model-reasoning.ts";
+import { normalizeVisionOverrides } from "./model-vision.ts";
 
 // 运营服务地址：远程使用 HTTPS，本机调试允许回环 HTTP（政府/内网版本由用户配置
 // 对应内部部署地址，留空表示完全关闭）。允许带端口与路径前缀，去掉尾部斜杠。
@@ -347,6 +349,8 @@ export function deserializeSettings(stored, secretStorage) {
     // 思考强度（空串 = 当前模型的默认配置）；由主进程按模型规范化后下发
     reasoningEffort: String(source.reasoningEffort || "").trim(),
     reasoningOverrides: normalizeReasoningOverrides(source.reasoningOverrides),
+    visionOverrides: normalizeVisionOverrides(source.visionOverrides),
+    contextLimitOverrides: normalizeContextLimitOverrides(source.contextLimitOverrides),
     // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
     subAgentProfileId: String(source.subAgentProfileId || "").trim(),
     apiKey: currentApiKey,
@@ -422,6 +426,8 @@ export function serializeSettings(settings, secretStorage) {
     model: String(settings?.model || "").trim(),
     reasoningEffort: String(settings?.reasoningEffort || "").trim(),
     reasoningOverrides: normalizeReasoningOverrides(settings?.reasoningOverrides),
+    visionOverrides: normalizeVisionOverrides(settings?.visionOverrides),
+    contextLimitOverrides: normalizeContextLimitOverrides(settings?.contextLimitOverrides),
     subAgentProfileId: String(settings?.subAgentProfileId || "").trim(),
     apiKey: String(settings?.apiKey || "").trim(),
     visionEndpoint: String(settings?.visionEndpoint || "").trim(),
@@ -478,6 +484,8 @@ export function serializeSettings(settings, secretStorage) {
     model: normalized.model,
     reasoningEffort: normalized.reasoningEffort,
     reasoningOverrides: normalized.reasoningOverrides,
+    visionOverrides: normalized.visionOverrides,
+    contextLimitOverrides: normalized.contextLimitOverrides,
     visionEndpoint: normalized.visionEndpoint,
     visionModel: normalized.visionModel,
     visionApiKey: visionSecret.value,

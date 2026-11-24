@@ -11,6 +11,7 @@ import path from "node:path";
 import test from "node:test";
 import { deepseekAnthropicBaseUrl, detectProvider, fetchKimiFormulaDefinitions, glmOcrFile, glmToolBaseUrl, isGlmNativeVisionModel, isKimiFormulaToolName, kimiFormulaBaseUrl, qwenResponsesUrl, runKimiFormula, searchDeepseekNative, searchGlmNative, searchQwenNative } from "../electron/providers.mts";
 import { isGlmTextModelNeedingVisionRewrite, isGlmVisionModel, requestModel, runAgent, toolDefinitions } from "../electron/agent.mts";
+import { resolveModelVisionConfig, updateVisionOverride } from "../electron/model-vision.ts";
 import { systemPrompt } from "../electron/agent/prompt.mts";
 import { createBotHarnessTools } from "../electron/host/dsh-runtime/bot-harness.mts";
 
@@ -864,6 +865,9 @@ test("glmOcrFile：请求形状正确，页码参数按需携带", async () => {
 });
 
 test("isGlmNativeVisionModel：GLM 多模态模型判定", () => {
+  assert.equal(isGlmNativeVisionModel("glm-5.4"), true, "GLM-5.4 等新一代模型默认支持原生视觉");
+  assert.equal(isGlmNativeVisionModel("glm-5.4-flash"), true);
+  assert.equal(isGlmNativeVisionModel("glm-6"), true);
   assert.equal(isGlmNativeVisionModel("glm-5.3-flash"), true, "GLM-5.3-Flash 原生多模态");
   assert.equal(isGlmNativeVisionModel("GLM-4.5V"), true);
   assert.equal(isGlmNativeVisionModel("glm-4.1v-thinking"), true);
@@ -878,12 +882,24 @@ test("isGlmNativeVisionModel：GLM 多模态模型判定", () => {
   assert.equal(isGlmNativeVisionModel(""), false);
 });
 
-test("isGlmVisionModel / isGlmTextModelNeedingVisionRewrite：上下文后缀剥离与端点限定", () => {
+test("isGlmVisionModel / isGlmTextModelNeedingVisionRewrite：上下文后缀剥离、新模型放行与手动覆盖", () => {
   assert.equal(isGlmVisionModel({ endpoint: GLM_ENDPOINT, model: "glm-5.3-flash[1M]" }), true, "应剥离 [1M] 上下文后缀");
+  assert.equal(isGlmVisionModel({ endpoint: GLM_ENDPOINT, model: "glm-5.4" }), true);
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.4" }), false);
   assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.3" }), true);
   assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.3-flash" }), false);
   // 自建网关跑 GLM 权重（非智谱云端端点）不强制改写，保持原样透传
   assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: "http://vllm.local/v1/chat/completions", model: "glm-5.3" }), false);
+  // 手动覆盖优先：把历史纯文本模型切为原生，或把新模型切为外部视觉服务
+  const nativeOverride = updateVisionOverride([], GLM_ENDPOINT, "glm-5.3", "native");
+  assert.equal(isGlmVisionModel({ endpoint: GLM_ENDPOINT, model: "glm-5.3[1M]", visionOverrides: nativeOverride }), true);
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.3", visionOverrides: nativeOverride }), false);
+  const serviceOverride = updateVisionOverride([], GLM_ENDPOINT, "glm-5.4", "service");
+  assert.equal(isGlmVisionModel({ endpoint: GLM_ENDPOINT, model: "glm-5.4", visionOverrides: serviceOverride }), false);
+  assert.equal(isGlmTextModelNeedingVisionRewrite({ endpoint: GLM_ENDPOINT, model: "glm-5.4", visionOverrides: serviceOverride }), true);
+  // 还原自动判断
+  const cleared = updateVisionOverride(serviceOverride, GLM_ENDPOINT, "glm-5.4", null);
+  assert.equal(resolveModelVisionConfig({ endpoint: GLM_ENDPOINT, model: "glm-5.4", overrides: cleared }).selection, "auto");
 });
 
 test("runAgent：GLM 端点下 web_search 走智谱 Web Search API 并复用会话密钥", async () => {
@@ -1048,7 +1064,7 @@ test("requestModel：直接请求也不向非 GLM 模型提供智谱识字工具
     } });
 });
 
-test("requestModel：GLM 纯文本模型带图无视觉服务时报错，glm-5.3-flash 原生放行", async () => {
+test("requestModel：GLM-5.4 原生放行，纯文本模型带图无视觉服务时报错，手动覆盖可双向切换", async () => {
   const imageMessages = [{
     role: "user",
     content: [
@@ -1063,19 +1079,66 @@ test("requestModel：GLM 纯文本模型带图无视觉服务时报错，glm-5.3
       fetchImpl: async () => { throw new Error("不应发起任何请求"); },
     }),
     /glm-5\.3-flash/,
-    "应提示改用多模态模型或配置视觉服务",
+    "应提示切换为模型原生支持图片或配置视觉服务",
   );
-  const calls = [];
+  // glm-5.4 与 glm-5.3-flash 默认均原生放行
+  for (const model of ["glm-5.4", "glm-5.3-flash"]) {
+    const calls = [];
+    await requestModel({
+      settings: { endpoint: GLM_ENDPOINT, model, apiKey: "k" },
+      messages: imageMessages,
+      fetchImpl: async (_url, options) => {
+        calls.push(JSON.parse(options.body));
+        return jsonResponse({ choices: [{ message: { role: "assistant", content: "图里有只猫" } }] });
+      },
+      tools: false,
+    });
+    assert.equal(calls[0].messages[0].content[1].image_url.url, "data:image/png;base64,AAAA", `${model} 应原样携带图片`);
+  }
+
+  // 将历史纯文本模型手动覆盖为 native 后，直接发送原图
+  const nativeCalls = [];
   await requestModel({
-    settings: { endpoint: GLM_ENDPOINT, model: "glm-5.3-flash", apiKey: "k" },
+    settings: {
+      endpoint: GLM_ENDPOINT,
+      model: "glm-5.3",
+      apiKey: "k",
+      visionOverrides: updateVisionOverride([], GLM_ENDPOINT, "glm-5.3", "native"),
+    },
     messages: imageMessages,
-    fetchImpl: async (url, options) => {
-      calls.push(JSON.parse(options.body));
-      return jsonResponse({ choices: [{ message: { role: "assistant", content: "图里有只猫" } }] });
+    fetchImpl: async (_url, options) => {
+      nativeCalls.push(JSON.parse(options.body));
+      return jsonResponse({ choices: [{ message: { role: "assistant", content: "直接看到了原图" } }] });
     },
     tools: false,
   });
-  assert.equal(calls[0].messages[0].content[1].image_url.url, "data:image/png;base64,AAAA", "glm-5.3-flash 应原样携带图片");
+  assert.equal(nativeCalls[0].messages[0].content[1].image_url.url, "data:image/png;base64,AAAA");
+
+  // 任意本地/自定义纯文本模型覆盖为 service 后，走外部视觉服务转写
+  const customEndpoint = "http://127.0.0.1:8000/v1/chat/completions";
+  const visionEndpoint = "https://vision.example/custom/chat/completions";
+  const serviceCalls = [];
+  await requestModel({
+    settings: {
+      endpoint: customEndpoint,
+      model: "Qwen3.8-27B",
+      apiKey: "",
+      visionEndpoint,
+      visionModel: "vl-model",
+      visionApiKey: "vision-k",
+      visionOverrides: updateVisionOverride([], customEndpoint, "Qwen3.8-27B", "service"),
+    },
+    messages: imageMessages,
+    fetchImpl: async (url, options) => {
+      serviceCalls.push({ url, body: JSON.parse(options.body) });
+      return jsonResponse({ choices: [{ message: { role: "assistant", content: url === visionEndpoint ? "图片是表格" : "收到描述" } }] });
+    },
+    tools: false,
+  });
+  assert.equal(serviceCalls.length, 2);
+  assert.equal(serviceCalls[0].url, visionEndpoint);
+  assert.equal(serviceCalls[1].url, customEndpoint);
+  assert.ok(!serviceCalls[1].body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url")));
 });
 
 test("runAgent：文字模型继续会话时，历史工具图片不阻断纯文字提问且不修改存档", async () => {

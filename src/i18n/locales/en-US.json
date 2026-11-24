@@ -882,5 +882,20 @@
   "browserViewport.resizeRight": "Resize right width",
   "browserViewport.resizeBottom": "Resize bottom height",
   "browserViewport.resizeBottomLeft": "Resize bottom-left corner",
-  "browserViewport.resizeBottomRight": "Resize bottom-right corner"
+  "browserViewport.resizeBottomRight": "Resize bottom-right corner",
+  "model.contextLimit": "Context Limit",
+  "model.contextLimitPlaceholder": "Auto (current: {limit})",
+  "model.contextLimitHint": "Supports 1M, 256K, or 131072; leave empty to infer from server or defaults.",
+  "model.contextLimitNeedModelHint": "Enter an endpoint and model name first to customize the context limit for this model.",
+  "model.contextLimitInvalid": "Invalid format: enter 1M, 256K, or an integer >= 1024, or leave blank for auto.",
+  "model.contextLimitSuffixOverrideHint": "Model name contains [{limit}] suffix which takes precedence; remove the suffix to use this field or auto detection.",
+  "model.visionSectionTitle": "Image Recognition",
+  "model.visionModeLabel": "Image Handling",
+  "model.visionAutoNative": "Auto (current: Native model vision)",
+  "model.visionAutoService": "Auto (current: External vision service)",
+  "model.visionModeNative": "Native model vision",
+  "model.visionModeService": "Use external vision service",
+  "model.visionNativeNote": "Images are sent directly to this model via image_url without an external vision service. If the model does not support images, switch to \"Use external vision service\" above.",
+  "model.visionNativeDeepseekNote": "Images are sent directly to DeepSeek without an external vision service. Images are only allowed in user messages (JPEG / PNG / GIF / WebP).",
+  "model.visionServiceNote": "Images are transcribed to text by the vision service below before sending to this model; original images are not sent directly. Requires an OpenAI-compatible Chat Completions endpoint supporting image_url. If this model natively supports vision, switch to \"Native model vision\" above."
 }

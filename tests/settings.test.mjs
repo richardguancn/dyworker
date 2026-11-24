@@ -415,3 +415,31 @@ test("fullCdpAccess 默认为 false，且序列化与反序列化往返保持一
   assert.equal(storedOff.fullCdpAccess, false);
   assert.equal(deserializeSettings(storedOff, secretStorage).fullCdpAccess, false);
 });
+
+test("visionOverrides 与 contextLimitOverrides 往返保存、去重并过滤非法条目", () => {
+  const stored = serializeSettings({
+    visionOverrides: [
+      { endpoint: " https://open.bigmodel.cn/api/paas/v4/chat/completions ", model: "glm-5.3[1M]", mode: "native" },
+      { endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions/", model: "GLM-5.3", mode: "service" }, // 重复覆盖，保留第一条
+      { endpoint: "https://api.example.com/v1/chat/completions", model: "bad", mode: "unknown" },
+    ],
+    contextLimitOverrides: [
+      { endpoint: " https://open.bigmodel.cn/api/paas/v4/chat/completions ", model: "glm-5.4[256K]", contextLimit: 2097152 },
+      { endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", model: "glm-5.4", contextLimit: 1048576 },
+      { endpoint: "https://api.example.com/v1/chat/completions", model: "too-small", contextLimit: 100 },
+    ],
+  }, secretStorage);
+
+  assert.deepEqual(stored.visionOverrides, [
+    { endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", model: "glm-5.3", mode: "native" },
+  ]);
+  assert.deepEqual(stored.contextLimitOverrides, [
+    { endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", model: "glm-5.4", contextLimit: 2097152 },
+  ]);
+
+  const restored = deserializeSettings(stored, secretStorage);
+  assert.deepEqual(restored.visionOverrides, stored.visionOverrides);
+  assert.deepEqual(restored.contextLimitOverrides, stored.contextLimitOverrides);
+  assert.deepEqual(deserializeSettings({}, secretStorage).visionOverrides, []);
+  assert.deepEqual(deserializeSettings({}, secretStorage).contextLimitOverrides, []);
+});

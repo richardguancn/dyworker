@@ -1,4 +1,10 @@
+import {
+  parseModelContextOverride,
+  resolveModelContextLimit,
+  type ContextLimitOverride,
+} from '../electron/model-context.ts';
 import { reasoningProvider } from '../electron/model-reasoning.ts';
+import { isGlmNativeVisionModel } from '../electron/model-vision.ts';
 
 export interface ProviderPreset {
   id: string;
@@ -65,7 +71,7 @@ export const providerPresets: ProviderPreset[] = [
       "glm-4.5-air": 131072,
       "glm-4-flash": 131072,
     },
-    defaultContextLimit: 204800,
+    defaultContextLimit: 1048576,
   },
   {
     id: "qwen",
@@ -176,11 +182,7 @@ export function matchProvider(endpoint: string): string {
   return preset?.id || reasoningProvider(value) || "custom";
 }
 
-// GLM 多模态模型（原生处理 image_url，无需视觉服务改写）：GLM-5.3-Flash、GLM-4.5V、
-// GLM-4.1V 系与历史 GLM-4V 系。判定模式与主进程 electron/providers.mjs 保持同源同步。
-export function isGlmNativeVisionModel(model: string): boolean {
-  return /^glm-(5\.3-flash|4\.5v|4\.1v|4v)(?=[-_]|$)/i.test(String(model || "").trim());
-}
+export { isGlmNativeVisionModel, parseModelContextOverride };
 
 // 按 baseurl 判断是否走 Responses API：路径以 /responses 结尾即按 Responses 请求，
 // DeepSeek 官方根地址（不带路径）自动视为 Responses；其余按 OpenAI Chat Completions。
@@ -196,32 +198,11 @@ export function usesResponsesApi(endpoint: string): boolean {
   }
 }
 
-// 模型名上下文覆盖语法：k3[1M]、Qwen3.8-27B[256K]、model[131072]。
-// 方括号后缀只影响本地上下文管理（用量圆环、裁剪/压缩阈值）；
-// 实际请求由主进程剥离后缀再发给服务端，与 electron/agent.mjs 的 bareModelName 保持同一语法。
-export function parseModelContextOverride(model: string): { name: string; contextLimit: number | null } {
-  const raw = String(model || "").trim();
-  const match = raw.match(/^(.*?)\s*\[([0-9]+(?:\.[0-9]+)?)\s*([kKmM])?\]$/);
-  if (!match) return { name: raw, contextLimit: null };
-  const unit = match[3]?.toLowerCase();
-  const value = Number(match[2]) * (unit === "m" ? 1048576 : unit === "k" ? 1024 : 1);
-  return { name: match[1].trim(), contextLimit: Number.isFinite(value) && value > 0 ? Math.floor(value) : null };
-}
-
-// 模型上下文上限（用于用量圆环；为公开资料的近似值，仅作参考）
-export function modelContextLimit(model: string, endpoint: string): number {
-  const parsed = parseModelContextOverride(model);
-  if (parsed.contextLimit) return parsed.contextLimit;
-  const name = parsed.name.toLowerCase();
-  const preset = providerPresets.find((item) => item.id === matchProvider(endpoint));
-  if (!name) return preset?.defaultContextLimit || 131072;
-  for (const item of providerPresets) {
-    const exact = item.contextLimits[name];
-    if (exact) return exact;
-  }
-  for (const item of providerPresets) {
-    const fuzzy = Object.keys(item.contextLimits).find((key) => name.includes(key.toLowerCase()) || key.toLowerCase().includes(name));
-    if (fuzzy) return item.contextLimits[fuzzy];
-  }
-  return preset?.defaultContextLimit || 131072;
+// 模型上下文上限（用于用量圆环与运行时上下文裁剪；优先后缀，其次按模型的覆盖设置，最后回退内置参考值）
+export function modelContextLimit(
+  model: string,
+  endpoint: string,
+  overrides?: ContextLimitOverride[],
+): number {
+  return resolveModelContextLimit({ model, endpoint, overrides });
 }

@@ -14,6 +14,9 @@ interface MessageLike {
 
 export function formatTokenCount(value: number) {
   const safe = Math.max(0, Math.round(Number(value) || 0));
+  if (safe >= 1_048_576 && safe % 1_048_576 === 0) {
+    return `${safe / 1_048_576}M`;
+  }
   if (safe >= 1_000_000) {
     const millions = safe / 1_000_000;
     return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;

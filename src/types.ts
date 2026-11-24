@@ -1,4 +1,6 @@
+import type { ContextLimitOverride } from '../electron/model-context.ts';
 import type { ReasoningOverride } from '../electron/model-reasoning.ts';
+import type { VisionOverride } from '../electron/model-vision.ts';
 
 export type Role = "user" | "assistant" | "system";
 
@@ -669,6 +671,10 @@ export interface ProviderSettings {
   reasoningEffort: string;
   // 按接入地址和模型保存的手动能力覆盖；空档位列表表示不支持调整。
   reasoningOverrides?: ReasoningOverride[];
+  // 按接入地址和模型保存的图片识别方式覆盖（native / service）
+  visionOverrides?: VisionOverride[];
+  // 按接入地址和模型保存的上下文窗口上限覆盖
+  contextLimitOverrides?: ContextLimitOverride[];
   // 子代理（dispatch_agent）专用模型的档案 id；空串 = 跟随主模型
   subAgentProfileId: string;
   apiKey: string;

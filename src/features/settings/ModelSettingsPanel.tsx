@@ -2,9 +2,22 @@
 // 纯展示组件：draft、profiles、凭证预检、本地审核模型下载等状态仍由 SettingsDialog 持有，
 // 避免切换 tab 时因子组件卸载而丢失；这里只通过 props 接收。
 import { LoaderCircle, Trash2 } from "lucide-react";
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { isLocalModelEndpoint } from "../../../electron/host/dsh-runtime/model-settings.mts";
-import { isGlmNativeVisionModel, providerPresets, usesResponsesApi } from "../../providers";
+import {
+  builtinModelContextLimit,
+  findContextLimitOverride,
+  formatContextLimitInput,
+  parseContextLimitInput,
+  parseModelContextOverride,
+  updateContextLimitOverride,
+} from "../../../electron/model-context.ts";
+import {
+  resolveModelVisionConfig,
+  updateVisionOverride,
+  type VisionModeSelection,
+} from "../../../electron/model-vision.ts";
+import { providerPresets, usesResponsesApi } from "../../providers";
 import { t } from "../../i18n";
 import type { DecisionLocalStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus } from "../../types";
 
@@ -98,6 +111,27 @@ export function ModelSettingsPanel({
   decisionDownloadError: string;
   startDecisionLocalDownload: () => Promise<void>;
 }) {
+  const endpointTrimmed = draft.endpoint.trim();
+  const modelTrimmed = draft.model.trim();
+  const canConfigureModelCapabilities = Boolean(endpointTrimmed && modelTrimmed);
+  const parsedModelSuffix = parseModelContextOverride(draft.model);
+  const modelCapabilityKey = `${endpointTrimmed}\n${parsedModelSuffix.name.toLowerCase()}`;
+  const savedContextOverride = findContextLimitOverride(draft.contextLimitOverrides, draft.endpoint, draft.model);
+  const autoContextLimit = builtinModelContextLimit(draft.model, draft.endpoint);
+  const autoContextLabel = formatContextLimitInput(autoContextLimit) || String(autoContextLimit);
+  const [contextInput, setContextInput] = useState(() => (
+    savedContextOverride ? formatContextLimitInput(savedContextOverride.contextLimit) : ""
+  ));
+  useEffect(() => {
+    setContextInput(savedContextOverride ? formatContextLimitInput(savedContextOverride.contextLimit) : "");
+  }, [modelCapabilityKey]);
+  const contextInputInvalid = Boolean(contextInput.trim()) && parseContextLimitInput(contextInput) === null;
+  const visionConfig = resolveModelVisionConfig({
+    endpoint: draft.endpoint,
+    model: draft.model,
+    overrides: draft.visionOverrides,
+  });
+
   return (<>
         <div className="dialog-section-title">{t("model.savedProfiles", "常用模型")}</div>
         <p className="profile-section-hint">{t("model.savedHint", "点击快速切换，修改后可随时保存。")}</p>
@@ -175,6 +209,55 @@ export function ModelSettingsPanel({
           {t("model.contextSuffixHint", "可在模型名后加 [1M]、[256K] 或 [131072] 后缀指定上下文上限（如 k3[1M]），仅用于本地用量统计与裁剪；请求时自动剥离后缀。")}
         </p>
         <label>
+          {t("model.contextLimit", "上下文上限")}
+          <input
+            value={contextInput}
+            disabled={!canConfigureModelCapabilities}
+            placeholder={t("model.contextLimitPlaceholder", "自动（当前：{limit}）", { limit: autoContextLabel })}
+            onChange={(event) => {
+              const raw = event.target.value;
+              setContextInput(raw);
+              if (!raw.trim()) {
+                setDraft((current) => ({
+                  ...current,
+                  contextLimitOverrides: updateContextLimitOverride(
+                    current.contextLimitOverrides,
+                    current.endpoint,
+                    current.model,
+                    null,
+                  ),
+                }));
+                return;
+              }
+              const parsed = parseContextLimitInput(raw);
+              if (parsed !== null) {
+                setDraft((current) => ({
+                  ...current,
+                  contextLimitOverrides: updateContextLimitOverride(
+                    current.contextLimitOverrides,
+                    current.endpoint,
+                    current.model,
+                    parsed,
+                  ),
+                }));
+              }
+            }}
+          />
+        </label>
+        {!canConfigureModelCapabilities ? (
+          <p className="dialog-note">{t("model.contextLimitNeedModelHint", "填写接口地址和模型名称后，可按当前模型自定义上下文上限。")}</p>
+        ) : contextInputInvalid ? (
+          <p className="credential-probe-result bad">{t("model.contextLimitInvalid", "格式无效：请输入 1M、256K 或不小于 1024 的整数，留空则自动判断。")}</p>
+        ) : parsedModelSuffix.contextLimit ? (
+          <p className="dialog-note">
+            {t("model.contextLimitSuffixOverrideHint", "当前模型名称自带 [{limit}] 后缀，优先按 {limit} 生效；去掉后缀后将使用此处或自动判断的值。", {
+              limit: formatContextLimitInput(parsedModelSuffix.contextLimit) || String(parsedModelSuffix.contextLimit),
+            })}
+          </p>
+        ) : (
+          <p className="dialog-note">{t("model.contextLimitHint", "支持 1M、256K、131072 等写法；留空表示按服务返回或参考值自动判断。")}</p>
+        )}
+        <label>
           {t("model.subAgent", "子代理模型")}
           <select
             value={draft.subAgentProfileId || ""}
@@ -189,30 +272,50 @@ export function ModelSettingsPanel({
         <p className="dialog-note">
           {t("model.subAgentHint", "子代理默认与主模型一致，可在此选用更轻量快速的模型跑收集任务。")}
         </p>
-        {(() => {
-          const modelName = draft.model.trim();
-          const deepseekVision = modelName.toLowerCase() === "deepseek-v4-flash-vision-exp";
-          const deepseekText = ["deepseek-v4-flash", "deepseek-v4-pro"].includes(modelName.toLowerCase());
-          const glmVision = providerId === "glm" && isGlmNativeVisionModel(modelName);
-          const glmText = providerId === "glm" && /^glm-/i.test(modelName) && !glmVision;
-          if (!(deepseekVision || deepseekText || glmVision || glmText)) return null;
-          if (deepseekVision || glmVision) return (<>
-          <div className="dialog-section-title">{t("model.visionSection", "图片（{name}）", { name: modelName })}</div>
-          <p className="dialog-note">{glmVision
-            ? "该模型是 GLM 原生多模态模型，附件图片会以 image_url 原样随请求发送给智谱，无需配置外部视觉服务。"
-            : "该模型原生支持图片输入（input_image / image_url），附件图片会原样随请求发送给 DeepSeek，无需再配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。"}</p>
-          </>);
-          return (<>
-        <div className="dialog-section-title">{t("model.visionAltSection", "图片识别（{name}）", { name: deepseekText ? "DeepSeek V4 Flash / Pro" : "GLM 纯文本模型" })}</div>
-        <p className="dialog-note">{deepseekText
-          ? "DeepSeek V4 系列模型本身负责文字理解。图片会先交给下方视觉服务识别，再把识别结果交给 DeepSeek；原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。"
-          : `GLM 纯文本模型不接收图片。可以把模型换成多模态的 glm-5.3-flash（推荐，图片直接发给智谱），或配置下方视觉服务：图片先交给视觉服务识别，再把识别结果交给 GLM，原图不会发送给纯文字接口。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url（如智谱 glm-4.5v）。`}</p>
+        <div className="dialog-section-title">{t("model.visionSectionTitle", "图片识别")}</div>
+        <label>
+          {t("model.visionModeLabel", "图片处理方式")}
+          <select
+            value={visionConfig.selection}
+            disabled={!canConfigureModelCapabilities}
+            onChange={(event) => {
+              const selection = event.target.value as VisionModeSelection;
+              setDraft((current) => ({
+                ...current,
+                visionOverrides: updateVisionOverride(
+                  current.visionOverrides,
+                  current.endpoint,
+                  current.model,
+                  selection === "auto" ? null : selection,
+                ),
+              }));
+            }}
+          >
+            <option value="auto">
+              {visionConfig.builtinMode === "native"
+                ? t("model.visionAutoNative", "自动判断（当前：模型原生支持图片）")
+                : t("model.visionAutoService", "自动判断（当前：使用外部视觉服务）")}
+            </option>
+            <option value="native">{t("model.visionModeNative", "模型原生支持图片")}</option>
+            <option value="service">{t("model.visionModeService", "使用外部视觉服务")}</option>
+          </select>
+        </label>
+        {visionConfig.mode === "native" ? (
+          <p className="dialog-note">
+            {providerId === "deepseek"
+              ? t("model.visionNativeDeepseekNote", "当前按原生图片模式发送：附件图片会原样随请求发送给 DeepSeek，无需配置外部视觉服务。图片仅允许出现在用户消息中，支持 JPEG / PNG / GIF / WebP。")
+              : t("model.visionNativeNote", "当前按原生图片模式发送：附件图片会以 image_url 原样随请求发送给当前模型，无需配置外部视觉服务。若该模型不支持图片，可在上方改为“使用外部视觉服务”。")}
+          </p>
+        ) : (<>
+        <p className="dialog-note">
+          {t("model.visionServiceNote", "图片会先交给下方视觉服务识别为文字，再交给当前模型处理，原图不会发送给当前模型。视觉服务需支持 OpenAI 兼容的 Chat Completions 和 image_url。若该模型已支持图片输入，可在上方改为“模型原生支持图片”。")}
+        </p>
         <label>
           {t("model.visionEndpoint", "视觉服务地址")}
           <input
             value={draft.visionEndpoint}
             placeholder="https://api.example.com/v1/chat/completions"
-            onChange={(event) => setDraft({ ...draft, visionEndpoint: event.target.value })}
+            onChange={(event) => setDraft((current) => ({ ...current, visionEndpoint: event.target.value }))}
           />
         </label>
         <label>
@@ -220,7 +323,7 @@ export function ModelSettingsPanel({
           <input
             value={draft.visionModel}
             placeholder={t("model.visionModelPlaceholder", "填写视觉服务提供的模型名称")}
-            onChange={(event) => setDraft({ ...draft, visionModel: event.target.value })}
+            onChange={(event) => setDraft((current) => ({ ...current, visionModel: event.target.value }))}
           />
         </label>
         <label>
@@ -229,11 +332,10 @@ export function ModelSettingsPanel({
             value={draft.visionApiKey}
             type="password"
             placeholder={t("model.apiKeyStoredLocally", "仅保存在当前设备")}
-            onChange={(event) => setDraft({ ...draft, visionApiKey: event.target.value })}
+            onChange={(event) => setDraft((current) => ({ ...current, visionApiKey: event.target.value }))}
           />
         </label>
-          </>);
-        })()}
+        </>)}
         {providerId === "kimi-open" && (<>
         <div className="dialog-section-title">{t("model.kimiPlatform", "Kimi 原生工具（开放平台）")}</div>
         <label className="dialog-check">
