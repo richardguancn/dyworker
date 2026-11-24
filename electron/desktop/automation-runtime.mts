@@ -65,7 +65,7 @@ async function resumeWake(wake, options: any = {}) {
     const wakeGoal = queuedGoalPayload({}, deps.ctx.sessions.get(wake.sessionId) || {});
     const wakeText = `你于 ${new Date(wake.createdAt).toLocaleString("zh-CN")} 主动挂起（原因：${wake.reason}），现在到达约定时间 ${new Date(wake.wakeAt).toLocaleString("zh-CN")}，请继续完成任务。`
       + (wake.finalText ? `\n此前的进展：\n${wake.finalText}` : "");
-    const collector = createTranscriptCollector({runId:wakeRunId});
+    const collector = createTranscriptCollector({runId:wakeRunId,userMessage:{origin:'automatic-wake'}});
     // 先发唤醒消息再开跑（与定时任务、渠道任务同一口径）：续跑开始前就把"谁在什么时候
     // 因为什么把任务唤醒"写进会话并推给界面。等收尾才和回答一起补上去的话，模型跑多久，
     // 用户在聊天里就有多久看不到这次唤醒的来由，中途崩溃/被关掉还会连同记录一起丢。
@@ -73,7 +73,7 @@ async function resumeWake(wake, options: any = {}) {
     // DSH 会话的唤醒提示就是 DSH 轮次正文（不带「（到点自动唤醒）」前缀），归档也按轮次回写；
     // 两处口径要一致，否则开跑前上屏的这条会在收尾归并时被改写一次。
     const wakeUserMessage = {
-      id:`${wakeRunId}:user`,runId:wakeRunId,role:"user",
+      id:`${wakeRunId}:user`,runId:wakeRunId,role:"user",origin:"automatic-wake",
       content:wakeSessionBefore?.runtime === "dsh" ? wakeText : `（到点自动唤醒）${wakeText}`,
       createdAt:new Date().toISOString(),
     };
@@ -111,7 +111,7 @@ async function resumeWake(wake, options: any = {}) {
       workingContext,
       goal: wakeGoal.goal,
       ...(wakeGoal.goal ? { loop: { enabled: true, iteration: 1, maximum: 10 } } : {}),
-      conversation: [...prior, { role: "user", content: wakeText }],
+      conversation: [...prior, { role: "user", origin: "automatic-wake", content: wakeText }],
       // 续跑中止信号：渲染端「停止」/ESC 能真正打断无人值守续跑
       signal: wakeAbort.signal,
       isCancelled: () => wakeAbort.signal.aborted,

@@ -20,6 +20,39 @@ import crypto from "node:crypto";
 // 之前触发落盘，绝不能带着空顺序覆盖 index），内部经同一条 promise 链
 // 串行执行，避免读写与迁移交错。
 
+export function restoredConversation(messages: any[], fallbackPrompt = "", fallbackFinalText = "") {
+  const visible = messages
+    .filter((message) => message?.role === "user" || message?.role === "assistant" || message?.role === "tool")
+    .map((message) => {
+      const content = Array.isArray(message.content)
+        ? message.content.filter(part => part?.type === 'text').map(part => part.text).join('\n')
+        : String(message.content || "");
+      // 旧版唤醒消息沿用用户气泡，只有宿主生成的轮次记录才按旧格式识别。
+      const legacyWake = message.role === 'user' && message.runId && message.id === message.runId + ':user'
+        && /^(?:（到点自动唤醒）)?你于 [^\n]* 主动挂起（原因：[\s\S]*?），现在到达约定时间 [^\n]*，请继续完成任务。/.test(content);
+      const wake = message.role === 'user' && (message.origin === 'automatic-wake' || legacyWake);
+      const entry: any = { role: wake ? 'assistant' : message.role, content };
+      if (message.role === "assistant") {
+        const reasoning = String(message.reasoning || message.reasoning_content || "").trim();
+        if (reasoning) entry.reasoning_content = reasoning;
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length) entry.tool_calls = message.tool_calls;
+        if (Array.isArray(message.executedMessages) && message.executedMessages.length) entry.executedMessages = message.executedMessages;
+      }
+      if (message.role === "tool" && message.tool_call_id) entry.tool_call_id = message.tool_call_id;
+      return entry;
+    })
+    .filter((message) => message.content.trim() || message.reasoning_content || message.tool_calls || message.executedMessages?.length);
+  if (visible.length) {
+    const recent = visible.filter((message, index) => message.role === 'user' || index >= visible.length - 20);
+    if (fallbackPrompt && !recent.some(message => message.role === 'user')) recent.unshift({ role: 'user', content: fallbackPrompt });
+    return recent;
+  }
+  const fallback = [];
+  if (fallbackPrompt) fallback.push({ role: "user", content: fallbackPrompt });
+  if (fallbackFinalText) fallback.push({ role: "assistant", content: fallbackFinalText });
+  return fallback;
+}
+
 const INDEX_NAME = "index.json";
 
 // 文件名 = 清洗后的 id + 原始 id 的短哈希：不同 id 清洗后同名也能区分

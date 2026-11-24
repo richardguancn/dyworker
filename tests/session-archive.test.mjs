@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSessionArchive } from "../electron/session-archive.mts";
+import { createSessionArchive, restoredConversation } from "../electron/session-archive.mts";
+import { buildReviewContext } from "../electron/approval-context.mts";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,6 +20,39 @@ const makeSession = (id, marker = id, extra = {}) => ({
   updatedAt: "2026-01-01T00:00:00.000Z",
   messages: [{ role: "assistant", content: `内容-${marker}` }],
   ...extra,
+});
+
+test('重新打开长会话：带回较早的用户要求和后来的改口，唤醒通知只作为工作记录', async t => {
+  const dir = await tempDir();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const config = { dir, legacyFile: path.join(dir, 'legacy.json') };
+  const first = '只制作两份备选稿，保留旧稿。', latest = '把份数改为三份，仍保留旧稿。';
+  const messages = [
+    { role: 'user', content: first }, { role: 'assistant', content: '早期工作记录' },
+    ...Array.from({ length: 24 }, (_, i) => ({ role: 'assistant', content: '进度 ' + i })),
+    { role: 'user', content: [{ type: 'text', text: latest }] },
+    { role: 'user', origin: 'automatic-wake', content: '自动续跑的早前进展' },
+    { role: 'user', content: '请继续。' },
+  ];
+  await createSessionArchive(config).saveAll([makeSession('resume', '', { messages })]);
+  const saved = await createSessionArchive(config).get('resume');
+  const history = restoredConversation(saved.messages);
+  const context = buildReviewContext({ conversation: history });
+  assert.deepEqual(history.filter(m => m.role === 'user' && m.origin !== 'automatic-wake').map(m => m.content), [first, latest, '请继续。']);
+  assert.ok(context.includes(first) && context.indexOf(first) < context.indexOf(latest));
+  assert.doesNotMatch(context, /自动续跑的早前进展/);
+  assert.ok(history.some(m => m.content === '进度 23'));
+  assert.ok(!history.some(m => m.content === '早期工作记录'));
+  assert.deepEqual(restoredConversation([], first, '已生成第一份'), [
+    { role: 'user', content: first }, { role: 'assistant', content: '已生成第一份' },
+  ]);
+  const wake = '你于 11月21日 主动挂起（原因：等待），现在到达约定时间 11月22日，请继续完成任务。';
+  for (const content of [wake, '（到点自动唤醒）' + wake]) {
+    const oldWake = { id: 'run:user', runId: 'run', role: 'user', content };
+    assert.deepEqual(restoredConversation([oldWake], first), [{ role: 'user', content: first }, { role: 'assistant', content }]);
+  }
+  assert.doesNotMatch(buildReviewContext({ conversation: [{ role: 'user', content: first },
+    { role: 'user', origin: 'automatic-wake', content: '阶段性工作记录' }] }), /阶段性工作记录/);
 });
 
 test("缓存淘汰不删除历史：全量读取、同步读取和修改保存均保持完整", async () => {

@@ -86,6 +86,7 @@ import { importMcpBundle } from "./mcp-bundle.mts";
 import { extractExplicitMemoryInstructions } from "./memory.mts";
 import { createRemoteMessagesManager } from "./remote-messages.mts";
 import { isTrustedAppRendererUrl } from "./renderer-origin.mts";
+import { restoredConversation } from "./session-archive.mts";
 import { SessionQueue } from "./session-queue.mts";
 import { handleSessionTool,SESSION_TOOL_NAMES,sessionToolDefinitions } from "./session-tools.mts";
 import { countUndecryptableSecrets,decryptChannelSecret,encryptChannelSecret,normalizeApprovalMode,normalizeDecisionService,normalizePreventSleep } from "./settings.mts";
@@ -1962,28 +1963,8 @@ async function persistSessionAppend(sessionId, messages) {
 
 // 从会话存档中重建可见对话（只读,渲染端仍是唯一写者）；找不到时退回唤醒记录里的提示与进展
 async function visibleConversationForSession(sessionId, fallbackPrompt, fallbackFinalText) {
-  const sessions = await readAllSessions();
-  const session = Array.isArray(sessions) ? sessions.find((item) => String(item?.id) === String(sessionId)) : null;
-  const visible = (session?.messages || [])
-    .filter((message) => message?.role === "user" || message?.role === "assistant" || message?.role === "tool")
-    .map((message) => {
-      const entry: any = { role: message.role, content: String(message.content || "") };
-      if (message.role === "assistant") {
-        const reasoning = String(message.reasoning || message.reasoning_content || "").trim();
-        if (reasoning) entry.reasoning_content = reasoning;
-        if (Array.isArray(message.tool_calls) && message.tool_calls.length) entry.tool_calls = message.tool_calls;
-        if (Array.isArray(message.executedMessages) && message.executedMessages.length) entry.executedMessages = message.executedMessages;
-      }
-      if (message.role === "tool" && message.tool_call_id) entry.tool_call_id = message.tool_call_id;
-      return entry;
-    })
-    .filter((message) => message.content.trim() || message.reasoning_content || message.tool_calls || message.executedMessages?.length)
-    .slice(-20);
-  if (visible.length) return visible;
-  const fallback = [];
-  if (fallbackPrompt) fallback.push({ role: "user", content: fallbackPrompt });
-  if (fallbackFinalText) fallback.push({ role: "assistant", content: fallbackFinalText });
-  return fallback;
+  const session = await ctx.sessions.getAsync(sessionId);
+  return restoredConversation(session?.messages || [], fallbackPrompt, fallbackFinalText);
 }
 
 async function workingContextForSession(sessionId) {
