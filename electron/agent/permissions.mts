@@ -72,6 +72,7 @@ export function evaluateApproval({
   }
 
   if (approvalMode === "allow-writes") {
+    if (name === "plugin_manage") return "ask";
     if (hasExternalPaths) return "ask";
     if (computerUseMutation) return "ask";
     if (name === "run_command") {

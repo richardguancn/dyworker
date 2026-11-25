@@ -50,37 +50,67 @@ export const authoringSkills = [
     description: '根据需求创建、制作或改进 DYWorker 插件，生成可安装的本地插件目录，并检查入口、工具或界面功能。',
     instructions: `# 插件制作
 
-用户明确要求制作 DYWorker 插件时使用。先确认想增加的实际能力，判断是否需要工具、界面或两者。仅可复用的文字流程优先建议技能，用户明确选插件时尊重选择。已明确的信息不重复询问。
+先理解用户想解决的办公需求，再构建本地 DYWorker 插件。若仅是文字规范用技能，用户选插件或处于创造模式时直接制作插件。
 
-## 交付与边界
-需要一个工作文件夹；没有时请用户选择。新插件放在当前工作区 plugins/<包名>/，不要修改应用内置插件或用户已安装的插件目录。检查是否存在同名目录，存在时先读取并判断是改进还是另起名称。交付 package.json、可直接执行的 index.js、必要资源、验证脚本和 README.md。默认只制作本地内容，不发布到 npm、GitHub 或其他外部服务。
+## 1. 大白话需求理解与样本优先
+- **面向用户零术语**：对话中不得要求用户懂插槽名、代码或 API；结尾只用白话说明入口在哪、怎么导入/使用。
+- **样本驱动**：用户附上 Excel/CSV/文本样本或参考截图时，先读取字段与布局，直接按真实表头建模和生成解析逻辑。
+- **低门槛澄清**：需求模糊时，编码前调 \`ask_user\` 问**至多 1 轮（2–3 个）日常选择题**（数据从哪来、放左侧整页还是右侧随手栏、手动导入还是每周自动更新），已明确的不再问。
+- **意图映射**：
+  - 独立看板/大屏/台账 → \`workspace.page\`；
+  - 边聊边用清单/小工具 → \`sidebar.right.pane.tab\`；
+  - 围绕当前对话跟踪视图 → \`conversation.view\`；
+  - 留存历史/每周更新 → \`ctx.storage\` 持久化 + 页面导入按钮 + 注册 \`ctx.tools\` 工具（供定时任务/目录监控写入）；
+  - 趋势/占比/统计图 → 前端 \`const echarts = require("echarts")\`（禁在 \`package.json\` 声明 \`echarts\` 依赖）。
 
-## 当前 DYWorker 的插件要求
-插件是 Cordis 模块。主机入口必须显式导出 name、inject 和 apply(ctx)，inject 仅声明实际需要且宿主提供的服务。package.json 至少声明 name、version、description、type: "module" 和 main: "index.js"，包名用小写英文、数字和短横线。不要标记 dyworker.builtin，不要用 Claude 插件或普通 MCP 配置冒充 DYWorker 插件。
+## 2. 交付与目录
+默认创建在 \`<userData>/created-plugins/<包名>/\`（仅用户指定时放工作区目录），不改内置插件。包名小写英文/数字/短横线；不声明 \`dyworker.builtin\` / \`dsh.builtin\`；仅本地运行，不发布外网。
 
-工具插件使用 @deepseek-ai/dsh-tools 的 defineTool，调用 ctx.tools.register(defineTool({...}))。参数字段采用此库的 type、required、description，不套用未经核对的其他工具格式。提供 output.schema 和 output.render；execute(args, exec) 返回结构化结果。需要任务状态时使用 exec.agent 所属会话，禁止跨任务共享状态；涉及文件操作时限定目标目录并检查路径，涉及外部写入时遵循当前审批与用户授权。
+## 3. 当前 DYWorker 的插件要求
+插件为 Cordis ESM 模块，\`package.json\` 配 \`name/version/description/type:"module"/main:"index.js"\`；\`index.js\` 导出 \`name\`、\`inject\`（\`storage\`/\`connection\`/\`tools\`）、\`apply(ctx)\`。
 
-下列是可运行的文本工具示例，必须按用户需求更改包名、工具名和功能，不把示例功能当成完成用户需求：
+### 工具插件（\`ctx.tools\`）
+用 \`@deepseek-ai/dsh-tools\` 的 \`defineTool\` 调 \`ctx.tools.register(defineTool({...}))\`（带 \`parameters\`、\`output.schema\`、\`output.render\`、\`execute(args, exec)\`），遵循工作区路径与审批边界。
 
+示例：
 package.json：
 \`\`\`json
 ${JSON.stringify(pluginStarterManifest, null, 2)}
 \`\`\`
-
 index.js：
 \`\`\`js
 ${pluginStarterSource}
 \`\`\`
 
-## 界面插件
-只有用户需要界面才增加客户端。package.json 的 exports["./client"] 指向 client.js，dsh.client.platform 为 "web"。client.js 必须是经典脚本，调用 window.__ModuleLoader__.load({ id: 包名, factory(require) { ...; return 插件对象; } })；不要直接交付浏览器不能加载的 TSX、ESM import 或未打包源码。插件对象声明 name、inject、apply；使用已存在的界面服务与插槽。先读取当前环境可用的宿主示例或服务声明，再实现具体交互，不猜造服务、插槽和调用方法。无法核对所需界面服务时明确说明缺项，不声称已兼容。React 等已有宿主模块从 require 获取，避免重复打包导致冲突；数据图表优先使用 ECharts。
+### 界面插件（原生 \`dyworker.client\`，禁写 \`dsh\` 字段）
+1. **\`package.json\`**：加 \`"exports": { ".": "./index.js", "./client": "./client.js" }\` 与 \`"dyworker": { "client": { "platform": "web", "inject": [] } }\`。
+2. **\`index.js\`**：用 \`ctx.storage.readJson/writeJson\` 持久化，\`ctx.connection.register({ path: "/api/<包名>/...", methods: ["GET","POST"], fetch })\` 供前端 \`fetch("/api/...")\` 调用。
+3. **\`client.js\`（classic script，禁 ESM \`import/export\` 与 JSX）**：
+   - 使用 \`window.__ModuleLoader__.load({ id: "<包名>", factory(require) { ... } })\`，\`React.createElement\` 写界面，主题变量（\`var(--surface)\`/\`var(--card)\`/\`var(--border)\`/\`var(--ink)\`/\`var(--muted)\`）适配深浅色。
+   - ECharts 用 \`const echarts = require("echarts");\`，在 \`useEffect\` 中 \`init\` + \`ResizeObserver\` + 清理 \`dispose()\`，\`backgroundColor: "transparent"\`。
+   - 插槽在 \`apply(ctx)\` 注册：\`ctx.effect(() => ctx.slots.inject("<插槽>", () => ctx.slots.register({ key: "main", label: "标题" }, Comp)))\`：
+\`\`\`js
+window.__ModuleLoader__.load({
+  id: "my-tool-page",
+  factory(require) {
+    const React = require("react");
+    const e = React.createElement;
+    return {
+      name: "my-tool-page",
+      inject: ["slots"],
+      apply(ctx) {
+        const Page = () => e("div", { style: { padding: 16, color: "var(--ink)" } }, "页面内容");
+        ctx.effect(() => ctx.slots.inject("workspace.page", () => ctx.slots.register({ key: "main", label: "我的看板" }, Page)));
+      }
+    };
+  }
+});
+\`\`\`
 
-## 验证与安装
-1. 读取并检查 package.json 的名称、入口、依赖与实际文件；运行语法检查和真实导入，确认 name、inject、apply 可用。测试只能模拟的部分需明确说明。
-2. 工具插件用隔离的工具注册容器加载主机入口，实际调用所注册工具，验证代表性输入、空输入、异常输入，修复后重测。有文件操作时用临时目录；不要把依赖缺失或测试未运行写成通过。
-3. 界面插件还需用真实模块加载器加载产物，确认不存在缺失模块，并打开页面检查渲染与交互。具备当前应用检查能力时再确认所需宿主服务；仅导入成功不能证明已安装可用。
-4. README.md 写清用途、依赖、制作目录、实际验证结果和安装方法。用户可在“插件 → 安装本地插件”选择或填写完整目录，应用会检查兼容性，再启用插件。不要凭空编造 DYWorker CLI 命令；未授权安装或当前没有应用安装通道时，交付已验证目录并如实说明尚未安装。
-5. 若用户同时要求安装，并且当前环境提供真实安装能力，按该能力安装，再确认插件列表中可见、状态正常和真实功能可调用；失败继续排查，无法完成时准确说明停在哪一步。不要仅凭制作成功宣称插件已启用。`,
+## 4. 验证与热挂载安装
+1. 先调 \`plugin_inspect\`（\`action: "check"\`, \`target: "<目录>"\`）检查清单、安全与语法；
+2. 通过后调 \`plugin_manage\`（\`action: "install"\`, \`target: "<目录>"\`, \`openSlot: true\` 或指定插槽）；在创造模式下受管目录的纯本地插件将自动安装并热挂载打开。若是工具插件，安装后须实际调用所注册工具核验返回结果；若是界面插件，确认插槽已挂载生效；
+3. 二次修改后调 \`plugin_manage\`（\`action: "reload"\`）刷新；未实调或未通过须如实说明。`,
   },
 ];
 

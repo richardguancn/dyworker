@@ -113,6 +113,7 @@ function isCatastrophicRemovalSegment(argv: string[], activeDirsRoot = false): b
 // 用户/系统钩子、系统交互与审批逻辑自身保护继续由共享入口保留。
 export function isReviewerEligible({ name = "", args = {}, hookRequiresApproval = false, approvalMode = "", forExternalPaths = false } = {} as any) {
   if (hookRequiresApproval) return false;
+  if (name === "plugin_manage") return false;
   if (approvalMode !== "reviewer" && !(approvalMode === "auto" && forExternalPaths)) return false;
   if (name === 'run_command') {
     const commandText = String(args.command || '');
@@ -328,7 +329,7 @@ export function relatedReviewToolEvidence(executedTools, command) {
 const impactSummaryTools = new Set([
   "run_command", "write_file", "edit_file", "append_file", "delete_file",
   "copy_file", "move_file", "make_directory",
-  "export_word_document", "export_excel_workbook", "save_skill", "update_skill",
+  "export_word_document", "export_excel_workbook", "office_recalculate", "save_skill", "update_skill",
 ]);
 
 export function isImpactSummaryEligible(name = "") {

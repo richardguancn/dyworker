@@ -7,6 +7,7 @@ import { prepareCommandExecution } from "../command-execution.mts";
 import { createCommandDiagnostics } from "../command-protection.mts";
 import { bundledCuratedRoot } from '../curated-plugins.mts';
 import { COMMAND_OUTPUT_LIMIT,COMMAND_TIMEOUT_MS,LIST_LIMIT,READ_LIMIT,clipped,documentExtensions,ignoredNames,moduleDir,runProcess,runPython,textExtensions } from "./shared.mts";
+import { runIsolatedSoffice } from "./office-tools.mts";
 
 // 基于行多重集的简易 diff 计数，用于 +N/-M 变更统计（对照 Codex 的文件变更摘要）
 export function diffLineCounts(before, after) {
@@ -150,6 +151,7 @@ export class Workspace {
 externalAuthorizations;
 trustedTempRoots;
 trustedSkillRoots;
+trustedWriteRoots;
 cancellationSignal;
 isCancelled;
 constructor(root, options = {} as any) {
@@ -167,9 +169,28 @@ constructor(root, options = {} as any) {
     // 技能与助手扩展目录（~/.agents、~/.codex、~/.gemini/antigravity 等）：
     // 助手读取自身技能说明、脚本与资产属于既定工作流，只读访问不应触发工作区外路径审批。
     this.trustedSkillRoots = options.trustSkillRoots === false ? [] : collectSkillRoots();
+    // 受信任额外写入根目录（如 <userData>/created-plugins）：仅在显式开启时视作工作区内
+    this.trustedWriteRoots = (Array.isArray(options.trustedWriteRoots) ? options.trustedWriteRoots : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .map((item) => {
+        const resolved = path.resolve(item);
+        try { return realpathSync(resolved); } catch { return resolved; }
+      });
     // 任务取消信号：runCommand 的长耗时命令据此立即终止，而不是等超时
     this.cancellationSignal = options.signal || null;
     this.isCancelled = typeof options.isCancelled === "function" ? options.isCancelled : null;
+  }
+
+  addTrustedWriteRoots(roots) {
+    const list = (Array.isArray(roots) ? roots : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .map((item) => {
+        const resolved = path.resolve(item);
+        try { return realpathSync(resolved); } catch { return resolved; }
+      });
+    this.trustedWriteRoots.push(...list);
   }
 
   canonicalPath(relativePath) {
@@ -196,6 +217,8 @@ constructor(root, options = {} as any) {
     if (this.trustedTempRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep))) return false;
     // 技能与助手扩展目录：只读访问属于受信任系统扩展，不触发审批/审核
     if (!forWrite && this.trustedSkillRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep))) return false;
+    // 受管创建根目录（如 created-plugins）：仅在显式注入 trustedWriteRoots 时放行
+    if (this.trustedWriteRoots.some((root) => absolute === root || absolute.startsWith(root + path.sep))) return false;
     return true;
   }
 
@@ -292,13 +315,17 @@ constructor(root, options = {} as any) {
       const result = await runProcess(attempt.program, attempt.args, 60_000, READ_LIMIT);
       if (result.ok && result.output.trim()) return result.output.trim();
     }
-    // LibreOffice（麒麟/UOS 政务机通常自带）：转成 txt 后读回
+    // LibreOffice（麒麟/UOS 政务机或桌面安装）：独立 Profile 隔离转成 txt 后读回并清理临时目录
     const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-doc-"));
-    const converted = await runProcess("soffice", ["--headless", "--convert-to", "txt:Text", "--outdir", outdir, file], 60_000, 2000);
-    if (converted.ok) {
-      const txt = path.join(outdir, `${path.basename(file, path.extname(file))}.txt`);
-      const text = await fs.readFile(txt, "utf8").catch(() => "");
-      if (text.trim()) return text.trim();
+    try {
+      const converted = await runIsolatedSoffice(["--headless", "--convert-to", "txt:Text", "--outdir", outdir, file], { timeoutMs: 60_000 });
+      if (converted.ok) {
+        const txt = path.join(outdir, `${path.basename(file, path.extname(file))}.txt`);
+        const text = await fs.readFile(txt, "utf8").catch(() => "");
+        if (text.trim()) return text.trim();
+      }
+    } finally {
+      await fs.rm(outdir, { recursive: true, force: true }).catch(() => {});
     }
     throw new Error("老式 .doc 是二进制格式，需要本机装有 textutil（macOS 自带）、antiword 或 LibreOffice 之一才能读取；也可以用 WPS 把文件另存为 .docx 后再读");
   }
@@ -340,11 +367,15 @@ constructor(root, options = {} as any) {
     const result = await runProcess("textutil", ["-convert", "txt", "-stdout", file], 60_000, READ_LIMIT);
     if (result.ok && result.output.trim()) return result.output.trim();
     const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-rtf-"));
-    const converted = await runProcess("soffice", ["--headless", "--convert-to", "txt:Text", "--outdir", outdir, file], 60_000, 2000);
-    if (converted.ok) {
-      const txt = path.join(outdir, `${path.basename(file, path.extname(file))}.txt`);
-      const text = await fs.readFile(txt, "utf8").catch(() => "");
-      if (text.trim()) return text.trim();
+    try {
+      const converted = await runIsolatedSoffice(["--headless", "--convert-to", "txt:Text", "--outdir", outdir, file], { timeoutMs: 60_000 });
+      if (converted.ok) {
+        const txt = path.join(outdir, `${path.basename(file, path.extname(file))}.txt`);
+        const text = await fs.readFile(txt, "utf8").catch(() => "");
+        if (text.trim()) return text.trim();
+      }
+    } finally {
+      await fs.rm(outdir, { recursive: true, force: true }).catch(() => {});
     }
     throw new Error("读取 RTF 需要 textutil（macOS 自带）或 LibreOffice 之一，本机未找到可用的转换器");
   }
@@ -354,13 +385,17 @@ constructor(root, options = {} as any) {
     const catppt = await runProcess("catppt", [file], 60_000, READ_LIMIT);
     if (catppt.ok && catppt.output.trim()) return catppt.output.trim();
     const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-ppt-"));
-    const converted = await runProcess("soffice", ["--headless", "--convert-to", "pptx", "--outdir", outdir, file], 120_000, 2000);
-    if (converted.ok) {
-      const pptxFile = path.join(outdir, `${path.basename(file, path.extname(file))}.pptx`);
-      try {
-        const text = await this.runOfficeExtractor(pptxFile);
-        if (text) return text;
-      } catch { /* 转换产物解析失败则落到下方提示 */ }
+    try {
+      const converted = await runIsolatedSoffice(["--headless", "--convert-to", "pptx", "--outdir", outdir, file], { timeoutMs: 120_000 });
+      if (converted.ok) {
+        const pptxFile = path.join(outdir, `${path.basename(file, path.extname(file))}.pptx`);
+        try {
+          const text = await this.runOfficeExtractor(pptxFile);
+          if (text) return text;
+        } catch { /* 转换产物解析失败则落到下方提示 */ }
+      }
+    } finally {
+      await fs.rm(outdir, { recursive: true, force: true }).catch(() => {});
     }
     throw new Error("老式 .ppt 是二进制格式，需要本机装有 catppt 或 LibreOffice 才能读取；也可以用 WPS 把文件另存为 .pptx 后再读");
   }
