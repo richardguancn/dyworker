@@ -3,6 +3,12 @@
 // 原生保存/打开对话框、附件与包文件读写、会话存档落盘、项目置顶配置。
 import os from "node:os";
 import {
+  extractConversationsJsonFromZip,
+  isLikelyDeepSeekConversationsJson,
+  isZipBuffer,
+  parseDeepSeekConversations,
+} from "../../deepseek-chat-import.mts";
+import {
   TRANSFER_EXTENSION,
   applyImportPlan,
   buildTransferPackage,
@@ -115,7 +121,7 @@ export function transferIpcPlugin(deps) {
             title: "导入任务或项目",
             properties: ["openFile"],
             filters: [
-              { name: "DYWorker 迁移包", extensions: [TRANSFER_EXTENSION, "json"] },
+              { name: "DYWorker 迁移包 / DeepSeek 导出包", extensions: [TRANSFER_EXTENSION, "zip", "json"] },
               { name: "全部文件", extensions: ["*"] },
             ],
           });
@@ -124,8 +130,61 @@ export function transferIpcPlugin(deps) {
           const source = picked.filePaths[0];
           const stat = await fs.stat(source);
           if (stat.size > MAX_PACKAGE_BYTES) return { ok: false, error: "迁移包超过 512MB，无法导入" };
-          const parsed = parseTransferPackage(await fs.readFile(source, "utf8"));
-          if (!parsed.ok) return { ok: false, error: parsed.error };
+          const rawBytes = Buffer.from(await fs.readFile(source));
+
+          // 兼容 DeepSeek 网页版官方导出包（.zip）
+          if (isZipBuffer(rawBytes) || String(source).toLowerCase().endsWith(".zip")) {
+            const extracted = extractConversationsJsonFromZip(rawBytes);
+            if (!extracted.ok) return { ok: false, error: "error" in extracted ? extracted.error : "压缩包解析失败" };
+            const importedDs = parseDeepSeekConversations(extracted.jsonText, {
+              hasSession: (id) => !!ctx.sessions.get(id),
+            });
+            if (!importedDs.ok) return { ok: false, error: "error" in importedDs ? importedDs.error : "导出对话解析失败" };
+            for (const session of importedDs.sessions) await ctx.sessions.replace(session);
+            return {
+              ok: true,
+              canceled: false,
+              kind: "deepseek",
+              sessions: importedDs.sessions,
+              added: importedDs.sessions.length,
+              renamed: importedDs.renamed,
+              attachments: 0,
+              skippedAttachments: [],
+              missingWorkspaces: [],
+              pinnedWorkspace: "",
+              project: null,
+              source,
+            };
+          }
+
+          const rawText = rawBytes.toString("utf8");
+          const parsed = parseTransferPackage(rawText);
+          if (!parsed.ok) {
+            let parsedJson: unknown = null;
+            try { parsedJson = JSON.parse(rawText); } catch {}
+            if (isLikelyDeepSeekConversationsJson(parsedJson)) {
+              const importedDs = parseDeepSeekConversations(rawText, {
+                hasSession: (id) => !!ctx.sessions.get(id),
+              });
+              if (!importedDs.ok) return { ok: false, error: "error" in importedDs ? importedDs.error : "导出对话解析失败" };
+              for (const session of importedDs.sessions) await ctx.sessions.replace(session);
+              return {
+                ok: true,
+                canceled: false,
+                kind: "deepseek",
+                sessions: importedDs.sessions,
+                added: importedDs.sessions.length,
+                renamed: importedDs.renamed,
+                attachments: 0,
+                skippedAttachments: [],
+                missingWorkspaces: [],
+                pinnedWorkspace: "",
+                project: null,
+                source,
+              };
+            }
+            return { ok: false, error: parsed.error };
+          }
           const pkg = parsed.package;
 
           // 包内工作目录是否已存在于本机：先异步探一遍，planImport 保持纯同步语义
