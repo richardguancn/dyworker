@@ -3,6 +3,7 @@ import { queuedGoalPayload,settledStoredGoal } from "../goal.mts";
 import { hasConfiguredModel } from "../host/dsh-runtime/model-settings.mts";
 import { mergeDshTranscript,patchDshAssistant,reconcileDshMessages } from '../host/dsh-runtime/presentation.mts';
 import { UNATTENDED_PENDING_TIMEOUT_MS } from "../host/services/inbox.mts";
+import { buildIsolatedEventPrompt } from "../schedule-event-funnel.mts";
 import { settingsForSession } from "../session-model.mts";
 import { unattendedApprovalMode,wakeApprovalMode } from "../settings.mts";
 import { taskResultText } from "../task-result.mts";
@@ -286,6 +287,16 @@ function createTranscriptCollector(options: any = {}) {
       } else if (agentEvent.type === "plan-update") {
         patch(message=>({...message,plan:agentEvent.steps}));
         plan = agentEvent.steps;
+      } else if (agentEvent.type === "context-compacted") {
+        const compactedActivity = {
+          id: crypto.randomUUID(),
+          kind: "commentary",
+          status: "success",
+          title: "上下文已压缩",
+          detail: String(agentEvent.summary || "").trim() || "上下文已压缩，已保留继续任务所需的内容。",
+        };
+        activities.push(compactedActivity);
+        patch((message) => ({ ...message, activities: [...(message.activities || []), compactedActivity] }));
       } else if (agentEvent.type === "assistant-reasoning") {
         reasoning = String(agentEvent.text || "");
       }
@@ -330,18 +341,38 @@ function createTranscriptCollector(options: any = {}) {
   };
 }
 
-async function runScheduledTask(record, meta) {
+async function runScheduledTask(rawRecord, meta) {
   deps.ctx.scheduler.running = true;
   trackTaskStart();
   broadcastSchedulesChanged();
+  const record = meta?.eventPayload
+    ? { ...rawRecord, prompt: buildIsolatedEventPrompt(rawRecord.prompt, meta.eventPayload) }
+    : rawRecord;
+  const candidateReuseId = record?.eventConfig?.sessionMode === "reuse"
+    ? String(record.eventConfig?.reusableSessionId || "").trim()
+    : "";
+  const reusableSession = candidateReuseId
+    && !deps.entryRuns.has(candidateReuseId)
+    && !deps.wakeRuns.has(candidateReuseId)
+    ? await deps.ctx.sessions.getAsync(candidateReuseId)
+    : null;
+  if (reusableSession) {
+    return runScheduledTaskCore(record, meta, reusableSession.id, reusableSession);
+  }
   // 本次执行的会话 id：收件箱条目、审计记录与最终留痕会话共用同一个
   const scheduleSessionId = crypto.randomUUID();
-  // 实时转发的运行标识 + 会话标题：与渠道运行同一套信封（用 scheduleRun 打标区分）
-  const scheduleRunId = scheduleSessionId;
+  return runScheduledTaskCore(record, meta, scheduleSessionId, null);
+}
+
+async function runScheduledTaskCore(record, meta, scheduleSessionId, reusableSession) {
+  const reusingSession = Boolean(reusableSession);
+  const priorMessages = reusingSession ? [...(reusableSession?.messages || [])] : [];
+  // 实时转发的运行标识 + 会话标题：每次执行使用独立 runId，避免复用会话时消息 id 冲突
+  const scheduleRunId = crypto.randomUUID();
   const scheduleAbort = new AbortController();
   deps.entryRuns.set(scheduleSessionId,{runId:scheduleRunId,abort:scheduleAbort,kind:"定时任务",
     workspacePath:String(record.workspacePath || "")});
-  const scheduleTitle = `计划：${String(record.name || "未命名").slice(0, 24)}`;
+  const scheduleTitle = reusableSession?.title || `计划：${String(record.name || "未命名").slice(0, 24)}`;
   const scheduleStartedAt = new Date().toISOString();
   const collector = createTranscriptCollector({runId:scheduleRunId});
   // 起跑前先建会话：界面立刻能看到"这次运行",后续事件边跑边填,不用等任务结束
@@ -355,6 +386,7 @@ async function runScheduledTask(record, meta) {
     prompt: record.prompt,
     startedAt: scheduleStartedAt,
     manual: Boolean(meta?.manual),
+    ...(reusingSession ? { reuseSession: true } : {}),
   });
   // 运行期把关键 agent 事件实时转发（白名单与渠道运行共用；trace/token-usage 只进本地留痕）。
   // 定义在 try 之外：catch 路径也要用它发收尾事件，若只在 try 内定义，
@@ -373,13 +405,16 @@ async function runScheduledTask(record, meta) {
   // 运行开始/结束是两条路径：起跑下发 schedules:run-started 建会话，收尾用 sessions:prepend
   // 下发完整转录（渲染端按会话 id 归并，不会出现两条同 id 会话）。
   const finishSession = async (messages) => {
+    const combinedMessages = reusingSession
+      ? [...priorMessages.filter((item: any) => item?.runId !== scheduleRunId), ...messages]
+      : messages;
     const session = {
       id: scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
       title: scheduleTitle,
       workspacePath: record.workspacePath,
-      createdAt: scheduleStartedAt,
+      createdAt: reusableSession?.createdAt || scheduleStartedAt,
       updatedAt: new Date().toISOString(),
-      messages,
+      messages: combinedMessages,
     };
     const priorSession=await deps.ctx.sessions.getAsync(scheduleSessionId);
     session.messages=mergeDshTranscript(priorSession?.messages || [],session.messages);
@@ -387,13 +422,18 @@ async function runScheduledTask(record, meta) {
     if (deps.mainWindow && !deps.mainWindow.isDestroyed()) deps.mainWindow.webContents.send("sessions:prepend", session);
   };
   try {
+    if (!reusingSession && record?.eventConfig?.sessionMode === "reuse" && record?.id) {
+      await deps.ctx.scheduler.updateEventReusableSession?.(record.id, scheduleSessionId);
+    }
     const settings = await readSettings();
     if (!hasConfiguredModel(settings)) {
       throw new Error("模型还没有配置，无法执行定时任务");
     }
+    const priorConversation = reusingSession ? await visibleConversationForSession(reusableSession) : [];
+    const priorWorkingContext = reusingSession ? await workingContextForSession(reusableSession) : undefined;
     await deps.ctx.sessions.upsert({id:scheduleSessionId,runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',
-      title:scheduleTitle,workspacePath:record.workspacePath,createdAt:scheduleStartedAt,updatedAt:scheduleStartedAt,
-      messages:[{id:`${scheduleRunId}:user`,runId:scheduleRunId,role:'user',content:record.prompt,createdAt:scheduleStartedAt}]});
+      title:scheduleTitle,workspacePath:record.workspacePath,createdAt:reusableSession?.createdAt || scheduleStartedAt,updatedAt:scheduleStartedAt,
+      messages:[...priorMessages, {id:`${scheduleRunId}:user`,runId:scheduleRunId,role:'user',content:record.prompt,createdAt:scheduleStartedAt}]});
     const result = await deps.ctx.agent.run({
       runtime:record.runtime === 'dsh' ? 'dsh' : 'dyworker',runId:scheduleRunId,
       signal:scheduleAbort.signal,isCancelled:()=>scheduleAbort.signal.aborted,
@@ -406,7 +446,8 @@ async function runScheduledTask(record, meta) {
       // 计划任务却逐条弹审批卡的口径分裂（渠道任务一直按全局模式运行）。
       approvalMode: unattendedApprovalMode(settings.approvalMode, record.allowWorkspaceWrites ? "reviewer" : "deny-changes"),
       prompt: record.prompt,
-      conversation: [{ role: "user", content: record.prompt }],
+      conversation: [...priorConversation, { role: "user", content: record.prompt }],
+      ...(priorWorkingContext ? { workingContext: priorWorkingContext } : {}),
       // 无人值守：需要确认的操作与提问进审批收件箱挂起等待（2 小时上限，超时按拒绝处理）
       requestApproval: async (action, approvalSignal?: AbortSignal) => {
         const pending = deps.ctx.inbox.create({

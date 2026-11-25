@@ -15,6 +15,12 @@
 import { Service } from "@deepseek-ai/cordis";
 import path from "node:path";
 import crypto from "node:crypto";
+import { isSafePublicUrl } from "../../agent/web-tools.mts";
+import {
+  evaluateEventFunnel,
+  type EventPayload,
+  type FunnelScheduleState,
+} from "../../schedule-event-funnel.mts";
 import { readJson, writeJson } from "../io.mts";
 import { normalizeApprovalMode } from "../../settings.mts";
 
@@ -24,10 +30,10 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
-export const RECURRENCES = ["once", "hourly", "daily", "weekly"];
+export const RECURRENCES = ["once", "minutes_5", "minutes_15", "hourly", "daily", "weekly"];
 
 // 重复方式 → 间隔秒数；未知/缺失按每天处理
-const RECURRENCE_SECONDS = { hourly: 3600, weekly: 7 * 86400, daily: 86400 };
+const RECURRENCE_SECONDS = { minutes_5: 300, minutes_15: 900, hourly: 3600, weekly: 7 * 86400, daily: 86400 };
 
 // 唤醒到期但被忙碌守卫推迟时的重试间隔。
 // 不能用 0：已到期的唤醒会算出 wait = max(0, target-now) = 0 → setTimeout(0) 立刻重跑，
@@ -79,6 +85,7 @@ export class SchedulerService extends Service {
       resumeWake: config.resumeWake || (async () => {}),
       broadcast: config.broadcast || (() => {}),
       now: config.now || (() => new Date()),
+      fetchImpl: config.fetchImpl || undefined,
     };
     // 定时器属宿主资源：dispose 时一并清掉（原先只在 before-quit 手工清 schedulerTimer，
     // wakeTimer 与启动 tick 都没人管）
@@ -124,6 +131,24 @@ export class SchedulerService extends Service {
     await writeJson(this.file("schedules.json"), items);
   }
 
+  async readSnapshots(): Promise<Record<string, FunnelScheduleState>> {
+    const raw = await readJson(this.file("schedule-snapshots.json"), {});
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  }
+
+  async writeSnapshots(snapshots: Record<string, FunnelScheduleState>) {
+    await writeJson(this.file("schedule-snapshots.json"), snapshots);
+  }
+
+  async updateEventReusableSession(id: string, sessionId: string) {
+    const items = await this.list();
+    const item = items.find((entry) => String(entry.id) === String(id));
+    if (!item) return;
+    item.eventConfig = { ...(item.eventConfig || {}), reusableSessionId: sessionId };
+    item.updatedAt = this.now().toISOString();
+    await this.writeScheduleList(items);
+  }
+
   // 新建或更新一条计划；校验与 main 收编前一致（错误文案保持）
   async save(payload) {
     const name = String(payload?.name || "").trim();
@@ -131,26 +156,79 @@ export class SchedulerService extends Service {
     const workspacePath = String(payload?.workspacePath || "").trim();
     const recurrence = String(payload?.recurrence || "daily");
     const runtime = payload?.runtime ?? "dyworker";
-    if (!["dyworker","dsh"].includes(runtime)) return {ok:false,error:"任务运行方式无效"};
+    const triggerType = String(payload?.triggerType ?? "time");
+    if (!["dyworker", "dsh"].includes(runtime)) return { ok: false, error: "任务运行方式无效" };
+    if (!["time", "folder", "url"].includes(triggerType)) return { ok: false, error: "触发方式无效" };
     const nextRun = new Date(payload?.nextRun || "");
     if (!name || !prompt) return { ok: false, error: "计划名称和任务内容不能为空" };
     if (!workspacePath) return { ok: false, error: "请先选择工作文件夹" };
     if (!RECURRENCES.includes(recurrence)) return { ok: false, error: "重复方式无效" };
     if (Number.isNaN(nextRun.getTime())) return { ok: false, error: "首次执行时间无效" };
+
+    const rawEventCfg = payload?.eventConfig && typeof payload.eventConfig === "object" ? payload.eventConfig : {};
+    if (triggerType === "url") {
+      const check = isSafePublicUrl(String(rawEventCfg.url || "").trim());
+      if (!check.ok) return { ok: false, error: check.error || "监控网址不合法" };
+    }
+    const parsedDebounce = Number(rawEventCfg.debounceSeconds);
+    const normalizedEventConfig = triggerType === "time"
+      ? undefined
+      : {
+          ...(triggerType === "folder" && String(rawEventCfg.watchPath || "").trim()
+            ? { watchPath: String(rawEventCfg.watchPath).trim() }
+            : {}),
+          ...(triggerType === "folder" && String(rawEventCfg.extensions || "").trim()
+            ? { extensions: String(rawEventCfg.extensions).trim() }
+            : {}),
+          ...(triggerType === "url" ? { url: String(rawEventCfg.url || "").trim() } : {}),
+          ...(String(rawEventCfg.keyword || "").trim() ? { keyword: String(rawEventCfg.keyword).trim() } : {}),
+          debounceSeconds: Number.isFinite(parsedDebounce) && parsedDebounce >= 0
+            ? Math.min(3600, Math.round(parsedDebounce))
+            : 30,
+          sessionMode: rawEventCfg.sessionMode === "reuse" ? "reuse" : "new",
+          ...(rawEventCfg.reusableSessionId ? { reusableSessionId: String(rawEventCfg.reusableSessionId) } : {}),
+        };
+
     const items = await this.list();
     const existing = payload?.id ? items.find((item) => String(item.id) === String(payload.id)) : null;
     if (existing) {
+      const oldCfg = existing.eventConfig || {};
+      const newCfg: any = normalizedEventConfig || {};
+      const targetChanged =
+        (existing.triggerType || "time") !== triggerType
+        || existing.workspacePath !== workspacePath
+        || String(oldCfg.watchPath || "") !== String(newCfg.watchPath || "")
+        || String(oldCfg.extensions || "") !== String(newCfg.extensions || "")
+        || String(oldCfg.url || "") !== String(newCfg.url || "");
+      if (normalizedEventConfig && !normalizedEventConfig.reusableSessionId && existing.eventConfig?.reusableSessionId && normalizedEventConfig.sessionMode === "reuse") {
+        normalizedEventConfig.reusableSessionId = existing.eventConfig.reusableSessionId;
+      }
       Object.assign(existing, {
-        name, prompt, workspacePath, recurrence, runtime,
+        name, prompt, workspacePath, recurrence, runtime, triggerType,
         nextRun: nextRun.toISOString(),
         allowWorkspaceWrites: Boolean(payload?.allowWorkspaceWrites),
         updatedAt: this.now().toISOString(),
       });
+      if (normalizedEventConfig) {
+        existing.eventConfig = normalizedEventConfig;
+      } else {
+        delete existing.eventConfig;
+        delete existing.lastFilterNote;
+      }
+      if (targetChanged) {
+        const snapshots = await this.readSnapshots();
+        if (snapshots[String(existing.id)]) {
+          delete snapshots[String(existing.id)];
+          await this.writeSnapshots(snapshots);
+        }
+      }
     } else {
       const nowIso = this.now().toISOString();
       items.push({
         id: crypto.randomUUID(),
         name, prompt, workspacePath, recurrence, runtime,
+        ...(triggerType !== "time" ? { triggerType } : {}),
+        ...(normalizedEventConfig ? { eventConfig: normalizedEventConfig } : {}),
         nextRun: nextRun.toISOString(),
         lastRun: "",
         enabled: true,
@@ -169,6 +247,11 @@ export class SchedulerService extends Service {
   async remove(id) {
     const items = await this.list();
     await this.writeScheduleList(items.filter((item) => String(item.id) !== String(id)));
+    const snapshots = await this.readSnapshots();
+    if (snapshots[String(id)]) {
+      delete snapshots[String(id)];
+      await this.writeSnapshots(snapshots);
+    }
     this.hooks.broadcast();
     return { ok: true };
   }
@@ -457,6 +540,8 @@ export class SchedulerService extends Service {
     if (this.hooks.isShuttingDown() || this.running || this.scheduling) return null;
     const now = this.now();
     let due = null;
+    let dueEventPayload: EventPayload | undefined;
+    let skippedBroadcast = false;
     // 重入保护只覆盖「读 → 挑 due → 写回 running」这段窗口，不跨 runScheduledTask：
     // 后者会在审批/提问等待期间主动释放 this.running（避免调度死锁），若这里把锁
     // 一直握到运行结束，其他已到期的计划在长达 2 小时的审批等待里都得不到执行。
@@ -473,23 +558,88 @@ export class SchedulerService extends Service {
           .filter((wake) => wake.status === "pending" && wake.scheduleId)
           .map((wake) => String(wake.scheduleId)),
       );
-      due = items.find((item) =>
-        item.enabled
-        // 等待审批或回答时会让出全局调度，但本轮仍在运行。
-        && item.lastStatus !== "running"
-        && item.nextRun
-        && new Date(item.nextRun) <= now
-        && !(item.lastStatus === "sleeping" && suspendedScheduleIds.has(String(item.id)))) || null;
-      if (due) {
+      const checkedIds = new Set<string>();
+      let snapshots: Record<string, FunnelScheduleState> | null = null;
+      let snapshotsDirty = false;
+      let listDirty = false;
+
+      while (true) {
+        const candidate = items.find((item) =>
+          item.enabled
+          // 等待审批或回答时会让出全局调度，但本轮仍在运行。
+          && item.lastStatus !== "running"
+          && item.nextRun
+          && new Date(item.nextRun) <= now
+          && !(item.lastStatus === "sleeping" && suspendedScheduleIds.has(String(item.id)))
+          && !checkedIds.has(String(item.id))) || null;
+        if (!candidate) break;
+
+        if (!manual && (candidate.triggerType === "folder" || candidate.triggerType === "url")) {
+          if (!snapshots) snapshots = await this.readSnapshots();
+          const funnel = await evaluateEventFunnel(candidate, snapshots[String(candidate.id)], now.getTime(), {
+            fetchImpl: this.hooks.fetchImpl,
+          });
+          snapshots[String(candidate.id)] = funnel.nextState;
+          snapshotsDirty = true;
+          candidate.lastCheckAt = now.toISOString();
+          candidate.lastFilterNote = funnel.note;
+
+          if (funnel.action !== "trigger") {
+            if (funnel.action === "debounce" && funnel.waitMs) {
+              candidate.nextRun = new Date(now.getTime() + funnel.waitMs).toISOString();
+            } else if (candidate.recurrence === "once") {
+              candidate.nextRun = new Date(now.getTime() + 300_000).toISOString();
+            } else {
+              candidate.nextRun = nextOccurrence(candidate.recurrence, candidate.nextRun, now);
+            }
+            candidate.updatedAt = now.toISOString();
+            listDirty = true;
+            skippedBroadcast = true;
+            checkedIds.add(String(candidate.id));
+            continue;
+          }
+
+          due = candidate;
+          dueEventPayload = funnel.eventPayload;
+          due.lastStatus = "running";
+          due.lastRun = now.toISOString();
+          due.updatedAt = now.toISOString();
+          listDirty = true;
+          break;
+        }
+
+        due = candidate;
         due.lastStatus = "running";
         due.lastRun = now.toISOString();
         due.updatedAt = now.toISOString();
-        await this.writeScheduleList(items);
+        listDirty = true;
+        break;
       }
+
+      if (snapshotsDirty && snapshots) await this.writeSnapshots(snapshots);
+      if (listDirty) await this.writeScheduleList(items);
     } finally {
       this.scheduling = false;
     }
+    if (skippedBroadcast && !due) {
+      this.hooks.broadcast();
+      return null;
+    }
+    if (skippedBroadcast) this.hooks.broadcast();
     if (!due) return null;
+    if (dueEventPayload) {
+      const meta = { manual, eventPayload: dueEventPayload };
+      if (awaitRun) {
+        await this.hooks.runScheduledTask(due, meta);
+      } else {
+        try {
+          void Promise.resolve(this.hooks.runScheduledTask(due, meta)).catch(() => {});
+        } catch {
+          // 同步抛出同样忽略：状态已落 running，下一轮 recoverInterrupted 会兜底
+        }
+      }
+      return due;
+    }
     if (awaitRun) {
       await this.hooks.runScheduledTask(due, { manual });
     } else {

@@ -1,8 +1,8 @@
-import { Bot, Check, Hand, LoaderCircle, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { Bot, Check, FolderOpen, Globe, Hand, LoaderCircle, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { defaultNextRun, formatScheduleTime } from "../../lib/format";
 import { t } from "../../i18n";
-import type { ApprovalMode, ScheduleRecord } from "../../types";
+import type { ApprovalMode, ScheduleEventConfig, ScheduleRecord } from "../../types";
 
 export const composerApprovalModes = [
   {
@@ -71,6 +71,8 @@ function planApprovalHint(mode: ApprovalMode, allowWorkspaceWrites: boolean) {
 
 const getRecurrenceLabels = (): Record<string, string> => ({
   once: t("plans.recurrence.once", "单次"),
+  minutes_5: t("plans.recurrence.minutes5", "每 5 分钟"),
+  minutes_15: t("plans.recurrence.minutes15", "每 15 分钟"),
   hourly: t("plans.recurrence.hourly", "每小时"),
   daily: t("plans.recurrence.daily", "每天"),
   weekly: t("plans.recurrence.weekly", "每周"),
@@ -80,11 +82,38 @@ export interface ScheduleDraft {
   runtime?: "dyworker" | "dsh";
   name: string;
   prompt: string;
+  triggerType?: "time" | "folder" | "url";
+  eventConfig?: ScheduleEventConfig;
   recurrence: ScheduleRecord["recurrence"];
   nextRun: string;
   allowWorkspaceWrites: boolean;
   workspacePath?: string;
 }
+
+const createInitialDraft = (): ScheduleDraft => ({
+  name: "",
+  prompt: "",
+  triggerType: "time",
+  eventConfig: {
+    watchPath: "",
+    extensions: "",
+    url: "",
+    keyword: "",
+    debounceSeconds: 30,
+    sessionMode: "new",
+  },
+  recurrence: "daily",
+  nextRun: defaultNextRun(),
+  allowWorkspaceWrites: false,
+  workspacePath: "",
+  runtime: "dyworker",
+});
+
+const TRIGGER_LABELS: Record<string, string> = {
+  time: "定时触发",
+  folder: "目录变更",
+  url: "网页变更",
+};
 
 const scheduleHistoryStatusLabels: Record<string, string> = {
   cancelled: "已停止",
@@ -119,7 +148,7 @@ export function PlansPanel({
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<ScheduleDraft>({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "", runtime:"dyworker" });
+  const [draft, setDraft] = useState<ScheduleDraft>(createInitialDraft);
 
   useEffect(() => {
     if (!seed) return;
@@ -127,17 +156,40 @@ export function PlansPanel({
     setFormOpen(true);
   }, [seed]);
 
+  const setTriggerType = (nextType: "time" | "folder" | "url") => {
+    setDraft((current) => ({
+      ...current,
+      triggerType: nextType,
+      recurrence: nextType !== "time" && current.recurrence === "daily"
+        ? "minutes_5"
+        : nextType === "time" && (current.recurrence === "minutes_5" || current.recurrence === "minutes_15")
+          ? "daily"
+          : current.recurrence,
+    }));
+  };
+
+  const updateEventConfig = (patch: Partial<ScheduleEventConfig>) => {
+    setDraft((current) => ({
+      ...current,
+      eventConfig: { ...(current.eventConfig || {}), ...patch },
+    }));
+  };
+
   const submit = async () => {
     setSaving(true);
-    const ok = await onSave(draft);
+    const payload: ScheduleDraft = draft.triggerType && draft.triggerType !== "time"
+      ? draft
+      : { ...draft, triggerType: "time", eventConfig: undefined };
+    const ok = await onSave(payload);
     setSaving(false);
     if (ok) {
       setFormOpen(false);
-      setDraft({ name: "", prompt: "", recurrence: "daily", nextRun: defaultNextRun(), allowWorkspaceWrites: false, workspacePath: "", runtime:"dyworker" });
+      setDraft(createInitialDraft());
     }
   };
 
   const recurrenceLabels = getRecurrenceLabels();
+  const activeTriggerType = draft.triggerType || "time";
 
   return (
     <div className="plans-panel">
@@ -147,8 +199,96 @@ export function PlansPanel({
       </button>
       {formOpen && (
         <div className="plan-form">
+          <div className="plan-trigger-tabs" role="tablist" aria-label={t("plans.triggerType", "触发方式")}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTriggerType === "time"}
+              className={`plan-trigger-tab ${activeTriggerType === "time" ? "active" : ""}`}
+              onClick={() => setTriggerType("time")}
+            >
+              {TRIGGER_LABELS.time}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTriggerType === "folder"}
+              className={`plan-trigger-tab ${activeTriggerType === "folder" ? "active" : ""}`}
+              onClick={() => setTriggerType("folder")}
+            >
+              <FolderOpen size={13} />
+              {TRIGGER_LABELS.folder}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTriggerType === "url"}
+              className={`plan-trigger-tab ${activeTriggerType === "url" ? "active" : ""}`}
+              onClick={() => setTriggerType("url")}
+            >
+              <Globe size={13} />
+              {TRIGGER_LABELS.url}
+            </button>
+          </div>
           <input value={draft.name} placeholder={t("plans.namePlaceholder", "计划名称，例如：每周五周报提醒")} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-          <textarea value={draft.prompt} rows={3} placeholder={t("plans.promptPlaceholder", "到时间要助手做什么，例如：汇总工作区本周的文档改动，整理成周报草稿")} onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} />
+          <textarea value={draft.prompt} rows={3} placeholder={activeTriggerType === "time" ? t("plans.promptPlaceholder", "到时间要助手做什么，例如：汇总工作区本周的文档改动，整理成周报草稿") : "命中变更后要助手做什么，例如：整理新增资料并输出摘要（外部内容会隔离在只读标签中）"} onChange={(event) => setDraft({ ...draft, prompt: event.target.value })} />
+          {activeTriggerType !== "time" && (
+            <div className="plan-event-fields">
+              {activeTriggerType === "folder" ? (
+                <>
+                  <input
+                    value={draft.eventConfig?.watchPath || ""}
+                    placeholder={currentWorkspacePath ? `监控目录（留空则监控工作区：${currentWorkspacePath}）` : "监控目录（绝对路径或相对工作区路径）"}
+                    onChange={(event) => updateEventConfig({ watchPath: event.target.value })}
+                  />
+                  <div className="plan-event-inline-row">
+                    <input
+                      value={draft.eventConfig?.extensions || ""}
+                      placeholder="扩展名过滤，如 .pdf,.docx"
+                      onChange={(event) => updateEventConfig({ extensions: event.target.value })}
+                    />
+                    <input
+                      value={draft.eventConfig?.keyword || ""}
+                      placeholder="关键词过滤（选填）"
+                      onChange={(event) => updateEventConfig({ keyword: event.target.value })}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    value={draft.eventConfig?.url || ""}
+                    placeholder="监控公开网址，如 https://example.com/releases"
+                    onChange={(event) => updateEventConfig({ url: event.target.value })}
+                  />
+                  <input
+                    value={draft.eventConfig?.keyword || ""}
+                    placeholder="关键词过滤（仅文本命中该词时触发，选填）"
+                    onChange={(event) => updateEventConfig({ keyword: event.target.value })}
+                  />
+                </>
+              )}
+              <div className="plan-event-inline-row">
+                <input
+                  type="number"
+                  min={0}
+                  max={3600}
+                  value={draft.eventConfig?.debounceSeconds ?? 30}
+                  placeholder="防抖秒数（默认 30）"
+                  title="检测到变动后等待稳定的防抖秒数（0 表示立即触发）"
+                  onChange={(event) => updateEventConfig({ debounceSeconds: Math.max(0, Number(event.target.value) || 0) })}
+                />
+                <select
+                  aria-label="事件会话模式"
+                  value={draft.eventConfig?.sessionMode === "reuse" ? "reuse" : "new"}
+                  onChange={(event) => updateEventConfig({ sessionMode: event.target.value === "reuse" ? "reuse" : "new" })}
+                >
+                  <option value="new">每次新建会话</option>
+                  <option value="reuse">复用同一监控会话</option>
+                </select>
+              </div>
+            </div>
+          )}
           <label>{t("plans.runtime", "任务运行方式")}
             <select aria-label={t("plans.runtime", "计划任务运行方式")} value={draft.runtime || 'dyworker'} onChange={event=>setDraft({...draft,runtime:event.target.value==='dsh' ? 'dsh' : 'dyworker'})}>
               <option value="dyworker">{t("plans.runtimeDyworker", "办公助手")}</option><option value="dsh">{t("plans.runtimeDsh", "DSH 插件会话")}</option>
@@ -156,6 +296,12 @@ export function PlansPanel({
           </label>
           <div className="plan-form-row">
             <select value={draft.recurrence} onChange={(event) => setDraft({ ...draft, recurrence: event.target.value as ScheduleRecord["recurrence"] })}>
+              {activeTriggerType !== "time" && (
+                <>
+                  <option value="minutes_5">{t("plans.recurrence.minutes5", "每 5 分钟")}</option>
+                  <option value="minutes_15">{t("plans.recurrence.minutes15", "每 15 分钟")}</option>
+                </>
+              )}
               <option value="once">{t("plans.recurrence.once", "单次")}</option>
               <option value="hourly">{t("plans.recurrence.hourly", "每小时")}</option>
               <option value="daily">{t("plans.recurrence.daily", "每天")}</option>
@@ -200,7 +346,14 @@ export function PlansPanel({
                 <Trash2 size={13} />
               </button>
             </div>
-            <p>{plan.runtime === "dsh" ? `${t("plans.runtimeDsh", "DSH 插件会话")} · ` : ""}{recurrenceLabels[plan.recurrence] || plan.recurrence} · {t("plans.nextRunPrefix", "下次 ")}{formatScheduleTime(plan.nextRun)}</p>
+            <p>
+              {plan.triggerType === "folder" && <span className="plan-event-badge">目录监控</span>}
+              {plan.triggerType === "url" && <span className="plan-event-badge">网页监控</span>}
+              {plan.runtime === "dsh" ? `${t("plans.runtimeDsh", "DSH 插件会话")} · ` : ""}{recurrenceLabels[plan.recurrence] || plan.recurrence} · {t("plans.nextRunPrefix", "下次 ")}{formatScheduleTime(plan.nextRun)}
+            </p>
+            {plan.lastFilterNote && (
+              <p className="plan-filter-note">巡检状态：{plan.lastFilterNote}</p>
+            )}
             {plan.lastStatus && (
               <p className={`plan-status ${plan.lastStatus}`}>
                 {plan.lastStatus === "running" ? t("plans.statusRunning", "正在执行…") : plan.lastStatus === "sleeping" ? plan.lastSummary || t("plans.statusSleeping", "已挂起等待唤醒") : plan.lastStatus === "cancelled" ? t("plans.statusCancelled", "上次已停止") : plan.lastStatus === "success" ? `${t("plans.statusSuccess", "上次完成：")}${plan.lastSummary || t("plans.statusNormal", "正常")}` : `${t("plans.statusFailed", "上次失败：")}${plan.lastSummary || t("plans.statusUnknown", "未知原因")}`}

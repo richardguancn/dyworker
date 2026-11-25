@@ -98,17 +98,33 @@ export function useSessionIpcRuntime(deps: SessionIpcRuntimeDeps) {
       // 占位气泡登记放在 updater 外：StrictMode 下 updater 会被双调，ref 写入必须只发生一次
       registerStreamMessage(channelStreamRunsRef.current, runId, { sessionId, messageId: assistantId });
       channelStreamIdsRef.current.set(sessionId, assistantId);
-      setSessions((current) => mergePrependedSession<SessionRecord>(current, {
-        id: sessionId,runtime:payload?.runtime === 'dsh' ? 'dsh' : 'dyworker',
-        title: payload?.title || "计划任务",
-        workspacePath: String(payload?.workspacePath || ""),
-        createdAt: startedAt,
-        updatedAt: startedAt,
-        messages: [
-          { id: `${runId}:user`,runId,role: "user", content: String(payload?.prompt || ""), createdAt: startedAt },
-          { id: assistantId,runId,role: "assistant", content: "", createdAt: startedAt, activities: [] },
-        ],
-      }).sessions);
+      const placeholderMessages = [
+        { id: `${runId}:user`, runId, role: "user" as const, content: String(payload?.prompt || ""), createdAt: startedAt },
+        { id: assistantId, runId, role: "assistant" as const, content: "", createdAt: startedAt, activities: [] },
+      ];
+      setSessions((current) => {
+        if (payload?.reuseSession && current.some((session) => session.id === sessionId)) {
+          return current.map((session) => {
+            if (session.id !== sessionId) return session;
+            const existingIds = new Set(session.messages.map((item) => item.id).filter(Boolean));
+            const appended = placeholderMessages.filter((item) => !existingIds.has(item.id));
+            return {
+              ...session,
+              updatedAt: startedAt,
+              messages: [...session.messages, ...appended],
+            };
+          });
+        }
+        return mergePrependedSession<SessionRecord>(current, {
+          id: sessionId,
+          runtime: payload?.runtime === "dsh" ? "dsh" : "dyworker",
+          title: payload?.title || "计划任务",
+          workspacePath: String(payload?.workspacePath || ""),
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          messages: placeholderMessages,
+        }).sessions;
+      });
       setRunningSessionIds((current) => new Set(current).add(sessionId));
       setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
       setScheduledRunSessions((current) => new Set(current).add(sessionId));
