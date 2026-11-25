@@ -7,8 +7,8 @@ import { isStatefulUiOperation } from "../electron/approval-context.mts";
 import { approvalDecision, evaluateApproval, isAutoApprovableCommand, isDevAutoApprovableCommand, isLowRiskCommand, isReviewerAutoApprovableCommand, toolDefinitions } from "../electron/agent.mts";
 
 // ---- 历史实现内联副本（oracle），仅用于等价性比对 ----
-const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
-const oracleWorkspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
+const oracleToolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook", "office_recalculate"]);
+const oracleWorkspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook", "office_recalculate"]);
 const oracleInternetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
 const oracleInternetReadTools = new Set(["web_search", "gov_search", "fetch_web_page"]);
 const oracleBrowserReadOnlyTools = new Set(["browser__read", "browser__snapshot", "browser__close"]);

@@ -11,7 +11,7 @@ import { isSkillPath } from "./workspace.mts";
 export const pathArgumentTools = new Set([
   "list_files", "find_files", "search_in_files", "read_file", "view_image", "ocr_file", "write_file", "edit_file",
   "make_directory", "append_file", "delete_file", "scan_sensitive_info",
-  "check_official_document", "export_word_document", "export_excel_workbook",
+  "check_official_document", "export_word_document", "export_excel_workbook", "office_render", "office_recalculate",
 ]);
 
 
@@ -706,7 +706,7 @@ export function isLikelyBackgroundCommand(command) {
 // 保守边界：本机界面操作、浏览器变更操作一律不可规则化；
 // 命令只对受信只读程序（ls/cat/grep 等）开放,且按 argv 前缀匹配、拒绝管道与复合命令
 // （对齐 openworker allowed_commands 语义,比放任任意命令的"shell asks forever"更可审计）。
-export const ruleEligiblePathTools = new Set(["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook"]);
+export const ruleEligiblePathTools = new Set(["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook", "office_recalculate"]);
 export const ruleEligibleDomainTools = new Set(["fetch_web_page", "browser__open"]);
 export const ruleTrustedPrograms = /^(ls|pwd|cat|head|tail|find|grep|rg|echo|printf|wc|file|stat|du|df|which|date|uname)$/;
 // 常用开发命令(写操作/网络/构建类)允许按 argv 前缀形成常驻规则,避免同类命令反复确认;

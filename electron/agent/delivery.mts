@@ -538,7 +538,7 @@ export function verifyTaskEvidence({
     // 收集所有成功写入记录的规范化相对路径
     const recordedPaths = new Set();
     for (const t of executedTools) {
-      if (t.status === "success" && ["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook"].includes(t.name)) {
+      if (t.status === "success" && ["write_file", "edit_file", "append_file", "export_word_document", "export_excel_workbook", "office_recalculate"].includes(t.name)) {
         if (t.args?.path) recordedPaths.add(normalizeRelPath(t.args.path));
       }
     }

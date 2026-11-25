@@ -16,7 +16,7 @@ export function resolveAssistantDelivery(messages: Reply[], finalText: string) {
   for (let index = replies.length - 2; index >= 0; index--) {
     const calls = replies[index].tool_calls || [];
     if (!calls.length || !calls.every(call => {
-      if (["save_memory", "save_skill", "update_skill"].includes(call.function?.name || "")) return true;
+      if (["save_memory", "save_skill", "update_skill", "plugin_manage"].includes(call.function?.name || "")) return true;
       if (call.function?.name !== "update_plan") return false;
       try {
         const steps = JSON.parse(call.function.arguments || "{}").steps;

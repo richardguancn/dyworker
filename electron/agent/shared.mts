@@ -30,6 +30,7 @@ export const READ_ONLY_TOOLS = Object.freeze(new Set([
   "scan_sensitive_info",
   "check_official_document",
   "calculate_workdays",
+  "office_render",
 ]));
 
 // 不设工具轮次上限（用户明确要求：一直跑到任务完成，对标 Codex/Kimi Work 的长程执行）。
