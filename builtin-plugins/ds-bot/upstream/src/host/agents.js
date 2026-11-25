@@ -2,7 +2,7 @@
 // them. Its Sessions are ordinary root Sessions in the DS Bot workspace, so they get
 // the whole dsh conversation surface and none of the team tools.
 import { randomUUID } from 'node:crypto'
-import { AGENT_NAME, AGENT_SESSION_TITLE_MAX, TEAM_TOOLS } from './constants.js'
+import { AGENT_NAME, AGENT_SESSION_TITLE_MAX } from './constants.js'
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -18,60 +18,8 @@ export function install(rt) {
   }
   // The DSH Agent a Session belongs to; Bot and group Sessions get undefined.
   const agentOf = sessionId => state.agents[sessionIndex.get(sessionId)]
-
-  // A DSH Agent Session must not offer the team tools: its agent sees only the
-  // global dsh surface minus this plugin's registrations. A Session whose deny
-  // has not landed yet (schemas not up, restrict hook missing, a transient
-  // throw) stays on the retry list until it sticks or the Session leaves.
-  const restricted = new WeakSet()
-  const RETRY_MS = 5_000
-  const pendingRestrict = new Set()
-  let retryTimer
-  const stopRetry = () => {
-    if (retryTimer !== undefined) clearInterval(retryTimer)
-    retryTimer = undefined
-  }
-  ctx.effect(() => stopRetry, 'ds-bot: agent tool restrict retry')
-  const scheduleRetry = (agent) => {
-    pendingRestrict.add(agent)
-    if (retryTimer === undefined) {
-      retryTimer = setInterval(() => {
-        for (const waiting of [...pendingRestrict]) void restrictTeamTools(waiting)
-        if (pendingRestrict.size === 0) stopRetry()
-      }, RETRY_MS)
-      retryTimer.unref?.()
-    }
-  }
-  const restrictTeamTools = async (agent) => {
-    if (agent === undefined || restricted.has(agent)) return
-    if (agentOf(agent.session?.id) === undefined) {
-      pendingRestrict.delete(agent)
-      return
-    }
-    // Unknown names make restrict() throw, so only deny what this profile serves.
-    const known = new Set(ctx.tools.schemas(agent).map(schema => schema.name))
-    const deny = TEAM_TOOLS.filter(name => known.has(name))
-    // An empty list can mean the schemas are not up yet, and a missing restrict
-    // hook means the Agent is still being put together; both retry.
-    if (deny.length === 0 || typeof agent.ctx?.tools?.restrict !== 'function') {
-      scheduleRetry(agent)
-      return
-    }
-    try {
-      agent.ctx.tools.restrict({ deny })
-      restricted.add(agent)
-      pendingRestrict.delete(agent)
-    } catch (error) {
-      rt.warn('ds-bot: team tools stay visible to DSH Agent %s: %s', agent.session?.id, error)
-      scheduleRetry(agent)
-    }
-  }
-  // Fires when a root Session resolves its agent, including sessions saved earlier.
-  ctx.on('agent/created', ({ agent }) => {
-    void rt.load()
-      .then(() => restrictTeamTools(agent))
-      .catch(error => rt.warn('ds-bot: tool restrict on agent/created failed: %s', error))
-  })
+  // A DSH Agent by id, for the windows that page its Sessions.
+  const agentById = agentId => rt.own(state.agents, agentId)
 
   const writeCheck = () => {
     const readOnly = rt.readOnly()
@@ -94,8 +42,6 @@ export function install(rt) {
     const { sessionId } = await ctx.sessionController.create({ workspaceId: target })
     agent.sessions.push(sessionId)
     await rt.save()
-    // agent/created fired before the session joined the index, so restrict again now.
-    await restrictTeamTools(await rt.resolveAgent(sessionId))
     return sessionId
   }
 
@@ -112,7 +58,6 @@ export function install(rt) {
     if (owned) throw new Error('Session already belongs to the team')
     agent.sessions.push(sessionId)
     await rt.save()
-    await restrictTeamTools(await rt.resolveAgent(sessionId))
     return sessionId
   }
 
@@ -136,16 +81,61 @@ export function install(rt) {
     return agent
   }
 
+  // A Session another plugin deleted outright is already gone: archiving it either
+  // wrote it before (resolving without a write) or cannot find it at all. Only that
+  // definite miss for this exact Session may drop the reference; an active Session, a
+  // storage fault, or a miss naming another Session stays a failure, so the reference
+  // and its tool restriction stay retryable.
+  const alreadyGone = (error, sessionId) => error?.name === 'WorkspaceUnknownSessionError'
+    && error?.sessionId === sessionId
+
   async function archiveAgentSession(agentId, sessionId) {
     writeCheck()
     const agent = record(agentId)
     if (!agent.sessions.includes(sessionId)) throw new Error('Session does not belong to the DSH Agent')
     // Archive first: the Session leaves the Agent only once it is actually gone,
     // so a failed archive stays retryable and keeps its tool restriction.
-    await ctx.workspaceRegistry.archiveSession(sessionId)
+    try {
+      await ctx.workspaceRegistry.archiveSession(sessionId)
+    } catch (error) {
+      if (!alreadyGone(error, sessionId)) throw error
+    }
     agent.sessions = agent.sessions.filter(id => id !== sessionId)
     await rt.save()
   }
+
+  // A permanent delete by another plugin leaves a reference whose Session can never
+  // be opened or archived again. The session manager reports a completed physical
+  // delete on its own event (not a dsh teardown signal: a plain close or unload is
+  // not a deletion), and this window drops the reference so the sidebar loses it
+  // too. Without such a plugin the listener never runs; an older dangling reference
+  // is still cleared by the archive action above.
+  ctx.on('session-manager/session-deleted', async ({ sessionId } = {}) => {
+    if (typeof sessionId !== 'string' || sessionId === '') return
+    await rt.load()
+    const agent = Object.values(state.agents).find(item => item.sessions?.includes(sessionId))
+    if (agent === undefined) return
+    writeCheck()
+    const position = agent.sessions.indexOf(sessionId)
+    agent.sessions = agent.sessions.filter(id => id !== sessionId)
+    try {
+      // The deletion already happened elsewhere, so the reference must not come
+      // back after a restart: this write has to land.
+      await rt.save({ required: true })
+    } catch (error) {
+      // The write did not land: keep the reference so the archive action or a
+      // later attempt can still clear it, rather than forgetting it in this window.
+      // The failed save had already re-indexed the state without this Session, so
+      // rebuild the Agent index after putting the reference back: until the next
+      // save or adopt, rt.agentOf must still see an owned Agent Session, or every
+      // window treats it as a Session no Agent owns.
+      if (state.agents[agent.id] === agent && !agent.sessions.includes(sessionId)) {
+        agent.sessions.splice(Math.min(position, agent.sessions.length), 0, sessionId)
+      }
+      rt.indexAgents()
+      throw error
+    }
+  })
 
   async function renameAgentSession(agentId, sessionId, title) {
     writeCheck()
@@ -167,6 +157,9 @@ export function install(rt) {
       try {
         await ctx.workspaceRegistry.archiveSession(sessionId)
       } catch (error) {
+        // A Session deleted outside dsh is already gone; it must not keep the
+        // whole Agent alive forever.
+        if (alreadyGone(error, sessionId)) continue
         failure ??= error
         kept.push(sessionId)
       }
@@ -182,5 +175,5 @@ export function install(rt) {
     await rt.save()
   }
 
-  Object.assign(rt, { agentOf, addAgent, createAgentSession, adoptAgentSession, archiveAgentSession, renameAgentSession, removeAgent })
+  Object.assign(rt, { agentOf, agentById, addAgent, createAgentSession, adoptAgentSession, archiveAgentSession, renameAgentSession, removeAgent })
 }

@@ -98,7 +98,7 @@ const ownVersion = () => {
 }
 
 // DSH packages share one version; the LLM package is always beside the plugin.
-const dshVersion = () => {
+export const dshVersion = () => {
   try {
     let dir = dirname(fileURLToPath(import.meta.resolve('@deepseek-ai/dsh-llm')))
     for (let depth = 0; depth < 5; depth += 1, dir = dirname(dir)) {
@@ -253,5 +253,9 @@ export function install(rt) {
     await writing
   }
 
-  Object.assign(rt, { warn, noteFailure: note, diagnostics: { report, logText, clear, entries } })
+  const issueFacts = () => {
+    const { botVersion, dshVersion, os } = facts()
+    return [botVersion && `DS Bot: ${botVersion}`, dshVersion && `DSH: ${dshVersion}`, `OS: ${os}`].filter(Boolean).join('\n')
+  }
+  Object.assign(rt, { warn, noteFailure: note, diagnostics: { report, logText, clear, entries, issueFacts } })
 }

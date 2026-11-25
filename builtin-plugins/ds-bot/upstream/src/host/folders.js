@@ -2,6 +2,7 @@
 // there, else a Bot works in its own folder, else in the team workspace. A Session's
 // folder is fixed when it is made, so a change moves the conversation on to a fresh
 // part (parts.js).
+import { ownChatSessions } from './threads.js'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
@@ -23,7 +24,15 @@ export function install(rt) {
   const teamFolder = () => ctx.workspaceRegistry.get?.(state.workspaceId)?.path
   // The desktop app names the folder the user chose for the Bots' files.
   const defaultTeamFolder = () => rt.config.workspace ?? (process.env.DS_BOT_WORKSPACE?.trim() || join(rt.home, 'workspace'))
-  const workDirOf = ({ botId, roomId } = {}) => rt.roomOf(roomId)?.workDir ?? rt.botOf(botId)?.workDir
+  // A member's own pick inside one group, made with working_directory there: a path,
+  // or null for the team workspace, which a missing entry would read as the Bot's
+  // folder. A group's folder outranks it; without one the Bot's folder is the default.
+  const workDirOf = ({ botId, roomId } = {}) => {
+    const room = rt.roomOf(roomId)
+    if (room?.workDir !== undefined) return room.workDir
+    if (room !== undefined && botId !== undefined && Object.hasOwn(room.memberDirs ?? {}, botId)) return room.memberDirs[botId] ?? undefined
+    return rt.botOf(botId)?.workDir
+  }
   const isFolder = path => stat(path).then(info => info.isDirectory(), () => false)
   const real = path => realpath(path).catch(() => resolve(path))
   // The real path of the deepest part that exists, with the rest after it.
@@ -49,30 +58,38 @@ export function install(rt) {
     const reported = session?.header === undefined ? undefined : ctx.get?.('workingDirectory')?.get?.(session) ?? session.header.cwd
     if (reported !== undefined) return reported
     const id = session?.id
-    return workDirOf({ botId: rt.selfOf?.(id), roomId: rt.groupOwners?.get(id)?.roomId }) ?? teamFolder()
+    const room = rt.roomOf(id)
+    if (room !== undefined) return workDirOf({ roomId: room.id }) ?? teamFolder()
+    const taskEntry = rt.taskBySession?.(id)?.task
+    if (taskEntry?.workDir !== undefined) return taskEntry.workDir ?? teamFolder()
+    return workDirOf({ botId: rt.selfOf?.(id), roomId: rt.groupOwners?.get(id)?.roomId ?? rt.taskOwners?.get(id)?.roomId }) ?? teamFolder()
   }
-
   // The desktop app runs its own DSH and names the user's, which Bots must not write either.
   const dataRoots = () => [rt.dshHome, rt.home, process.env.DS_BOT_USER_DSH_HOME?.trim()].filter(Boolean)
 
   // A Bot that could write where DSH or the team keeps its data could change its own
   // permissions or the team, so neither those folders nor one that holds them is allowed.
+  // The workspace exception covers only a workspace lying inside the data root (the
+  // plugin's default does): one that holds or is a data root does not open it up.
   async function guarded(path) {
     const team = await realTeam()
     for (const root of dataRoots()) {
       const data = await real(root)
       if (within(data, path)) return true
-      if (within(path, data) && !(team !== undefined && within(path, team))) return true
+      if (within(path, data) && !(team !== undefined && within(path, team) && team !== data && within(team, data))) return true
     }
     return false
   }
 
   // A file a Bot names to read into the team, such as a photo, may not come from DSH's or
-  // the team's data; the team workspace, which can lie in it, is the exception.
+  // the team's data; the team workspace, which can lie in it, is the exception, for the
+  // same reason as in guarded().
   async function inData(path) {
     const team = await realTeam()
-    if (team !== undefined && within(path, team)) return false
-    for (const root of dataRoots()) if (within(path, await real(root))) return true
+    for (const root of dataRoots()) {
+      const data = await real(root)
+      if (within(path, data) && !(team !== undefined && within(path, team) && team !== data && within(team, data))) return true
+    }
     return false
   }
 
@@ -123,29 +140,78 @@ export function install(rt) {
     if (!(await isFolder(path))) throw new Error(`${text} is a file, not a folder`)
     if (await holdsData(path)) throw new Error(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
     if (path === await realTeam()) return path
+    const clash = await rt.privateClash(path)
+    if (clash) throw new Error(`${text} is in or around the folder of ${clash.name}, a private Bot, so it cannot be the team workspace`)
     const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'DS Bot')
     state.workspaceId = workspace.id
     await rt.save()
     return path
   }
 
-  // Every Session of a Bot: its own chat and its conversation in each of its groups.
-  const sessionsOfBot = botId => [rt.chatOf(botId), ...Object.values(state.rooms)
-    .filter(room => room.members.includes(botId)).map(room => room.sessions?.[botId])].filter(Boolean)
+  // Every place (its live Session, if made yet, and the preset its fresh part gets) that
+  // would work in the folder being set. A group with its own folder or a member's own
+  // folder pick there does not inherit the Bot's folder.
+  const folderPlaces = ({ botId, room, botIds, places, sessions = [] }) => {
+    if (places !== undefined) return places
+    if (botId !== undefined) {
+      const bot = rt.botOf(botId)
+      const own = [...new Set([rt.chatOf(botId), ...ownChatSessions(bot)].filter(Boolean))]
+      const list = own.length === 0
+        ? [{ preset: bot?.permission }]
+        : own.map(sessionId => ({ sessionId, preset: bot?.permission }))
+      for (const entry of Object.values(state.rooms)) {
+        if (!entry.members.includes(botId) || entry.workDir !== undefined || Object.hasOwn(entry.memberDirs ?? {}, botId)) continue
+        list.push({ sessionId: entry.sessions?.[botId], preset: entry.permission ?? bot?.permission })
+      }
+      return list
+    }
+    if (room !== undefined && botIds !== undefined) {
+      return botIds.map(id => ({ sessionId: room.sessions?.[id], preset: room.permission ?? rt.botOf(id)?.permission }))
+    }
+    return [{ preset: undefined }, ...sessions.map(sessionId => ({ sessionId }))]
+  }
 
-  // A folder outside the team workspace widens where a Bot may write, so a Bot that
-  // sets one for Bots whose writes are bounded by their folder asks the user first.
-  // `sessions` are the Sessions that would work there; the default policy counts too,
-  // since the Sessions made there later start under it. Throws when it is not allowed.
-  async function approveFolder(exec, { path, sessions = [], who }) {
+  // A folder outside the team workspace widens where a bounded Session may write, so a
+  // bounded caller that sets one for Sessions bounded by their folder asks the user first.
+  // Both existing Sessions and the presets their fresh parts inherit count; a caller on
+  // Full access (not Auto review or custom review) widens nothing beyond its own reach.
+  async function approveFolder(exec, options) {
+    const { path, who } = options
     const team = await realTeam()
     const policy = ctx.get?.('sandboxPolicy')
-    if (path === undefined || (team !== undefined && within(path, team)) || policy === undefined) return
-    const agents = await Promise.all(sessions.map(id => rt.resolveAgent(id)))
-    const modes = [policy.resolve(), ...agents.map(agent => policy.resolve({ session: agent.session }))].map(entry => entry.mode)
-    if (!modes.includes('workspace-write')) return
-    const approval = ctx.get?.('approval')
+    if (path === undefined || (team !== undefined && within(path, team))) return
     const agent = exec.agent
+    if (policy !== undefined) {
+      const presets = ctx.get?.('permissionPresets')
+      if (agent?.session !== undefined && policy.resolve({ session: agent.session }).mode === 'danger-full-access') {
+        if (presets === undefined) return
+        try {
+          if (presets.current?.(agent.session) === 'danger-full-access') return
+        } catch { /* fail closed: keep checking affected places */ }
+      }
+      const fallback = policy.resolve().mode
+      const presetMode = (name) => {
+        if (presets === undefined) return fallback
+        try {
+          const chosen = name || presets.catalog?.()?.defaultPreset
+          if (!chosen) return 'workspace-write'
+          return presets.resolve(chosen)?.sandbox ?? fallback
+        } catch {
+          return 'workspace-write'
+        }
+      }
+      const places = folderPlaces(options)
+      const sessions = [...new Set(places.map(place => place.sessionId).filter(Boolean))]
+      const agents = await Promise.all(sessions.map(id => rt.resolveAgent(id)))
+      const modes = places.length === 0 ? [fallback] : [
+        ...agents.map(entry => policy.resolve({ session: entry.session }).mode),
+        ...places.filter(place => Object.hasOwn(place, 'preset')).map(place => presetMode(place.preset)),
+      ]
+      if (!modes.includes('workspace-write')) return
+    }
+    // With no policy service a Session's bounds cannot be checked, so a folder outside
+    // the workspace asks like a bounded one would; when nobody can be asked it throws.
+    const approval = ctx.get?.('approval')
     if (approval === undefined || agent?.session === undefined) throw new Error(`Working in ${path} needs the user's approval, and there is no way to ask for it here, so nothing changed. The user can make this change in the settings.`)
     const outcome = await approval.request({
       agent,
@@ -206,5 +272,5 @@ export function install(rt) {
     }
   }
 
-  Object.assign(rt, { teamFolder, defaultTeamFolder, workDirOf, sessionFolder, isFolder, real, folderAt, cleanWorkDir, workFolder, inData, setTeamWorkspace, sessionsOfBot, approveFolder, folderEndpoint })
+  Object.assign(rt, { teamFolder, defaultTeamFolder, workDirOf, sessionFolder, isFolder, real, realBeyond, folderAt, cleanWorkDir, workFolder, inData, setTeamWorkspace, approveFolder, folderEndpoint })
 }

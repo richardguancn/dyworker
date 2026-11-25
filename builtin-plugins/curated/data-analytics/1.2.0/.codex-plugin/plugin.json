@@ -1,0 +1,394 @@
+{
+  "name": "data-analytics",
+  "version": "1.2.0",
+  "description": "Answer product and business questions with data",
+  "author": {
+    "name": "Data Maintainers"
+  },
+  "homepage": "https://openai.com/",
+  "repository": "",
+  "license": "Proprietary",
+  "keywords": [
+    "data-analytics",
+    "analytics",
+    "business intelligence",
+    "sql",
+    "business-context",
+    "dashboards",
+    "funnel-analysis",
+    "kpi-reporting",
+    "market-sizing",
+    "metric-diagnostics",
+    "post-launch-updates",
+    "product-analysis",
+    "retention",
+    "root-cause-analysis",
+    "scorecards",
+    "validation",
+    "visualization",
+    "jupyter-notebooks",
+    "databricks",
+    "bigquery",
+    "snowflake",
+    "deepnote",
+    "mixpanel",
+    "mixpanel-headless",
+    "metabase",
+    "thoughtspot",
+    "guided-flow",
+    "data-context",
+    "context-skills",
+    "reporting-conventions"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Data",
+    "shortDescription": "Answer questions with data",
+    "longDescription": "Data helps you turn questions about your product or business into answers you can act on. Investigate what changed, explore the evidence, and turn findings into clear visuals and recommendations. Start with your own data or explore a sample dashboard and report.\n\n**Deep analysis, grounded in your data**\n\n- Bring advanced OpenAI intelligence to data science tasks, from exploring datasets to testing hypotheses and explaining results.\n- Ground answers in your company’s data across connected warehouses, BI tools, and business applications.\n- Use your company’s semantic layer for authoritative metric definitions and business logic maintained by your data experts.\n- Investigate changes in conversion, revenue, and retention. Review launch performance, compare results with your plan, and understand the drivers.\n- Check data quality, estimate opportunities, and keep sources, assumptions, and uncertainty visible.\n\n**Clear, interactive visuals**\n\n- Quick inline answers: Get a concise explanation with a chart or table directly in chat.\n- Dashboards: Build interactive dashboards to monitor performance, explore trends, and investigate your business.\n- Reports: Turn findings into business reviews, reports, and presentations with clear takeaways and supporting evidence.\n\n**Works with your data and applications**\n\n- Bring data from warehouses, BI tools, product analytics platforms, spreadsheets, and uploaded files.\n- Work with your existing BI tools, Google Docs, and Microsoft Office to analyze data and create outputs in familiar formats.\n- Build interactive dashboards and reports with OpenAI Sites, and organize and share findings in OpenAI Pages.\n- Create reproducible notebooks and reuse metric definitions, reporting examples, and preferences as Data context for you or your team.",
+    "developerName": "OpenAI",
+    "category": "Data & Analytics",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://openai.com/",
+    "supportURL": "https://help.openai.com/",
+    "privacyPolicyURL": "https://openai.com/policies/privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/terms-of-use/",
+    "defaultPrompt": [
+      "Help me get started with my first data task",
+      "Analyze product or business data and recommend where to focus next",
+      "Turn my metric links and working preferences into reusable Data context"
+    ],
+    "brandColor": "#0285FF",
+    "composerIcon": "./assets/datascience-small.svg",
+    "logo": "./assets/datascience.png",
+    "screenshots": []
+  },
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/onboarding/SKILL.md",
+      "dependencies": [
+        {
+          "name": "slack",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Messaging"
+          ]
+        },
+        {
+          "name": "teams",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Messaging"
+          ]
+        },
+        {
+          "name": "notion",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files",
+            "Export"
+          ]
+        },
+        {
+          "name": "gmail",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "outlook-email",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "outlook-calendar",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Calendar"
+          ]
+        },
+        {
+          "name": "google-calendar",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Calendar"
+          ]
+        },
+        {
+          "name": "google-drive",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files",
+            "Export"
+          ]
+        },
+        {
+          "name": "databricks",
+          "marketplace": "oai-maintained-plugins",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "snowflake",
+          "marketplace": "oai-maintained-plugins",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "bigquery",
+          "marketplace": "oai-maintained-plugins",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "sharepoint",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "github",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Developer Tools"
+          ]
+        },
+        {
+          "name": "statsig",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Experimentation"
+          ]
+        },
+        {
+          "name": "app-6a5937013728819186b9de76e1f68de1",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence",
+            "Export"
+          ]
+        },
+        {
+          "name": "power-bi",
+          "marketplace": "oai-maintained-plugins",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "hex",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence",
+            "Export"
+          ]
+        },
+        {
+          "name": "deepnote",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "amplitude",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Product Analytics"
+          ]
+        },
+        {
+          "name": "mixpanel",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Product Analytics"
+          ]
+        },
+        {
+          "name": "posthog",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Product Analytics"
+          ]
+        },
+        {
+          "name": "omni-analytics",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "metabase",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "app-6aa240082b3c81919f204960ce7e0dc0",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "alation",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "motherduck",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "similarweb",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Market Intelligence"
+          ]
+        },
+        {
+          "name": "app-6a91fcd93878819188347d20f83fe2ee",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "app-6a57330f603c8191928119af462402b2",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "app-6a917708c64481918f7ddea0cef4b8e6",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "app-6a710de0c6b08191a298927933709e4e",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Data Warehouses"
+          ]
+        },
+        {
+          "name": "app-6a5fa5e2392c8191824fb0340191afba",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Databases"
+          ]
+        },
+        {
+          "name": "app-6a7c7752de408191a101b78e59fda025",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Experimentation"
+          ]
+        },
+        {
+          "name": "app-6a9b05b3b5e0819197d074e79dfc2e8d",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Business Intelligence"
+          ]
+        },
+        {
+          "name": "app-6998622475e081918795d4f4c5e42df4",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Market Intelligence"
+          ]
+        },
+        {
+          "name": "villagesql",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Databases"
+          ]
+        },
+        {
+          "name": "azure-cosmosdb",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Databases"
+          ]
+        },
+        {
+          "name": "firebase",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Databases"
+          ]
+        },
+        {
+          "name": "redis-development",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Databases"
+          ]
+        }
+      ]
+    }
+  },
+  "mcpServers": "./.mcp.json",
+  "requires_local_executor": false
+}

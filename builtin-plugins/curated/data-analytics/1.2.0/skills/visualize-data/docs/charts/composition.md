@@ -1,0 +1,3 @@
+# Composition
+
+Compose ordinary HTML/CSS text around the component, only requested pieces. Add short analysis when asked; exact-value inspection uses native tooltip/keyboard/touch, not an unsolicited table. Tables only explicitly requested; omit table styles/code otherwise. Derive chart/readouts/analysis from the same reviewed rows, validate calculations/denominators/units and assumptions; match external swatches to chart. Requested tables may start collapsed with native disclosure/focus and row-hover styling, no row tab stops. Keep comparison IDs/domains consistent. Use controls.md/coordinated.md when needed; shared offline-check workflow applies.

@@ -38,6 +38,43 @@ export interface ClientRuntime {
 }
 
 let current: ClientRuntime | null = null;
+let cachedPluginEcharts: Record<string, any> | null = null;
+let loadingPluginEcharts: Promise<Record<string, any>> | null = null;
+
+/** 按需预热插件可用的 ECharts 实例（保留在独立异步 chunk，不进首屏包） */
+export async function ensurePluginEcharts(): Promise<Record<string, any>> {
+  if (cachedPluginEcharts) return cachedPluginEcharts;
+  if (!loadingPluginEcharts) {
+    loadingPluginEcharts = import("../echarts-setup.ts")
+      .then((mod) => {
+        const raw = mod.echarts;
+        const wrapped = Object.assign({}, raw, { default: raw });
+        cachedPluginEcharts = wrapped;
+        if (current) current.loader.provide("echarts", () => wrapped);
+        return wrapped;
+      })
+      .catch((error) => {
+        loadingPluginEcharts = null;
+        throw error;
+      });
+  }
+  return loadingPluginEcharts;
+}
+
+function resolvePluginEcharts(): Record<string, any> {
+  if (cachedPluginEcharts) return cachedPluginEcharts;
+  // 延迟到插件首次读取方法时再检视缓存，避免 createClientRuntime 初始化阶段触发动态导入或抛错
+  return new Proxy({} as Record<string, any>, {
+    get(_target, prop) {
+      if (!cachedPluginEcharts) {
+        void ensurePluginEcharts().catch(() => {});
+        if (prop === "__esModule") return true;
+        throw new Error("ECharts 尚未完成预热，请先等待插件脚本加载或稍后刷新重试");
+      }
+      return Reflect.get(cachedPluginEcharts, prop, cachedPluginEcharts);
+    },
+  });
+}
 
 /** 新建一个独立的运行时实例（每次调用都是新的，测试与多实例场景用） */
 export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientRuntime {
@@ -65,6 +102,7 @@ export function createClientRuntime(options: ClientRuntimeOptions = {}): ClientR
     .provide("react-dom/client", () => ReactDOMClient)
     .provide("react/jsx-runtime", () => JsxRuntime)
     .provide("react/jsx-dev-runtime", () => JsxRuntime)
+    .provide("echarts", () => resolvePluginEcharts())
     .provide(PRIMITIVES_MODULE, () => primitives)
     .provide(SHIMMED_CLIENT_MODULES[0], () => createSlotsModuleShim(shimReport))
     .provide(SHIMMED_CLIENT_MODULES[1], () => createRuntimeClientShim(shimReport))
@@ -111,7 +149,11 @@ export function resetClientRuntime(): void {
  * 用 <script> 加载一个插件 bundle，并等它注册进加载器。
  * 返回本次注册的 bundle 记录（含 requires / missing，用于诊断与验收）。
  */
-export async function loadBundleScript(url: string, { timeoutMs = 15_000 }: { timeoutMs?: number } = {}): Promise<LoadedBundle> {
+export async function loadBundleScript(
+  url: string,
+  { timeoutMs = 15_000, preloadEcharts = true }: { timeoutMs?: number; preloadEcharts?: boolean } = {},
+): Promise<LoadedBundle> {
+  if (preloadEcharts) await ensurePluginEcharts();
   const runtime = clientRuntime();
   const before = new Set(runtime.loader.bundles_().map((bundle) => bundle.id));
 

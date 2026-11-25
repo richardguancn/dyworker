@@ -1,0 +1,443 @@
+{
+  "name": "sales",
+  "version": "1.1.7",
+  "description": "Practical seller and sales-leadership dashboards and sales workflows. Understand customer context, prepare for meetings, follow up after calls, manage pipeline, plan deals, build business cases and customer decision decks, review forecasts, find customer evidence, coach reps, and work from CRM context.",
+  "author": {
+    "name": "OpenAI"
+  },
+  "homepage": "https://github.com/openai/openai/tree/master/chatgpt/oai-maintained-plugins/plugins/sales",
+  "repository": "https://github.com/openai/openai/tree/master/chatgpt/oai-maintained-plugins/plugins/sales",
+  "license": "Proprietary",
+  "keywords": [
+    "sales",
+    "crm",
+    "hubspot",
+    "zoominfo",
+    "outreach",
+    "gmail",
+    "outlook",
+    "microsoft teams",
+    "sales intelligence",
+    "account-intelligence",
+    "account-home",
+    "seller-dashboard",
+    "leadership-dashboard",
+    "revenue-leadership",
+    "meeting-preparation",
+    "call-follow-up",
+    "competitive-brief",
+    "deal-strategy",
+    "business-case",
+    "customer-presentations",
+    "decision-deck",
+    "forecasting",
+    "customer-quotes",
+    "sales-coaching",
+    "pipeline",
+    "account-prioritization",
+    "company-enrichment",
+    "salesforce",
+    "guided-flow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Sales",
+    "shortDescription": "Practical workflows for sales",
+    "longDescription": "The Sales plugin helps you work more effectively as a sales person or account director, keeping you focused on what's important and taking simple tasks off your plate. You'll find skills to help with meeting preparation and follow-up, forecasting and account preparation, and more.\n\nTo get the most from this plugin, you should have CRM access enabled, but it will also be valuable if you have meeting transcripts, internal messaging, email, and calendar plugins installed.",
+    "developerName": "OpenAI",
+    "category": "Business & Operations",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://openai.com/",
+    "supportURL": "https://help.openai.com/",
+    "privacyPolicyURL": "https://openai.com/policies/row-privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
+    "defaultPrompt": [
+      "What can you do?",
+      "Help me prepare for my upcoming customer meeting",
+      "Build the first version of my seller dashboard"
+    ],
+    "brandColor": "#FB6A22",
+    "composerIcon": "./assets/codex-sales-plugin-composer-icon.svg",
+    "logo": "./assets/codex-sales-plugin-icon.png",
+    "screenshots": []
+  },
+  "extensions": {
+    "com.openai": {
+      "dependencies": [
+        {
+          "name": "slack",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Internal Messaging"
+          ]
+        },
+        {
+          "name": "teams",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Internal Messaging"
+          ]
+        },
+        {
+          "name": "zoom",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts"
+          ]
+        },
+        {
+          "name": "app-6a1406641678819185c31e8ebd379a62",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts",
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "granola",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts"
+          ]
+        },
+        {
+          "name": "fireflies",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts"
+          ]
+        },
+        {
+          "name": "otter-ai",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts"
+          ]
+        },
+        {
+          "name": "app-6a589d56de588191a5023a243c7bcfd4",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Meeting Transcripts"
+          ]
+        },
+        {
+          "name": "salesforce",
+          "marketplace": "oai-maintained-plugins",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "hubspot",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "close",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "attio",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "pipedrive",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "app-6af0ad8c21a88191ba6c3c8d07a164d0",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "zoho",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "servicenow",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "CRM"
+          ]
+        },
+        {
+          "name": "zoominfo",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "app-6aedf6ea2fac819180910f8b98663c77",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "hg-insights",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "rox",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "apollo",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "actively",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "meticulate",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "common-room",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "app-6a0c823633748191bdeb80219fdce871",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Sales Intelligence"
+          ]
+        },
+        {
+          "name": "gmail",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "outlook-email",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "outreach",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "app-6a988345a05c819190cdcd213b2f86dc",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Email"
+          ]
+        },
+        {
+          "name": "notion",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "google-drive",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "sharepoint",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "app-69dd1d0f73b48191ac4fadf206ad9aed",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "app-69f0ffe2c6008191aaf507e1d354b284",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "figma",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "canva",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "app-698a098735908191989f5788d7ee317e",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "app-6a83901dde988191b3f3cefdcc19acfa",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "app-6aebb48ad41c8191a260dd178eca686a",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Knowledge & Files"
+          ]
+        },
+        {
+          "name": "google-calendar",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Calendar"
+          ]
+        },
+        {
+          "name": "outlook-calendar",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Calendar"
+          ]
+        },
+        {
+          "name": "calendly",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Scheduling"
+          ]
+        },
+        {
+          "name": "monday-com",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Work Management"
+          ]
+        },
+        {
+          "name": "docusign",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Document Signing"
+          ]
+        },
+        {
+          "name": "app-69f0f2e2c7708191b18a9940856fa450",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Document Signing"
+          ]
+        },
+        {
+          "name": "app-6a96ec86423c8191a13c7369bba45295",
+          "marketplace": "openai-curated",
+          "isRequired": false,
+          "categories": [
+            "Document Signing"
+          ]
+        }
+      ]
+    }
+  }
+}

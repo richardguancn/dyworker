@@ -1,0 +1,26 @@
+{
+  "baseUrl": "https://persistent.oaistatic.com/plugins/data/examples/8c5422b4368e6a5f0f47e1cddd5420bc6464693d545678c2b627a2acd1ed0dc1/",
+  "summary": {
+    "orders": 5940,
+    "grossRevenueUsd": 1359525,
+    "discountUsd": 183170,
+    "revenueUsd": 1176355,
+    "costUsd": 757215,
+    "targetRevenueUsd": 1266659,
+    "grossProfitUsd": 419140,
+    "grossMarginRate": 0.35630400686867486,
+    "discountRate": 0.13473088027068278,
+    "averageOrderValueUsd": 198.0395622895623,
+    "attainmentRate": 0.9287069369104076,
+    "gapUsd": -90304,
+    "previousOrders": 5157,
+    "previousRevenueUsd": 1111395,
+    "previousGrossMarginRate": 0.4141110946153258,
+    "previousDiscountUsd": 58500,
+    "previousDiscountRate": 0.05000448758221892,
+    "orderChangeRate": 0.1518324607329844,
+    "revenueChangeRate": 0.058449066263569716,
+    "targetGapRate": -0.07129306308959238,
+    "marginChangePp": -5.7807087746650945
+  }
+}

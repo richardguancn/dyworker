@@ -22,9 +22,15 @@ const BOT_DELEGATED_TOOL_NAMES = new Set([
   'feishu_bitable_inspect', 'feishu_bitable_read_records', 'feishu_bitable_write_records',
   'feishu_sheet_read', 'feishu_sheet_write',
 ]);
-// 上游能力库依赖独立的技能服务、MCP 加载器及审批页面；本适配继续使用应用自己的工具入口。
-const BOT_UNAVAILABLE_TOOL_NAMES = new Set(['request_secret', 'list_secrets', 'list_capabilities',
-  'save_capability', 'delete_capability', 'attach_capability', 'detach_capability', 'show_view']);
+// 上游能力库与桌面独立面板依赖独立的技能服务、MCP/连接器加载器及审批页面；本适配继续使用应用自己的工具入口。
+const BOT_UNAVAILABLE_TOOL_NAMES = new Set([
+  'request_secret', 'list_secrets',
+  'list_capabilities', 'save_capability', 'delete_capability', 'attach_capability', 'detach_capability',
+  'show_view',
+  'list_connectors', 'request_connector',
+  'mail_read', 'mail_search', 'mail_draft', 'mail_send', 'mail_update',
+  'prepare_ds_bot_issue', 'read_document', 'approve_agent_action',
+]);
 
 // The application and the official runtime have separate Cordis tools/storage
 // contracts. Resolve runtime exports without merging their declaration worlds.
@@ -304,6 +310,20 @@ export async function createBotTeam({ dataDir, entryUrl, readSettings, host, gen
       output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
         render: (_args: any, value: any) => [{ type: 'text', text: String(value?.text ?? '') }] } });
     await syncModels();
+    // 上游 0.3.x 新增了 local-agents 自动扫描本机外部 CLI（local-* 路由），
+    // DYWorker 团队面板模型沿用应用自身的模型配置，未接入上游外部 CLI 代理，
+    // 屏蔽 local-* 路由注册可避免面板列出不可用模型或被群聊自动选中后报错。
+    const rawRegisterAdapter = ctx.llm.registerAdapter.bind(ctx.llm);
+    ctx.llm.registerAdapter = (providers: any, adapter: any) => {
+      const filtered = (Array.isArray(providers) ? providers : [providers])
+        .filter((id: any) => !String(id).startsWith('local-'));
+      if (!filtered.length) {
+        const noop: any = () => {};
+        noop.replace = () => {};
+        return noop;
+      }
+      return rawRegisterAdapter(filtered, adapter);
+    };
     const upstream = await import(entryUrl);
     botFiber = await ctx.plugin({ ...upstream, apply(scope: any, config: any) {
       const runtime = upstream.createRuntime(scope, config);

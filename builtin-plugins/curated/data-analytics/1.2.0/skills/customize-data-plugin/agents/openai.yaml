@@ -1,0 +1,6 @@
+interface:
+  display_name: "Customize Data Plugin"
+  short_description: "Save Data settings and reusable working preferences"
+  default_prompt: "Use $customize-data-plugin to save my Data settings, preferred tools, reporting style, and workflow conventions."
+policy:
+  allow_implicit_invocation: true

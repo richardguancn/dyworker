@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 // 不应再从注册表下载，也不能被客户端依赖图当成缺失模块。
 export const HOST_CLIENT_MODULES = new Set([
   "@deepseek-ai/cordis", "react", "react-dom", "react-dom/client",
-  "react/jsx-runtime", "react/jsx-dev-runtime",
+  "react/jsx-runtime", "react/jsx-dev-runtime", "echarts",
   "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-ui-slots",
   "@deepseek-ai/dsh-client-runtime/client",
   "@deepseek-ai/dsh-client-store", "@deepseek-ai/dsh-client-ui-dockkit",

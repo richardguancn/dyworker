@@ -25,11 +25,11 @@ test('8 种内置插件的全部文件与锁定快照一致，不依赖原缓存
   }
   assert.ok(count > 2000);
   const plugins = await readCuratedPlugins();
-  assert.equal(plugins.flatMap(plugin => plugin.skills).length, 118);
+  assert.equal(plugins.flatMap(plugin => plugin.skills).length, 119);
   assert.equal(plugins.filter(plugin => plugin.local).length, 8);
   const skills = plugins.flatMap(plugin => plugin.skills);
-  assert.equal(new Set(skills.map(skill => skill.id)).size, 118);
-  assert.equal(new Set(skills.map(skill => skill.name)).size, 118);
+  assert.equal(new Set(skills.map(skill => skill.id)).size, 119);
+  assert.equal(new Set(skills.map(skill => skill.name)).size, 119);
   assert.equal(skills.filter(skill => skill.name.endsWith(':company-tearsheet')).length, 2);
 });
 
@@ -177,7 +177,7 @@ test('20 套办公模板均保留原文件和预览，数据分析脚本可以�
     assert.ok(reference.length > 100);
     if (manifest.preview) assert.ok((await fs.stat(path.join(directory, manifest.preview))).size > 100);
   }
-  const script = path.join(root, 'data-analytics/1.0.11/skills/visualize-data/scripts/render-inline-chart.mjs');
+  const script = path.join(root, 'data-analytics/1.2.0/scripts/prepare-resource-preview.mjs');
   const output = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
   assert.match(output, /--input/);
 });

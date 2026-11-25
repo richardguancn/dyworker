@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "chartApiVersion": 3,
+  "typecheck": {
+    "apiVersion": 1,
+    "typescriptVersion": "5.8.3"
+  },
+  "assets": {
+    "chart-check.mjs": {
+      "bytes": 7173593,
+      "sha256": "907b168c11db0d22cadb8ff95bd5198cc905fcef650ba517a5a5f4457feb3b5d"
+    },
+    "chart_structure.py": {
+      "bytes": 2200,
+      "sha256": "22246223dce06856fe1fcac2e0db2f77febe992a97b34a8ab384ade8ddc92e96"
+    },
+    "chart-check.NOTICES.txt": {
+      "bytes": 49134,
+      "sha256": "ea39396106617afb028f5d518a0f353990506580ca7b7cad00fd092400cd5f14"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Set up Data"
+  short_description: "Set up data sources and choose a first task"
+  default_prompt: "Use $onboarding to help me set up Data and get started with my first data task."

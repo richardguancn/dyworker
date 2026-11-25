@@ -46,7 +46,8 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
       const moduleErrors: string[] = [];
       for (const moduleRef of info.modules || []) {
         try {
-          const loaded = loadedBundle(moduleRef.spec) || await loadBundleScript(moduleRef.url);
+          const loaded = loadedBundle(moduleRef.spec)
+            || await loadBundleScript(moduleRef.url, { preloadEcharts: !entry?.builtin });
           // 单个模块失败不能静默：插件运行时 require 到它就会报"宿主未提供该模块"，
           // 而真正的原因藏在这里（脚本取不到 / 执行抛错）。
           if (loaded?.error) moduleErrors.push(`${moduleRef.spec}: ${loaded.error}`);
@@ -64,7 +65,7 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
       let record = loadedBundle(info.name);
       if (!record) {
         try {
-          record = await loadBundleScript(primary.url);
+          record = await loadBundleScript(primary.url, { preloadEcharts: !entry?.builtin });
         } catch (error: any) {
           record = loadedBundle(info.name);
           if (!record) {

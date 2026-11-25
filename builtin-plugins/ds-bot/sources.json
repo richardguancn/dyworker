@@ -1,36 +1,64 @@
 {
   "repository": "https://github.com/Fei2411/DS-Bot",
-  "commit": "4a7b55069ad300eae8be42a74f31bc170b40ead7",
-  "version": "0.2.3",
+  "commit": "d104d9ca18d69a35460f14e15dff4d553181433a",
+  "version": "0.3.10",
   "license": "Apache-2.0",
   "files": {
     "upstream/README.md": {
       "source": "ds-bot/README.md",
-      "sha256": "32606bdf6e3cd5466f103725122735aeeb5c547e259f0f78173743e36d69dd55"
+      "sha256": "5237139a01a10aa80dd56fb69ef8f98e38f3675e6851f4c860b2b61c00d30b93"
     },
     "upstream/index.js": {
       "source": "ds-bot/index.js",
-      "sha256": "703de38dd5d8248be008186d2c105c5493d2627e9d6f10515bf9a1fb20b81608"
+      "sha256": "3081d711a08ab523ac55874927af21418ed4044736e8491bce5bf25bd25dbb0f"
+    },
+    "upstream/link.js": {
+      "source": "ds-bot/link.js",
+      "sha256": "1f94cb79271f7278f351759c33b620b8cabb98dc5fbc0a4751df83d8f96630ea"
+    },
+    "upstream/office.js": {
+      "source": "ds-bot/office.js",
+      "sha256": "ff4c970adbecd80a1ec4fee12a3ebaaea963dee19e4784bf10c1ff946f6eb1db"
     },
     "upstream/package.json": {
       "source": "ds-bot/package.json",
-      "sha256": "a7535557002e799acb69578eee18eb09952dfbdcfcfbe479975a43050169dbef"
+      "sha256": "afbb2bab367775c4fbb78454cc45b182c79b0002c6895eab4b626cffddc7833f"
+    },
+    "upstream/plugin.js": {
+      "source": "ds-bot/plugin.js",
+      "sha256": "bb10d28eb7a77c6caf30599104287ac7c17e2786e1a9532c626c77bc809845eb"
+    },
+    "upstream/src/host/agent-commands.js": {
+      "source": "ds-bot/src/host/agent-commands.js",
+      "sha256": "d145d3110082b9557d4df16f9987c9c8d029e73625bb5c088d9ff9408098f4ec"
     },
     "upstream/src/host/agents.js": {
       "source": "ds-bot/src/host/agents.js",
-      "sha256": "abfd34f15f8cfd8bb1b6a38b497d4249ac256afaefdd4860fa2a29dc128c7380"
+      "sha256": "ee2ce9e7ff078f32c3a0b920a7f8f742197fbfe3cf2cb36cd26c3c37afd333e2"
     },
     "upstream/src/host/approvals.js": {
       "source": "ds-bot/src/host/approvals.js",
-      "sha256": "1067d1161bf9a61c8cf922942a5374f61c6104a8b79c393ef438758f97d5e838"
+      "sha256": "a24c6eb501319ee8d0d74bac8a76d333a4ca3c052ebc15edbee27eab105a52a3"
     },
     "upstream/src/host/avatar-library.js": {
       "source": "ds-bot/src/host/avatar-library.js",
-      "sha256": "134e7e1f21e327b495c94775d72a5a977b98505bcf6178fe61532d4458fc3724"
+      "sha256": "23948d575f857f8363c6cb7e4e481a59e56ed1fc513764239f66e7de3a15c3ab"
     },
     "upstream/src/host/avatar.js": {
       "source": "ds-bot/src/host/avatar.js",
       "sha256": "fb3090994cc98e42222996a5a9e519447a18932b856d061a1d4c34cc64f5e141"
+    },
+    "upstream/src/host/bot-tasks.js": {
+      "source": "ds-bot/src/host/bot-tasks.js",
+      "sha256": "07701ae804298f68aa54f6fb8d69c7b98b4b99afd059d81d107d320bdc593e7e"
+    },
+    "upstream/src/host/browser-plugins.js": {
+      "source": "ds-bot/src/host/browser-plugins.js",
+      "sha256": "392b26237a9e3a61b925659b7e613209068c55b9987ed1731fe8a8e6d6fa4912"
+    },
+    "upstream/src/host/browser.js": {
+      "source": "ds-bot/src/host/browser.js",
+      "sha256": "0cda1c1e256e485e2e0ec439db728cb8df9f4efd811b16a0b73a97aa8539f4fe"
     },
     "upstream/src/host/browser/gate.js": {
       "source": "ds-bot/src/host/browser/gate.js",
@@ -42,131 +70,387 @@
     },
     "upstream/src/host/browser/mount.js": {
       "source": "ds-bot/src/host/browser/mount.js",
-      "sha256": "5235c7697ae7a97f8d9152700e8a663288b45509bcc4000db09502f3698d3b3f"
+      "sha256": "9c63b7f99f72f470d884bd0864984ddc8124e8d7a56422a99754a06b262c6a4e"
     },
     "upstream/src/host/browser/refs.js": {
       "source": "ds-bot/src/host/browser/refs.js",
       "sha256": "5e15e36eb13170b7c9291974cdc393009a92205ca8bf1425dccb2d076410b729"
     },
+    "upstream/src/host/browser/script-child.js": {
+      "source": "ds-bot/src/host/browser/script-child.js",
+      "sha256": "0d3074ab97a95c8a98e445264efd822ace68b1bf90b0a4f93ed3ea66471edcfa"
+    },
+    "upstream/src/host/browser/script-runner.js": {
+      "source": "ds-bot/src/host/browser/script-runner.js",
+      "sha256": "48f342c52452d5cf4e07ff87e70c3ff663171bf930c941593c05e5883678a79e"
+    },
     "upstream/src/host/browser/script.js": {
       "source": "ds-bot/src/host/browser/script.js",
-      "sha256": "d2a0b3b6a8c02eb756c140853c05a514f40c05e7ca5d66c37ae34b13047100ce"
+      "sha256": "6ab58e23ef1d994df6865add2126d38b60ebddb832f6b009faf6d5f14a3c9ca9"
     },
     "upstream/src/host/browser/session-model.js": {
       "source": "ds-bot/src/host/browser/session-model.js",
-      "sha256": "4ea5c71b7af6f08408ad7b66f66550ba5aafc5788beaca4bb1a010d3c6bd6e34"
+      "sha256": "c4646a64abe262ac2ee089f926d40832dfdd5d35681a14e9d2d7a45c51a05d55"
     },
     "upstream/src/host/browser/session.js": {
       "source": "ds-bot/src/host/browser/session.js",
-      "sha256": "e4b6d0a4c1a5d9cd2be2cd30edf6a01f61729a0238733e153db73395f7cb427f"
+      "sha256": "6ba697ed8f30f0e1e57b72abd3de664da1f770c3cd005138057c835cae9cb2ef"
     },
     "upstream/src/host/browser/task.js": {
       "source": "ds-bot/src/host/browser/task.js",
       "sha256": "d5c6bf1663001fe211ba76d66fe46f510f649c4c146b42c6f6b7d2b127476697"
     },
-    "upstream/src/host/browser-plugins.js": {
-      "source": "ds-bot/src/host/browser-plugins.js",
-      "sha256": "ed74513820e4eb82a73a13a8b1a72ef079e7928f41e7c67aea536f312a478e5b"
-    },
-    "upstream/src/host/browser.js": {
-      "source": "ds-bot/src/host/browser.js",
-      "sha256": "d6619386927428850359bbf08747e1aedd138a60bab305f5be3a75e8efa5419f"
-    },
     "upstream/src/host/btw.js": {
       "source": "ds-bot/src/host/btw.js",
-      "sha256": "c34936716465a0672d008c26f035702949495847cb2a323edd5d04187d7f841b"
+      "sha256": "9397894e728c7228f1ce58cf9b9255d6e9f0dd2afe73f8699dc09f833ae98e2f"
+    },
+    "upstream/src/host/builtin-packs.js": {
+      "source": "ds-bot/src/host/builtin-packs.js",
+      "sha256": "6a0921b62c3ac7ef5be442fcb98be43848085ab2863d597305b22ac3e375c0d2"
     },
     "upstream/src/host/capabilities.js": {
       "source": "ds-bot/src/host/capabilities.js",
-      "sha256": "966174e15008baca711119d22cbdd2a6d2a3161327fd453f1b9d84a8082eecb4"
+      "sha256": "656fcc0b0fb7fd597dfd0f62bd49522d92becd4ed1c77dd53ba016f045614c89"
+    },
+    "upstream/src/host/changes.js": {
+      "source": "ds-bot/src/host/changes.js",
+      "sha256": "263c61c324660de9c12f017a42f47bf478cfcd699fd676ebf549c0d3523390ac"
     },
     "upstream/src/host/channel.js": {
       "source": "ds-bot/src/host/channel.js",
-      "sha256": "2429a1037f5569e56adcda886705b65e9f67eb2b562c8bbaec2406f5bf066553"
+      "sha256": "34b2a23af48a7c90984cca4050d3187816a9873fd513005cfb4663a6b8a33cb8"
     },
     "upstream/src/host/chat-index.js": {
       "source": "ds-bot/src/host/chat-index.js",
-      "sha256": "6ad7efefa31d7aaaa0ecbde2a369a28c59a36383203ff72dc50e5e98e5a007e7"
+      "sha256": "ba9087594a1861f3d46668c243d2606739ab62a1ebf3b1192ca4cee9002331d0"
     },
-    "upstream/src/host/connectors.js": {
-      "source": "ds-bot/src/host/connectors.js",
-      "sha256": "95f8d052c68f6b53e969224041285c258ca97ab2acab56485051cdc9e71f1b29"
+    "upstream/src/host/claims.js": {
+      "source": "ds-bot/src/host/claims.js",
+      "sha256": "0c149af079ee73d8dd770eb683303a1417bcbe3c869754759d51261b01084839"
+    },
+    "upstream/src/host/computer/catalog.js": {
+      "source": "ds-bot/src/host/computer/catalog.js",
+      "sha256": "6c06c9854b9161173a2a526144bceedd699e0602f5f2249215e33d43fdeb00b5"
+    },
+    "upstream/src/host/computer/index.js": {
+      "source": "ds-bot/src/host/computer/index.js",
+      "sha256": "9b5308f85eef57c5179c95bf329f5f46a5f1ca0790e09929923d5691409e1146"
+    },
+    "upstream/src/host/computer/leases.js": {
+      "source": "ds-bot/src/host/computer/leases.js",
+      "sha256": "2c31261a7673ef5b30b70727d9fdb2084e05ff783b6f3f5368cf5f45c8d3c2a8"
+    },
+    "upstream/src/host/computer/mac-helper.js": {
+      "source": "ds-bot/src/host/computer/mac-helper.js",
+      "sha256": "657f244c13e8ce41fd35e50ccb74b70f01efe94fd5ddfd5ba6958bf04a80ff63"
+    },
+    "upstream/src/host/connectors/catalog.js": {
+      "source": "ds-bot/src/host/connectors/catalog.js",
+      "sha256": "d7a929a2166868d40200aaa886f2a4155cbca6e7ab0a4b07ecdeff0c3ddb7335"
+    },
+    "upstream/src/host/connectors/gateway.js": {
+      "source": "ds-bot/src/host/connectors/gateway.js",
+      "sha256": "334104c32b91efe7d66f6a8c731c27b085af8fbb5a731e89b546d34067b7ebbf"
+    },
+    "upstream/src/host/connectors/index.js": {
+      "source": "ds-bot/src/host/connectors/index.js",
+      "sha256": "1b5da94a41a8bb5f849e7f54eaab23f9da3aaa1ee27111e1c33f79f5ef9a2b24"
+    },
+    "upstream/src/host/connectors/mail/index.js": {
+      "source": "ds-bot/src/host/connectors/mail/index.js",
+      "sha256": "c5f7898c8ece10f05d3e244da14a4fbad7153553b745390fd2419f136c3f2235"
+    },
+    "upstream/src/host/connectors/mail/presets.js": {
+      "source": "ds-bot/src/host/connectors/mail/presets.js",
+      "sha256": "51a52768d9cf52df0b69da9c89ee5f255db0096836dd6d38bfbd7eed712573cc"
+    },
+    "upstream/src/host/connectors/mail/transport.js": {
+      "source": "ds-bot/src/host/connectors/mail/transport.js",
+      "sha256": "1392e0eddbd75cba971565c6003427780a3f87d6cb19088f4d5a5e2423ebf874"
+    },
+    "upstream/src/host/connectors/oauth.js": {
+      "source": "ds-bot/src/host/connectors/oauth.js",
+      "sha256": "abb70689db38584c4667fda7fffecf944fba38ab0cc8b3e3ee8ea1e2629d3dce"
     },
     "upstream/src/host/constants.js": {
       "source": "ds-bot/src/host/constants.js",
-      "sha256": "7f4956154d44fb2c3286ccdb48c0cf0b82173c93248858f97482b4843f5bf43d"
+      "sha256": "9ca65ac8c1e21dc83fb7a974a4ccbe977ac4830f05dbe0b2526497aa84c2e7f2"
+    },
+    "upstream/src/host/deepseek-services.js": {
+      "source": "ds-bot/src/host/deepseek-services.js",
+      "sha256": "2a4364b583b3aafdf22db0d269ab47482d58f2ebc9bb672e3caa0446a0691719"
     },
     "upstream/src/host/delivery.js": {
       "source": "ds-bot/src/host/delivery.js",
-      "sha256": "b828c7c3950d82130416a1efbb4e21d053cffb2be5ba695fa0083c7fb3c4488d"
+      "sha256": "5def34d6cf20831ff32a305242efc1be87d04c98b3cabc45da820d93f6efac1b"
     },
     "upstream/src/host/diagnostics.js": {
       "source": "ds-bot/src/host/diagnostics.js",
-      "sha256": "5cd07367dfde624ce7bb7e5c2f794b870c1d91a11c7ac2920128e548a241d2c4"
+      "sha256": "055146477e2d09249b94b6fb93ddce458443a275a83db2357e29acf9f4fd68d2"
     },
     "upstream/src/host/dsh-update.js": {
       "source": "ds-bot/src/host/dsh-update.js",
       "sha256": "d7c87158fe375aa3b791b81236f38db6efe4235fe925d49026778a6aabf54062"
     },
+    "upstream/src/host/entry.js": {
+      "source": "ds-bot/src/host/entry.js",
+      "sha256": "444702f33de21438d47d75202f3f906516a3f481c349dcc8c677ddb5a0c83e4c"
+    },
     "upstream/src/host/feed.js": {
       "source": "ds-bot/src/host/feed.js",
-      "sha256": "7af9fecea98b21858c288bed17e4ecbe5289247ec79ddaa2b7071d84be496f6b"
+      "sha256": "20bb54d9fe879115f4ca3a76def46f81ccf77f7c91dffcb12ce26156051f4a5c"
     },
     "upstream/src/host/files.js": {
       "source": "ds-bot/src/host/files.js",
-      "sha256": "52073d4d121100f58e1686da2765a616278c5cf93eb62806d0c9f81a1fcee6af"
+      "sha256": "fc9c59d303ccce130f735a4044951b8efb87ac87dab693128dda1d70eea9b2f2"
     },
     "upstream/src/host/folders.js": {
       "source": "ds-bot/src/host/folders.js",
-      "sha256": "d95c61e60de0441fd3fca7b8ce8275a98b292510f9c357998fe888d6c6b037db"
+      "sha256": "67e0e4615c6a64fb353dd96fde81e1b2138d6df7aa8d2b1e29b53c9558712711"
+    },
+    "upstream/src/host/goal-skills.js": {
+      "source": "ds-bot/src/host/goal-skills.js",
+      "sha256": "9dc46d3a23a63ed6ab66ffb696e091ae950cad3cd8e203a1249b60a2017910bb"
+    },
+    "upstream/src/host/goals.js": {
+      "source": "ds-bot/src/host/goals.js",
+      "sha256": "1566770d95c4e89244180679b91eec0f135ccf7e78968f9c1af3e72eb6ecd62a"
+    },
+    "upstream/src/host/group-search.js": {
+      "source": "ds-bot/src/host/group-search.js",
+      "sha256": "f8622a6884559c1549b434104ed5ba81701ba13445099a95c60c44ff9caed4c3"
     },
     "upstream/src/host/groups.js": {
       "source": "ds-bot/src/host/groups.js",
-      "sha256": "c140094a252dd45491310ce9d9df878e6810fd013d20189f8067fb5f74bee404"
+      "sha256": "06c261868b55ee7cdc53dc3b98759779c1d0e5cd60ad6f39beeca24458e7a91c"
     },
     "upstream/src/host/handoffs.js": {
       "source": "ds-bot/src/host/handoffs.js",
-      "sha256": "d60fb5137be4b64e308fa933a8c1c2063d2e737c8ba6306e8884e4044ac8828a"
+      "sha256": "adf95d4fc6ff8feeb6cfc94bd1c3768e1a8c89543940a7bb6e14ff4828818ba6"
     },
     "upstream/src/host/home-lock.js": {
       "source": "ds-bot/src/host/home-lock.js",
-      "sha256": "dc8fda9d62ba17e4fd2116a79af8af6a7f701593380694150f82c492056ab4b0"
+      "sha256": "184d65fb38eb5440139dafcec98c79910b424da1eb497e3a096d2c8948105995"
+    },
+    "upstream/src/host/im/format.js": {
+      "source": "ds-bot/src/host/im/format.js",
+      "sha256": "09ff4f81703a35def963216ce7e2f5541532bb4b6d5a01f816494b1b98cd6213"
+    },
+    "upstream/src/host/im/index.js": {
+      "source": "ds-bot/src/host/im/index.js",
+      "sha256": "02c325eaf0a6da3a542abdcd9987f7733f1b7f1b9765c16f06beacfcabc31b65"
+    },
+    "upstream/src/host/im/outbound-images.js": {
+      "source": "ds-bot/src/host/im/outbound-images.js",
+      "sha256": "303a17e33ff9a7aec51627f24757436c2f794af358a2b70fb3455f90e38f04d9"
+    },
+    "upstream/src/host/im/platforms/dingtalk.js": {
+      "source": "ds-bot/src/host/im/platforms/dingtalk.js",
+      "sha256": "46d2cc68d8b02f68d05d624b3248690f17ecce21180e81d70155b12ef009ee11"
+    },
+    "upstream/src/host/im/platforms/discord.js": {
+      "source": "ds-bot/src/host/im/platforms/discord.js",
+      "sha256": "7ce4f0c8646b921761c525b24f212964e131f82d067d540415c7fe53fd859e72"
+    },
+    "upstream/src/host/im/platforms/feishu.js": {
+      "source": "ds-bot/src/host/im/platforms/feishu.js",
+      "sha256": "da84468450ac161b90cdab69fa9699f839016244fbd7c1acb49ccef66686b5ce"
+    },
+    "upstream/src/host/im/platforms/index.js": {
+      "source": "ds-bot/src/host/im/platforms/index.js",
+      "sha256": "fadc7adb04e4c30246010024e5bf5677674117e24d3c0ea42d28bd661149ccd8"
+    },
+    "upstream/src/host/im/platforms/media.js": {
+      "source": "ds-bot/src/host/im/platforms/media.js",
+      "sha256": "c597e9c4afdb966a3b9434dd1c792637a61baf7700e6afdcee9dd55f6edea1a4"
+    },
+    "upstream/src/host/im/platforms/qq.js": {
+      "source": "ds-bot/src/host/im/platforms/qq.js",
+      "sha256": "3f8cc364560b3873cfde0a414da84d51004ed13cbc5510cebffe42d281edd133"
+    },
+    "upstream/src/host/im/platforms/retry.js": {
+      "source": "ds-bot/src/host/im/platforms/retry.js",
+      "sha256": "3293e98158e38f70a24d4e1f740233c7bb4f1763334efb5d88e658153d13a2b3"
+    },
+    "upstream/src/host/im/platforms/slack.js": {
+      "source": "ds-bot/src/host/im/platforms/slack.js",
+      "sha256": "f09265017bd4328efc32377a36a6f40e88ef9422ed2e279cc24ebe7396eed564"
+    },
+    "upstream/src/host/im/platforms/telegram.js": {
+      "source": "ds-bot/src/host/im/platforms/telegram.js",
+      "sha256": "5117a612228fa2a718be9bc3864586737705c95573df98c2eaf6d86569076b5f"
+    },
+    "upstream/src/host/im/platforms/wecom.js": {
+      "source": "ds-bot/src/host/im/platforms/wecom.js",
+      "sha256": "6de0b6517724e9f8db5c154c7b3f0a211551e9927b752fdc1475610191dbde6e"
+    },
+    "upstream/src/host/im/platforms/weixin.js": {
+      "source": "ds-bot/src/host/im/platforms/weixin.js",
+      "sha256": "6643f52de7c194246ae46baff2373dcb98e399b68468a383395cd50432dbbcbd"
+    },
+    "upstream/src/host/im/qq-markdown.js": {
+      "source": "ds-bot/src/host/im/qq-markdown.js",
+      "sha256": "0305a09dd4702245cac6bbc8fa4359b68e00c1ff9e2201362ec1419ea1187ae7"
+    },
+    "upstream/src/host/im/view-choices.js": {
+      "source": "ds-bot/src/host/im/view-choices.js",
+      "sha256": "6e28e5b4eff99f3200879a3a9e8b374259c80c84c35f84ca3fb2e002d0756008"
+    },
+    "upstream/src/host/im/view-form.js": {
+      "source": "ds-bot/src/host/im/view-form.js",
+      "sha256": "108b406db297ed9e82758eb5f5a5c0baafba5523df359bff9e83fc695c604d2a"
     },
     "upstream/src/host/images.js": {
       "source": "ds-bot/src/host/images.js",
-      "sha256": "898f9e83f268477c3b47179c0ca8460aad072ebb086a87c21fc1c7ed3b504e29"
+      "sha256": "f8e175c72c6afe1f0f99b4b3ac8610c098c6f16500f45600d46d83055325a2d5"
+    },
+    "upstream/src/host/issue-report.js": {
+      "source": "ds-bot/src/host/issue-report.js",
+      "sha256": "d39b93a115a6577f1d8d98456b23ed4c2c18d772b3a98757c981546bd3b33f71"
+    },
+    "upstream/src/host/learning.js": {
+      "source": "ds-bot/src/host/learning.js",
+      "sha256": "d6f8654b96e7a57fcaac08fd30d18799f4787902d8f1fc534deb87b2fe9ae8f0"
+    },
+    "upstream/src/host/ledger.js": {
+      "source": "ds-bot/src/host/ledger.js",
+      "sha256": "5ba0b3ff7a24da956f90527226a09bfcbc0d4e971f712050c3a0753c17c9d0e9"
+    },
+    "upstream/src/host/legacy.mjs": {
+      "source": "ds-bot/src/host/legacy.mjs",
+      "sha256": "56fca0da78c0507aef9d412e53dfcac1c7f6d0b0f37315e8c9ea199bf1f78df5"
     },
     "upstream/src/host/links.js": {
       "source": "ds-bot/src/host/links.js",
-      "sha256": "01fca4728c87728a3815e435d4f9445fe45f808b7a5e5c6ba2f92772bf38411e"
+      "sha256": "8e236726b974498c679e79cd2621baaa76d065d493c79780bf23c6154cedc061"
+    },
+    "upstream/src/host/local-agents/acp.js": {
+      "source": "ds-bot/src/host/local-agents/acp.js",
+      "sha256": "1701a23aa4f67926eb753af1be1a02a04d913a3a0ecdc2d1067b0e4c624b6472"
+    },
+    "upstream/src/host/local-agents/adapter.js": {
+      "source": "ds-bot/src/host/local-agents/adapter.js",
+      "sha256": "b3175a1a65c81f6fd620db9b0f5c19edd03fc465d92f4920cf213081b6256c4c"
+    },
+    "upstream/src/host/local-agents/claude.js": {
+      "source": "ds-bot/src/host/local-agents/claude.js",
+      "sha256": "7809bbeae6408011af5f5696f7b765391e2517fc28a49c60579382205229af03"
+    },
+    "upstream/src/host/local-agents/codex.js": {
+      "source": "ds-bot/src/host/local-agents/codex.js",
+      "sha256": "21ae432c05538fb09f2836b2add1d3dc193354ca60b2be5269332caea1d01175"
+    },
+    "upstream/src/host/local-agents/discover.js": {
+      "source": "ds-bot/src/host/local-agents/discover.js",
+      "sha256": "9b37dd695f956b604a6a5da94ce04f805e40bb8933c01c678d25d890b4ed92c6"
+    },
+    "upstream/src/host/local-agents/engines.js": {
+      "source": "ds-bot/src/host/local-agents/engines.js",
+      "sha256": "ee19242b028628e0a75fbbb662c88c3a589e931db58db20847925c0d2f15ca2d"
+    },
+    "upstream/src/host/local-agents/index.js": {
+      "source": "ds-bot/src/host/local-agents/index.js",
+      "sha256": "fc5a87ff7d45e1ab85af3a6a345e95661ebe6d93747485473e131dbd5c7f63c1"
+    },
+    "upstream/src/host/local-agents/jsonrpc.js": {
+      "source": "ds-bot/src/host/local-agents/jsonrpc.js",
+      "sha256": "2a6f8319d055ea9a36d1485c4d1e01e7c17f8d516a78511b6ff6f7bcfd578c6a"
+    },
+    "upstream/src/host/local-agents/lines.js": {
+      "source": "ds-bot/src/host/local-agents/lines.js",
+      "sha256": "4bcd2d8dfadd3b2b0936d01f88220e52a5b9aff3a47e7ab04436c15c1138b076"
+    },
+    "upstream/src/host/local-agents/mcp-stdio.js": {
+      "source": "ds-bot/src/host/local-agents/mcp-stdio.js",
+      "sha256": "e5902be25991eda67df425c51003a17555cdfdc7c9929cc94d8b04b3b859b9b2"
+    },
+    "upstream/src/host/local-agents/mcp.js": {
+      "source": "ds-bot/src/host/local-agents/mcp.js",
+      "sha256": "b353366fccf8d205d68d3de653d174275ec547330f855fd6240f279b277b1d45"
+    },
+    "upstream/src/host/manual-skills.js": {
+      "source": "ds-bot/src/host/manual-skills.js",
+      "sha256": "1680ea7ab0017c672d95fab6b3031f669a95018d8f8e22e27d4785d2bc35b2bb"
+    },
+    "upstream/src/host/mcp-server.js": {
+      "source": "ds-bot/src/host/mcp-server.js",
+      "sha256": "e00095eeac6192869b35d6f1ab14545de983bc9e34effc37969a8384ed84f392"
+    },
+    "upstream/src/host/memory-copy.js": {
+      "source": "ds-bot/src/host/memory-copy.js",
+      "sha256": "dc319d454d31386d764e118987151dd44eeb7ba8a4069019cb27a0c5f7b80bf1"
+    },
+    "upstream/src/host/memory-entries.js": {
+      "source": "ds-bot/src/host/memory-entries.js",
+      "sha256": "64063b5a6f70bd547d7115673cbcdcedf017d61fa5cb9050525cd295df92caa9"
     },
     "upstream/src/host/memory-pending.js": {
       "source": "ds-bot/src/host/memory-pending.js",
       "sha256": "6fc08524bceae6d9c85811244c1236b228cfe32ad2c9ac7cbca2e08cd143cdc7"
     },
+    "upstream/src/host/memory-review.js": {
+      "source": "ds-bot/src/host/memory-review.js",
+      "sha256": "10d2b0458317db525dabe036eb4ea54624f4622277144b77678f7a1107893a1a"
+    },
+    "upstream/src/host/memory-search.js": {
+      "source": "ds-bot/src/host/memory-search.js",
+      "sha256": "b56241ed39670f9a7b950a90a773dd5d5af2543244140479dcb729b19735f6af"
+    },
+    "upstream/src/host/memory-tidy.js": {
+      "source": "ds-bot/src/host/memory-tidy.js",
+      "sha256": "6b21c378d0ed1fa1f6e08707f0a69aca3e68ab932851987b22e21fd708c388ea"
+    },
     "upstream/src/host/memory.js": {
       "source": "ds-bot/src/host/memory.js",
-      "sha256": "67f3003196b7734949599e69aff3b90d5e14172ed535e160d831dc0e2f574b7f"
+      "sha256": "09ee25154d649445bc0fe67be968fe62551689484992b4da7ae06f00c37b3900"
+    },
+    "upstream/src/host/mobile.js": {
+      "source": "ds-bot/src/host/mobile.js",
+      "sha256": "e36b89ad78e0800bcc9a7728db2fc1d620bc66d2efaf8db51c151dfd2bda0e0e"
     },
     "upstream/src/host/models.js": {
       "source": "ds-bot/src/host/models.js",
-      "sha256": "367d334d01288c885bfcbf0d33f9dd068f0f1975a809acdcddb6ed1a662d22a5"
+      "sha256": "36d5641e914ce0cd3a6ed1fbf2a3086982da5b14a0c2204173a5342c71d91d21"
+    },
+    "upstream/src/host/office-skills.js": {
+      "source": "ds-bot/src/host/office-skills.js",
+      "sha256": "ae32ce2268063279a212654fb2dd424bc11b474602a07c53878b2c412ee24ec9"
     },
     "upstream/src/host/parts.js": {
       "source": "ds-bot/src/host/parts.js",
-      "sha256": "dc348783a4542a8dab6200b63a507a5e6f74c364d2144fde41ee6a676a8e6313"
+      "sha256": "d0c762e46a00d053220eda242efaf503d24e15dbcff65ea6ac39c42f3d5234a6"
     },
     "upstream/src/host/permissions.js": {
       "source": "ds-bot/src/host/permissions.js",
-      "sha256": "3c33fdb09b8d7aa2c0695408f11eac012a8c3d45c20628451298228fdac78bf1"
+      "sha256": "2ebc08a5549b9eecbb94a372f01029a80f75764c9062463ddc816a6706b81763"
+    },
+    "upstream/src/host/phone.js": {
+      "source": "ds-bot/src/host/phone.js",
+      "sha256": "1527d75d9dae7d7b860dd0924ced9b64cacac0b478fa2e8ef9da1ab30adb7113"
+    },
+    "upstream/src/host/preview-worker.js": {
+      "source": "ds-bot/src/host/preview-worker.js",
+      "sha256": "ca6ed5ff6104790a79f5fa00de923dc981ec0031a805670a858d68c258be218a"
+    },
+    "upstream/src/host/preview.js": {
+      "source": "ds-bot/src/host/preview.js",
+      "sha256": "6bfe7f6b9ad09865c9f8f85cf522b73f3f4b430c30f29b88efa2bdd3d9c1200e"
+    },
+    "upstream/src/host/privacy.js": {
+      "source": "ds-bot/src/host/privacy.js",
+      "sha256": "2f883e61b9f432e84b1e8866c673b781461d3c6f9a3dcdf31f05019b132ea862"
     },
     "upstream/src/host/prompt.js": {
       "source": "ds-bot/src/host/prompt.js",
-      "sha256": "6e793a09edf398136746024b4fec1f44eaa7ba8c303515b4157f652a65dc4622"
+      "sha256": "b15fd1dd8b046589533540b45388e6573e84fdf51bb09aa48a97e694c1e83c21"
     },
     "upstream/src/host/providers.js": {
       "source": "ds-bot/src/host/providers.js",
-      "sha256": "cc8601058d617a63ebc0573b98bc41d44d7743d55d864a23ec52256ea3ed2d33"
+      "sha256": "f80ba6a54d03a883c2ab2772e373b52303b8e6c8227c36bc7fb16e318499f489"
+    },
+    "upstream/src/host/remote.js": {
+      "source": "ds-bot/src/host/remote.js",
+      "sha256": "67cb8a1edc32fdf1164cb3b5ce4cef7d98642e05984213feb9e268c1c9cdfc6f"
     },
     "upstream/src/host/requests.js": {
       "source": "ds-bot/src/host/requests.js",
@@ -174,71 +458,211 @@
     },
     "upstream/src/host/resume.js": {
       "source": "ds-bot/src/host/resume.js",
-      "sha256": "1378c4fd5803551aeb8a6be3f06407a00b33bdecc8d0ab3ff81f8926596e73a2"
+      "sha256": "605dd3fdef2cd9aee73edd9210666c480c31fe371ccb50652c3c3fb28a312bd9"
     },
     "upstream/src/host/roster.js": {
       "source": "ds-bot/src/host/roster.js",
-      "sha256": "855e08353c1dc821051e15f3f0c87e1dda58397c5a4432286ddfe490e1a7ace2"
+      "sha256": "20461d2d4aeae6ca373e3431a5802317d1130468e1940d22032189134429f984"
     },
     "upstream/src/host/schedules.js": {
       "source": "ds-bot/src/host/schedules.js",
-      "sha256": "35dcd8f46f133863b2724235bd7a82f47366e1520f3886acc01f2691fcde9e8f"
+      "sha256": "353a08f8cacd3109fbae810e95b4cebbced946e757d1ccb57bff28314d95e961"
+    },
+    "upstream/src/host/search-text.js": {
+      "source": "ds-bot/src/host/search-text.js",
+      "sha256": "599a1d76e4682da254ff76b19205fb430b8e4b4889bfccad7384daa0d1b37a70"
+    },
+    "upstream/src/host/secrets-crypto.js": {
+      "source": "ds-bot/src/host/secrets-crypto.js",
+      "sha256": "c8f36974d214e61fc70ffe72e32bab5c5637347f50a0275077f37c0e26e8da81"
     },
     "upstream/src/host/secrets.js": {
       "source": "ds-bot/src/host/secrets.js",
-      "sha256": "cfb5eeb8d777eae640cf0863ce51935cda8e874d8e2f790a60c54249a73841b5"
+      "sha256": "66cec105c1ea648533240f96368e9782263f81d6ee311527aebf5aaea438a114"
+    },
+    "upstream/src/host/services.js": {
+      "source": "ds-bot/src/host/services.js",
+      "sha256": "21e0a3d02d90f811eaf3fde746ed189a1d2e6f0854cbb11de2e439bbf842cc6f"
     },
     "upstream/src/host/side.js": {
       "source": "ds-bot/src/host/side.js",
-      "sha256": "44d99fde9abbbc4664b35353392a4c88d21eab1642c3799c2756dad40b4e8d6e"
+      "sha256": "c62a0c0077d76554b5ee406bbfb51fb16e9b8448f70b450cb9a8c2340956a496"
+    },
+    "upstream/src/host/skills/ds-bot-manual/SKILL.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/SKILL.md",
+      "sha256": "3ca50548705612b73c08e9f7d069817d22428b72eb8e715d4033beba67e2388b"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/bots.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/bots.md",
+      "sha256": "77fe83569b2a4097c34ad3010da3534fe27f487f512ab4eac454ff3589cdcfe7"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/browser-computer.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/browser-computer.md",
+      "sha256": "673a906beb1c6cdf968084bc13b50c5165af46bb0d65bdf2c01c0e385c85e412"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/capabilities.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/capabilities.md",
+      "sha256": "6d9ef7c003061510f2c63be824ab6eb032bf31e8f0e788af8f801a56d4396142"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/chats.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/chats.md",
+      "sha256": "c73099121a32c0dc080ef2efd097b34b4059985d975532bd7e7eaa87c4f095a2"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/getting-started.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/getting-started.md",
+      "sha256": "9433a57dc2b417adb2413b479789802508bc3baf051da9bcdc9763191a58d4d7"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/memory.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/memory.md",
+      "sha256": "3b0fc67825184b12f70088bc2704aae567d3f882c2cd5b26458897255619a75a"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/models.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/models.md",
+      "sha256": "59a2a93d546ef3e77ff52409a02f6bedd8b5302f96c2e9f99e747865b22d03a7"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/permissions.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/permissions.md",
+      "sha256": "e3b7ff3f5b8cbd2b77cada211218acd41818cd42708c42ec9ec51f8f67b11760"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/remote-access.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/remote-access.md",
+      "sha256": "78794226192bf576f0d9c160b8efec70ddb64cffa28f21efb1137016de97148c"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/settings.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/settings.md",
+      "sha256": "327c94bab77dc84be66b0acdb306c10cba062e2766ab025a1da99d15a8b74922"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/tasks.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/tasks.md",
+      "sha256": "c5f5763002e050fa16ffc0d820924ef71d4f02a3d80842611c82824c536788db"
+    },
+    "upstream/src/host/skills/ds-bot-manual/references/troubleshooting.md": {
+      "source": "ds-bot/src/host/skills/ds-bot-manual/references/troubleshooting.md",
+      "sha256": "4b7ff97a64154a36933831fbf75a1fc5f160e0943925ea0abc9fd6e12f88c9c7"
+    },
+    "upstream/src/host/skills/goal-grill/SKILL.md": {
+      "source": "ds-bot/src/host/skills/goal-grill/SKILL.md",
+      "sha256": "f6e6a17e897bda4d3e16e636cd7ddb519e080c79d4d7a3bfacbcafec37b02a26"
+    },
+    "upstream/src/host/skills/report-ds-bot-issue/SKILL.md": {
+      "source": "ds-bot/src/host/skills/report-ds-bot-issue/SKILL.md",
+      "sha256": "179188a9623127c5d124f7a7eea0cd7f33c26527b3655f2afc9fe73a477ce560"
+    },
+    "upstream/src/host/steer.js": {
+      "source": "ds-bot/src/host/steer.js",
+      "sha256": "f6498e359f5ea891f8fac4936b602f64226228ab7199dc1e9a1104cf2360cb0e"
     },
     "upstream/src/host/steward.js": {
       "source": "ds-bot/src/host/steward.js",
-      "sha256": "d57861b743d0293e21f1b29b5d5c28bb79b69fe0fed22e9e2fc1faf71bbf5155"
+      "sha256": "7847095fb4968c930d895575f5254fe98dce3d96ba7e038457979c7d90319aea"
     },
     "upstream/src/host/store.js": {
       "source": "ds-bot/src/host/store.js",
-      "sha256": "c62883fb2eb461ed7d5a03c98125f6601e6322cb57715810ec7ada7e10a3a90d"
+      "sha256": "6494f21fe71c208d246d56947680fdcbe55b77546c12bdf1da240854e0d5a504"
+    },
+    "upstream/src/host/tasks.js": {
+      "source": "ds-bot/src/host/tasks.js",
+      "sha256": "8b76fb1571da403f693ab91b8181370ae584fb5f1658d50f32d591a766aea131"
     },
     "upstream/src/host/text.js": {
       "source": "ds-bot/src/host/text.js",
-      "sha256": "2bb5f204061f12f1a648ccce62855f6a67ac0e72a1b3876a9a26937497ae4b6c"
+      "sha256": "221941303c26053977a0eb0f6dc07e47dacde92a6863fd09c80cbcbad9270226"
     },
     "upstream/src/host/thinking.js": {
       "source": "ds-bot/src/host/thinking.js",
-      "sha256": "6c6d36e327eff448450cf1729612c51d8f4c8cadb288e864375d1edcd0988da4"
+      "sha256": "bba3c6ed44759520045985868dcd8a57f06ccaaec431184a7acf1eb5e37ddb1e"
+    },
+    "upstream/src/host/threads.js": {
+      "source": "ds-bot/src/host/threads.js",
+      "sha256": "e93710eacf98a2e86c74bd768f55590f1ac9af98748e4dc74148e5bc5b6e90e0"
     },
     "upstream/src/host/time-context.js": {
       "source": "ds-bot/src/host/time-context.js",
       "sha256": "117d3edacdebd494384445c80da4837df4583f5271cfe56f5a165ae5612cc1cd"
     },
+    "upstream/src/host/tool-schema.js": {
+      "source": "ds-bot/src/host/tool-schema.js",
+      "sha256": "092b8b6c10dfd42274be2860834ee4a9e24b01715da744a43c4b16f137835a8a"
+    },
     "upstream/src/host/tools.js": {
       "source": "ds-bot/src/host/tools.js",
-      "sha256": "f7f74219b4c84fcc65860b3de363e410ab7f49f27cbdc10a0bff1d3b514c3ff0"
+      "sha256": "a5c743b7c75c96498775808f029a5f15c7e08dbe6eaf33089d29b3c2a9ffb382"
     },
     "upstream/src/host/turns.js": {
       "source": "ds-bot/src/host/turns.js",
-      "sha256": "51bdfae5370a89f14cdb2e3d5935e02cdeb1aa41ef6ef8105dd8d45fc2189f99"
+      "sha256": "147b87e0a271c43e1110c4948180b9d3284f89212b86ecd3ecfe382fd569f442"
     },
     "upstream/src/host/update.js": {
       "source": "ds-bot/src/host/update.js",
-      "sha256": "83e080c8820bf9f1d49d43ebc605e77988e4eab78135a8c8dcd4581585a4f7a3"
+      "sha256": "99a232c19f73b1a4624e066ed4a7c12f8f25aee861c789d90288164fc5840954"
     },
     "upstream/src/host/usage.js": {
       "source": "ds-bot/src/host/usage.js",
-      "sha256": "c09bcb2d2ee24c8779fe30e6fb4838c511fd2673c2297c10f1e758579eb56117"
+      "sha256": "efe6be0f7cc2171073942619f5a7556e31018f7a745e84fd1c4c0183ca90cfce"
     },
-    "upstream/src/shared/formula.js": {
-      "source": "ds-bot/src/shared/formula.js",
-      "sha256": "2fda97b3a9f146eee4c80d7fb5abeb476c47d00153032c680a8c9d1b1903a749"
+    "upstream/src/office/check.js": {
+      "source": "ds-bot/src/office/check.js",
+      "sha256": "1f75c1559e3d8945bfc10a503e0f5dbee1fefc7be9e24641b3f2fe6323026a38"
+    },
+    "upstream/src/office/cli.js": {
+      "source": "ds-bot/src/office/cli.js",
+      "sha256": "4f01cc4c8be1b8b3b9f2a5102824c0cec8a5aada0f18d7d8f20e695c3a970135"
+    },
+    "upstream/src/office/docx.js": {
+      "source": "ds-bot/src/office/docx.js",
+      "sha256": "5b59826bffabff7f25206aa69331c1468103f691f504e255cc84b72c8931d375"
+    },
+    "upstream/src/office/package.js": {
+      "source": "ds-bot/src/office/package.js",
+      "sha256": "6c4e0599242b73cf08a18c23553ac559c830f8b1e670820b2ba36dd5e7222ffb"
+    },
+    "upstream/src/office/png.js": {
+      "source": "ds-bot/src/office/png.js",
+      "sha256": "0d9dff8c5fe6f48383b55d6aa277f308fc8b7febc314f8311392d1d11a00c420"
+    },
+    "upstream/src/office/pptx.js": {
+      "source": "ds-bot/src/office/pptx.js",
+      "sha256": "d9122f6324db66f1ea474dd438b8751d596f83488dad160b59007ae903723410"
+    },
+    "upstream/src/office/skills/office-tools/SKILL.md": {
+      "source": "ds-bot/src/office/skills/office-tools/SKILL.md",
+      "sha256": "843d236c7385b91f6d6d9d58c415258e4a2dabd827b2dc1a6b2653ea361d5f22"
+    },
+    "upstream/src/office/skills/office/SKILL.md": {
+      "source": "ds-bot/src/office/skills/office/SKILL.md",
+      "sha256": "cae85de2c3dae5816c2f83be481d6de18476ff73f2794eea3140f996d0ace489"
+    },
+    "upstream/src/office/xlsx.js": {
+      "source": "ds-bot/src/office/xlsx.js",
+      "sha256": "029c4504b171526d81ece305be4c8f07155d83b9500fb6e962a1660a4b779b9d"
+    },
+    "upstream/src/office/xml.js": {
+      "source": "ds-bot/src/office/xml.js",
+      "sha256": "807f628c45a0ce9cd358d599117aa254189c5a89d49f64d97475764246e53675"
+    },
+    "upstream/src/office/zip.js": {
+      "source": "ds-bot/src/office/zip.js",
+      "sha256": "a97b713c21304337205458b6fac58e9493611fdb23c47c79ce59b401e7c55e45"
+    },
+    "upstream/src/shared/browser-endpoints.js": {
+      "source": "ds-bot/src/shared/browser-endpoints.js",
+      "sha256": "df9a4e4053558e5eb140c56e4d7663460bf32d78ef26cc02919a42bf487dbb25"
+    },
+    "upstream/src/shared/file-chunks.js": {
+      "source": "ds-bot/src/shared/file-chunks.js",
+      "sha256": "b5f5a2ff502ab686929a23ee2fd82da544031b61f779d98e15be2c6a269160ce"
+    },
+    "upstream/src/shared/group-replies.js": {
+      "source": "ds-bot/src/shared/group-replies.js",
+      "sha256": "dea62f8755dc18e6ad5e0c05064fa7e4458fd89504faffc62c362476aca24d99"
+    },
+    "upstream/src/shared/im-platforms.js": {
+      "source": "ds-bot/src/shared/im-platforms.js",
+      "sha256": "cd5452fee7f2a994e12935e27f4390b2757bf468c015bbefb2952652ad6358e8"
     },
     "upstream/src/shared/mentions.js": {
       "source": "ds-bot/src/shared/mentions.js",
       "sha256": "a011d792da173dcf86f3a480ea8b9f8411528bf0b9a99db36a37e6b0e0aeecec"
-    },
-    "upstream/src/shared/views.js": {
-      "source": "ds-bot/src/shared/views.js",
-      "sha256": "83e6a0ec08938bf4ed9874466e831a2d84b7116848daa83671c5434f7ce64609"
     }
   }
 }

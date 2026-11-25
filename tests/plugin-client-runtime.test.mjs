@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-import { createClientRuntime, PRIMITIVES_MODULE } from "../src/pluginRuntime/index.ts";
+import { createClientRuntime, ensurePluginEcharts, PRIMITIVES_MODULE } from "../src/pluginRuntime/index.ts";
 import { HOST_CLIENT_MODULES, orderClientModules, resolveClientEntries } from "../electron/host/plugin-client.mts";
 import { createPrimitives } from "../src/pluginRuntime/primitives.ts";
 import * as React from 'react';
@@ -386,4 +386,23 @@ test("插件 API 桥：只接管同源 /api/*，其余 fetch 原样透传，失�
 
   restore();
   assert.equal(await (await target.fetch("/assets/logo.png")).text(), "origin", "复原后不再拦截");
+});
+
+test("按需预热后，自制插件可通过 require(\"echarts\") 同步获取宿主共享 ECharts", async () => {
+  assert.equal(HOST_CLIENT_MODULES.has("echarts"), true);
+  await ensurePluginEcharts();
+  const { target } = freshRuntime();
+  let grabbed = null;
+  const record = target.__ModuleLoader__.load({
+    id: "dashboard-echarts-demo",
+    factory(require) {
+      grabbed = require("echarts");
+      return { name: "dashboard-echarts-demo", apply() {} };
+    },
+  });
+  assert.equal(record.exports.name, "dashboard-echarts-demo");
+  assert.ok(grabbed);
+  assert.equal(typeof grabbed.init, "function");
+  assert.equal(typeof grabbed.use, "function");
+  assert.equal(grabbed.default?.init, grabbed.init);
 });

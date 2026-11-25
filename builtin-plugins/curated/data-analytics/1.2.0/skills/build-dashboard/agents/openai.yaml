@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build Dashboard"
+  short_description: "Create source-backed dashboards for monitoring performance, exploring drivers, and acting on metrics."
+  default_prompt: "Build a source-backed dashboard in the destination selected by shared output preference and delivery rules, with reviewed data and useful interactions. Use a spreadsheet or BI-native destination only when explicitly requested or selected by those rules."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,161 @@
+<div id="data-onboarding-workflow-selector">
+  <style>
+    #data-onboarding-workflow-selector .data-workflow-list {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    #data-onboarding-workflow-selector .data-workflow-choice {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-sizing: border-box;
+      max-width: 100%;
+      min-height: 40px;
+      padding: 7px 15px 7px 11px;
+      border: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent);
+      border-radius: 100px;
+      background: var(--background);
+      color: var(--foreground);
+      font: inherit;
+      font-size: var(--font-size-base);
+      font-weight: 400;
+      line-height: 1.4286;
+      text-align: left;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    #data-onboarding-workflow-selector .data-workflow-icon {
+      display: block;
+      width: 24px;
+      height: 24px;
+      flex: 0 0 24px;
+    }
+    #data-onboarding-workflow-selector .data-workflow-choice:hover:not(:disabled) {
+      background: var(--accent);
+    }
+    #data-onboarding-workflow-selector .data-workflow-choice:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+    #data-onboarding-workflow-selector .data-workflow-choice:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    #data-onboarding-workflow-selector [data-workflow-status]:empty {
+      display: none;
+    }
+    @media (pointer: coarse) {
+      #data-onboarding-workflow-selector .data-workflow-choice {
+        min-height: 44px;
+      }
+    }
+  </style>
+  <div data-workflow-actions hidden>
+    <div class="data-workflow-list" role="group" aria-label="What would you like to build with Data?">
+      <button type="button" class="data-workflow-choice cursor-interaction" data-workflow="connect">
+        <!-- Shared Plugins icon: chatgpt/web/src/core/icons/plugins.svg. -->
+        <svg
+  class="data-workflow-icon"
+  aria-hidden="true"
+  width="20"
+  height="20"
+  viewBox="0 0 20 20"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M12.5237 12.1924C14.3269 14.1381 17.2163 13.014 17.4174 10.1336C17.7028 6.04716 14.8639 2.52067 10.3126 2.52067C6.33249 2.52067 2.85384 5.55922 2.58175 9.45548C2.28146 13.7557 5.34791 17.4288 9.99831 17.4288C11.568 17.4288 13.1817 17.0594 14.3792 16.2112"
+    stroke="currentColor"
+    stroke-width="1.33"
+    stroke-linecap="round"
+  />
+  <path
+    d="M6.37392 8.96015L7.47225 10.1012"
+    stroke="currentColor"
+    stroke-width="1.33"
+    stroke-linecap="round"
+  />
+  <path
+    d="M9.12428 6.31254L10.2226 7.45358"
+    stroke="currentColor"
+    stroke-width="1.33"
+    stroke-linecap="round"
+  />
+  <path
+    d="M11.0282 6.8903L6.88601 10.8773C6.80316 10.9571 6.80049 11.0887 6.88006 11.1718C7.41431 11.7292 8.18345 12.5419 8.18345 12.5419C9.36779 13.7723 10.9977 13.5204 12.2473 12.3176C13.4969 11.1147 13.853 9.52339 12.6265 8.26529L11.3234 6.89673C11.2438 6.81312 11.1113 6.81024 11.0282 6.8903Z"
+    stroke="currentColor"
+    stroke-width="1.33"
+    stroke-linecap="round"
+  />
+</svg>
+        <span>Connect my data</span>
+      </button>
+      <button type="button" class="data-workflow-choice cursor-interaction" data-workflow="metric-change">
+        <img class="data-workflow-icon" src="data:image/svg+xml;base64,PHN2ZyBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJub25lIiBvdmVyZmxvdz0idmlzaWJsZSIgc3R5bGU9ImRpc3BsYXk6IGJsb2NrOyIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxnIGlkPSJtYWduaWZpbmdnbGFzcyI+CjxwYXRoIGlkPSJ2ZWN0b3IiIGQ9Ik0xMC44NCAxOS4yM0M2LjIxIDE5LjIzIDIuNDUgMTUuNDcgMi40NSAxMC44NEMyLjQ1IDYuMjEgNi4yMSAyLjQ1IDEwLjg0IDIuNDVDMTUuNDcgMi40NSAxOS4yMyA2LjIxIDE5LjIzIDEwLjg0QzE5LjIzIDE1LjQ3IDE1LjQ3IDE5LjIzIDEwLjg0IDE5LjIzWk0yMS4xNCAyMS4xNUMyMC43NCAyMS41NCAyMC4xMSAyMS41NSAxOS43MiAyMS4xNUwxNS43MyAxNy4xNUwxNy4xNCAxNS43NEwyMS4xNCAxOS43M0MyMS41NCAyMC4xMiAyMS41MyAyMC43NSAyMS4xNCAyMS4xNVoiIGZpbGw9IiM0M0QwRkIiLz4KPHBhdGggaWQ9InZlY3Rvcl8yIiBkPSJNMTcuMjMgMTAuODRDMTcuMjMgMTQuMzcgMTQuMzcgMTcuMjMgMTAuODQgMTcuMjNDNy4zMSAxNy4yMyA0LjQ1IDE0LjM3IDQuNDUgMTAuODRDNC40NSA3LjMxIDcuMzEgNC40NSAxMC44NCA0LjQ1QzE0LjM3IDQuNDUgMTcuMjMgNy4zMSAxNy4yMyAxMC44NFoiIGZpbGw9IiNDREYzRkYiLz4KPHBhdGggaWQ9InZlY3Rvcl8zIiBkPSJNMjEuMzUgMTkuNThMMTcuNTggMTUuODFDMTcuMDggMTYuNDggMTYuNDkgMTcuMDggMTUuODEgMTcuNThMMTkuNTggMjEuMzVDMjAuMDcgMjEuODQgMjAuODYgMjEuODQgMjEuMzUgMjEuMzVDMjEuODQgMjAuODYgMjEuODQgMjAuMDcgMjEuMzUgMTkuNThaIiBmaWxsPSIjMUJBNUNGIi8+CjwvZz4KPC9zdmc+Cg==" width="24" height="24" alt="" aria-hidden="true">
+        <span>Understand what changed</span>
+      </button>
+      <button type="button" class="data-workflow-choice cursor-interaction" data-workflow="artifact">
+        <img class="data-workflow-icon" src="data:image/svg+xml;base64,PHN2ZyBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJub25lIiBvdmVyZmxvdz0idmlzaWJsZSIgc3R5bGU9ImRpc3BsYXk6IGJsb2NrOyIgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiB2aWV3Qm94PSIwIDAgMjQgMjQiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxnIGlkPSJpbWFnZS10ZXh0LWRvY3VtZW50Ij4KPHBhdGggaWQ9InZlY3RvciIgZD0iTTEzIDIuNTkzNzVDMTMuMjY2NiAyLjU5Mzc1IDEzLjUzNzYgMi42Njg0MiAxMy44MTI1IDIuODE4MzZDMTQuMDg3NSAyLjk2ODM2IDE0LjM5NTYgMy4yMTA2MSAxNC43MzczIDMuNTQzOTVMMTkuNjg3NSA4LjQ0MzM2QzIwLjIyOTIgOC45ODUwMyAyMC41IDkuNTM1NDIgMjAuNSAxMC4wOTM4VjE3LjU0MzlDMjAuNSAxOC4yNjg5IDIwLjMyMTIgMTguOTQgMTkuOTYyOSAxOS41NTY2QzE5LjYwNDYgMjAuMTY0OSAxOS4xMTY1IDIwLjY0NzYgMTguNSAyMS4wMDU5QzE3Ljg5MTcgMjEuMzY0MiAxNy4yMjUgMjEuNTQzOSAxNi41IDIxLjU0MzlINy41QzYuNzc1IDIxLjU0MzkgNi4xMDM5NyAyMS4zNjQyIDUuNDg3MyAyMS4wMDU5QzQuODc5MTYgMjAuNjQ3NiA0LjM5NTM3IDIwLjE2NDggNC4wMzcxMSAxOS41NTY2QzMuNjc4ODEgMTguOTQgMy41MDAwMyAxOC4yNjg5IDMuNSAxNy41NDM5VjYuNTkzNzVDMy41IDUuODY4ODIgMy42Nzg4NCA1LjIwMjA0IDQuMDM3MTEgNC41OTM3NUM0LjM5NTQ0IDMuOTc3MDggNC44Nzg5NyAzLjQ4OTE5IDUuNDg3MyAzLjEzMDg2QzYuMTAzOTYgMi43NzI1NCA2Ljc3NTAxIDIuNTkzNzUgNy41IDIuNTkzNzVIMTNaIiBmaWxsPSIjREZERkRGIi8+CjxwYXRoIGlkPSJ2ZWN0b3JfMiIgZD0iTTcuMzA1MTggMTEuMjQ2N0M3LjMwNTE4IDEwLjgxMjMgNy42NTczMSAxMC40NjAxIDguMDkxNyAxMC40NjAxSDEwLjg0NDVDMTEuMjc4OSAxMC40NjAxIDExLjYzMTEgMTAuODEyMyAxMS42MzExIDExLjI0NjdWMTQuMzkyOEMxMS42MzExIDE0LjgyNzIgMTEuMjc4OSAxNS4xNzkzIDEwLjg0NDUgMTUuMTc5M0g4LjA5MTdDNy42NTczMSAxNS4xNzkzIDcuMzA1MTggMTQuODI3MiA3LjMwNTE4IDE0LjM5MjhWMTEuMjQ2N1oiIGZpbGw9IiM5QjlCOUIiLz4KPHBhdGggaWQ9InZlY3Rvcl8zIiBkPSJNMTYuNjk0OSAxNy41NzczQzE2LjY5NDkgMTcuMTc5NyAxNi4zNzMgMTYuODU3MSAxNS45NzU0IDE2Ljg1N0w4LjAyNTQ5IDE2Ljg1NDlDNy42Mjc4NCAxNi44NTQ5IDcuMzA1MTggMTcuMTc3NSA3LjMwNTE4IDE3LjU3NTJDNy4zMDUxOCAxNy45NzI4IDcuNjI3ODQgMTguMjk1NSA4LjAyNTQ5IDE4LjI5NTVMMTUuOTc1NCAxOC4yOTc2QzE2LjM3MyAxOC4yOTc2IDE2LjY5NDkgMTcuOTc1IDE2LjY5NDkgMTcuNTc3M1oiIGZpbGw9IiM5QjlCOUIiLz4KPHBhdGggaWQ9InZlY3Rvcl80IiBkPSJNMTYuNjk0OSAxNC40MDY3QzE2LjY5NDkgMTQuMDA5MSAxNi4zNzMgMTMuNjg2NSAxNS45NzU0IDEzLjY4NjRMMTQuMDI1NSAxMy42ODQzQzEzLjYyNzggMTMuNjg0MyAxMy4zMDUyIDE0LjAwNjkgMTMuMzA1MiAxNC40MDQ2QzEzLjMwNTIgMTQuODAyMiAxMy42Mjc4IDE1LjEyNDkgMTQuMDI1NSAxNS4xMjQ5TDE1Ljk3NTQgMTUuMTI3MUMxNi4zNzMgMTUuMTI3IDE2LjY5NDkgMTQuODA0NCAxNi42OTQ5IDE0LjQwNjdaIiBmaWxsPSIjOUI5QjlCIi8+CjxwYXRoIGlkPSJ2ZWN0b3JfNSIgZD0iTTE2LjY5NDkgMTEuMjM0OEMxNi42OTQ5IDEwLjgzNzIgMTYuMzczIDEwLjUxNDUgMTUuOTc1NCAxMC41MTQ1TDE0LjAyNTUgMTAuNTEyM0MxMy42Mjc4IDEwLjUxMjMgMTMuMzA1MiAxMC44MzUgMTMuMzA1MiAxMS4yMzI2QzEzLjMwNTIgMTEuNjMwMyAxMy42Mjc4IDExLjk1MyAxNC4wMjU1IDExLjk1M0wxNS45NzU0IDExLjk1NTFDMTYuMzczIDExLjk1NTEgMTYuNjk0OSAxMS42MzI0IDE2LjY5NDkgMTEuMjM0OFoiIGZpbGw9IiM5QjlCOUIiLz4KPHBhdGggaWQ9InZlY3Rvcl82IiBkPSJNMTMgMi41OTM3NUMxMy4yNjY3IDIuNTkzNzUgMTMuNTM3NSAyLjY2ODc1IDEzLjgxMjUgMi44MTg3NUMxNC4wODc1IDIuOTY4NzUgMTQuMzk1OCAzLjIxMDQyIDE0LjczNzUgMy41NDM3NUwxOS42ODc1IDguNDQzNzVDMjAuMjI5MiA4Ljk4NTQyIDIwLjUgOS41MzU0MiAyMC41IDEwLjA5MzhIMTUuNzEyNUMxNC44NzkyIDEwLjA5MzggMTQuMjE2NyA5Ljg1MjA4IDEzLjcyNSA5LjM2ODc1QzEzLjI0MTcgOC44NzcwOCAxMyA4LjIxNDU4IDEzIDcuMzgxMjVWMi41OTM3NVoiIGZpbGw9IiNGNUY1RjUiLz4KPC9nPgo8L3N2Zz4K" width="24" height="24" alt="" aria-hidden="true">
+        <span>Build a dashboard or report</span>
+      </button>
+    </div>
+  </div>
+  <p data-workflow-fallback>Type your choice in the chat: Connect my data, Understand what changed, Build a dashboard or report, or your own question.</p>
+  <p data-workflow-status role="status" aria-live="polite"></p>
+</div>
+<script>
+(() => {
+  const root = document.getElementById("data-onboarding-workflow-selector");
+  const actions = root.querySelector("[data-workflow-actions]");
+  const fallback = root.querySelector("[data-workflow-fallback]");
+  const status = root.querySelector("[data-workflow-status]");
+  const buttons = [...root.querySelectorAll("button[data-workflow]")];
+  const workflows = {
+    connect: {
+      title: "Connect my data",
+      prompt: "Help me connect my data sources to Data.",
+    },
+    "metric-change": {
+      title: "Understand what changed with Data",
+      prompt: "Help me investigate a metric change with Data.",
+    },
+    artifact: {
+      title: "Build a dashboard or report with Data",
+      prompt: "Help me build a dashboard or report with Data.",
+    },
+  };
+  let pending = false;
+
+  function updateAvailability() {
+    const available = typeof window.openai?.sendFollowUpMessage === "function";
+    actions.hidden = !available;
+    fallback.hidden = available;
+    return available;
+  }
+
+  updateAvailability();
+  for (const button of buttons) {
+    button.addEventListener("click", async () => {
+      if (pending || !updateAvailability()) return;
+      pending = true;
+      for (const item of buttons) item.disabled = true;
+      status.setAttribute("role", "status");
+      status.textContent = "Confirm in the app to continue.";
+      try {
+        await window.openai.sendFollowUpMessage(workflows[button.dataset.workflow]);
+        // The host can resolve after dismissal; resolution is not submission.
+        status.textContent = "";
+      } catch {
+        status.setAttribute("role", "alert");
+        status.textContent = "Could not open confirmation. Try again, or type your choice in the chat.";
+        fallback.hidden = false;
+      } finally {
+        pending = false;
+        for (const item of buttons) item.disabled = false;
+      }
+    });
+  }
+})();
+</script>

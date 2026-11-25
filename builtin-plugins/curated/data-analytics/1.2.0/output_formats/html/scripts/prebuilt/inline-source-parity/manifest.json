@@ -1,0 +1,15 @@
+{
+  "sourceRevision": "03e93b62dba2c6963e75c500c9eaf266cf997911",
+  "purpose": "Preserve alpha-11 inline Sources receipt behavior while standalone HTML uses production 1.0.11. Applied only inside the temporary receipt build snapshot.",
+  "files": {
+    "src/components/SourceInspector.jsx": "b81b92f69339ffad147cf404b2b7b6638e366f952630a0704a933dd4743c496f",
+    "src/components/SourcesReceipt.jsx": "65bdfb1edb7a1e719fe82d95683a3fc8bc9dcc1da85e5a6bd7ecf3b46018cfc9",
+    "src/styles-foundation.css": "7efc70ad96257a6757208c677392d8e59bf46cce4de04fdd7260d266b24ad94c",
+    "src/styles.css": "b9604b5469779fc4b5d20581c9cfe2c531ad8f947cb827a6c552ba449200b6fa",
+    "src/charting/chart-data-shape.js": "e4693c3422df8be48c18e8900ed8f853de3bf4437c1de997c51cbeef44fc864e",
+    "src/charting/chart-overrides.js": "b035a719dd8d130ce599e3503790a27d863ae8419e5ee9d498b96426c94691a6",
+    "src/charting/chart-theme.js": "5f7d2459f8061336a85dd286e2c8e630277c88422a7dfe56548a44522f1e8562",
+    "src/charting/experimental-bar-chart.css": "5a8b847c059bf5e95350f463238ec180ba578efa3cd0537f3f4a74aa69ccedd8",
+    "src/data-app-styles.css": "93220bfefc1f82937b168f32d044ab54f9f6c8f538652361c39e5937eca1c67f"
+  }
+}
