@@ -238,6 +238,36 @@ export async function executeCdpTool(
     checkLease,
     sessionId,
     timeoutMs: Math.round(rawTimeout),
+    onDispatch: adapter?.lastInputState
+      ? () => {
+          if (method === "Input.dispatchMouseEvent") {
+            if (params.type === "mousePressed") {
+              adapter.lastInputState.mouseDown = {
+                x: Number(params.x) || 0,
+                y: Number(params.y) || 0,
+                button: typeof params.button === "string" ? params.button : "left",
+                clickCount: Number(params.clickCount) || 1,
+                ...(params.modifiers !== undefined ? { modifiers: Number(params.modifiers) || 0 } : {}),
+              };
+            } else if (params.type === "mouseReleased") {
+              adapter.lastInputState.mouseDown = null;
+            }
+          } else if (method === "Input.dispatchKeyEvent") {
+            if (params.type === "keyDown" || params.type === "rawKeyDown") {
+              adapter.lastInputState.keyDown = {
+                fromRawCdp: true,
+                ...(params.key ? { key: String(params.key) } : {}),
+                ...(params.code ? { code: String(params.code) } : {}),
+                ...(params.windowsVirtualKeyCode !== undefined ? { windowsVirtualKeyCode: Number(params.windowsVirtualKeyCode) } : {}),
+                ...(params.nativeVirtualKeyCode !== undefined ? { nativeVirtualKeyCode: Number(params.nativeVirtualKeyCode) } : {}),
+                ...(params.modifiers !== undefined ? { modifiers: Number(params.modifiers) || 0 } : {}),
+              };
+            } else if (params.type === "keyUp") {
+              adapter.lastInputState.keyDown = null;
+            }
+          }
+        }
+      : undefined,
   });
 
   if (args?.saveToPath) {

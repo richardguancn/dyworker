@@ -44,11 +44,12 @@ async function call(team, endpoint, payload = {}) {
   assert.equal(result.ok, true, JSON.stringify(result.error));
   return result.value;
 }
-async function settle(team) {
-  for (let i = 0; i < 30; i++) {
+async function settle(team, roomId) {
+  for (let i = 0; i < 60; i++) {
     await Promise.all(team.ctx.agents.list().map(agent => agent.whenIdle()));
     await new Promise(resolve => setTimeout(resolve, 20));
-    if (team.ctx.agents.list().every(agent => agent.status === 'idle')) return;
+    const roomBusy = roomId ? (await call(team, 'room-progress', { roomId })).length > 0 : false;
+    if (!roomBusy && team.ctx.agents.list().every(agent => agent.status === 'idle')) return;
   }
   throw new Error('机器人没有完成回复');
 }
@@ -105,12 +106,12 @@ test('原插件真实运行：模型选择、机器人对话、提问回答、�
   const bot = await call(team, 'create-bot', { name: '写作助手', role: '写作', model: selected.ref }); await settle(team);
   const room = await call(team, 'create-room', { name: '工作群', members: [chief.id, bot.id], admin: chief.id });
   await call(team, 'update-room', { id: room.id, mode: 'everyone' });
-  await call(team, 'send', { sessionId: room.id, text: '两位请给意见' }); await settle(team);
+  await call(team, 'send', { sessionId: room.id, text: '两位请给意见' }); await settle(team, room.id);
   const group = await call(team, 'dyworker-history', { sessionId: room.id });
   assert.ok(group.groupLog.some(line => line.who === 'User' && line.text === '两位请给意见'));
   assert.ok(group.groupLog.some(line => line.botId === chief.id)); assert.ok(group.groupLog.some(line => line.botId === bot.id));
   const lastSeq = group.groupLog.at(-1)?.seq || 0;
-  await call(team, 'send', { sessionId: room.id, text: `@${bot.name} 请独立检查` }); await settle(team);
+  await call(team, 'send', { sessionId: room.id, text: `@${bot.name} 请独立检查` }); await settle(team, room.id);
   const targeted = (await call(team, 'dyworker-history', { sessionId: room.id })).groupLog.filter(line => line.seq > lastSeq && !line.kind && line.who !== 'User');
   assert.equal(targeted.length, 1, '指定成员时只让该成员回复');
   assert.equal(targeted[0].botId, bot.id);
@@ -176,7 +177,10 @@ test('长对话切换到后续部分：读取当前回复、显示运行状态�
   const history = await call(team, 'dyworker-history', { sessionId: chief.id });
   assert.ok(history.events.some(event => event.sessionId === fresh.sessionId && JSON.stringify(event.data).includes('当前部分的回复')));
   assert.ok(tools.some(tool => tool.name === 'read_file'), '继续提供 DYWorker 的文件工具');
-  assert.ok(!tools.some(tool => ['save_capability', 'attach_capability', 'request_secret', 'show_view'].includes(tool.name)), '不向模型提供没有对应服务或操作页面的工具');
+  assert.ok(!tools.some(tool => [
+    'save_capability', 'attach_capability', 'request_secret', 'show_view',
+    'list_connectors', 'request_connector', 'mail_read', 'mail_send', 'read_document', 'prepare_ds_bot_issue', 'approve_agent_action',
+  ].includes(tool.name)), '不向模型提供没有对应服务或操作页面的工具');
   await call(team, 'send', { sessionId: chief.id, text: '当前部分长回复' }); await started;
   assert.equal((await call(team, 'dyworker-history', { sessionId: chief.id })).running, true);
   await call(team, 'dyworker-stop', { sessionId: chief.id }); await settle(team);
@@ -255,9 +259,9 @@ test('模型失败可见、重新发送恢复；停止群聊会同时取消成�
   started = new Promise(resolve => { markStarted = resolve; }); mode = 'slow';
   await call(team, 'send', { sessionId: room.id, text: '长回复检查' }); await started;
   assert.equal((await call(team, 'dyworker-history', { sessionId: room.id })).running, true);
-  await call(team, 'dyworker-stop', { sessionId: room.id }); await settle(team);
+  await call(team, 'dyworker-stop', { sessionId: room.id }); await settle(team, room.id);
   assert.equal(activeSignal.aborted, true);
   assert.equal((await call(team, 'dyworker-history', { sessionId: room.id })).running, false);
-  mode = 'ok'; await call(team, 'send', { sessionId: room.id, text: '群聊继续' }); await settle(team);
+  mode = 'ok'; await call(team, 'send', { sessionId: room.id, text: '群聊继续' }); await settle(team, room.id);
   assert.ok((await call(team, 'dyworker-history', { sessionId: room.id })).groupLog.some(line => line.text === '已恢复回复'));
 });

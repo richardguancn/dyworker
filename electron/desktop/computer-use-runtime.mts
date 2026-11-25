@@ -174,6 +174,7 @@ export function createComputerUseRuntime(
       filled?: { snapshot: Awaited<ReturnType<typeof readBrowserForm>>, labels: string[] } },
     observedBrowsers: Set<string>,
     closing?: Promise<void>,
+    activeInputOp?: boolean,
   };
   const runs = new Map<string, Run>();
   let catalog: Promise<any[]> | undefined;
@@ -342,7 +343,13 @@ export function createComputerUseRuntime(
         if ("error" in plan) return replyFailure(plan.error);
         if (review) return { ok: true, result: browserFillReview(plan), images: [] };
         current.observation = undefined;
-        const result = await fillBrowserForm(plan, latest, observe, invoke);
+        let result;
+        current.activeInputOp = true;
+        try {
+          result = await fillBrowserForm(plan, latest, observe, invoke);
+        } finally {
+          current.activeInputOp = false;
+        }
         if (!result.ok || !("snapshot" in result) || !result.snapshot.form) return failure(result.result);
         const id = randomUUID();
         const snapshot = result.snapshot;
@@ -624,7 +631,14 @@ export function createComputerUseRuntime(
       if (evidence && name === "click" && macObservationText(fresh.text) !== macObservationText(previous.result.text)) {
         nativeArgs.click_method = "accessibility";
       }
-      const result = await invoke(name, nativeArgs);
+      const isStatefulKeyMouse = name === "drag" || name === "press_key" || name === "type_text";
+      if (isStatefulKeyMouse) current.activeInputOp = true;
+      let result;
+      try {
+        result = await invoke(name, nativeArgs);
+      } finally {
+        if (isStatefulKeyMouse) current.activeInputOp = false;
+      }
       if (isMac && result.isError && /^set_value could not verify/.test(result.text)) {
         return failure(`${result.text} 请先复读。正文没有变化时，优先使用应用自带的「查找/替换」或其他适用的编辑入口；不要重复同一次写入。`);
       }

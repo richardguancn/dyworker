@@ -6,7 +6,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 32, 28, 0.32);
+  background: rgba(20, 22, 18, 0.36);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 /* 「总结为工作模板」草稿确认对话框 */
@@ -387,7 +389,7 @@ html:not([data-theme]) .review-status-badge.status-a {
 
 
   html:not([data-theme]) .dialog-overlay {
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.56);
   }
 
 
@@ -563,7 +565,7 @@ html[data-theme="dark"] .review-status-badge.status-a {
 
 
   html[data-theme="dark"] .dialog-overlay {
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.56);
   }
 
 

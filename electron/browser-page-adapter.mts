@@ -774,7 +774,30 @@ constructor(contents, { scriptTimeoutMs = PAGE_SCRIPT_TIMEOUT_MS, screenshotTime
     const pressed = this.lastInputState.keyDown;
     if (!pressed) return;
     this.lastInputState.keyDown = null;
-    if (!await this.trackInputRelease('Input.dispatchKeyEvent', { type: 'keyUp', ...pressed })) throw new Error('INPUT_RELEASE_FAILED: 按键释放未得到确认');
+    const { fromRawCdp, ...keyPayload } = pressed;
+    const MODIFIER_RELEASE_SPECS = [
+      { bit: 8, key: "Shift", code: "ShiftLeft", vk: 16 },
+      { bit: 4, key: "Meta", code: "MetaLeft", vk: 91 },
+      { bit: 2, key: "Control", code: "ControlLeft", vk: 17 },
+      { bit: 1, key: "Alt", code: "AltLeft", vk: 18 },
+    ];
+    let ok = await this.trackInputRelease("Input.dispatchKeyEvent", { type: "keyUp", ...keyPayload });
+    const modifierMask = fromRawCdp ? (Number(keyPayload.modifiers) || 0) : 0;
+    if (modifierMask > 0) {
+      for (const spec of MODIFIER_RELEASE_SPECS) {
+        if ((modifierMask & spec.bit) && keyPayload.key !== spec.key) {
+          const released = await this.trackInputRelease("Input.dispatchKeyEvent", {
+            type: "keyUp",
+            key: spec.key,
+            code: spec.code,
+            windowsVirtualKeyCode: spec.vk,
+            nativeVirtualKeyCode: spec.vk,
+          });
+          if (!released) ok = false;
+        }
+      }
+    }
+    if (!ok) throw new Error("INPUT_RELEASE_FAILED: 按键释放未得到确认");
   }
 
   /**

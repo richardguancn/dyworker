@@ -214,8 +214,20 @@ constructor({ command, args = [], env, cwd, requestTimeoutMs = REQUEST_TIMEOUT_M
       }
     };
     // EOF lets an idle native session restore the observed window before exit.
-    if (this.isolateProcessTree && !busy && child.stdin?.writable) child.stdin.end();
-    else terminate("SIGTERM");
+    // 若在途调用（如按住拖拽或快捷键）被取消，先短暂放开 stdin EOF（最多 200ms）让底层释放键鼠，再执行 SIGTERM/SIGKILL。
+    if (this.isolateProcessTree && child.stdin?.writable) {
+      try { child.stdin.end(); } catch {}
+      if (busy) {
+        const drained = await Promise.race([
+          exited.then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
+        ]);
+        if (drained) return;
+        if (child.exitCode == null && child.signalCode == null) terminate("SIGTERM");
+      }
+    } else {
+      terminate("SIGTERM");
+    }
     let shutdownTimer: ReturnType<typeof setTimeout>;
     const graceful = await Promise.race([
       exited.then(() => true),
