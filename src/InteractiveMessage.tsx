@@ -19,6 +19,7 @@ import hljs from "highlight.js/lib/common";
 import { isPreviewableExtension } from "../electron/file-preview-formats.mts";
 import { localImagePathFromSource } from "../electron/local-image-path.mts";
 import { useResolvedTheme } from "./appearance/controller";
+import { ActionCardBlock } from "./features/message/ActionCardBlock";
 import { MermaidLightbox } from "./features/message/MermaidLightbox";
 import { getComposerWorkspacePath } from "./state/sessionStore";
 import { openFilePreviewRef } from "./state/sharedRefs";
@@ -198,7 +199,15 @@ async function copyCodeText(text: string) {
   }
 }
 
-function MarkdownPre({ children, node: _node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+function MarkdownPre({ children, node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+  const firstChild = Array.isArray(children) ? children[0] : children;
+  const childClass = String((firstChild as any)?.props?.className || "");
+  const hastClasses = (node as any)?.children?.[0]?.properties?.className;
+  const isActionCard = childClass.includes("language-action-card")
+    || (Array.isArray(hastClasses) && hastClasses.some((item: unknown) => String(item).includes("action-card")));
+  if (isActionCard) {
+    return <div className="action-card-outer">{children}</div>;
+  }
   const [copied, setCopied] = useState(false);
   const timerRef = useRef(0);
   const preRef = useRef<HTMLPreElement>(null);
@@ -254,6 +263,10 @@ function MarkdownCode({ className, children, node: _node, ...props }: ComponentP
   // echarts 数据图表同样懒加载：内容是严格 JSON 的 ECharts option
   if (language === "echarts") {
     return <code {...props} className={className || "language-echarts"}><EchartsDiagram code={text} /></code>;
+  }
+  // action-card：个性化功能页面推荐卡片
+  if (language === "action-card") {
+    return <div className="language-action-card"><ActionCardBlock code={text} /></div>;
   }
   if (highlighted != null) {
     return <code {...props} className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} />;

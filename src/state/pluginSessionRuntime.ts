@@ -13,7 +13,7 @@ import { useViewStore } from "./viewStore";
 export function usePluginSessionRuntime({ activeSession }: { activeSession: SessionRecord | undefined }) {
   const { sessions, workspacePath, activeId } = useSessionStore();
   const { setPluginPanelChoices } = usePanelStore();
-  const { setToolPanelTabs, setBotTeamAvailable, setBotTeamPageOpen, setPluginConversationViews, setConversationView, setRightPanelOpen, setActiveToolPanelTabId, setToolPanelMenuOpen } = useLayoutStore();
+  const { setToolPanelTabs, setBotTeamAvailable, setBotTeamPageOpen, setPluginWorkspacePages, setActiveWorkspacePage, setPluginConversationViews, setConversationView, setRightPanelOpen, setActiveToolPanelTabId, setToolPanelMenuOpen } = useLayoutStore();
   const { ready } = useViewStore();
 
 
@@ -71,6 +71,21 @@ export function usePluginSessionRuntime({ activeSession }: { activeSession: Sess
       const available = pages.some(item => item.pluginId === "ds-bot" && item.meta.key === "bot-team");
       setBotTeamAvailable(available);
       if (!available) setBotTeamPageOpen(false);
+      const customPages = pages
+        .filter(item => !(item.pluginId === "ds-bot" && item.meta.key === "bot-team"))
+        .map(item => ({
+          pluginId: String(item.pluginId || ""),
+          key: String(item.meta.key ?? item.meta.id ?? ""),
+          label: typeof item.meta.label === "function"
+            ? String((item.meta.label as () => unknown)())
+            : String(item.meta.label ?? item.meta.id ?? item.pluginId ?? "插件页面"),
+        }))
+        .filter(item => item.pluginId && item.key);
+      setPluginWorkspacePages(customPages);
+      const active = useLayoutStore.getState().activeWorkspacePage;
+      if (active && !customPages.some(page => page.pluginId === active.pluginId && page.key === active.key)) {
+        setActiveWorkspacePage(null);
+      }
     };
     sync();
     return host.subscribe(sync);

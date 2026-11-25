@@ -233,6 +233,9 @@ html .reference-layout:is(.platform-win32, .platform-linux).sidebar-collapsed { 
   color: var(--quiet);
 }
 .reference-layout .empty-conversation h1 { margin: 0; color: var(--ink); font-size: calc(28px * var(--font-ui-scale)); font-weight: 400; line-height: 1.4; }
+@container welcome (max-height: 310px) {
+  .reference-layout .empty-conversation .creation-examples { display: none; }
+}
 @container welcome (max-height: 180px) {
   .reference-layout .empty-conversation .empty-mark { display: none; }
 }
@@ -694,10 +697,28 @@ html.window-maximized:has(.reference-layout.platform-linux) #root {
   --window-corner-radius: 0px;
   clip-path: none;
 }
-/* 消息滚到标题栏下方时渐隐；遮罩随视口固定，不拦截点击和滚动。 */
-.reference-layout .conversation-viewport {
+/* 消息滚到标题栏下方时渐隐：
+   1. 非半透明模式下用独立顶部纯色渐变覆盖层替代 mask-image，并给滚动容器设置实色背景，
+      确保 Chromium 合成滚动层保持不透明（contents_opaque），彻底避免 Linux 下滚动时
+      LCD 子像素与灰度抗锯齿来回切换导致的字体变粗/忽粗忽细。
+   2. 半透明/壁纸模式下，仅在非 Linux 平台保留 mask-image 透出背景图。 */
+html[data-translucent="true"] .reference-layout:not(.platform-linux) .conversation-viewport {
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 24px);
   mask-image: linear-gradient(to bottom, transparent, #000 24px);
+}
+html:not([data-translucent="true"]) .reference-layout .conversation-viewport {
+  background: var(--surface-strong, var(--surface));
+}
+html:not([data-translucent="true"]) .reference-layout .main-panel:not(.empty-session):not(.plugins-page-open):not(.conversation-view-open):not(.bot-team-page-open):not(.settings-page-open)::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--topbar-height) + var(--conversation-tabs-height));
+  left: 0;
+  right: 12px;
+  height: 24px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--surface-strong, var(--surface)), transparent);
 }
 
 /* 右侧工具入口：图标、名称、数量与快捷键分别对齐。 */

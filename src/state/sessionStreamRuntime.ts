@@ -176,9 +176,10 @@ export function useSessionStreamRuntime(deps: SessionStreamRuntimeDeps) {
         } }));
       } else if (event.type === "context-compacted") {
         ensureChannelAssistant(sessionId, runId);
+        const summary = String(event.summary || "").trim();
         patchChannelAssistant(sessionId, current => ({ ...current, activities: [...(current.activities || []), {
           id: crypto.randomUUID(), kind: "commentary", status: "success",
-          title: "上下文已压缩", detail: "上下文已压缩，已保留继续任务所需的内容。",
+          title: "上下文已压缩", detail: summary || "上下文已压缩，已保留继续任务所需的内容。",
         }] }));
       } else if (event.type === "loop-state") {
         setLoopStates((current) => {

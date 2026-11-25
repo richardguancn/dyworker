@@ -151,12 +151,15 @@ export const INLINE_TOKEN_REGEX = /(@[^\s@]+|\/[^\s/@]+)/g;
 // @「标题」会话引用 token：会话标题可含空格，用全角括号定界才能与后续正文无歧义地切分
 export const SESSION_TOKEN_REGEX = /@「([^「」@]+)」/g;
 
-// 正文里出现的 /token 名字集合：判断技能引用是否已内联在正文中
+// 正文里出现的 /token 名字集合：跳过 @路径/ 内部的斜杠，避免把 @docs/api/ 误识别为 /api 技能
 export function skillTokensInText(text: string): Set<string> {
   const names = new Set<string>();
-  SKILL_TOKEN_REGEX.lastIndex = 0;
+  INLINE_TOKEN_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = SKILL_TOKEN_REGEX.exec(text))) names.add(match[1]);
+  while ((match = INLINE_TOKEN_REGEX.exec(text))) {
+    const token = match[0];
+    if (token.startsWith("/")) names.add(token.slice(1));
+  }
   return names;
 }
 

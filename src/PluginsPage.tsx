@@ -225,7 +225,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const detailEntry = verifiedEntries.find(entry => entry.id === detailSelection?.entryId)
     || (detailCatalog ? entries.find(entry => isInstalled(detailCatalog, [entry])) : undefined);
   if (detailSelection && (detailEntry||detailCatalog)) return <>
-    {(marketSpec || localInstallOpen) && <AddPluginDialog initialSpec={marketSpec} onClose={() => { setMarketSpec(''); setLocalInstallOpen(false); }} onInstalled={() => void refresh()} />}
+    {(marketSpec || localInstallOpen) && <AddPluginDialog initialSpec={marketSpec} initialMode={marketSpec ? "remote" : localInstallOpen ? "local" : undefined} onClose={() => { setMarketSpec(''); setLocalInstallOpen(false); }} onInstalled={() => void refresh()} />}
     <PluginDetailPage entry={detailEntry} bundle={detailEntry ? bundleOf.get(detailEntry.name) : undefined} catalog={detailCatalog || catalog.find(plugin => plugin.packageName === detailEntry?.name)}
       busy={Boolean(busy)} error={error} notice={notice} refreshKey={refreshKey} configuration={detailEntry ? configurationFor(detailEntry) : undefined}
       onBack={() => { setDetailSelection(null); setEditing(null); }} onToggle={() => { if (detailEntry) void toggle(detailEntry); }}
@@ -246,6 +246,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
       {marketSpec || localInstallOpen ? (
         <AddPluginDialog
           initialSpec={marketSpec}
+          initialMode={marketSpec ? "remote" : localInstallOpen ? "local" : undefined}
           onClose={() => { setMarketSpec(""); setLocalInstallOpen(false); }}
           onInstalled={() => void refresh()}
         />

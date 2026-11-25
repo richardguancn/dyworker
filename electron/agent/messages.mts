@@ -542,3 +542,69 @@ export function messageText(message) {
   }
   return "";
 }
+
+import { stripTaskFailureNote } from "../task-result.mts";
+export { stripTaskFailureNote };
+
+/** 构造发往 agent 循环的历史消息条目：保留半程工具进度并过滤纯报错空壳消息，防止失败重试污染上下文 */
+export function prepareAgentConversationEntries(
+  message: any,
+  recovered: { executedMessages?: any[]; summary?: string } | undefined,
+  resolvedContent: any,
+): any[] {
+  const execution = message?.executedMessages?.length ? message.executedMessages : recovered?.executedMessages;
+  if (message?.role === "assistant" && Array.isArray(execution) && execution.length > 0) {
+    const out: any[] = [];
+    for (const m of execution) {
+      out.push({
+        role: m.role,
+        content: m.content || "",
+        ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
+        ...(Array.isArray(m.tool_calls) && m.tool_calls.length ? { tool_calls: m.tool_calls } : {}),
+        ...(m.role === "tool" && m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+      });
+    }
+    if (message.taskStatus === "cancelled" || recovered) {
+      out.push({ role: "assistant", content: "本轮已停止。前面的工具结果是当时的进度；最后的行动计划不能视为已执行。" });
+    } else if (message.taskStatus === "error") {
+      out.push({ role: "assistant", content: "本轮因异常中断。前面的工具结果是当时的真实进度；请在已完成进度的基础上继续剩余工作，不要重复执行已成功的副作用操作。" });
+    }
+    return out;
+  }
+
+  if (message?.role === "assistant" && message?.taskStatus === "error") {
+    const cleanText = typeof resolvedContent === "string"
+      ? stripTaskFailureNote(resolvedContent)
+      : "";
+    const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+    if (!cleanText && !hasToolCalls && !recovered?.summary) {
+      return [];
+    }
+    const entry: any = {
+      role: "assistant",
+      content: cleanText,
+      ...(String(message?.reasoning || message?.reasoning_content || "").trim()
+        ? { reasoning_content: String(message?.reasoning || message?.reasoning_content || "").trim() }
+        : {}),
+      ...(hasToolCalls ? { tool_calls: message.tool_calls } : {}),
+    };
+    return [recovered?.summary ? { role: "assistant", content: recovered.summary } : entry];
+  }
+
+  const entry: any = {
+    role: message?.role,
+    content: resolvedContent,
+  };
+  if (message?.role === "assistant") {
+    const reasoning = String(message?.reasoning || message?.reasoning_content || "").trim();
+    if (reasoning) entry.reasoning_content = reasoning;
+    if (Array.isArray(message?.tool_calls) && message.tool_calls.length) {
+      entry.tool_calls = message.tool_calls;
+    }
+  }
+  if (message?.role === "tool" && message?.tool_call_id) {
+    entry.tool_call_id = message.tool_call_id;
+  }
+  return [recovered?.summary ? { role: "assistant", content: recovered.summary } : entry];
+}
+

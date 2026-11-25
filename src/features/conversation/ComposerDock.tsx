@@ -2,7 +2,8 @@
 // （状态提示 toast、待发送列表、目标横幅、项目栏、粘贴折叠、注释条、附件条、
 // 输入框与镜像层、工具栏、模型/审批菜单、语音与发送按钮、回到底部按钮）。
 // 状态与回调由 App 经 ConversationPane 传入。
-import { ArrowDown, ArrowUp, AtSign, Check, ChevronDown, CornerDownRight, ListEnd, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, AtSign, Blocks, Check, ChevronDown, CornerDownRight, ListEnd, FileCode2, FileText, Folder, FolderOpen, GitBranch, LoaderCircle, MessageSquare, Mic, Moon, MoreHorizontal, Paperclip, Pencil, Plus, Settings, Slash, Square, Trash2, X } from "lucide-react";
 import { ContextRing } from "../usage/UsagePanels";
 import { t, useLocale } from "../../i18n";
 import { composerApprovalModes, getApprovalModeDetails } from "../plans/PlansPanel";
@@ -19,6 +20,7 @@ import { formatWakeTime } from "../../wakeNote";
 import { clientHost } from "../../pluginRuntime/clientHostSingleton.ts";
 import { reasoningModelKey } from "../../../electron/model-reasoning.ts";
 import { saveComposerReasoning } from "../../state/settingsActions";
+import { useSessionStore } from "../../state/sessionStore";
 import type { ConversationPaneProps } from "./ConversationPane";
 
 export type ComposerDockProps = Pick<ConversationPaneProps,
@@ -82,6 +84,29 @@ export function ComposerDock(props: ComposerDockProps) {
     canSend, sendMessage, runningRunIdsRef,
     atBottom, viewportRef,
   } = props;
+  const creationModeActive = Boolean(activeSession?.creationMode && activeSession?.runtime !== "dsh");
+  const prevCreationRef = useRef<{ sessionId: string; active: boolean }>({
+    sessionId: activeSession?.id || activeId || "",
+    active: creationModeActive,
+  });
+  const [creationEntering, setCreationEntering] = useState(false);
+
+  useEffect(() => {
+    const currentId = activeSession?.id || activeId || "";
+    const prev = prevCreationRef.current;
+    prevCreationRef.current = { sessionId: currentId, active: creationModeActive };
+
+    // 仅在同一会话内从关闭切换到开启时播放瞬时唤醒爆发动效，切会话不误触发
+    if (prev.sessionId === currentId && !prev.active && creationModeActive) {
+      setCreationEntering(true);
+      const timer = window.setTimeout(() => setCreationEntering(false), 950);
+      return () => window.clearTimeout(timer);
+    }
+    if (!creationModeActive) {
+      setCreationEntering(false);
+    }
+  }, [activeSession?.id, activeId, creationModeActive]);
+
   return (
         <div className="composer-dock" ref={setComposerDockNode}>
           {(error || activeSessionError) && (
@@ -248,11 +273,19 @@ export function ComposerDock(props: ComposerDockProps) {
             goal={activeSession?.goal && activeSession.goalState?.status !== 'complete' ? <GoalBanner key={`${activeSession.id}:${activeSession.goalState?.id || 'legacy'}`}
               session={activeSession} busy={activeTaskRunning} onAction={(action) => handleGoalAction(activeSession.id, action)} /> : null} />
           <div
-            className={`composer-card ${composerDragActive ? "drag-over" : ""}`}
+            className={`composer-card ${composerDragActive ? "drag-over" : ""} ${creationModeActive ? "creation-mode" : ""} ${creationEntering ? "creation-entering" : ""}`.trim()}
             onDragOver={handleComposerDragOver}
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
+            {creationModeActive && (
+              <div className="composer-creation-fx" aria-hidden="true">
+                <span className="composer-creation-sheen" />
+                <span className="composer-creation-spark spark-1" />
+                <span className="composer-creation-spark spark-2" />
+                <span className="composer-creation-spark spark-3" />
+              </div>
+            )}
             {editingMessage && editingMessage.sessionId === activeSession?.id && (
               <div className="message-editing-banner" role="status">
                 <Pencil size={13} />
@@ -281,7 +314,7 @@ export function ComposerDock(props: ComposerDockProps) {
                     <span><strong>{item.title}</strong><small>{item.detail}</small></span>
                   </button>
                 )) : (
-                  <p className="mention-empty">{mentionMenu.kind === "slash" ? "没有匹配的技能" : "没有匹配的会话或文件"}</p>
+                  <p className="mention-empty">{mentionMenu.kind === "slash" ? "没有匹配的技能" : "没有匹配的会话、文件夹或文件"}</p>
                 )}
               </div>
             )}
@@ -541,6 +574,26 @@ export function ComposerDock(props: ComposerDockProps) {
                     </div>
                   )}
                 </div>
+                {activeSession?.runtime !== "dsh" && (
+                  <button
+                    type="button"
+                    className={`creation-mode-toggle ${activeSession?.creationMode ? "active" : ""} ${creationEntering ? "entering" : ""}`.trim()}
+                    onClick={() => {
+                      const targetId = activeSession?.id || activeId;
+                      if (!targetId) return;
+                      const next = !activeSession?.creationMode;
+                      const { setSessions, setNewTaskDraft } = useSessionStore.getState();
+                      setSessions((current) => current.map((item) => item.id === targetId ? { ...item, creationMode: next } : item));
+                      setNewTaskDraft((current) => current && current.id === targetId ? { ...current, creationMode: next } : current);
+                      setNotice(next ? "已开启创造模式：可让 AI 创建并热挂载页面或插件" : "已关闭创造模式");
+                    }}
+                    aria-pressed={Boolean(activeSession?.creationMode)}
+                    title={activeSession?.creationMode ? "创造模式已开启：AI 可创建并热挂载个性化页面与插件（点击关闭）" : "开启创造模式：让 AI 为你创建专属页面、看板或插件"}
+                  >
+                    <Blocks size={14} />
+                    <span>创造模式</span>
+                  </button>
+                )}
               </div>
               <div className="composer-actions composer-send-actions">
                 <ContextRing used={contextUsage.used} limit={contextUsage.limit} exact={contextUsage.exact} />

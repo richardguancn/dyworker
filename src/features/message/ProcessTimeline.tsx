@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  Blocks,
   Bot,
   Brain,
   Check,
@@ -95,6 +96,9 @@ export function ActivityIcon({ kind }: { kind: ActivityRecord["kind"] }) {
       return <FileCode2 size={14} />;
     case "finish":
       return <Check size={14} />;
+    case "plugin_inspect":
+    case "plugin_manage":
+      return <Blocks size={14} />;
     default:
       return <Sparkles size={14} />;
   }
@@ -266,6 +270,38 @@ export function ProcessCommentaryItem({ text }: { text: string }) {
   return (
     <div className="process-commentary-item">
       <MarkdownSnippet content={text} />
+    </div>
+  );
+}
+
+const DEFAULT_COMPACTION_DETAIL = "上下文已压缩，已保留继续任务所需的内容。";
+
+export function ProcessCompactionItem({ activity }: { activity: ActivityRecord }) {
+  const [open, setOpen] = useState(false);
+  const summary = String(activity.detail || "").trim();
+  const hasRichSummary = Boolean(summary && summary !== DEFAULT_COMPACTION_DETAIL);
+  return (
+    <div className="process-action-item success process-compaction-item">
+      <button
+        type="button"
+        className="process-action-header"
+        aria-expanded={hasRichSummary ? open : undefined}
+        onClick={() => hasRichSummary && setOpen((value) => !value)}
+        disabled={!hasRichSummary}
+      >
+        <span className="process-action-icon">
+          <History size={13} />
+        </span>
+        <span className="process-action-title">
+          {hasRichSummary ? `${activity.title || "上下文已压缩"}（点击查看保留摘要）` : DEFAULT_COMPACTION_DETAIL}
+        </span>
+        {hasRichSummary && (open ? <ChevronDown size={13} /> : <ChevronRight size={13} />)}
+      </button>
+      {open && hasRichSummary && (
+        <div className="process-action-detail process-compaction-detail">
+          <MarkdownSnippet content={summary} />
+        </div>
+      )}
     </div>
   );
 }
@@ -442,6 +478,9 @@ export const ProcessTimeline = memo(function ProcessTimeline({
           {/* 按时序遍历各项活动 */}
           {activities.map((activity) => {
             if (activity.kind === "commentary") {
+              if (activity.title === "上下文已压缩") {
+                return <ProcessCompactionItem key={activity.id} activity={activity} />;
+              }
               return <ProcessCommentaryItem key={activity.id} text={activity.detail || activity.title} />;
             }
             if (activity.kind === "thinking") {

@@ -40,6 +40,16 @@ export function codeBreadcrumbSegments(filePath: string, workspacePath: string) 
   return [workspaceName, ...relative.split(/[\\/]/).filter(Boolean)];
 }
 
+export function workspaceRelativePath(entryPath: string, workspacePath: string): string {
+  const norm = (value: string) => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = norm(workspacePath);
+  const target = norm(entryPath);
+  if (root && (target === root || target.startsWith(`${root}/`))) {
+    return target.slice(root.length).replace(/^\/+/, "");
+  }
+  return target.split("/").pop() || target;
+}
+
 export function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
   const isImage = /\.(png|jpe?g|gif|bmp|webp)$/i.test(file.name);
   return {
@@ -49,6 +59,109 @@ export function workspaceFileAttachment(file: WorkspaceEntry): Attachment {
     mimeType: isImage ? "image/*" : "text/plain",
     isImage,
   };
+}
+
+export function workspaceDirectoryAttachment(dir: WorkspaceEntry, tokenName?: string): Attachment {
+  const cleanName = tokenName || (dir.name.endsWith("/") ? dir.name : `${dir.name}/`);
+  return {
+    name: cleanName,
+    path: dir.path,
+    size: 0,
+    mimeType: "inode/directory",
+    isImage: false,
+    isDirectory: true,
+  };
+}
+
+export interface WorkspaceTarget extends WorkspaceEntry {
+  relativePath: string;
+  mentionToken: string;
+}
+
+export function flattenWorkspaceTargets(entries: WorkspaceEntry[], workspacePath: string): WorkspaceTarget[] {
+  const out: WorkspaceTarget[] = [];
+  const walk = (list: WorkspaceEntry[]) => {
+    for (const entry of list || []) {
+      const rel = workspaceRelativePath(entry.path, workspacePath) || entry.name;
+      const isDir = entry.kind === "directory";
+      out.push({
+        ...entry,
+        relativePath: rel,
+        mentionToken: isDir ? `${rel.replace(/\/+$/, "")}/` : entry.name,
+      });
+      if (entry.children?.length) walk(entry.children);
+    }
+  };
+  walk(entries);
+  return out;
+}
+
+export function filterAtMentionTargets(targets: WorkspaceTarget[], rawQuery: string, limit = 12): WorkspaceTarget[] {
+  const query = String(rawQuery || "").trim().replace(/^@+/, "");
+  const lower = query.toLowerCase();
+  const hasSlash = lower.includes("/");
+
+  if (!lower) {
+    // 无查询词时：顶层条目优先，目录排在同级文件之前
+    const scored = targets.map((item, idx) => {
+      const depth = item.relativePath.split("/").length;
+      return { item, score: (depth === 1 ? 0 : 100 + depth) + (item.kind === "directory" ? 0 : 10), idx };
+    });
+    scored.sort((a, b) => a.score - b.score || a.idx - b.idx);
+    return scored.slice(0, limit).map((row) => row.item);
+  }
+
+  if (hasSlash) {
+    const slashIdx = lower.lastIndexOf("/");
+    const dirPrefix = lower.slice(0, slashIdx);
+    const tail = lower.slice(slashIdx + 1);
+    const directChildren: WorkspaceTarget[] = [];
+    const fallbackMatches: WorkspaceTarget[] = [];
+
+    for (const item of targets) {
+      const relLower = item.relativePath.toLowerCase();
+      if (dirPrefix) {
+        if (!relLower.startsWith(`${dirPrefix}/`)) {
+          if (relLower.includes(lower)) fallbackMatches.push(item);
+          continue;
+        }
+        const rest = relLower.slice(dirPrefix.length + 1);
+        if (!rest.includes("/")) {
+          if (!tail || rest.startsWith(tail) || rest.includes(tail)) directChildren.push(item);
+        } else if (tail && rest.includes(tail)) {
+          fallbackMatches.push(item);
+        }
+      } else {
+        // 以 `/` 开头：匹配顶层
+        if (!relLower.includes("/") && (!tail || relLower.includes(tail))) directChildren.push(item);
+        else if (relLower.includes(tail)) fallbackMatches.push(item);
+      }
+    }
+    const sortDirFirst = (a: WorkspaceTarget, b: WorkspaceTarget) => {
+      if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+      if (tail) {
+        const aStarts = a.name.toLowerCase().startsWith(tail) ? 0 : 1;
+        const bStarts = b.name.toLowerCase().startsWith(tail) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+      }
+      return a.relativePath.localeCompare(b.relativePath, "zh-CN", { numeric: true });
+    };
+    directChildren.sort(sortDirFirst);
+    fallbackMatches.sort(sortDirFirst);
+    return [...directChildren, ...fallbackMatches].slice(0, limit);
+  }
+
+  const matched = targets
+    .filter((item) => item.name.toLowerCase().includes(lower) || item.relativePath.toLowerCase().includes(lower))
+    .map((item, idx) => {
+      const nameLower = item.name.toLowerCase();
+      const starts = nameLower.startsWith(lower) ? 0 : 1;
+      const dirWeight = item.kind === "directory" ? 0 : 1;
+      const depth = item.relativePath.split("/").length;
+      return { item, score: starts * 100 + dirWeight * 10 + depth, idx };
+    });
+  matched.sort((a, b) => a.score - b.score || a.idx - b.idx);
+  return matched.slice(0, limit).map((row) => row.item);
 }
 
 // 按名称筛选文件树:保留命中项的祖先目录链

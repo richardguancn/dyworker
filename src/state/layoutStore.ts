@@ -85,6 +85,10 @@ export interface LayoutState {
   setBotTeamPageOpen: (value: Updater<boolean>) => void;
   botTeamAvailable: boolean;
   setBotTeamAvailable: (value: Updater<boolean>) => void;
+  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string }>;
+  setPluginWorkspacePages: (value: Updater<Array<{ pluginId: string; key: string; label: string }>>) => void;
+  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
+  setActiveWorkspacePage: (value: Updater<{ pluginId: string; key: string; label: string } | null>) => void;
 
   conversationView: string;
   setConversationView: (value: Updater<string>) => void;
@@ -169,6 +173,10 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setBotTeamPageOpen: (value) => set((s) => updateField(s, "botTeamPageOpen", value)),
   botTeamAvailable: false,
   setBotTeamAvailable: (value) => set((s) => updateField(s, "botTeamAvailable", value)),
+  pluginWorkspacePages: [],
+  setPluginWorkspacePages: (value) => set((s) => updateField(s, "pluginWorkspacePages", value)),
+  activeWorkspacePage: null,
+  setActiveWorkspacePage: (value) => set((s) => updateField(s, "activeWorkspacePage", value)),
 
   conversationView: "chat",
   setConversationView: (value) => set((s) => updateField(s, "conversationView", value)),

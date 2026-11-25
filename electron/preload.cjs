@@ -363,4 +363,20 @@ contextBridge.exposeInMainWorld("dyworker", {
   // 插件视图要的会话投影（sessionId + key）
   pluginProjection: (payload) => ipcRenderer.invoke("plugins:projection", payload),
   dshOperation: (payload) => ipcRenderer.invoke('plugins:dsh-operation', payload),
+  managedPluginsRoot: () => ipcRenderer.invoke("plugins:managed-root"),
+  choosePluginDirectory: () => ipcRenderer.invoke("plugins:choose-directory"),
+  listCreatedPlugins: () => ipcRenderer.invoke("plugins:list-created"),
+  createPluginFromCard: (payload) => ipcRenderer.invoke("plugins:card-create", payload),
+  cancelCardPluginCreation: (payload) => ipcRenderer.invoke("plugins:card-cancel", payload),
+  onPluginSyncRequest: (callback) => {
+    const listener = (_event, request) => callback(request);
+    ipcRenderer.on("plugins:sync-request", listener);
+    return () => ipcRenderer.removeListener("plugins:sync-request", listener);
+  },
+  replyPluginSync: (payload) => ipcRenderer.send("plugins:sync-reply", payload),
+  onPluginsUpdated: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("plugins:updated", listener);
+    return () => ipcRenderer.removeListener("plugins:updated", listener);
+  },
 });

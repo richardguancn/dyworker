@@ -11,8 +11,8 @@ export const RISK = Object.freeze({
 });
 
 // 需要审批的内建工具（= 全部 consequential 内建工具，单源，agent.mjs 从这里 import）
-export const toolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook"]);
-export const workspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook"]);
+export const toolsNeedingApproval = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "run_command", "save_skill", "update_skill", "export_word_document", "export_excel_workbook", "office_recalculate", "plugin_manage"]);
+export const workspaceWriteTools = new Set(["write_file", "edit_file", "make_directory", "append_file", "copy_file", "move_file", "delete_file", "export_word_document", "export_excel_workbook", "office_recalculate"]);
 export const internetApprovalTools = new Set(["web_search", "gov_search", "fetch_web_page", "browser__open", "ocr_file"]);
 export const feishuWriteTools = new Set(["feishu_create_doc", "feishu_write_doc", "feishu_grant_doc_permission", "feishu_bitable_write_records", "feishu_sheet_write"]);
 

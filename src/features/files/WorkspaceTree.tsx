@@ -1,6 +1,7 @@
 import { Search, X } from "lucide-react";
 import { memo, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { filterWorkspaceEntries, takeWorkspaceEntries } from "../../lib/files";
+import { usePanelStore } from "../../state/panelStore";
 import type { WorkspaceEntry } from "../../types";
 import { WorkspaceNode } from "./WorkspaceNode";
 
@@ -8,11 +9,12 @@ type TreeProps = {
   entries: WorkspaceEntry[];
   onOpenFile: (entry: WorkspaceEntry) => void;
   onInsertFile?: (entry: WorkspaceEntry) => void;
+  revealedPath?: { path: string; nonce: number } | null;
 };
 
-const WorkspaceRows = memo(function WorkspaceRows({ entries, onOpenFile, onInsertFile, forceExpand }: TreeProps & { forceExpand?: boolean }) {
+const WorkspaceRows = memo(function WorkspaceRows({ entries, onOpenFile, onInsertFile, forceExpand, revealedPath }: TreeProps & { forceExpand?: boolean }) {
   return <div className="workspace-tree">
-    {entries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} onOpenFile={onOpenFile} onInsertFile={onInsertFile} forceExpand={forceExpand} />)}
+    {entries.map((entry) => <WorkspaceNode entry={entry} key={entry.path} onOpenFile={onOpenFile} onInsertFile={onInsertFile} forceExpand={forceExpand} revealedPath={revealedPath} />)}
   </div>;
 });
 
@@ -45,12 +47,16 @@ const WorkspaceSearchResults = memo(function WorkspaceSearchResults({ entries, q
 
 export function WorkspaceTree({ entries, workspaceOpen, onOpenFile, onInsertFile }: TreeProps & { workspaceOpen: boolean }) {
   const [fileFilter, setFileFilter] = useState("");
+  const revealedTreePath = usePanelStore((s) => s.revealedTreePath);
   const keyword = fileFilter.trim();
   const query = useDeferredValue(keyword);
   const resultsRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (resultsRef.current) resultsRef.current.scrollTop = 0;
   }, [query]);
+  useEffect(() => {
+    if (revealedTreePath) setFileFilter("");
+  }, [revealedTreePath]);
 
   return <>
     <div className="tool-file-filter">
@@ -60,8 +66,8 @@ export function WorkspaceTree({ entries, workspaceOpen, onOpenFile, onInsertFile
     </div>
     <div className="file-split-tree-results" ref={resultsRef} aria-busy={keyword !== query}>
       {workspaceOpen && (entries.length ? <>
-        <div hidden={Boolean(query)}><WorkspaceRows entries={entries} onOpenFile={onOpenFile} onInsertFile={onInsertFile} /></div>
-        {query && <WorkspaceSearchResults key={query} entries={entries} query={query} onOpenFile={onOpenFile} onInsertFile={onInsertFile} />}
+        <div hidden={Boolean(query)}><WorkspaceRows entries={entries} onOpenFile={onOpenFile} onInsertFile={onInsertFile} revealedPath={revealedTreePath} /></div>
+        {query && <WorkspaceSearchResults key={query} entries={entries} query={query} onOpenFile={onOpenFile} onInsertFile={onInsertFile} revealedPath={revealedTreePath} />}
       </> : <p className="panel-empty">这个文件夹是空的。</p>)}
     </div>
   </>;

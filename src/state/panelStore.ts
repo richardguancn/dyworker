@@ -38,6 +38,9 @@ export interface PanelState {
   setSkillEdit: (value: Updater<SkillRecord | null>) => void;
   pluginPanelChoices: PluginPanelTab[];
   setPluginPanelChoices: (value: Updater<PluginPanelTab[]>) => void;
+  /** 文件面板目录树自动展开并定位的目标路径（点击气泡 @目录/ 时触发） */
+  revealedTreePath: { path: string; nonce: number } | null;
+  setRevealedTreePath: (value: Updater<{ path: string; nonce: number } | null>) => void;
 }
 
 export const usePanelStore = create<PanelState>((set) => ({
@@ -69,4 +72,6 @@ export const usePanelStore = create<PanelState>((set) => ({
   setSkillEdit: (value) => set((s) => updateField(s, "skillEdit", value)),
   pluginPanelChoices: [],
   setPluginPanelChoices: (value) => set((s) => updateField(s, "pluginPanelChoices", value)),
+  revealedTreePath: null,
+  setRevealedTreePath: (value) => set((s) => updateField(s, "revealedTreePath", value)),
 }));

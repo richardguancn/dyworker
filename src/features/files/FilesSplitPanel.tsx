@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { FileBrowserToolbar } from "../../FileBrowserToolbar";
 import { FileTextEditor } from "../../FileTextEditor";
 import { isMarkdownFile, isTextPreviewFile } from "../../lib/files";
+import { usePanelStore } from "../../state/panelStore";
 import type { WorkspaceEntry } from "../../types";
 import { MarkdownLiveEditorPane } from "./MarkdownLiveEditorPane";
 import { WorkspaceTree } from "./WorkspaceTree";
@@ -65,6 +66,10 @@ export function FilesSplitPanel({
   const previewRequest = useRef(0);
   // 右侧文件树开关（默认开启）与拖拽调宽（null = 跟随默认弹性宽度）
   const [treeVisible, setTreeVisible] = useState(true);
+  const revealedTreePath = usePanelStore((s) => s.revealedTreePath);
+  useEffect(() => {
+    if (revealedTreePath) setTreeVisible(true);
+  }, [revealedTreePath]);
   const [treeWidth, setTreeWidth] = useState<number | null>(null);
   const treeRef = useRef<HTMLDivElement | null>(null);
   const treeResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);

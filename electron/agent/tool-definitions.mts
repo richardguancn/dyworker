@@ -158,6 +158,17 @@ export function toolDefinitions(settings = null) {
         },
       },
       ["path", "sheets"]),
+    functionTool("office_render", "将 PDF 或 Office 文档（.docx/.doc/.pptx/.ppt/.xlsx/.xls）渲染为页面截图以检查排版、表格折行或文字溢出（单次最多 2 页）。",
+      {
+        path: stringProperty("文档相对工作区路径"),
+        pages: stringProperty("可选页码或范围（如 \"1\" 或 \"2-3\"），默认 \"1-2\""),
+      },
+      ["path"]),
+    functionTool("office_recalculate", "通过本机 LibreOffice 重新计算 Excel 工作簿（.xlsx/.xlsm/.ods）中的全部公式缓存值，并检查 #REF!/#DIV/0! 等公式错误。",
+      {
+        path: stringProperty("表格文件路径"),
+      },
+      ["path"]),
     functionTool("web_search", "搜索公开互联网并返回标题与网址。",
       {
         query: stringProperty("关键词"),

@@ -9,6 +9,8 @@ const OFFICE_TOOLS = new Set([
   'calculate_workdays',
   'export_word_document',
   'export_excel_workbook',
+  'office_render',
+  'office_recalculate',
   'scan_sensitive_info',
   'ocr_file',
 ]);
@@ -37,7 +39,14 @@ const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
     guidance: browserUseGuidance,
   },
   office: {
-    summary: '政务与办公（政策检索、公文检查、工作日、Word/Excel、脱敏、OCR）',
+    summary: '政务与办公（政策检索、公文检查、工作日、Word/Excel、页面视觉自检与公式重算、脱敏、OCR）',
+    guidance: [
+      'Office 文档避坑红线：',
+      '1. 旧格式 .doc/.xls/.ppt 不能直接由 python-docx/openpyxl/python-pptx 打开，请先转换后再编辑；',
+      '2. Word(.docx) 修改已有段落必须操作 run（直接修改 paragraph.text 会静默清空格式），设置中文字体须同时写 run.font.name 与 w:eastAsia；',
+      '3. PPT/Word/复杂报表改版后无法靠纯文本判断是否溢出或错位，交付前务必用 office_render 渲染关键页看图自检；',
+      '4. Excel 写入公式不会自动产生缓存计算值，需调用 office_recalculate 重算并检查 #REF!/#DIV/0! 错误；严禁用 pandas 直接覆盖保存含多 Sheet/样式的已有工作簿。',
+    ].join('\n'),
   },
   history_and_skills: {
     summary: '历史会话检索与技能模板管理',
@@ -48,9 +57,12 @@ const GROUP_META: Record<string, { summary: string; guidance?: string }> = {
   feishu: {
     summary: '飞书云文档、多维表格与电子表格读写',
   },
+  plugin_authoring: {
+    summary: '检查与管理本地扩展插件（安装、重载、启停、卸载）',
+  },
 };
 
-const GROUP_ORDER = ['desktop', 'browser', 'office', 'history_and_skills', 'file_and_wake', 'feishu'] as const;
+const GROUP_ORDER = ['desktop', 'browser', 'office', 'history_and_skills', 'file_and_wake', 'feishu', 'plugin_authoring'] as const;
 
 export function resolveGroupSummary(group: string, tools?: any[]): string {
   if (GROUP_META[group]?.summary) return GROUP_META[group].summary;
@@ -87,6 +99,7 @@ function classifyGroup(name: string, identity: string): string | null {
   }
   if (FILE_AND_WAKE_TOOLS.has(name)) return 'file_and_wake';
   if (name.startsWith('feishu_')) return 'feishu';
+  if (name === 'plugin_inspect' || name === 'plugin_manage') return 'plugin_authoring';
   if (name.startsWith('plugin__')) {
     const match = /^plugin__([a-zA-Z0-9_-]+)__/.exec(name);
     return match ? `plugin_${match[1]}` : 'plugins';

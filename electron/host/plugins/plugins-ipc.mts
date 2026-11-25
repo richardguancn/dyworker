@@ -6,7 +6,10 @@
 // 本插件自己就走契约层（ctx.ipc / ctx.plugins），不接收壳层 deps 大包：
 // 既是功能实现，也是"第三方插件该怎么写"的第二个样板。
 import { createHistoryRelay } from '../dsh-runtime/history-relay.mts';
-export function pluginsIpcPlugin() {
+import { dirname } from "node:path";
+import { cancelCardPluginCreation, listCreatedLocalPlugins, managedCreatedPluginsRoot, startCardPluginCreation, tryBuildOfflineLocalInstallRunner } from "../../plugin-authoring.mts";
+
+export function pluginsIpcPlugin(deps: any = {}) {
   return {
     name: "ipc:plugins",
     // 为什么需要 loader：cordis 4 的严格服务访问按**当前调用方 fiber** 判定，
@@ -53,14 +56,17 @@ export function pluginsIpcPlugin() {
           allowIncompatible: Boolean(payload?.allowIncompatible),
         })));
 
-      // 从包管理器装进 profile，再走上面的安装流程
+      // 从包管理器装进 profile，再走上面的安装流程；本地纯 JS 目录优先走离线快速拷贝
       ctx.effect(() => ctx.ipc.handle("plugins:install-package", async (_event, payload) => {
+        const rawInput = String(payload?.input ?? payload?.spec ?? "").trim();
+        const localFast = rawInput ? await tryBuildOfflineLocalInstallRunner(rawInput) : null;
         const downloaded = await host.installPackage({
-          input: payload?.input ?? payload?.spec,
+          input: localFast?.ok ? localFast.resolvedDir : (payload?.input ?? payload?.spec),
           version: payload?.version,
           source: payload?.source,
           customRegistry: payload?.customRegistry,
           allowIncompatible: Boolean(payload?.allowIncompatible),
+          ...(localFast?.ok && localFast.run ? { run: localFast.run } : {}),
         });
         return downloaded;
       }));
@@ -120,6 +126,42 @@ export function pluginsIpcPlugin() {
           return { ok: false, error: String(error?.message || error) };
         }
       }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:managed-root", () => {
+        const dataDir = deps.dataDir || ctx.paths?.dataDir || dirname(ctx.plugins?.dir || ".");
+        return managedCreatedPluginsRoot(dataDir);
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:choose-directory", async () => {
+        const win = ctx.get("window");
+        if (!win?.dialog?.showOpenDialog) return null;
+        const result = await win.dialog.showOpenDialog({
+          properties: ["openDirectory"],
+          title: "选择插件文件夹",
+        });
+        return result?.canceled ? null : result?.filePaths?.[0] || null;
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:list-created", () => {
+        const dataDir = deps.dataDir || ctx.paths?.dataDir || dirname(ctx.plugins?.dir || ".");
+        return listCreatedLocalPlugins(ctx, dataDir);
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:card-create", (event, payload) => {
+        const dataDir = deps.dataDir || ctx.paths?.dataDir || dirname(ctx.plugins?.dir || ".");
+        return startCardPluginCreation({
+          ctx,
+          dataDir,
+          getSettings: deps.getSettings || (() => ctx.get("settings")?.read?.()),
+          renderer: event?.sender,
+          syncClientPlugin: deps.syncClientPlugin
+            ? (req) => deps.syncClientPlugin(event?.sender, req)
+            : undefined,
+          notifyPluginsUpdated: deps.notifyPluginsUpdated,
+        }, payload);
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:card-cancel", (_event, payload) => cancelCardPluginCreation(payload)));
     },
   };
 }

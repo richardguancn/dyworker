@@ -80,12 +80,13 @@ export const applyWorkspaceSelection = (targetWorkspacePath: string) => {
 };
 
 export const createTask = (targetWorkspacePath = useSessionStore.getState().workspacePath) => {
-  const { setPluginsPageOpen, setBotTeamPageOpen, setConversationView } = useLayoutStore.getState();
+  const { setPluginsPageOpen, setBotTeamPageOpen, setActiveWorkspacePage, setConversationView } = useLayoutStore.getState();
   const { newTaskDraft, setActiveId, setNewTaskDraft } = useSessionStore.getState();
   const { setActiveSkills, setComposer, setAttachments } = useComposerStore.getState();
   const { setEditingMessage, setNotice } = useViewStore.getState();
   setPluginsPageOpen(false);
   setBotTeamPageOpen(false);
+  setActiveWorkspacePage(null);
   setConversationView("chat");
   const nextWorkspacePath = String(targetWorkspacePath || "");
   if (newTaskDraft) {
@@ -115,7 +116,13 @@ export const createTask = (targetWorkspacePath = useSessionStore.getState().work
   window.setTimeout(() => textareaRef.current?.focus(), 0);
 };
 
-export const prepareExtensionCreation = ({ kind, requirement, workspacePath: targetDirectory }: ExtensionCreationRequest) => {
+const CREATION_PLACEMENT_NOTES: Record<string, string> = {
+  "workspace.page": "期望位置：作为左侧独立页面使用",
+  "sidebar.right.pane.tab": "期望位置：作为右侧随手工具面板使用",
+  "tools": "期望位置：仅作为助手后台工具扩展（不需界面）",
+};
+
+export const prepareExtensionCreation = ({ kind, requirement, workspacePath: targetDirectory, placement }: ExtensionCreationRequest) => {
   const { skills } = usePanelStore.getState();
   const { setSessions, setActiveId } = useSessionStore.getState();
   const { setActiveSkills, setMentionMenu } = useComposerStore.getState();
@@ -126,8 +133,15 @@ export const prepareExtensionCreation = ({ kind, requirement, workspacePath: tar
   const creator: SkillRecord = skills.find(item => item.id === bundled.id) || {
     ...bundled, enabled: true, builtIn: true, source: 'builtin', sourceLabel: '内置', createdAt: new Date().toISOString(),
   };
-  const session = { ...makeSession(targetDirectory), title: kind === 'plugin' ? '制作插件' : '制作技能' };
-  const text = `/${creator.name}\n请根据以下需求制作${kind === 'plugin' ? 'DYWorker 插件' : '可复用技能'}，完成后实际检查并说明如何使用。\n\n${requirement}`;
+  const session = {
+    ...makeSession(targetDirectory),
+    title: kind === 'plugin' ? '制作插件' : '制作技能',
+    ...(kind === 'plugin' ? { creationMode: true } : {}),
+  };
+  const placementLine = kind === 'plugin' && placement && CREATION_PLACEMENT_NOTES[placement]
+    ? `${CREATION_PLACEMENT_NOTES[placement]}\n`
+    : '';
+  const text = `/${creator.name}\n请根据以下需求制作${kind === 'plugin' ? 'DYWorker 插件' : '可复用技能'}，完成后实际检查并说明如何使用。\n\n${placementLine}${requirement}`;
   // 先登记新会话的草稿，避免会话切换时的草稿恢复覆盖制作需求。
   sessionDraftsRef.current[session.id] = { text, pastes: [], annotations: [], attachments: [] };
   setSessions(current => [session, ...current]);
@@ -139,7 +153,7 @@ export const prepareExtensionCreation = ({ kind, requirement, workspacePath: tar
   setSettingsOpen(false);
   setPluginsPageOpen(false);
   setConversationView('chat');
-  applyWorkspaceSelection(targetDirectory);
+  if (targetDirectory) applyWorkspaceSelection(targetDirectory);
   setNotice('制作需求已准备，发送后开始制作。');
   window.setTimeout(() => textareaRef.current?.focus(), 0);
 };

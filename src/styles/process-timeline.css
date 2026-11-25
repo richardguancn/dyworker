@@ -294,6 +294,13 @@
   word-break: break-all;
 }
 
+.process-compaction-detail {
+  max-height: 320px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.55;
+}
+
 /* 深色模式适配 */
 @media (prefers-color-scheme: dark) {
   html:not([data-theme]) .process-collapse-trigger {

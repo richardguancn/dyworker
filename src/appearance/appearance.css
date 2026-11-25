@@ -136,6 +136,11 @@ html[data-translucent="true"] .reasoning-manager {
   background: var(--card-solid, var(--card));
 }
 
+html[data-translucent="true"] .add-plugin-dialog,
+html[data-translucent="true"] .add-plugin-source-menu {
+  background: var(--card-solid, var(--card));
+}
+
 /* 模态对话框沿用正文阅读面（surface-strong），深浅两态都与面板协调 */
 html[data-translucent="true"] .settings-dialog,
 html[data-translucent="true"] .identity-dialog {

@@ -20,7 +20,7 @@ export function systemPrompt(workspacePath, loop, memoryReviewDue, goal = "", id
 
   const governmentSections = governmentMode ? [
     "# 公文与政府事务\n"
-    + "- 公文遵循 GB/T 9704，成稿用 check_official_document 自查、export_word_document 导出；时限用 calculate_workdays，政策先 gov_search 再 fetch_web_page 核原文（附网址），外发前用 scan_sensitive_info 检查。",
+    + "- 公文遵循 GB/T 9704，成稿用 check_official_document 自查、export_word_document 导出；复杂排版/表格用 office_render 看图自检、office_recalculate 重算公式；时限用 calculate_workdays，政策先 gov_search 再 fetch_web_page 核原文（附网址），外发前用 scan_sensitive_info 检查。",
   ] : [];
 
   const toolsSection = locale.startsWith("zh") || governmentMode

@@ -2,8 +2,9 @@
 // 回合导航、消息流、终端/调试/收件箱浮层、输入区 dock 与发送区）。
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（sendMessage、updateComposer、beginPanelResize、
 // 各种 useEffect 等）仍留在 App.tsx，这里只通过 props 接收状态与回调。
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Blocks, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
 import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, RefObject, SetStateAction } from "react";
+import { CREATION_MODE_EXAMPLES } from "../../lib/creationExamples";
 import { composerApprovalModes } from "../plans/PlansPanel";
 import { t } from "../../i18n";
 import type { LoadedConversationTurn, VisibleConversationMessage } from "../../lib/pagination";
@@ -37,6 +38,7 @@ type MessageRowActions = {
   toggleSpeakMessage: (...args: never[]) => unknown;
   openMessageSession: (...args: never[]) => unknown;
   forkSessionAt: (...args: never[]) => unknown;
+  retryFailedMessage: (...args: never[]) => unknown;
   openPluginReference: (...args: never[]) => unknown;
   openReview: (...args: never[]) => unknown;
   bindMessageRow: (...args: never[]) => unknown;
@@ -72,6 +74,7 @@ export interface ConversationPaneProps {
 
   botTeamPageOpen: boolean;
   botTeamAvailable: boolean;
+  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
   pluginsPageOpen: boolean;
   settingsOpen: boolean;
 
@@ -274,7 +277,7 @@ export function ConversationPane(props: ConversationPaneProps) {
   const {
     ConversationMessageRow, messageRowActions,
     activeSession, activeId, workspacePath,
-    botTeamPageOpen, botTeamAvailable, pluginsPageOpen, settingsOpen,
+    botTeamPageOpen, botTeamAvailable, activeWorkspacePage, pluginsPageOpen, settingsOpen,
     conversationView, setConversationView, pluginConversationViews,
     conversationSearchOpen, setConversationSearchOpen, conversationSearchQuery, setConversationSearchQuery,
     conversationSearchMatchIndex, setConversationSearchMatchIndex, conversationMatchTotal, conversationSearchInputRef,
@@ -294,10 +297,14 @@ export function ConversationPane(props: ConversationPaneProps) {
     inboxOpen, setInboxOpen, inboxItems, inboxTab, systemMessageFocusId, setSystemMessageFocusId,
     imagePreview, closeImagePreview, imagePreviewIndex, imagePreviewPeers, navigateImagePreview, setNotice, setError,
   } = props;
+  const workspacePageShown = Boolean((botTeamPageOpen && botTeamAvailable) || activeWorkspacePage);
+  const creationGuideShown = Boolean(props.ready && activeSession?.creationMode && activeSession?.runtime !== "dsh");
   return (
-      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${botTeamPageOpen ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!botTeamPageOpen && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
+      <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${workspacePageShown ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!workspacePageShown && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
         {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
           <PluginSlotView slot="workspace.page" pluginId="ds-bot" pluginKey="bot-team" visible={!settingsOpen} />
+        </section> : activeWorkspacePage ? <section className="bot-team-page" aria-label={activeWorkspacePage.label}>
+          <PluginSlotView slot="workspace.page" pluginId={activeWorkspacePage.pluginId} pluginKey={activeWorkspacePage.key} visible={!settingsOpen} workspacePath={workspacePath} />
         </section> : <>
         {/* 会话区视图标签（对照 DSH 的「对话 / 轨迹」）：插件注册进 conversation.view 插槽的
             视图也在这里成为一个标签页，点开即在会话区渲染插件组件。 */}
@@ -466,8 +473,32 @@ export function ConversationPane(props: ConversationPaneProps) {
           <div className="conversation-column" key={activeSession?.id}>
             {!activeSession?.messages.length ? (
               <div className="empty-conversation">
-                <span className="empty-mark"><Sparkles size={44} strokeWidth={1.3} /></span>
-                <h1>{!props.ready ? t("common.loading", "正在加载…") : props.error && !activeSession ? t("common.unableToOpen", "暂时无法打开对话") : t("conversation.whatToWorkOn", "我们要完成什么？")}</h1>
+                <span className="empty-mark">{creationGuideShown ? <Blocks size={44} strokeWidth={1.3} /> : <Sparkles size={44} strokeWidth={1.3} />}</span>
+                <h1>{!props.ready ? t("common.loading", "正在加载…") : props.error && !activeSession ? t("common.unableToOpen", "暂时无法打开对话") : creationGuideShown ? t("conversation.whatToCreate", "我们要打造什么专属功能？") : t("conversation.whatToWorkOn", "我们要完成什么？")}</h1>
+                {creationGuideShown && (
+                  <div className="creation-examples" aria-label="创造模式示例灵感">
+                    <p className="creation-examples-head">直接说出想要的功能，或把你的 Excel/CSV 报表、参考截图发给我，点下面示例也能直接开始</p>
+                    <div className="creation-examples-grid">
+                      {CREATION_MODE_EXAMPLES.map((example) => (
+                        <button
+                          key={example.id}
+                          type="button"
+                          className="creation-example-card"
+                          onClick={() => {
+                            props.updateComposer(example.prompt);
+                            window.setTimeout(() => props.textareaRef.current?.focus(), 0);
+                          }}
+                        >
+                          <div className="creation-example-top">
+                            <strong>{example.title}</strong>
+                            <span className="creation-example-badge">{example.slotLabel}</span>
+                          </div>
+                          <span className="creation-example-desc">{example.summary}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <>

@@ -7,6 +7,7 @@
 import { useEffect, useMemo } from "react";
 import { applyBrowserPanelSwitch } from "./browserPanelSwitch";
 import { clientHost } from "../pluginRuntime/clientHostSingleton.ts";
+import { mountClientPlugin, unmountClientPlugin } from "../pluginRuntime/hotMount.ts";
 import { createSessionSaveQueue } from "../sessionSaveQueue";
 import { createTraceBuffer, trimRecentText } from "../traceBuffer";
 import { goalElapsed, startGoal } from "../goal";
@@ -822,4 +823,38 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     setConversationToolsOpen(false);
     void refreshGitInfo();
   }, [ready, composerWorkspacePath]);
+
+  // 响应主进程发起的插件热挂载 / 热卸载同步请求（创造模式安装/重载/启停/卸载）
+  useEffect(() => {
+    const bridge = window.dyworker;
+    if (!bridge?.onPluginSyncRequest) return;
+    const offSync = bridge.onPluginSyncRequest((req) => {
+      void (async () => {
+        try {
+          if (req.action === "disable" || req.action === "uninstall") {
+            await unmountClientPlugin(req.pluginId, req.pkgName);
+            bridge.replyPluginSync?.({ requestId: req.requestId, ok: true, slots: [] });
+            return;
+          }
+          const result = await mountClientPlugin(req.pluginId || req.pkgName || "", {
+            openSlot: req.openSlot,
+          });
+          bridge.replyPluginSync?.({ requestId: req.requestId, ...result });
+        } catch (err: any) {
+          bridge.replyPluginSync?.({
+            requestId: req.requestId,
+            ok: false,
+            error: String(err?.message || err),
+          });
+        }
+      })();
+    });
+    const offUpdated = bridge.onPluginsUpdated?.(() => {
+      // clientHost subscribe 会自动刷新侧栏与面板列表；此处保活通道订阅即可
+    });
+    return () => {
+      offSync?.();
+      offUpdated?.();
+    };
+  }, []);
 }

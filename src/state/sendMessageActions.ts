@@ -11,13 +11,14 @@ import { getLocale } from "../i18n";
 import { patchDshAssistant, reconcileDshTurns } from "../dshTurns";
 import { activeGoal, changeGoalStatus, settleGoal, startGoal } from "../goal";
 import { appendBranchActivity, patchActivityTree } from "../lib/activity";
-import { workspaceFileAttachment } from "../lib/files";
+import { workspaceDirectoryAttachment, workspaceFileAttachment } from "../lib/files";
 import { FILE_TOKEN_REGEX, SESSION_TOKEN_REGEX, formatSessionReference, pathDirname, shortTitle } from "../lib/text";
 import { clientHost } from "../pluginRuntime/clientHostSingleton.ts";
 import { modelContextLimit } from "../providers";
 import { applyReasoningStream } from "../reasoningStream";
+import { formatUnreportedCardDecisions } from "../lib/actionCards";
 import { recordTaskFailure } from "../taskFailure.ts";
-import type { AgentResult, Attachment, ChatMessage, SessionRecord } from "../types";
+import type { AgentResult, Attachment, ChatMessage, ProviderSettings, SessionRecord } from "../types";
 import { formatWakeTime } from "../wakeNote";
 import { resolveTokenFile, resolveTokenSession } from "./composerActions";
 import { useComposerStore } from "./composerStore";
@@ -26,7 +27,438 @@ import { selectActiveSession, useSessionStore } from "./sessionStore";
 import { useSettingsStore } from "./settingsStore";
 import { activeIdRef, agentUnsubscribeRefs, appendSessionTracesRef, attachmentsRef, createTaskRef, handleGoalActionRef, mentionTokenPathsRef, playCompletionSoundRef, queueDebugLogRef, queuedRunsRef, refreshMemoriesRef, refreshSkillsRef, runningRunIdsRef, sessionTokenIdsRef, sessionsRef, shouldScrollToBottomRef, textareaRef } from "./sharedRefs";
 import { useViewStore } from "./viewStore";
-import { taskResultText } from "../../electron/task-result.mts";
+import { stripTaskFailureNote, taskResultText } from "../../electron/task-result.mts";
+
+type DispatchDesktopTaskArgs = {
+  targetSession: SessionRecord;
+  updatedSession: SessionRecord;
+  outboundMessages: ChatMessage[];
+  workspacePath: string;
+  taskSessionId: string;
+  taskRunId: string;
+  messageRunId: string;
+  queuedNow: boolean;
+  isQueuedEdit: boolean;
+  settings: ProviderSettings;
+  approvalMode: ReturnType<typeof useSettingsStore.getState>["approvalMode"];
+  assistantId: string;
+  resumeInPlace?: boolean;
+  baseContent?: string;
+  priorExecuted?: NonNullable<ChatMessage["executedMessages"]>;
+  pluginSubmission?: import('../pluginRuntime/conversation').ConversationSubmission;
+  cancelPluginInput?: () => void;
+  checkGoalGuard?: boolean;
+};
+
+async function dispatchDesktopTask({
+  targetSession,
+  updatedSession,
+  outboundMessages,
+  workspacePath,
+  taskSessionId,
+  taskRunId,
+  messageRunId,
+  queuedNow,
+  isQueuedEdit,
+  settings,
+  approvalMode,
+  assistantId,
+  resumeInPlace = false,
+  baseContent = "",
+  priorExecuted = [],
+  pluginSubmission,
+  cancelPluginInput,
+  checkGoalGuard = false,
+}: DispatchDesktopTaskArgs) {
+  const { setRunningSessionIds, setRunningStartedAt, setSleepingSessions, setPendingApprovals, setPendingQuestions, setLoopStates } = useSessionStore.getState();
+  let queuedResponse = false;
+  let requestAssistantId: string | undefined;
+
+  try {
+    if (window.dyworker?.sendTask) {
+      requestAssistantId = assistantId;
+      let activeDshTurnId: string | undefined;
+      const taskStartedAt = Date.now();
+      const patchAssistant = (updater: (current: ChatMessage) => ChatMessage) => {
+        const turnId = activeDshTurnId;
+        updateSession(targetSession.id, (session) => ({
+          ...session,
+          messages: patchDshAssistant(session.messages, { assistantId, runId: messageRunId, turnId }, updater),
+        }));
+      };
+      if (resumeInPlace) {
+        patchAssistant((current) => ({
+          ...current,
+          content: baseContent,
+          runId: messageRunId,
+          taskStatus: undefined,
+          taskReason: undefined,
+        }));
+      } else if (!isQueuedEdit) {
+        updateSession(targetSession.id, (session) => ({
+          ...session,
+          messages: [...session.messages, {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            activities: [],
+            runId: messageRunId,
+            taskStatus: queuedNow ? "queued" : undefined,
+          }],
+        }));
+      }
+      const applyAgentResult = (result: AgentResult) => {
+        patchAssistant((current) => {
+          const incomingFinal = result.finalText || (!resumeInPlace ? current.content : "");
+          let content = resumeInPlace && baseContent
+            ? (incomingFinal ? `${baseContent}\n\n${incomingFinal}` : baseContent)
+            : (incomingFinal || current.content);
+          if (result.status === "paused" && result.reason) {
+            content = content ? `${content}\n\n**已暂停**：${result.reason}` : `**已暂停**：${result.reason}`;
+          } else if (result.status === "sleeping" && result.wake) {
+            const sleepNote = `**已主动挂起**：将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续（原因：${result.wake.reason}）。期间可以关闭应用，到点会照常继续。`;
+            content = content ? `${content}\n\n${sleepNote}` : sleepNote;
+          } else if (result.status === "cancelled") {
+            content = content ? `${content}\n\n已按你的要求停止。` : "已按你的要求停止。";
+          } else if (result.status === "error") {
+            content = taskResultText(result, content);
+          }
+          const plan = result.plan?.length ? result.plan : current.plan;
+          const mergedExecuted = [
+            ...priorExecuted,
+            ...(Array.isArray(result.executedMessages) ? result.executedMessages : []),
+          ];
+          return {
+            ...current,
+            content,
+            createdAt: new Date().toISOString(),
+            changes: result.changes?.length ? result.changes : current.changes,
+            plan,
+            durationMs: Date.now() - taskStartedAt,
+            taskStatus: result.status,
+            taskReason: result.reason,
+            ...(mergedExecuted.length ? { executedMessages: mergedExecuted } : {}),
+            ...(result.workingContext !== undefined ? { workingContext: result.workingContext } : {}),
+          };
+        });
+        if (!resumeInPlace && result.dshTurns?.length && updatedSession.messages.at(-1)?.id) {
+          updateSession(targetSession.id, session => ({ ...session, messages: reconcileDshTurns(session.messages, result.dshTurns!, {
+            userId: updatedSession.messages.at(-1)!.id!, assistantId, runId: messageRunId,
+          }) }));
+        }
+        if (result.workingContext !== undefined) {
+          updateSession(targetSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
+        }
+        if ((result.status === "done" || result.status === "error") && taskSessionId !== activeIdRef.current) {
+          updateSession(taskSessionId, (session) => ({ ...session, unread: true }));
+        }
+        if (result.status === "done" && !result.demo) {
+          playCompletionSoundRef.current();
+          showSessionNotice(taskSessionId, "任务已完成");
+        } else if (result.status === "sleeping" && result.wake) {
+          showSessionNotice(taskSessionId, `已挂起，将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续`);
+          setSleepingSessions((current) => ({
+            ...current,
+            [taskSessionId]: {
+              sessionId: taskSessionId,
+              wakeAt: result.wake!.wakeAt,
+              reason: result.wake!.reason || "",
+            },
+          }));
+          void refreshPendingWakes();
+        }
+        updateSession(taskSessionId, (session) => settleGoal(session, updatedSession, result));
+        if (result.status === 'done' && result.goalAchieved && activeGoal(sessionsRef.current.find(row => row.id === taskSessionId) || updatedSession)) {
+          showSessionNotice(taskSessionId, "目标已完成");
+        }
+      };
+      let finishedEventSeen = false;
+      let agentResultApplied = false;
+      const applyAgentResultOnce = (result: AgentResult) => {
+        if (agentResultApplied) return;
+        agentResultApplied = true;
+        applyAgentResult(result);
+      };
+      const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
+        if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
+        const agentEvent = sessionAgentEvent.event;
+        if (!resumeInPlace && agentEvent.type === "dsh-conversation" && updatedSession.messages.at(-1)?.id) {
+          activeDshTurnId = agentEvent.turns.at(-1)?.user.id;
+          updateSession(targetSession.id, session => ({ ...session, messages: reconcileDshTurns(session.messages, agentEvent.turns, {
+            userId: updatedSession.messages.at(-1)!.id!, assistantId, runId: messageRunId, live: true,
+          }) }));
+        } else if (agentEvent.type === "activity") {
+          if (agentEvent.activity.branch) {
+            patchAssistant((current) => {
+              const { list, attached } = appendBranchActivity(current.activities || [], agentEvent.activity);
+              if (!attached) {
+                console.warn("子代理分支活动找不到父活动，已丢弃", agentEvent.activity.id);
+                return current;
+              }
+              return { ...current, activities: list };
+            });
+          } else {
+            patchAssistant((current) => ({ ...current, activities: [...(current.activities || []), agentEvent.activity] }));
+          }
+        } else if (agentEvent.type === "activity-update") {
+          patchAssistant((current) => ({
+            ...current,
+            activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail, agentEvent.durationMs, agentEvent.commentary),
+          }));
+        } else if (agentEvent.type === "trace") {
+          appendSessionTracesRef.current([agentEvent.trace]);
+        } else if (agentEvent.type === "assistant-text" && !activeDshTurnId) {
+          patchAssistant((current) => ({
+            ...current,
+            content: resumeInPlace && baseContent
+              ? (agentEvent.text ? `${baseContent}\n\n${agentEvent.text}` : baseContent)
+              : agentEvent.text,
+          }));
+        } else if (agentEvent.type === "assistant-reasoning" && !activeDshTurnId) {
+          patchAssistant((current) => applyReasoningStream(current, agentEvent.text));
+        } else if (agentEvent.type === "file-change") {
+          patchAssistant((current) => ({ ...current, changes: agentEvent.changes }));
+        } else if (agentEvent.type === "plan-update") {
+          patchAssistant((current) => ({ ...current, plan: agentEvent.steps }));
+        } else if (agentEvent.type === "approval-request") {
+          setPendingApprovals((current) => ({ ...current, [taskSessionId]: agentEvent.action }));
+        } else if (agentEvent.type === "approval-withdrawn") {
+          setPendingApprovals(current => {
+            if (current[taskSessionId]?.id !== agentEvent.actionId) return current;
+            const next = { ...current }; delete next[taskSessionId]; return next;
+          });
+        } else if (agentEvent.type === "ask-user") {
+          setPendingQuestions((current) => ({ ...current, [taskSessionId]: agentEvent.request }));
+        } else if (agentEvent.type === "loop-state") {
+          setLoopStates((current) => {
+            const next = { ...current };
+            if (agentEvent.active) {
+              next[taskSessionId] = { iteration: agentEvent.iteration, maximum: agentEvent.maximum, status: agentEvent.status };
+            } else {
+              delete next[taskSessionId];
+            }
+            return next;
+          });
+        } else if (agentEvent.type === "queued") {
+          markQueued(taskSessionId, taskRunId);
+          setRunningSessionIds((current) => {
+            const next = new Set(current);
+            next.add(taskSessionId);
+            return next;
+          });
+        } else if (agentEvent.type === "queue-start") {
+          unmarkQueued(taskSessionId, taskRunId);
+          runningRunIdsRef.current.set(taskSessionId, taskRunId);
+          setRunningSessionIds((current) => {
+            const next = new Set(current);
+            next.add(taskSessionId);
+            return next;
+          });
+          setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
+          patchAssistant((current) => ({ ...current, taskStatus: undefined }));
+        } else if (agentEvent.type === "memory-saved") {
+          void refreshMemoriesRef.current();
+          showSessionNotice(taskSessionId, "已保存一条长期记忆");
+        } else if (agentEvent.type === "skill-saved") {
+          void refreshSkillsRef.current();
+          showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已保存`);
+        } else if (agentEvent.type === "skill-updated") {
+          void refreshSkillsRef.current();
+          showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已改进`);
+        } else if (agentEvent.type === "debug-log") {
+          queueDebugLogRef.current(agentEvent.entry);
+        } else if (agentEvent.type === "context-usage") {
+          const total = agentEvent.total ?? agentEvent.used + agentEvent.completion;
+          updateSession(updatedSession.id, (session) => ({
+            ...session,
+            contextTokens: total,
+            contextTokensExact: !agentEvent.estimated,
+            contextModel: settings.model,
+            contextEndpoint: settings.endpoint,
+          }));
+        } else if (agentEvent.type === "token-usage") {
+          updateSession(updatedSession.id, (session) => ({
+            ...session,
+            tokenStats: {
+              prompt: (session.tokenStats?.prompt || 0) + (Number(agentEvent.prompt) || 0),
+              completion: (session.tokenStats?.completion || 0) + (Number(agentEvent.completion) || 0),
+              requests: (session.tokenStats?.requests || 0) + 1,
+            },
+          }));
+        } else if (agentEvent.type === "context-compacted") {
+          const summary = String(agentEvent.summary || "").trim();
+          patchAssistant(current => ({ ...current, activities: [...(current.activities || []), {
+            id: crypto.randomUUID(), kind: "commentary", status: "success",
+            title: "上下文已压缩", detail: summary || "上下文已压缩，已保留继续任务所需的内容。",
+          }] }));
+          showSessionNotice(taskSessionId, "上下文已压缩，已保留继续任务所需的内容，任务继续");
+        } else if (agentEvent.type === "agent-finished") {
+          finishedEventSeen = true;
+          unmarkQueued(taskSessionId, taskRunId);
+          void refreshMemoriesRef.current();
+          applyAgentResultOnce(agentEvent.result);
+          if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+            runningRunIdsRef.current.delete(taskSessionId);
+          }
+          if (!runningRunIdsRef.current.has(taskSessionId)) {
+            setRunningStartedAt((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingApprovals((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+            setPendingQuestions((current) => {
+              const next = { ...current };
+              delete next[taskSessionId];
+              return next;
+            });
+          }
+          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
+          agentUnsubscribeRefs.current.delete(taskRunId);
+          if (unsubscribe) window.setTimeout(unsubscribe, 1000);
+          if (!sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
+            setRunningSessionIds((current) => {
+              if (!current.has(taskSessionId)) return current;
+              const next = new Set(current);
+              next.delete(taskSessionId);
+              return next;
+            });
+          }
+        }
+      });
+      agentUnsubscribeRefs.current.set(taskRunId, unsubscribeAgent);
+      try {
+        if (checkGoalGuard && (updatedSession.goal || targetSession.goal)) {
+          const saved = await window.dyworker.saveSessions({ changed: [updatedSession], removed: [],
+            order: sessionsRef.current.map(row => row.id), activeId: activeIdRef.current,
+            meta: sessionsRef.current.map(row => ({ id: row.id, channel: row.channel, workspacePath: row.workspacePath })) });
+          if (!saved.ok) throw new Error(saved.error || '目标保存失败，请重试');
+          const latest = sessionsRef.current.find(row => row.id === taskSessionId);
+          if (activeGoal(updatedSession) && (!latest || !activeGoal(latest) || latest.goalState?.id !== updatedSession.goalState?.id)) {
+            applyAgentResultOnce({ status: 'cancelled', finalText: '' });
+            if (!runningRunIdsRef.current.has(taskSessionId)) setRunningSessionIds(current => {
+              const next = new Set(current); next.delete(taskSessionId); return next;
+            });
+            return;
+          }
+        }
+        const response = await window.dyworker.sendTask({
+          settings,
+          runtime: updatedSession.runtime,
+          workspacePath,
+          sessionId: updatedSession.id,
+          contextLimit: modelContextLimit(settings.model, settings.endpoint, settings.contextLimitOverrides),
+          workingContext: updatedSession.workingContext,
+          goal: activeGoal(updatedSession),
+          goalId: updatedSession.goalState?.id,
+          messages: outboundMessages,
+          loop: { enabled: Boolean(activeGoal(updatedSession)), maximum: activeGoal(updatedSession) ? 10 : 1 },
+          approvalMode,
+          creationMode: Boolean(updatedSession.creationMode),
+          runId: taskRunId,
+        });
+        if (response.queued) {
+          queuedResponse = !finishedEventSeen;
+          if (!finishedEventSeen && runningRunIdsRef.current.get(taskSessionId) !== taskRunId) markQueued(taskSessionId, taskRunId);
+        } else {
+          if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
+          if (!finishedEventSeen) applyAgentResultOnce(response.result);
+        }
+      } finally {
+        if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+          runningRunIdsRef.current.delete(taskSessionId);
+        }
+        // 排队消息的监听器一直保留到真正执行完成；非排队消息的监听器在此收尾
+        if (!queuedResponse) {
+          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
+          agentUnsubscribeRefs.current.delete(taskRunId);
+          if (unsubscribe) window.setTimeout(unsubscribe, 1000);
+        }
+        if (!queuedResponse && !sessionHasQueued(taskSessionId)
+          && !runningRunIdsRef.current.has(taskSessionId)) {
+          setRunningSessionIds((current) => {
+            if (!current.has(taskSessionId)) return current;
+            const next = new Set(current);
+            next.delete(taskSessionId);
+            return next;
+          });
+        }
+        if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
+          setLoopStates((current) => {
+            const next = { ...current };
+            delete next[taskSessionId];
+            return next;
+          });
+        }
+      }
+    } else {
+      let response;
+      if (window.dyworker) {
+        response = await window.dyworker.completeChat({ settings, messages: outboundMessages });
+      } else {
+        await new Promise((resolve) => window.setTimeout(resolve, 650));
+        response = {
+          content:
+            "**新任务已进入 Electron 工作区。**\n\n我会继续保持现在的阅读层级和紧凑布局。桌面版接入模型设置后，这里会直接显示真实回复。",
+        };
+      }
+      const assistant: ChatMessage = {
+        role: "assistant",
+        content: response.content,
+        createdAt: new Date().toISOString(),
+      };
+      shouldScrollToBottomRef.current = taskSessionId;
+      updateSession(taskSessionId, (session) => ({
+        ...settleGoal(session, updatedSession, { status: "paused", finalText: "", reason: "当前环境仅展示预览，未执行目标。" }),
+        updatedAt: assistant.createdAt,
+        messages: [...session.messages, assistant],
+      }));
+    }
+  } catch (requestError) {
+    const detail = requestError instanceof Error ? requestError.message : String(requestError);
+    showSessionError(taskSessionId, detail);
+    updateSession(taskSessionId, (session) => ({
+      ...settleGoal(session, updatedSession, { status: "error", finalText: "", reason: detail }),
+      messages: recordTaskFailure(session.messages, { assistantId: requestAssistantId, runId: messageRunId,
+        detail, createdAt: new Date().toISOString() }),
+    }));
+    if (pluginSubmission) throw requestError;
+  } finally {
+    if (cancelPluginInput) pluginSubmission?.signal.removeEventListener('abort', cancelPluginInput);
+    if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
+      runningRunIdsRef.current.delete(taskSessionId);
+    }
+    if (!queuedResponse && !sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
+      setRunningSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(taskSessionId);
+        return next;
+      });
+    }
+    if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
+      setRunningStartedAt((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
+      setPendingApprovals((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
+      setPendingQuestions((current) => {
+        const next = { ...current };
+        delete next[taskSessionId];
+        return next;
+      });
+    }
+  }
+}
 
 export const markQueued = (sessionId: string, runId: string) => {
   const { setQueuedRunIds } = useViewStore.getState();
@@ -153,6 +585,7 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
     : undefined;
 
   let goalDriven = false;
+  let creationModeOverride: boolean | undefined;
   let pastedBlocks = composerPastes;
   let messageAnnotations = annotations;
   let annotationText = "";
@@ -164,6 +597,24 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
   let sessionText = "";
 
   if (!isOverride) {
+    // /create：开启、关闭或携带需求进入创造模式
+    const createCommand = content.match(/^\/create(?:\s+([\s\S]*))?$/i);
+    if (createCommand) {
+      const arg = (createCommand[1] || "").trim();
+      const pureToggle = !arg || /^(?:on|off|开启|关闭)$/i.test(arg);
+      if (pureToggle) {
+        const nextCreationMode = !arg ? !targetSession.creationMode : /^(?:on|开启)$/i.test(arg);
+        setSessions((current) => current.map((s) => s.id === targetSession.id ? { ...s, creationMode: nextCreationMode } : s));
+        setNewTaskDraft((current) => current && current.id === targetSession.id ? { ...current, creationMode: nextCreationMode } : current);
+        setComposer("");
+        setMentionMenu(null);
+        setNotice(nextCreationMode ? "已开启创造模式：可让 AI 创建并热挂载页面或插件" : "已关闭创造模式");
+        window.setTimeout(() => textareaRef.current?.focus(), 0);
+        return;
+      }
+      creationModeOverride = true;
+      content = arg;
+    }
     // /new：开启全新会话（对齐渠道快捷指令与斜杠菜单）
     const isPureNewSession = /^(?:\/new|\/reset|new|reset|新建会话|新会话|新任务|重置会话|重置对话|清空上下文)[。.!！?？\s]*$/i.test(content);
     if (isPureNewSession) {
@@ -204,7 +655,10 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
       const file = resolveTokenFile(tokenMatch[1]);
       if (file && !seenTokenPaths.has(file.path)) {
         seenTokenPaths.add(file.path);
-        tokenAttachments.push({ ...workspaceFileAttachment(file), inlineRef: true });
+        const attachment = file.kind === "directory"
+          ? workspaceDirectoryAttachment(file, tokenMatch[1])
+          : workspaceFileAttachment(file);
+        tokenAttachments.push({ ...attachment, inlineRef: true });
       }
     }
     mentionTokenPathsRef.current.clear();
@@ -267,13 +721,14 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
       }).join("\n\n")}\n\n以下是我的任务:\n`
     : "";
   const typedContent = content;
+  const cardDecisionSync = formatUnreportedCardDecisions(targetSession.actionCardDecisions);
   const modelContent = dshDraft?.references.length ? dshDraft.text : typedContent || (selectedSkills.length ? "（按模板处理当前工作区）" : pastedBlocks.length ? "请处理这段粘贴的长文本。" : messageAnnotations.length ? "请处理以下引用注释。" : "请处理这些附件。");
   const message: ChatMessage = {
     id: crypto.randomUUID(),
     role: "user",
     runId: messageRunId,
-    content: skillsBlock + modelContent + pastedText + annotationText + sessionText,
-    ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length || sessionRefs.length || dshDraft?.references.length ? {
+    content: skillsBlock + modelContent + pastedText + annotationText + sessionText + cardDecisionSync.receiptText,
+    ...(typedContent !== modelContent || selectedSkills.length || pastedBlocks.length || messageAnnotations.length || sessionRefs.length || dshDraft?.references.length || cardDecisionSync.receiptText ? {
       displayContent: dshDraft?.references.length ? dshDraft.clipboardText : typedContent,
       ...(selectedSkills.length ? { skillsUsed: selectedSkills.map((skill) => skill.name) } : {}),
     } : {}),
@@ -297,6 +752,8 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
     : null;
   const updatedSession: SessionRecord = {
     ...bindSessionModel(targetSession, settings),
+    ...(creationModeOverride !== undefined ? { creationMode: creationModeOverride } : {}),
+    ...(cardDecisionSync.updatedDecisions ? { actionCardDecisions: cardDecisionSync.updatedDecisions } : {}),
     ...(goalDriven ? startGoal(content) : (resumeGoal || targetSession.goalState?.status === "blocked") ? { goalState: { ...changeGoalStatus(targetSession, "active").goalState!, id: crypto.randomUUID() } } : {}),
     ...(editingTarget ? { workingContext: undefined } : {}),
     title: baseMessages.length === 0 ? shortTitle(content || (pastedBlocks.length ? "粘贴的长文本" : "")) : targetSession.title,
@@ -324,390 +781,126 @@ export const sendMessage = async (overridePrompt?: string, overrideSessionId?: s
     return;
   }
 
-  let requestAssistantId: string | undefined;
-  try {
-    if (window.dyworker?.sendTask) {
-      const assistantId = crypto.randomUUID();
-      requestAssistantId = assistantId;
-      let activeDshTurnId: string | undefined;
-      const taskStartedAt = Date.now();
-      const patchAssistant = (updater: (current: ChatMessage) => ChatMessage) => {
-        const turnId = activeDshTurnId;
-        updateSession(targetSession.id, (session) => ({
-          ...session,
-          messages: patchDshAssistant(session.messages,{assistantId,runId:messageRunId,turnId},updater),
-        }));
-      };
-      updateSession(targetSession.id, (session) => ({
-        ...session,
-        messages: [...session.messages, {
-          id: assistantId,
-          role: "assistant",
-          content: "",
-          createdAt: new Date().toISOString(),
-          activities: [],
-          runId: messageRunId,
-          taskStatus: queuedNow ? "queued" : undefined,
-        }],
-      }));
-      const applyAgentResult = (result: AgentResult) => {
-        patchAssistant((current) => {
-          let content = result.finalText || current.content;
-          if (result.status === "paused" && result.reason) {
-            content = content ? `${content}\n\n**已暂停**：${result.reason}` : `**已暂停**：${result.reason}`;
-          } else if (result.status === "sleeping" && result.wake) {
-            const sleepNote = `**已主动挂起**：将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续（原因：${result.wake.reason}）。期间可以关闭应用，到点会照常继续。`;
-            content = content ? `${content}\n\n${sleepNote}` : sleepNote;
-          } else if (result.status === "cancelled") {
-            content = content ? `${content}\n\n已按你的要求停止。` : "已按你的要求停止。";
-          } else if (result.status === "error") {
-            content = taskResultText(result, content);
-          }
-          const plan = result.plan?.length ? result.plan : current.plan;
-          return {
-            ...current,
-            content,
-            // 占位气泡创建于消息提交时；这里在任务收尾打点，让气泡时间显示模型回复时间
-            createdAt: new Date().toISOString(),
-            changes: result.changes?.length ? result.changes : current.changes,
-            plan,
-            durationMs: Date.now() - taskStartedAt,
-            taskStatus: result.status,
-            taskReason: result.reason,
-            ...(Array.isArray(result.executedMessages) && result.executedMessages.length
-              ? { executedMessages: result.executedMessages }
-              : {}),
-            ...(result.workingContext !== undefined ? { workingContext: result.workingContext } : {}),
-          };
-        });
-        if (result.dshTurns?.length && updatedSession.messages.at(-1)?.id) {
-          updateSession(targetSession.id, session => ({...session,messages:reconcileDshTurns(session.messages,result.dshTurns!,{
-            userId:updatedSession.messages.at(-1)!.id!,assistantId,runId:messageRunId,
-          })}));
-        }
-        if (result.workingContext !== undefined) {
-          updateSession(targetSession.id, (session) => ({ ...session, workingContext: result.workingContext }));
-        }
-        // 非当前会话在后台完成时标记未读（列表小绿点），点开会话即清除
-        if ((result.status === "done" || result.status === "error") && taskSessionId !== activeIdRef.current) {
-          updateSession(taskSessionId, (session) => ({ ...session, unread: true }));
-        }
-        if (result.status === "done" && !result.demo) {
-          playCompletionSoundRef.current();
-          showSessionNotice(taskSessionId, "任务已完成");
-        } else if (result.status === "sleeping" && result.wake) {
-          showSessionNotice(taskSessionId, `已挂起，将于 ${formatWakeTime(result.wake.wakeAt)} 自动唤醒继续`);
-          // 挂起态以主进程登记为准（这里先给即时反馈，重启后的权威列表由 wakes:list-pending 拉取）
-          setSleepingSessions((current) => ({
-            ...current,
-            [taskSessionId]: {
-              sessionId: taskSessionId,
-              wakeAt: result.wake!.wakeAt,
-              reason: result.wake!.reason || "",
-            },
-          }));
-          // 再回主进程核对一次：没有工作目录等情况下登记会被跳过（到点根本不会唤醒），
-          // 只信本地标记会把输入框永久锁死，所以以磁盘上的 pending 列表为准自纠正
-          void refreshPendingWakes();
-        }
-        updateSession(taskSessionId, (session) => settleGoal(session, updatedSession, result));
-        if (result.status === 'done' && result.goalAchieved && activeGoal(sessionsRef.current.find(row => row.id === taskSessionId) || updatedSession)) {
-          showSessionNotice(taskSessionId, "目标已完成");
-        }
-      };
-      let finishedEventSeen = false;
-      // 收尾结果只应用一次：agent-finished 事件与 sendTask 的返回值是两条通道，
-      // 谁先到不保证；两边都应用会让"已按你的要求停止。"之类追加重叠出现两遍。
-      let agentResultApplied = false;
-      const applyAgentResultOnce = (result: AgentResult) => {
-        if (agentResultApplied) return;
-        agentResultApplied = true;
-        applyAgentResult(result);
-      };
-      const unsubscribeAgent = window.dyworker.onAgentEvent((sessionAgentEvent) => {
-        if (sessionAgentEvent.sessionId !== taskSessionId || sessionAgentEvent.runId !== taskRunId) return;
-        const agentEvent = sessionAgentEvent.event;
-        if (agentEvent.type === "dsh-conversation" && updatedSession.messages.at(-1)?.id) {
-          activeDshTurnId = agentEvent.turns.at(-1)?.user.id;
-          updateSession(targetSession.id, session => ({...session,messages:reconcileDshTurns(session.messages,agentEvent.turns,{
-            userId:updatedSession.messages.at(-1)!.id!,assistantId,runId:messageRunId,live:true,
-          })}));
-        } else if (agentEvent.type === "activity") {
-          // 子代理分支活动（带 branch）挂到父活动（dispatch_agent）的 children 上，
-          // 随 message.activities 落盘；不再走单独的全局缓存（会跨会话串数据）
-          if (agentEvent.activity.branch) {
-            patchAssistant((current) => {
-              const { list, attached } = appendBranchActivity(current.activities || [], agentEvent.activity);
-              if (!attached) {
-                console.warn("子代理分支活动找不到父活动，已丢弃", agentEvent.activity.id);
-                return current;
-              }
-              return { ...current, activities: list };
-            });
-          } else {
-            patchAssistant((current) => ({ ...current, activities: [...(current.activities || []), agentEvent.activity] }));
-          }
-        } else if (agentEvent.type === "activity-update") {
-          // patchActivityTree 同时覆盖主活动与子代理 children，branch 标记无需区分
-          patchAssistant((current) => ({
-            ...current,
-            activities: patchActivityTree(current.activities || [], agentEvent.id, agentEvent.status, agentEvent.detail, agentEvent.durationMs, agentEvent.commentary),
-          }));
-        } else if (agentEvent.type === "trace") {
-          appendSessionTracesRef.current([agentEvent.trace]);
-        } else if (agentEvent.type === "assistant-text" && !activeDshTurnId) {
-          patchAssistant((current) => ({ ...current, content: agentEvent.text }));
-        } else if (agentEvent.type === "assistant-reasoning" && !activeDshTurnId) {
-          patchAssistant((current) => applyReasoningStream(current, agentEvent.text));
-        } else if (agentEvent.type === "file-change") {
-          patchAssistant((current) => ({ ...current, changes: agentEvent.changes }));
-        } else if (agentEvent.type === "plan-update") {
-          patchAssistant((current) => ({ ...current, plan: agentEvent.steps }));
-        } else if (agentEvent.type === "approval-request") {
-          setPendingApprovals((current) => ({ ...current, [taskSessionId]: agentEvent.action }));
-        } else if (agentEvent.type === "approval-withdrawn") {
-          setPendingApprovals(current => {
-            if (current[taskSessionId]?.id !== agentEvent.actionId) return current;
-            const next = { ...current }; delete next[taskSessionId]; return next;
-          });
-        } else if (agentEvent.type === "ask-user") {
-          setPendingQuestions((current) => ({ ...current, [taskSessionId]: agentEvent.request }));
-        } else if (agentEvent.type === "loop-state") {
-          setLoopStates((current) => {
-            const next = { ...current };
-            if (agentEvent.active) {
-              next[taskSessionId] = { iteration: agentEvent.iteration, maximum: agentEvent.maximum, status: agentEvent.status };
-            } else {
-              delete next[taskSessionId];
-            }
-            return next;
-          });
-        } else if (agentEvent.type === "queued") {
-          markQueued(taskSessionId, taskRunId);
-          setRunningSessionIds((current) => {
-            const next = new Set(current);
-            next.add(taskSessionId);
-            return next;
-          });
-        } else if (agentEvent.type === "queue-start") {
-          unmarkQueued(taskSessionId, taskRunId);
-          runningRunIdsRef.current.set(taskSessionId, taskRunId);
-          setRunningSessionIds((current) => {
-            const next = new Set(current);
-            next.add(taskSessionId);
-            return next;
-          });
-          setRunningStartedAt((current) => ({ ...current, [taskSessionId]: Date.now() }));
-          patchAssistant((current) => ({ ...current, taskStatus: undefined }));
-        } else if (agentEvent.type === "memory-saved") {
-          void refreshMemoriesRef.current();
-          showSessionNotice(taskSessionId, "已保存一条长期记忆");
-        } else if (agentEvent.type === "skill-saved") {
-          void refreshSkillsRef.current();
-          showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已保存`);
-        } else if (agentEvent.type === "skill-updated") {
-          void refreshSkillsRef.current();
-          showSessionNotice(taskSessionId, `工作模板「${agentEvent.item.name}」已改进`);
-        } else if (agentEvent.type === "debug-log") {
-          queueDebugLogRef.current(agentEvent.entry);
-        } else if (agentEvent.type === "context-usage") {
-          const total = agentEvent.total ?? agentEvent.used + agentEvent.completion;
-          updateSession(updatedSession.id, (session) => ({
-            ...session,
-            contextTokens: total,
-            contextTokensExact: !agentEvent.estimated,
-            contextModel: settings.model,
-            contextEndpoint: settings.endpoint,
-          }));
-        } else if (agentEvent.type === "token-usage") {
-          // 会话累计用量：每次模型调用按服务端 usage（或估算）累加，圆环 tooltip 展示
-          updateSession(updatedSession.id, (session) => ({
-            ...session,
-            tokenStats: {
-              prompt: (session.tokenStats?.prompt || 0) + (Number(agentEvent.prompt) || 0),
-              completion: (session.tokenStats?.completion || 0) + (Number(agentEvent.completion) || 0),
-              requests: (session.tokenStats?.requests || 0) + 1,
-            },
-          }));
-        } else if (agentEvent.type === "context-compacted") {
-          patchAssistant(current => ({ ...current, activities: [...(current.activities || []), {
-            id: crypto.randomUUID(), kind: "commentary", status: "success",
-            title: "上下文已压缩", detail: "上下文已压缩，已保留继续任务所需的内容。",
-          }] }));
-          showSessionNotice(taskSessionId, "上下文已压缩，已保留继续任务所需的内容，任务继续");
-        } else if (agentEvent.type === "agent-finished") {
-          finishedEventSeen = true;
-          unmarkQueued(taskSessionId, taskRunId);
-          void refreshMemoriesRef.current();
-          applyAgentResultOnce(agentEvent.result);
-          if (runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
-            runningRunIdsRef.current.delete(taskSessionId);
-          }
-          if (!runningRunIdsRef.current.has(taskSessionId)) {
-            setRunningStartedAt((current) => {
-              const next = { ...current };
-              delete next[taskSessionId];
-              return next;
-            });
-            setPendingApprovals((current) => {
-              const next = { ...current };
-              delete next[taskSessionId];
-              return next;
-            });
-            setPendingQuestions((current) => {
-              const next = { ...current };
-              delete next[taskSessionId];
-              return next;
-            });
-          }
-          // 排队消息的监听器一直保留到真正执行完成，这里统一收尾
-          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
-          agentUnsubscribeRefs.current.delete(taskRunId);
-          if (unsubscribe) window.setTimeout(unsubscribe, 1000);
-          // 会话是否继续显示运行状态由队列决定：还有排队消息则保持，全部完成才收起
-          if (!sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
-            setRunningSessionIds((current) => {
-              if (!current.has(taskSessionId)) return current;
-              const next = new Set(current);
-              next.delete(taskSessionId);
-              return next;
-            });
-          }
-        }
-      });
-      agentUnsubscribeRefs.current.set(taskRunId, unsubscribeAgent);
-      try {
-        // Goal controls and queued runs read the archive; publish the goal before admission.
-        if (updatedSession.goal || targetSession.goal) {
-          const saved = await window.dyworker.saveSessions({ changed: [updatedSession], removed: [],
-            order: sessionsRef.current.map(row => row.id), activeId: activeIdRef.current,
-            meta: sessionsRef.current.map(row => ({ id: row.id, channel: row.channel, workspacePath: row.workspacePath })) });
-          if (!saved.ok) throw new Error(saved.error || '目标保存失败，请重试');
-          const latest = sessionsRef.current.find(row => row.id === taskSessionId);
-          if (activeGoal(updatedSession) && (!latest || !activeGoal(latest) || latest.goalState?.id !== updatedSession.goalState?.id)) {
-            applyAgentResultOnce({ status: 'cancelled', finalText: '' });
-            if (!runningRunIdsRef.current.has(taskSessionId)) setRunningSessionIds(current => {
-              const next = new Set(current); next.delete(taskSessionId); return next;
-            });
-            return;
-          }
-        }
-        const response = await window.dyworker.sendTask({
-          settings,
-          runtime: updatedSession.runtime,
-          workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath,
-          sessionId: updatedSession.id,
-          contextLimit: modelContextLimit(settings.model, settings.endpoint, settings.contextLimitOverrides),
-          workingContext: updatedSession.workingContext,
-          goal: activeGoal(updatedSession),
-          goalId: updatedSession.goalState?.id,
-          messages: updatedSession.messages,
-          loop: { enabled: Boolean(activeGoal(updatedSession)), maximum: activeGoal(updatedSession) ? 10 : 1 },
-          approvalMode,
-          runId: taskRunId,
-        });
-        if (response.queued) {
-          queuedResponse = !finishedEventSeen;
-          if (!finishedEventSeen && runningRunIdsRef.current.get(taskSessionId) !== taskRunId) markQueued(taskSessionId, taskRunId);
-        } else {
-          if (!response.ok || !response.result) throw new Error(response.error || "任务执行失败");
-          if (!finishedEventSeen) applyAgentResultOnce(response.result);
-        }
-      } finally {
-        if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
-          runningRunIdsRef.current.delete(taskSessionId);
-        }
-        // 非排队消息的监听器在此收尾；排队消息由 agent-finished 统一收尾（任务可能尚未开始）
-        if (!queuedResponse) {
-          // webContents.send 的尾部事件可能晚于 invoke 响应到达，延迟取消订阅避免丢事件
-          const unsubscribe = agentUnsubscribeRefs.current.get(taskRunId);
-          agentUnsubscribeRefs.current.delete(taskRunId);
-          if (unsubscribe) window.setTimeout(unsubscribe, 1000);
-        }
-        // invoke 的完整结果也能收尾，不能依赖结束事件一定先送达。
-        // 若下一项已经开始，则不能清掉新任务的运行状态。
-        if (!queuedResponse && !sessionHasQueued(taskSessionId)
-          && !runningRunIdsRef.current.has(taskSessionId)) {
-          setRunningSessionIds((current) => {
-            if (!current.has(taskSessionId)) return current;
-            const next = new Set(current);
-            next.delete(taskSessionId);
-            return next;
-          });
-        }
-        // 排队消息尚未执行，不清理当前任务的循环状态（由 queue-start/agent-finished 维护）
-        if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
-          setLoopStates((current) => {
-            const next = { ...current };
-            delete next[taskSessionId];
-            return next;
-          });
-        }
-      }
-    } else {
-      let response;
-      if (window.dyworker) {
-        response = await window.dyworker.completeChat({ settings, messages: updatedSession.messages });
-      } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
-        response = {
-          content:
-            "**新任务已进入 Electron 工作区。**\n\n我会继续保持现在的阅读层级和紧凑布局。桌面版接入模型设置后，这里会直接显示真实回复。",
-        };
-      }
-      const assistant: ChatMessage = {
-        role: "assistant",
-        content: response.content,
-        createdAt: new Date().toISOString(),
-      };
-      shouldScrollToBottomRef.current = taskSessionId;
-      updateSession(taskSessionId, (session) => ({
-        ...settleGoal(session, updatedSession, { status: "paused", finalText: "", reason: "当前环境仅展示预览，未执行目标。" }),
-        updatedAt: assistant.createdAt,
-        messages: [...session.messages, assistant],
-      }));
-    }
-  } catch (requestError) {
-    const detail = requestError instanceof Error ? requestError.message : String(requestError);
-    showSessionError(taskSessionId, detail);
-    updateSession(taskSessionId, (session) => ({
-      ...settleGoal(session, updatedSession, { status: "error", finalText: "", reason: detail }),
-      messages: recordTaskFailure(session.messages, { assistantId: requestAssistantId, runId: messageRunId,
-        detail, createdAt: new Date().toISOString() }),
-    }));
-    if (pluginSubmission) throw requestError;
-  } finally {
-    pluginSubmission?.signal.removeEventListener('abort', cancelPluginInput);
-    if (!queuedResponse && runningRunIdsRef.current.get(taskSessionId) === taskRunId) {
-      runningRunIdsRef.current.delete(taskSessionId);
-    }
-    // 发送失败或响应先到时同样恢复输入状态；排队或新任务仍运行时保留。
-    if (!queuedResponse && !sessionHasQueued(taskSessionId) && !runningRunIdsRef.current.has(taskSessionId)) {
-      setRunningSessionIds((current) => {
-        const next = new Set(current);
-        next.delete(taskSessionId);
-        return next;
-      });
-    }
-    // 排队消息尚未执行：不清理当前任务的运行态，防止误删正在执行任务的审批/计时
-    if (!queuedResponse && !runningRunIdsRef.current.has(taskSessionId)) {
-      setRunningStartedAt((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
-      setPendingApprovals((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
-      setPendingQuestions((current) => {
-        const next = { ...current };
-        delete next[taskSessionId];
-        return next;
-      });
-    }
+  await dispatchDesktopTask({
+    targetSession,
+    updatedSession,
+    outboundMessages: updatedSession.messages,
+    workspacePath: pluginSubmission ? targetSession.workspacePath : workspacePath,
+    taskSessionId,
+    taskRunId,
+    messageRunId,
+    queuedNow,
+    isQueuedEdit,
+    settings,
+    approvalMode,
+    assistantId: crypto.randomUUID(),
+    pluginSubmission,
+    cancelPluginInput,
+    checkGoalGuard: true,
+  });
+};
+
+// 无污染重试 / 继续失败回复：
+// - 若尚未留下有效工具进度，移除纯报错占位气泡并在原位重新发送；
+// - 若已有部分 executedMessages 工具进度，保留已完成的工具成果原位续跑，不向聊天流插入人造“继续”用户气泡。
+export const retryFailedMessage = async (sessionId: string, assistantIndex: number) => {
+  const sessionState = useSessionStore.getState();
+  const { sessions, sleepingSessions, runningSessionIds, workspacePath: globalWorkspacePath, setSessions, setRunningSessionIds, setRunningStartedAt } = sessionState;
+  const { setNotice } = useViewStore.getState();
+  const { settings: globalSettings, approvalMode } = useSettingsStore.getState();
+  const targetSession = sessionsRef.current.find((s) => s.id === sessionId) || sessions.find((s) => s.id === sessionId);
+  if (!targetSession) return;
+  if (runningSessionIds.has(sessionId) || runningRunIdsRef.current.has(sessionId)) {
+    setNotice("当前任务仍在运行中，请等待完成或先停止后再重试");
+    return;
   }
+  if (sleepingSessions[sessionId]) {
+    setNotice(`${formatWakeTime(sleepingSessions[sessionId].wakeAt)} 将自动唤醒继续；可直接点上方「立即继续」`);
+    return;
+  }
+  const failedMessage = targetSession.messages[assistantIndex];
+  if (!failedMessage || failedMessage.role !== "assistant" || failedMessage.taskStatus !== "error") return;
+
+  const settings = settingsForSession(globalSettings, targetSession);
+  settings.locale = getLocale();
+  if (!settings.identity) {
+    setNotice("请先选择 DYWorker 的使用身份");
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const taskRunId = crypto.randomUUID();
+  const hasProgress = Array.isArray(failedMessage.executedMessages) && failedMessage.executedMessages.length > 0;
+  const assistantId = failedMessage.id || crypto.randomUUID();
+  const baseContent = hasProgress ? stripTaskFailureNote(failedMessage.content) : "";
+  const priorExecuted = hasProgress ? [...(failedMessage.executedMessages || [])] : [];
+  const nextWorkspacePath = String(targetSession.workspacePath || globalWorkspacePath || "");
+
+  let nextMessages: ChatMessage[];
+  let outboundMessages: ChatMessage[];
+  if (hasProgress) {
+    nextMessages = targetSession.messages.map((item, idx) => idx === assistantIndex
+      ? {
+          ...item,
+          id: assistantId,
+          content: baseContent,
+          runId: taskRunId,
+          taskStatus: undefined,
+          taskReason: undefined,
+        }
+      : item);
+    outboundMessages = [
+      ...nextMessages.slice(0, assistantIndex + 1),
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: "请基于上面已完成的工具执行进度继续完成剩余任务。",
+        createdAt: now,
+      },
+    ];
+  } else {
+    nextMessages = targetSession.messages.filter((_, idx) => idx !== assistantIndex);
+    outboundMessages = [...nextMessages];
+  }
+
+  const updatedSession: SessionRecord = {
+    ...bindSessionModel(targetSession, settings),
+    updatedAt: now,
+    messages: nextMessages,
+  };
+
+  sessionsRef.current = sessionsRef.current.map((s) => (s.id === sessionId ? updatedSession : s));
+  setSessions((current) => current.map((s) => (s.id === sessionId ? updatedSession : s)));
+
+  clearSessionError(sessionId);
+  clearSessionNotice(sessionId);
+  runningRunIdsRef.current.set(sessionId, taskRunId);
+  setRunningSessionIds((current) => {
+    const next = new Set(current);
+    next.add(sessionId);
+    return next;
+  });
+  setRunningStartedAt((current) => ({ ...current, [sessionId]: Date.now() }));
+  shouldScrollToBottomRef.current = sessionId;
+
+  await dispatchDesktopTask({
+    targetSession,
+    updatedSession,
+    outboundMessages,
+    workspacePath: nextWorkspacePath,
+    taskSessionId: sessionId,
+    taskRunId,
+    messageRunId: taskRunId,
+    queuedNow: false,
+    isQueuedEdit: false,
+    settings,
+    approvalMode,
+    assistantId,
+    resumeInPlace: hasProgress,
+    baseContent,
+    priorExecuted,
+    checkGoalGuard: false,
+  });
 };
 
 // 从队列移除一条排队消息（同时移除它的空助手占位）

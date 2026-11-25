@@ -30,7 +30,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setAppUpdate: (value) => set((s) => updateField(s, "appUpdate", value)),
   approvalMode: "reviewer",
   setApprovalMode: (value) => set((s) => updateField(s, "approvalMode", value)),
-  platform: window.dyworker?.platform || "",
+  platform: typeof window !== "undefined" ? (window.dyworker?.platform || "") : "",
   setPlatform: (value) => set((s) => updateField(s, "platform", value)),
   windowMaximized: false,
   setWindowMaximized: (value) => set((s) => updateField(s, "windowMaximized", value)),

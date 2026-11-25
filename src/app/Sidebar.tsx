@@ -1,7 +1,7 @@
 // 任务侧栏：从 App.tsx 抽出的 <aside className="sidebar"> 整段与其中的会话项渲染闭包。
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（selectSession、createTask 等）仍留在 App.tsx，
 // 这里只通过 props 接收状态与回调。
-import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, Moon, MoreHorizontal, Package, Pin, Search, SquarePen, Upload, X } from "lucide-react";
+import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LayoutGrid, LoaderCircle, Moon, MoreHorizontal, Package, Pin, Search, SquarePen, Upload, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginSlotView } from "../PluginSlotView";
@@ -44,6 +44,9 @@ export interface SidebarProps {
   setBotTeamPageOpen: Dispatch<SetStateAction<boolean>>;
   setPluginsPageOpen: Dispatch<SetStateAction<boolean>>;
   botTeamAvailable: boolean;
+  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string }>;
+  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
+  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string } | null>>;
   setRightPanelOpen: Dispatch<SetStateAction<boolean>>;
   setConversationView: Dispatch<SetStateAction<string>>;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
@@ -87,7 +90,8 @@ export function Sidebar(props: SidebarProps) {
     workspaceMenuPath, setWorkspaceMenuPath, sessionMenuId, setSessionMenuId,
     renamingId, setRenamingId,
     pluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen, setPluginsPageOpen,
-    botTeamAvailable, setRightPanelOpen, setConversationView,
+    botTeamAvailable, pluginWorkspacePages, activeWorkspacePage, setActiveWorkspacePage,
+    setRightPanelOpen, setConversationView,
     setSettingsOpen, setConversationSearchOpen, setTerminalOpen,
     recentExpanded, showArchived, setShowArchived, sessions,
     runningSessionIds, sleepingSessions, skillSummarySessionId, fileManagerLabel,
@@ -110,7 +114,7 @@ export function Sidebar(props: SidebarProps) {
     // 插件页打开时主内容区不是会话，会话列表就**不该再显示"当前选中"高亮**——
     // 否则用户会以为这个会话仍可点击选中（实际点了没反应：activeId 没变）。
     const selected = session.id === activeId && !pluginsPageOpen && !botTeamPageOpen;
-    return (
+    return ((selected) => (
     <div className={`session-item-wrap ${selected ? "active" : ""} ${session.pinned ? "pinned" : ""} ${session.archived ? "archived" : ""}`} key={session.id} data-menu-root>
       {renamingId === session.id ? (
         <input
@@ -178,7 +182,7 @@ export function Sidebar(props: SidebarProps) {
         </div>
       )}
     </div>
-    );
+    ))(selected && !activeWorkspacePage);
   };
 
   return (
@@ -239,7 +243,7 @@ export function Sidebar(props: SidebarProps) {
               <button
                 className="icon-button subtle tiny"
                 aria-label={t("sidebar.importPackage", "导入任务或项目")} /* aria-label="导入任务或项目" */
-                title={t("sidebar.importPackageDesc", "导入任务或项目（.dyworker 迁移包，可从其他电脑导入）")}
+                title={t("sidebar.importPackageDesc", "导入任务或项目（支持 .dyworker 迁移包及 DeepSeek 导出 .zip / conversations.json）")}
                 onClick={() => void importSessionPackage()}
               >
                 <Upload size={14} />
@@ -370,9 +374,35 @@ export function Sidebar(props: SidebarProps) {
           {botTeamAvailable && <section className="sidebar-section bot-team-section">
             <button className={`recent-section-toggle bot-team-entry ${botTeamPageOpen ? "active" : ""}`}
               aria-label={t("sidebar.botTeam", "团队助手")} aria-current={botTeamPageOpen ? "page" : undefined}
-              onClick={() => { setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
+              onClick={() => { setActiveWorkspacePage(null); setBotTeamPageOpen(true); setRightPanelOpen(false); setPluginsPageOpen(false); setConversationView("chat"); setSettingsOpen(false); setConversationSearchOpen(false); setTerminalOpen(false); }}>
               <Bot size={16} /><span>{t("sidebar.botTeam", "团队助手")}</span><ChevronRight size={13} />
             </button>
+          </section>}
+
+          {pluginWorkspacePages.length > 0 && <section className="sidebar-section bot-team-section" aria-label="扩展页面">
+            {pluginWorkspacePages.map((page) => {
+              const active = Boolean(activeWorkspacePage && activeWorkspacePage.pluginId === page.pluginId && activeWorkspacePage.key === page.key && !botTeamPageOpen);
+              return (
+                <button
+                  key={`${page.pluginId}:${page.key}`}
+                  className={`recent-section-toggle bot-team-entry ${active ? "active" : ""}`}
+                  aria-label={page.label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => {
+                    setActiveWorkspacePage(page);
+                    setBotTeamPageOpen(false);
+                    setRightPanelOpen(false);
+                    setPluginsPageOpen(false);
+                    setConversationView("chat");
+                    setSettingsOpen(false);
+                    setConversationSearchOpen(false);
+                    setTerminalOpen(false);
+                  }}
+                >
+                  <LayoutGrid size={16} /><span>{page.label}</span><ChevronRight size={13} />
+                </button>
+              );
+            })}
           </section>}
 
           <section className="sidebar-section recent-section">

@@ -1600,11 +1600,66 @@ html[data-theme="dark"] .step-track {
   }
 
   html[data-theme="dark"] .step-actions button:disabled,
-  html[data-theme="dark"] .step-actions button.primary:disabled {
+html[data-theme="dark"] .step-actions button.primary:disabled {
     background: rgba(255, 255, 255, 0.06);
     color: rgba(255, 255, 255, 0.32);
     border-color: transparent;
     box-shadow: none;
+  }
+
+  html[data-theme="dark"] .message-file-card {
+    background: var(--card);
+    border-color: var(--border);
+    color: var(--ink);
+  }
+
+  html[data-theme="dark"] .message-file-card.clickable:hover {
+    border-color: var(--border-strong);
+  }
+
+  html[data-theme="dark"] .message-file-card-icon {
+    background: rgba(255, 255, 255, 0.08);
+    color: #c2c6bc;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-word {
+    background: rgba(96, 165, 250, 0.16);
+    color: #93c5fd;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-excel {
+    background: rgba(74, 222, 128, 0.15);
+    color: #86efac;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-ppt {
+    background: rgba(251, 146, 60, 0.16);
+    color: #fdba74;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-pdf {
+    background: rgba(248, 113, 113, 0.16);
+    color: #fca5a5;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-code {
+    background: rgba(45, 212, 191, 0.15);
+    color: #5eead4;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-archive {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fcd34d;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-video {
+    background: rgba(192, 132, 252, 0.16);
+    color: #d8b4fe;
+  }
+
+  html[data-theme="dark"] .message-file-card-icon.kind-text {
+    background: rgba(163, 230, 53, 0.14);
+    color: #bef264;
   }
 
 

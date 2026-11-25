@@ -1,3 +1,9 @@
+const TASK_FAILURE_NOTE_RE = /(?:\r?\n){0,2}(?:\*\*任务未完成，已停止\*\*：|请求没有完成：)[\s\S]*$/;
+
+export function stripTaskFailureNote(text: unknown): string {
+  return String(text || "").replace(TASK_FAILURE_NOTE_RE, "").trim();
+}
+
 /** 各入口共用失败收尾文案；进度正文存在时也必须显示停止原因。 */
 export function taskResultText(result: { status?: string; finalText?: string; reason?: string },
   fallback = "", emptyText = "（没有产出内容）"): string {

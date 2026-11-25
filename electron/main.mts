@@ -5,6 +5,7 @@ import { appendFileSync,existsSync,promises as fs,readFileSync,statSync,writeFil
 import path from "node:path";
 import { fileURLToPath,pathToFileURL } from "node:url";
 import { builtinHooks,isSafeBrowserUrl,probeServerContextLimit,requestModel,sanitizeToolCalls,summarizationSettings } from "./agent.mts";
+import { prepareAgentConversationEntries } from "./agent/messages.mts";
 import { explicitModelContextLimit,resolveModelContextLimit } from "./model-context.ts";
 import { createUpdaterController,DEFAULT_UPDATE_URL } from "./app-updater.mts";
 import { createMacStoreFileAccess } from "./mac-store-file-access.mts";
@@ -58,6 +59,7 @@ import { knowledgeExportIpcPlugin } from "./host/plugins/knowledge-export-ipc.mt
 import { knowledgeFoldersIpcPlugin } from "./host/plugins/knowledge-folders-ipc.mts";
 import { pluginApiIpcPlugin } from "./host/plugins/plugin-api-ipc.mts";
 import { pluginsIpcPlugin } from "./host/plugins/plugins-ipc.mts";
+import { PLUGIN_AUTHORING_TOOL_NAMES, executePluginInspect, executePluginManage, managedCreatedPluginsRoot, pluginAuthoringToolDefinitions } from "./plugin-authoring.mts";
 import { rulesIpcPlugin } from "./host/plugins/rules-ipc.mts";
 import { schedulesIpcPlugin } from "./host/plugins/schedules-ipc.mts";
 import { sensitivePathGuardPlugin } from "./host/plugins/sensitive-path-guard.mts";
@@ -1110,16 +1112,54 @@ async function mcpExtraTools(...args: Parameters<typeof mcpRuntime.mcpExtraTools
 }
 
 
-// ---- 浏览器协作（可见窗口，操作可审计） ----
+// ---- 浏览器协作与插件创作工具（可见窗口，操作可审计） ----
+
+const pendingPluginSyncs = new Map<string, (result: any) => void>();
+ipcMain.on("plugins:sync-reply", (_event, payload) => {
+  const requestId = String(payload?.requestId || "");
+  const resolve = pendingPluginSyncs.get(requestId);
+  if (!resolve) return;
+  pendingPluginSyncs.delete(requestId);
+  resolve(payload);
+});
+
+function resolvePluginSyncTarget(preferredRenderer?: any) {
+  if (preferredRenderer && !preferredRenderer.isDestroyed?.()) return preferredRenderer;
+  if (mainWindow && !mainWindow.isDestroyed?.()) return mainWindow.webContents;
+  return BrowserWindow.getAllWindows().find((win) => !win.isDestroyed?.())?.webContents || null;
+}
+
+function requestRendererPluginSync(preferredRenderer: any, req: any) {
+  const target = resolvePluginSyncTarget(preferredRenderer);
+  if (!target) return Promise.resolve({ ok: false, skipped: true });
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPluginSyncs.delete(requestId);
+      resolve({ ok: false, timeout: true });
+    }, 8000);
+    pendingPluginSyncs.set(requestId, (result) => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+    target.send("plugins:sync-request", { requestId, ...req });
+  });
+}
+
+function notifyAllWindowsPluginsUpdated() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed?.()) win.webContents.send("plugins:updated");
+  }
+}
 
 function agentExtraTools(mcpTools) {
   // 会话检索工具全路径开放（桌面/定时/续跑/渠道）：纯只读、数据源是本机会话存档，无审批风险。
   // 插件工具（plugin__*）也在这里进入模型可见的工具面，风险由 host/risk.mts 按名字判定为
   // 有副作用，因此和外部工具一样要走审批与审计。
-  return [...mcpTools, ...browserToolDefinitions(), ...filePreviewToolDefinitions(), ...sessionToolDefinitions(), ...ctx.tools.definitions()];
+  return [...mcpTools, ...browserToolDefinitions(), ...filePreviewToolDefinitions(), ...sessionToolDefinitions(), ...pluginAuthoringToolDefinitions(), ...ctx.tools.definitions()];
 }
 
-function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "", channel = "", channelUserId = "" } = {} as any) {
+function createExtraToolRouter(settings, workspacePath, { signal, renderer, sessionId = "", runId = "", channel = "", channelUserId = "", creationMode = false } = {} as any) {
   const browserAgent = new BrowserAgent({
     openPanel: renderer
       ? (url, tabId, credential) =>
@@ -1192,6 +1232,19 @@ function createExtraToolRouter(settings, workspacePath, { signal, renderer, sess
   let desktopRun = { sessionId, runId, signal };
   const route = async (name, args, context = {} as any) => {
     if (name === "open_file") return requestFilePreview(args, { workspacePath, sessionId, renderer });
+    if (PLUGIN_AUTHORING_TOOL_NAMES.has(String(name))) {
+      const managedRoot = managedCreatedPluginsRoot(app.getPath("userData"));
+      const execOpts = {
+        workspacePath,
+        managedRoot,
+        defaultOpenSlot: Boolean((desktopRun as any)?.creationMode || creationMode),
+        syncClientPlugin: (req: any) => requestRendererPluginSync(renderer, req),
+        notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
+      };
+      return name === "plugin_inspect"
+        ? executePluginInspect(ctx, args, execOpts)
+        : executePluginManage(ctx, args, execOpts);
+    }
     // 会话检索工具优先：只读查 sessions.json，不走浏览器/MCP
     if (SESSION_TOOL_NAMES.has(String(name))) {
       const sessions = await readAllSessions();
@@ -1487,36 +1540,10 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     for (const message of conversation) {
       const recovered = message?.role === "assistant" ? recoveredHistory.get(message.runId) : undefined;
       const execution = message?.executedMessages?.length ? message.executedMessages : recovered?.executedMessages;
-      if (message?.role === "assistant" && Array.isArray(execution) && execution.length > 0) {
-        for (const m of execution) {
-          agentConversation.push({
-            role: m.role,
-            content: m.content || "",
-            ...(m.reasoning_content ? { reasoning_content: m.reasoning_content } : {}),
-            ...(Array.isArray(m.tool_calls) && m.tool_calls.length ? { tool_calls: m.tool_calls } : {}),
-            ...(m.role === "tool" && m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-          });
-        }
-        if (message.taskStatus === "cancelled" || recovered) {
-          agentConversation.push({ role: "assistant", content: "本轮已停止。前面的工具结果是当时的进度；最后的行动计划不能视为已执行。" });
-        }
-      } else {
-        const entry: any = {
-          role: message?.role,
-          content: await providerMessageContent(message),
-        };
-        if (message?.role === "assistant") {
-          const reasoning = String(message?.reasoning || message?.reasoning_content || "").trim();
-          if (reasoning) entry.reasoning_content = reasoning;
-          if (Array.isArray(message?.tool_calls) && message.tool_calls.length) {
-            entry.tool_calls = message.tool_calls;
-          }
-        }
-        if (message?.role === "tool" && message?.tool_call_id) {
-          entry.tool_call_id = message.tool_call_id;
-        }
-        agentConversation.push(recovered?.summary ? { role: "assistant", content: recovered.summary } : entry);
-      }
+      const resolvedContent = message?.role === "assistant" && Array.isArray(execution) && execution.length > 0
+        ? undefined
+        : await providerMessageContent(message);
+      agentConversation.push(...prepareAgentConversationEntries(message, recovered, resolvedContent));
     }
     const approvalMode = normalizeApprovalMode(payload?.approvalMode);
     // 服务器自报的实际上限（vLLM 等在 /models 里带 max_model_len）：本地/自建模型常远小于
@@ -1531,12 +1558,16 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
     // 统一代理入口：公共选项装配（hooks/记忆/技能/常驻规则/审计/MCP 工具/守卫）、
     // 循环续跑、记忆落盘与 sleeping→唤醒登记都在 ctx.agent.run 内；
     // 桌面入口只声明差异：流式合并 emit、pending-map 审批、abort 信号与循环事件
+    const creationMode = Boolean(payload?.creationMode);
+    const managedPluginsRoot = creationMode ? managedCreatedPluginsRoot(app.getPath("userData")) : "";
     const finalResult = await ctx.agent.run({
       settings,
       runtime: payload?.runtime,
       workspacePath,
       sessionId,
       approvalMode,
+      creationMode,
+      ...(creationMode ? { managedPluginsRoot, trustedWriteRoots: [managedPluginsRoot] } : {}),
       prompt: latestUserText,
       contextLimit: (() => {
         const explicit = explicitModelContextLimit({
@@ -1561,7 +1592,7 @@ async function executeAgentRun({ payload: initialPayload, sender }) {
       conversation: sanitizeToolCalls(agentConversation),
       loop,
       loopStateEvents: true,
-      routerOptions: { signal: abortController.signal, renderer: sender, sessionId, runId },
+      routerOptions: { signal: abortController.signal, renderer: sender, sessionId, runId, creationMode },
       requestApproval: (action, approvalSignal?: AbortSignal) => new Promise<any>((resolve) => {
         const abort = () => {
           agentState.pending.delete(action.id);
@@ -1801,7 +1832,12 @@ ctx.plugin(tracesIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(usageHooksIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(auditIpcPlugin());
 // 插件管理通道（走契约层：ctx.ipc / ctx.plugins）
-ctx.plugin(pluginsIpcPlugin());
+ctx.plugin(pluginsIpcPlugin({
+  dataDir: app.getPath("userData"),
+  getSettings: readSettings,
+  syncClientPlugin: requestRendererPluginSync,
+  notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
+}));
 ctx.plugin(pluginApiIpcPlugin());
 ctx.plugin(windowIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(attachmentsIpcPlugin({ trustedHandle, ...shellDeps }));

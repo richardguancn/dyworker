@@ -21,6 +21,18 @@ export function attachmentType(filePath) {
 
 export async function describeAttachment(filePath) {
   const stat = await fs.stat(filePath);
+  if (stat.isDirectory()) {
+    const base = path.basename(filePath) || filePath;
+    return {
+      name: base.endsWith("/") ? base : `${base}/`,
+      path: filePath,
+      size: 0,
+      mimeType: "inode/directory",
+      isImage: false,
+      isVoice: false,
+      isDirectory: true,
+    };
+  }
   const mimeType = attachmentType(filePath);
   const isImage = mimeType.startsWith("image/");
   const extension = path.extname(filePath).toLowerCase();
@@ -57,32 +69,39 @@ export async function providerMessageContent(message) {
   for (const attachment of Array.isArray(message?.attachments) ? message.attachments : []) {
     const filePath = String(attachment?.path || "");
     if (!filePath) continue;
+    const displayName = String(attachment?.name || "").trim() || path.basename(filePath);
     try {
       const stat = await fs.stat(filePath);
+      // 目录引用零预读：仅附带绝对路径提示，不读取/遍历子文件，防止 EISDIR 与上下文膨胀
+      if (attachment?.isDirectory || attachment?.mimeType === "inode/directory" || stat.isDirectory()) {
+        const cleanName = displayName.replace(/^@/, "");
+        text += `\n\n[引用目录 @${cleanName}：${filePath}（如需查看目录内容，请按需调用 list_files 或 find_files）]`;
+        continue;
+      }
       const mimeType = attachmentType(filePath);
       if (mimeType.startsWith("image/")) {
         if (stat.size > 32 * 1024 * 1024) {
-          text += `\n\n[图片 ${path.basename(filePath)} 超过 32 MB，未发送]`;
+          text += `\n\n[图片 ${displayName} 超过 32 MB，未发送]`;
           continue;
         }
         const image = await readLocalImageForModel(filePath);
         if (!image.ok || !image.dataUrl) {
-          text += `\n\n[图片 ${path.basename(filePath)} ${image.error || "过大或无法压缩"}，未发送]`;
+          text += `\n\n[图片 ${displayName} ${image.error || "过大或无法压缩"}，未发送]`;
           continue;
         }
         imageBlocks.push({ type: "image_url", image_url: { url: image.dataUrl } });
       } else if (textExtensions.has(path.extname(filePath).toLowerCase())) {
         if (stat.size > 2 * 1024 * 1024) {
-          text += `\n\n[文本附件 ${path.basename(filePath)} 超过 2 MB，未展开]`;
+          text += `\n\n[文本附件 ${displayName} 超过 2 MB，未展开]`;
           continue;
         }
         const content = await fs.readFile(filePath, "utf8");
-        text += `\n\n--- 附件：${path.basename(filePath)} ---\n${content}`;
+        text += `\n\n--- 附件：${displayName} ---\n${content}`;
       } else {
-        text += `\n\n[已选择附件 ${path.basename(filePath)}；当前通用模型接口仅直接读取文本和图片]`;
+        text += `\n\n[已选择附件 ${displayName}；当前通用模型接口仅直接读取文本和图片]`;
       }
     } catch (error: any) {
-      text += `\n\n[附件 ${path.basename(filePath)} 读取失败：${error instanceof Error ? error.message : String(error)}]`;
+      text += `\n\n[附件 ${displayName} 读取失败：${error instanceof Error ? error.message : String(error)}]`;
     }
   }
   if (!imageBlocks.length) return text || "请处理已选择的附件。";

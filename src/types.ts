@@ -31,6 +31,8 @@ export type ActivityKind =
   | "load_skill"
   | "save_skill"
   | "update_skill"
+  | "plugin_inspect"
+  | "plugin_manage"
   | "web_search"
   | "gov_search"
   | "fetch_web_page"
@@ -269,7 +271,7 @@ export type AgentEvent =
   | { type: "ask-user"; request: QuestionRequest }
   | { type: "debug-log"; entry: DebugLogEntry }
   | { type: "context-usage"; used: number; completion: number; total?: number; estimated: boolean }
-  | { type: "context-compacted" }
+  | { type: "context-compacted"; summary?: string }
   | { type: "queued"; count: number }
   | { type: "queue-start"; count: number }
   | { type: "token-usage"; model: string; prompt: number; completion: number; estimated: boolean }
@@ -303,6 +305,7 @@ export interface Attachment {
   mimeType: string;
   isImage?: boolean;
   isVoice?: boolean;
+  isDirectory?: boolean;
   duration?: number;
   previewUrl?: string;
   // 来自输入框 @token 的内联引用：气泡里随正文按顺序展示，不再重复渲染成 chip
@@ -350,12 +353,39 @@ export interface ChatMessage {
   executedMessages?: AgentResult["executedMessages"];
 }
 
+export type ActionCardSlot = "sidebar.right.pane.tab" | "workspace.page" | "conversation.view" | "custom";
+
+export interface ActionCardProposal {
+  id: string;
+  title: string;
+  summary: string;
+  recommendedSlot: ActionCardSlot;
+  slotReason?: string;
+  prompt: string;
+}
+
+export interface ActionCardDecision {
+  status: "idle" | "creating" | "created" | "undone" | "dismissed" | "failed" | "cancelled";
+  chosenSlot: ActionCardSlot;
+  customPlacement?: string;
+  pluginId?: string;
+  pluginName?: string;
+  pluginDir?: string;
+  error?: string;
+  reportedToModel?: boolean;
+  updatedAt?: string;
+}
+
 export interface SessionRecord {
   id: string;
   modelSelection?: import('../electron/session-model.mts').SessionModelSelection;
   parentSessionId?: string;
   dshForkAtSeq?: number;
   runtime?: 'dyworker' | 'dsh';
+  /** 开启「创造模式」：直接挂载插件自省与安装/热挂载工具并允许写入托管插件目录 */
+  creationMode?: boolean;
+  /** 本会话内可选操作卡片（Action Card）的处理记录，键为 cardId */
+  actionCardDecisions?: Record<string, ActionCardDecision>;
   title: string;
   // 用户手动重命名过：不再被自动生成的会话标题覆盖
   titleCustom?: boolean;
@@ -955,15 +985,29 @@ export interface SkillLibrarySearchResult {
   version: string;
 }
 
+export interface ScheduleEventConfig {
+  watchPath?: string;
+  extensions?: string;
+  url?: string;
+  keyword?: string;
+  debounceSeconds?: number;
+  sessionMode?: "new" | "reuse";
+  reusableSessionId?: string;
+}
+
 export interface ScheduleRecord {
   runtime?: "dyworker" | "dsh";
   id: string;
   name: string;
   prompt: string;
   workspacePath: string;
-  recurrence: "once" | "hourly" | "daily" | "weekly";
+  triggerType?: "time" | "folder" | "url";
+  eventConfig?: ScheduleEventConfig;
+  recurrence: "minutes_5" | "minutes_15" | "once" | "hourly" | "daily" | "weekly";
   nextRun: string;
   lastRun: string;
+  lastCheckAt?: string;
+  lastFilterNote?: string;
   enabled: boolean;
   allowWorkspaceWrites: boolean;
   lastStatus: "" | "running" | "success" | "failed" | "sleeping" | "cancelled";
@@ -997,6 +1041,8 @@ export interface ScheduleRunStarted {
   startedAt: string;
   /** 用户点了「立即执行」（区别于到点自动运行）：界面可以把这次运行的会话直接推到眼前 */
   manual?: boolean;
+  /** 事件监控复用已有会话 */
+  reuseSession?: boolean;
 }
 
 export interface DyworkerBridge {
@@ -1213,6 +1259,7 @@ export interface DyworkerBridge {
     messages: ChatMessage[];
     loop?: { enabled: boolean; maximum: number };
     approvalMode?: ApprovalMode;
+    creationMode?: boolean;
     sessionId?: string;
     runId?: string;
   }): Promise<{ ok: boolean; result?: AgentResult; queued?: boolean; runId?: string; error?: string }>;
@@ -1347,6 +1394,52 @@ export interface DyworkerBridge {
   pluginClientBundles(id: string): Promise<PluginClientBundlesResult>;
   /** 插件视图要的会话投影（DSH 客户端契约里的 useProjection） */
   pluginProjection(payload: { sessionId: string; key: string }): Promise<{ ok: boolean; value?: unknown; error?: string }>;
+  /** 创造模式默认托管目录（<userData>/created-plugins） */
+  managedPluginsRoot?(): Promise<string>;
+  choosePluginDirectory?(): Promise<string | null>;
+  listCreatedPlugins?(): Promise<CreatedLocalPluginRecord[]>;
+  /** 接收主进程发起的客户端热挂载/卸载请求并回传结果 */
+  onPluginSyncRequest?(callback: (payload: {
+    requestId: string;
+    action: "install" | "reload" | "enable" | "disable" | "uninstall";
+    pluginId: string;
+    pkgName?: string;
+    openSlot?: boolean | string;
+  }) => void): () => void;
+  replyPluginSync?(payload: {
+    requestId: string;
+    id?: string;
+    name?: string;
+    ok: boolean;
+    hasClient?: boolean;
+    slots?: string[];
+    error?: string;
+  }): void;
+  onPluginsUpdated?(callback: () => void): () => void;
+  /** 通过对话末尾创建卡片在后台生成并安装插件 */
+  createPluginFromCard?(payload: {
+    sessionId: string;
+    cardId: string;
+    title: string;
+    summary: string;
+    prompt: string;
+    chosenSlot: ActionCardSlot;
+    customPlacement?: string;
+    workspacePath?: string;
+    recentMessages?: Array<{ role: string; content: string }>;
+    settings: ProviderSettings;
+    approvalMode: ApprovalMode;
+  }): Promise<{
+    ok: boolean;
+    cancelled?: boolean;
+    pluginId?: string;
+    pkgName?: string;
+    pluginDir?: string;
+    slot?: string;
+    message?: string;
+    error?: string;
+  }>;
+  cancelCardPluginCreation?(payload: { sessionId: string; cardId: string }): Promise<{ ok: boolean; cancelled?: boolean }>;
   dshOperation(payload: { sessionId: string; action: 'session-create' | 'session-fork' | 'global-search' | 'global-search-cancel' | 'overview' | 'snapshot' | 'family' | 'child-snapshot' | 'session-image' | 'history-page' | 'history-open' | 'history-next' | 'history-close' | 'history-list' | 'history-control-open' | 'history-state' | 'history-search' | 'session-rename' | 'session-command' | 'settings-describe' | 'settings-update' | 'settings-mutate' | 'inject' | 'compact' | 'input-snapshot' | 'input-admit' | 'input-update-queue' | 'input-cancel' | 'child-prompt' | 'child-interrupt'; payload?: unknown }): Promise<{ ok: boolean; value?: any; error?: { message: string; code?: string; details?: any } }>;
 
 }
@@ -1449,6 +1542,23 @@ export interface PluginClientBundlesResult {
   modules?: Array<{ spec: string; url: string }>;
   /** 声明了但本机没装的客户端模块 */
   missingModules?: string[];
+  error?: string;
+}
+
+export interface CreatedLocalPluginRecord {
+  dir: string;
+  folderName: string;
+  packageName: string;
+  displayName: string;
+  description: string;
+  version: string;
+  installed: boolean;
+  active: boolean;
+  disabled?: boolean;
+  entryId?: string;
+  hasClient: boolean;
+  hasThirdPartyDeps: boolean;
+  valid: boolean;
   error?: string;
 }
 

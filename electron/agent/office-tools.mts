@@ -1,9 +1,11 @@
-// 办公检查、工作日计算、文档导出与文字识别。
-import { promises as fs } from "node:fs";
+// 办公检查、工作日计算、文档导出、公式重算、页面渲染与文字识别。
+import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { readLocalImageForModel } from "../local-image.mts";
 import { detectProvider,glmOcrFile,glmToolBaseUrl } from "../providers.mts";
-import { READ_LIMIT,clipped,ignoredNames,moduleDir,runPython,textExtensions } from "./shared.mts";
+import { READ_LIMIT,clipped,ignoredNames,moduleDir,runProcess,runPython,textExtensions } from "./shared.mts";
 
 // ---- 政府办公工具：保密检查与公文格式检查 ----
 
@@ -288,4 +290,248 @@ export async function runOcrFile(workspace, settings, fetchImpl, args) {
     endPage: args.end_page,
   });
   return clipped(markdown, READ_LIMIT);
+}
+
+// ---- LibreOffice 探测与隔离调用、视觉渲染自检、Excel 公式重算 ----
+
+const SOFFICE_CANDIDATES_BY_PLATFORM: Record<string, string[]> = {
+  darwin: [
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/opt/homebrew/bin/soffice",
+    "/usr/local/bin/soffice",
+  ],
+  win32: [
+    "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+    "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+  ],
+  linux: [
+    "/usr/bin/soffice",
+    "/usr/bin/libreoffice",
+    "/usr/local/bin/soffice",
+  ],
+};
+
+export function findSofficeBinary(): string {
+  const explicit = String(process.env.DYWORKER_SOFFICE_PATH || "").trim();
+  if (explicit) return explicit;
+  const candidates = SOFFICE_CANDIDATES_BY_PLATFORM[process.platform] || [];
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // 忽略权限异常继续探测下一路径
+    }
+  }
+  return "soffice";
+}
+
+export async function runIsolatedSoffice(
+  args: string[],
+  options: { timeoutMs?: number; binaryPath?: string; runner?: typeof runProcess } = {},
+) {
+  const timeoutMs = Number(options.timeoutMs) || 60_000;
+  const runner = options.runner || runProcess;
+  const primary = options.binaryPath || findSofficeBinary();
+  const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-lo-profile-"));
+  const profileUrl = pathToFileURL(profileDir).href;
+  const fullArgs = [`-env:UserInstallation=${profileUrl}`, ...args];
+  try {
+    let result = await runner(primary, fullArgs, timeoutMs, 4000);
+    if (!result.ok && primary === "soffice" && String(result.output || "").startsWith("无法启动程序")) {
+      result = await runner("libreoffice", fullArgs, timeoutMs, 4000);
+    }
+    return result;
+  } finally {
+    await fs.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export function parseRenderPageRange(pagesSpec: unknown): { start: number; end: number } {
+  const raw = String(pagesSpec || "").trim();
+  if (!raw) return { start: 1, end: 2 };
+  const rangeMatch = /^(\d+)\s*[-–~]\s*(\d+)$/.exec(raw);
+  if (rangeMatch) {
+    const start = Math.max(1, Number(rangeMatch[1]) || 1);
+    const parsedEnd = Math.max(start, Number(rangeMatch[2]) || start);
+    return { start, end: Math.min(start + 1, parsedEnd) };
+  }
+  const single = Math.max(1, Number.parseInt(raw, 10) || 1);
+  return { start: single, end: single };
+}
+
+const RENDERABLE_OFFICE_EXTS = new Set([".pdf", ".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"]);
+
+export async function renderOfficePages(
+  workspace: any,
+  args: any = {},
+  options: { runner?: typeof runProcess; readImage?: typeof readLocalImageForModel; sofficeBinary?: string } = {},
+) {
+  const relPath = String(args?.path || "").trim();
+  if (!relPath) throw new Error("请提供要渲染检查的文档路径（path）");
+  const target = workspace.resolve(relPath, { forWrite: false });
+  const stat = await fs.stat(target).catch(() => null);
+  if (!stat?.isFile()) throw new Error(`文件不存在：${relPath}`);
+
+  const ext = path.extname(target).toLowerCase();
+  if (!RENDERABLE_OFFICE_EXTS.has(ext)) {
+    throw new Error(`office_render 支持 .pdf/.docx/.doc/.pptx/.ppt/.xlsx/.xls，暂不支持 ${ext || "该格式"}`);
+  }
+
+  const runner = options.runner || runProcess;
+  const readImage = options.readImage || readLocalImageForModel;
+  const { start, end } = parseRenderPageRange(args?.pages);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-office-render-"));
+
+  try {
+    let pdfPath = ext === ".pdf" ? target : "";
+    if (!pdfPath) {
+      const converted = await runIsolatedSoffice(
+        ["--headless", "--convert-to", "pdf", "--outdir", tmpDir, target],
+        { timeoutMs: 90_000, binaryPath: options.sofficeBinary, runner },
+      );
+      if (converted.ok) {
+        const candidatePdf = path.join(tmpDir, `${path.basename(target, path.extname(target))}.pdf`);
+        if (await fs.stat(candidatePdf).then((s) => s.isFile()).catch(() => false)) {
+          pdfPath = candidatePdf;
+        }
+      }
+      if (!pdfPath && process.platform !== "darwin") {
+        throw new Error(`无法将 ${ext} 转为 PDF 预览（${converted.output || "未安装 LibreOffice"}）。请先安装 LibreOffice 后再调用视觉自检`);
+      }
+    }
+
+    let pngFiles: string[] = [];
+    const prefix = path.join(tmpDir, "page");
+    if (pdfPath) {
+      const poppler = await runner("pdftoppm", ["-png", "-r", "144", "-f", String(start), "-l", String(end), pdfPath, prefix], 60_000, 2000);
+      if (poppler.ok) {
+        const names = (await fs.readdir(tmpDir)).filter((name) => /^page.*\.png$/i.test(name)).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+        pngFiles = names.map((name) => path.join(tmpDir, name));
+      }
+    }
+
+    if (!pngFiles.length && process.platform === "darwin") {
+      const quickSource = pdfPath || target;
+      const ql = await runner("qlmanage", ["-t", "-s", "1600", "-o", tmpDir, quickSource], 30_000, 2000);
+      if (ql.ok) {
+        const names = (await fs.readdir(tmpDir)).filter((name) => name.toLowerCase().endsWith(".png")).sort();
+        pngFiles = names.map((name) => path.join(tmpDir, name));
+      }
+    }
+
+    if (!pngFiles.length) {
+      throw new Error("未能生成文档渲染图片：请确认本机已安装 LibreOffice 与 poppler-utils（pdftoppm）");
+    }
+
+    const pickedFiles = pngFiles.slice(0, 2);
+    const renderedPages: Array<{ path: string; page: number; dataUrl: string; mimeType: string }> = [];
+    for (let i = 0; i < pickedFiles.length; i += 1) {
+      const image = await readImage(pickedFiles[i]);
+      if (!image?.ok || !image.dataUrl) {
+        throw new Error(image?.error || "渲染出的图片读取或压缩失败");
+      }
+      renderedPages.push({
+        path: relPath,
+        page: start + i,
+        dataUrl: image.dataUrl,
+        mimeType: image.mimeType || "image/png",
+      });
+    }
+
+    return {
+      summaryText: `已渲染 ${relPath}（第 ${start}${renderedPages.length > 1 ? `-${start + renderedPages.length - 1}` : ""} 页，共 ${renderedPages.length} 张预览图）。请仔细检查排版、表格列宽与文字是否截断或重叠。`,
+      renderedPages,
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+const EXCEL_ERROR_TOKENS = ["#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A", "#NUM!", "#NULL!"];
+const EXCEL_SCAN_PY = `
+import json, sys, zipfile, xml.etree.ElementTree as ET
+path = sys.argv[1]
+tokens = {"#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A", "#NUM!", "#NULL!"}
+errors = []
+with zipfile.ZipFile(path, "r") as zf:
+  names = sorted(n for n in zf.namelist() if n.startswith("xl/worksheets/") and n.endswith(".xml"))
+  for sheet_idx, name in enumerate(names, 1):
+    root = ET.fromstring(zf.read(name))
+    for elem in root.iter():
+      if elem.tag.endswith("}c") or elem.tag == "c":
+        cell_type = elem.attrib.get("t", "")
+        ref = elem.attrib.get("r", "?")
+        val = ""
+        for ch in elem:
+          if ch.tag.endswith("}v") or ch.tag == "v":
+            val = (ch.text or "").strip()
+            break
+        if (cell_type == "e" and val) or val in tokens:
+          errors.append(f"Sheet{sheet_idx}!{ref}: {val}")
+          if len(errors) >= 20:
+            print(json.dumps(errors, ensure_ascii=False))
+            sys.exit(0)
+print(json.dumps(errors, ensure_ascii=False))
+`;
+
+export async function scanExcelFormulaErrors(xlsxPath: string): Promise<string[]> {
+  if (!xlsxPath.toLowerCase().endsWith(".xlsx") && !xlsxPath.toLowerCase().endsWith(".xlsm")) return [];
+  const res = await runPython(["-c", EXCEL_SCAN_PY, xlsxPath], 30_000, 8000);
+  if (!res.ok) return [];
+  try {
+    const parsed = JSON.parse(String(res.output || "[]"));
+    return Array.isArray(parsed)
+      ? parsed.map(String).filter((line) => EXCEL_ERROR_TOKENS.some((tok) => line.includes(tok)) || line.includes("!"))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function recalculateExcelWorkbook(
+  workspace: any,
+  args: any = {},
+  options: { runner?: typeof runProcess; sofficeBinary?: string; scanErrors?: (filePath: string) => Promise<string[]> } = {},
+) {
+  const relPath = String(args?.path || "").trim();
+  if (!relPath) throw new Error("请提供需要重算公式的表格路径（path）");
+  const target = workspace.resolve(relPath, { forWrite: true });
+  const stat = await fs.stat(target).catch(() => null);
+  if (!stat?.isFile()) throw new Error(`文件不存在：${relPath}`);
+
+  const ext = path.extname(target).toLowerCase();
+  if (![".xlsx", ".xlsm", ".ods"].includes(ext)) {
+    throw new Error(`office_recalculate 仅支持 .xlsx/.xlsm/.ods 文件，不支持 ${ext || "该格式"}`);
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "dyworker-recalc-"));
+  const outDir = path.join(tmpDir, "out");
+  await fs.mkdir(outDir, { recursive: true });
+  const stagedInput = path.join(tmpDir, path.basename(target));
+  await fs.copyFile(target, stagedInput);
+
+  try {
+    const outFormat = ext.slice(1);
+    const converted = await runIsolatedSoffice(
+      ["--headless", "--convert-to", outFormat, "--outdir", outDir, stagedInput],
+      { timeoutMs: 90_000, binaryPath: options.sofficeBinary, runner: options.runner },
+    );
+    if (!converted.ok) {
+      throw new Error(`LibreOffice 公式重算失败（${converted.output || "请确认本机已安装 LibreOffice"}）`);
+    }
+    const outputFile = path.join(outDir, path.basename(target));
+    const outStat = await fs.stat(outputFile).catch(() => null);
+    if (!outStat?.isFile() || outStat.size === 0) {
+      throw new Error("公式重算未生成有效输出文件");
+    }
+    await fs.copyFile(outputFile, target);
+    const scanFn = options.scanErrors || scanExcelFormulaErrors;
+    const formulaErrors = await scanFn(target);
+    const errorNote = formulaErrors.length
+      ? `\n警告：检测到 ${formulaErrors.length} 处公式计算错误：${formulaErrors.join("、")}`
+      : "\n已重算全部公式缓存值，未发现公式错误（#REF!/#DIV/0!/#VALUE! 等）。";
+    return `已完成 ${relPath} 公式重算并保存。${errorNote}`;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }

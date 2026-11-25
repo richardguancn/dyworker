@@ -4,6 +4,7 @@
 // 后必须保证「同一实例」——App 的清理 effect、IPC 订阅运行时与 actions 三处读写都要
 // 指向同一份数据，因此抽成普通 `{ current: … }` 对象（模块只求值一次，天然单例）。
 import type { Attachment, DebugLogEntry, MessageAnnotation, SessionRecord, SkillRecord, TraceEvent, WorkspaceEntry } from "../types";
+import type { WorkspaceTarget } from "../lib/files";
 import type { BrowserWebviewElement } from "../features/browser/browserUtils";
 import type { RegisteredInputCandidate } from "../pluginRuntime/inputTriggers";
 import type { ComposerHandle } from "../pluginRuntime/dshDraftEditor.ts";
@@ -54,7 +55,8 @@ export const annotationQuotesRef: { current: AnnotationQuote[] } = { current: []
 export const dismissedPluginMention: { current: { sessionId: string; text: string; start: number; query: string } | null } = { current: null };
 // 工作区文件扁平列表与 @// 候选项的渲染镜像：派生自 state，App 每次渲染刷新，actions 读取
 export const workspaceFilesRef: { current: WorkspaceEntry[] } = { current: [] };
-export type MentionItem = { id: string; title: string; detail: string; pluginInput?: RegisteredInputCandidate; skill?: SkillRecord; file?: WorkspaceEntry; prompt?: string; session?: SessionRecord };
+export const workspaceTargetsRef: { current: WorkspaceTarget[] } = { current: [] };
+export type MentionItem = { id: string; title: string; detail: string; pluginInput?: RegisteredInputCandidate; skill?: SkillRecord; file?: WorkspaceEntry | WorkspaceTarget; prompt?: string; session?: SessionRecord };
 export const mentionItemsRef: { current: MentionItem[] } = { current: [] };
 // 新建任务：由 App 注册后指向真正的实现（applyMention 触发内置 /new 时调用）
 export const createTaskRef: { current: (targetWorkspacePath?: string) => void } = { current: () => {} };
@@ -142,3 +144,19 @@ export const bootstrapFailedRef: { current: boolean } = { current: false };
 export const settingsSaveErrorRef: { current: string } = { current: "" };
 // 模型列表拉取去重键：同一 endpoint+key 只拉一次，换地址或密钥后重新拉
 export const composerModelsKeyRef: { current: string } = { current: "" };
+
+// 客户端插件热挂载与插槽激活：由 src/pluginRuntime/hotMount.ts 在启动时注册，
+// 避免 ActionCardBlock / InteractiveMessage 等纯渲染组件静态拉入含顶层 await 的 @lexical/* 宿主依赖，导致 CJS 单测打包失败。
+export const pluginHotMountRef: {
+  current: {
+    mountClientPlugin: (pluginId: string, options?: { openSlot?: string | boolean; slotKey?: string }) => Promise<{ ok: boolean; error?: string }>;
+    activateClientPluginSlot: (pluginId: string, preferredSlot?: string, slotKey?: string) => string | null;
+    unmountClientPlugin: (idOrName: string, extraName?: string) => Promise<void>;
+  };
+} = {
+  current: {
+    mountClientPlugin: async () => ({ ok: false, error: "插件宿主未初始化" }),
+    activateClientPluginSlot: () => null,
+    unmountClientPlugin: async () => {},
+  },
+};

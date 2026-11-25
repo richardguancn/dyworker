@@ -85,6 +85,33 @@ export function subAgentTopic(title, task) {
   return clipped(brief, 24);
 }
 
+const PLUGIN_MANAGE_ACTION_LABELS: Record<string, string> = {
+  install: "安装到本地",
+  reload: "重新加载",
+  enable: "启用",
+  disable: "停用",
+  uninstall: "卸载",
+};
+
+const PLUGIN_SLOT_LABELS: Record<string, string> = {
+  "workspace.page": "左侧独立页面",
+  "sidebar.right.pane.tab": "右侧工具面板",
+  "conversation.view": "对话顶部视图",
+};
+
+function friendlyPluginTarget(target: unknown): string {
+  const raw = String(target || "").trim().replace(/[\\/]+$/, "");
+  if (!raw) return "";
+  const parts = raw.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || raw;
+}
+
+function friendlyPluginSlot(openSlot: unknown): string {
+  if (openSlot === true) return "安装后自动打开";
+  const key = String(openSlot || "").trim();
+  return PLUGIN_SLOT_LABELS[key] || key;
+}
+
 export function toolSummary(name, args) {
   switch (name) {
     case "list_files": return `查看文件夹 ${args.path || "（工作区根目录）"}`;
@@ -104,6 +131,8 @@ export function toolSummary(name, args) {
     case "search_in_files": return `全文检索：${String(args.query || "").slice(0, 40)}`;
     case "get_datetime": return "获取当前日期时间";
     case "export_excel_workbook": return `导出 Excel ${args.path || ""}`;
+    case "office_render": return `渲染文档自检 ${args.path || ""}${args.pages ? `（第 ${args.pages} 页）` : ""}`;
+    case "office_recalculate": return `重算表格公式 ${args.path || ""}`;
     case "run_command": return `运行命令：${String(args.command || "").slice(0, 60)}`;
     case "save_memory": return "保存一条长期记忆";
     case "search_history": return `搜索历史任务：${String(args.query || "").slice(0, 40)}`;
@@ -114,6 +143,12 @@ export function toolSummary(name, args) {
     case "discover_mcp_tools": return `查找服务工具：${String(args.query || "全部").slice(0, 40)}`;
     case "save_skill": return `保存工作模板：${args.name || ""}`;
     case "update_skill": return `改进工作模板：${args.skill_id || ""}`;
+    case "plugin_inspect": return `检查插件（${args.action || "list"}）：${args.target || ""}`;
+    case "plugin_manage": {
+      const actionLabel = ({ install: "安装插件", reload: "重载插件", enable: "启用插件", disable: "停用插件", uninstall: "卸载插件" } as Record<string, string>)[args.action] || "管理插件";
+      const nameHint = friendlyPluginTarget(args.target);
+      return nameHint ? `${actionLabel}：${nameHint}` : actionLabel;
+    }
     case "web_search": return `搜索网页：${String(args.query || "").slice(0, 40)}`;
     case "gov_search": return `搜索政府官网：${String(args.query || "").slice(0, 40)}`;
     case "fetch_web_page": return `读取网页：${String(args.url || "").slice(0, 60)}`;
@@ -225,6 +260,18 @@ export function approvalDetails(name, args) {
   }
   if (name === "copy_file" || name === "move_file") return `${args.source || ""} → ${args.target || ""}`;
   if (name === "save_skill") return `${args.name || ""}\n${args.description || ""}\n\n${clipped(String(args.instructions || ""), 2000)}`;
+  if (name === "plugin_manage") {
+    const actionText = PLUGIN_MANAGE_ACTION_LABELS[String(args.action || "")] || String(args.action || "");
+    const targetName = friendlyPluginTarget(args.target);
+    const rawTarget = String(args.target || "").trim();
+    const lines = [
+      `操作：${actionText}`,
+      targetName ? `插件：${targetName}` : "",
+      args.openSlot ? `展示位置：${friendlyPluginSlot(args.openSlot)}` : "",
+      rawTarget && rawTarget !== targetName ? `位置：${rawTarget}` : "",
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
   if (name === "update_skill") {
     return `模板：${args.skill_id || ""}\n\n改进后的执行要求：\n${clipped(String(args.instructions || ""), 2000)}`;
   }

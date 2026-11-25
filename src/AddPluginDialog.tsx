@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, ChevronDown, Loader2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from "lucide-react";
 import { t } from "./i18n";
-import type { PluginCompatibility } from "./types";
+import { pluginHotMountRef } from "./state/sharedRefs";
+import type { CreatedLocalPluginRecord, PluginCompatibility } from "./types";
 
-// 「添加插件」弹窗：包名 / GitHub 仓库地址 / 本地目录 三种来源，对齐 DSH 的添加向导。
+// 「添加插件」弹窗：支持「本地目录 / 我创建的插件」与「包名 / GitHub 仓库」两种入口。
 //
-// 安装源：官方源或中国大陆镜像源（npm 走 registry 镜像，GitHub 走代理前缀并逐个回退）。
-//
-// 安全提示照抄 DSH 的口径并保留其含义：插件以你的权限在本机运行，来源不明可能损坏应用
-// 或读取泄露数据；且当前版本不支持自动更新（升级需先卸载再装新版）。
+// 本地纯 JS 插件走受控离线拷贝安装并在启用后自动热挂载打开；
+// 网络来源保留官方源 / 中国大陆镜像源 / 自定义地址，并保留来源可信与默认不执行安装脚本提示。
 
 function getVerdictLabel(verdict?: string) {
   switch (verdict) {
@@ -28,7 +27,29 @@ function verdictClass(verdict?: string) {
   return "bad";
 }
 
-export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { onClose: () => void; onInstalled: () => void; initialSpec?: string }) {
+function isLocalPathLike(value: string): boolean {
+  const trimmed = String(value || "").trim();
+  return /^[.~/]/.test(trimmed) || /^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("\\\\");
+}
+
+function isRemoteRepoLike(value: string): boolean {
+  return /^\s*(https?:\/\/)?(www\.)?github\.com\//i.test(value);
+}
+
+export function AddPluginDialog({
+  onClose,
+  onInstalled,
+  initialSpec = "",
+  initialMode,
+}: {
+  onClose: () => void;
+  onInstalled: () => void;
+  initialSpec?: string;
+  initialMode?: "local" | "remote";
+}) {
+  const inferredMode: "local" | "remote" = initialMode
+    ?? (initialSpec && !isLocalPathLike(initialSpec) ? "remote" : "local");
+  const [mode, setMode] = useState<"local" | "remote">(inferredMode);
   const [input, setInput] = useState(initialSpec);
   const [version, setVersion] = useState("");
   const [source, setSource] = useState<"default" | "cn" | "custom">("default");
@@ -38,6 +59,9 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
   const [guideOpen, setGuideOpen] = useState(false);
   const [allowIncompatible, setAllowIncompatible] = useState(false);
   const [compat, setCompat] = useState<PluginCompatibility | null>(null);
+  const [createdPlugins, setCreatedPlugins] = useState<CreatedLocalPluginRecord[]>([]);
+  const [createdLoading, setCreatedLoading] = useState(false);
+  const [quickBusyDir, setQuickBusyDir] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [log, setLog] = useState("");
@@ -51,6 +75,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
   const target = input.trim();
+  const treatAsLocal = mode === "local" && !isRemoteRepoLike(target);
 
   useEffect(() => {
     if (!sourceOpen) return;
@@ -60,6 +85,21 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [sourceOpen]);
+
+  // 加载创造模式受管目录中已创建的本地插件，便于一键安装/恢复
+  useEffect(() => {
+    let cancelled = false;
+    if (!bridge?.listCreatedPlugins) return;
+    setCreatedLoading(true);
+    void bridge.listCreatedPlugins().then((items) => {
+      if (!cancelled && Array.isArray(items)) setCreatedPlugins(items);
+    }).catch(() => {
+      // 列出失败时不阻塞弹窗主流程
+    }).finally(() => {
+      if (!cancelled) setCreatedLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [bridge]);
 
   const SOURCE_OPTIONS = [
     { id: "default", label: t("plugins.source.default", "官方源"), hint: "registry.npmjs.org" },
@@ -77,7 +117,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     setLog("");
     try {
       // GitHub / 本地来源先要装进 profile 才能判定，这里只对包名做预检
-      if (/^[\w@./-]+$/.test(probe) && !/^[.~/]/.test(probe) && !probe.includes("github.com")) {
+      if (/^[\w@./-]+$/.test(probe) && !isLocalPathLike(probe) && !probe.includes("github.com")) {
         setCompat(await bridge.checkPluginCompatibility(probe));
       } else {
         setLog("GitHub / 本地来源需要先安装到插件目录，安装完成后会自动做兼容性判定。");
@@ -101,7 +141,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     try {
       const list = await bridge?.listPlugins();
       const bundle = list?.bundles?.find((item) => item.name === name || item.packageName === name);
-      const entry = list?.entries?.find((item) => item.name === bundle?.packageName || item.name === name);
+      const entry = list?.entries?.find((item) => item.name === bundle?.packageName || item.name === name || item.id === name);
       return {
         version: bundle?.version || "",
         description: bundle?.description || entry?.description || "",
@@ -123,9 +163,9 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     try {
       const payload = {
         input: target,
-        version: version.trim() || undefined,
-        source,
-        customRegistry: source === "custom" ? customRegistry : undefined,
+        version: !treatAsLocal ? (version.trim() || undefined) : undefined,
+        source: !treatAsLocal ? source : "default",
+        customRegistry: !treatAsLocal && source === "custom" ? customRegistry : undefined,
         allowIncompatible: force || allowIncompatible,
       };
       const installed = await bridge.installPluginPackage(payload);
@@ -164,6 +204,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     try {
       const enabled = await bridge.enablePlugin(result.entryId);
       if (!enabled?.ok) { setError(enabled?.error || "插件启用失败"); return; }
+      await pluginHotMountRef.current.mountClientPlugin(result.entryId, { openSlot: true }).catch(() => null);
       onInstalled();
       onClose();
     } catch (enableError: any) {
@@ -171,6 +212,68 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
     } finally {
       setBusy("");
     }
+  };
+
+  const chooseDirectory = async () => {
+    if (!bridge?.choosePluginDirectory) return;
+    setError("");
+    const picked = await bridge.choosePluginDirectory().catch(() => null);
+    if (picked) {
+      setMode("local");
+      setInput(picked);
+      setLog("");
+      setCompat(null);
+    }
+  };
+
+  const quickInstallCreated = async (item: CreatedLocalPluginRecord) => {
+    if (!bridge) return;
+    setQuickBusyDir(item.dir);
+    setBusy("quick");
+    setError("");
+    try {
+      const installed = await bridge.installPluginPackage({
+        input: item.dir,
+        allowIncompatible: true,
+      });
+      if (!installed?.ok) {
+        setInput(item.dir);
+        setResult({
+          ok: false,
+          name: installed?.analysis?.name || item.displayName || item.packageName,
+          verdict: installed?.verdict,
+          reasons: installed?.analysis?.reasons || (installed?.error ? [installed.error] : []),
+          matrix: installed?.matrix,
+          incompatible: installed?.incompatible,
+          source: "local",
+          version: item.version,
+          dir: installed?.dir,
+          detailOpen: true,
+        });
+        return;
+      }
+      const info = await describeInstalled(installed.name || item.packageName);
+      const entryId = info.entryId || item.entryId || installed.name || item.packageName;
+      const enabled = await bridge.enablePlugin(entryId);
+      if (!enabled?.ok) {
+        setError(enabled?.error || "启用插件失败");
+        return;
+      }
+      await pluginHotMountRef.current.mountClientPlugin(entryId, { openSlot: true }).catch(() => null);
+      onInstalled();
+      onClose();
+    } catch (err: any) {
+      setError(String(err?.message || err));
+    } finally {
+      setQuickBusyDir("");
+      setBusy("");
+    }
+  };
+
+  const onInputChange = (nextValue: string) => {
+    setInput(nextValue);
+    if (isRemoteRepoLike(nextValue)) setMode("remote");
+    else if (isLocalPathLike(nextValue)) setMode("local");
   };
 
   return createPortal(
@@ -228,67 +331,147 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
         ) : (
         <>
         <header className="add-plugin-header">
-          <h2>{t("plugins.addPlugin", "添加插件")}</h2>
+          <div className="add-plugin-header-title">
+            <h2>{t("plugins.addPlugin", "添加插件")}</h2>
+            <p className="add-plugin-sub">{t("plugins.addPluginSub", "输入插件的包名、GitHub 仓库地址或本地目录路径。")}</p>
+          </div>
           <button className="icon-button subtle" onClick={onClose} aria-label={t("common.close", "关闭")}><X size={16} /></button>
         </header>
 
-        <p className="add-plugin-sub">{t("plugins.addPluginSub", "输入插件的包名、GitHub 仓库地址或本地目录路径。")}</p>
+        <div className="add-plugin-tabs" role="tablist" aria-label="插件来源">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "local"}
+            className={`add-plugin-tab ${mode === "local" ? "active" : ""}`}
+            onClick={() => { setMode("local"); setError(""); }}
+          >
+            本地文件夹 / 我创建的
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "remote"}
+            className={`add-plugin-tab ${mode === "remote" ? "active" : ""}`}
+            onClick={() => { setMode("remote"); setError(""); }}
+          >
+            包名 / GitHub 仓库
+          </button>
+        </div>
 
-        <input
-          className="add-plugin-input"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={t("plugins.inputPlaceholder", "例如 dsh-plugin-whale-pet，或 https://github.com/owner/repo，或 /path/to/plugin")}
-          spellCheck={false}
-          autoFocus
-        />
-
-        <div className="add-plugin-row">
-          <input
-            className="add-plugin-version"
-            value={version}
-            onChange={(event) => setVersion(event.target.value)}
-            placeholder={t("plugins.versionPlaceholder", "版本（仅包名来源可用）")}
-            spellCheck={false}
-          />
-          <div className="add-plugin-source-wrap" ref={sourceWrapRef}>
-            <button className="add-plugin-source-button" onClick={() => setSourceOpen((open) => !open)} aria-expanded={sourceOpen}>
-              {t("plugins.sourcePrefix", "安装源")} <strong>{sourceLabel}</strong>
-              <ChevronDown size={14} className={sourceOpen ? "rotated" : ""} />
-            </button>
-            {sourceOpen && (
-              <div className="add-plugin-source-menu" role="radiogroup" aria-label="安装源">
-                {SOURCE_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    role="radio"
-                    aria-checked={source === option.id}
-                    className={`add-plugin-source-option ${source === option.id ? "on" : ""}`}
-                    onClick={() => {
-                      setSource(option.id);
-                      if (option.id !== "custom") setSourceOpen(false);
-                    }}
-                  >
-                    <span className={`add-plugin-radio ${source === option.id ? "on" : ""}`} />
-                    <span className="add-plugin-source-label">{option.label}</span>
-                    {option.hint ? <span className="add-plugin-source-hint">{option.hint}</span> : null}
-                  </button>
-                ))}
-                {source === "custom" && (
-                  <div className="add-plugin-source-custom">
-                    <input
-                      value={customRegistry}
-                      onChange={(event) => setCustomRegistry(event.target.value)}
-                      placeholder="https://npm.example.com/"
-                      spellCheck={false}
-                    />
-                    <p>填写内网或私有 npm 源地址，以 http:// 或 https:// 开头。若为需要登录的源，请把凭据放在本机的 ~/.npmrc 里。</p>
-                  </div>
-                )}
+        {mode === "local" && (createdLoading || createdPlugins.length > 0) ? (
+          <div className="add-plugin-created">
+            <div className="add-plugin-created-head">
+              <span><Sparkles size={13} /> 我创建的本地功能</span>
+              <small>点一下即可安装并打开使用</small>
+            </div>
+            {createdLoading ? (
+              <div className="add-plugin-created-loading"><Loader2 size={13} className="spin" /> 正在扫描本地功能…</div>
+            ) : (
+              <div className="add-plugin-created-list">
+                {createdPlugins.map((item) => {
+                  const busyThis = quickBusyDir === item.dir;
+                  return (
+                    <div className="add-plugin-created-item" key={item.dir}>
+                      <div className="add-plugin-created-info">
+                        <strong>{item.displayName || item.packageName}</strong>
+                        <span className="add-plugin-created-meta">
+                          {item.installed ? (item.disabled ? "已停用" : "已安装") : "未安装"}
+                          {item.version ? ` · v${item.version}` : ""}
+                          {item.description ? ` · ${item.description}` : ""}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="add-plugin-created-btn"
+                        disabled={Boolean(busy) || !item.valid}
+                        title={item.valid ? undefined : (item.error || "插件校验未通过")}
+                        onClick={() => void quickInstallCreated(item)}
+                      >
+                        {busyThis ? <Loader2 size={13} className="spin" /> : null}
+                        {item.installed ? "重装并打开" : "一键安装"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
+        ) : null}
+
+        <div className="add-plugin-path-row">
+          <input
+            className="add-plugin-input"
+            value={input}
+            onChange={(event) => onInputChange(event.target.value)}
+            placeholder={
+              mode === "local"
+                ? t("plugins.localInputPlaceholder", "选择或粘贴本地插件文件夹路径，例如 ~/dev/my-plugin")
+                : t("plugins.inputPlaceholder", "例如 dsh-plugin-whale-pet，或 https://github.com/owner/repo，或 /path/to/plugin")
+            }
+            spellCheck={false}
+            autoFocus
+          />
+          {mode === "local" && bridge?.choosePluginDirectory ? (
+            <button
+              type="button"
+              className="add-plugin-browse-btn"
+              onClick={() => void chooseDirectory()}
+              disabled={Boolean(busy)}
+            >
+              <FolderOpen size={14} /> 选择文件夹…
+            </button>
+          ) : null}
         </div>
+
+        {!treatAsLocal ? (
+          <div className="add-plugin-row">
+            <input
+              className="add-plugin-version"
+              value={version}
+              onChange={(event) => setVersion(event.target.value)}
+              placeholder={t("plugins.versionPlaceholder", "版本（仅包名来源可用）")}
+              spellCheck={false}
+            />
+            <div className="add-plugin-source-wrap" ref={sourceWrapRef}>
+              <button className="add-plugin-source-button" onClick={() => setSourceOpen((open) => !open)} aria-expanded={sourceOpen}>
+                {t("plugins.sourcePrefix", "安装源")} <strong>{sourceLabel}</strong>
+                <ChevronDown size={14} className={sourceOpen ? "rotated" : ""} />
+              </button>
+              {sourceOpen && (
+                <div className="add-plugin-source-menu" role="radiogroup" aria-label="安装源">
+                  {SOURCE_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      role="radio"
+                      aria-checked={source === option.id}
+                      className={`add-plugin-source-option ${source === option.id ? "on" : ""}`}
+                      onClick={() => {
+                        setSource(option.id);
+                        if (option.id !== "custom") setSourceOpen(false);
+                      }}
+                    >
+                      <span className={`add-plugin-radio ${source === option.id ? "on" : ""}`} />
+                      <span className="add-plugin-source-label">{option.label}</span>
+                      {option.hint ? <span className="add-plugin-source-hint">{option.hint}</span> : null}
+                    </button>
+                  ))}
+                  {source === "custom" && (
+                    <div className="add-plugin-source-custom">
+                      <input
+                        value={customRegistry}
+                        onChange={(event) => setCustomRegistry(event.target.value)}
+                        placeholder="https://npm.example.com/"
+                        spellCheck={false}
+                      />
+                      <p>填写内网或私有 npm 源地址，以 http:// 或 https:// 开头。若为需要登录的源，请把凭据放在本机的 ~/.npmrc 里。</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <button className="add-plugin-guide-toggle" onClick={() => setGuideOpen((open) => !open)} aria-expanded={guideOpen}>
           <ChevronDown size={14} className={guideOpen ? "rotated" : ""} /> 插件安装引导和示例
@@ -304,19 +487,19 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
           </div>
         )}
 
-        {/^\s*(https?:\/\/)?(www\.)?github\.com\//i.test(input) || /^[.~/]/.test(input.trim()) ? (
+        {isRemoteRepoLike(target) || (isLocalPathLike(target) && guideOpen) ? (
           <div className="add-plugin-build-note">
             GitHub 或本地目录需要包含已经构建好的插件文件。安装默认不运行插件的安装脚本；只有源码时，请先在可信环境构建，或使用作者发布的包名安装。
           </div>
         ) : null}
 
-        {source === "custom" && customRegistry.trim() ? (
+        {!treatAsLocal && source === "custom" && customRegistry.trim() ? (
           <div className="add-plugin-mirror-note">
             自定义源：<code>{customRegistry.trim()}</code>（npm 会带 <code>--registry</code> 使用它；需要登录的源请把凭据写进本机 <code>~/.npmrc</code>）
           </div>
         ) : null}
 
-        {source === "cn" ? (
+        {!treatAsLocal && source === "cn" ? (
           <div className="add-plugin-mirror-note">
             大陆镜像源：npm 走 <code>registry.npmmirror.com</code>；GitHub 走第三方代理（ghfast.top / gh-proxy.com / ghproxy.net，逐个回退）。
             <strong>代理会经手你拉取的代码</strong>，仅在直连不通时使用。
@@ -324,10 +507,10 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
         ) : null}
 
         <div className="add-plugin-warning">
-          <AlertTriangle size={15} />
+          <AlertTriangle size={14} />
           <div>
             <p>请确认插件来源可信。插件在本机以你的权限运行，来源不明的插件可能损坏 DYWorker，或读取和泄露你的数据。</p>
-            <p>插件不会自动更新。升级时直接添加同一插件的新版本；安装或启动失败会保留原有版本。</p>
+            <p>插件不会自动更新。升级时直接添加同一插件的新版本；安装或启动失败会保留原有版本。{isLocalPathLike(target) && !guideOpen ? "（本地目录安装默认不运行插件的安装脚本。）" : ""}</p>
           </div>
         </div>
 
@@ -337,7 +520,7 @@ export function AddPluginDialog({ onClose, onInstalled, initialSpec = "" }: { on
         </label>
 
         {error && <div className="plugins-message bad"><AlertTriangle size={14} /> <span>{error}</span></div>}
-        {log && !error && <pre className="add-plugin-log">{log}</pre>}
+        {log && !error && <div className="add-plugin-log">{log}</div>}
         {compat && (
           <div className={`plugins-compat ${verdictClass(compat.verdict)}`}>
             <div className="plugins-compat-head">

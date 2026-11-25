@@ -1,7 +1,7 @@
 // 应用外壳：从 App.tsx 抽出的标题栏（含会话顶栏、任务菜单、会话工具）与窗口控制、主导航。
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（selectSession、createTask、git 处理等）仍留在 App.tsx，
 // 这里只通过 props 接收状态与回调。
-import { AlarmClock, Bot, Check, ChevronRight, Folder, GitBranch, GitCommitHorizontal, History, House, Info, Minus, MoreHorizontal, Plus, Search, Settings, Sparkles, Square, SquarePen, Upload, UserRound, X } from "lucide-react";
+import { AlarmClock, Bot, Check, ChevronRight, Folder, GitBranch, GitCommitHorizontal, History, House, Info, LayoutGrid, Minus, MoreHorizontal, Plus, Search, Settings, Sparkles, Square, SquarePen, Upload, UserRound, X } from "lucide-react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginIcon } from "../PluginIcon";
@@ -61,6 +61,8 @@ export interface ShellChromeProps {
   runPushOnly: () => Promise<void>;
   setConversationSearchOpen: Dispatch<SetStateAction<boolean>>;
   botTeamPageOpen: boolean;
+  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
+  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string } | null>>;
   sidebarOpen: boolean;
   setSidebarOpen: Dispatch<SetStateAction<boolean>>;
   settingsOpen: boolean;
@@ -133,6 +135,8 @@ export function ShellChrome(props: ShellChromeProps) {
     runPushOnly,
     setConversationSearchOpen,
     botTeamPageOpen,
+    activeWorkspacePage,
+    setActiveWorkspacePage,
     sidebarOpen,
     setSidebarOpen,
     settingsOpen,
@@ -369,10 +373,10 @@ export function ShellChrome(props: ShellChromeProps) {
               {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
               <PanelLeftIcon size={18} />
             </button>
-            {botTeamPageOpen ? <Bot size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? t("nav.botTeam", "机器人团队") : (!activeSession?.title || activeSession.title === "新任务" ? t("common.newTask", "新任务") : activeSession.title)}</strong>
+            {botTeamPageOpen ? <Bot size={18} /> : activeWorkspacePage ? <LayoutGrid size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
+            <strong>{botTeamPageOpen ? t("nav.botTeam", "机器人团队") : activeWorkspacePage ? activeWorkspacePage.label : (!activeSession?.title || activeSession.title === "新任务" ? t("common.newTask", "新任务") : activeSession.title)}</strong>
           </div>
-          {!botTeamPageOpen && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
+          {!botTeamPageOpen && !activeWorkspacePage && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}
             {conversationTools}
           </div>}
@@ -423,9 +427,9 @@ export function ShellChrome(props: ShellChromeProps) {
         </button>
       </div>
       <nav className="navigation-rail" aria-label="主导航">
-        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "active" : ""}`}
-          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen && !botTeamPageOpen ? "page" : undefined}
-          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
+        <button className={`rail-button ${!pluginsPageOpen && !settingsOpen && !botTeamPageOpen && !activeWorkspacePage ? "active" : ""}`}
+          aria-label="首页" title="首页" aria-current={!pluginsPageOpen && !settingsOpen && !botTeamPageOpen && !activeWorkspacePage ? "page" : undefined}
+          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setActiveWorkspacePage(null); setSettingsOpen(false); setConversationView("chat"); setRailMenuOpen(false); }}>
           <House size={21} />
         </button>
         <button className={`rail-button ${settingsOpen && settingsTab === "plans" ? "active" : ""}`}
@@ -433,7 +437,7 @@ export function ShellChrome(props: ShellChromeProps) {
           <AlarmClock size={20} />
         </button>
         <button className={`rail-button sidebar-plugins-button ${settingsOpen && settingsTab === "plugins" ? "active" : ""}`}
-          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
+          onClick={() => { setPluginsPageOpen(false); setBotTeamPageOpen(false); setActiveWorkspacePage(null); setSettingsTab("plugins"); setSettingsOpen(true); setRailMenuOpen(false); }}
           aria-label="插件" title="插件" aria-current={settingsOpen && settingsTab === "plugins" ? "page" : undefined}>
           <PluginIcon size={20} />
         </button>

@@ -352,7 +352,12 @@ export class DshRuntimeService extends Service {
           detail: JSON.stringify(images.length ? { images } : data.message?.content ?? data.error ?? '') });
       }
       if (owner === sessionId) {
-        if (['compaction/summary', 'compaction/prune'].includes(event.type)) emit({ type: 'context-compacted' });
+        if (['compaction/summary', 'compaction/prune'].includes(event.type)) {
+          const summary = event.type === 'compaction/summary'
+            ? String((data as any)?.summary ?? (data as any)?.text ?? '').trim()
+            : '';
+          emit({ type: 'context-compacted', ...(summary ? { summary } : {}) });
+        }
         if (contextUsage) emit({ type: 'context-usage', ...contextUsage });
       }
       options.onDshEvent?.({ sessionId: owner, event });

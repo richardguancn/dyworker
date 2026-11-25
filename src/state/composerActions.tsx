@@ -9,29 +9,39 @@ import { Copy } from "lucide-react";
 import type { ClipboardEvent, DragEvent, MouseEvent } from "react";
 import { normalizeQuote } from "../annotations";
 import { findQuoteRange, type ContextMenuItem } from "../features/annotations/SelectionOverlays";
-import { WORKSPACE_FILE_DRAG_TYPE } from "../lib/files";
+import { WORKSPACE_FILE_DRAG_TYPE, workspaceRelativePath, type WorkspaceTarget } from "../lib/files";
 import { copyTextToClipboard, displayWorkspace } from "../lib/text";
 import { clientHost } from "../pluginRuntime/clientHostSingleton.ts";
 import type { Attachment, ChatMessage, MessageAnnotation, SessionRecord, WorkspaceEntry } from "../types";
 import { useComposerStore } from "./composerStore";
 import { useLayoutStore } from "./layoutStore";
+import { usePanelStore } from "./panelStore";
 import { previewWorkspace } from "./previewData";
 import { updateSession } from "./sessionActions";
 import { selectActiveSession, useSessionStore } from "./sessionStore";
-import { activeIdRef, annotationQuotesRef, createTaskRef, dismissedPluginMention, mentionItemsRef, mentionTokenPathsRef, sessionDraftsRef, sessionTokenIdsRef, textareaRef, viewportRef, workspaceFilesRef } from "./sharedRefs";
+import { activeIdRef, annotationQuotesRef, createTaskRef, dismissedPluginMention, mentionItemsRef, mentionTokenPathsRef, sessionDraftsRef, sessionTokenIdsRef, textareaRef, viewportRef, workspaceFilesRef, workspaceTargetsRef } from "./sharedRefs";
 import { openFilePreview, openToolPanelTab } from "./toolPanelActions";
 import { useViewStore } from "./viewStore";
 
 const COMPOSER_LONG_PASTE_THRESHOLD = 1000;
 
-// 把文件解析成 @token 引用：优先用用户在候选菜单里点选的路径，同名文件退回按名字匹配
-export const resolveTokenFile = (name: string): WorkspaceEntry | undefined => {
+// 把文件或目录解析成 @token 引用：优先用用户在候选菜单里点选的路径，其次按相对路径或名字匹配
+export const resolveTokenFile = (name: string): WorkspaceTarget | WorkspaceEntry | undefined => {
+  const targets = workspaceTargetsRef.current.length ? workspaceTargetsRef.current : workspaceFilesRef.current;
   const recorded = mentionTokenPathsRef.current.get(name);
   if (recorded) {
-    const exact = workspaceFilesRef.current.find((file) => file.path === recorded);
+    const exact = targets.find((entry) => entry.path === recorded);
     if (exact) return exact;
   }
-  return workspaceFilesRef.current.find((file) => file.name === name);
+  if (name.endsWith("/")) {
+    const dirQuery = name.slice(0, -1);
+    return targets.find((entry) => entry.kind === "directory" && (
+      ("relativePath" in entry && entry.relativePath === dirQuery) || entry.name === dirQuery
+    ));
+  }
+  const byRelative = targets.find((entry) => "relativePath" in entry && entry.relativePath === name);
+  if (byRelative) return byRelative;
+  return targets.find((entry) => entry.name === name);
 };
 
 // 把 @「标题」token 解析成会话：优先用候选菜单点选时记录的 id（同名会话不串），
@@ -49,30 +59,53 @@ export const resolveTokenSession = (title: string): SessionRecord | undefined =>
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))[0];
 };
 
-// 打开气泡里被引用的文件（@token 点击）：优先用消息里记录的附件路径，桌面版调主进程，预览环境给提示
-export const openReferencedFile = async (name: string, knownPath?: string) => {
+// 打开气泡里被引用的文件或文件夹（@token 点击）：目录在当前工作区文件树中展开定位，文件打开预览
+export const openReferencedFile = async (name: string, knownPath?: string, isDirectoryHint?: boolean) => {
   const { workspacePath } = useSessionStore.getState();
   const { setNotice } = useViewStore.getState();
-  const filePath = knownPath || resolveTokenFile(name)?.path;
-  if (!filePath) {
-    setNotice(`没有找到文件 ${name}，可能已移动或删除`);
+  const { setRightPanelOpen } = useLayoutStore.getState();
+  const { setRevealedTreePath } = usePanelStore.getState();
+  const resolved = resolveTokenFile(name);
+  const targetPath = knownPath || resolved?.path;
+  const isDirectory = Boolean(isDirectoryHint || name.endsWith("/") || resolved?.kind === "directory");
+  if (!targetPath) {
+    setNotice(`没有找到${isDirectory ? "文件夹" : "文件"} ${name}，可能已移动或删除`);
     return;
   }
-  openFilePreview(filePath, workspacePath);
+  if (isDirectory) {
+    const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normRoot = normalize(workspacePath || "");
+    const normTarget = normalize(targetPath);
+    if (normRoot && (normTarget === normRoot || normTarget.startsWith(`${normRoot}/`))) {
+      setRightPanelOpen(true);
+      openToolPanelTab("files");
+      setRevealedTreePath({ path: targetPath, nonce: Date.now() });
+      return;
+    }
+    void window.dyworker?.openPath?.(targetPath);
+    return;
+  }
+  openFilePreview(targetPath, workspacePath);
 };
 
-// 在光标处插入「@文件名 」内联 token：引用随正文按顺序展示（对齐 Codex 的 @ 引用体验）
+// 在光标处插入「@文件名 」或「@目录/ 」内联 token：引用随正文按顺序展示
 export const insertFileToken = (file: WorkspaceEntry) => {
   const { composer, setComposer, setMentionMenu } = useComposerStore.getState();
+  const { workspacePath } = useSessionStore.getState();
   const { setNotice } = useViewStore.getState();
-  const token = `@${file.name} `;
+  const isDir = file.kind === "directory";
+  const rel = "relativePath" in file && typeof file.relativePath === "string" && file.relativePath
+    ? file.relativePath
+    : workspaceRelativePath(file.path, workspacePath) || file.name;
+  const tokenCore = isDir ? `${rel.replace(/\/+$/, "")}/` : file.name;
+  const token = `@${tokenCore} `;
   const textarea = textareaRef.current;
   const start = textarea ? textarea.selectionStart : composer.length;
   const end = textarea ? textarea.selectionEnd : composer.length;
-  mentionTokenPathsRef.current.set(file.name, file.path);
+  mentionTokenPathsRef.current.set(tokenCore, file.path);
   setComposer(composer.slice(0, start) + token + composer.slice(end));
   setMentionMenu(null);
-  setNotice(`已引用文件：${file.name}`);
+  setNotice(isDir ? `已引用文件夹：${tokenCore}` : `已引用文件：${file.name}`);
   window.setTimeout(() => {
     const target = textareaRef.current;
     if (target) {
@@ -103,7 +136,8 @@ export const handleComposerDrop = (event: DragEvent<HTMLDivElement>) => {
   if (!filePath) return;
   event.preventDefault();
   setComposerDragActive(false);
-  const file = workspaceFilesRef.current.find((entry) => entry.path === filePath);
+  const targets = workspaceTargetsRef.current.length ? workspaceTargetsRef.current : workspaceFilesRef.current;
+  const file = targets.find((candidate) => candidate.path === filePath);
   if (file) insertFileToken(file);
 };
 
@@ -385,20 +419,74 @@ export const applyMention = (index: number, action: 'pick' | 'drill' = 'pick') =
     // 内置命令（如 /init）：把预设指令填入输入框，由用户确认后发送
     setComposer(item.prompt);
   } else if (mentionMenu.kind === "at" && item.file) {
-    // 文件引用：在 @ 位置原地插入内联 token，引用按输入顺序留在正文里
-    const token = `@${item.file.name} `;
     const start = nativeStart;
     const end = nativeEnd;
-    mentionTokenPathsRef.current.set(item.file.name, item.file.path);
-    setComposer(composer.slice(0, start) + token + composer.slice(end));
-    window.setTimeout(() => {
-      const target = textareaRef.current;
-      if (target) {
-        const pos = start + token.length;
-        target.focus();
-        target.setSelectionRange(pos, pos);
+    if (item.file.kind === "directory") {
+      const { workspacePath } = useSessionStore.getState();
+      const rel = "relativePath" in item.file && item.file.relativePath
+        ? item.file.relativePath
+        : workspaceRelativePath(item.file.path, workspacePath) || item.file.name;
+      const tokenCore = `${rel.replace(/\/+$/, "")}/`;
+      if (action === "drill") {
+        const prefix = `@${tokenCore}`;
+        const pos = start + prefix.length;
+        setComposer(composer.slice(0, start) + prefix + composer.slice(end));
+        setMentionMenu({ kind: "at", query: tokenCore, start, end: pos });
+        useComposerStore.getState().setMentionIndex(0);
+        window.setTimeout(() => {
+          const target = textareaRef.current;
+          if (target) {
+            target.focus();
+            target.setSelectionRange(pos, pos);
+          }
+        }, 0);
+        return;
       }
-    }, 0);
+      const token = `@${tokenCore} `;
+      mentionTokenPathsRef.current.set(tokenCore, item.file.path);
+      setComposer(composer.slice(0, start) + token + composer.slice(end));
+      setNotice(`已引用文件夹：${tokenCore}`);
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + token.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
+      setMentionMenu(null);
+      return;
+    }
+    // 文件引用：若工作区存在同名不同路径的文件，或当前已在目录前缀下钻中选择，保留不重名策略
+    const rel = "relativePath" in item.file && item.file.relativePath
+      ? item.file.relativePath
+      : workspaceRelativePath(item.file.path, useSessionStore.getState().workspacePath) || item.file.name;
+    const recordedSameName = mentionTokenPathsRef.current.get(item.file.name);
+    if (recordedSameName && recordedSameName !== item.file.path) {
+      const conflictToken = `@${rel} `;
+      mentionTokenPathsRef.current.set(rel, item.file.path);
+      setComposer(composer.slice(0, start) + conflictToken + composer.slice(end));
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + conflictToken.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
+    } else {
+      const token = `@${item.file.name} `;
+      mentionTokenPathsRef.current.set(item.file.name, item.file.path);
+      setComposer(composer.slice(0, start) + token + composer.slice(end));
+      window.setTimeout(() => {
+        const target = textareaRef.current;
+        if (target) {
+          const pos = start + token.length;
+          target.focus();
+          target.setSelectionRange(pos, pos);
+        }
+      }, 0);
+    }
   } else if (mentionMenu.kind === "at" && item.session) {
     // 会话引用：在 @ 位置原地插入「@「标题」」内联 token，标题用全角括号定界（可含空格）
     const session = item.session;

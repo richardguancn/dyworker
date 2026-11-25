@@ -29,6 +29,7 @@ import { ConversationMessageRow } from "./features/message/ConversationMessageRo
 import { composerApprovalModes } from "./features/plans/PlansPanel";
 import { ToolPanel } from "./features/toolpanel/ToolPanel";
 import { playCompletionSound } from "./lib/completionSound";
+import { filterAtMentionTargets, flattenWorkspaceTargets } from "./lib/files";
 import { formatMessageTime } from "./lib/format";
 import {
 CONVERSATION_TURN_PAGE_SIZE,
@@ -62,14 +63,14 @@ import { usePanelStore } from "./state/panelStore";
 import { usePluginInputRuntime } from "./state/pluginInputRuntime";
 import { usePluginInputSubscriptions } from "./state/pluginInputSubscriptions";
 import { usePluginSessionRuntime } from "./state/pluginSessionRuntime";
-import { cancelQueuedMessage,removeQueuedMessage,runQueuedMessageNow,sendMessage } from "./state/sendMessageActions";
+import { cancelQueuedMessage,removeQueuedMessage,retryFailedMessage,runQueuedMessageNow,sendMessage } from "./state/sendMessageActions";
 import { archiveSession,cancelSleepingTask,clearSessionError,clearSessionNotice,deleteSession,openWorkspaceInFileManager,patchWakingSleepNote,refreshPendingWakes,renameSession,resumeSleepingTask,showSessionNotice,togglePin,toggleWorkspacePin,unarchiveSession,updateSession } from "./state/sessionActions";
 import { useSessionIpcRuntime } from "./state/sessionIpcRuntime";
 import { useSessionStore } from "./state/sessionStore";
 import { useSessionStreamRuntime } from "./state/sessionStreamRuntime";
 import { activateModelProfile,downloadAppUpdate,ensureComposerModels,saveProviderSettings,selectApprovalMode,switchComposerModel } from "./state/settingsActions";
 import { useSettingsStore } from "./state/settingsStore";
-import { activeIdRef,activeToolPanelTabIdRef,appShellRef,appendSessionTracesRef,bootstrapFailedRef,browserPanelCommandsRef,browserResumeGuardRef,conversationPrependAnchorRef,conversationSearchInputRef,conversationTurnRefs,createTaskRef,debugLogFlushTimerRef,dismissedPluginMention,handleGoalActionRef,manualRunScheduleRef,mentionItemsRef,messageRowRefs,openFilePreviewRef,panelGeometryRef,panelResizeRef,pendingDebugLogsRef,queueDebugLogRef,recentDebugLogsRef,refreshMemoriesRef,refreshSkillsRef,runningRunIdsRef,searchScrollKeyRef,selectSessionRef,sessionsRef,suppressStickUntilRef,textareaRef,toolPanelTabsRef,tracePublishTimerRef,viewportRef,wakingSessionsRef,workspaceFilesRef } from "./state/sharedRefs";
+import { activeIdRef,activeToolPanelTabIdRef,appShellRef,appendSessionTracesRef,bootstrapFailedRef,browserPanelCommandsRef,browserResumeGuardRef,conversationPrependAnchorRef,conversationSearchInputRef,conversationTurnRefs,createTaskRef,debugLogFlushTimerRef,dismissedPluginMention,handleGoalActionRef,manualRunScheduleRef,mentionItemsRef,messageRowRefs,openFilePreviewRef,panelGeometryRef,panelResizeRef,pendingDebugLogsRef,queueDebugLogRef,recentDebugLogsRef,refreshMemoriesRef,refreshSkillsRef,runningRunIdsRef,searchScrollKeyRef,selectSessionRef,sessionsRef,suppressStickUntilRef,textareaRef,toolPanelTabsRef,tracePublishTimerRef,viewportRef,wakingSessionsRef,workspaceFilesRef,workspaceTargetsRef } from "./state/sharedRefs";
 import { useStartupRuntime } from "./state/startupRuntime";
 import { clearWorkspace,closeFilePanelTabs,createTask,exportProjectPackage,exportSessionMarkdown,exportSessionPackage,forkSession,handleGoalAction,importSessionPackage,jumpToConversationTurn,openAnnotationList,scheduleCloseAnnotationList,sessionPendingInboxCount,summarizeSessionToSkill,toggleTerminal } from "./state/taskActions";
 import { choosePreviewFile,closeToolPanelTab,focusToolPanelTab,openFilePreview,openToolPanelTab } from "./state/toolPanelActions";
@@ -93,6 +94,12 @@ const builtinCommands = [
     prompt: "/goal ",
   },
   {
+    id: "builtin:create",
+    title: "/create",
+    detail: "开启或切换当前会话的创造模式（制作并热挂载原生插件页面或工具）",
+    prompt: "/create ",
+  },
+  {
     id: "builtin:init",
     title: "/init",
     detail: "分析工作区并生成 AGENTS.md 项目约定",
@@ -112,7 +119,7 @@ export function App() {
     railMenuOpen, setRailMenuOpen, topMenuOpen, setTopMenuOpen, conversationToolsOpen, setConversationToolsOpen,
     sessionMenuId, setSessionMenuId, workspaceMenuPath, setWorkspaceMenuPath, renamingId, setRenamingId,
     pluginsPageOpen, setPluginsPageOpen, botTeamPageOpen, setBotTeamPageOpen,
-    botTeamAvailable, setBotTeamAvailable,
+    botTeamAvailable, setBotTeamAvailable, pluginWorkspacePages, activeWorkspacePage, setActiveWorkspacePage,
     conversationView, setConversationView, pluginConversationViews, setPluginConversationViews,
     showArchived, setShowArchived, workspaceOpen, setWorkspaceOpen,
     workspaceGroupOpen, setWorkspaceGroupOpen, workspaceSessionVisibleCounts, setWorkspaceSessionVisibleCounts,
@@ -512,21 +519,19 @@ export function App() {
   // 注册 createTask 给 composerActions：applyMention 触发内置 /new 时调用
   createTaskRef.current = createTask;
 
-  const workspaceFiles = useMemo(() => {
-    const out: WorkspaceEntry[] = [];
-    const walk = (entries: WorkspaceEntry[]) => {
-      for (const entry of entries) {
-        if (entry.kind === "file") out.push(entry);
-        if (entry.children) walk(entry.children);
-      }
-    };
-    walk(workspaceEntries);
-    return out;
-  }, [workspaceEntries]);
-  // 刷新 @token 解析用的文件列表镜像：composerActions 读 workspaceFilesRef.current
+  const workspaceTargets = useMemo(
+    () => flattenWorkspaceTargets(workspaceEntries, workspacePath),
+    [workspaceEntries, workspacePath],
+  );
+  const workspaceFiles = useMemo(
+    () => workspaceTargets.filter((entry) => entry.kind === "file"),
+    [workspaceTargets],
+  );
+  // 刷新 @token 解析用的文件与目录镜像：composerActions 读 workspaceFilesRef / workspaceTargetsRef
   workspaceFilesRef.current = workspaceFiles;
+  workspaceTargetsRef.current = workspaceTargets;
 
-  // 输入框正文里能解析成文件引用的 @token：镜像层只为这些 token 画高亮
+  // 输入框正文里能解析成文件/目录引用的 @token：镜像层只为这些 token 画高亮
   const activeTokenNames = useMemo(() => {
     const names = new Set<string>();
     if (!composer) return names;
@@ -537,7 +542,7 @@ export function App() {
     }
     return names;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composer, workspaceFiles]);
+  }, [composer, workspaceTargets]);
 
   // 正文里已选技能的 /技能名：与 @文件 一样在镜像层画内联高亮
   const activeSkillNames = useMemo(() => new Set(activeSkills.map((skill) => skill.name)), [activeSkills]);
@@ -648,14 +653,19 @@ export function App() {
         detail: `历史会话 · ${formatMessageTime(session.updatedAt)} · ${session.messages.length} 条消息${session.channel === "qq" ? " · QQ" : session.channel === "wechat" ? " · 微信" : session.channel === "feishu" ? " · 飞书" : ""}`,
         session,
       }));
-    const fileCandidates = workspaceFiles
-      .filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query))
-      .slice(0, 8)
-      .map((file) => ({ id: file.path, title: file.name, detail: file.path, file }));
+    const fileCandidates = filterAtMentionTargets(workspaceTargets, mentionMenu.query, 10)
+      .map((entry) => ({
+        id: entry.path,
+        title: entry.kind === "directory" ? `${entry.relativePath}/` : entry.name,
+        detail: entry.kind === "directory"
+          ? `文件夹 · ${entry.relativePath}/（Tab 进入子项 · Enter 引用）`
+          : entry.relativePath,
+        file: entry,
+      }));
     const plugins = pluginInputCandidates.map(item => ({ id: item.id, title: item.candidate.label || `@${item.candidate.name}`,
       detail: item.candidate.description || '插件引用', pluginInput: item }));
     return [...plugins, ...sessionCandidates, ...fileCandidates];
-  }, [mentionMenu, mentionSkills, workspaceFiles, sessions, activeSession, pluginInputCandidates]);
+  }, [mentionMenu, mentionSkills, workspaceTargets, sessions, activeSession, pluginInputCandidates]);
   // 刷新 @// 候选镜像：composerActions 的 applyMention 读 mentionItemsRef.current
   mentionItemsRef.current = mentionItems;
 
@@ -922,7 +932,10 @@ export function App() {
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        applyMention(mentionIndex, event.key === 'Tab' && !event.shiftKey && mentionItems[mentionIndex]?.pluginInput?.candidate.drill ? 'drill' : 'pick');
+        const selectedItem = mentionItems[mentionIndex];
+        const canDrill = event.key === "Tab" && !event.shiftKey
+          && (Boolean(selectedItem?.pluginInput?.candidate.drill) || selectedItem?.file?.kind === "directory");
+        applyMention(mentionIndex, canDrill ? "drill" : "pick");
         return;
       }
       if (event.key === "Escape") {
@@ -1012,6 +1025,7 @@ export function App() {
     // 只靠 activeId 变化的 effect 是关不掉的（这就是之前点了没反应的原因）。
     setPluginsPageOpen(false);
     setBotTeamPageOpen(false);
+    setActiveWorkspacePage(null);
     setSessionMenuId(null);
     setActiveId(session.id);
     setEditingMessage(null);
@@ -1087,6 +1101,9 @@ export function App() {
     forkSessionAt(sessionId: string, index: number) {
       const session = sessionsRef.current.find(entry => entry.id === sessionId);
       if (session) forkSession(session, index);
+    },
+    retryFailedMessage(sessionId: string, index: number) {
+      void retryFailedMessage(sessionId, index);
     },
     openPluginReference(sessionId: string, reference: any) {
       try {
@@ -1319,6 +1336,8 @@ export function App() {
         runPushOnly={runPushOnly}
         setConversationSearchOpen={setConversationSearchOpen}
         botTeamPageOpen={botTeamPageOpen}
+        activeWorkspacePage={activeWorkspacePage}
+        setActiveWorkspacePage={setActiveWorkspacePage}
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
         settingsOpen={settingsOpen}
@@ -1369,6 +1388,9 @@ export function App() {
         setBotTeamPageOpen={setBotTeamPageOpen}
         setPluginsPageOpen={setPluginsPageOpen}
         botTeamAvailable={botTeamAvailable}
+        pluginWorkspacePages={pluginWorkspacePages}
+        activeWorkspacePage={activeWorkspacePage}
+        setActiveWorkspacePage={setActiveWorkspacePage}
         setRightPanelOpen={setRightPanelOpen}
         setConversationView={setConversationView}
         setSettingsOpen={setSettingsOpen}
@@ -1420,6 +1442,7 @@ export function App() {
         activeId={activeId}
         botTeamPageOpen={botTeamPageOpen}
         botTeamAvailable={botTeamAvailable}
+        activeWorkspacePage={activeWorkspacePage}
         pluginsPageOpen={pluginsPageOpen}
         settingsOpen={settingsOpen}
         conversationView={conversationView}
