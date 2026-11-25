@@ -1,11 +1,11 @@
 import {
 Copy,
-FileCode2,
 FileImage,
 FileText,
 LoaderCircle,
 Package,
 Pencil,
+RotateCcw,
 Square,
 Volume2
 } from "lucide-react";
@@ -15,6 +15,7 @@ import { assistantImageAttachments } from "../../assistantImages.ts";
 import { t } from "../../i18n";
 import { ImageAttachmentView } from "../../ImageAttachment";
 import { InteractiveMessage } from "../../InteractiveMessage";
+import { parseUserMessagePresentation } from "../../lib/channelMessage";
 import { formatMessageTime } from "../../lib/format";
 import {
 messageVisibleText,
@@ -27,6 +28,7 @@ import type { Attachment,ChatMessage } from "../../types";
 import { MessageAnnotationChip } from "../annotations/SelectionOverlays";
 import { ChangesSummary,MessagePasteBlocks } from "./Cards";
 import { ClampedUserText } from "./ClampedText";
+import { FileAttachmentCards } from "./FileAttachmentCards";
 import { ProcessTimeline } from "./ProcessTimeline";
 import { VoiceMessageBubble,isVoiceAttachment,isVoiceMessage } from "./VoiceMessage";
 
@@ -35,7 +37,7 @@ import { VoiceMessageBubble,isVoiceAttachment,isVoiceMessage } from "./VoiceMess
 
 // ===== 浏览器「导入 Cookie 和密码」对话框（对照 Codex 浏览器更多菜单） =====
 
-export type MessageRowActions = { [Key in "openReferencedFile" | "openImagePreview" | "handleMessageContextMenu" | "togglePlayVoice" | "toggleActivityCollapse" | "copyMessage" | "startMessageEdit" | "toggleSpeakMessage" | "openMessageSession" | "forkSessionAt" | "openPluginReference" | "openReview" | "bindMessageRow"]: (...args: any[]) => any };
+export type MessageRowActions = { [Key in "openReferencedFile" | "openImagePreview" | "handleMessageContextMenu" | "togglePlayVoice" | "toggleActivityCollapse" | "copyMessage" | "startMessageEdit" | "toggleSpeakMessage" | "openMessageSession" | "forkSessionAt" | "retryFailedMessage" | "openPluginReference" | "openReview" | "bindMessageRow"]: (...args: any[]) => any };
 
 export const ConversationMessageRow = memo(function ConversationMessageRow({
   message, index, turnIndex, sessionId, workspacePath, isEditing, activeTaskRunning, isStreamingMessage,
@@ -76,28 +78,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const legacySkillChips = message.role === "user"
     ? (message.skillsUsed ?? []).filter((name) => !skillTokensInText(messageVisibleText(message)).has(name))
     : [];
-  // 纯图片消息：占位文字已去掉，气泡里没有文字/chip/粘贴块/注释/语音时整个气泡不渲染，只留图片
-  const bubbleHasContent = message.role === "user" && (
-    isVoiceMessage(message)
-    || Boolean(messageVisibleText(message).trim())
-    || legacySkillChips.length > 0
-    || Boolean(message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)))
-    || Boolean(message.pasteBlocks?.length)
-    || Boolean(message.annotations?.length)
-    || Boolean(message.dshAttachmentNames?.length)
-  );
-  // 只有长文块或注释入口时，由入口本身承载内容，不再套一层气泡。
-  const bubbleBare = message.role === "user"
-    && Boolean(message.annotations?.length || message.pasteBlocks?.length)
-    && !isVoiceMessage(message)
-    && !messageVisibleText(message).trim()
-    && !legacySkillChips.length
-    && !message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
-    && !message.dshAttachmentNames?.length;
-  const openMessageFile = (name: string) => {
-    const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
-    void actions.openReferencedFile(name, recorded?.path);
-  };
+  const userVoice = message.role === "user" && isVoiceMessage(message);
   const assistantImages = message.role === 'assistant' ? assistantImageAttachments(message) : [];
   const userImages: Attachment[] = message.role === 'user' ? [
     ...(message.attachments?.filter(attachment=>attachment.isImage) || []),
@@ -106,6 +87,52 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
       size:Math.floor(part.data.length * 3 / 4),isImage:true,previewUrl:`data:${part.mediaType};base64,${part.data}`,
     }] : []),
   ] : [];
+  const userFileAttachments = message.role === "user"
+    ? (message.attachments ?? []).filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))
+    : [];
+  const userPresentation = message.role === "user"
+    ? parseUserMessagePresentation(messageVisibleText(message), {
+        hasImages: userImages.length > 0,
+        fileAttachments: userFileAttachments,
+        isVoice: userVoice,
+      })
+    : { channelPrefix: "", channelLabel: "", visibleText: "", resolvedFiles: [] };
+  // 纯图片/纯文件消息：占位文字与文件卡片已独立于气泡外，气泡里没有文字/chip/粘贴块/注释/语音时不渲染空气泡
+  const bubbleHasContent = message.role === "user" && (
+    userVoice
+    || Boolean(userPresentation.visibleText.trim())
+    || legacySkillChips.length > 0
+    || Boolean(message.pasteBlocks?.length)
+    || Boolean(message.annotations?.length)
+    || Boolean(message.dshAttachmentNames?.length)
+  );
+  // 只有长文块或注释入口时，由入口本身承载内容，不再套一层气泡。
+  const bubbleBare = message.role === "user"
+    && Boolean(message.annotations?.length || message.pasteBlocks?.length)
+    && !userVoice
+    && !userPresentation.visibleText.trim()
+    && !legacySkillChips.length
+    && !message.dshAttachmentNames?.length;
+  const openMessageFile = (name: string) => {
+    const recorded = (message.attachments ?? []).find((attachment) => attachment.inlineRef && attachment.name === name);
+    void actions.openReferencedFile(name, recorded?.path, recorded?.isDirectory);
+  };
+  const openAttachmentFile = (attachment: Attachment, displayName: string) => {
+    const filePath = String(attachment.path || "").trim();
+    if (!filePath) return;
+    if (attachment.isDirectory || attachment.mimeType === "inode/directory") {
+      void actions.openReferencedFile(displayName, filePath, true);
+      return;
+    }
+    const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+    const normRoot = normalize(workspacePath || "");
+    const normFile = normalize(filePath);
+    if (normRoot && (normFile === normRoot || normFile.startsWith(`${normRoot}/`))) {
+      void actions.openReferencedFile(displayName, filePath);
+      return;
+    }
+    void window.dyworker?.openPath?.(filePath);
+  };
   // 点击气泡里的会话引用：切到对应会话（会话可能已被删除，找不到就提示）
   const openMessageSession = (title: string) => actions.openMessageSession(message, title);
   return (
@@ -120,6 +147,9 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
     {message.role === "system" ? null : message.role === "user" ? (
       <>
         <div className="user-message-stack">
+          {!userVoice && Boolean(userPresentation.channelLabel) && (
+            <div className="message-channel-tag">{userPresentation.channelLabel}</div>
+          )}
           {/* 图片附件独立展示在气泡上方（微信风格方形缩略图），不与文本混排在气泡里 */}
           {Boolean(userImages.length) && (
             <div className="message-attachments">
@@ -139,33 +169,32 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               ))}
             </div>
           )}
+          {Boolean(userPresentation.resolvedFiles.length) && (
+            <FileAttachmentCards
+              files={userPresentation.resolvedFiles}
+              onOpen={openAttachmentFile}
+            />
+          )}
           {bubbleHasContent && (
           <div
-            className={`user-bubble${isEditing ? " editing" : ""}${isVoiceMessage(message) ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
+            className={`user-bubble${isEditing ? " editing" : ""}${userVoice ? " voice-wrapper" : ""}${bubbleBare ? " bare" : ""}`}
             onContextMenu={(event) => actions.handleMessageContextMenu(event, message)}
           >
           {!!message.dshAttachmentNames?.length && <span className="message-inline-refs" aria-label="已发送的插件附件">
             {message.dshAttachmentNames.map((name,at)=><span className="ref-chip" key={at}><FileText size={13} /><span>{name}</span></span>)}
           </span>}
-          {Boolean(legacySkillChips.length || message.attachments?.some((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment))) && (
+          {Boolean(legacySkillChips.length) && (
             <span className="message-inline-refs">
-              {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token）和手动添加的附件 chip */}
+              {/* /技能名 已内联随正文高亮；这里只兜底旧消息（正文无 token） */}
               {legacySkillChips.map((name) => (
                 <span key={`${message.createdAt}-${name}`} className="ref-chip" title={`引用技能 /${name}`}>
                   <Package size={13} />
                   <span>{name}</span>
                 </span>
               ))}
-              {/* @token 内联引用已随正文高亮展示，这里只渲染手动添加的附件 chip */}
-              {message.attachments?.filter((attachment) => !attachment.isImage && !attachment.inlineRef && !isVoiceAttachment(attachment)).map((attachment) => (
-                <span key={`${message.createdAt}-${attachment.path}`} className="ref-chip" title={attachment.path}>
-                  {/\.[cm]?[jt]sx?$/i.test(attachment.name) ? <FileCode2 size={13} /> : <FileText size={13} />}
-                  <span>{attachment.name}</span>
-                </span>
-              ))}
             </span>
           )}
-          {isVoiceMessage(message) ? (
+          {userVoice ? (
             <VoiceMessageBubble
               message={message}
               playingPath={playingVoicePath}
@@ -177,7 +206,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
             />
           ) : (
             <ClampedUserText
-              text={messageVisibleText(message)}
+              text={userPresentation.visibleText}
               tokenNames={inlineTokenNames}
               skillNames={messageSkillNames}
               onFileToken={openMessageFile}
@@ -253,6 +282,16 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
             <button type="button" onClick={() => actions.forkSessionAt(sessionId, index)} aria-label={t("chat.forkSession", "从此处分叉新会话")} title={t("chat.forkSessionTitle", "从此处分叉：把会话开头到这里的对话复制为新会话")}>
               <ForkBranchIcon size={16} />
             </button>
+            {!activeTaskRunning && message.taskStatus === "error" && (
+              <button
+                type="button"
+                onClick={() => void actions.retryFailedMessage(sessionId, index)}
+                aria-label={message.executedMessages?.length ? "继续未完步骤" : "重试本轮"}
+                title={message.executedMessages?.length ? "无污染续跑：基于已完成的工具进度继续，不插入新用户消息" : "无污染重试：原位重跑本轮请求"}
+              >
+                <RotateCcw size={15} />
+              </button>
+            )}
             <time dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}</time>
             <span className="ai-disclaimer">{t("chat.aiDisclaimer", "由AI生成，请注意甄别")}</span>
           </div>

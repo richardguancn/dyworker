@@ -1,4 +1,5 @@
 import { LoaderCircle } from "lucide-react";
+import { extractChannelPrefix } from "../../lib/channelMessage";
 import { stripControlMarkers } from "../../lib/text";
 import type { Attachment, ChatMessage } from "../../types";
 import { ClampedUserText } from "./ClampedText";
@@ -21,15 +22,8 @@ export function isVoiceMessage(message: ChatMessage): boolean {
 
 export function parseVoiceMessageDetails(message: ChatMessage) {
   const raw = String(message.displayContent ?? message.content ?? "").trim();
-  let text = raw;
-  let channelPrefix = "";
-
-  // 匹配 [来自QQ 张三] 或 [来自微信] 或 [来自飞书 张三] 等
-  const channelMatch = text.match(/^(\[来自(?:QQ|微信|飞书|qq|wechat|feishu)[^\]]*\])\s*/i);
-  if (channelMatch) {
-    channelPrefix = channelMatch[1];
-    text = text.slice(channelMatch[0].length).trim();
-  }
+  const { channelPrefix, channelLabel, body } = extractChannelPrefix(raw);
+  let text = body;
 
   // 匹配 [语音转写] 或 [语音]
   const voiceTagMatch = text.match(/^\[(?:语音转写|语音)\]\s*/);
@@ -46,6 +40,7 @@ export function parseVoiceMessageDetails(message: ChatMessage) {
 
   return {
     channelPrefix,
+    channelLabel,
     asrText: stripControlMarkers(text),
     voiceAttachment,
   };
@@ -89,7 +84,7 @@ export function VoiceMessageBubble({
   skillNames?: Set<string>;
   onFileToken?: (name: string) => void;
 }) {
-  const { channelPrefix, asrText, voiceAttachment } = parseVoiceMessageDetails(message);
+  const { channelPrefix, channelLabel, asrText, voiceAttachment } = parseVoiceMessageDetails(message);
   const pathKey = voiceAttachment ? (voiceAttachment.path || voiceAttachment.name) : "";
   const isPlaying = Boolean(pathKey && playingPath === pathKey);
   const isLoading = Boolean(pathKey && loadingPath === pathKey);
@@ -104,8 +99,8 @@ export function VoiceMessageBubble({
 
   return (
     <div className="voice-message-block">
-      {channelPrefix && (
-        <div className="voice-channel-tag">{channelPrefix}</div>
+      {(channelLabel || channelPrefix) && (
+        <div className="voice-channel-tag">{channelLabel || channelPrefix}</div>
       )}
       {voiceAttachment && (
         <button

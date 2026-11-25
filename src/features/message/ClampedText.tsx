@@ -1,8 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff } from "lucide-react";
+import { findSecretSpans } from "../../lib/secretMask";
 import { INLINE_TOKEN_REGEX, SESSION_TOKEN_REGEX } from "../../lib/text";
 import type { ChatMessage } from "../../types";
+
+function SecretMaskSpan({ raw, masked }: { raw: string; masked: string }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <span className={`secret-mask-chip${revealed ? " revealed" : ""}`}>
+      <code className="secret-mask-value">{revealed ? raw : masked}</code>
+      <button
+        type="button"
+        className="secret-mask-toggle"
+        title={revealed ? "隐藏凭据" : "临时查看凭据明文"}
+        aria-label={revealed ? "隐藏凭据" : "查看凭据明文"}
+        onClick={(event) => {
+          event.stopPropagation();
+          setRevealed((value) => !value);
+        }}
+      >
+        {revealed ? <EyeOff size={11} /> : <Eye size={11} />}
+      </button>
+    </span>
+  );
+}
 
 // 长消息折叠（Codex 风格“显示更多/收起”）：内容过长时默认收起，
 // 折叠状态下测量是否真的超出，避免短消息出现多余按钮。
@@ -92,14 +114,16 @@ export function ClampedUserText({
         {pluginReferences?.length ? (() => {
           const pieces: ReactNode[] = []; let cursor = 0;
           for (const [index, ref] of pluginReferences.entries()) {
-            if (ref.offset < cursor || ref.offset + ref.length > text.length || text.slice(ref.offset, ref.offset + ref.length) !== ref.clipboardText) return text;
-            pieces.push(renderInlineTokens(text.slice(cursor, ref.offset), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: `bubble-before-ref:${index}`, onFileToken, sessionTitles, onSessionToken }));
+            if (ref.offset < cursor || ref.offset + ref.length > text.length || text.slice(ref.offset, ref.offset + ref.length) !== ref.clipboardText) {
+              return renderInlineTokens(text, new Set<string>(), new Set<string>(), { keyPrefix: "bubble-fallback", maskSecrets: true });
+            }
+            pieces.push(renderInlineTokens(text.slice(cursor, ref.offset), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: `bubble-before-ref:${index}`, onFileToken, sessionTitles, onSessionToken, maskSecrets: true }));
             pieces.push(<button key={`plugin-ref:${index}`} className="message-plugin-reference" type="button" title={ref.label}
               onClick={() => onPluginReference?.(ref)}>{ref.label}</button>);
             cursor = ref.offset + ref.length;
           }
-          pieces.push(renderInlineTokens(text.slice(cursor), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: 'bubble-after-refs', onFileToken, sessionTitles, onSessionToken })); return pieces;
-        })() : renderInlineTokens(text, tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: "bubble", onFileToken, sessionTitles, onSessionToken })}
+          pieces.push(renderInlineTokens(text.slice(cursor), tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: 'bubble-after-refs', onFileToken, sessionTitles, onSessionToken, maskSecrets: true })); return pieces;
+        })() : renderInlineTokens(text, tokenNames ?? new Set<string>(), skillNames ?? new Set<string>(), { keyPrefix: "bubble", onFileToken, sessionTitles, onSessionToken, maskSecrets: true })}
       </span>
       {overflowing && (
         <ShowMoreToggle expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
@@ -119,13 +143,45 @@ export function renderInlineTokens(
     onFileToken?: (name: string) => void;
     sessionTitles?: Set<string>;
     onSessionToken?: (title: string) => void;
+    maskSecrets?: boolean;
   },
 ): ReactNode {
   if (!text) return null;
-  const { keyPrefix = "", onFileToken, sessionTitles, onSessionToken } = options || {};
-  if (!fileNames.size && !skillNames.size && !sessionTitles?.size) return text;
+  const { keyPrefix = "", onFileToken, sessionTitles, onSessionToken, maskSecrets = false } = options || {};
+  if (!fileNames.size && !skillNames.size && !sessionTitles?.size && !maskSecrets) return text;
   const parts: ReactNode[] = [];
   let index = 0;
+
+  const pushPlainText = (slice: string) => {
+    if (!slice) return;
+    if (!maskSecrets) {
+      parts.push(slice);
+      return;
+    }
+    const spans = findSecretSpans(slice);
+    if (!spans.length) {
+      parts.push(slice);
+      return;
+    }
+    let pos = 0;
+    for (const span of spans) {
+      if (span.start > pos) parts.push(slice.slice(pos, span.start));
+      parts.push(
+        <SecretMaskSpan
+          key={`${keyPrefix}-secret-${index++}`}
+          raw={slice.slice(span.start, span.end)}
+          masked={span.masked}
+        />,
+      );
+      pos = span.end;
+    }
+    if (pos < slice.length) parts.push(slice.slice(pos));
+  };
+
+  if (!fileNames.size && !skillNames.size && !sessionTitles?.size) {
+    pushPlainText(text);
+    return parts.length === 1 && typeof parts[0] === "string" ? parts[0] : parts;
+  }
 
   // 普通片段：沿用 @文件 / /技能 的正则扫描，只在 [from,to) 窗口内取 token
   const emitPlain = (from: number, to: number) => {
@@ -137,7 +193,7 @@ export function renderInlineTokens(
       const isFile = token.startsWith("@") && fileNames.has(name);
       const isSkill = token.startsWith("/") && skillNames.has(name);
       if (!isFile && !isSkill) continue;
-      if (match.index > from) parts.push(text.slice(from, match.index));
+      if (match.index > from) pushPlainText(text.slice(from, match.index));
       if (isFile) {
         parts.push(
           <span
@@ -152,7 +208,7 @@ export function renderInlineTokens(
       }
       from = match.index + token.length;
     }
-    if (from < to) parts.push(text.slice(from, to));
+    if (from < to) pushPlainText(text.slice(from, to));
   };
 
   // 会话 token 用括号定界单独扫；命中区间交给 emitPlain 之外的分支渲染，

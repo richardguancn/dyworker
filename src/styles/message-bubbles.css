@@ -257,14 +257,23 @@ html:root .user-bubble.bare {
   max-width: 100%;
 }
 
+.message-channel-tag,
 .voice-channel-tag {
   display: inline-flex;
   align-items: center;
   font-size: calc(11.5px * var(--font-ui-scale, 1));
   color: var(--quiet, #8d9289);
   font-weight: 500;
-  margin-bottom: 2px;
   align-self: flex-end;
+  justify-self: end;
+}
+
+.message-channel-tag {
+  margin-bottom: 4px;
+}
+
+.voice-channel-tag {
+  margin-bottom: 2px;
 }
 
 .voice-play-bar {
@@ -417,5 +426,41 @@ html:root .user-bubble.bare {
   color: #8d9289;
   font-size: calc(12px * var(--font-ui-scale, 1));
   line-height: 1;
+}
+
+.secret-mask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--accent-soft, rgba(70, 74, 66, 0.08));
+  vertical-align: baseline;
+}
+
+.secret-mask-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  letter-spacing: 0.01em;
+}
+
+.secret-mask-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted, #7d8078);
+  cursor: pointer;
+}
+
+.secret-mask-toggle:hover {
+  background: var(--accent-soft, rgba(70, 74, 66, 0.14));
+  color: var(--ink, #383b36);
 }
 

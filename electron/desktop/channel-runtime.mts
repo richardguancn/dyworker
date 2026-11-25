@@ -49,10 +49,11 @@ async function buildChannelAttachments(media) {
   const result = [];
   for (const item of Array.isArray(media) ? media : []) {
     if (!item || typeof item !== "object") continue;
+    const preferredName = String(item.fileName || "").trim();
     const ext = item.filePath ? path.extname(item.filePath).toLowerCase() : "";
     const isVoice = item.kind === "voice" || ext === ".silk" || (item.mimeType && item.mimeType.startsWith("audio/"));
     const fallback = {
-      name: item.fileName || (item.kind === "voice" ? "语音" : "附件"),
+      name: preferredName || (item.kind === "voice" ? "语音" : "附件"),
       path: item.filePath || "",
       size: Number(item.size) || 0,
       mimeType: item.mimeType || (isVoice ? "audio/silk" : "application/octet-stream"),
@@ -68,6 +69,7 @@ async function buildChannelAttachments(media) {
       const desc = await describeAttachment(item.filePath);
       result.push({
         ...desc,
+        name: preferredName || desc.name,
         isVoice: Boolean(isVoice || desc.isVoice),
         ...(item.duration ? { duration: Number(item.duration) } : {}),
       });
@@ -458,6 +460,7 @@ async function runChannelTask({ channel, chat, chatKey, text, media, chatRecord,
       workingContext,
       conversation: [...prior, { role: "user", content: contentForModel }],
       auditExtras: { channel },
+      isChannel: true,
       extraTools: channelMediaToolDefinitions(),
       onExtraTool: routeExtraTool,
       isCancelled: () => deps.channelTaskAborts.has(myKey) || channelAbort.signal.aborted,
