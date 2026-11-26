@@ -773,7 +773,7 @@ html:not([data-translucent="true"]) .reference-layout .main-panel:not(.empty-ses
     color-mix(in srgb, var(--ink) 44%, transparent) 78%,
     transparent
   );
-  opacity: 0.16;
+  opacity: 0;
   transition: opacity 150ms ease, width 150ms ease;
 }
 .reference-layout .chat-width-handle:hover::after,

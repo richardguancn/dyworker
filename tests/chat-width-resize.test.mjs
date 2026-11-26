@@ -68,6 +68,7 @@ test("layout.css 与组件源码契约: --chat-width 联动、对称手柄与窄
   assert.match(layoutCss, /\.reference-layout\s+\.composer-project-bar\s*\{[^}]*width:\s*calc\(var\(--chat-width\)\s*-\s*28px\)/);
   assert.match(layoutCss, /\.reference-layout\s+\.chat-width-handle-left\s*\{[^}]*left:\s*calc\(50%\s*-\s*var\(--chat-width\)\s*\/\s*2\s*-\s*20px\)/);
   assert.match(layoutCss, /\.reference-layout\s+\.chat-width-handle-right\s*\{[^}]*right:\s*calc\(50%\s*-\s*var\(--chat-width\)\s*\/\s*2\s*-\s*20px\)/);
+  assert.match(layoutCss, /\.reference-layout\s+\.chat-width-handle::after\s*\{[^}]*opacity:\s*0;/);
   assert.match(layoutCss, /@media\s*\(max-width:\s*820px\)\s*\{[^}]*\.reference-layout\s+\.chat-width-handle\s*\{\s*display:\s*none;\s*\}/);
 
   assert.match(paneSource, /className="chat-width-handle chat-width-handle-left"/);
