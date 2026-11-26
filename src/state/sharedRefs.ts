@@ -101,7 +101,12 @@ export const searchScrollKeyRef: { current: string | null } = { current: null };
 export const appShellRef: { current: HTMLDivElement | null } = { current: null };
 // 面板几何镜像与拖动状态：App 每次渲染刷新几何值，startupRuntime 的拖动 effect 读取
 export const panelGeometryRef: { current: { rightPanelOpen: boolean; sidebarOpen: boolean; appliedSidebarWidth: number; appliedToolPanelWidth: number } } = { current: { rightPanelOpen: false, sidebarOpen: false, appliedSidebarWidth: 0, appliedToolPanelWidth: 0 } };
-export const panelResizeRef: { current: { edge: "left" | "right"; startX: number; startWidth: number } | null } = { current: null };
+export const panelResizeRef: {
+  current:
+    | { edge: "left" | "right"; startX: number; startWidth: number }
+    | { edge: "chat-left" | "chat-right"; startX: number; startWidth: number; maxWidth: number }
+    | null;
+} = { current: null };
 
 // 会话草稿快照 ref：切换会话时保留各自输入框内容，最新值经 ref 读取避免闭包取到旧值
 export const composerRef: { current: string } = { current: "" };

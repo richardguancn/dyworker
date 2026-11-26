@@ -897,5 +897,7 @@
   "model.visionModeService": "Externen Vision-Dienst verwenden",
   "model.visionNativeNote": "Bilder werden direkt per image_url an dieses Modell gesendet, ohne externen Vision-Dienst. Falls das Modell keine Bilder unterstützt, wählen Sie oben „Externen Vision-Dienst verwenden“.",
   "model.visionNativeDeepseekNote": "Bilder werden direkt an DeepSeek gesendet, ohne externen Vision-Dienst. Bilder sind nur in Benutzernachrichten zulässig (JPEG / PNG / GIF / WebP).",
-  "model.visionServiceNote": "Bilder werden vom Vision-Dienst unten in Text umgewandelt, bevor sie an dieses Modell gehen. Erfordert einen OpenAI-kompatiblen Chat-Completions-Endpunkt mit image_url. Wenn das Modell Bilder nativ unterstützt, oben umschalten."
+  "model.visionServiceNote": "Bilder werden vom Vision-Dienst unten in Text umgewandelt, bevor sie an dieses Modell gehen. Erfordert einen OpenAI-kompatiblen Chat-Completions-Endpunkt mit image_url. Wenn das Modell Bilder nativ unterstützt, oben umschalten.",
+  "conversation.resizeWidth": "Unterhaltungsbreite anpassen",
+  "conversation.resizeWidthHint": "Ziehen zum Anpassen der Breite, Doppelklick zum Zurücksetzen"
 }

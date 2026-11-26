@@ -204,7 +204,7 @@
 }
 
 .user-message-stack {
-  max-width: min(680px, 76%);
+  max-width: 76%;
   display: grid;
   justify-items: end;
 }

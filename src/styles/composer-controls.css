@@ -517,10 +517,10 @@
   -webkit-backdrop-filter: blur(3px);
 }
 
-@property --creation-angle {
+@property --creation-sweep {
   syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
+  inherits: true;
+  initial-value: 180deg;
 }
 
 :root {
@@ -528,7 +528,9 @@
   --creation-c2: #9b6bff;
   --creation-c3: #14b8a6;
   --creation-c4: #f59e0b;
-  --creation-glow-opacity: 0.22;
+  --creation-head: #ffffff;
+  --creation-wave-opacity: 0.28;
+  --creation-halo: rgba(79, 124, 255, 0.14);
 }
 
 html[data-theme="dark"] {
@@ -536,7 +538,9 @@ html[data-theme="dark"] {
   --creation-c2: #b983ff;
   --creation-c3: #2dd4bf;
   --creation-c4: #fbbf24;
-  --creation-glow-opacity: 0.34;
+  --creation-head: #ffffff;
+  --creation-wave-opacity: 0.36;
+  --creation-halo: rgba(107, 158, 255, 0.22);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -545,7 +549,9 @@ html[data-theme="dark"] {
     --creation-c2: #b983ff;
     --creation-c3: #2dd4bf;
     --creation-c4: #fbbf24;
-    --creation-glow-opacity: 0.34;
+    --creation-head: #ffffff;
+    --creation-wave-opacity: 0.36;
+    --creation-halo: rgba(107, 158, 255, 0.22);
   }
 }
 
@@ -590,72 +596,96 @@ html[data-theme="dark"] {
   animation: creation-icon-pop 520ms cubic-bezier(0.22, 1.4, 0.36, 1);
 }
 
-/* 创造模式输入框：流光渐变边框 + 柔和外晕 + 进入瞬间全息扫光与星火 */
+/* 创造模式输入框：与原边框 100% 重合的极光环，双点从底中向两侧合围至顶中，背景漫涌后彻底复原 */
 .composer-card.creation-mode {
   position: relative;
-  isolation: isolate;
-  border-color: color-mix(in srgb, var(--creation-c1) 34%, var(--border));
+  box-shadow: 0 0 18px var(--creation-halo), var(--shadow-md);
+}
+
+.composer-card.creation-mode:focus-within {
+  box-shadow: 0 0 24px color-mix(in srgb, var(--creation-c1) 28%, transparent), var(--shadow-lg);
 }
 
 .composer-card.creation-mode.creation-entering {
-  animation: creation-card-ignite 560ms cubic-bezier(0.22, 1.32, 0.36, 1) both;
+  animation: creation-card-ignite 620ms cubic-bezier(0.22, 1.25, 0.36, 1) both;
 }
 
-.composer-card.creation-mode::before {
+.composer-creation-ring {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+  --creation-sweep: 180deg;
+}
+
+.composer-creation-ring::before {
   content: "";
   position: absolute;
-  inset: -1.5px;
+  inset: 0;
   border-radius: inherit;
   padding: 1.75px;
-  pointer-events: none;
-  z-index: 2;
   background: conic-gradient(
-    from var(--creation-angle),
-    var(--creation-c1),
-    var(--creation-c2),
-    var(--creation-c3),
-    var(--creation-c4),
-    var(--creation-c1)
+    from 180deg at 50% 50%,
+    var(--creation-c3) 0deg,
+    var(--creation-c1) 92deg,
+    var(--creation-c2) 180deg,
+    var(--creation-c4) 268deg,
+    var(--creation-c3) 360deg
   );
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
-  opacity: 0.88;
-  animation: creation-border-spin 6.5s linear infinite;
 }
 
-.composer-card.creation-mode:focus-within::before {
-  opacity: 1;
-  animation-duration: 4.5s;
+.composer-creation-ring.entering {
+  animation: creation-sweep-enclose 1050ms linear both;
+  -webkit-mask-image: conic-gradient(
+    from 180deg at 50% 50%,
+    #000 0deg,
+    #000 var(--creation-sweep),
+    transparent calc(var(--creation-sweep) + 5deg),
+    transparent calc(355deg - var(--creation-sweep)),
+    #000 calc(360deg - var(--creation-sweep)),
+    #000 360deg
+  );
+  mask-image: conic-gradient(
+    from 180deg at 50% 50%,
+    #000 0deg,
+    #000 var(--creation-sweep),
+    transparent calc(var(--creation-sweep) + 5deg),
+    transparent calc(355deg - var(--creation-sweep)),
+    #000 calc(360deg - var(--creation-sweep)),
+    #000 360deg
+  );
 }
 
-.composer-card.creation-mode::after {
+.composer-creation-ring.entering::after {
   content: "";
   position: absolute;
-  inset: -5px;
+  inset: 0;
   border-radius: inherit;
-  pointer-events: none;
-  z-index: -1;
-  background: conic-gradient(
-    from var(--creation-angle),
-    var(--creation-c1),
-    var(--creation-c2),
-    var(--creation-c3),
-    var(--creation-c4),
-    var(--creation-c1)
-  );
-  filter: blur(16px);
-  opacity: var(--creation-glow-opacity);
-  animation:
-    creation-border-spin 6.5s linear infinite,
-    creation-aura-breathe 4.6s ease-in-out infinite;
-}
-
-.composer-card.creation-mode.creation-entering::after {
-  animation:
-    creation-border-spin 3.2s linear infinite,
-    creation-aura-burst 880ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  padding: 2.5px;
+  background:
+    conic-gradient(
+      from 180deg at 50% 50%,
+      transparent max(0deg, calc(var(--creation-sweep) - 10deg)),
+      var(--creation-head) max(0deg, calc(var(--creation-sweep) - 2deg)),
+      transparent calc(var(--creation-sweep) + 4deg)
+    ),
+    conic-gradient(
+      from 180deg at 50% 50%,
+      transparent calc(356deg - var(--creation-sweep)),
+      var(--creation-head) min(360deg, calc(362deg - var(--creation-sweep))),
+      transparent min(360deg, calc(370deg - var(--creation-sweep)))
+    );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  filter: drop-shadow(0 0 6px var(--creation-c1));
+  animation: creation-heads-fade 1050ms ease-out both;
 }
 
 .composer-creation-fx {
@@ -667,84 +697,88 @@ html[data-theme="dark"] {
   z-index: 1;
 }
 
-.composer-creation-sheen {
+.composer-creation-bg-wave {
   position: absolute;
-  top: -35%;
-  bottom: -35%;
-  left: -45%;
-  width: 44%;
+  inset: 0;
   opacity: 0;
-  transform: translateX(-60%) skewX(-22deg);
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--creation-c1) 24%, transparent) 30%,
-    color-mix(in srgb, #ffffff 42%, var(--creation-c2) 26%) 50%,
-    color-mix(in srgb, var(--creation-c3) 24%, transparent) 70%,
-    transparent 100%
+  transform-origin: 50% 105%;
+  background:
+    radial-gradient(92% 95% at 50% 104%, color-mix(in srgb, var(--creation-c3) 38%, transparent) 0%, transparent 66%),
+    radial-gradient(68% 86% at 22% 76%, color-mix(in srgb, var(--creation-c1) 34%, transparent) 0%, transparent 72%),
+    radial-gradient(68% 86% at 78% 76%, color-mix(in srgb, var(--creation-c2) 34%, transparent) 0%, transparent 72%);
+  animation: creation-bg-transition 1550ms cubic-bezier(0.22, 0.85, 0.3, 1) forwards;
+}
+
+.composer-creation-meet-flash {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  width: 190px;
+  height: 30px;
+  transform: translateX(-50%) scale(0.4);
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--creation-head) 82%, var(--creation-c2) 18%) 0%,
+    color-mix(in srgb, var(--creation-c1) 46%, transparent) 46%,
+    transparent 76%
   );
+  filter: blur(5px);
+  animation: creation-meet-spark 460ms ease-out 960ms both;
 }
 
-.composer-card.creation-entering .composer-creation-sheen {
-  animation: creation-sheen-sweep 840ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+/* 宽扁卡片周长角度映射：底边约 0-78deg、左右竖边 78-102deg、顶边 102-180deg */
+@keyframes creation-sweep-enclose {
+  0% { --creation-sweep: 0deg; }
+  32% { --creation-sweep: 78deg; }
+  54% { --creation-sweep: 102deg; }
+  100% { --creation-sweep: 180deg; }
 }
 
-.composer-creation-spark {
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  opacity: 0;
-  background: radial-gradient(circle, #ffffff 10%, var(--creation-c1) 58%, transparent 100%);
-  box-shadow: 0 0 10px var(--creation-c2);
+@keyframes creation-heads-fade {
+  0% { opacity: 0.9; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
-.composer-creation-spark.spark-1 { left: 16%; bottom: 20%; }
-.composer-creation-spark.spark-2 { left: 52%; bottom: 14%; background: radial-gradient(circle, #ffffff 10%, var(--creation-c3) 58%, transparent 100%); }
-.composer-creation-spark.spark-3 { left: 82%; bottom: 24%; background: radial-gradient(circle, #ffffff 10%, var(--creation-c2) 58%, transparent 100%); }
+@keyframes creation-bg-transition {
+  0% {
+    opacity: 0;
+    transform: translateY(40%) scale(0.46);
+  }
+  34% {
+    opacity: var(--creation-wave-opacity);
+    transform: translateY(8%) scale(0.95);
+  }
+  68% {
+    opacity: calc(var(--creation-wave-opacity) * 1.15);
+    transform: translateY(-2%) scale(1.06);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10%) scale(1.1);
+  }
+}
 
-.composer-card.creation-entering .composer-creation-spark.spark-1 {
-  animation: creation-spark-rise 760ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both;
-}
-.composer-card.creation-entering .composer-creation-spark.spark-2 {
-  animation: creation-spark-rise 860ms cubic-bezier(0.16, 1, 0.3, 1) 140ms both;
-}
-.composer-card.creation-entering .composer-creation-spark.spark-3 {
-  animation: creation-spark-rise 740ms cubic-bezier(0.16, 1, 0.3, 1) 210ms both;
-}
-
-@keyframes creation-border-spin {
-  to { --creation-angle: 360deg; }
+@keyframes creation-meet-spark {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.35);
+  }
+  35% {
+    opacity: 0.95;
+    transform: translateX(-50%) scale(1.14);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.55);
+  }
 }
 
 @keyframes creation-card-ignite {
-  0% { transform: scale(0.988); }
-  45% { transform: scale(1.009); }
+  0% { transform: scale(0.996); }
+  45% { transform: scale(1.004); }
   100% { transform: scale(1); }
-}
-
-@keyframes creation-aura-breathe {
-  0%, 100% { opacity: var(--creation-glow-opacity); transform: scale(1); }
-  50% { opacity: calc(var(--creation-glow-opacity) * 1.28); transform: scale(1.008); }
-}
-
-@keyframes creation-aura-burst {
-  0% { opacity: 0.72; transform: scale(0.985); filter: blur(20px); }
-  45% { opacity: 0.64; transform: scale(1.022); filter: blur(22px); }
-  100% { opacity: var(--creation-glow-opacity); transform: scale(1); filter: blur(16px); }
-}
-
-@keyframes creation-sheen-sweep {
-  0% { opacity: 0; transform: translateX(-60%) skewX(-22deg); }
-  18% { opacity: 0.85; }
-  82% { opacity: 0.7; }
-  100% { opacity: 0; transform: translateX(380%) skewX(-22deg); }
-}
-
-@keyframes creation-spark-rise {
-  0% { opacity: 0; transform: translateY(6px) scale(0.4); }
-  30% { opacity: 0.95; transform: translateY(-10px) scale(1.15); }
-  100% { opacity: 0; transform: translateY(-28px) scale(0.35); }
 }
 
 @keyframes creation-icon-pop {
@@ -753,27 +787,19 @@ html[data-theme="dark"] {
   100% { transform: rotate(360deg) scale(1); }
 }
 
-html[data-glass-lightweight="true"] .composer-card.creation-mode,
-html[data-glass-lightweight="true"] .composer-card.creation-mode::before,
-html[data-glass-lightweight="true"] .composer-card.creation-mode::after,
-html[data-glass-lightweight="true"] .composer-creation-sheen,
-html[data-glass-lightweight="true"] .composer-creation-spark,
-html[data-glass-lightweight="true"] .creation-mode-toggle.entering svg {
-  animation: none !important;
-}
-
-html[data-glass-lightweight="true"] .composer-creation-fx {
-  display: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .composer-card.creation-mode,
-  .composer-card.creation-mode::before,
-  .composer-card.creation-mode::after,
-  .composer-creation-sheen,
-  .composer-creation-spark,
+  .composer-creation-ring.entering,
+  .composer-creation-ring.entering::after,
+  .composer-creation-bg-wave,
+  .composer-creation-meet-flash,
   .creation-mode-toggle.entering svg {
     animation: none !important;
+  }
+
+  .composer-creation-ring.entering {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   .composer-creation-fx {
@@ -783,7 +809,7 @@ html[data-glass-lightweight="true"] .composer-creation-fx {
 
 /* 创造模式空会话示例灵感网格 */
 .creation-examples {
-  width: min(740px, 100%);
+  width: min(var(--chat-max-width, 740px), 100%);
   margin-top: 22px;
   display: grid;
   gap: 12px;

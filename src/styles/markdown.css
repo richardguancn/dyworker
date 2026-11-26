@@ -31,7 +31,7 @@
 .markdown-local-image {
   display: block;
   width: fit-content;
-  max-width: min(100%, 760px);
+  max-width: 100%;
   margin: 12px 0 18px;
   overflow: hidden;
   border: 1px solid #dedfd9;
@@ -119,7 +119,7 @@
 
 .echarts-canvas {
   width: 100%;
-  max-width: 680px;
+  max-width: 100%;
   height: 320px;
   align-self: center;
 }

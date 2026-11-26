@@ -897,5 +897,7 @@
   "model.visionModeService": "Usar servicio de visión externo",
   "model.visionNativeNote": "Las imágenes se envían directamente a este modelo mediante image_url sin servicio externo. Si el modelo no admite imágenes, cambie arriba a «Usar servicio de visión externo».",
   "model.visionNativeDeepseekNote": "Las imágenes se envían directamente a DeepSeek sin servicio externo. Solo se permiten imágenes en mensajes de usuario (JPEG / PNG / GIF / WebP).",
-  "model.visionServiceNote": "El servicio de visión inferior transcribe las imágenes a texto antes de enviarlas al modelo. Requiere un endpoint Chat Completions compatible con OpenAI e image_url. Si este modelo admite visión nativa, cámbielo arriba."
+  "model.visionServiceNote": "El servicio de visión inferior transcribe las imágenes a texto antes de enviarlas al modelo. Requiere un endpoint Chat Completions compatible con OpenAI e image_url. Si este modelo admite visión nativa, cámbielo arriba.",
+  "conversation.resizeWidth": "Ajustar ancho de conversación",
+  "conversation.resizeWidthHint": "Arrastra para ajustar el ancho o haz doble clic para restablecer"
 }

@@ -897,5 +897,7 @@
   "model.visionModeService": "外部ビジョンサービスを使用",
   "model.visionNativeNote": "画像は外部ビジョンサービスを介さず、image_url として現在のモデルに直接送信されます。画像非対応の場合は上で「外部ビジョンサービスを使用」に切り替えてください。",
   "model.visionNativeDeepseekNote": "画像は外部ビジョンサービスを介さず DeepSeek に直接送信されます。画像はユーザーメッセージでのみ許可されます（JPEG / PNG / GIF / WebP）。",
-  "model.visionServiceNote": "画像は下のビジョンサービスでテキスト化してから現在のモデルに渡されます（元画像は直接送信されません）。OpenAI 互換の Chat Completions と image_url に対応したサービスが必要です。モデルがネイティブ画像対応の場合は上で切り替えてください。"
+  "model.visionServiceNote": "画像は下のビジョンサービスでテキスト化してから現在のモデルに渡されます（元画像は直接送信されません）。OpenAI 互換の Chat Completions と image_url に対応したサービスが必要です。モデルがネイティブ画像対応の場合は上で切り替えてください。",
+  "conversation.resizeWidth": "会話幅を調整",
+  "conversation.resizeWidthHint": "ドラッグで会話幅を調整、ダブルクリックでリセット"
 }

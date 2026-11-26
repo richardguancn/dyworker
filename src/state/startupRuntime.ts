@@ -18,7 +18,12 @@ import { closeImagePreview, navigateImagePreview } from "./messageActions";
 import { refreshGitInfo } from "./gitActions";
 import { syncAtBottom } from "./panelActions";
 import type { ApprovalMode, SessionRecord } from "../types";
-import type { ToolPanelTab } from "./layoutStore";
+import {
+  computeSymmetricChatWidth,
+  persistChatContentWidth,
+  useLayoutStore,
+  type ToolPanelTab,
+} from "./layoutStore";
 import {
   activeIdRef, sessionsRef, sessionDraftsRef, attachmentsRef, shouldScrollToBottomRef, viewportRef,
   toolPanelTabsRef, toolPanelTabSequenceRef, recorderRef, microphoneStreamRef, agentUnsubscribeRefs,
@@ -29,7 +34,6 @@ import {
   composerRef, composerPastesRef, annotationsRef, lastActiveIdRef, browserPanelCommandsRef,
   conversationPrependAnchorRef, suppressStickUntilRef,
 } from "./sharedRefs";
-import { useLayoutStore } from "./layoutStore";
 import { useSettingsStore } from "./settingsStore";
 import { useComposerStore } from "./composerStore";
 import { useSessionStore } from "./sessionStore";
@@ -69,7 +73,7 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     setPluginsPageOpen, setBotTeamPageOpen, setViewportWidth, setSidebarOpen,
     setTerminalAvailable, setTerminalOpen, debugOpen,
     toolPanelTabs, setToolPanelTabs, activeToolPanelTabId, setActiveToolPanelTabId,
-    toolPanelWidth, setToolPanelWidth, setSidebarWidth, rightPanelOpen, setRightPanelOpen,
+    toolPanelWidth, setToolPanelWidth, setSidebarWidth, setChatContentWidth, rightPanelOpen, setRightPanelOpen,
     setSessionMenuId, setWorkspaceMenuPath, setTopMenuOpen, setConversationToolsOpen,
     setRailMenuOpen, setAddMenuOpen, setModelMenuOpen, setApprovalMenuOpen,
     setToolPanelMenuOpen, setToolPanelAddMenuOpen, settingsOpen,
@@ -487,10 +491,13 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
         const max = Math.max(220, window.innerWidth - 58 - (geometry.rightPanelOpen ? geometry.appliedToolPanelWidth : 0) - 420);
         width = Math.min(Math.max(resize.startWidth + pendingX - resize.startX, 220), Math.min(520, max));
         shell.style.setProperty("--sidebar-width", `${width}px`);
-      } else {
+      } else if (resize.edge === "right") {
         const max = Math.max(360, window.innerWidth - 58 - (geometry.sidebarOpen ? geometry.appliedSidebarWidth : 0) - 420);
         width = Math.min(Math.max(resize.startWidth + resize.startX - pendingX, 320), max);
         shell.style.setProperty("--tool-panel-width", `${width}px`);
+      } else if (resize.edge === "chat-left" || resize.edge === "chat-right") {
+        width = computeSymmetricChatWidth(resize.edge, resize.startWidth, resize.startX, pendingX, resize.maxWidth);
+        shell.style.setProperty("--chat-max-width", `${width}px`);
       }
     };
     const onPointerMove = (event: PointerEvent) => {
@@ -504,11 +511,15 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
       apply();
       if (width !== null) {
         if (panelResizeRef.current.edge === "left") setSidebarWidth(width);
-        else setToolPanelWidth(width);
+        else if (panelResizeRef.current.edge === "right") setToolPanelWidth(width);
+        else {
+          setChatContentWidth(width);
+          persistChatContentWidth(width);
+        }
       }
       panelResizeRef.current = null;
       pendingX = width = null;
-      document.body.classList.remove("resizing-panels");
+      document.body.classList.remove("resizing-panels", "resizing-chat-width");
     };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", finish);
@@ -516,7 +527,7 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
     window.addEventListener("blur", finish);
     return () => {
       cancelAnimationFrame(frame);
-      document.body.classList.remove("resizing-panels");
+      document.body.classList.remove("resizing-panels", "resizing-chat-width");
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);

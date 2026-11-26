@@ -3,10 +3,11 @@
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（sendMessage、updateComposer、beginPanelResize、
 // 各种 useEffect 等）仍留在 App.tsx，这里只通过 props 接收状态与回调。
 import { ArrowDown, ArrowUp, Blocks, ChevronDown, ChevronUp, LoaderCircle, Search, Sparkles, X } from "lucide-react";
-import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, RefObject, SetStateAction } from "react";
+import type { ClipboardEvent, ComponentType, Dispatch, DragEvent, KeyboardEvent, MouseEvent, PointerEvent, RefObject, SetStateAction } from "react";
 import { CREATION_MODE_EXAMPLES } from "../../lib/creationExamples";
 import { composerApprovalModes } from "../plans/PlansPanel";
 import { t } from "../../i18n";
+import { CHAT_CONTENT_WIDTH_MAX, CHAT_CONTENT_WIDTH_MIN } from "../../state/layoutStore";
 import type { LoadedConversationTurn, VisibleConversationMessage } from "../../lib/pagination";
 import { indexConversation } from "../../lib/text";
 import { ApprovalCard, QuestionCard } from "../message/Cards";
@@ -63,6 +64,10 @@ interface MessageRowProps {
 
 export interface ConversationPaneProps {
   ready: boolean;
+  chatContentWidth: number;
+  beginChatWidthResize: (edge: "chat-left" | "chat-right", event: PointerEvent<HTMLDivElement>) => void;
+  resetChatContentWidth: () => void;
+  stepChatContentWidth: (delta: number, panelElement?: Element | null) => void;
   ConversationMessageRow: ComponentType<MessageRowProps>;
   messageRowActions: MessageRowActions;
 
@@ -275,6 +280,7 @@ export interface ConversationPaneProps {
 export function ConversationPane(props: ConversationPaneProps) {
   // 输入区 dock 相关 props 不再逐个解构：整体透传给 <ComposerDock {...props} />。
   const {
+    chatContentWidth, beginChatWidthResize, resetChatContentWidth, stepChatContentWidth,
     ConversationMessageRow, messageRowActions,
     activeSession, activeId, workspacePath,
     botTeamPageOpen, botTeamAvailable, activeWorkspacePage, pluginsPageOpen, settingsOpen,
@@ -299,6 +305,20 @@ export function ConversationPane(props: ConversationPaneProps) {
   } = props;
   const workspacePageShown = Boolean((botTeamPageOpen && botTeamAvailable) || activeWorkspacePage);
   const creationGuideShown = Boolean(props.ready && activeSession?.creationMode && activeSession?.runtime !== "dsh");
+  const resizeLabel = t("conversation.resizeWidth", "调整会话内容宽度");
+  const resizeHint = t("conversation.resizeWidthHint", "拖动调整会话内容宽度，双击恢复默认");
+  const handleResizeKeyDown = (edge: "chat-left" | "chat-right", event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      stepChatContentWidth(edge === "chat-left" ? 20 : -20, event.currentTarget.parentElement);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      stepChatContentWidth(edge === "chat-left" ? -20 : 20, event.currentTarget.parentElement);
+    } else if (event.key === "Home" || event.key === "Enter") {
+      event.preventDefault();
+      resetChatContentWidth();
+    }
+  };
   return (
       <main className={`main-panel ${!activeSession?.messages.length ? "empty-session" : ""} ${workspacePageShown ? "bot-team-page-open" : ""} ${pluginsPageOpen ? "plugins-page-open" : ""} ${!workspacePageShown && conversationView !== "chat" ? "conversation-view-open" : ""} ${terminalOpen ? "terminal-open" : ""}`}>
         {botTeamPageOpen && botTeamAvailable ? <section className="bot-team-page" aria-label="机器人团队页面">
@@ -693,6 +713,38 @@ export function ConversationPane(props: ConversationPaneProps) {
 
         <BackgroundBrowserHandoff sessionId={activeId} running={activeTaskRunning} />
         <ComposerDock {...props} />
+        {conversationView === "chat" && (
+          <>
+            <div
+              className="chat-width-handle chat-width-handle-left"
+              role="separator"
+              tabIndex={0}
+              aria-orientation="vertical"
+              aria-label={resizeLabel}
+              aria-valuemin={CHAT_CONTENT_WIDTH_MIN}
+              aria-valuemax={CHAT_CONTENT_WIDTH_MAX}
+              aria-valuenow={chatContentWidth}
+              title={resizeHint}
+              onPointerDown={(event) => beginChatWidthResize("chat-left", event)}
+              onDoubleClick={resetChatContentWidth}
+              onKeyDown={(event) => handleResizeKeyDown("chat-left", event)}
+            />
+            <div
+              className="chat-width-handle chat-width-handle-right"
+              role="separator"
+              tabIndex={0}
+              aria-orientation="vertical"
+              aria-label={resizeLabel}
+              aria-valuemin={CHAT_CONTENT_WIDTH_MIN}
+              aria-valuemax={CHAT_CONTENT_WIDTH_MAX}
+              aria-valuenow={chatContentWidth}
+              title={resizeHint}
+              onPointerDown={(event) => beginChatWidthResize("chat-right", event)}
+              onDoubleClick={resetChatContentWidth}
+              onKeyDown={(event) => handleResizeKeyDown("chat-right", event)}
+            />
+          </>
+        )}
         </>}
       </main>
   );

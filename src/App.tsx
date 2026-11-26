@@ -56,7 +56,13 @@ import { applyMention,chooseAttachments,chooseWorkspace,handleComposerDragLeave,
 import { useComposerStore } from "./state/composerStore";
 import { createBranch,generateCommitMessage,openCommitPanel,refreshGitInfo,runCommit,runPushOnly,switchBranch,toggleBranchMenu } from "./state/gitActions";
 import { useInboxStore } from "./state/inboxStore";
-import { useLayoutStore } from "./state/layoutStore";
+import {
+  CHAT_CONTENT_WIDTH_DEFAULT,
+  CHAT_CONTENT_WIDTH_MIN,
+  clampChatContentWidth,
+  persistChatContentWidth,
+  useLayoutStore,
+} from "./state/layoutStore";
 import { cancelMessageEdit,closeImagePreview,copyMessage,navigateImagePreview,openImagePreview,startMessageEdit,togglePlayVoice,toggleSpeakMessage,toggleVoiceInput } from "./state/messageActions";
 import { refreshImportedHistory,refreshMemories,refreshSkills,refreshWorkspace,syncAtBottom } from "./state/panelActions";
 import { usePanelStore } from "./state/panelStore";
@@ -111,6 +117,7 @@ export function App() {
   // 布局 / 外壳 / 设置类状态已迁到 zustand store（字段名与 setter 与原先的 useState 一致）。
   const {
     sidebarOpen, setSidebarOpen, sidebarWidth, setSidebarWidth, toolPanelWidth, setToolPanelWidth,
+    chatContentWidth, setChatContentWidth,
     viewportWidth, setViewportWidth, rightPanelOpen, setRightPanelOpen,
     toolPanelTabs, setToolPanelTabs, toolPanelTabOverflow, setToolPanelTabOverflow,
     activeToolPanelTabId, setActiveToolPanelTabId, toolPanelMenuOpen, setToolPanelMenuOpen,
@@ -1088,6 +1095,49 @@ export function App() {
     document.body.classList.add("resizing-panels");
   };
 
+  const measureChatPanelMaxWidth = (panelElement?: Element | null) => {
+    const panelWidth =
+      panelElement?.getBoundingClientRect().width
+      || viewportRef.current?.closest(".main-panel")?.getBoundingClientRect().width
+      || window.innerWidth;
+    return Math.max(CHAT_CONTENT_WIDTH_MIN, Math.floor(panelWidth - 48));
+  };
+
+  const beginChatWidthResize = (edge: "chat-left" | "chat-right", event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const maxWidth = measureChatPanelMaxWidth(event.currentTarget.parentElement);
+    const renderedWidth = viewportRef.current?.querySelector(".conversation-column")?.getBoundingClientRect().width;
+    const startWidth = typeof renderedWidth === "number" && renderedWidth > 0
+      ? Math.min(maxWidth, Math.max(CHAT_CONTENT_WIDTH_MIN, renderedWidth))
+      : Math.min(chatContentWidth, maxWidth);
+    panelResizeRef.current = {
+      edge,
+      startX: event.clientX,
+      startWidth: Math.round(startWidth),
+      maxWidth,
+    };
+    document.body.classList.add("resizing-panels", "resizing-chat-width");
+  };
+
+  const resetChatContentWidth = () => {
+    appShellRef.current?.style.setProperty("--chat-max-width", `${CHAT_CONTENT_WIDTH_DEFAULT}px`);
+    setChatContentWidth(CHAT_CONTENT_WIDTH_DEFAULT);
+    persistChatContentWidth(CHAT_CONTENT_WIDTH_DEFAULT);
+  };
+
+  const stepChatContentWidth = (delta: number, panelElement?: Element | null) => {
+    const maxWidth = measureChatPanelMaxWidth(panelElement);
+    const renderedWidth = viewportRef.current?.querySelector(".conversation-column")?.getBoundingClientRect().width;
+    const baseWidth = typeof renderedWidth === "number" && renderedWidth > 0
+      ? Math.min(chatContentWidth, Math.round(renderedWidth))
+      : Math.min(chatContentWidth, maxWidth);
+    const nextWidth = clampChatContentWidth(baseWidth + delta, maxWidth);
+    appShellRef.current?.style.setProperty("--chat-max-width", `${nextWidth}px`);
+    setChatContentWidth(nextWidth);
+    persistChatContentWidth(nextWidth);
+  };
+
   const messageRowActions = useStableHandlers({
     openReferencedFile, openImagePreview, handleMessageContextMenu, togglePlayVoice, toggleActivityCollapse,
     copyMessage, startMessageEdit, toggleSpeakMessage,
@@ -1127,6 +1177,7 @@ export function App() {
   const panelStyle = {
     "--sidebar-width": `${appliedSidebarWidth}px`,
     "--tool-panel-width": `${appliedToolPanelWidth}px`,
+    "--chat-max-width": `${chatContentWidth}px`,
   } as CSSProperties;
 
   // 右侧面板菜单项（首页菜单页与 + 下拉菜单共用）。终端由内置插件在底部打开。
@@ -1433,6 +1484,10 @@ export function App() {
 
       <ConversationPane
         ready={ready}
+        chatContentWidth={chatContentWidth}
+        beginChatWidthResize={beginChatWidthResize}
+        resetChatContentWidth={resetChatContentWidth}
+        stepChatContentWidth={stepChatContentWidth}
         ConversationMessageRow={ConversationMessageRow}
         messageRowActions={messageRowActions}
         activeSession={activeSession}

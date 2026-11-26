@@ -897,5 +897,7 @@
   "model.visionModeService": "使用外部視覺服務",
   "model.visionNativeNote": "目前以原生圖片模式傳送：附件圖片會以 image_url 原樣隨請求送給目前模型，無需設定外部視覺服務。若該模型不支援圖片，可在上方改為「使用外部視覺服務」。",
   "model.visionNativeDeepseekNote": "目前以原生圖片模式傳送：附件圖片會原樣隨請求送給 DeepSeek，無需設定外部視覺服務。圖片僅允許出現在使用者訊息中，支援 JPEG / PNG / GIF / WebP。",
-  "model.visionServiceNote": "圖片會先交給下方視覺服務辨識為文字，再交給目前模型處理，原圖不會送給目前模型。視覺服務須支援 OpenAI 相容的 Chat Completions 與 image_url。若該模型已支援圖片輸入，可在上方改為「模型原生支援圖片」。"
+  "model.visionServiceNote": "圖片會先交給下方視覺服務辨識為文字，再交給目前模型處理，原圖不會送給目前模型。視覺服務須支援 OpenAI 相容的 Chat Completions 與 image_url。若該模型已支援圖片輸入，可在上方改為「模型原生支援圖片」。",
+  "conversation.resizeWidth": "調整對話內容寬度",
+  "conversation.resizeWidthHint": "拖動調整對話內容寬度，雙擊恢復預設"
 }

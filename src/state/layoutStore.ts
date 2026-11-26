@@ -34,6 +34,50 @@ export type ToolPanelTab = {
   autoFitDesktop?: boolean;
 };
 
+export const CHAT_CONTENT_WIDTH_KEY = "dyworker_chat_content_width";
+export const CHAT_CONTENT_WIDTH_DEFAULT = 740;
+export const CHAT_CONTENT_WIDTH_MIN = 560;
+export const CHAT_CONTENT_WIDTH_MAX = 2400;
+
+export function clampChatContentWidth(value: number, maxWidth = CHAT_CONTENT_WIDTH_MAX): number {
+  if (!Number.isFinite(value)) return CHAT_CONTENT_WIDTH_DEFAULT;
+  const upper = Math.max(CHAT_CONTENT_WIDTH_MIN, Math.floor(Number.isFinite(maxWidth) ? maxWidth : CHAT_CONTENT_WIDTH_MAX));
+  return Math.min(upper, Math.max(CHAT_CONTENT_WIDTH_MIN, Math.round(value)));
+}
+
+export function computeSymmetricChatWidth(
+  edge: "chat-left" | "chat-right",
+  startWidth: number,
+  startX: number,
+  currentX: number,
+  maxWidth = CHAT_CONTENT_WIDTH_MAX,
+): number {
+  const delta = edge === "chat-left" ? (startX - currentX) * 2 : (currentX - startX) * 2;
+  return clampChatContentWidth(startWidth + delta, maxWidth);
+}
+
+export function readSavedChatContentWidth(storage?: Pick<Storage, "getItem"> | null): number {
+  try {
+    const store = storage === undefined ? (typeof localStorage === "undefined" ? null : localStorage) : storage;
+    const raw = store?.getItem(CHAT_CONTENT_WIDTH_KEY);
+    if (!raw) return CHAT_CONTENT_WIDTH_DEFAULT;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return CHAT_CONTENT_WIDTH_DEFAULT;
+    return clampChatContentWidth(parsed);
+  } catch {
+    return CHAT_CONTENT_WIDTH_DEFAULT;
+  }
+}
+
+export function persistChatContentWidth(width: number, storage?: Pick<Storage, "setItem"> | null): void {
+  try {
+    const store = storage === undefined ? (typeof localStorage === "undefined" ? null : localStorage) : storage;
+    store?.setItem(CHAT_CONTENT_WIDTH_KEY, String(clampChatContentWidth(width)));
+  } catch {
+    // 存储不可用时忽略
+  }
+}
+
 export interface LayoutState {
   sidebarOpen: boolean;
   setSidebarOpen: (value: Updater<boolean>) => void;
@@ -41,6 +85,8 @@ export interface LayoutState {
   setSidebarWidth: (value: Updater<number>) => void;
   toolPanelWidth: number;
   setToolPanelWidth: (value: Updater<number>) => void;
+  chatContentWidth: number;
+  setChatContentWidth: (value: Updater<number>) => void;
   viewportWidth: number;
   setViewportWidth: (value: Updater<number>) => void;
   rightPanelOpen: boolean;
@@ -129,6 +175,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setSidebarWidth: (value) => set((s) => updateField(s, "sidebarWidth", value)),
   toolPanelWidth: initialToolPanelWidth(),
   setToolPanelWidth: (value) => set((s) => updateField(s, "toolPanelWidth", value)),
+  chatContentWidth: readSavedChatContentWidth(),
+  setChatContentWidth: (value) => set((s) => updateField(s, "chatContentWidth", value)),
   viewportWidth: typeof window === "undefined" ? 1280 : window.innerWidth,
   setViewportWidth: (value) => set((s) => updateField(s, "viewportWidth", value)),
   rightPanelOpen: false,

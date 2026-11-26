@@ -90,16 +90,18 @@ export function ComposerDock(props: ComposerDockProps) {
     active: creationModeActive,
   });
   const [creationEntering, setCreationEntering] = useState(false);
+  const [creationEnterSeq, setCreationEnterSeq] = useState(0);
 
   useEffect(() => {
     const currentId = activeSession?.id || activeId || "";
     const prev = prevCreationRef.current;
     prevCreationRef.current = { sessionId: currentId, active: creationModeActive };
 
-    // 仅在同一会话内从关闭切换到开启时播放瞬时唤醒爆发动效，切会话不误触发
+    // 仅在同一会话内从关闭切换到开启时播放双点合围与背景过渡，切会话不误触发
     if (prev.sessionId === currentId && !prev.active && creationModeActive) {
+      setCreationEnterSeq((seq) => seq + 1);
       setCreationEntering(true);
-      const timer = window.setTimeout(() => setCreationEntering(false), 950);
+      const timer = window.setTimeout(() => setCreationEntering(false), 1600);
       return () => window.clearTimeout(timer);
     }
     if (!creationModeActive) {
@@ -278,13 +280,18 @@ export function ComposerDock(props: ComposerDockProps) {
             onDragLeave={handleComposerDragLeave}
             onDrop={handleComposerDrop}
           >
-            {creationModeActive && (
-              <div className="composer-creation-fx" aria-hidden="true">
-                <span className="composer-creation-sheen" />
-                <span className="composer-creation-spark spark-1" />
-                <span className="composer-creation-spark spark-2" />
-                <span className="composer-creation-spark spark-3" />
+            {creationModeActive && creationEntering && (
+              <div key={`bg-${creationEnterSeq}`} className="composer-creation-fx" aria-hidden="true">
+                <span className="composer-creation-bg-wave" />
+                <span className="composer-creation-meet-flash" />
               </div>
+            )}
+            {creationModeActive && (
+              <div
+                key={`ring-${creationEnterSeq}`}
+                className={`composer-creation-ring ${creationEntering ? "entering" : "settled"}`}
+                aria-hidden="true"
+              />
             )}
             {editingMessage && editingMessage.sessionId === activeSession?.id && (
               <div className="message-editing-banner" role="status">
