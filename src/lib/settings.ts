@@ -53,6 +53,10 @@ export const defaultSettings: ProviderSettings = {
     quietHours: "",
     dailyPopupLimit: 3,
   },
+  lanShare: {
+    enabled: true,
+    nickname: "",
+  },
   fullCdpAccess: false,
   approvalMode: "reviewer",
   preventSleep: "tasks",

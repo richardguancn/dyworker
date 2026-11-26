@@ -70,6 +70,7 @@ import { speechIpcPlugin } from "./host/plugins/speech-ipc.mts";
 import { telemetryIpcPlugin } from "./host/plugins/telemetry-ipc.mts";
 import { tracesIpcPlugin } from "./host/plugins/traces-ipc.mts";
 import { transferIpcPlugin } from "./host/plugins/transfer-ipc.mts";
+import { lanShareIpcPlugin } from "./host/plugins/lan-share-ipc.mts";
 import { usageHooksIpcPlugin } from "./host/plugins/usage-hooks-ipc.mts";
 import { windowIpcPlugin } from "./host/plugins/window-ipc.mts";
 import { workspaceIpcPlugin } from "./host/plugins/workspace-ipc.mts";
@@ -1834,6 +1835,8 @@ ctx.plugin(auditIpcPlugin());
 // 插件管理通道（走契约层：ctx.ipc / ctx.plugins）
 ctx.plugin(pluginsIpcPlugin({
   dataDir: app.getPath("userData"),
+  appVersion: app.getVersion(),
+  documentsDir: () => app.getPath("documents"),
   getSettings: readSettings,
   syncClientPlugin: requestRendererPluginSync,
   notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
@@ -1850,6 +1853,16 @@ ctx.plugin(settingsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(sessionsIpcPlugin({ trustedHandle, ...shellDeps }));
 // 任务/项目跨机迁移：导出包打包与导入落盘（领域逻辑在 session-transfer.mts）
 ctx.plugin(transferIpcPlugin({ trustedHandle, ...shellDeps }));
+ctx.plugin(lanShareIpcPlugin({
+  trustedHandle,
+  ...shellDeps,
+  dataDir: app.getPath("userData"),
+  appVersion: app.getVersion(),
+  readSettings,
+  saveSettings,
+  notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
+  notifyLanIncoming,
+}));
 ctx.plugin(appIpcPlugin({ trustedHandle, ...shellDeps }));
 
 // 外观域的壳层状态桥：外观状态与应用逻辑被设置页/应用菜单/系统主题事件共用，
@@ -1920,6 +1933,30 @@ function notifyInboxItem(item) {
     } catch {
       // 系统通知失败不影响业务流程
     }
+  }
+}
+
+function notifyLanIncoming(offer) {
+  if (typeof Notification?.isSupported === "function" && Notification.isSupported()) {
+    try {
+      const kindLabel = offer.kind === "project" ? "项目" : offer.kind === "plugin" ? "插件" : "任务会话";
+      const senderLabel = offer.sender?.account
+        ? `${offer.sender.displayName}（${offer.sender.account}）`
+        : (offer.sender?.displayName || "局域网同事");
+      const notification = new Notification({
+        title: `收到来自 ${senderLabel} 的${kindLabel}分享`,
+        body: String(offer.title || "点击查看并确认接收").slice(0, 100),
+        silent: false,
+      });
+      notification.on("click", () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          if (!mainWindow.isVisible()) mainWindow.show();
+          mainWindow.focus();
+        }
+      });
+      notification.show();
+    } catch {}
   }
 }
 

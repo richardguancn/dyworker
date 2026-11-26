@@ -9,6 +9,7 @@ import { ConversationToolsIcon, PanelLeftIcon, PanelRightIcon } from "./icons";
 import { AppUpdateAction } from "../features/settings/SettingsSubPanels";
 import type { SettingsTab } from "../features/settings/SettingsDialog";
 import { displayWorkspace } from "../lib/text";
+import { useLanShareStore } from "../state/lanShareStore";
 import { t } from "../i18n";
 import type { AppUpdateStatus, GitBranchesInfo, GitDiffStats, SessionRecord, WorkspaceContext } from "../types";
 
@@ -178,6 +179,14 @@ export function ShellChrome(props: ShellChromeProps) {
           <button role="menuitem" onClick={() => archiveSession(activeSession.id)}>归档任务</button>
           <button role="menuitem" onClick={() => { setTopMenuOpen(false); exportSessionMarkdown(activeSession); }}>导出为 Markdown</button>
           <button role="menuitem" onClick={() => { setTopMenuOpen(false); void exportSessionPackage(activeSession); }}>导出任务文件…</button>
+          <button role="menuitem" onClick={() => {
+            setTopMenuOpen(false);
+            useLanShareStore.getState().openLanShareSend({
+              kind: "session",
+              sessionId: activeSession.id,
+              title: activeSession.title || "未命名任务",
+            });
+          }}>局域网分享…</button>
           <button
             role="menuitem"
             disabled={skillSummarySessionId === activeSession.id}

@@ -407,3 +407,297 @@
   box-shadow: var(--shadow-lg);
 }
 
+/* ---- 局域网分享（发送 & 接收弹窗） ---- */
+.lan-share-dialog,
+.lan-share-incoming-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.lan-share-target-card,
+.lan-share-sender-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-strong, var(--surface));
+}
+
+.lan-share-target-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--card-solid, var(--card));
+  border: 1px solid var(--border);
+  color: var(--ink);
+}
+
+.lan-share-target-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lan-share-target-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lan-share-target-head strong {
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lan-share-target-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.lan-share-self-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-strong, var(--surface));
+}
+
+.lan-share-self-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lan-share-self-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: var(--ink);
+}
+
+.lan-share-self-label {
+  color: var(--muted);
+}
+
+.lan-share-nick-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lan-share-nick-edit input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--card-solid, var(--card));
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.lan-share-icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.lan-share-icon-link:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.lan-share-self-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lan-share-self-controls .plugins-text-button.is-on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--ink);
+}
+
+.lan-share-account-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--ink);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 500;
+}
+
+.lan-share-peers-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lan-share-peers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.lan-share-peers-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lan-share-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 26px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.lan-share-empty strong {
+  color: var(--ink);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+}
+
+.lan-share-empty p {
+  margin: 0;
+  max-width: 380px;
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+}
+
+.lan-share-peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.lan-share-peer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-solid, var(--card));
+}
+
+.lan-share-peer-avatar {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--ink);
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  font-weight: 700;
+}
+
+.lan-share-peer-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lan-share-peer-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lan-share-peer-name strong {
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  color: var(--ink);
+}
+
+.lan-share-peer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--quiet);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.lan-share-peer-status {
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+.lan-share-peer-status.waiting { color: var(--muted); }
+.lan-share-peer-status.ok { color: var(--pl-ok-fg); }
+.lan-share-peer-status.warn { color: var(--pl-warn-fg); }
+.lan-share-peer-status.bad { color: var(--pl-bad-fg); }
+
+.lan-share-peer-action {
+  flex: 0 0 auto;
+}
+
+.lan-share-send-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lan-share-send-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.lan-share-incoming-dialog .add-plugin-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+

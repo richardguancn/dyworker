@@ -7,6 +7,7 @@ import { AppLogo } from "../AppLogo";
 import { PluginSlotView } from "../PluginSlotView";
 import { nextWorkspaceVisibleCount, resolveWorkspaceVisibleCount } from "../lib/pagination";
 import { WORKSPACE_SESSION_LIMIT, displayWorkspace } from "../lib/text";
+import { useLanShareStore } from "../state/lanShareStore";
 import { t } from "../i18n";
 import type { InboxItem, PendingWakeRecord, SessionRecord } from "../types";
 
@@ -173,6 +174,14 @@ export function Sidebar(props: SidebarProps) {
           )}
           <button role="menuitem" onClick={() => { setSessionMenuId(null); exportSessionMarkdown(session); }}>导出为 Markdown</button>
           <button role="menuitem" onClick={() => { setSessionMenuId(null); void exportSessionPackage(session); }}>导出任务文件…</button>
+          <button role="menuitem" onClick={() => {
+            setSessionMenuId(null);
+            useLanShareStore.getState().openLanShareSend({
+              kind: "session",
+              sessionId: session.id,
+              title: session.title || "未命名任务",
+            });
+          }}>局域网分享…</button>
           <button
             role="menuitem"
             disabled={skillSummarySessionId === session.id}
@@ -316,6 +325,18 @@ export function Sidebar(props: SidebarProps) {
                           <button role="menuitem" onClick={() => { setWorkspaceMenuPath(null); void exportProjectPackage(group.path); }}>
                             <Package size={15} />
                             <span>导出项目文件…</span>
+                          </button>
+                          <button role="menuitem" onClick={() => {
+                            setWorkspaceMenuPath(null);
+                            useLanShareStore.getState().openLanShareSend({
+                              kind: "project",
+                              workspacePath: group.path,
+                              title: displayWorkspace(group.path),
+                              subtitle: `${group.sessions.length} 个任务`,
+                            });
+                          }}>
+                            <Upload size={15} />
+                            <span>局域网分享项目…</span>
                           </button>
                           <button role="menuitem" onClick={() => { setWorkspaceMenuPath(null); void importSessionPackage(); }}>
                             <Upload size={15} />

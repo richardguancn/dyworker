@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("dyworker", {
   // 同步暴露平台（sandbox preload 可直接读 process.platform）：首帧渲染就要用它决定
@@ -19,6 +19,38 @@ contextBridge.exposeInMainWorld("dyworker", {
   // 任务/项目跨机迁移：导出为 .dyworker 迁移包 / 从迁移包导入
   exportSessionPackage: (payload) => ipcRenderer.invoke("sessions:export-package", payload),
   importSessionPackage: () => ipcRenderer.invoke("sessions:import-package"),
+  // 局域网发现与点对点分享
+  getLanShareState: () => ipcRenderer.invoke("lan-share:get-state"),
+  updateLanShareConfig: (payload) => ipcRenderer.invoke("lan-share:update-config", payload),
+  refreshLanSharePeers: () => ipcRenderer.invoke("lan-share:refresh-peers"),
+  sendLanShare: (payload) => ipcRenderer.invoke("lan-share:send", payload),
+  cancelLanShare: (payload) => ipcRenderer.invoke("lan-share:cancel-send", payload),
+  respondLanShareIncoming: (payload) => ipcRenderer.invoke("lan-share:respond-incoming", payload),
+  onLanSharePeersUpdated: (callback) => {
+    const listener = (_event, peers) => callback(peers);
+    ipcRenderer.on("lan-share:peers-updated", listener);
+    return () => ipcRenderer.removeListener("lan-share:peers-updated", listener);
+  },
+  onLanShareIncoming: (callback) => {
+    const listener = (_event, offer) => callback(offer);
+    ipcRenderer.on("lan-share:incoming-request", listener);
+    return () => ipcRenderer.removeListener("lan-share:incoming-request", listener);
+  },
+  onLanShareIncomingCancelled: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("lan-share:incoming-cancelled", listener);
+    return () => ipcRenderer.removeListener("lan-share:incoming-cancelled", listener);
+  },
+  onLanShareTransferUpdate: (callback) => {
+    const listener = (_event, transfer) => callback(transfer);
+    ipcRenderer.on("lan-share:transfer-update", listener);
+    return () => ipcRenderer.removeListener("lan-share:transfer-update", listener);
+  },
+  onLanShareImported: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("lan-share:imported", listener);
+    return () => ipcRenderer.removeListener("lan-share:imported", listener);
+  },
   savePinnedWorkspaces: (paths) => ipcRenderer.invoke("workspace-pins:save", paths),
   chooseWorkspace: () => ipcRenderer.invoke("workspace:choose"),
   chooseAttachments: (sessionId) => ipcRenderer.invoke("attachments:choose", sessionId),
@@ -366,6 +398,18 @@ contextBridge.exposeInMainWorld("dyworker", {
   managedPluginsRoot: () => ipcRenderer.invoke("plugins:managed-root"),
   choosePluginDirectory: () => ipcRenderer.invoke("plugins:choose-directory"),
   listCreatedPlugins: () => ipcRenderer.invoke("plugins:list-created"),
+  inspectPluginExport: (target) => ipcRenderer.invoke("plugins:inspect-export", { target }),
+  exportPluginPackage: (payload) => ipcRenderer.invoke("plugins:export-package", payload),
+  choosePluginShareFile: () => ipcRenderer.invoke("plugins:choose-share-file"),
+  inspectPluginSharePackage: (payload) => ipcRenderer.invoke("plugins:inspect-share-package", payload),
+  importPluginSharePackage: (payload) => ipcRenderer.invoke("plugins:import-share-package", payload),
+  getPathForFile: (file) => {
+    try {
+      return webUtils?.getPathForFile?.(file) || "";
+    } catch {
+      return "";
+    }
+  },
   createPluginFromCard: (payload) => ipcRenderer.invoke("plugins:card-create", payload),
   cancelCardPluginCreation: (payload) => ipcRenderer.invoke("plugins:card-cancel", payload),
   onPluginSyncRequest: (callback) => {

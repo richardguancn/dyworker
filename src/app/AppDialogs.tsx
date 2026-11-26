@@ -5,6 +5,8 @@ import { MemoryEditDialog } from "../features/memory/MemoryPanels";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { AppUpdateDialog,FullAccessDialog,IdentitySetupDialog } from "../features/settings/SettingsSubPanels";
 import { SkillDraftDialog,SkillEditDialog } from "../features/skills/SkillPanels";
+import { LanShareIncomingDialog } from "../features/transfer/LanShareIncomingDialog";
+import { LanShareSendDialog } from "../features/transfer/LanShareSendDialog";
 import { clearBrowserData,clearBrowserSessionHistory,fillSavedPassword,openBrowserUrl } from "../state/browserActions";
 import { useBrowserStore } from "../state/browserStore";
 import { addSelectionToComposer,closeContextMenu,sendSelectionToSideChat } from "../state/composerActions";
@@ -277,5 +279,5 @@ export function AppDialogs({ browserActiveDownloadCount, activeToolPanelTab, com
             setAnnotationEditor(null);
           }}
         />
-      )}</>;
+      )}<LanShareSendDialog /><LanShareIncomingDialog /></>;
 }

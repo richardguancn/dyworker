@@ -100,6 +100,14 @@ export function normalizeIdentity(value) {
   return value === "general" || value === "government" ? value : null;
 }
 
+export function normalizeLanShareSettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    enabled: source.enabled !== false,
+    nickname: String(source.nickname || "").trim().slice(0, 40),
+  };
+}
+
 // 语音转写引擎：cloud 走 OpenAI 兼容 /audio/transcriptions，local 走内置 Qwen3-ASR + llama-server。
 export function normalizeTranscriptionEngine(value) {
   return String(value || "") === "local" ? "local" : "cloud";
@@ -409,6 +417,7 @@ export function deserializeSettings(stored, secretStorage) {
     nativeToolsDisabled: Array.isArray(source.nativeToolsDisabled) ? source.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(source.telemetry),
+    lanShare: normalizeLanShareSettings(source.lanShare),
     fullCdpAccess: source.fullCdpAccess === true,
     locale: String(source.locale || "").trim() || undefined,
   };
@@ -472,6 +481,7 @@ export function serializeSettings(settings, secretStorage) {
     nativeToolsDisabled: Array.isArray(settings?.nativeToolsDisabled) ? settings.nativeToolsDisabled.map(String) : ["memory", "excel"],
     enableWebSearchBuiltin: settings?.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(settings?.telemetry),
+    lanShare: normalizeLanShareSettings(settings?.lanShare),
     fullCdpAccess: settings?.fullCdpAccess === true,
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
@@ -536,6 +546,7 @@ export function serializeSettings(settings, secretStorage) {
     nativeToolsDisabled: normalized.nativeToolsDisabled,
     enableWebSearchBuiltin: normalized.enableWebSearchBuiltin,
     telemetry: normalized.telemetry,
+    lanShare: normalized.lanShare,
     fullCdpAccess: normalized.fullCdpAccess,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,
