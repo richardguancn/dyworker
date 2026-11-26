@@ -91,6 +91,7 @@ const PLUGIN_MANAGE_ACTION_LABELS: Record<string, string> = {
   enable: "启用",
   disable: "停用",
   uninstall: "卸载",
+  export: "导出插件分享包",
 };
 
 const PLUGIN_SLOT_LABELS: Record<string, string> = {
@@ -145,7 +146,7 @@ export function toolSummary(name, args) {
     case "update_skill": return `改进工作模板：${args.skill_id || ""}`;
     case "plugin_inspect": return `检查插件（${args.action || "list"}）：${args.target || ""}`;
     case "plugin_manage": {
-      const actionLabel = ({ install: "安装插件", reload: "重载插件", enable: "启用插件", disable: "停用插件", uninstall: "卸载插件" } as Record<string, string>)[args.action] || "管理插件";
+      const actionLabel = ({ install: "安装插件", reload: "重载插件", enable: "启用插件", disable: "停用插件", uninstall: "卸载插件", export: "导出插件分享包" } as Record<string, string>)[args.action] || "管理插件";
       const nameHint = friendlyPluginTarget(args.target);
       return nameHint ? `${actionLabel}：${nameHint}` : actionLabel;
     }
@@ -268,6 +269,8 @@ export function approvalDetails(name, args) {
       `操作：${actionText}`,
       targetName ? `插件：${targetName}` : "",
       args.openSlot ? `展示位置：${friendlyPluginSlot(args.openSlot)}` : "",
+      args.action === "export" && args.outputPath ? `输出位置：${String(args.outputPath).trim()}` : "",
+      args.action === "export" ? `附带插件数据：${args.includeData ? "是（包含 ctx.storage 保存的数据）" : "否（仅源码本体）"}` : "",
       rawTarget && rawTarget !== targetName ? `位置：${rawTarget}` : "",
     ].filter(Boolean);
     return lines.join("\n");

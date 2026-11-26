@@ -778,6 +778,11 @@ export interface ProviderSettings {
   enableWebSearchBuiltin: boolean;
   // 使用统计与运营消息设置：统计默认关闭；统计上传与消息订阅分别开关
   telemetry: TelemetrySettings;
+  // 局域网发现与分享开关及自定义昵称
+  lanShare?: {
+    enabled: boolean;
+    nickname: string;
+  };
   // 是否在已连接的 Browser Use 会话中启用完整 Chrome DevTools Protocol (CDP) 访问权限，默认关闭
   fullCdpAccess: boolean;
 }
@@ -1107,6 +1112,29 @@ export interface DyworkerBridge {
     source?: string;
     error?: string;
   }>;
+  getLanShareState?(): Promise<LanShareState>;
+  updateLanShareConfig?(payload: { enabled?: boolean; nickname?: string }): Promise<LanShareState>;
+  refreshLanSharePeers?(): Promise<{ ok: boolean; peers: LanPeerRecord[]; self?: LanIdentity }>;
+  sendLanShare?(payload: {
+    peerId: string;
+    kind: LanShareKind;
+    sessionId?: string;
+    workspacePath?: string;
+    pluginTarget?: string;
+    includeData?: boolean;
+  }): Promise<{ ok: boolean; transferId?: string; transfer?: LanOutgoingTransfer; error?: string }>;
+  cancelLanShare?(payload: { transferId: string }): Promise<{ ok: boolean; error?: string }>;
+  respondLanShareIncoming?(payload: {
+    transferId: string;
+    accepted: boolean;
+    importData?: boolean;
+    overwriteData?: boolean;
+  }): Promise<{ ok: boolean; accepted?: boolean; kind?: LanShareKind; importResult?: any; error?: string }>;
+  onLanSharePeersUpdated?(callback: (peers: LanPeerRecord[]) => void): () => void;
+  onLanShareIncoming?(callback: (offer: LanIncomingOffer) => void): () => void;
+  onLanShareIncomingCancelled?(callback: (payload: { transferId: string }) => void): () => void;
+  onLanShareTransferUpdate?(callback: (transfer: LanOutgoingTransfer) => void): () => void;
+  onLanShareImported?(callback: (payload: { kind: LanShareKind; offer: LanIncomingOffer; result: any }) => void): () => void;
   chooseWorkspace(): Promise<{ canceled: boolean; path?: string; entries?: WorkspaceEntry[] }>;
   chooseAttachments(sessionId?: string): Promise<{ canceled: boolean; attachments: Attachment[] }>;
   serializeCommandAttachments(payload: { sessionId: string; grantIds: string[] }): Promise<{ ok: boolean; attachments?: import('./pluginRuntime/inputTriggers').SubmitAttachment[]; error?: string }>;
@@ -1398,6 +1426,19 @@ export interface DyworkerBridge {
   managedPluginsRoot?(): Promise<string>;
   choosePluginDirectory?(): Promise<string | null>;
   listCreatedPlugins?(): Promise<CreatedLocalPluginRecord[]>;
+  inspectPluginExport?(target: string): Promise<PluginExportInspection>;
+  exportPluginPackage?(payload: { target: string; includeData?: boolean }): Promise<PluginExportResult>;
+  choosePluginShareFile?(): Promise<string | null>;
+  inspectPluginSharePackage?(payload: { filePath?: string; dataBase64?: string; fileName?: string }): Promise<PluginSharePackagePreview>;
+  importPluginSharePackage?(payload: {
+    filePath?: string;
+    dataBase64?: string;
+    fileName?: string;
+    importData?: boolean;
+    overwriteData?: boolean;
+    allowIncompatible?: boolean;
+  }): Promise<PluginShareImportResult>;
+  getPathForFile?(file: File): string;
   /** 接收主进程发起的客户端热挂载/卸载请求并回传结果 */
   onPluginSyncRequest?(callback: (payload: {
     requestId: string;
@@ -1577,6 +1618,164 @@ export interface PluginInstallResult {
   downloaded?: { ok?: boolean; kind?: string; ranInstallScripts?: boolean; error?: string };
   source?: { kind?: string; input?: string; source?: string };
   dir?: string;
+}
+
+export interface PluginSensitiveFinding {
+  kind: "secret" | "local-path";
+  file: string;
+  preview: string;
+  reason: string;
+}
+
+export interface PluginExportInspection {
+  ok: boolean;
+  error?: string;
+  shareKind?: "local" | "remote";
+  packageName?: string;
+  entryId?: string;
+  displayName?: string;
+  version?: string;
+  description?: string;
+  sourceDir?: string;
+  hasClient?: boolean;
+  hasThirdPartyDeps?: boolean;
+  defaultFileName?: string;
+  pluginFileCount?: number;
+  dataFiles?: Array<{ relativePath: string; size: number }>;
+  dataTotalBytes?: number;
+  pluginWarnings?: PluginSensitiveFinding[];
+  dataWarnings?: PluginSensitiveFinding[];
+  sourceKind?: string;
+  installSpec?: string;
+  homepage?: string;
+  repository?: string;
+  shareText?: string;
+}
+
+export interface PluginExportResult {
+  ok: boolean;
+  canceled?: boolean;
+  error?: string;
+  shareKind?: "local" | "remote";
+  path?: string;
+  packageName?: string;
+  displayName?: string;
+  version?: string;
+  includesData?: boolean;
+  includedDataFiles?: string[];
+  fileCount?: number;
+  bytes?: number;
+  warnings?: PluginSensitiveFinding[];
+  installSpec?: string;
+  shareText?: string;
+}
+
+export interface PluginSharePackagePreview {
+  ok: boolean;
+  error?: string;
+  format?: "dyplugin" | "zip";
+  fileName?: string;
+  filePath?: string;
+  packageName?: string;
+  displayName?: string;
+  version?: string;
+  description?: string;
+  exportedAt?: string;
+  appVersion?: string;
+  hasClient?: boolean;
+  hasThirdPartyDeps?: boolean;
+  dependencies?: string[];
+  warnings?: string[];
+  pluginFileCount?: number;
+  includesData?: boolean;
+  dataFiles?: Array<{ relativePath: string; size: number }>;
+  conflictingDataFiles?: string[];
+  alreadyInstalled?: boolean;
+  installedVersion?: string;
+  managedDirExists?: boolean;
+}
+
+export interface PluginShareImportResult extends PluginInstallResult {
+  entryId?: string;
+  packageName?: string;
+  displayName?: string;
+  version?: string;
+  pluginDir?: string;
+  importedDataFiles?: string[];
+  skippedDataFiles?: string[];
+}
+
+export type LanShareKind = "session" | "project" | "plugin";
+
+export interface LanIdentity {
+  deviceId: string;
+  displayName: string;
+  account: string;
+  host: string;
+  platform: string;
+  appVersion: string;
+}
+
+export interface LanPeerRecord {
+  deviceId: string;
+  displayName: string;
+  account: string;
+  host: string;
+  platform: string;
+  appVersion: string;
+  ip: string;
+  httpPort: number;
+  lastSeenAt: number;
+}
+
+export interface LanIncomingOffer {
+  transferId: string;
+  kind: LanShareKind;
+  title: string;
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+  downloadToken: string;
+  senderIp: string;
+  sender: {
+    deviceId: string;
+    displayName: string;
+    account: string;
+    host: string;
+    platform: string;
+    httpPort: number;
+  };
+  meta: Record<string, any>;
+  receivedAt: number;
+  expiresAt: number;
+}
+
+export interface LanOutgoingTransfer {
+  transferId: string;
+  peerId: string;
+  peerName: string;
+  kind: LanShareKind;
+  title: string;
+  fileName: string;
+  sizeBytes: number;
+  status: "waiting" | "transferring" | "completed" | "rejected" | "cancelled" | "failed";
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LanShareState {
+  ok: boolean;
+  error?: string;
+  self?: LanIdentity;
+  discoverable?: boolean;
+  nickname?: string;
+  httpPort?: number;
+  discoveryPort?: number;
+  discoveryError?: string;
+  peers?: LanPeerRecord[];
+  incoming?: LanIncomingOffer[];
+  outgoing?: LanOutgoingTransfer[];
 }
 
 declare global {

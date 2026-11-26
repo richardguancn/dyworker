@@ -899,5 +899,10 @@
   "model.visionNativeDeepseekNote": "Bilder werden direkt an DeepSeek gesendet, ohne externen Vision-Dienst. Bilder sind nur in Benutzernachrichten zulässig (JPEG / PNG / GIF / WebP).",
   "model.visionServiceNote": "Bilder werden vom Vision-Dienst unten in Text umgewandelt, bevor sie an dieses Modell gehen. Erfordert einen OpenAI-kompatiblen Chat-Completions-Endpunkt mit image_url. Wenn das Modell Bilder nativ unterstützt, oben umschalten.",
   "conversation.resizeWidth": "Unterhaltungsbreite anpassen",
-  "conversation.resizeWidthHint": "Ziehen zum Anpassen der Breite, Doppelklick zum Zurücksetzen"
+  "conversation.resizeWidthHint": "Ziehen zum Anpassen der Breite, Doppelklick zum Zurücksetzen",
+  "plugins.share": "Teilen",
+  "plugins.shareTitle": "Plugin teilen",
+  "plugins.shareDialogAria": "Plugin teilen",
+  "plugins.importShare": "Paket importieren…",
+  "plugins.importShareTitle": "Plugin-Paket importieren"
 }

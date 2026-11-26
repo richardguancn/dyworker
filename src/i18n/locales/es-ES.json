@@ -899,5 +899,10 @@
   "model.visionNativeDeepseekNote": "Las imágenes se envían directamente a DeepSeek sin servicio externo. Solo se permiten imágenes en mensajes de usuario (JPEG / PNG / GIF / WebP).",
   "model.visionServiceNote": "El servicio de visión inferior transcribe las imágenes a texto antes de enviarlas al modelo. Requiere un endpoint Chat Completions compatible con OpenAI e image_url. Si este modelo admite visión nativa, cámbielo arriba.",
   "conversation.resizeWidth": "Ajustar ancho de conversación",
-  "conversation.resizeWidthHint": "Arrastra para ajustar el ancho o haz doble clic para restablecer"
+  "conversation.resizeWidthHint": "Arrastra para ajustar el ancho o haz doble clic para restablecer",
+  "plugins.share": "Compartir",
+  "plugins.shareTitle": "Compartir complemento",
+  "plugins.shareDialogAria": "Compartir complemento",
+  "plugins.importShare": "Importar paquete…",
+  "plugins.importShareTitle": "Importar paquete de complemento"
 }

@@ -6,9 +6,11 @@
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { analyzePlugin } from "./host/dsh-compat.mts";
 import { resolveClientEntries } from "./host/plugin-client.mts";
+import { exportPluginSharePackage, inspectPluginForExport } from "./plugin-share.mts";
 
 export const PLUGIN_AUTHORING_TOOL_NAMES = new Set(["plugin_inspect", "plugin_manage"]);
 
@@ -85,14 +87,14 @@ export function pluginAuthoringToolDefinitions() {
       function: {
         name: "plugin_manage",
         description:
-          "对本地插件执行受控管理动作（安装、重载、启用、停用、卸载）并同步刷新客户端 UI。所有变更均需审批权限。",
+          "对本地插件执行受控管理动作（安装、重载、启用、停用、卸载、导出分享包）并同步刷新客户端 UI。所有变更均需审批权限。",
         parameters: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              enum: ["install", "reload", "enable", "disable", "uninstall"],
-              description: "管理动作：install / reload / enable / disable / uninstall",
+              enum: ["install", "reload", "enable", "disable", "uninstall", "export"],
+              description: "管理动作：install / reload / enable / disable / uninstall / export",
             },
             target: {
               type: "string",
@@ -102,6 +104,14 @@ export function pluginAuthoringToolDefinitions() {
               type: ["boolean", "string"],
               description:
                 "可选：安装或启用后是否自动在界面打开插件插槽；可传 true，或指定 sidebar.right.pane.tab / workspace.page / conversation.view",
+            },
+            outputPath: {
+              type: "string",
+              description: "可选：action=export 时指定导出的 .dyplugin 文件路径；省略时输出到工作区或下载目录",
+            },
+            includeData: {
+              type: "boolean",
+              description: "可选：action=export 时是否附带当前插件保存的数据（ctx.storage），默认 false",
             },
           },
           required: ["action", "target"],
@@ -487,6 +497,8 @@ export interface PluginSyncRequest {
 export interface PluginAuthoringExecOptions {
   workspacePath?: string;
   managedRoot?: string;
+  dataDir?: string;
+  storageRoot?: string;
   defaultOpenSlot?: boolean;
   syncClientPlugin?: (req: PluginSyncRequest) => Promise<any>;
   notifyPluginsUpdated?: () => void;
@@ -758,6 +770,72 @@ export async function executePluginManage(
       pkgName,
       preservedSourceDir: preservedLocalDir || undefined,
       clientSync: clientSync ?? null,
+    };
+  }
+
+  if (action === "export") {
+    const dataDir = String(
+      options.dataDir
+      || (options.managedRoot ? path.dirname(path.resolve(options.managedRoot)) : "")
+      || (plugins?.dir ? path.dirname(plugins.dir) : ""),
+    ).trim();
+    const storageRoot = String(
+      options.storageRoot
+      || ctx?.get?.("storage")?.root
+      || (plugins?.dir ? path.join(plugins.dir, "data") : ""),
+    ).trim();
+
+    const inspection = await inspectPluginForExport(ctx, { target, dataDir, storageRoot });
+    if (!inspection?.ok) {
+      return { ok: false, error: inspection?.error || `无法导出插件：${target}` };
+    }
+    if (inspection.shareKind === "remote") {
+      return {
+        ok: true,
+        action: "export",
+        shareKind: "remote",
+        packageName: inspection.packageName,
+        displayName: inspection.displayName,
+        version: inspection.version,
+        installSpec: inspection.installSpec,
+        shareText: inspection.shareText,
+      };
+    }
+
+    const rawOutputPath = String(args?.outputPath || "").trim();
+    let resolvedOutputPath = "";
+    if (rawOutputPath) {
+      resolvedOutputPath = path.isAbsolute(rawOutputPath)
+        ? path.resolve(rawOutputPath)
+        : path.resolve(options.workspacePath || os.homedir(), rawOutputPath);
+    } else if (options.workspacePath) {
+      resolvedOutputPath = path.join(path.resolve(options.workspacePath), inspection.defaultFileName);
+    } else {
+      resolvedOutputPath = path.join(os.homedir(), "Downloads", inspection.defaultFileName);
+    }
+
+    const exported = await exportPluginSharePackage(ctx, {
+      target,
+      outputPath: resolvedOutputPath,
+      includeData: Boolean(args?.includeData),
+      dataDir,
+      storageRoot,
+    });
+    if (!exported?.ok) {
+      return { ok: false, error: exported?.error || "导出插件分享包失败" };
+    }
+    return {
+      ok: true,
+      action: "export",
+      shareKind: "local",
+      path: exported.path,
+      packageName: exported.packageName,
+      displayName: exported.displayName,
+      version: exported.version,
+      includesData: exported.includesData,
+      includedDataFiles: exported.includedDataFiles,
+      bytes: exported.bytes,
+      warnings: exported.warnings,
     };
   }
 

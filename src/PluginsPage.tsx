@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { AlertTriangle, Check, Loader2, PackageOpen, Plus, RefreshCw, Search, Share2, Trash2 } from "lucide-react";
 import { PluginIcon } from "./PluginIcon";
 import { AddPluginDialog } from "./AddPluginDialog";
+import { SharePluginDialog } from "./SharePluginDialog";
+import { extractDroppedShareFile, hasDraggedShareFiles, type ShareDropInput } from "./lib/pluginShare";
 import { filterCatalog, isInstalled, isVisibleInstalledPlugin } from "./pluginCatalog";
 import type {CatalogPlugin} from "./pluginCatalog";
 import {BUILTIN_PLUGIN_LABELS} from './pluginLabels';
@@ -59,6 +61,9 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const [marketCategory, setMarketCategory] = useState("");
   const [marketSpec, setMarketSpec] = useState("");
   const [localInstallOpen, setLocalInstallOpen] = useState(false);
+  const [pendingShareFile, setPendingShareFile] = useState<ShareDropInput | null>(null);
+  const [shareTarget, setShareTarget] = useState<{ target: string; title?: string } | null>(null);
+  const [pageDragOver, setPageDragOver] = useState(false);
   const [detailSelection, setDetailSelection] = useState<{ entryId?: string; catalogId?: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -220,15 +225,63 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
     const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
     return !marketQuery.trim()||[entry.id,entry.name,entry.description,bundleOf.get(entry.name)?.description,approved?.displayName,builtin?.name,builtin?.summary,...(approved?.tags||[])].join(' ').toLowerCase().includes(marketQuery.trim().toLowerCase());
   });
+  const handlePageDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!hasDraggedShareFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!pageDragOver) setPageDragOver(true);
+  };
+
+  const handlePageDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+      setPageDragOver(false);
+    }
+  };
+
+  const handlePageDrop = async (event: DragEvent<HTMLElement>) => {
+    if (!hasDraggedShareFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    setPageDragOver(false);
+    const dropped = await extractDroppedShareFile(event.dataTransfer);
+    if (!dropped) {
+      setError("仅支持拖入 .dyplugin 或 .zip 格式的插件分享包");
+      return;
+    }
+    setError("");
+    setPendingShareFile(dropped);
+    setLocalInstallOpen(true);
+  };
+
   const available=filterCatalog(marketQuery,marketCategory,catalog);
   const detailCatalog = catalog.find(plugin => plugin.id === detailSelection?.catalogId);
   const detailEntry = verifiedEntries.find(entry => entry.id === detailSelection?.entryId)
     || (detailCatalog ? entries.find(entry => isInstalled(detailCatalog, [entry])) : undefined);
   if (detailSelection && (detailEntry||detailCatalog)) return <>
-    {(marketSpec || localInstallOpen) && <AddPluginDialog initialSpec={marketSpec} initialMode={marketSpec ? "remote" : localInstallOpen ? "local" : undefined} onClose={() => { setMarketSpec(''); setLocalInstallOpen(false); }} onInstalled={() => void refresh()} />}
+    {(marketSpec || localInstallOpen) && (
+      <AddPluginDialog
+        initialSpec={marketSpec}
+        initialMode={marketSpec ? "remote" : localInstallOpen ? "local" : undefined}
+        initialShareFile={pendingShareFile}
+        onShareLocal={(target, title) => setShareTarget({ target, title })}
+        onClose={() => { setMarketSpec(''); setLocalInstallOpen(false); setPendingShareFile(null); }}
+        onInstalled={() => void refresh()}
+      />
+    )}
+    {shareTarget && (
+      <SharePluginDialog
+        target={shareTarget.target}
+        titleHint={shareTarget.title}
+        onClose={() => setShareTarget(null)}
+      />
+    )}
     <PluginDetailPage entry={detailEntry} bundle={detailEntry ? bundleOf.get(detailEntry.name) : undefined} catalog={detailCatalog || catalog.find(plugin => plugin.packageName === detailEntry?.name)}
       busy={Boolean(busy)} error={error} notice={notice} refreshKey={refreshKey} configuration={detailEntry ? configurationFor(detailEntry) : undefined}
       onBack={() => { setDetailSelection(null); setEditing(null); }} onToggle={() => { if (detailEntry) void toggle(detailEntry); }}
+      onShare={detailEntry && !detailEntry.builtin ? () => {
+        const bundle = bundleOf.get(detailEntry.name);
+        const approved = catalog.find(plugin => plugin.packageName === detailEntry.name);
+        setShareTarget({ target: bundle?.packageName || detailEntry.name || detailEntry.id, title: approved?.displayName || detailEntry.id });
+      } : undefined}
       onUninstall={() => { if (detailEntry) void run('已卸载', async () => {
         const result = await bridge!.uninstallPlugin(bundleOf.get(detailEntry.name)?.name || detailEntry.id);
         if (result?.ok !== false) { await clientHost().unload(detailEntry.id); setDetailSelection(null); setEditing(null); }
@@ -242,13 +295,34 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   </>;
 
   return (
-    <section className="plugins-page">
+    <section
+      className={`plugins-page ${pageDragOver ? "drag-over" : ""}`}
+      onDragOver={handlePageDragOver}
+      onDragLeave={handlePageDragLeave}
+      onDrop={(event) => void handlePageDrop(event)}
+    >
+      {pageDragOver ? (
+        <div className="plugin-drop-overlay" role="status">
+          <PackageOpen size={28} />
+          <strong>松开以预览并导入插件分享包</strong>
+          <span>支持 .dyplugin 与普通 .zip 插件包</span>
+        </div>
+      ) : null}
       {marketSpec || localInstallOpen ? (
         <AddPluginDialog
           initialSpec={marketSpec}
           initialMode={marketSpec ? "remote" : localInstallOpen ? "local" : undefined}
-          onClose={() => { setMarketSpec(""); setLocalInstallOpen(false); }}
+          initialShareFile={pendingShareFile}
+          onShareLocal={(target, title) => setShareTarget({ target, title })}
+          onClose={() => { setMarketSpec(""); setLocalInstallOpen(false); setPendingShareFile(null); }}
           onInstalled={() => void refresh()}
+        />
+      ) : null}
+      {shareTarget ? (
+        <SharePluginDialog
+          target={shareTarget.target}
+          titleHint={shareTarget.title}
+          onClose={() => setShareTarget(null)}
         />
       ) : null}
       <header className="plugins-page-header">
@@ -348,6 +422,15 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                   <button className="plugins-text-button" onClick={() => setDetailSelection({entryId:entry.id})}>
                     {t("plugins.settings", "设置")}
                   </button>
+                  {entry.builtin ? null : (
+                    <button
+                      className="plugins-text-button"
+                      disabled={Boolean(busy)}
+                      onClick={() => setShareTarget({ target: bundle?.packageName || entry.name || entry.id, title: builtin?.name || approved?.displayName || entry.id })}
+                    >
+                      <Share2 size={13} /> {t("plugins.share", "分享")}
+                    </button>
+                  )}
                   {entry.builtin ? null : (
                     <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", async () => {
                       const result=await bridge!.uninstallPlugin(bundle?.name||entry.id);

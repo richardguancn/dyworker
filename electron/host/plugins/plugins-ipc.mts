@@ -6,8 +6,18 @@
 // 本插件自己就走契约层（ctx.ipc / ctx.plugins），不接收壳层 deps 大包：
 // 既是功能实现，也是"第三方插件该怎么写"的第二个样板。
 import { createHistoryRelay } from '../dsh-runtime/history-relay.mts';
-import { dirname } from "node:path";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path, { dirname } from "node:path";
 import { cancelCardPluginCreation, listCreatedLocalPlugins, managedCreatedPluginsRoot, startCardPluginCreation, tryBuildOfflineLocalInstallRunner } from "../../plugin-authoring.mts";
+import {
+  MAX_SHARE_ARCHIVE_BYTES,
+  SHARE_PACKAGE_EXTENSION,
+  exportPluginSharePackage,
+  inspectPluginForExport,
+  inspectSharePackage,
+  unpackSharePackageToManagedDir,
+} from "../../plugin-share.mts";
 
 export function pluginsIpcPlugin(deps: any = {}) {
   return {
@@ -162,6 +172,174 @@ export function pluginsIpcPlugin(deps: any = {}) {
       }));
 
       ctx.effect(() => ctx.ipc.handle("plugins:card-cancel", (_event, payload) => cancelCardPluginCreation(payload)));
+
+      const resolveShareContext = () => {
+        const dataDir = deps.dataDir || ctx.paths?.dataDir || dirname(ctx.plugins?.dir || ".");
+        const storageRoot = ctx.get("storage")?.root || path.join(ctx.plugins?.dir || dataDir, "data");
+        return { dataDir, storageRoot };
+      };
+
+      const decodeSharePayloadInput = async (payload: any) => {
+        const filePath = String(payload?.filePath || "").trim();
+        if (filePath) return { filePath };
+        const rawBase64 = String(payload?.dataBase64 || "").trim();
+        if (!rawBase64) throw new Error("请提供分享包路径或文件内容");
+        if (rawBase64.length > Math.ceil(MAX_SHARE_ARCHIVE_BYTES * 1.4)) {
+          throw new Error("分享包体积超过 50 MB 上限");
+        }
+        const buffer = Buffer.from(rawBase64, "base64");
+        if (!buffer.length) throw new Error("分享包内容为空");
+        return { buffer, fileName: String(payload?.fileName || "plugin.dyplugin") };
+      };
+
+      ctx.effect(() => ctx.ipc.handle("plugins:inspect-export", async (_event, payload) => {
+        try {
+          const { dataDir, storageRoot } = resolveShareContext();
+          return await inspectPluginForExport(ctx, {
+            target: String(payload?.target || "").trim(),
+            dataDir,
+            storageRoot,
+          });
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:export-package", async (_event, payload) => {
+        try {
+          const target = String(payload?.target || "").trim();
+          const includeData = Boolean(payload?.includeData);
+          const { dataDir, storageRoot } = resolveShareContext();
+          const inspection = await inspectPluginForExport(ctx, { target, dataDir, storageRoot });
+          if (!inspection?.ok) return inspection;
+          if (inspection.shareKind !== "local") {
+            return {
+              ok: false,
+              shareKind: "remote",
+              error: "第三方插件请复制安装地址分享，无需导出本地压缩包",
+              installSpec: inspection.installSpec,
+              shareText: inspection.shareText,
+            };
+          }
+
+          const win = ctx.get("window");
+          if (!win?.dialog?.showSaveDialog) {
+            return { ok: false, error: "当前窗口环境不支持保存文件对话框" };
+          }
+          const docsRoot = typeof deps.documentsDir === "function"
+            ? deps.documentsDir()
+            : (deps.documentsDir || path.join(os.homedir(), "Documents"));
+          const saved = await win.dialog.showSaveDialog(win.current, {
+            title: "导出插件分享包",
+            defaultPath: path.join(docsRoot, inspection.defaultFileName),
+            filters: [
+              { name: "DYWorker 插件分享包", extensions: [SHARE_PACKAGE_EXTENSION] },
+              { name: "ZIP 压缩包", extensions: ["zip"] },
+            ],
+          });
+          if (saved?.canceled || !saved?.filePath) {
+            return { ok: true, canceled: true };
+          }
+
+          return await exportPluginSharePackage(ctx, {
+            target,
+            outputPath: saved.filePath,
+            includeData,
+            dataDir,
+            storageRoot,
+            appVersion: String(deps.appVersion || ""),
+          });
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:choose-share-file", async () => {
+        const win = ctx.get("window");
+        if (!win?.dialog?.showOpenDialog) return null;
+        const result = await win.dialog.showOpenDialog(win.current, {
+          title: "选择插件分享包",
+          properties: ["openFile"],
+          filters: [
+            { name: "DYWorker 插件分享包", extensions: [SHARE_PACKAGE_EXTENSION, "zip"] },
+          ],
+        });
+        return result?.canceled ? null : result?.filePaths?.[0] || null;
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:inspect-share-package", async (_event, payload) => {
+        try {
+          const { dataDir, storageRoot } = resolveShareContext();
+          const input = await decodeSharePayloadInput(payload);
+          return await inspectSharePackage({
+            ...input,
+            ctx,
+            dataDir,
+            storageRoot,
+          });
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      }));
+
+      ctx.effect(() => ctx.ipc.handle("plugins:import-share-package", async (_event, payload) => {
+        try {
+          const { dataDir, storageRoot } = resolveShareContext();
+          const input = await decodeSharePayloadInput(payload);
+          const unpacked = await unpackSharePackageToManagedDir({
+            ...input,
+            dataDir,
+            storageRoot,
+            importData: payload?.importData !== false,
+            overwriteData: Boolean(payload?.overwriteData),
+          });
+          if (!unpacked?.ok || !unpacked.pluginDir) {
+            return unpacked;
+          }
+
+          const localFast = await tryBuildOfflineLocalInstallRunner(unpacked.pluginDir);
+          const installed = await host.installPackage({
+            input: unpacked.pluginDir,
+            allowIncompatible: Boolean(payload?.allowIncompatible),
+            ...(localFast?.ok && localFast.run ? { run: localFast.run } : {}),
+          });
+          if (!installed?.ok) {
+            return {
+              ...installed,
+              pluginDir: unpacked.pluginDir,
+              packageName: unpacked.packageName,
+              displayName: unpacked.displayName,
+              version: unpacked.version,
+              importedDataFiles: unpacked.importedDataFiles,
+              skippedDataFiles: unpacked.skippedDataFiles,
+            };
+          }
+
+          const entries = typeof host.entries === "function" ? host.entries() : [];
+          const matched = entries.find((item: any) =>
+            item && (item.id === installed.id || item.name === unpacked.packageName || item.id === unpacked.packageName),
+          );
+          const entryId = String(matched?.id || installed.id || unpacked.packageName);
+          if (matched?.disabled) {
+            await host.setEnabled(entryId, true).catch(() => null);
+          }
+          deps.notifyPluginsUpdated?.();
+
+          return {
+            ...installed,
+            ok: true,
+            entryId,
+            packageName: unpacked.packageName,
+            displayName: unpacked.displayName,
+            version: unpacked.version,
+            pluginDir: unpacked.pluginDir,
+            importedDataFiles: unpacked.importedDataFiles,
+            skippedDataFiles: unpacked.skippedDataFiles,
+          };
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      }));
     },
   };
 }

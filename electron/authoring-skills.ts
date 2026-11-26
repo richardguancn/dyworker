@@ -84,7 +84,7 @@ ${pluginStarterSource}
 
 ### 界面插件（原生 \`dyworker.client\`，禁写 \`dsh\` 字段）
 1. **\`package.json\`**：加 \`"exports": { ".": "./index.js", "./client": "./client.js" }\` 与 \`"dyworker": { "client": { "platform": "web", "inject": [] } }\`。
-2. **\`index.js\`**：用 \`ctx.storage.readJson/writeJson\` 持久化，\`ctx.connection.register({ path: "/api/<包名>/...", methods: ["GET","POST"], fetch })\` 供前端 \`fetch("/api/...")\` 调用。
+2. **\`index.js\`**：用 \`ctx.storage.readJson/writeJson\` 持久化，存储文件统一放到 \`<包名>/...\` 子目录（如 \`ctx.storage.readJson("<包名>/data.json")\`）以便分享时精准隔离数据；\`ctx.connection.register({ path: "/api/<包名>/...", methods: ["GET","POST"], fetch })\` 供前端 \`fetch("/api/...")\` 调用。
 3. **\`client.js\`（classic script，禁 ESM \`import/export\` 与 JSX）**：
    - 使用 \`window.__ModuleLoader__.load({ id: "<包名>", factory(require) { ... } })\`，\`React.createElement\` 写界面，主题变量（\`var(--surface)\`/\`var(--card)\`/\`var(--border)\`/\`var(--ink)\`/\`var(--muted)\`）适配深浅色。
    - ECharts 用 \`const echarts = require("echarts");\`，在 \`useEffect\` 中 \`init\` + \`ResizeObserver\` + 清理 \`dispose()\`，\`backgroundColor: "transparent"\`。
@@ -110,7 +110,8 @@ window.__ModuleLoader__.load({
 ## 4. 验证与热挂载安装
 1. 先调 \`plugin_inspect\`（\`action: "check"\`, \`target: "<目录>"\`）检查清单、安全与语法；
 2. 通过后调 \`plugin_manage\`（\`action: "install"\`, \`target: "<目录>"\`, \`openSlot: true\` 或指定插槽）；在创造模式下受管目录的纯本地插件将自动安装并热挂载打开。若是工具插件，安装后须实际调用所注册工具核验返回结果；若是界面插件，确认插槽已挂载生效；
-3. 二次修改后调 \`plugin_manage\`（\`action: "reload"\`）刷新；未实调或未通过须如实说明。`,
+3. 二次修改后调 \`plugin_manage\`（\`action: "reload"\`）刷新；未实调或未通过须如实说明；
+4. 用户明确要求“打包分享这个插件”时，可调 \`plugin_manage\`（\`action: "export"\`, \`target: "<包名或目录>"\`，默认 \`includeData: false\`；仅用户要求连带当前模板/数据一起分享时传 \`includeData: true\`）导出单文件 \`.dyplugin\` 分享包并告知完整文件位置。`,
   },
 ];
 

@@ -1,7 +1,8 @@
 // 对话后个性化推荐卡片（```action-card```）渲染与交互组件：
 // 支持推荐位置选择、后台创建与取消、热挂载打开、撤销（保留源码）与一键恢复。
-import { Blocks, Check, ExternalLink, LoaderCircle, RotateCcw, Sparkles, Undo2, X } from "lucide-react";
+import { Blocks, Check, ExternalLink, LoaderCircle, RotateCcw, Share2, Sparkles, Undo2, X } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
+import { SharePluginDialog } from "../../SharePluginDialog";
 import { formatUnreportedCardDecisions, parseActionCardCode } from "../../lib/actionCards";
 import { useSessionStore } from "../../state/sessionStore";
 import { useSettingsStore } from "../../state/settingsStore";
@@ -36,6 +37,7 @@ export function ActionCardBlock({ code }: { code: string }) {
   const [customDraft, setCustomDraft] = useState("");
   const [busyAction, setBusyAction] = useState<"" | "opening" | "undoing" | "restoring">("");
   const [localError, setLocalError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const card = parsed.status === "ok" ? parsed.card : null;
   const savedDecision = card ? session?.actionCardDecisions?.[card.id] : undefined;
@@ -388,6 +390,17 @@ export function ActionCardBlock({ code }: { code: string }) {
               <ExternalLink size={14} />
               <span>{busyAction === "opening" ? "打开中…" : "打开页面"}</span>
             </button>
+            {(savedDecision?.pluginDir || savedDecision?.pluginId || savedDecision?.pluginName) && (
+              <button
+                type="button"
+                className="action-card-btn secondary"
+                disabled={busyAction !== ""}
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 size={14} />
+                <span>分享</span>
+              </button>
+            )}
             <button
               type="button"
               className="action-card-btn secondary"
@@ -412,6 +425,13 @@ export function ActionCardBlock({ code }: { code: string }) {
           </button>
         )}
       </div>
+      {shareOpen && (savedDecision?.pluginDir || savedDecision?.pluginId || savedDecision?.pluginName) && (
+        <SharePluginDialog
+          target={savedDecision.pluginDir || savedDecision.pluginId || savedDecision.pluginName || ""}
+          titleHint={card.title}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   );
 }

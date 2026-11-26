@@ -885,5 +885,10 @@
   "model.visionNativeDeepseekNote": "외부 비전 서비스 없이 이미지를 DeepSeek에 직접 전송합니다. 이미지는 사용자 메시지에만 포함할 수 있습니다 (JPEG / PNG / GIF / WebP).",
   "model.visionServiceNote": "아래 비전 서비스가 이미지를 텍스트로 설명한 뒤 현재 모델에 전달합니다(원본 이미지는 직접 전송되지 않음). image_url을 지원하는 OpenAI 호환 Chat Completions 서비스가 필요합니다. 모델이 네이티브 이미지를 지원하면 위에서 전환하세요.",
   "conversation.resizeWidth": "대화 너비 조정",
-  "conversation.resizeWidthHint": "드래그하여 대화 너비 조정, 두 번 클릭하여 재설정"
+  "conversation.resizeWidthHint": "드래그하여 대화 너비 조정, 두 번 클릭하여 재설정",
+  "plugins.share": "공유",
+  "plugins.shareTitle": "플러그인 공유",
+  "plugins.shareDialogAria": "플러그인 공유",
+  "plugins.importShare": "공유 패키지 가져오기…",
+  "plugins.importShareTitle": "플러그인 공유 패키지 가져오기"
 }

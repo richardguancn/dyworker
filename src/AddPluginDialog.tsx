@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, FolderOpen, Loader2, PackageOpen, Share2, Sparkles, X } from "lucide-react";
 import { t } from "./i18n";
+import { extractDroppedShareFile, formatShareBytes, hasDraggedShareFiles, type ShareDropInput } from "./lib/pluginShare";
+import { SharePluginDialog } from "./SharePluginDialog";
 import { pluginHotMountRef } from "./state/sharedRefs";
-import type { CreatedLocalPluginRecord, PluginCompatibility } from "./types";
+import type { CreatedLocalPluginRecord, PluginCompatibility, PluginSharePackagePreview } from "./types";
 
 // 「添加插件」弹窗：支持「本地目录 / 我创建的插件」与「包名 / GitHub 仓库」两种入口。
 //
@@ -41,11 +43,15 @@ export function AddPluginDialog({
   onInstalled,
   initialSpec = "",
   initialMode,
+  initialShareFile = null,
+  onShareLocal,
 }: {
   onClose: () => void;
   onInstalled: () => void;
   initialSpec?: string;
   initialMode?: "local" | "remote";
+  initialShareFile?: ShareDropInput | null;
+  onShareLocal?: (target: string, title?: string) => void;
 }) {
   const inferredMode: "local" | "remote" = initialMode
     ?? (initialSpec && !isLocalPathLike(initialSpec) ? "remote" : "local");
@@ -62,6 +68,12 @@ export function AddPluginDialog({
   const [createdPlugins, setCreatedPlugins] = useState<CreatedLocalPluginRecord[]>([]);
   const [createdLoading, setCreatedLoading] = useState(false);
   const [quickBusyDir, setQuickBusyDir] = useState("");
+  const [shareInput, setShareInput] = useState<ShareDropInput | null>(null);
+  const [sharePreview, setSharePreview] = useState<PluginSharePackagePreview | null>(null);
+  const [importData, setImportData] = useState(true);
+  const [overwriteData, setOverwriteData] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [inlineShareTarget, setInlineShareTarget] = useState<{ target: string; title?: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [log, setLog] = useState("");
@@ -226,6 +238,112 @@ export function AddPluginDialog({
     }
   };
 
+  const inspectShareInput = async (payload: ShareDropInput) => {
+    if (!bridge?.inspectPluginSharePackage) {
+      setError("当前环境不支持导入插件分享包");
+      return;
+    }
+    setBusy("share-inspect");
+    setError("");
+    setLog("");
+    setResult(null);
+    try {
+      const preview = await bridge.inspectPluginSharePackage(payload);
+      if (!preview?.ok) {
+        setError(preview?.error || "分享包校验未通过");
+        return;
+      }
+      setShareInput(payload);
+      setSharePreview(preview);
+      setImportData(Boolean(preview.includesData));
+      setOverwriteData(false);
+    } catch (err: any) {
+      setError(String(err?.message || err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  useEffect(() => {
+    if (!initialShareFile) return;
+    void inspectShareInput(initialShareFile);
+    // 仅在初始携带分享包时自动预检一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialShareFile]);
+
+  const chooseShareFile = async () => {
+    if (!bridge?.choosePluginShareFile) return;
+    setError("");
+    const picked = await bridge.choosePluginShareFile().catch(() => null);
+    if (picked) {
+      await inspectShareInput({ filePath: picked, fileName: picked.split(/[\\/]/).pop() });
+    }
+  };
+
+  const confirmShareImport = async (force = false) => {
+    if (!bridge?.importPluginSharePackage || !shareInput) return;
+    setBusy("share-import");
+    setError("");
+    try {
+      const imported = await bridge.importPluginSharePackage({
+        ...shareInput,
+        importData,
+        overwriteData,
+        allowIncompatible: force || allowIncompatible,
+      });
+      if (!imported?.ok) {
+        setResult({
+          ok: false,
+          name: imported?.analysis?.name || sharePreview?.displayName || sharePreview?.packageName || "分享包插件",
+          verdict: imported?.verdict,
+          reasons: imported?.analysis?.reasons || (imported?.error ? [imported.error] : []),
+          matrix: imported?.matrix,
+          incompatible: imported?.incompatible,
+          source: "local",
+          version: sharePreview?.version,
+          dir: imported?.pluginDir || imported?.dir,
+          detailOpen: true,
+        });
+        return;
+      }
+      const targetEntryId = imported.entryId || imported.id || imported.packageName || sharePreview?.packageName || "";
+      if (targetEntryId) {
+        await pluginHotMountRef.current.mountClientPlugin(targetEntryId, { openSlot: true }).catch(() => null);
+      }
+      onInstalled();
+      onClose();
+    } catch (err: any) {
+      setError(String(err?.message || err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleDialogDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedShareFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!dragOver) setDragOver(true);
+  };
+
+  const handleDialogDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+      setDragOver(false);
+    }
+  };
+
+  const handleDialogDrop = async (event: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedShareFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    setDragOver(false);
+    const dropped = await extractDroppedShareFile(event.dataTransfer);
+    if (!dropped) {
+      setError("仅支持拖入 .dyplugin 或 .zip 格式的插件分享包");
+      return;
+    }
+    await inspectShareInput(dropped);
+  };
+
   const quickInstallCreated = async (item: CreatedLocalPluginRecord) => {
     if (!bridge) return;
     setQuickBusyDir(item.dir);
@@ -278,7 +396,19 @@ export function AddPluginDialog({
 
   return createPortal(
     <div className="dialog-overlay" role="dialog" aria-label={t("plugins.addDialogAria", "添加插件")}>
-      <div className="add-plugin-dialog">
+      {inlineShareTarget ? (
+        <SharePluginDialog
+          target={inlineShareTarget.target}
+          titleHint={inlineShareTarget.title}
+          onClose={() => setInlineShareTarget(null)}
+        />
+      ) : null}
+      <div
+        className={`add-plugin-dialog ${dragOver ? "drag-over" : ""}`}
+        onDragOver={handleDialogDragOver}
+        onDragLeave={handleDialogDragLeave}
+        onDrop={(event) => void handleDialogDrop(event)}
+      >
         {result ? (
           <div className="install-result">
             <header className="add-plugin-header">
@@ -321,12 +451,121 @@ export function AddPluginDialog({
             ) : (
               <div className="install-result-actions">
                 <button className="plugins-text-button" onClick={() => setResult(null)}>{t("common.back", "返回")}</button>
-                {result.incompatible && <button className="add-plugin-submit" onClick={() => void install(true)} disabled={busy === "install"}>
-                  {busy === "install" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.installAnyway", "仍然安装（部分功能可能不可用）")}
+                {result.incompatible && <button className="add-plugin-submit" onClick={() => void (shareInput ? confirmShareImport(true) : install(true))} disabled={Boolean(busy)}>
+                  {busy === "install" || busy === "share-import" ? <Loader2 size={14} className="spin" /> : null} {t("plugins.installAnyway", "仍然安装（部分功能可能不可用）")}
                 </button>}
               </div>
             )}
             {error && <div className="plugins-message bad"><AlertTriangle size={14} /> <span>{error}</span></div>}
+          </div>
+        ) : sharePreview ? (
+          <div className="plugin-share-import-view">
+            <header className="add-plugin-header">
+              <div className="add-plugin-header-title">
+                <h2>{t("plugins.importShareTitle", "导入插件分享包")}</h2>
+                <p className="add-plugin-sub">源码将保存至受管插件目录，安装后可随时用「创造模式」继续修改。</p>
+              </div>
+              <button className="icon-button subtle" onClick={onClose} aria-label={t("common.close", "关闭")}><X size={16} /></button>
+            </header>
+
+            <div className="plugin-share-preview-card">
+              <div className="plugin-share-summary-head">
+                <strong>{sharePreview.displayName || sharePreview.packageName}</strong>
+                {sharePreview.version ? <span className="plugin-tag">v{sharePreview.version}</span> : null}
+                <span className="plugin-tag">{sharePreview.format === "zip" ? "ZIP 插件包" : ".dyplugin 分享包"}</span>
+                {sharePreview.hasClient ? <span className="plugin-tag">含界面</span> : <span className="plugin-tag">纯工具</span>}
+              </div>
+              {sharePreview.description ? <p>{sharePreview.description}</p> : null}
+              <div className="plugin-share-summary-meta">
+                <span>包名：{sharePreview.packageName}</span>
+                <span>文件数：{sharePreview.pluginFileCount || 0} 个</span>
+              </div>
+            </div>
+
+            {sharePreview.alreadyInstalled ? (
+              <div className="plugins-message warn">
+                当前已安装同名插件{sharePreview.installedVersion ? `（v${sharePreview.installedVersion}）` : ""}，继续导入将替换为分享包版本（v{sharePreview.version || "—"}）。
+              </div>
+            ) : null}
+
+            {sharePreview.hasThirdPartyDeps ? (
+              <div className="add-plugin-build-note">
+                该插件声明了第三方依赖（{(sharePreview.dependencies || []).join("、")}），安装时需连接包管理源拉取依赖。
+              </div>
+            ) : null}
+
+            {sharePreview.includesData && sharePreview.dataFiles?.length ? (
+              <div className="plugin-share-data-box">
+                <label className="plugin-share-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={importData}
+                    disabled={Boolean(busy)}
+                    onChange={(event) => setImportData(event.target.checked)}
+                  />
+                  <span>导入分享包附带的插件数据（{sharePreview.dataFiles.length} 个文件）</span>
+                </label>
+                <div className="plugin-share-data-list">
+                  <ul>
+                    {sharePreview.dataFiles.slice(0, 8).map((item) => (
+                      <li key={item.relativePath}>
+                        <code>{item.relativePath}</code>
+                        <span>{formatShareBytes(item.size)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {importData && sharePreview.conflictingDataFiles?.length ? (
+                  <label className="plugin-share-checkbox plugin-share-overwrite">
+                    <input
+                      type="checkbox"
+                      checked={overwriteData}
+                      disabled={Boolean(busy)}
+                      onChange={(event) => setOverwriteData(event.target.checked)}
+                    />
+                    <span>覆盖本机已有的 {sharePreview.conflictingDataFiles.length} 个同名数据文件（默认保留本机数据）</span>
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="add-plugin-warning">
+              <AlertTriangle size={14} />
+              <div>
+                <p>请确认分享包来自可信同事或渠道。插件在本机以你的权限运行，导入默认不运行第三方安装脚本。</p>
+              </div>
+            </div>
+
+            <label className="add-plugin-allow">
+              <input type="checkbox" checked={allowIncompatible} onChange={(event) => setAllowIncompatible(event.target.checked)} />
+              {t("plugins.allowIncompatible", "允许安装不完全兼容的插件（可能装载后不生效）")}
+            </label>
+
+            {error ? <div className="plugins-message bad"><AlertTriangle size={14} /> <span>{error}</span></div> : null}
+
+            <div className="add-plugin-actions">
+              <button
+                type="button"
+                className="plugins-text-button"
+                disabled={Boolean(busy)}
+                onClick={() => {
+                  setShareInput(null);
+                  setSharePreview(null);
+                  setError("");
+                }}
+              >
+                {t("common.back", "返回")}
+              </button>
+              <button
+                type="button"
+                className="add-plugin-submit"
+                disabled={Boolean(busy)}
+                onClick={() => void confirmShareImport(false)}
+              >
+                {busy === "share-import" ? <Loader2 size={14} className="spin" /> : null}
+                {busy === "share-import" ? "正在安装并启用…" : "确认安装并启用"}
+              </button>
+            </div>
           </div>
         ) : (
         <>
@@ -381,16 +620,30 @@ export function AddPluginDialog({
                           {item.description ? ` · ${item.description}` : ""}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        className="add-plugin-created-btn"
-                        disabled={Boolean(busy) || !item.valid}
-                        title={item.valid ? undefined : (item.error || "插件校验未通过")}
-                        onClick={() => void quickInstallCreated(item)}
-                      >
-                        {busyThis ? <Loader2 size={13} className="spin" /> : null}
-                        {item.installed ? "重装并打开" : "一键安装"}
-                      </button>
+                      <div className="add-plugin-created-actions">
+                        <button
+                          type="button"
+                          className="add-plugin-created-btn"
+                          disabled={Boolean(busy)}
+                          title="打包分享此插件"
+                          onClick={() => {
+                            if (onShareLocal) onShareLocal(item.dir, item.displayName || item.packageName);
+                            else setInlineShareTarget({ target: item.dir, title: item.displayName || item.packageName });
+                          }}
+                        >
+                          <Share2 size={13} /> 分享
+                        </button>
+                        <button
+                          type="button"
+                          className="add-plugin-created-btn"
+                          disabled={Boolean(busy) || !item.valid}
+                          title={item.valid ? undefined : (item.error || "插件校验未通过")}
+                          onClick={() => void quickInstallCreated(item)}
+                        >
+                          {busyThis ? <Loader2 size={13} className="spin" /> : null}
+                          {item.installed ? "重装并打开" : "一键安装"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -412,15 +665,29 @@ export function AddPluginDialog({
             spellCheck={false}
             autoFocus
           />
-          {mode === "local" && bridge?.choosePluginDirectory ? (
-            <button
-              type="button"
-              className="add-plugin-browse-btn"
-              onClick={() => void chooseDirectory()}
-              disabled={Boolean(busy)}
-            >
-              <FolderOpen size={14} /> 选择文件夹…
-            </button>
+          {mode === "local" && (bridge?.choosePluginShareFile || bridge?.choosePluginDirectory) ? (
+            <div className="add-plugin-browse-group">
+              {bridge?.choosePluginShareFile ? (
+                <button
+                  type="button"
+                  className="add-plugin-browse-btn"
+                  onClick={() => void chooseShareFile()}
+                  disabled={Boolean(busy)}
+                >
+                  <PackageOpen size={14} /> {t("plugins.importShare", "导入分享包…")}
+                </button>
+              ) : null}
+              {bridge?.choosePluginDirectory ? (
+                <button
+                  type="button"
+                  className="add-plugin-browse-btn"
+                  onClick={() => void chooseDirectory()}
+                  disabled={Boolean(busy)}
+                >
+                  <FolderOpen size={14} /> 选择文件夹…
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
 

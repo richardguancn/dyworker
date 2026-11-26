@@ -899,5 +899,10 @@
   "model.visionNativeDeepseekNote": "画像は外部ビジョンサービスを介さず DeepSeek に直接送信されます。画像はユーザーメッセージでのみ許可されます（JPEG / PNG / GIF / WebP）。",
   "model.visionServiceNote": "画像は下のビジョンサービスでテキスト化してから現在のモデルに渡されます（元画像は直接送信されません）。OpenAI 互換の Chat Completions と image_url に対応したサービスが必要です。モデルがネイティブ画像対応の場合は上で切り替えてください。",
   "conversation.resizeWidth": "会話幅を調整",
-  "conversation.resizeWidthHint": "ドラッグで会話幅を調整、ダブルクリックでリセット"
+  "conversation.resizeWidthHint": "ドラッグで会話幅を調整、ダブルクリックでリセット",
+  "plugins.share": "共有",
+  "plugins.shareTitle": "プラグインを共有",
+  "plugins.shareDialogAria": "プラグインを共有",
+  "plugins.importShare": "共有パックを読み込む…",
+  "plugins.importShareTitle": "プラグイン共有パックを読み込む"
 }

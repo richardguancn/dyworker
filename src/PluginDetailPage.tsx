@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, AlertTriangle, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ExternalLink, Loader2, Share2 } from 'lucide-react';
 import { PluginIcon } from './PluginIcon';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -31,11 +31,12 @@ type Props = {
   entry?: PluginEntryRecord; bundle?: PluginBundleRecord; catalog?: CatalogPlugin;
   busy: boolean; error: string; notice: string; configuration?: ReactNode;
   onBack: () => void; onToggle: () => void; onUninstall: () => void; onInstall: () => void; onLoadClient: () => void;
+  onShare?: () => void;
   clientResult?: string; refreshKey: number;
 };
 
 export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, configuration, onBack, onToggle,
-  onUninstall, onInstall, onLoadClient, clientResult, refreshKey }: Props) {
+  onUninstall, onInstall, onLoadClient, onShare, clientResult, refreshKey }: Props) {
   const [detail, setDetail] = useState<PluginDetailRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -87,6 +88,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
       </div>
       <div className="plugin-detail-actions">{entry ? <>
         <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? t("plugins.enable", "启用") : t("plugins.disable", "停用")}</button>
+        {!entry.builtin && onShare && <button className="plugins-text-button" disabled={busy || checking} onClick={onShare}><Share2 size={14} /> {t("plugins.share", "分享")}</button>}
         {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>{t("plugins.uninstall", "卸载")}</button>}
       </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>{t("plugins.installAction", "安装")}</button>}</div>
     </header>
