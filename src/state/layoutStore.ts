@@ -131,10 +131,10 @@ export interface LayoutState {
   setBotTeamPageOpen: (value: Updater<boolean>) => void;
   botTeamAvailable: boolean;
   setBotTeamAvailable: (value: Updater<boolean>) => void;
-  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string }>;
-  setPluginWorkspacePages: (value: Updater<Array<{ pluginId: string; key: string; label: string }>>) => void;
-  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
-  setActiveWorkspacePage: (value: Updater<{ pluginId: string; key: string; label: string } | null>) => void;
+  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string }>;
+  setPluginWorkspacePages: (value: Updater<Array<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string }>>) => void;
+  activeWorkspacePage: { pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null;
+  setActiveWorkspacePage: (value: Updater<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null>) => void;
 
   conversationView: string;
   setConversationView: (value: Updater<string>) => void;

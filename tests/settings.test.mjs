@@ -443,3 +443,41 @@ test("visionOverrides 与 contextLimitOverrides 往返保存、去重并过滤�
   assert.deepEqual(deserializeSettings({}, secretStorage).visionOverrides, []);
   assert.deepEqual(deserializeSettings({}, secretStorage).contextLimitOverrides, []);
 });
+
+test("pluginCustomizations 往返保存并过滤非法图标、非法色值与空条目", () => {
+  const stored = serializeSettings({
+    pluginCustomizations: {
+      " weekly-board ": {
+        icon: "bar-chart-3",
+        iconColor: "#4F46E5",
+        displayName: "  周报可视化看板  ",
+        author: " 产品研发部 ",
+      },
+      "bad-entry": {
+        icon: "invalid icon!",
+        iconColor: "red",
+        displayName: "   ",
+        author: "",
+      },
+      "only-name": {
+        displayName: "专属名称",
+      },
+    },
+  }, secretStorage);
+
+  assert.deepEqual(stored.pluginCustomizations, {
+    "weekly-board": {
+      icon: "bar-chart-3",
+      iconColor: "#4f46e5",
+      displayName: "周报可视化看板",
+      author: "产品研发部",
+    },
+    "only-name": {
+      displayName: "专属名称",
+    },
+  });
+
+  const restored = deserializeSettings(stored, secretStorage);
+  assert.deepEqual(restored.pluginCustomizations, stored.pluginCustomizations);
+  assert.deepEqual(deserializeSettings({}, secretStorage).pluginCustomizations, {});
+});

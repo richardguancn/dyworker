@@ -5,11 +5,13 @@ import { AlarmClock, Bot, Check, ChevronRight, Folder, GitBranch, GitCommitHoriz
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginIcon } from "../PluginIcon";
+import { PluginGlyph, resolvePluginVisual } from "../lib/pluginIcons";
 import { ConversationToolsIcon, PanelLeftIcon, PanelRightIcon } from "./icons";
 import { AppUpdateAction } from "../features/settings/SettingsSubPanels";
 import type { SettingsTab } from "../features/settings/SettingsDialog";
 import { displayWorkspace } from "../lib/text";
 import { useLanShareStore } from "../state/lanShareStore";
+import { useSettingsStore } from "../state/settingsStore";
 import { t } from "../i18n";
 import type { AppUpdateStatus, GitBranchesInfo, GitDiffStats, SessionRecord, WorkspaceContext } from "../types";
 
@@ -62,8 +64,8 @@ export interface ShellChromeProps {
   runPushOnly: () => Promise<void>;
   setConversationSearchOpen: Dispatch<SetStateAction<boolean>>;
   botTeamPageOpen: boolean;
-  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
-  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string } | null>>;
+  activeWorkspacePage: { pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null;
+  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null>>;
   sidebarOpen: boolean;
   setSidebarOpen: Dispatch<SetStateAction<boolean>>;
   settingsOpen: boolean;
@@ -370,6 +372,15 @@ export function ShellChrome(props: ShellChromeProps) {
     </div>
   );
 
+  const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
+  const activePageVisual = activeWorkspacePage
+    ? resolvePluginVisual([activeWorkspacePage.pluginId, `${activeWorkspacePage.pluginId}:${activeWorkspacePage.key}`], pluginCustomizations, {
+      displayName: activeWorkspacePage.label,
+      icon: activeWorkspacePage.icon,
+      iconColor: activeWorkspacePage.iconColor,
+    })
+    : null;
+
   const conversationHeader = (
         <header className="topbar">
           <div className="topbar-left">
@@ -382,8 +393,12 @@ export function ShellChrome(props: ShellChromeProps) {
               {/* 与侧栏里的「收起侧栏」用同一个图标：收起/展开不换图（用户口径） */}
               <PanelLeftIcon size={18} />
             </button>
-            {botTeamPageOpen ? <Bot size={18} /> : activeWorkspacePage ? <LayoutGrid size={18} /> : Boolean(activeSession?.messages.length) && <Folder size={18} />}
-            <strong>{botTeamPageOpen ? t("nav.botTeam", "机器人团队") : activeWorkspacePage ? activeWorkspacePage.label : (!activeSession?.title || activeSession.title === "新任务" ? t("common.newTask", "新任务") : activeSession.title)}</strong>
+            {botTeamPageOpen
+              ? <Bot size={18} />
+              : activeWorkspacePage && activePageVisual
+                ? <PluginGlyph iconId={activePageVisual.iconId} color={activePageVisual.iconColor} size={18} fallback="workspace-page" />
+                : Boolean(activeSession?.messages.length) && <Folder size={18} />}
+            <strong>{botTeamPageOpen ? t("nav.botTeam", "机器人团队") : activeWorkspacePage ? (activePageVisual?.displayName || activeWorkspacePage.label) : (!activeSession?.title || activeSession.title === "新任务" ? t("common.newTask", "新任务") : activeSession.title)}</strong>
           </div>
           {!botTeamPageOpen && !activeWorkspacePage && Boolean(activeSession?.messages.length) && <div className="topbar-right no-drag">
             {taskMenu}

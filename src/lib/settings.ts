@@ -57,6 +57,7 @@ export const defaultSettings: ProviderSettings = {
     enabled: true,
     nickname: "",
   },
+  pluginCustomizations: {},
   fullCdpAccess: false,
   approvalMode: "reviewer",
   preventSleep: "tasks",

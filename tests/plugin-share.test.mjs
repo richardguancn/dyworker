@@ -432,5 +432,65 @@ test("前端组件、Preload 与 IPC 接线契约完整", async () => {
   assert.match(preload, /getPathForFile/);
   assert.match(ipc, /plugins:export-package/);
   assert.match(ipc, /plugins:import-share-package/);
+  assert.match(ipc, /plugins:update-metadata/);
   assert.match(skill, /action:\s*"export"/);
+  assert.match(skill, /action:\s*"update"/);
+  assert.match(preload, /updatePluginMetadata/);
+
+  const [guidePage, appearanceDialog, pluginIcons] = await Promise.all([
+    read("../src/PluginGuidePage.tsx"),
+    read("../src/PluginAppearanceDialog.tsx"),
+    read("../src/lib/pluginIcons.tsx"),
+  ]);
+  assert.match(pluginsPage, /PluginAppearanceDialog/);
+  assert.match(pluginsPage, /PluginGuidePage/);
+  assert.match(guidePage, /plugin-guide-aurora/);
+  assert.match(appearanceDialog, /updatePluginMetadata/);
+  assert.match(pluginIcons, /PLUGIN_ICON_PRESETS/);
+});
+
+test("插件分享包导出与导入完整保留自定义名称、作者、图标与颜色", async (t) => {
+  const root = await mkSandbox(t, "dyw-share-visual-");
+  const senderDir = path.join(root, "sender");
+  const receiverDir = path.join(root, "receiver");
+  await fs.mkdir(senderDir, { recursive: true });
+  await fs.mkdir(receiverDir, { recursive: true });
+
+  const pluginDir = path.join(senderDir, "visual-plugin");
+  await createSampleClientPlugin(pluginDir, "visual-plugin");
+  const pkgJsonPath = path.join(pluginDir, "package.json");
+  const pkgJson = JSON.parse(await fs.readFile(pkgJsonPath, "utf8"));
+  pkgJson.author = "原著作者";
+  pkgJson.dyworker = { ...pkgJson.dyworker, displayName: "原名称" };
+  await fs.writeFile(pkgJsonPath, `${JSON.stringify(pkgJson, null, 2)}\n`, "utf8");
+
+  const host = await createHost({ userDataDir: senderDir, mountPlugins: true });
+  t.after(async () => disposeHost(host));
+  await executePluginManage(host, { action: "install", target: pluginDir }, { managedRoot: senderDir });
+
+  const shareFile = path.join(root, "visual-plugin.dyplugin");
+  const exported = await exportPluginSharePackage(host, {
+    target: pluginDir,
+    outputPath: shareFile,
+    dataDir: senderDir,
+    customization: {
+      displayName: "财务月报看板",
+      author: "财务信息化组",
+      icon: "bar-chart-3",
+      iconColor: "#7c3aed",
+    },
+  });
+  assert.equal(exported.ok, true, exported.error);
+  assert.equal(exported.displayName, "财务月报看板");
+
+  const unpacked = await unpackSharePackageToManagedDir({
+    filePath: shareFile,
+    dataDir: receiverDir,
+  });
+  assert.equal(unpacked.ok, true, unpacked.error);
+  const unpackedPkg = JSON.parse(await fs.readFile(path.join(unpacked.pluginDir, "package.json"), "utf8"));
+  assert.equal(unpackedPkg.author, "财务信息化组");
+  assert.equal(unpackedPkg.dyworker?.displayName, "财务月报看板");
+  assert.equal(unpackedPkg.dyworker?.icon, "bar-chart-3");
+  assert.equal(unpackedPkg.dyworker?.iconColor, "#7c3aed");
 });

@@ -1,0 +1,769 @@
+/* 插件功能引导页：极光流动、立体微悬浮、雷达波纹与交互演练动效（支持深浅色与减弱动效偏好） */
+
+.plugin-guide-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-bottom: 36px;
+}
+
+.plugin-guide-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 极光 Hero 舞台 */
+.plugin-guide-hero {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.95fr);
+  align-items: center;
+  gap: 24px;
+  padding: 28px;
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent, #2563eb) 22%, var(--border));
+  background:
+    radial-gradient(circle at 12% 18%, color-mix(in srgb, #6366f1 18%, transparent), transparent 52%),
+    radial-gradient(circle at 86% 24%, color-mix(in srgb, #06b6d4 16%, transparent), transparent 48%),
+    radial-gradient(circle at 60% 90%, color-mix(in srgb, #ec4899 12%, transparent), transparent 50%),
+    var(--surface);
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+@media (max-width: 820px) {
+  .plugin-guide-hero {
+    grid-template-columns: 1fr;
+    padding: 22px 18px;
+  }
+}
+
+.plugin-guide-aurora {
+  position: absolute;
+  inset: -40%;
+  pointer-events: none;
+  background: conic-gradient(
+    from 120deg at 50% 50%,
+    transparent 0deg,
+    color-mix(in srgb, #4f46e5 14%, transparent) 65deg,
+    color-mix(in srgb, #0891b2 14%, transparent) 140deg,
+    color-mix(in srgb, #db2777 11%, transparent) 220deg,
+    transparent 300deg
+  );
+  filter: blur(42px);
+  opacity: 0.72;
+  animation: guideAuroraSpin 18s linear infinite;
+}
+
+.plugin-guide-hero-copy,
+.plugin-guide-hero-stage {
+  position: relative;
+  z-index: 1;
+}
+
+.plugin-guide-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  background: color-mix(in srgb, var(--accent, #2563eb) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent, #2563eb) 28%, transparent);
+}
+
+.plugin-guide-hero-copy h1 {
+  margin: 12px 0 10px;
+  font-size: calc(26px * var(--font-ui-scale, 1));
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, var(--ink) 20%, var(--accent, #2563eb) 72%, #0891b2 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.plugin-guide-hero-copy p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+  line-height: 1.65;
+}
+
+.plugin-guide-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.plugin-guide-cta {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 11px;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #4f46e5, #2563eb 55%, #0891b2);
+  cursor: pointer;
+  box-shadow: 0 8px 22px color-mix(in srgb, #2563eb 34%, transparent);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.plugin-guide-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-110%) skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.34), transparent);
+  animation: guideSheen 4.4s ease-in-out infinite;
+}
+
+.plugin-guide-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px color-mix(in srgb, #2563eb 42%, transparent);
+}
+
+/* 右侧立体悬浮演示卡 */
+.plugin-guide-float-card {
+  position: relative;
+  padding: 16px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--card) 86%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: guideFloat 5.6s ease-in-out infinite;
+}
+
+.plugin-guide-float-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.plugin-guide-float-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.plugin-guide-float-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.plugin-guide-float-meta strong {
+  display: block;
+  font-size: calc(14px * var(--font-ui-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-guide-float-meta span {
+  display: block;
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: var(--muted);
+}
+
+.plugin-guide-ver-pill {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  font-weight: 600;
+  color: #059669;
+  background: color-mix(in srgb, #059669 14%, transparent);
+  border: 1px solid color-mix(in srgb, #059669 30%, transparent);
+}
+
+.plugin-guide-float-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-guide-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  overflow: hidden;
+}
+
+.plugin-guide-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4f46e5, #06b6d4);
+  animation: guidePulseBar 3.2s ease-in-out infinite;
+}
+
+.plugin-guide-float-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.plugin-guide-float-chips span {
+  padding: 3px 8px;
+  border-radius: 7px;
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* 4 步交互演练舞台 */
+.plugin-guide-stage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.plugin-guide-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.plugin-guide-section-title h2 {
+  margin: 0;
+  font-size: calc(17px * var(--font-ui-scale, 1));
+  font-weight: 650;
+}
+
+.plugin-guide-section-title span {
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: var(--muted);
+}
+
+.plugin-guide-steps-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 820px) {
+  .plugin-guide-steps-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.plugin-guide-step-tab {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: transform 0.16s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.plugin-guide-step-tab:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 42%, transparent);
+}
+
+.plugin-guide-step-tab.active {
+  background: color-mix(in srgb, var(--accent, #2563eb) 9%, var(--card));
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent, #2563eb) 14%, transparent);
+}
+
+.plugin-guide-step-num {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-ui-scale, 1));
+  color: var(--accent, #2563eb);
+  font-weight: 700;
+}
+
+.plugin-guide-step-tab strong {
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.plugin-guide-step-tab small {
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: var(--muted);
+}
+
+.plugin-guide-step-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg, #4f46e5, #06b6d4);
+  transform-origin: left center;
+  animation: guideStepProgress 6s linear forwards;
+}
+
+/* 舞台展示面板 */
+.plugin-guide-stage-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 20px;
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ink) 5%, transparent);
+  animation: guideFadeSlide 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (max-width: 820px) {
+  .plugin-guide-stage-panel {
+    grid-template-columns: 1fr;
+    padding: 18px;
+  }
+}
+
+.plugin-guide-stage-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.plugin-guide-stage-copy h3 {
+  margin: 0;
+  font-size: calc(18px * var(--font-ui-scale, 1));
+}
+
+.plugin-guide-stage-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.plugin-guide-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plugin-guide-checklist li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.5;
+}
+
+.plugin-guide-checklist li svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: #059669;
+}
+
+.plugin-guide-stage-visual {
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* 演示 1：创造模式流程动画 */
+.guide-flow-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guide-flow-node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  animation: guidePopIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.guide-flow-node:nth-child(2) { animation-delay: 0.12s; }
+.guide-flow-node:nth-child(3) { animation-delay: 0.24s; }
+
+.guide-flow-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, transparent);
+  color: var(--accent, #2563eb);
+  flex: 0 0 auto;
+}
+
+.guide-flow-node strong {
+  display: block;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+}
+
+.guide-flow-node small {
+  color: var(--muted);
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+}
+
+/* 演示 2：真实互动图标/颜色/重命名/作者沙盒 */
+.guide-sandbox-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guide-sandbox-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.guide-sandbox-inputs input {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+.guide-sandbox-pickers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.guide-sandbox-icons,
+.guide-sandbox-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.guide-mini-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.16s ease;
+}
+
+.guide-mini-icon-btn:hover {
+  transform: scale(1.1);
+}
+
+.guide-mini-icon-btn.active {
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #2563eb) 22%, transparent);
+}
+
+.guide-mini-color-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.16s ease;
+}
+
+.guide-mini-color-dot:hover {
+  transform: scale(1.18);
+}
+
+.guide-mini-color-dot.active {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--ink);
+}
+
+.guide-sandbox-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+
+.guide-sandbox-icon-pop {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  display: grid;
+  place-items: center;
+  animation: guideIconBounce 0.34s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 演示 3：版本号自动升级动画 */
+.guide-version-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guide-version-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+
+.guide-version-step.active {
+  border-color: color-mix(in srgb, #059669 50%, transparent);
+  background: color-mix(in srgb, #059669 7%, var(--card));
+}
+
+.guide-version-badge {
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.guide-version-step.active .guide-version-badge {
+  color: #059669;
+  border-color: color-mix(in srgb, #059669 40%, transparent);
+  animation: guideIconBounce 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 演示 4：雷达分享脉冲 */
+.guide-radar-box {
+  position: relative;
+  min-height: 170px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.guide-radar-pulse {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent, #2563eb) 14%, transparent);
+  color: var(--accent, #2563eb);
+}
+
+.guide-radar-pulse::before,
+.guide-radar-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #2563eb) 45%, transparent);
+  animation: guideRadarPing 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.guide-radar-pulse::after {
+  animation-delay: 1.2s;
+}
+
+.guide-radar-beam {
+  flex: 1;
+  height: 2px;
+  margin: 0 12px;
+  background: repeating-linear-gradient(90deg, var(--accent, #2563eb) 0 6px, transparent 6px 12px);
+  opacity: 0.65;
+  animation: guideBeamSlide 1.4s linear infinite;
+}
+
+.guide-radar-peer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.guide-radar-peer strong {
+  font-size: calc(13px * var(--font-ui-scale, 1));
+}
+
+.guide-radar-peer span {
+  font-size: calc(11.5px * var(--font-ui-scale, 1));
+  color: #059669;
+}
+
+/* 实战提示词卡墙 */
+.plugin-guide-prompts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .plugin-guide-prompts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.plugin-guide-prompt-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 78%, var(--card));
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.plugin-guide-prompt-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent, #2563eb) 36%, transparent);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.plugin-guide-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plugin-guide-prompt-head strong {
+  font-size: calc(13.5px * var(--font-ui-scale, 1));
+}
+
+.plugin-guide-prompt-card blockquote {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.plugin-guide-prompt-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes guideAuroraSpin {
+  from { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.08); }
+  to { transform: rotate(360deg) scale(1); }
+}
+
+@keyframes guideSheen {
+  0%, 60% { transform: translateX(-120%) skewX(-20deg); }
+  100% { transform: translateX(220%) skewX(-20deg); }
+}
+
+@keyframes guideFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes guidePulseBar {
+  0%, 100% { width: 64%; opacity: 0.85; }
+  50% { width: 92%; opacity: 1; }
+}
+
+@keyframes guideStepProgress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes guideFadeSlide {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes guidePopIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes guideIconBounce {
+  0% { transform: scale(0.8); }
+  60% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+@keyframes guideRadarPing {
+  0% { transform: scale(0.85); opacity: 0.75; }
+  100% { transform: scale(2.15); opacity: 0; }
+}
+
+@keyframes guideBeamSlide {
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-guide-aurora,
+  .plugin-guide-cta::after,
+  .plugin-guide-float-card,
+  .plugin-guide-bar-fill,
+  .plugin-guide-step-progress,
+  .plugin-guide-stage-panel,
+  .guide-flow-node,
+  .guide-sandbox-icon-pop,
+  .guide-version-step.active .guide-version-badge,
+  .guide-radar-pulse::before,
+  .guide-radar-pulse::after,
+  .guide-radar-beam {
+    animation: none !important;
+  }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, AlertTriangle, ExternalLink, Loader2, Share2 } from 'lucide-react';
-import { PluginIcon } from './PluginIcon';
+import { ArrowLeft, AlertTriangle, ExternalLink, Loader2, Pencil, Share2 } from 'lucide-react';
+import { PluginGlyph, pluginTileStyle, resolvePluginVisual } from './lib/pluginIcons';
+import { useSettingsStore } from './state/settingsStore';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { t } from './i18n';
@@ -32,11 +33,12 @@ type Props = {
   busy: boolean; error: string; notice: string; configuration?: ReactNode;
   onBack: () => void; onToggle: () => void; onUninstall: () => void; onInstall: () => void; onLoadClient: () => void;
   onShare?: () => void;
+  onEditAppearance?: (defaults: { displayName: string; author: string; icon: string; iconColor: string }) => void;
   clientResult?: string; refreshKey: number;
 };
 
 export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, configuration, onBack, onToggle,
-  onUninstall, onInstall, onLoadClient, onShare, clientResult, refreshKey }: Props) {
+  onUninstall, onInstall, onLoadClient, onShare, onEditAppearance, clientResult, refreshKey }: Props) {
   const [detail, setDetail] = useState<PluginDetailRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -69,8 +71,18 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
     finally { if (checkGeneration.current === generation) setChecking(false); }
   };
   const metadata = detail?.metadata;
-  const builtin=entry?.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
-  const title = builtin?.name||catalog?.displayName || entry?.id || '插件详情';
+  const builtin = entry?.builtin ? BUILTIN_PLUGIN_LABELS[entry.name] : undefined;
+  const defaultTitle = builtin?.name || catalog?.displayName || metadata?.displayName || bundle?.displayName || entry?.id || '插件详情';
+  const defaultAuthor = String(metadata?.author || bundle?.author || '').trim();
+  const defaultIcon = String(metadata?.icon || bundle?.icon || '').trim();
+  const defaultIconColor = String(metadata?.iconColor || bundle?.iconColor || '').trim();
+  const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
+  const visual = resolvePluginVisual(
+    [entry?.id, bundle?.packageName, entry?.name, catalog?.packageName],
+    pluginCustomizations,
+    { displayName: defaultTitle, author: defaultAuthor, icon: defaultIcon, iconColor: defaultIconColor },
+  );
+  const title = visual.displayName || defaultTitle;
   const version = metadata?.version || bundle?.version;
   const client = bundle?.client || entry?.client;
   const source = bundle?.source;
@@ -80,14 +92,26 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
   return <section className="plugins-page plugin-detail-page" aria-label={t("plugins.detailAria", "插件详情")}>
     <button className="plugins-text-button plugin-detail-back" onClick={onBack}><ArrowLeft size={15} /> {t("plugins.backToList", "返回列表")}</button>
     <header className="plugin-detail-header">
-      <div className="plugin-detail-icon"><PluginIcon size={27} /></div>
+      <button
+        type="button"
+        className={`plugin-detail-icon ${entry && onEditAppearance ? 'editable' : ''}`}
+        style={pluginTileStyle(visual.iconColor, bundle?.packageName || entry?.name || catalog?.packageName || title)}
+        title={entry && onEditAppearance ? '点击编辑图标、颜色、名称与作者' : undefined}
+        disabled={!entry || !onEditAppearance}
+        onClick={() => onEditAppearance?.({ displayName: defaultTitle, author: defaultAuthor, icon: defaultIcon, iconColor: defaultIconColor })}
+      >
+        <PluginGlyph iconId={visual.iconId} color={visual.iconColor} size={27} />
+        {entry && onEditAppearance && <span className="plugin-icon-edit-badge" aria-hidden="true"><Pencil size={10} /></span>}
+      </button>
       <div className="plugin-detail-heading"><h1 ref={heading} tabIndex={-1}>{title}</h1>
         <div className="plugin-detail-tags">{version && <span className="plugin-tag">v{version}</span>}
+          {visual.author && <span className="plugin-tag">作者：{visual.author}</span>}
           <span className="plugin-tag">{entry ? pluginStateLabel(entry) : t("plugins.notInstalled", "尚未安装")}</span>
           {entry?.builtin && <span className="plugin-tag">{t("plugins.builtin", "内置")}</span>}{catalog && <span className="plugin-tag">{catalog.category}</span>}</div>
       </div>
       <div className="plugin-detail-actions">{entry ? <>
         <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? t("plugins.enable", "启用") : t("plugins.disable", "停用")}</button>
+        {onEditAppearance && <button className="plugins-text-button" disabled={busy || checking} onClick={() => onEditAppearance({ displayName: defaultTitle, author: defaultAuthor, icon: defaultIcon, iconColor: defaultIconColor })}><Pencil size={13} /> 外观与信息</button>}
         {!entry.builtin && onShare && <button className="plugins-text-button" disabled={busy || checking} onClick={onShare}><Share2 size={14} /> {t("plugins.share", "分享")}</button>}
         {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>{t("plugins.uninstall", "卸载")}</button>}
       </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>{t("plugins.installAction", "安装")}</button>}</div>
@@ -126,7 +150,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
       {loading && <p role="status">正在读取已安装插件的资料…</p>}
       {detail?.metadataError && <p className="plugin-row-error">部分资料无法读取：{detail.metadataError}</p>}
       <dl className="plugin-detail-facts"><dt>包名</dt><dd>{metadata?.name || bundle?.packageName || entry?.name || catalog?.packageName || '未提供'}</dd>
-        <dt>作者</dt><dd>{metadata?.author || '未提供'}</dd><dt>许可证</dt><dd>{metadata?.license || '未提供'}</dd>
+        <dt>作者</dt><dd>{visual.author || '未提供'}</dd><dt>许可证</dt><dd>{metadata?.license || '未提供'}</dd>
         <dt>来源</dt><dd>{entry?.builtin ? '随应用提供' : source?.input || source?.source || catalog?.install || (entry ? '本地插件清单' : '未提供')}</dd>
         {catalog && <><dt>验证记录</dt><dd>{catalog.support.date} · v{catalog.support.version}</dd></>}</dl>
       <div className="plugin-detail-links">{links.map((link: any) => link.url ? <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer">{link.label}<ExternalLink size={12} /></a> : <span key={link.label}>{link.label}未提供可打开的安全地址</span>)}</div>

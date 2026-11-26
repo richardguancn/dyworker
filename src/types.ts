@@ -783,8 +783,17 @@ export interface ProviderSettings {
     enabled: boolean;
     nickname: string;
   };
+  // 用户自定义的插件外观与展示信息（图标、颜色、重命名、作者），键为插件 packageName 或 entryId
+  pluginCustomizations?: Record<string, PluginCustomization>;
   // 是否在已连接的 Browser Use 会话中启用完整 Chrome DevTools Protocol (CDP) 访问权限，默认关闭
   fullCdpAccess: boolean;
+}
+
+export interface PluginCustomization {
+  icon?: string;
+  iconColor?: string;
+  displayName?: string;
+  author?: string;
 }
 
 // ---- 使用统计与运营消息（方案《APP使用统计与消息推送实施方案-2026-09-24》）----
@@ -1416,6 +1425,7 @@ export interface DyworkerBridge {
   enablePlugin(id: string): Promise<{ ok: boolean; error?: string }>;
   disablePlugin(id: string): Promise<{ ok: boolean; error?: string }>;
   configurePlugin(payload: { id: string; config: unknown }): Promise<{ ok: boolean; error?: string }>;
+  updatePluginMetadata?(payload: { target: string; displayName?: string; author?: string; icon?: string; iconColor?: string }): Promise<{ ok: boolean; updatedSource?: boolean; updatedInstalled?: boolean; error?: string }>;
   uninstallPlugin(id: string): Promise<{ ok: boolean; error?: string }>;
   reloadPlugins(): Promise<{ ok: boolean; count?: number }>;
   /** 客户端半边（dsh.client）入口：只返回 URL，真正执行在渲染端的客户端运行时 */
@@ -1526,6 +1536,10 @@ export interface PluginBundleRecord {
   packageName: string;
   version: string;
   description: string;
+  displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
   source?: { kind: string; input: string; source: string } | null;
   /** 客户端半边声明（dsh.client）；没有界面半边的插件为 null */
   client?: { platform?: string; inject?: string[] } | null;
@@ -1561,7 +1575,7 @@ export interface PluginListResult {
 export interface PluginDetailRecord {
   entry: PluginEntryRecord;
   bundle: PluginBundleRecord | null;
-  metadata: { name: string; version: string; description: string; author: string; license: string; homepage: string; repository: string;
+  metadata: { name: string; version: string; description: string; displayName?: string; author: string; icon?: string; iconColor?: string; license: string; homepage: string; repository: string;
     engines: Array<{ name: string; version: string }>; dependencies: Array<{ name: string; version: string }>;
     peerDependencies: Array<{ name: string; version: string }> } | null;
   readme: string;

@@ -87,18 +87,27 @@ export function pluginAuthoringToolDefinitions() {
       function: {
         name: "plugin_manage",
         description:
-          "对本地插件执行受控管理动作（安装、重载、启用、停用、卸载、导出分享包）并同步刷新客户端 UI。所有变更均需审批权限。",
+          "对本地插件执行受控管理动作（安装、更新并升级版本、重载、启用、停用、卸载、导出分享包）并同步刷新客户端 UI。所有变更均需审批权限。",
         parameters: {
           type: "object",
           properties: {
             action: {
               type: "string",
-              enum: ["install", "reload", "enable", "disable", "uninstall", "export"],
-              description: "管理动作：install / reload / enable / disable / uninstall / export",
+              enum: ["install", "update", "reload", "enable", "disable", "uninstall", "export"],
+              description: "管理动作：install / update / reload / enable / disable / uninstall / export",
             },
             target: {
               type: "string",
               description: "install 时传本地插件目录路径；其他动作传插件 id、包名或本地目录路径",
+            },
+            versionBump: {
+              type: "string",
+              enum: ["patch", "minor", "major"],
+              description: "可选：action=update 时升级的版本号级别（patch 修订号+1 / minor 次版本号+1 / major 主版本号+1），默认 patch",
+            },
+            nextVersion: {
+              type: "string",
+              description: "可选：action=update 时显式指定新版本号（如 0.2.0），优先于 versionBump",
             },
             openSlot: {
               type: ["boolean", "string"],
@@ -359,8 +368,8 @@ export async function canAutoInstallCreatedPlugin(
     return { ok: false, reason: "当前处于只读模式（不允许修改）" };
   }
   const action = String(args?.action || "").trim();
-  if (action !== "install" && action !== "reload") {
-    return { ok: false, reason: "仅 install 或 reload 动作支持自动安装" };
+  if (action !== "install" && action !== "reload" && action !== "update") {
+    return { ok: false, reason: "仅 install、update 或 reload 动作支持自动安装" };
   }
   const managedRootRaw = String(options.managedRoot || "").trim();
   if (!managedRootRaw) {
@@ -376,7 +385,7 @@ export async function canAutoInstallCreatedPlugin(
     return { ok: false, reason: "缺少目标插件目录" };
   }
   const resolvedDir = (await resolveTargetDirectory(target, { managedRoot: managedRootRaw }))
-    || (action === "reload" ? await pathExistsDir(path.join(managedRootRaw, target)) : null);
+    || ((action === "reload" || action === "update") ? await pathExistsDir(path.join(managedRootRaw, target)) : null);
   if (!resolvedDir) {
     return { ok: false, reason: "目标不在受管创造目录内或目录不存在" };
   }
@@ -485,6 +494,150 @@ function findPluginBundle(ctx: any, target: string) {
   const key = String(target || "").trim();
   const bundles = typeof ctx?.plugins?.bundles_ === "function" ? ctx.plugins.bundles_() : [];
   return bundles.find((b: any) => b && (b.name === key || b.packageName === key)) || null;
+}
+
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+export function isValidSemverVersion(value: string): boolean {
+  return SEMVER_RE.test(String(value || "").trim());
+}
+
+/** 对 x.y.z 版本号递增指定位；非标准格式时回退到 0.1.1 */
+export function bumpSemverVersion(current: string, bump: "patch" | "minor" | "major" = "patch"): string {
+  const match = SEMVER_RE.exec(String(current || "").trim());
+  if (!match) return bump === "major" ? "1.0.0" : bump === "minor" ? "0.2.0" : "0.1.1";
+  let major = Number(match[1]);
+  let minor = Number(match[2]);
+  let patch = Number(match[3]);
+  if (bump === "major") {
+    major += 1;
+    minor = 0;
+    patch = 0;
+  } else if (bump === "minor") {
+    minor += 1;
+    patch = 0;
+  } else {
+    patch += 1;
+  }
+  return `${major}.${minor}.${patch}`;
+}
+
+async function resolveExistingLocalPluginDir(
+  ctx: any,
+  target: string,
+  options: { workspacePath?: string; managedRoot?: string; dataDir?: string } = {},
+): Promise<{
+  resolvedDir: string | null;
+  matchedEntry: any;
+  bundle: any;
+  pkgNameHint: string;
+  rawLocalSource: string;
+}> {
+  const matchedEntry = findPluginEntry(ctx, target);
+  const pkgNameHint = String(matchedEntry?.name || target);
+  const bundle = findPluginBundle(ctx, pkgNameHint) || findPluginBundle(ctx, target);
+  const rawLocalSource = bundle?.source?.kind === "local"
+    ? String(bundle.source.path || bundle.source.input || bundle.source.spec || bundle.source.raw || "")
+    : "";
+  const managedRoot = options.managedRoot || (options.dataDir ? managedCreatedPluginsRoot(options.dataDir) : "");
+  let resolvedDir = await resolveTargetDirectory(target, {
+    workspacePath: options.workspacePath,
+    managedRoot,
+  })
+    || (rawLocalSource ? await pathExistsDir(rawLocalSource) : null)
+    || (managedRoot ? await pathExistsDir(path.join(managedRoot, pkgNameHint)) : null);
+
+  if (!resolvedDir && managedRoot) {
+    const dirents = await fs.readdir(managedRoot, { withFileTypes: true }).catch(() => []);
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory() || dirent.name.startsWith(".")) continue;
+      const candidate = path.join(managedRoot, dirent.name);
+      try {
+        const manifest = JSON.parse(await fs.readFile(path.join(candidate, "package.json"), "utf8"));
+        if (manifest?.name && (manifest.name === pkgNameHint || manifest.name === target)) {
+          resolvedDir = candidate;
+          break;
+        }
+      } catch {}
+    }
+  }
+  return { resolvedDir, matchedEntry, bundle, pkgNameHint, rawLocalSource };
+}
+
+/** 同步更新本地插件源码目录及已安装运行时 package.json 中的展示名称、作者、图标与颜色 */
+export async function updateLocalPluginMetadata(
+  ctx: any,
+  payload: { target?: string; displayName?: string; author?: string; icon?: string; iconColor?: string },
+  options: { dataDir?: string } = {},
+): Promise<{ ok: boolean; updatedSource?: boolean; updatedInstalled?: boolean; error?: string }> {
+  const target = String(payload?.target || "").trim();
+  if (!target) return { ok: false, error: "缺少插件标识" };
+
+  const { resolvedDir, matchedEntry, bundle, pkgNameHint } = await resolveExistingLocalPluginDir(ctx, target, {
+    dataDir: options.dataDir,
+  });
+  if (matchedEntry?.builtin) {
+    return { ok: true, updatedSource: false, updatedInstalled: false };
+  }
+
+  let installedDir = "";
+  try {
+    const pkgKey = String(bundle?.packageName || matchedEntry?.name || pkgNameHint);
+    const dir = ctx?.plugins?.packageDirOf?.(pkgKey);
+    if (dir) installedDir = (await pathExistsDir(dir)) || "";
+  } catch {}
+
+  const applyManifestPatch = async (dirPath: string): Promise<boolean> => {
+    const pkgPath = path.join(dirPath, "package.json");
+    let manifest: any;
+    try {
+      manifest = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+    } catch {
+      return false;
+    }
+    if (!manifest || typeof manifest !== "object") return false;
+    const dy = manifest.dyworker && typeof manifest.dyworker === "object" ? { ...manifest.dyworker } : {};
+    if (payload.displayName !== undefined) {
+      const nameVal = String(payload.displayName || "").trim().slice(0, 60);
+      if (nameVal) dy.displayName = nameVal;
+      else delete dy.displayName;
+    }
+    if (payload.icon !== undefined) {
+      const iconVal = String(payload.icon || "").trim();
+      if (/^[a-z0-9-]{1,40}$/.test(iconVal)) dy.icon = iconVal;
+      else delete dy.icon;
+    }
+    if (payload.iconColor !== undefined) {
+      const colorVal = String(payload.iconColor || "").trim().toLowerCase();
+      if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/.test(colorVal)) dy.iconColor = colorVal;
+      else delete dy.iconColor;
+    }
+    if (Object.keys(dy).length > 0) manifest.dyworker = dy;
+    else delete manifest.dyworker;
+
+    if (payload.author !== undefined) {
+      const authorVal = String(payload.author || "").trim().slice(0, 60);
+      if (authorVal) manifest.author = authorVal;
+      else delete manifest.author;
+    }
+    await fs.writeFile(pkgPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    return true;
+  };
+
+  const updatedSource = resolvedDir ? await applyManifestPatch(resolvedDir) : false;
+  const updatedInstalled = installedDir && installedDir !== resolvedDir
+    ? await applyManifestPatch(installedDir)
+    : false;
+
+  if (bundle) {
+    if (payload.displayName !== undefined) bundle.displayName = String(payload.displayName || "").trim().slice(0, 60) || undefined;
+    if (payload.author !== undefined) bundle.author = String(payload.author || "").trim().slice(0, 60) || undefined;
+    if (payload.icon !== undefined) bundle.icon = /^[a-z0-9-]{1,40}$/.test(String(payload.icon || "").trim()) ? String(payload.icon).trim() : undefined;
+    if (payload.iconColor !== undefined) bundle.iconColor = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(payload.iconColor || "").trim()) ? String(payload.iconColor).trim().toLowerCase() : undefined;
+    await ctx?.plugins?.persistBundles?.().catch(() => {});
+  }
+
+  return { ok: true, updatedSource, updatedInstalled };
 }
 
 export interface PluginSyncRequest {
@@ -654,28 +807,68 @@ export async function executePluginManage(
     };
   }
 
-  if (action === "reload") {
-    const matchedEntry = findPluginEntry(ctx, target);
-    const pkgNameHint = String(matchedEntry?.name || target);
-    const bundle = findPluginBundle(ctx, pkgNameHint) || findPluginBundle(ctx, target);
-    const rawLocalSource = bundle?.source?.kind === "local"
-      ? String(bundle.source.path || bundle.source.input || bundle.source.spec || bundle.source.raw || "")
-      : "";
-    const resolvedDir = await resolveTargetDirectory(target, {
-      workspacePath: options.workspacePath,
-      managedRoot: options.managedRoot,
-    }) || (rawLocalSource ? await pathExistsDir(rawLocalSource) : null)
-      || (options.managedRoot ? await pathExistsDir(path.join(options.managedRoot, pkgNameHint)) : null);
+  if (action === "update" || action === "reload") {
+    const dataDir = String(
+      options.dataDir
+      || (options.managedRoot ? path.dirname(path.resolve(options.managedRoot)) : "")
+      || (plugins?.dir ? path.dirname(plugins.dir) : ""),
+    ).trim();
+    const { resolvedDir, matchedEntry, bundle, pkgNameHint, rawLocalSource } = await resolveExistingLocalPluginDir(
+      ctx,
+      target,
+      { workspacePath: options.workspacePath, managedRoot: options.managedRoot, dataDir },
+    );
+
+    if (action === "update" && !resolvedDir) {
+      return { ok: false, error: `找不到插件「${target}」的本地源码目录，仅支持更新本地或自制插件` };
+    }
 
     let pluginId = String(matchedEntry?.id || target);
     let pkgName = String(matchedEntry?.name || bundle?.packageName || bundle?.name || target);
+    let previousVersion = String(bundle?.version || "");
+    if (!previousVersion && matchedEntry?.name) {
+      try {
+        const installedDir = plugins.packageDirOf?.(matchedEntry.name);
+        if (installedDir) {
+          const installedPkg = JSON.parse(await fs.readFile(path.join(installedDir, "package.json"), "utf8"));
+          previousVersion = String(installedPkg?.version || "");
+        }
+      } catch {}
+    }
+    let nextVersion = previousVersion;
+    let versionBumped = false;
 
     if (resolvedDir) {
       const validation = await validateLocalPluginDirectory(resolvedDir);
       if (!validation.ok || !validation.manifest) {
-        return { ok: false, error: validation.error || "重载前本地插件校验失败" };
+        return { ok: false, error: validation.error || "本地插件校验失败" };
       }
       pkgName = String(validation.manifest.name);
+      const sourceVersion = String(validation.manifest.version || "").trim();
+      nextVersion = sourceVersion;
+
+      if (action === "update") {
+        const requestedVersion = String(args?.nextVersion || "").trim();
+        const requestedBump = args?.versionBump as "patch" | "minor" | "major" | undefined;
+        if (requestedVersion) {
+          if (!isValidSemverVersion(requestedVersion)) {
+            return { ok: false, error: `无效的语义化版本号：${requestedVersion}（示例：0.1.1 或 0.2.0）` };
+          }
+          nextVersion = requestedVersion;
+        } else if (requestedBump || !sourceVersion || (previousVersion && sourceVersion === previousVersion)) {
+          const bumpLevel = requestedBump === "major" || requestedBump === "minor" ? requestedBump : "patch";
+          nextVersion = bumpSemverVersion(sourceVersion || previousVersion || "0.1.0", bumpLevel);
+        }
+
+        if (nextVersion !== sourceVersion) {
+          const pkgPath = path.join(resolvedDir, "package.json");
+          const pkgJson = JSON.parse(await fs.readFile(pkgPath, "utf8"));
+          pkgJson.version = nextVersion;
+          await fs.writeFile(pkgPath, `${JSON.stringify(pkgJson, null, 2)}\n`, "utf8");
+          versionBumped = true;
+        }
+      }
+
       const run = validation.hasThirdPartyDeps
         ? undefined
         : buildLocalCopyInstallRunner(resolvedDir, pkgName);
@@ -685,7 +878,7 @@ export async function executePluginManage(
         ...(run ? { run } : {}),
       });
       if (!refreshed?.ok) {
-        return { ok: false, error: refreshed?.error || "重载本地插件失败", detail: refreshed };
+        return { ok: false, error: refreshed?.error || "更新本地插件失败", detail: refreshed };
       }
       pluginId = String(findPluginEntry(ctx, refreshed.id || pkgName)?.id || refreshed.id || pkgName);
     } else {
@@ -696,6 +889,7 @@ export async function executePluginManage(
     }
 
     const latestEntry = findPluginEntry(ctx, pluginId) || findPluginEntry(ctx, pkgName);
+    const latestBundle = findPluginBundle(ctx, pkgName);
     const clientSync = await options.syncClientPlugin?.({
       action: "reload",
       pluginId: String(latestEntry?.id || pluginId),
@@ -705,9 +899,14 @@ export async function executePluginManage(
     options.notifyPluginsUpdated?.();
     return {
       ok: true,
-      action: "reload",
+      action,
       pluginId: String(latestEntry?.id || pluginId),
       pkgName: String(latestEntry?.name || pkgName),
+      ...(action === "update" ? {
+        previousVersion: previousVersion || undefined,
+        version: String(latestBundle?.version || nextVersion || ""),
+        versionBumped,
+      } : {}),
       sourceDir: resolvedDir || rawLocalSource || undefined,
       active: Boolean(latestEntry?.active),
       error: latestEntry?.error || undefined,

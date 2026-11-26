@@ -4,10 +4,12 @@
 import { Bell, Bot, ChevronDown, ChevronRight, Folder, FolderOpen, LayoutGrid, LoaderCircle, Moon, MoreHorizontal, Package, Pin, Search, SquarePen, Upload, X } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
+import { PluginGlyph, resolvePluginVisual } from "../lib/pluginIcons";
 import { PluginSlotView } from "../PluginSlotView";
 import { nextWorkspaceVisibleCount, resolveWorkspaceVisibleCount } from "../lib/pagination";
 import { WORKSPACE_SESSION_LIMIT, displayWorkspace } from "../lib/text";
 import { useLanShareStore } from "../state/lanShareStore";
+import { useSettingsStore } from "../state/settingsStore";
 import { t } from "../i18n";
 import type { InboxItem, PendingWakeRecord, SessionRecord } from "../types";
 
@@ -45,9 +47,9 @@ export interface SidebarProps {
   setBotTeamPageOpen: Dispatch<SetStateAction<boolean>>;
   setPluginsPageOpen: Dispatch<SetStateAction<boolean>>;
   botTeamAvailable: boolean;
-  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string }>;
-  activeWorkspacePage: { pluginId: string; key: string; label: string } | null;
-  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string } | null>>;
+  pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string }>;
+  activeWorkspacePage: { pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null;
+  setActiveWorkspacePage: Dispatch<SetStateAction<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null>>;
   setRightPanelOpen: Dispatch<SetStateAction<boolean>>;
   setConversationView: Dispatch<SetStateAction<string>>;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
@@ -101,6 +103,8 @@ export function Sidebar(props: SidebarProps) {
     summarizeSessionToSkill, toggleWorkspacePin,
     openWorkspaceInFileManager, sessionPendingInboxCount,
   } = props;
+
+  const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
 
   const resetWorkspaceVisibleCount = (targetPath: string) => {
     setWorkspaceSessionVisibleCounts((current) => {
@@ -403,11 +407,18 @@ export function Sidebar(props: SidebarProps) {
           {pluginWorkspacePages.length > 0 && <section className="sidebar-section bot-team-section" aria-label="扩展页面">
             {pluginWorkspacePages.map((page) => {
               const active = Boolean(activeWorkspacePage && activeWorkspacePage.pluginId === page.pluginId && activeWorkspacePage.key === page.key && !botTeamPageOpen);
+              const singlePageOfPlugin = pluginWorkspacePages.filter((item) => item.pluginId === page.pluginId).length === 1;
+              const visual = resolvePluginVisual([page.pluginId, `${page.pluginId}:${page.key}`], pluginCustomizations, {
+                displayName: page.label,
+                icon: page.icon,
+                iconColor: page.iconColor,
+              });
+              const displayLabel = singlePageOfPlugin && visual.displayName ? visual.displayName : page.label;
               return (
                 <button
                   key={`${page.pluginId}:${page.key}`}
                   className={`recent-section-toggle bot-team-entry ${active ? "active" : ""}`}
-                  aria-label={page.label}
+                  aria-label={displayLabel}
                   aria-current={active ? "page" : undefined}
                   onClick={() => {
                     setActiveWorkspacePage(page);
@@ -420,7 +431,9 @@ export function Sidebar(props: SidebarProps) {
                     setTerminalOpen(false);
                   }}
                 >
-                  <LayoutGrid size={16} /><span>{page.label}</span><ChevronRight size={13} />
+                  <PluginGlyph iconId={visual.iconId} color={visual.iconColor} size={16} fallback="workspace-page" />
+                  <span>{displayLabel}</span>
+                  <ChevronRight size={13} />
                 </button>
               );
             })}

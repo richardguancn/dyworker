@@ -50,21 +50,23 @@ export const authoringSkills = [
     description: '根据需求创建、制作或改进 DYWorker 插件，生成可安装的本地插件目录，并检查入口、工具或界面功能。',
     instructions: `# 插件制作
 
-先理解用户想解决的办公需求，再构建本地 DYWorker 插件。若仅是文字规范用技能，用户选插件或处于创造模式时直接制作插件。
+先理解用户想解决的办公需求，再构建本地 DYWorker 插件。若仅是文字规范用技能，用户选插件或处于创造模式时必须直接制作并热挂载原生本地插件，严禁以在工作区写单个 \`.html\` 文件并用 \`open_file\` 预览替代（除非用户明确要求“只要导出 HTML 文件，不要做插件”）。
 
 ## 1. 大白话需求理解与样本优先
 - **面向用户零术语**：对话中不得要求用户懂插槽名、代码或 API；结尾只用白话说明入口在哪、怎么导入/使用。
 - **样本驱动**：用户附上 Excel/CSV/文本样本或参考截图时，先读取字段与布局，直接按真实表头建模和生成解析逻辑。
-- **低门槛澄清**：需求模糊时，编码前调 \`ask_user\` 问**至多 1 轮（2–3 个）日常选择题**（数据从哪来、放左侧整页还是右侧随手栏、手动导入还是每周自动更新），已明确的不再问。
+- **低门槛澄清**：需求模糊时，编码前调 \`ask_user\` 问**至多 1 轮（2–3 个）日常选择题**（数据从哪来、放左侧整页还是右侧随手栏、手动导入还是每周自动更新），已明确的不再问；不要把交付形态引导成独立 HTML 网页。
 - **意图映射**：
-  - 独立看板/大屏/台账 → \`workspace.page\`；
+  - 独立页面/独立看板/大屏/台账 → \`workspace.page\`；
   - 边聊边用清单/小工具 → \`sidebar.right.pane.tab\`；
   - 围绕当前对话跟踪视图 → \`conversation.view\`；
   - 留存历史/每周更新 → \`ctx.storage\` 持久化 + 页面导入按钮 + 注册 \`ctx.tools\` 工具（供定时任务/目录监控写入）；
+  - 接入飞书文档/表格或外部链接 → 同样封装为原生插件页面（如 \`workspace.page\`），支持在页面中配置/切换文档链接、内嵌视图，或通过 \`ctx.storage\` + \`ctx.connection\` + \`ctx.tools\`（配合助手/定时任务拉取同步）在页面展示，不得退化为工作区单个 \`.html\` 文件；
   - 趋势/占比/统计图 → 前端 \`const echarts = require("echarts")\`（禁在 \`package.json\` 声明 \`echarts\` 依赖）。
 
 ## 2. 交付与目录
 默认创建在 \`<userData>/created-plugins/<包名>/\`（仅用户指定时放工作区目录），不改内置插件。包名小写英文/数字/短横线；不声明 \`dyworker.builtin\` / \`dsh.builtin\`；仅本地运行，不发布外网。
+- 新建插件时，在 \`package.json\` 中配好中文展示名 \`dyworker.displayName\`、作者 \`author\`，以及贴合场景的内置图标 \`dyworker.icon\`（如 \`layout-grid\` / \`bar-chart-3\` / \`file-spreadsheet\` / \`clipboard-check\` / \`folder-kanban\` / \`globe\` / \`wrench\` / \`sparkles\`）和颜色 \`dyworker.iconColor\`（如 \`#2563eb\` / \`#059669\` / \`#d97706\` / \`#7c3aed\`）。
 
 ## 3. 当前 DYWorker 的插件要求
 插件为 Cordis ESM 模块，\`package.json\` 配 \`name/version/description/type:"module"/main:"index.js"\`；\`index.js\` 导出 \`name\`、\`inject\`（\`storage\`/\`connection\`/\`tools\`）、\`apply(ctx)\`。
@@ -107,10 +109,10 @@ window.__ModuleLoader__.load({
 });
 \`\`\`
 
-## 4. 验证与热挂载安装
+## 4. 验证、热挂载安装与更新升级版本
 1. 先调 \`plugin_inspect\`（\`action: "check"\`, \`target: "<目录>"\`）检查清单、安全与语法；
-2. 通过后调 \`plugin_manage\`（\`action: "install"\`, \`target: "<目录>"\`, \`openSlot: true\` 或指定插槽）；在创造模式下受管目录的纯本地插件将自动安装并热挂载打开。若是工具插件，安装后须实际调用所注册工具核验返回结果；若是界面插件，确认插槽已挂载生效；
-3. 二次修改后调 \`plugin_manage\`（\`action: "reload"\`）刷新；未实调或未通过须如实说明；
+2. 新建插件通过后调 \`plugin_manage\`（\`action: "install"\`, \`target: "<目录>"\`, \`openSlot: true\` 或指定插槽）；在创造模式下受管目录的纯本地插件将自动安装并热挂载打开。若是工具插件，安装后须实际调用所注册工具核验返回结果；若是界面插件，确认插槽已挂载生效；
+3. **更新/修改已有插件**：先调 \`plugin_inspect\`（\`action: "list"\` / \`detail\`）定位已有插件源码目录，修改时保留用户已调整的 \`dyworker.displayName\`、\`author\`、\`dyworker.icon\`、\`dyworker.iconColor\`；经 \`plugin_inspect(action="check")\` 通过后，调用 \`plugin_manage\`（\`action: "update"\`, \`target: "<目录或包名>"\`, \`versionBump: "patch"\` 或 \`"minor"\`, \`openSlot: true\`）**同步升级版本号**并热刷新生效，回复中写明新旧版本号；
 4. 用户明确要求“打包分享这个插件”时，可调 \`plugin_manage\`（\`action: "export"\`, \`target: "<包名或目录>"\`，默认 \`includeData: false\`；仅用户要求连带当前模板/数据一起分享时传 \`includeData: true\`）导出单文件 \`.dyplugin\` 分享包并告知完整文件位置。`,
   },
 ];

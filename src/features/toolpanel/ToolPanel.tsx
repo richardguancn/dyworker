@@ -8,6 +8,7 @@ import { createElement, lazy, Suspense, useEffect, useRef, useState } from "reac
 import type { Dispatch, PointerEvent as ReactPointerEvent, ReactNode, RefObject, SetStateAction } from "react";
 import { t } from "../../i18n";
 import { PanelRightIcon } from "../../app/icons";
+import { PluginGlyph, resolvePluginVisual } from "../../lib/pluginIcons";
 import { PluginSlotView } from "../../PluginSlotView";
 import { BrowserControlOverlay } from "../../BrowserControlOverlay";
 import { FilePreviewPanel } from "../../FilePreviewPanel";
@@ -278,7 +279,11 @@ export function ToolPanel(props: ToolPanelProps) {
             data-overflow-start={toolPanelTabOverflow.start ? "true" : "false"}
             data-overflow-end={toolPanelTabOverflow.end ? "true" : "false"}
           >
-          {!pristineMenuPage && toolPanelTabs.map((tab) => (
+          {!pristineMenuPage && toolPanelTabs.map((tab) => {
+            const pluginVisual = tab.kind === "plugin"
+              ? resolvePluginVisual([tab.pluginId || "", tab.pluginKey || ""], settings.pluginCustomizations, { displayName: tab.title })
+              : null;
+            return (
             <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} data-tool-panel-tab-id={tab.id} role="presentation">
               <button
                 className="tool-panel-tab-main"
@@ -286,7 +291,7 @@ export function ToolPanel(props: ToolPanelProps) {
                 aria-selected={tab.id === activeToolPanelTabId}
                 onClick={() => focusToolPanelTab(tab.id)}
                 onFocus={(event) => event.currentTarget.closest<HTMLElement>(".tool-panel-tab")?.scrollIntoView({ block: "nearest", inline: "nearest" })}
-                title={tab.title}
+                title={pluginVisual?.displayName || tab.title}
               >
                 {tab.kind === "browser"
                   ? tab.loading
@@ -294,14 +299,23 @@ export function ToolPanel(props: ToolPanelProps) {
                     : tab.favicon
                       ? <img className="browser-tab-favicon" src={tab.favicon} alt="" aria-hidden="true" />
                       : <Globe size={16} />
-                  : tab.kind === "preview" ? <FileText size={16} /> : tab.kind === "review" ? <SquarePlus size={16} /> : tab.kind === "chat" ? <MessageSquarePlus size={16} /> : <FolderOpen size={16} />}
-                <span>{tab.title}</span>
+                  : tab.kind === "preview"
+                    ? <FileText size={16} />
+                    : tab.kind === "review"
+                      ? <SquarePlus size={16} />
+                      : tab.kind === "chat"
+                        ? <MessageSquarePlus size={16} />
+                        : tab.kind === "plugin" && pluginVisual
+                          ? <PluginGlyph iconId={pluginVisual.iconId} color={pluginVisual.iconColor} size={16} />
+                          : <FolderOpen size={16} />}
+                <span>{pluginVisual?.displayName || tab.title}</span>
               </button>
-              <button className="tool-panel-tab-close" aria-label={`${t("common.close", "关闭")} ${tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
+              <button className="tool-panel-tab-close" aria-label={`${t("common.close", "关闭")} ${pluginVisual?.displayName || tab.title}`} onClick={(event) => { event.stopPropagation(); closeToolPanelTab(tab.id); }}>
                 <X size={14} />
               </button>
             </div>
-          ))}
+            );
+          })}
           </div>
           {!pristineMenuPage && toolPanelTabOverflow.start && (
             <button

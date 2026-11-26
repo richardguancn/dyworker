@@ -79,6 +79,8 @@ export function usePluginSessionRuntime({ activeSession }: { activeSession: Sess
           label: typeof item.meta.label === "function"
             ? String((item.meta.label as () => unknown)())
             : String(item.meta.label ?? item.meta.id ?? item.pluginId ?? "插件页面"),
+          ...(typeof item.meta.icon === "string" && item.meta.icon.trim() ? { icon: item.meta.icon.trim() } : {}),
+          ...(typeof item.meta.iconColor === "string" && item.meta.iconColor.trim() ? { iconColor: item.meta.iconColor.trim() } : {}),
         }))
         .filter(item => item.pluginId && item.key);
       setPluginWorkspacePages(customPages);

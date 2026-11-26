@@ -87,6 +87,7 @@ export function subAgentTopic(title, task) {
 
 const PLUGIN_MANAGE_ACTION_LABELS: Record<string, string> = {
   install: "安装到本地",
+  update: "更新并升级版本",
   reload: "重新加载",
   enable: "启用",
   disable: "停用",
@@ -146,7 +147,7 @@ export function toolSummary(name, args) {
     case "update_skill": return `改进工作模板：${args.skill_id || ""}`;
     case "plugin_inspect": return `检查插件（${args.action || "list"}）：${args.target || ""}`;
     case "plugin_manage": {
-      const actionLabel = ({ install: "安装插件", reload: "重载插件", enable: "启用插件", disable: "停用插件", uninstall: "卸载插件", export: "导出插件分享包" } as Record<string, string>)[args.action] || "管理插件";
+      const actionLabel = ({ install: "安装插件", update: "更新插件", reload: "重载插件", enable: "启用插件", disable: "停用插件", uninstall: "卸载插件", export: "导出插件分享包" } as Record<string, string>)[args.action] || "管理插件";
       const nameHint = friendlyPluginTarget(args.target);
       return nameHint ? `${actionLabel}：${nameHint}` : actionLabel;
     }

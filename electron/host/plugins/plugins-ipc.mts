@@ -9,7 +9,7 @@ import { createHistoryRelay } from '../dsh-runtime/history-relay.mts';
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path, { dirname } from "node:path";
-import { cancelCardPluginCreation, listCreatedLocalPlugins, managedCreatedPluginsRoot, startCardPluginCreation, tryBuildOfflineLocalInstallRunner } from "../../plugin-authoring.mts";
+import { cancelCardPluginCreation, listCreatedLocalPlugins, managedCreatedPluginsRoot, startCardPluginCreation, tryBuildOfflineLocalInstallRunner, updateLocalPluginMetadata } from "../../plugin-authoring.mts";
 import {
   MAX_SHARE_ARCHIVE_BYTES,
   SHARE_PACKAGE_EXTENSION,
@@ -85,6 +85,12 @@ export function pluginsIpcPlugin(deps: any = {}) {
       ctx.effect(() => ctx.ipc.handle("plugins:disable", (_event, id) => host.setEnabled(id, false)));
       ctx.effect(() => ctx.ipc.handle("plugins:configure", (_event, payload) =>
         host.configure(payload?.id, payload?.config ?? null)));
+      ctx.effect(() => ctx.ipc.handle("plugins:update-metadata", async (_event, payload) => {
+        const dataDir = deps.dataDir || ctx.paths?.dataDir || dirname(ctx.plugins?.dir || ".");
+        const res = await updateLocalPluginMetadata(ctx, payload || {}, { dataDir });
+        if (res?.ok) deps.notifyPluginsUpdated?.();
+        return res;
+      }));
       ctx.effect(() => ctx.ipc.handle("plugins:uninstall", (_event, id) => host.uninstall({ spec: id })));
       // 重新读清单（手工编辑过 dyworker.yml 后用）
       ctx.effect(() => ctx.ipc.handle("plugins:reload", () => host.reload().then((result) => ({ ok: true, ...result }))));
@@ -241,6 +247,10 @@ export function pluginsIpcPlugin(deps: any = {}) {
             return { ok: true, canceled: true };
           }
 
+          const settings = await (deps.getSettings?.() ?? ctx.get("settings")?.read?.()).catch(() => null);
+          const customMap = settings?.pluginCustomizations || {};
+          const custom = customMap[inspection.packageName] || customMap[inspection.entryId] || customMap[target];
+
           return await exportPluginSharePackage(ctx, {
             target,
             outputPath: saved.filePath,
@@ -248,6 +258,7 @@ export function pluginsIpcPlugin(deps: any = {}) {
             dataDir,
             storageRoot,
             appVersion: String(deps.appVersion || ""),
+            ...(custom ? { customization: custom } : {}),
           });
         } catch (error: any) {
           return { ok: false, error: String(error?.message || error) };

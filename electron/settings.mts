@@ -108,6 +108,30 @@ export function normalizeLanShareSettings(value) {
   };
 }
 
+export function normalizePluginCustomizations(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const result = {};
+  for (const [rawKey, rawItem] of Object.entries(source)) {
+    const key = String(rawKey || "").trim().slice(0, 120);
+    if (!key || !rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) continue;
+    const item: any = rawItem;
+    const rawIcon = String(item.icon || "").trim();
+    const icon = /^[a-z0-9-]{1,40}$/.test(rawIcon) ? rawIcon : "";
+    const rawColor = String(item.iconColor || "").trim();
+    const iconColor = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(rawColor) ? rawColor.toLowerCase() : "";
+    const displayName = String(item.displayName || "").trim().slice(0, 60);
+    const author = String(item.author || "").trim().slice(0, 60);
+    if (!icon && !iconColor && !displayName && !author) continue;
+    result[key] = {
+      ...(icon ? { icon } : {}),
+      ...(iconColor ? { iconColor } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(author ? { author } : {}),
+    };
+  }
+  return result;
+}
+
 // 语音转写引擎：cloud 走 OpenAI 兼容 /audio/transcriptions，local 走内置 Qwen3-ASR + llama-server。
 export function normalizeTranscriptionEngine(value) {
   return String(value || "") === "local" ? "local" : "cloud";
@@ -418,6 +442,7 @@ export function deserializeSettings(stored, secretStorage) {
     enableWebSearchBuiltin: source.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(source.telemetry),
     lanShare: normalizeLanShareSettings(source.lanShare),
+    pluginCustomizations: normalizePluginCustomizations(source.pluginCustomizations),
     fullCdpAccess: source.fullCdpAccess === true,
     locale: String(source.locale || "").trim() || undefined,
   };
@@ -482,6 +507,7 @@ export function serializeSettings(settings, secretStorage) {
     enableWebSearchBuiltin: settings?.enableWebSearchBuiltin === true,
     telemetry: normalizeTelemetrySettings(settings?.telemetry),
     lanShare: normalizeLanShareSettings(settings?.lanShare),
+    pluginCustomizations: normalizePluginCustomizations(settings?.pluginCustomizations),
     fullCdpAccess: settings?.fullCdpAccess === true,
   };
   const currentSecret = encryptSecret(normalized.apiKey, secretStorage);
@@ -547,6 +573,7 @@ export function serializeSettings(settings, secretStorage) {
     enableWebSearchBuiltin: normalized.enableWebSearchBuiltin,
     telemetry: normalized.telemetry,
     lanShare: normalized.lanShare,
+    pluginCustomizations: normalized.pluginCustomizations,
     fullCdpAccess: normalized.fullCdpAccess,
     encrypted: currentSecret.encrypted,
     apiKey: currentSecret.value,

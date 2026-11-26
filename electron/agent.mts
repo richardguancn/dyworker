@@ -33,6 +33,7 @@ import { Workspace,diffLineCounts,loadProjectInstructions,unifiedDiff } from "./
 import { buildReviewContext,delegatedReviewContext,isStatefulUiOperation,readReviewObservation,reviewActionDetails,reviewContextFingerprint,reviewToolDefinition } from "./approval-context.mts";
 import { ApprovalNeedsReview, pendingApprovalDecision, reviewerDenialMessage, reviewerRevisionMessage, reviewTaskAction } from "./approval-policy.mts";
 import { resolveAssistantDelivery } from "./assistant-delivery.ts";
+import { authoringSkill } from "./authoring-skills.ts";
 import { computerUseAction,isComputerUseTool } from "./computer-use.mts";
 import { compressImageBufferForModel,readLocalImageForModel } from "./local-image.mts";
 import { selectWikiPages } from "./memory-wiki.mts";
@@ -176,12 +177,14 @@ export async function runAgent({
     messages.push({ role: "system", content: promptDef.subAgentGreeting });
   }
   if (creationMode) {
-    messages[0].content += "\n\n# 创造模式\n"
-      + "- 对用户全程用日常办公语言交流（不提插槽名/代码/API），先调 `load_skill(\"builtin-plugin-creator\")` 取规范再开发。\n"
+    messages[0].content += "\n\n# 创造模式（必须交付 DYWorker 原生插件）\n"
+      + "- 用户已开启创造模式，默认目标是创建、修改并热挂载 DYWorker 原生本地插件；用户提到的「独立页面 / 看板 / 工具 / 面板」均指应用内的原生插件界面，严禁以在工作区写单个 `.html` 文件并用 `open_file` 预览替代（除非用户明确说明只要独立 HTML、不做插件）。\n"
+      + "- 对用户全程用日常办公语言交流（不提插槽名/代码/API），澄清时只问内容与数据来源，不要把交付形态引导成独立 HTML 网页。\n"
       + (managedPluginsRoot
         ? `- 默认创建在 \`${managedPluginsRoot}/<pkg-name>\`（仅用户明确指定时才放工作区）。\n`
         : "")
-      + "- 完成后依次调 `plugin_inspect(action=\"check\")` 与 `plugin_manage(action=\"install\", openSlot=true)` 自动安装并立即打开。";
+      + "- 完成后依次调 `plugin_inspect(action=\"check\")` 与 `plugin_manage(action=\"install\", openSlot=true)` 自动安装并立即打开；若是修改/迭代已有插件，请先定位源码并调用 `plugin_manage(action=\"update\", versionBump=\"patch\"|\"minor\", openSlot=true)` 同步升级版本号并热刷新。\n\n"
+      + authoringSkill("plugin").instructions;
   } else if (depth === 0 && !isChannel) {
     messages[0].content += "\n\n# 个性化功能卡片推荐（仅限高价值场景）\n"
       + "- 只有当本轮回复已经产生了适合固化为交互式常驻页面的结构化方案、数据看板、清单追踪器或专属工作台时，才可在全文最末附带 **至多 1 个** ```action-card``` JSON 代码块提议创建页面；普通问答、报错分析或简短编辑严禁输出。\n"

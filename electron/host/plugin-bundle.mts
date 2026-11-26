@@ -147,11 +147,19 @@ export async function describeBundle(profileManifest, spec, { id }: any = {}) {
   const manifest = await readPackageManifest(pkgDir);
   const { patchFile, patchFiles, namespace, patches } = await readBundlePatch(pkgDir, manifest);
   const entryId = id || defaultEntryId(spec);
+  const author = typeof manifest.author === "string" ? manifest.author.trim() : String(manifest.author?.name || "").trim();
+  const displayName = String(manifest.dyworker?.displayName || manifest.dyworker?.title || manifest.displayName || "").trim();
+  const icon = String(manifest.dyworker?.icon || "").trim();
+  const iconColor = String(manifest.dyworker?.iconColor || "").trim();
   return {
     name: spec,
     packageName: manifest.name || spec,
     version: manifest.version || "",
     description: String(manifest.description || ""),
+    ...(displayName ? { displayName } : {}),
+    ...(author ? { author } : {}),
+    ...(icon ? { icon } : {}),
+    ...(iconColor ? { iconColor } : {}),
     dir: pkgDir,
     entryUrl: pathToFileURL(pkgDir).href,
     patchFile,

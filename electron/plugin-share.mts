@@ -53,6 +53,9 @@ export interface PluginShareManifest {
   appVersion: string;
   packageName: string;
   displayName: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
   pluginVersion: string;
   description: string;
   hasClient: boolean;
@@ -667,6 +670,7 @@ export async function exportPluginSharePackage(
     dataDir?: string;
     storageRoot?: string;
     appVersion?: string;
+    customization?: { displayName?: string; author?: string; icon?: string; iconColor?: string };
   },
 ) {
   const info = await resolveShareablePluginInfo(ctx, options);
@@ -695,6 +699,15 @@ export async function exportPluginSharePackage(
     return { ok: false, error: "插件目录中没有可导出的文件" };
   }
 
+  const custom = options.customization || {};
+  const manifestAuthor = typeof info.manifest?.author === "string"
+    ? info.manifest.author.trim()
+    : String(info.manifest?.author?.name || "").trim();
+  const finalDisplayName = String(custom.displayName || info.displayName || "").trim() || info.displayName;
+  const finalAuthor = String(custom.author ?? manifestAuthor).trim();
+  const finalIcon = String(custom.icon ?? info.manifest?.dyworker?.icon ?? "").trim();
+  const finalIconColor = String(custom.iconColor ?? info.manifest?.dyworker?.iconColor ?? "").trim();
+
   const includeData = Boolean(options.includeData);
   const dataFiles: PluginStorageFileItem[] = includeData ? info.dataFiles : [];
   const pluginWarnings = await scanFilesForWarnings(pluginFiles);
@@ -704,7 +717,19 @@ export async function exportPluginSharePackage(
   let totalBytes = 0;
 
   for (const file of pluginFiles) {
-    const buf = await fs.readFile(file.absolutePath);
+    let buf = await fs.readFile(file.absolutePath);
+    if (file.relativePath === "package.json") {
+      try {
+        const parsedPkg = JSON.parse(buf.toString("utf8"));
+        const dy = parsedPkg.dyworker && typeof parsedPkg.dyworker === "object" ? { ...parsedPkg.dyworker } : {};
+        if (finalDisplayName) dy.displayName = finalDisplayName;
+        if (finalIcon) dy.icon = finalIcon;
+        if (finalIconColor) dy.iconColor = finalIconColor;
+        if (Object.keys(dy).length) parsedPkg.dyworker = dy;
+        if (finalAuthor) parsedPkg.author = finalAuthor;
+        buf = Buffer.from(`${JSON.stringify(parsedPkg, null, 2)}\n`, "utf8");
+      } catch {}
+    }
     totalBytes += buf.length;
     if (totalBytes > MAX_SHARE_UNPACKED_BYTES) {
       return { ok: false, error: "插件源码总体积超过 150 MB 限制，无法导出" };
@@ -727,7 +752,10 @@ export async function exportPluginSharePackage(
     exportedAt: new Date().toISOString(),
     appVersion: String(options.appVersion || ""),
     packageName: info.packageName,
-    displayName: info.displayName,
+    displayName: finalDisplayName,
+    ...(finalAuthor ? { author: finalAuthor } : {}),
+    ...(finalIcon ? { icon: finalIcon } : {}),
+    ...(finalIconColor ? { iconColor: finalIconColor } : {}),
     pluginVersion: info.version,
     description: info.description,
     hasClient: info.hasClient,
@@ -753,7 +781,10 @@ export async function exportPluginSharePackage(
     shareKind: "local" as const,
     path: outputPath,
     packageName: info.packageName,
-    displayName: info.displayName,
+    displayName: finalDisplayName,
+    ...(finalAuthor ? { author: finalAuthor } : {}),
+    ...(finalIcon ? { icon: finalIcon } : {}),
+    ...(finalIconColor ? { iconColor: finalIconColor } : {}),
     version: info.version,
     includesData: dataFiles.length > 0,
     includedDataFiles: dataFiles.map((item) => item.relativePath),

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { AlertTriangle, Check, Loader2, PackageOpen, Plus, RefreshCw, Search, Share2, Trash2 } from "lucide-react";
-import { PluginIcon } from "./PluginIcon";
+import { AlertTriangle, Check, Loader2, PackageOpen, Palette, Pencil, Plus, RefreshCw, Search, Share2, Sparkles, Trash2 } from "lucide-react";
+import { PluginAppearanceDialog, type PluginAppearanceTarget } from "./PluginAppearanceDialog";
+import { PluginGuidePage } from "./PluginGuidePage";
+import { PluginGlyph, pluginTileStyle, resolvePluginVisual } from "./lib/pluginIcons";
+import { useSettingsStore } from "./state/settingsStore";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { SharePluginDialog } from "./SharePluginDialog";
 import { extractDroppedShareFile, hasDraggedShareFiles, type ShareDropInput } from "./lib/pluginShare";
@@ -25,13 +28,7 @@ import { t } from "./i18n";
 // 名字缺失就永不 apply、界面只表现为"什么都没发生"。所以安装前先跑兼容性判定
 // 并把结论摊开：runnable 可装 · partial 语义不同（需显式放行）· unsupported 跑不了（附原因）。
 
-/** 插件图标底色：按名字散列取一个稳定的柔和色，视觉上区分不同插件 */
-const TILE_COLORS = ["#e8eefc", "#e9f5ea", "#fdf1e3", "#f3e9fb", "#e6f3f7", "#fdecec"];
-function tileColor(seed: string) {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) % 997;
-  return TILE_COLORS[hash % TILE_COLORS.length];
-}
+/** 插件图标底色已统一迁至 ./lib/pluginIcons，兼容不同主题下的自定义配色与散列底色 */
 
 export function PluginsPage({onCreate,sessionId,mcpPanel,onSkillsChanged}:{onCreate:()=>void;sessionId?:string;mcpPanel:ReactNode;onSkillsChanged?:()=>void}) {
   const [format,setFormat]=useState('dsh');
@@ -63,9 +60,12 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   const [localInstallOpen, setLocalInstallOpen] = useState(false);
   const [pendingShareFile, setPendingShareFile] = useState<ShareDropInput | null>(null);
   const [shareTarget, setShareTarget] = useState<{ target: string; title?: string } | null>(null);
+  const [appearanceTarget, setAppearanceTarget] = useState<PluginAppearanceTarget | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [pageDragOver, setPageDragOver] = useState(false);
   const [detailSelection, setDetailSelection] = useState<{ entryId?: string; catalogId?: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
 
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
 
@@ -221,9 +221,11 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
   </div>;
   const verifiedEntries=entries.filter(entry=>isVisibleInstalledPlugin(entry,bundleOf.get(entry.name),catalog));
   const shownEntries=verifiedEntries.filter(entry=>{
+    const bundle=bundleOf.get(entry.name);
     const approved=catalog.find(plugin=>isInstalled(plugin,[entry]));
     const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
-    return !marketQuery.trim()||[entry.id,entry.name,entry.description,bundleOf.get(entry.name)?.description,approved?.displayName,builtin?.name,builtin?.summary,...(approved?.tags||[])].join(' ').toLowerCase().includes(marketQuery.trim().toLowerCase());
+    const visual=resolvePluginVisual([entry.id,bundle?.packageName,entry.name,approved?.packageName],pluginCustomizations,{displayName:builtin?.name||approved?.displayName||bundle?.displayName||entry.id,author:bundle?.author});
+    return !marketQuery.trim()||[entry.id,entry.name,entry.description,bundle?.description,approved?.displayName,builtin?.name,builtin?.summary,visual.displayName,visual.author,...(approved?.tags||[])].join(' ').toLowerCase().includes(marketQuery.trim().toLowerCase());
   });
   const handlePageDragOver = (event: DragEvent<HTMLElement>) => {
     if (!hasDraggedShareFiles(event.dataTransfer)) return;
@@ -252,11 +254,50 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
     setLocalInstallOpen(true);
   };
 
+  const openAppearanceFor = (
+    entry: PluginEntryRecord,
+    bundle: PluginBundleRecord | undefined,
+    approved: CatalogPlugin | undefined,
+    overrides?: { displayName?: string; author?: string; icon?: string; iconColor?: string },
+  ) => {
+    const builtin = entry.builtin ? BUILTIN_PLUGIN_LABELS[entry.name] : undefined;
+    const defaultDisplayName = overrides?.displayName || builtin?.name || approved?.displayName || bundle?.displayName || entry.id;
+    setAppearanceTarget({
+      primaryKey: entry.id || bundle?.packageName || entry.name,
+      lookupKeys: [bundle?.packageName || "", entry.name, entry.id, approved?.packageName || ""].filter(Boolean),
+      defaultDisplayName,
+      defaultAuthor: overrides?.author ?? bundle?.author ?? "",
+      defaultIcon: overrides?.icon ?? bundle?.icon ?? "",
+      defaultIconColor: overrides?.iconColor ?? bundle?.iconColor ?? "",
+      packageName: bundle?.packageName || entry.name || entry.id,
+      builtin: Boolean(entry.builtin),
+    });
+  };
+
+  if (guideOpen) {
+    return (
+      <PluginGuidePage
+        onBack={() => setGuideOpen(false)}
+        onStartCreate={() => {
+          setGuideOpen(false);
+          onCreate();
+        }}
+      />
+    );
+  }
+
   const available=filterCatalog(marketQuery,marketCategory,catalog);
   const detailCatalog = catalog.find(plugin => plugin.id === detailSelection?.catalogId);
   const detailEntry = verifiedEntries.find(entry => entry.id === detailSelection?.entryId)
     || (detailCatalog ? entries.find(entry => isInstalled(detailCatalog, [entry])) : undefined);
   if (detailSelection && (detailEntry||detailCatalog)) return <>
+    {appearanceTarget && (
+      <PluginAppearanceDialog
+        target={appearanceTarget}
+        onClose={() => setAppearanceTarget(null)}
+        onSaved={() => void refresh()}
+      />
+    )}
     {(marketSpec || localInstallOpen) && (
       <AddPluginDialog
         initialSpec={marketSpec}
@@ -280,7 +321,13 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
       onShare={detailEntry && !detailEntry.builtin ? () => {
         const bundle = bundleOf.get(detailEntry.name);
         const approved = catalog.find(plugin => plugin.packageName === detailEntry.name);
-        setShareTarget({ target: bundle?.packageName || detailEntry.name || detailEntry.id, title: approved?.displayName || detailEntry.id });
+        const visual = resolvePluginVisual([detailEntry.id, bundle?.packageName, detailEntry.name, approved?.packageName], pluginCustomizations, { displayName: approved?.displayName || bundle?.displayName || detailEntry.id });
+        setShareTarget({ target: bundle?.packageName || detailEntry.name || detailEntry.id, title: visual.displayName || approved?.displayName || detailEntry.id });
+      } : undefined}
+      onEditAppearance={detailEntry ? (defaults) => {
+        const bundle = bundleOf.get(detailEntry.name);
+        const approved = catalog.find(plugin => plugin.packageName === detailEntry.name);
+        openAppearanceFor(detailEntry, bundle, approved, defaults);
       } : undefined}
       onUninstall={() => { if (detailEntry) void run('已卸载', async () => {
         const result = await bridge!.uninstallPlugin(bundleOf.get(detailEntry.name)?.name || detailEntry.id);
@@ -325,12 +372,20 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
           onClose={() => setShareTarget(null)}
         />
       ) : null}
+      {appearanceTarget ? (
+        <PluginAppearanceDialog
+          target={appearanceTarget}
+          onClose={() => setAppearanceTarget(null)}
+          onSaved={() => void refresh()}
+        />
+      ) : null}
       <header className="plugins-page-header">
         <div className="plugins-page-heading">
           <h1>{t("plugins.title", "插件")}</h1>
           <p>{t("plugins.subtitle", "管理已安装插件，按需添加已验证的功能。")}</p>
         </div>
         <div className="plugins-page-actions">
+          <button className="plugins-text-button" onClick={() => setGuideOpen(true)}><Sparkles size={14} /> 使用指南</button>
           <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> {t("plugins.create", "创建插件")}</button>
           <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>{t("plugins.installLocal", "安装本地插件")}</button>
           <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label={t("plugins.refreshCatalog", "刷新插件清单")} title={t("plugins.refreshCatalog", "刷新插件清单")}>
@@ -365,8 +420,9 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
         {available.map(plugin=>{
           const existing=entries.find(entry=>isInstalled(plugin,[entry]));
           const installed=existing&&bundleOf.get(existing.name)?.version===plugin.support.version;
+          const visual = resolvePluginVisual([plugin.packageName], pluginCustomizations, { displayName: plugin.displayName });
           return <div className="plugin-card market" key={plugin.id}>
-            <div className="plugin-card-icon" style={{'--plugin-tile':tileColor(plugin.packageName)} as React.CSSProperties}><PluginIcon size={20}/></div>
+            <div className="plugin-card-icon" style={pluginTileStyle(visual.iconColor, plugin.packageName)}><PluginGlyph iconId={visual.iconId} color={visual.iconColor} size={20}/></div>
             <div className="plugin-card-body">
               <div className="plugin-card-title"><button className="plugin-name-button" onClick={()=>{setError('');setNotice('');setDetailSelection({catalogId:plugin.id});}}>{plugin.displayName}</button><span className="plugin-tag ok"><Check size={11}/>{t("plugins.verified", "已验证")}</span></div>
               <p className="plugin-card-desc">{plugin.summary}</p>
@@ -391,18 +447,39 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
           const bundle = bundleOf.get(entry.name);
           const builtin=entry.builtin?BUILTIN_PLUGIN_LABELS[entry.name]:undefined;
           const approved=catalog.find(plugin=>plugin.packageName===entry.name);
+          const defaultDisplayName = builtin?.name || approved?.displayName || bundle?.displayName || entry.id;
+          const visual = resolvePluginVisual(
+            [entry.id, bundle?.packageName, entry.name, approved?.packageName],
+            pluginCustomizations,
+            {
+              displayName: defaultDisplayName,
+              author: bundle?.author || "",
+              icon: bundle?.icon || "",
+              iconColor: bundle?.iconColor || "",
+            },
+          );
+          const displayTitle = visual.displayName || defaultDisplayName;
           const description = builtin?.summary||approved?.summary||bundle?.description || entry.description || "";
           return (
             <div className="plugin-card" key={entry.id}>
-              <div className="plugin-card-icon" style={{ "--plugin-tile": tileColor(entry.name) } as React.CSSProperties}>
-                <PluginIcon size={18} />
-              </div>
+              <button
+                type="button"
+                className="plugin-card-icon editable"
+                style={pluginTileStyle(visual.iconColor, bundle?.packageName || entry.name)}
+                title="点击编辑图标、颜色、名称与作者"
+                aria-label={`编辑 ${displayTitle} 外观与信息`}
+                onClick={() => openAppearanceFor(entry, bundle, approved)}
+              >
+                <PluginGlyph iconId={visual.iconId} color={visual.iconColor} size={18} />
+                <span className="plugin-icon-edit-badge" aria-hidden="true"><Pencil size={9} /></span>
+              </button>
               <div className="plugin-card-body">
                 <div className="plugin-card-title">
                   <span data-plugin-package={bundle?.name || entry.name}>
-                    <button className="plugin-name-button" onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{builtin?.name||approved?.displayName||entry.id}</button>
+                    <button className="plugin-name-button" onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{displayTitle}</button>
                   </span>
                   {bundle?.version ? <span className="plugin-tag">v{bundle.version}</span> : null}
+                  {visual.author ? <span className="plugin-tag">{visual.author}</span> : null}
                   {bundle?.source?.kind === 'local' && !entry.builtin ? <span className="plugin-tag">{t("plugins.localMade", "本地制作")}</span> : null}
 
                   <span className={`plugin-tag ${entry.active ? "ok" : ""}`}>{entry.unsupportedReason || (entry.disabled ? t("plugins.statusDisabled", "已停用") : entry.active ? t("plugins.statusActive", "已启动") : entry.state === "session-required" ? t("plugins.statusSessionRequired", "用于 DSH 插件会话") : entry.state === "loading" ? t("plugins.statusLoading", "启动中") : entry.state === "failed" ? t("plugins.statusFailed", "启动失败") : t("plugins.statusWaiting", "等待所需能力"))}</span>
@@ -418,7 +495,10 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                 {entry.unsupportedReason && <p className="plugin-card-desc muted">{entry.unsupportedReason}</p>}
                 {entry.error ? <div className="plugin-row-error"><AlertTriangle size={12} /> {entry.error}</div> : null}
                 <div className="plugin-card-tools">
-                  <button className="plugins-text-button" aria-label={`查看 ${entry.id} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{t("plugins.details", "详情")}</button>
+                  <button className="plugins-text-button" aria-label={`查看 ${displayTitle} 详情`} onClick={() => { setError(''); setNotice(''); setDetailSelection({ entryId: entry.id }); }}>{t("plugins.details", "详情")}</button>
+                  <button className="plugins-text-button" onClick={() => openAppearanceFor(entry, bundle, approved)}>
+                    <Palette size={13} /> 外观与信息
+                  </button>
                   <button className="plugins-text-button" onClick={() => setDetailSelection({entryId:entry.id})}>
                     {t("plugins.settings", "设置")}
                   </button>
@@ -426,7 +506,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                     <button
                       className="plugins-text-button"
                       disabled={Boolean(busy)}
-                      onClick={() => setShareTarget({ target: bundle?.packageName || entry.name || entry.id, title: builtin?.name || approved?.displayName || entry.id })}
+                      onClick={() => setShareTarget({ target: bundle?.packageName || entry.name || entry.id, title: displayTitle })}
                     >
                       <Share2 size={13} /> {t("plugins.share", "分享")}
                     </button>

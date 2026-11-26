@@ -2438,6 +2438,7 @@ app.whenReady().then(async () => {
     dataDir: app.getPath("userData"),
     appVersion: app.getVersion(),
     initialSettings: storedSettings,
+    getWebContents: () => BrowserWindow.getAllWindows().map((win) => win.webContents),
     readSettings,
     saveSettings,
     notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,

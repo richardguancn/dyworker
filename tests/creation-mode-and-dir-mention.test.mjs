@@ -21,13 +21,18 @@ import { evaluateApproval } from "../electron/agent/permissions.mts";
 import { isReviewerEligible } from "../electron/agent/review.mts";
 import { matchStandingRule, suggestStandingRule } from "../electron/agent/standing-rules.mts";
 import { Workspace } from "../electron/agent/workspace.mts";
+import { runAgent } from "../electron/agent.mts";
+import { authoringSkill } from "../electron/authoring-skills.ts";
 import { createHost, disposeHost } from "../electron/host/context.mts";
 import {
+  bumpSemverVersion,
   canAutoInstallCreatedPlugin,
   executePluginInspect,
   executePluginManage,
   listCreatedLocalPlugins,
   managedCreatedPluginsRoot,
+  pluginAuthoringToolDefinitions,
+  updateLocalPluginMetadata,
   validateLocalPluginDirectory,
 } from "../electron/plugin-authoring.mts";
 
@@ -517,4 +522,155 @@ test("创造模式自动安装资格与默认打开插槽：严守边界与免�
     syncClientPlugin: async (req) => { syncCalls.push(req); return { ok: true }; },
   });
   assert.equal(syncCalls[1]?.openSlot, false, "显式传 openSlot: false 时应保持 false");
+});
+
+test("创造模式提示词：直接内联插件制作规范、明确独立页面对应 workspace.page 且普通模式不注入", async (t) => {
+  const root = await mkSandbox(t, "dyworker-creation-prompt-");
+  const managedRoot = path.join(root, "created-plugins");
+  const pluginInstructions = authoringSkill("plugin").instructions;
+  assert.match(pluginInstructions, /独立页面.*workspace\.page/);
+  assert.match(pluginInstructions, /接入飞书文档\/表格或外部链接/);
+  assert.match(pluginInstructions, /严禁以在工作区写单个 `\.html` 文件/);
+
+  const settings = { endpoint: "http://mock.local/v1/chat/completions", model: "mock", apiKey: "test" };
+  const captureRequest = async (creationMode) => {
+    let capturedBody = null;
+    const res = await runAgent({
+      settings,
+      workspacePath: root,
+      approvalMode: "reviewer",
+      creationMode,
+      managedPluginsRoot: creationMode ? managedRoot : "",
+      extraTools: pluginAuthoringToolDefinitions(),
+      conversation: [{ role: "user", content: "我想做个独立页面接入飞书文档。" }],
+      fetchImpl: async (_url, options) => {
+        capturedBody = JSON.parse(options.body);
+        return {
+          ok: true,
+          json: async () => ({ choices: [{ message: { role: "assistant", content: "ok" } }] }),
+        };
+      },
+    });
+    assert.equal(res.status, "done");
+    return capturedBody;
+  };
+
+  const creationBody = await captureRequest(true);
+  const creationSystem = String(creationBody?.messages?.[0]?.content || "");
+  const creationToolNames = (creationBody?.tools || []).map((item) => item?.function?.name);
+  assert.match(creationSystem, /# 创造模式（必须交付 DYWorker 原生插件）/);
+  assert.match(creationSystem, /workspace\.page/);
+  assert.match(creationSystem, /window\.__ModuleLoader__\.load/);
+  assert.match(creationSystem, /严禁以在工作区写单个 `\.html` 文件/);
+  assert.ok(creationToolNames.includes("plugin_inspect"), "创造模式首轮应直接可见 plugin_inspect");
+  assert.ok(creationToolNames.includes("plugin_manage"), "创造模式首轮应直接可见 plugin_manage");
+
+  const normalBody = await captureRequest(false);
+  const normalSystem = String(normalBody?.messages?.[0]?.content || "");
+  assert.doesNotMatch(normalSystem, /# 创造模式/);
+  assert.doesNotMatch(normalSystem, /window\.__ModuleLoader__\.load/);
+});
+
+test("创造模式更新插件：自动递增版本号、防重复递增、同步更新元数据与受管放行边界", async (t) => {
+  assert.equal(bumpSemverVersion("0.1.0", "patch"), "0.1.1");
+  assert.equal(bumpSemverVersion("0.1.5", "minor"), "0.2.0");
+  assert.equal(bumpSemverVersion("1.4.2", "major"), "2.0.0");
+  assert.equal(bumpSemverVersion("invalid", "patch"), "0.1.1");
+
+  const dataDir = await mkSandbox(t, "dyw-plugin-update-");
+  const managedRoot = managedCreatedPluginsRoot(dataDir);
+  const pluginDir = path.join(managedRoot, "feishu-board");
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.writeFile(
+    path.join(pluginDir, "package.json"),
+    JSON.stringify({
+      name: "feishu-board",
+      version: "0.1.0",
+      type: "module",
+      main: "index.js",
+      description: "飞书项目计划看板",
+      author: "原开发者",
+      dyworker: { displayName: "飞书看板", icon: "file-spreadsheet", iconColor: "#2563eb" },
+    }, null, 2),
+    "utf8",
+  );
+  await fs.writeFile(path.join(pluginDir, "index.js"), "export const name = 'feishu-board'; export function apply() {}\n", "utf8");
+
+  const host = await createHost({ userDataDir: dataDir, homeDir: dataDir, mountPlugins: true });
+  t.after(async () => { await disposeHost(host); });
+
+  const syncCalls = [];
+  const execOpts = {
+    managedRoot,
+    dataDir,
+    defaultOpenSlot: true,
+    syncClientPlugin: async (req) => { syncCalls.push(req); return { ok: true }; },
+  };
+
+  // 1. 首次安装 0.1.0
+  const installed = await executePluginManage(host, { action: "install", target: pluginDir }, execOpts);
+  assert.equal(installed.ok, true, JSON.stringify(installed));
+
+  // 2. 更新本地元数据（重命名、改作者、改图标和颜色）
+  const metaRes = await updateLocalPluginMetadata(host, {
+    target: "feishu-board",
+    displayName: "项目计划总览",
+    author: "数智团队",
+    icon: "folder-kanban",
+    iconColor: "#059669",
+  }, { dataDir });
+  assert.equal(metaRes.ok, true);
+  assert.equal(metaRes.updatedSource, true);
+  const updatedPkgAfterMeta = JSON.parse(await fs.readFile(path.join(pluginDir, "package.json"), "utf8"));
+  assert.equal(updatedPkgAfterMeta.author, "数智团队");
+  assert.equal(updatedPkgAfterMeta.dyworker.displayName, "项目计划总览");
+  assert.equal(updatedPkgAfterMeta.dyworker.icon, "folder-kanban");
+  assert.equal(updatedPkgAfterMeta.dyworker.iconColor, "#059669");
+
+  // 3. 创造模式 action=update 默认自动递增 patch 版本号（0.1.0 -> 0.1.1），且保留新元数据
+  const autoPatch = await canAutoInstallCreatedPlugin(
+    { action: "update", target: "feishu-board" },
+    { creationMode: true, approvalMode: "reviewer", managedRoot },
+  );
+  assert.equal(autoPatch.ok, true);
+
+  const updated1 = await executePluginManage(host, { action: "update", target: "feishu-board" }, execOpts);
+  assert.equal(updated1.ok, true, JSON.stringify(updated1));
+  assert.equal(updated1.previousVersion, "0.1.0");
+  assert.equal(updated1.version, "0.1.1");
+  assert.equal(updated1.versionBumped, true);
+  const pkgAfterUpdate1 = JSON.parse(await fs.readFile(path.join(pluginDir, "package.json"), "utf8"));
+  assert.equal(pkgAfterUpdate1.version, "0.1.1");
+  assert.equal(pkgAfterUpdate1.dyworker.displayName, "项目计划总览");
+
+  // 4. minor 升级（0.1.1 -> 0.2.0）且不产生版本漂移
+  const updated2 = await executePluginManage(host, { action: "update", target: "feishu-board", versionBump: "minor" }, execOpts);
+  assert.equal(updated2.ok, true);
+  assert.equal(updated2.previousVersion, "0.1.1");
+  assert.equal(updated2.version, "0.2.0");
+  const detail = await host.plugins.detail("feishu-board");
+  assert.equal(detail.bundle?.version, "0.2.0");
+  assert.equal(detail.bundle?.drift, null);
+  assert.equal(detail.metadata?.displayName, "项目计划总览");
+  assert.equal(detail.metadata?.author, "数智团队");
+  assert.equal(detail.metadata?.icon, "folder-kanban");
+  assert.equal(detail.metadata?.iconColor, "#059669");
+
+  // 5. 若源码已手工递增为 0.3.0 且未传 versionBump，应沿用 0.3.0 不重复递增
+  pkgAfterUpdate1.version = "0.3.0";
+  await fs.writeFile(path.join(pluginDir, "package.json"), `${JSON.stringify(pkgAfterUpdate1, null, 2)}\n`, "utf8");
+  const updated3 = await executePluginManage(host, { action: "update", target: pluginDir }, execOpts);
+  assert.equal(updated3.ok, true);
+  assert.equal(updated3.version, "0.3.0");
+  assert.equal(updated3.versionBumped, false);
+
+  // 6. 非受管外部目录仍拒绝自动放行 update
+  const outsideDir = await mkSandbox(t, "dyw-outside-update-");
+  await fs.writeFile(path.join(outsideDir, "package.json"), JSON.stringify({ name: "outside-pkg", version: "0.1.0", main: "index.js" }), "utf8");
+  await fs.writeFile(path.join(outsideDir, "index.js"), "export function apply() {}", "utf8");
+  const outsideAuto = await canAutoInstallCreatedPlugin(
+    { action: "update", target: outsideDir },
+    { creationMode: true, approvalMode: "reviewer", managedRoot },
+  );
+  assert.equal(outsideAuto.ok, false);
 });

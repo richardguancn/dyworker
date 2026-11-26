@@ -385,6 +385,7 @@ contextBridge.exposeInMainWorld("dyworker", {
   enablePlugin: (id) => ipcRenderer.invoke("plugins:enable", id),
   disablePlugin: (id) => ipcRenderer.invoke("plugins:disable", id),
   configurePlugin: (payload) => ipcRenderer.invoke("plugins:configure", payload),
+  updatePluginMetadata: (payload) => ipcRenderer.invoke("plugins:update-metadata", payload),
   uninstallPlugin: (id) => ipcRenderer.invoke("plugins:uninstall", id),
   reloadPlugins: () => ipcRenderer.invoke("plugins:reload"),
   pluginClientBundles: (id) => ipcRenderer.invoke("plugins:client-bundles", id),

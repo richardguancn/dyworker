@@ -46,7 +46,7 @@ export async function prepareTransferPackagePayload(ctx: any, deps: any, payload
 
   if (kind === "project") {
     const workspacePath = String(payload?.workspacePath || "").trim();
-    if (!workspacePath) return { ok: false as const, error: "请先选择要分享或导出的项目" };
+    if (!workspacePath) return { ok: false as const, error: "请先选择要导出的项目" };
     sessions = all.filter((session) => String(session?.workspacePath || "") === workspacePath);
     if (!sessions.length) return { ok: false as const, error: "这个项目下还没有任务，没有可导出的内容" };
     const pinned = await readPinnedWorkspaces();
@@ -54,7 +54,7 @@ export async function prepareTransferPackagePayload(ctx: any, deps: any, payload
   } else {
     const sessionId = String(payload?.sessionId || "");
     const session = all.find((item) => String(item?.id) === sessionId) || ctx.sessions.get(sessionId);
-    if (!session) return { ok: false as const, error: "找不到要分享或导出的任务" };
+    if (!session) return { ok: false as const, error: "找不到要导出的任务" };
     sessions = [session];
     project = session.workspacePath ? { path: String(session.workspacePath), title: projectTitle(session.workspacePath) } : null;
   }

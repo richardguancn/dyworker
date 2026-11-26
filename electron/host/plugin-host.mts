@@ -507,12 +507,20 @@ export class PluginHostService extends Service {
       };
     }
     const existing = this.bundles.findIndex((bundle) => bundle.name === name);
+    const author = typeof manifest.author === "string" ? manifest.author.trim() : String(manifest.author?.name || "").trim();
+    const displayName = String(manifest.dyworker?.displayName || manifest.dyworker?.title || manifest.displayName || described.displayName || "").trim();
+    const icon = String(manifest.dyworker?.icon || described.icon || "").trim();
+    const iconColor = String(manifest.dyworker?.iconColor || described.iconColor || "").trim();
     const record = {
       ...(existing >= 0 ? this.bundles[existing] : {}),
       name,
       packageName: described.packageName,
       version: described.version,
       description: described.description || "",
+      displayName: displayName || undefined,
+      author: author || undefined,
+      icon: icon || undefined,
+      iconColor: iconColor || undefined,
       patchFile: described.patchFile,
       patchFiles: described.patchFiles,
       declared: described.declared,
@@ -609,6 +617,7 @@ export class PluginHostService extends Service {
         if (bundle) {
           bundle.source = prepared.source;
           if (version) bundle.pinnedVersion = version;
+          else delete bundle.pinnedVersion;
           await this.persistBundles();
         }
       }
@@ -969,6 +978,9 @@ export class PluginHostService extends Service {
       const author = typeof manifest.author === 'string' ? manifest.author : String(manifest.author?.name || '');
       const repository = typeof manifest.repository === 'string' ? manifest.repository : String(manifest.repository?.url || '');
       metadata = { name: String(manifest.name || entry.name), version: String(manifest.version || ''),
+        displayName: String(manifest.dyworker?.displayName || manifest.dyworker?.title || manifest.displayName || ''),
+        icon: String(manifest.dyworker?.icon || ''),
+        iconColor: String(manifest.dyworker?.iconColor || ''),
         description: String(manifest.description || ''), author, license: typeof manifest.license === 'string' ? manifest.license : '',
         homepage: String(manifest.homepage || ''), repository,
         engines: Object.entries(manifest.engines || {}).map(([name, version]) => ({ name, version: String(version) })),
