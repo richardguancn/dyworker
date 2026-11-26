@@ -434,4 +434,13 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(ipc, /lan-share:send/);
   assert.match(ipc, /lan-share:respond-incoming/);
   assert.match(mainTs, /lanShareIpcPlugin/);
+  const readyIndex = mainTs.indexOf("app.whenReady()");
+  const lanMountIndex = mainTs.indexOf("ctx.plugin(lanShareIpcPlugin");
+  const createWindowIndex = mainTs.indexOf("createWindow();");
+  assert.ok(readyIndex > -1 && lanMountIndex > -1 && createWindowIndex > -1);
+  assert.ok(
+    readyIndex < lanMountIndex && lanMountIndex < createWindowIndex,
+    "lanShareIpcPlugin 必须在 app.whenReady() 之后、createWindow() 之前挂载",
+  );
+  assert.match(mainTs, /safeStorageForHost[\s\S]*?app\.isReady\(\)/);
 });

@@ -63,13 +63,12 @@ export function lanShareIpcPlugin(deps: any) {
       const dataDir = String(deps.dataDir || app?.getPath?.("userData") || os.tmpdir());
       const deviceId = loadOrCreateDeviceId(dataDir);
 
-      let cachedSettings: any = { lanShare: { enabled: true, nickname: "" } };
+      let cachedSettings: any = deps.initialSettings || { lanShare: { enabled: true, nickname: "" } };
       const refreshSettingsSnapshot = async () => {
         try {
           cachedSettings = await readSettings();
         } catch {}
       };
-      void refreshSettingsSnapshot();
 
       const broadcast = (channel: string, payload: any) => {
         const list = typeof getWebContents === "function" ? getWebContents() : [];
@@ -166,7 +165,12 @@ export function lanShareIpcPlugin(deps: any) {
         },
       });
 
-      void refreshSettingsSnapshot().then(() => service.start()).catch(() => {});
+      const startService = () => service.start().catch(() => {});
+      if (deps.initialSettings) {
+        void startService();
+      } else {
+        void refreshSettingsSnapshot().then(startService).catch(() => {});
+      }
       ctx.effect(() => () => service.stop());
 
       trustedHandle("lan-share:get-state", async () => {

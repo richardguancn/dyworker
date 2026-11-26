@@ -317,7 +317,27 @@ const safeStorageForHost = process.env.DYWORKER_SKIP_SAFE_STORAGE
       encryptString: (value: string) => Buffer.from(String(value), "utf8"),
       decryptString: (buffer: Buffer) => Buffer.from(buffer).toString("utf8"),
     }
-  : safeStorage;
+  : {
+      isEncryptionAvailable: () => {
+        if (!app.isReady()) {
+          console.error("[dyworker] 拒绝在 app.whenReady() 之前调用 safeStorage.isEncryptionAvailable()");
+          return false;
+        }
+        return safeStorage.isEncryptionAvailable();
+      },
+      encryptString: (value: string) => {
+        if (!app.isReady()) {
+          throw new Error("禁止在 app.whenReady() 之前调用 safeStorage.encryptString()");
+        }
+        return safeStorage.encryptString(value);
+      },
+      decryptString: (buffer: Buffer) => {
+        if (!app.isReady()) {
+          throw new Error("禁止在 app.whenReady() 之前调用 safeStorage.decryptString()");
+        }
+        return safeStorage.decryptString(buffer);
+      },
+    };
 
 const ctx = await createHost({
   userDataDir: app.getPath("userData"),
@@ -1853,16 +1873,6 @@ ctx.plugin(settingsIpcPlugin({ trustedHandle, ...shellDeps }));
 ctx.plugin(sessionsIpcPlugin({ trustedHandle, ...shellDeps }));
 // 任务/项目跨机迁移：导出包打包与导入落盘（领域逻辑在 session-transfer.mts）
 ctx.plugin(transferIpcPlugin({ trustedHandle, ...shellDeps }));
-ctx.plugin(lanShareIpcPlugin({
-  trustedHandle,
-  ...shellDeps,
-  dataDir: app.getPath("userData"),
-  appVersion: app.getVersion(),
-  readSettings,
-  saveSettings,
-  notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
-  notifyLanIncoming,
-}));
 ctx.plugin(appIpcPlugin({ trustedHandle, ...shellDeps }));
 
 // 外观域的壳层状态桥：外观状态与应用逻辑被设置页/应用菜单/系统主题事件共用，
@@ -2422,6 +2432,17 @@ app.whenReady().then(async () => {
   ctx.remoteMessages.start();
   // 两个服务都就绪后再挂 IPC 插件（inject 满足即注册通道，早于窗口创建）
   await ctx.plugin(telemetryIpcPlugin({ trustedHandle }));
+  await ctx.plugin(lanShareIpcPlugin({
+    trustedHandle,
+    ...shellDeps,
+    dataDir: app.getPath("userData"),
+    appVersion: app.getVersion(),
+    initialSettings: storedSettings,
+    readSettings,
+    saveSettings,
+    notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
+    notifyLanIncoming,
+  }));
   createWindow();
   ctx.backgroundTasksManager.setBroadcastCallback((event) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
