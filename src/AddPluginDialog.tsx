@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, FolderOpen, Loader2, PackageOpen, Share2, Sparkles, X } from "lucide-react";
 import { t } from "./i18n";
+import { PluginGlyph, pluginTileStyle } from "./lib/pluginIcons";
 import { extractDroppedShareFile, formatShareBytes, hasDraggedShareFiles, type ShareDropInput } from "./lib/pluginShare";
 import { SharePluginDialog } from "./SharePluginDialog";
 import { pluginHotMountRef } from "./state/sharedRefs";
@@ -470,8 +471,15 @@ export function AddPluginDialog({
 
             <div className="plugin-share-preview-card">
               <div className="plugin-share-summary-head">
+                <span
+                  className="plugin-share-summary-icon"
+                  style={pluginTileStyle(sharePreview.iconColor || "", sharePreview.packageName || "")}
+                >
+                  <PluginGlyph iconId={sharePreview.icon || ""} color={sharePreview.iconColor || ""} size={17} />
+                </span>
                 <strong>{sharePreview.displayName || sharePreview.packageName}</strong>
                 {sharePreview.version ? <span className="plugin-tag">v{sharePreview.version}</span> : null}
+                {sharePreview.author ? <span className="plugin-tag">{sharePreview.author}</span> : null}
                 <span className="plugin-tag">{sharePreview.format === "zip" ? "ZIP 插件包" : ".dyplugin 分享包"}</span>
                 {sharePreview.hasClient ? <span className="plugin-tag">含界面</span> : <span className="plugin-tag">纯工具</span>}
               </div>

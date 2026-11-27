@@ -622,10 +622,69 @@ async function scanFilesForWarnings(
   return scanSensitiveFindings(texts);
 }
 
+export interface PluginCustomizationInput {
+  displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
+}
+
+/** 按候选 key 顺序从 settings.pluginCustomizations 解析并合并本机自定义外观元数据 */
+export function resolvePluginCustomizationFromSettings(
+  settings: any,
+  keys: Array<string | undefined | null>,
+): PluginCustomizationInput | undefined {
+  const map = settings?.pluginCustomizations;
+  if (!map || typeof map !== "object") return undefined;
+  const merged: PluginCustomizationInput = {};
+  const seen = new Set<string>();
+  for (const rawKey of keys) {
+    const key = String(rawKey || "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const entry = map[key];
+    if (!entry || typeof entry !== "object") continue;
+    if (!merged.displayName && typeof entry.displayName === "string" && entry.displayName.trim()) {
+      merged.displayName = entry.displayName.trim();
+    }
+    if (!merged.author && typeof entry.author === "string" && entry.author.trim()) {
+      merged.author = entry.author.trim();
+    }
+    if (!merged.icon && typeof entry.icon === "string" && entry.icon.trim()) {
+      merged.icon = entry.icon.trim();
+    }
+    if (!merged.iconColor && typeof entry.iconColor === "string" && entry.iconColor.trim()) {
+      merged.iconColor = entry.iconColor.trim();
+    }
+  }
+  return merged.displayName || merged.author || merged.icon || merged.iconColor ? merged : undefined;
+}
+
+function mergeExportVisuals(
+  info: { displayName?: string; manifest?: any },
+  customization?: PluginCustomizationInput,
+) {
+  const custom = customization || {};
+  const manifestAuthor = typeof info.manifest?.author === "string"
+    ? info.manifest.author.trim()
+    : String(info.manifest?.author?.name || "").trim();
+  return {
+    displayName: String(custom.displayName || info.displayName || "").trim() || String(info.displayName || ""),
+    author: String(custom.author || manifestAuthor || "").trim(),
+    icon: String(custom.icon || info.manifest?.dyworker?.icon || "").trim(),
+    iconColor: String(custom.iconColor || info.manifest?.dyworker?.iconColor || "").trim(),
+  };
+}
+
 /** 导出前预检：返回插件元信息、关联数据文件、以及源码/数据中的敏感信息告警 */
 export async function inspectPluginForExport(
   ctx: any,
-  options: { target: string; dataDir?: string; storageRoot?: string },
+  options: {
+    target: string;
+    dataDir?: string;
+    storageRoot?: string;
+    customization?: PluginCustomizationInput;
+  },
 ) {
   const info = await resolveShareablePluginInfo(ctx, options);
   if (!info?.ok) return info;
@@ -636,13 +695,17 @@ export async function inspectPluginForExport(
   const pluginFiles = await collectDirectoryFiles(info.sourceDir);
   const pluginWarnings = await scanFilesForWarnings(pluginFiles);
   const dataWarnings = await scanFilesForWarnings(info.dataFiles, "data/");
+  const visuals = mergeExportVisuals(info, options.customization);
 
   return {
     ok: true,
     shareKind: "local" as const,
     packageName: info.packageName,
     entryId: info.entryId,
-    displayName: info.displayName,
+    displayName: visuals.displayName,
+    ...(visuals.author ? { author: visuals.author } : {}),
+    ...(visuals.icon ? { icon: visuals.icon } : {}),
+    ...(visuals.iconColor ? { iconColor: visuals.iconColor } : {}),
     version: info.version,
     description: info.description,
     sourceDir: info.sourceDir,
@@ -670,7 +733,7 @@ export async function exportPluginSharePackage(
     dataDir?: string;
     storageRoot?: string;
     appVersion?: string;
-    customization?: { displayName?: string; author?: string; icon?: string; iconColor?: string };
+    customization?: PluginCustomizationInput;
   },
 ) {
   const info = await resolveShareablePluginInfo(ctx, options);
@@ -699,14 +762,11 @@ export async function exportPluginSharePackage(
     return { ok: false, error: "插件目录中没有可导出的文件" };
   }
 
-  const custom = options.customization || {};
-  const manifestAuthor = typeof info.manifest?.author === "string"
-    ? info.manifest.author.trim()
-    : String(info.manifest?.author?.name || "").trim();
-  const finalDisplayName = String(custom.displayName || info.displayName || "").trim() || info.displayName;
-  const finalAuthor = String(custom.author ?? manifestAuthor).trim();
-  const finalIcon = String(custom.icon ?? info.manifest?.dyworker?.icon ?? "").trim();
-  const finalIconColor = String(custom.iconColor ?? info.manifest?.dyworker?.iconColor ?? "").trim();
+  const visuals = mergeExportVisuals(info, options.customization);
+  const finalDisplayName = visuals.displayName;
+  const finalAuthor = visuals.author;
+  const finalIcon = visuals.icon;
+  const finalIconColor = visuals.iconColor;
 
   const includeData = Boolean(options.includeData);
   const dataFiles: PluginStorageFileItem[] = includeData ? info.dataFiles : [];
@@ -1036,6 +1096,12 @@ export async function inspectSharePackage(options: {
     const displayName = String(
       parsed.shareManifest?.displayName || resolveDisplayName(manifest, packageName),
     ).trim();
+    const manifestAuthor = typeof manifest.author === "string"
+      ? manifest.author.trim()
+      : String(manifest.author?.name || "").trim();
+    const author = String(parsed.shareManifest?.author || manifestAuthor || "").trim();
+    const icon = String(parsed.shareManifest?.icon || manifest.dyworker?.icon || "").trim();
+    const iconColor = String(parsed.shareManifest?.iconColor || manifest.dyworker?.iconColor || "").trim();
 
     const dataDir = String(options.dataDir || (options.ctx?.plugins?.dir ? path.dirname(options.ctx.plugins.dir) : "")).trim();
     const managedRoot = dataDir ? managedCreatedPluginsRoot(dataDir) : "";
@@ -1079,6 +1145,9 @@ export async function inspectSharePackage(options: {
       filePath,
       packageName,
       displayName,
+      ...(author ? { author } : {}),
+      ...(icon ? { icon } : {}),
+      ...(iconColor ? { iconColor } : {}),
       version,
       description,
       exportedAt: parsed.shareManifest?.exportedAt || "",
@@ -1147,6 +1216,40 @@ export async function unpackSharePackageToManagedDir(options: {
     await fs.mkdir(nextDir, { recursive: true });
     try {
       await writeArchiveFilesToDir(parsed.pluginFiles, nextDir);
+      if (parsed.shareManifest) {
+        const pkgJsonPath = path.join(nextDir, "package.json");
+        try {
+          const pkg = JSON.parse(await fs.readFile(pkgJsonPath, "utf8"));
+          if (pkg && typeof pkg === "object") {
+            const dy = pkg.dyworker && typeof pkg.dyworker === "object" ? { ...pkg.dyworker } : {};
+            let touched = false;
+            const shareName = String(parsed.shareManifest.displayName || "").trim();
+            const shareAuthor = String(parsed.shareManifest.author || "").trim();
+            const shareIcon = String(parsed.shareManifest.icon || "").trim();
+            const shareIconColor = String(parsed.shareManifest.iconColor || "").trim();
+            if (shareName && !dy.displayName) {
+              dy.displayName = shareName;
+              touched = true;
+            }
+            if (shareIcon && !dy.icon) {
+              dy.icon = shareIcon;
+              touched = true;
+            }
+            if (shareIconColor && !dy.iconColor) {
+              dy.iconColor = shareIconColor;
+              touched = true;
+            }
+            if (shareAuthor && !pkg.author) {
+              pkg.author = shareAuthor;
+              touched = true;
+            }
+            if (touched) {
+              if (Object.keys(dy).length) pkg.dyworker = dy;
+              await fs.writeFile(pkgJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+            }
+          }
+        } catch {}
+      }
       await fs.rm(targetDir, { recursive: true, force: true });
       await fs.rename(nextDir, targetDir);
     } catch (error) {

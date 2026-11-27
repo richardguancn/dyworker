@@ -386,6 +386,21 @@ export class PluginHostService extends Service {
       description = String(manifest.description || "");
       // 顺手记下客户端半边声明：列表要据此显示"有界面半边"，不必为每行再读一次清单
       this.clients.set(key, manifest.dsh?.client || manifest.dyworker?.client || null);
+      const matchedBundle = this.bundles.find((b) => b.name === key || b.packageName === key);
+      if (matchedBundle) {
+        const manifestAuthor = typeof manifest.author === "string"
+          ? manifest.author.trim()
+          : String(manifest.author?.name || "").trim();
+        const manifestDisplayName = String(
+          manifest.dyworker?.displayName || manifest.dyworker?.title || manifest.displayName || "",
+        ).trim();
+        const manifestIcon = String(manifest.dyworker?.icon || "").trim();
+        const manifestIconColor = String(manifest.dyworker?.iconColor || "").trim();
+        if (!matchedBundle.displayName && manifestDisplayName) matchedBundle.displayName = manifestDisplayName;
+        if (!matchedBundle.author && manifestAuthor) matchedBundle.author = manifestAuthor;
+        if (!matchedBundle.icon && manifestIcon) matchedBundle.icon = manifestIcon;
+        if (!matchedBundle.iconColor && manifestIconColor) matchedBundle.iconColor = manifestIconColor;
+      }
     } catch {
       description = "";
       this.clients.set(key, null);
@@ -1044,6 +1059,10 @@ export class PluginHostService extends Service {
       packageName: bundle.packageName,
       version: bundle.version,
       description: bundle.description || "",
+      displayName: bundle.displayName || "",
+      author: bundle.author || "",
+      icon: bundle.icon || "",
+      iconColor: bundle.iconColor || "",
       patchFile: bundle.patchFile,
       declared: Boolean(bundle.declared),
       installed: this.rows.some((row) => row.name === bundle.name || row.name === bundle.packageName),

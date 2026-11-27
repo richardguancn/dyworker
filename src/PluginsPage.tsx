@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Loader2, PackageOpen, Palette, Pencil, Plus, Refr
 import { PluginAppearanceDialog, type PluginAppearanceTarget } from "./PluginAppearanceDialog";
 import { PluginGuidePage } from "./PluginGuidePage";
 import { PluginGlyph, pluginTileStyle, resolvePluginVisual } from "./lib/pluginIcons";
+import { buildPluginBundleVisualMap, useLayoutStore } from "./state/layoutStore";
 import { useSettingsStore } from "./state/settingsStore";
 import { AddPluginDialog } from "./AddPluginDialog";
 import { SharePluginDialog } from "./SharePluginDialog";
@@ -76,6 +77,7 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
     try {
       const [installed,directory]=await Promise.all([bridge.listPlugins(),bridge.pluginCatalog({force})]);
       if(generation!==refreshGeneration.current)return;
+      useLayoutStore.getState().setPluginBundleVisuals(buildPluginBundleVisualMap(installed));
       setData(installed);setCatalog(directory.plugins);setCatalogMeta(directory);
       setRefreshKey(value => value + 1);setError('');
     } catch (refreshError: any) {

@@ -3,7 +3,44 @@
 // 使用点一次解构即可继续复用原有变量名。
 import { create } from "zustand";
 import type { BrowserViewportState } from "../features/browser/browserViewport.ts";
+import type { PluginBundleRecord, PluginEntryRecord } from "../types.ts";
 import { updateField, type Updater } from "./updateField.ts";
+
+export type PluginBundleVisual = {
+  displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
+};
+
+/** 将插件列表返回的包级外观元数据索引为 Map，供侧栏/顶栏/右侧工具栏按 pluginId 或 packageName 读取 */
+export function buildPluginBundleVisualMap(
+  list: { entries?: PluginEntryRecord[]; bundles?: PluginBundleRecord[] } | null | undefined,
+): Record<string, PluginBundleVisual> {
+  const map: Record<string, PluginBundleVisual> = {};
+  const entries = Array.isArray(list?.entries) ? list!.entries : [];
+  const bundles = Array.isArray(list?.bundles) ? list!.bundles : [];
+  for (const bundle of bundles) {
+    if (!bundle) continue;
+    const visual: PluginBundleVisual = {
+      ...(bundle.displayName ? { displayName: bundle.displayName } : {}),
+      ...(bundle.author ? { author: bundle.author } : {}),
+      ...(bundle.icon ? { icon: bundle.icon } : {}),
+      ...(bundle.iconColor ? { iconColor: bundle.iconColor } : {}),
+    };
+    if (!visual.displayName && !visual.author && !visual.icon && !visual.iconColor) continue;
+    for (const key of [bundle.packageName, bundle.name]) {
+      if (key) map[key] = visual;
+    }
+    for (const entry of entries) {
+      if (entry && (entry.name === bundle.name || entry.name === bundle.packageName || entry.id === bundle.name || entry.id === bundle.packageName)) {
+        if (entry.id) map[entry.id] = visual;
+        if (entry.name) map[entry.name] = visual;
+      }
+    }
+  }
+  return map;
+}
 
 export type ToolPanelTab = {
   id: string;
@@ -133,6 +170,8 @@ export interface LayoutState {
   setBotTeamAvailable: (value: Updater<boolean>) => void;
   pluginWorkspacePages: Array<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string }>;
   setPluginWorkspacePages: (value: Updater<Array<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string }>>) => void;
+  pluginBundleVisuals: Record<string, PluginBundleVisual>;
+  setPluginBundleVisuals: (value: Updater<Record<string, PluginBundleVisual>>) => void;
   activeWorkspacePage: { pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null;
   setActiveWorkspacePage: (value: Updater<{ pluginId: string; key: string; label: string; icon?: string; iconColor?: string } | null>) => void;
 
@@ -223,6 +262,8 @@ export const useLayoutStore = create<LayoutState>((set) => ({
   setBotTeamAvailable: (value) => set((s) => updateField(s, "botTeamAvailable", value)),
   pluginWorkspacePages: [],
   setPluginWorkspacePages: (value) => set((s) => updateField(s, "pluginWorkspacePages", value)),
+  pluginBundleVisuals: {},
+  setPluginBundleVisuals: (value) => set((s) => updateField(s, "pluginBundleVisuals", value)),
   activeWorkspacePage: null,
   setActiveWorkspacePage: (value) => set((s) => updateField(s, "activeWorkspacePage", value)),
 

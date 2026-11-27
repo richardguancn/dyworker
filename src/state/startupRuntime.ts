@@ -19,6 +19,7 @@ import { refreshGitInfo } from "./gitActions";
 import { syncAtBottom } from "./panelActions";
 import type { ApprovalMode, SessionRecord } from "../types";
 import {
+  buildPluginBundleVisualMap,
   computeSymmetricChatWidth,
   persistChatContentWidth,
   useLayoutStore,
@@ -861,7 +862,11 @@ export function useStartupRuntime(deps: StartupRuntimeDeps) {
       })();
     });
     const offUpdated = bridge.onPluginsUpdated?.(() => {
-      // clientHost subscribe 会自动刷新侧栏与面板列表；此处保活通道订阅即可
+      void bridge.listPlugins?.()
+        .then((list) => {
+          useLayoutStore.getState().setPluginBundleVisuals(buildPluginBundleVisualMap(list));
+        })
+        .catch(() => {});
     });
     return () => {
       offSync?.();

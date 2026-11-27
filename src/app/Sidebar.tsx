@@ -9,6 +9,7 @@ import { PluginSlotView } from "../PluginSlotView";
 import { nextWorkspaceVisibleCount, resolveWorkspaceVisibleCount } from "../lib/pagination";
 import { WORKSPACE_SESSION_LIMIT, displayWorkspace } from "../lib/text";
 import { useLanShareStore } from "../state/lanShareStore";
+import { useLayoutStore } from "../state/layoutStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { t } from "../i18n";
 import type { InboxItem, PendingWakeRecord, SessionRecord } from "../types";
@@ -105,6 +106,7 @@ export function Sidebar(props: SidebarProps) {
   } = props;
 
   const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
+  const pluginBundleVisuals = useLayoutStore((s) => s.pluginBundleVisuals);
 
   const resetWorkspaceVisibleCount = (targetPath: string) => {
     setWorkspaceSessionVisibleCounts((current) => {
@@ -408,10 +410,12 @@ export function Sidebar(props: SidebarProps) {
             {pluginWorkspacePages.map((page) => {
               const active = Boolean(activeWorkspacePage && activeWorkspacePage.pluginId === page.pluginId && activeWorkspacePage.key === page.key && !botTeamPageOpen);
               const singlePageOfPlugin = pluginWorkspacePages.filter((item) => item.pluginId === page.pluginId).length === 1;
+              const bundleVisual = pluginBundleVisuals[page.pluginId];
               const visual = resolvePluginVisual([page.pluginId, `${page.pluginId}:${page.key}`], pluginCustomizations, {
-                displayName: page.label,
-                icon: page.icon,
-                iconColor: page.iconColor,
+                displayName: bundleVisual?.displayName || page.label,
+                author: bundleVisual?.author || "",
+                icon: bundleVisual?.icon || page.icon,
+                iconColor: bundleVisual?.iconColor || page.iconColor,
               });
               const displayLabel = singlePageOfPlugin && visual.displayName ? visual.displayName : page.label;
               return (

@@ -1651,6 +1651,9 @@ export interface PluginExportInspection {
   packageName?: string;
   entryId?: string;
   displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
   version?: string;
   description?: string;
   sourceDir?: string;
@@ -1677,6 +1680,9 @@ export interface PluginExportResult {
   path?: string;
   packageName?: string;
   displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
   version?: string;
   includesData?: boolean;
   includedDataFiles?: string[];
@@ -1695,6 +1701,9 @@ export interface PluginSharePackagePreview {
   filePath?: string;
   packageName?: string;
   displayName?: string;
+  author?: string;
+  icon?: string;
+  iconColor?: string;
   version?: string;
   description?: string;
   exportedAt?: string;

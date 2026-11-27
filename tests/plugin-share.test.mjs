@@ -15,6 +15,7 @@ import {
   inspectPluginForExport,
   inspectSharePackage,
   readSafeArchiveEntries,
+  resolvePluginCustomizationFromSettings,
   scanSensitiveFindings,
   unpackSharePackageToManagedDir,
 } from "../electron/plugin-share.mts";
@@ -438,16 +439,27 @@ test("前端组件、Preload 与 IPC 接线契约完整", async () => {
   assert.match(skill, /action:\s*"update"/);
   assert.match(preload, /updatePluginMetadata/);
 
-  const [guidePage, appearanceDialog, pluginIcons] = await Promise.all([
+  const [guidePage, appearanceDialog, pluginIcons, lanIpc, authoringTs, sidebarTs, shellTs, toolPanelTs] = await Promise.all([
     read("../src/PluginGuidePage.tsx"),
     read("../src/PluginAppearanceDialog.tsx"),
     read("../src/lib/pluginIcons.tsx"),
+    read("../electron/host/plugins/lan-share-ipc.mts"),
+    read("../electron/plugin-authoring.mts"),
+    read("../src/app/Sidebar.tsx"),
+    read("../src/app/ShellLayout.tsx"),
+    read("../src/features/toolpanel/ToolPanel.tsx"),
   ]);
   assert.match(pluginsPage, /PluginAppearanceDialog/);
   assert.match(pluginsPage, /PluginGuidePage/);
   assert.match(guidePage, /plugin-guide-aurora/);
   assert.match(appearanceDialog, /updatePluginMetadata/);
   assert.match(pluginIcons, /PLUGIN_ICON_PRESETS/);
+  assert.match(ipc, /resolvePluginCustomizationFromSettings/);
+  assert.match(lanIpc, /resolvePluginCustomizationFromSettings/);
+  assert.match(authoringTs, /resolvePluginCustomizationFromSettings/);
+  assert.match(sidebarTs, /pluginBundleVisuals/);
+  assert.match(shellTs, /pluginBundleVisuals/);
+  assert.match(toolPanelTs, /pluginBundleVisuals/);
 });
 
 test("插件分享包导出与导入完整保留自定义名称、作者、图标与颜色", async (t) => {
@@ -469,20 +481,56 @@ test("插件分享包导出与导入完整保留自定义名称、作者、图�
   t.after(async () => disposeHost(host));
   await executePluginManage(host, { action: "install", target: pluginDir }, { managedRoot: senderDir });
 
+  const resolvedCustom = resolvePluginCustomizationFromSettings({
+    pluginCustomizations: {
+      "visual-plugin": {
+        displayName: "财务月报看板",
+        author: "财务信息化组",
+        icon: "bar-chart-3",
+        iconColor: "#7c3aed",
+      },
+    },
+  }, ["visual-plugin"]);
+  assert.deepEqual(resolvedCustom, {
+    displayName: "财务月报看板",
+    author: "财务信息化组",
+    icon: "bar-chart-3",
+    iconColor: "#7c3aed",
+  });
+
+  const inspectedExport = await inspectPluginForExport(host, {
+    target: pluginDir,
+    dataDir: senderDir,
+    customization: resolvedCustom,
+  });
+  assert.equal(inspectedExport.ok, true, inspectedExport.error);
+  assert.equal(inspectedExport.displayName, "财务月报看板");
+  assert.equal(inspectedExport.author, "财务信息化组");
+  assert.equal(inspectedExport.icon, "bar-chart-3");
+  assert.equal(inspectedExport.iconColor, "#7c3aed");
+
   const shareFile = path.join(root, "visual-plugin.dyplugin");
   const exported = await exportPluginSharePackage(host, {
     target: pluginDir,
     outputPath: shareFile,
     dataDir: senderDir,
-    customization: {
-      displayName: "财务月报看板",
-      author: "财务信息化组",
-      icon: "bar-chart-3",
-      iconColor: "#7c3aed",
-    },
+    customization: resolvedCustom,
   });
   assert.equal(exported.ok, true, exported.error);
   assert.equal(exported.displayName, "财务月报看板");
+  assert.equal(exported.author, "财务信息化组");
+  assert.equal(exported.icon, "bar-chart-3");
+  assert.equal(exported.iconColor, "#7c3aed");
+
+  const sharePreview = await inspectSharePackage({
+    filePath: shareFile,
+    dataDir: receiverDir,
+  });
+  assert.equal(sharePreview.ok, true, sharePreview.error);
+  assert.equal(sharePreview.displayName, "财务月报看板");
+  assert.equal(sharePreview.author, "财务信息化组");
+  assert.equal(sharePreview.icon, "bar-chart-3");
+  assert.equal(sharePreview.iconColor, "#7c3aed");
 
   const unpacked = await unpackSharePackageToManagedDir({
     filePath: shareFile,
@@ -494,6 +542,29 @@ test("插件分享包导出与导入完整保留自定义名称、作者、图�
   assert.equal(unpackedPkg.dyworker?.displayName, "财务月报看板");
   assert.equal(unpackedPkg.dyworker?.icon, "bar-chart-3");
   assert.equal(unpackedPkg.dyworker?.iconColor, "#7c3aed");
+
+  const receiverHost = await createHost({ userDataDir: receiverDir, mountPlugins: true });
+  t.after(async () => disposeHost(receiverHost));
+  const installed = await receiverHost.plugins.installPackage({
+    input: unpacked.pluginDir,
+    allowIncompatible: false,
+    npmPath: "/fake/npm",
+    run: async (_cmd, args) => {
+      if (args[0] === "install") {
+        const prefixDir = args[args.indexOf("--prefix") + 1];
+        const destDir = path.join(prefixDir, "node_modules", "visual-plugin");
+        await fs.mkdir(path.dirname(destDir), { recursive: true });
+        await fs.cp(unpacked.pluginDir, destDir, { recursive: true, force: true });
+      }
+      return { code: 0, stdout: "ok", stderr: "" };
+    },
+  });
+  assert.equal(installed.ok, true, JSON.stringify(installed));
+  const installedBundle = receiverHost.plugins.bundles_().find((item) => item.packageName === "visual-plugin");
+  assert.equal(installedBundle?.displayName, "财务月报看板");
+  assert.equal(installedBundle?.author, "财务信息化组");
+  assert.equal(installedBundle?.icon, "bar-chart-3");
+  assert.equal(installedBundle?.iconColor, "#7c3aed");
 });
 
 test("原生 DYWorker 插件使用 tools 等宿主服务时导出与严格导入均可成功启用", async (t) => {

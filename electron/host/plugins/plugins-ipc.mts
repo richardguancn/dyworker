@@ -16,6 +16,7 @@ import {
   exportPluginSharePackage,
   inspectPluginForExport,
   inspectSharePackage,
+  resolvePluginCustomizationFromSettings,
   unpackSharePackageToManagedDir,
 } from "../../plugin-share.mts";
 
@@ -185,6 +186,25 @@ export function pluginsIpcPlugin(deps: any = {}) {
         return { dataDir, storageRoot };
       };
 
+      const readSettingsSafe = () =>
+        Promise.resolve(deps.getSettings?.() ?? ctx.get("settings")?.read?.()).catch(() => null);
+
+      const resolveShareCustomization = async (target: string, extraKeys: Array<string | undefined | null> = []) => {
+        const settings = await readSettingsSafe();
+        const entries = typeof host.entries === "function" ? host.entries() : [];
+        const bundles = typeof host.bundles_ === "function" ? host.bundles_() : [];
+        const matchedEntry = entries.find((item: any) => item && (item.id === target || item.name === target));
+        const matchedBundle = bundles.find((item: any) => item && (item.name === target || item.packageName === target));
+        return resolvePluginCustomizationFromSettings(settings, [
+          ...extraKeys,
+          matchedBundle?.packageName,
+          matchedBundle?.name,
+          matchedEntry?.name,
+          matchedEntry?.id,
+          target,
+        ]);
+      };
+
       const decodeSharePayloadInput = async (payload: any) => {
         const filePath = String(payload?.filePath || "").trim();
         if (filePath) return { filePath };
@@ -200,11 +220,14 @@ export function pluginsIpcPlugin(deps: any = {}) {
 
       ctx.effect(() => ctx.ipc.handle("plugins:inspect-export", async (_event, payload) => {
         try {
+          const target = String(payload?.target || "").trim();
           const { dataDir, storageRoot } = resolveShareContext();
+          const customization = await resolveShareCustomization(target);
           return await inspectPluginForExport(ctx, {
-            target: String(payload?.target || "").trim(),
+            target,
             dataDir,
             storageRoot,
+            ...(customization ? { customization } : {}),
           });
         } catch (error: any) {
           return { ok: false, error: String(error?.message || error) };
@@ -216,7 +239,13 @@ export function pluginsIpcPlugin(deps: any = {}) {
           const target = String(payload?.target || "").trim();
           const includeData = Boolean(payload?.includeData);
           const { dataDir, storageRoot } = resolveShareContext();
-          const inspection = await inspectPluginForExport(ctx, { target, dataDir, storageRoot });
+          const preCustomization = await resolveShareCustomization(target);
+          const inspection = await inspectPluginForExport(ctx, {
+            target,
+            dataDir,
+            storageRoot,
+            ...(preCustomization ? { customization: preCustomization } : {}),
+          });
           if (!inspection?.ok) return inspection;
           if (inspection.shareKind !== "local") {
             return {
@@ -247,9 +276,7 @@ export function pluginsIpcPlugin(deps: any = {}) {
             return { ok: true, canceled: true };
           }
 
-          const settings = await (deps.getSettings?.() ?? ctx.get("settings")?.read?.()).catch(() => null);
-          const customMap = settings?.pluginCustomizations || {};
-          const custom = customMap[inspection.packageName] || customMap[inspection.entryId] || customMap[target];
+          const custom = await resolveShareCustomization(target, [inspection.packageName, inspection.entryId]);
 
           return await exportPluginSharePackage(ctx, {
             target,

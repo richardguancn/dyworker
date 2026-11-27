@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Copy, FolderOpen, Loader2, PackageCheck, Radio, Share2, X } from "lucide-react";
 import { t } from "./i18n";
+import { PluginGlyph, pluginTileStyle } from "./lib/pluginIcons";
 import { copyShareText, formatShareBytes } from "./lib/pluginShare";
 import { useLanShareStore } from "./state/lanShareStore";
 import type { PluginExportInspection, PluginExportResult } from "./types";
@@ -126,8 +127,22 @@ export function SharePluginDialog({
             </div>
             <h3 className="install-result-title">分享包已导出</h3>
             <div className="install-result-card">
-              <strong>{exported.displayName || exported.packageName || titleHint}</strong>
-              {exported.version ? <span className="install-result-version">v{exported.version} · {formatShareBytes(exported.bytes || 0)}</span> : null}
+              <div className="plugin-share-summary-head">
+                <span
+                  className="plugin-share-summary-icon"
+                  style={pluginTileStyle(exported.iconColor || "", exported.packageName || target)}
+                >
+                  <PluginGlyph iconId={exported.icon || ""} color={exported.iconColor || ""} size={17} />
+                </span>
+                <strong>{exported.displayName || exported.packageName || titleHint}</strong>
+                {exported.version ? <span className="plugin-tag">v{exported.version}</span> : null}
+                {exported.author ? <span className="plugin-tag">{exported.author}</span> : null}
+              </div>
+              {exported.version || exported.bytes ? (
+                <span className="install-result-version">
+                  {exported.version ? `v${exported.version}` : ""}{exported.version && exported.bytes ? " · " : ""}{exported.bytes ? formatShareBytes(exported.bytes) : ""}
+                </span>
+              ) : null}
               <p className="plugin-share-path">{exported.path}</p>
             </div>
             <div className="plugin-share-meta-note">
@@ -198,8 +213,15 @@ export function SharePluginDialog({
           <>
             <div className="plugin-share-summary-card">
               <div className="plugin-share-summary-head">
+                <span
+                  className="plugin-share-summary-icon"
+                  style={pluginTileStyle(inspection.iconColor || "", inspection.packageName || target)}
+                >
+                  <PluginGlyph iconId={inspection.icon || ""} color={inspection.iconColor || ""} size={17} />
+                </span>
                 <strong>{inspection.displayName || titleHint || inspection.packageName}</strong>
                 {inspection.version ? <span className="plugin-tag">v{inspection.version}</span> : null}
+                {inspection.author ? <span className="plugin-tag">{inspection.author}</span> : null}
                 {inspection.hasClient ? <span className="plugin-tag">含界面</span> : <span className="plugin-tag">纯工具</span>}
               </div>
               {inspection.description ? <p>{inspection.description}</p> : null}

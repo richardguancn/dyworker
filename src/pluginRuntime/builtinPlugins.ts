@@ -10,6 +10,7 @@
 
 import { installClientRuntime, loadBundleScript, loadedBundle } from "./index.ts";
 import { clientHost } from "./clientHostSingleton.ts";
+import { buildPluginBundleVisualMap, useLayoutStore } from "../state/layoutStore.ts";
 
 export interface BuiltinLoadResult {
   id: string;
@@ -25,6 +26,7 @@ export async function loadBuiltinClientHalves(bridge: any = (globalThis as any).
   let entries: any[] = [];
   try {
     const list = await bridge.listPlugins();
+    useLayoutStore.getState().setPluginBundleVisuals(buildPluginBundleVisualMap(list));
     entries = Array.isArray(list?.entries) ? list.entries : [];
   } catch {
     return results;

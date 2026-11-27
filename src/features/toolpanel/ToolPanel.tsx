@@ -27,7 +27,7 @@ import {
   type ViewportResizeEdge,
 } from "../browser/browserViewport";
 import type { BrowserControlState, FileChange, ProviderSettings, SessionRecord, WorkspaceEntry } from "../../types";
-import type { ToolPanelTab } from "../../state/layoutStore";
+import { useLayoutStore, type ToolPanelTab } from "../../state/layoutStore";
 
 const FilesSplitPanel = lazy(async () => ({ default: (await import("../files/FilesSplitPanel")).FilesSplitPanel }));
 
@@ -151,6 +151,7 @@ export function ToolPanel(props: ToolPanelProps) {
     choosePreviewFile, openFilePreview, insertFileToken, refreshWorkspace, openToolPanelTab, shortcutLabel,
   } = props;
 
+  const pluginBundleVisuals = useLayoutStore((s) => s.pluginBundleVisuals);
   const browserContentRef = useRef<HTMLDivElement | null>(null);
   const [browserContentSize, setBrowserContentSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const [resizingViewport, setResizingViewport] = useState<{
@@ -280,8 +281,16 @@ export function ToolPanel(props: ToolPanelProps) {
             data-overflow-end={toolPanelTabOverflow.end ? "true" : "false"}
           >
           {!pristineMenuPage && toolPanelTabs.map((tab) => {
+            const tabBundleVisual = tab.kind === "plugin"
+              ? (pluginBundleVisuals[tab.pluginId || ""] || pluginBundleVisuals[tab.pluginKey || ""])
+              : undefined;
             const pluginVisual = tab.kind === "plugin"
-              ? resolvePluginVisual([tab.pluginId || "", tab.pluginKey || ""], settings.pluginCustomizations, { displayName: tab.title })
+              ? resolvePluginVisual([tab.pluginId || "", tab.pluginKey || ""], settings.pluginCustomizations, {
+                displayName: tabBundleVisual?.displayName || tab.title,
+                author: tabBundleVisual?.author || "",
+                icon: tabBundleVisual?.icon || "",
+                iconColor: tabBundleVisual?.iconColor || "",
+              })
               : null;
             return (
             <div className={`tool-panel-tab ${tab.id === activeToolPanelTabId ? "active" : ""}`} key={tab.id} data-tool-panel-tab-id={tab.id} role="presentation">

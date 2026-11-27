@@ -9,7 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { LanShareService } from "../../lan-share.mts";
 import { tryBuildOfflineLocalInstallRunner } from "../../plugin-authoring.mts";
-import { exportPluginSharePackage, unpackSharePackageToManagedDir } from "../../plugin-share.mts";
+import {
+  exportPluginSharePackage,
+  resolvePluginCustomizationFromSettings,
+  unpackSharePackageToManagedDir,
+} from "../../plugin-share.mts";
 import { exportFileName, parseTransferPackage } from "../../session-transfer.mts";
 import { commitTransferPackageImport, prepareTransferPackagePayload } from "./transfer-ipc.mts";
 
@@ -268,6 +272,17 @@ export function lanShareIpcPlugin(deps: any) {
             const target = String(payload?.pluginTarget || "").trim();
             if (!target) return { ok: false, error: "缺少要分享的插件标识" };
             const storageRoot = ctx.get("storage")?.root || path.join(ctx.plugins?.dir || dataDir, "data");
+            const entries = typeof ctx.plugins?.entries === "function" ? ctx.plugins.entries() : [];
+            const bundles = typeof ctx.plugins?.bundles_ === "function" ? ctx.plugins.bundles_() : [];
+            const matchedEntry = entries.find((item: any) => item && (item.id === target || item.name === target));
+            const matchedBundle = bundles.find((item: any) => item && (item.name === target || item.packageName === target));
+            const customization = resolvePluginCustomizationFromSettings(cachedSettings, [
+              matchedBundle?.packageName,
+              matchedBundle?.name,
+              matchedEntry?.name,
+              matchedEntry?.id,
+              target,
+            ]);
             const tempDir = await fsSync.mkdtemp(path.join(os.tmpdir(), "dyworker-lan-plugin-"));
             const tempFile = path.join(tempDir, "share.dyplugin");
             try {
@@ -278,6 +293,7 @@ export function lanShareIpcPlugin(deps: any) {
                 dataDir,
                 storageRoot,
                 appVersion: String(appVersion || app?.getVersion?.() || ""),
+                ...(customization ? { customization } : {}),
               });
               if (!exported?.ok || !exported.path) {
                 return { ok: false, error: exported?.error || "插件打包失败" };
@@ -291,6 +307,9 @@ export function lanShareIpcPlugin(deps: any) {
                 meta: {
                   packageName: exported.packageName,
                   pluginVersion: exported.version,
+                  ...(exported.author ? { author: exported.author } : {}),
+                  ...(exported.icon ? { icon: exported.icon } : {}),
+                  ...(exported.iconColor ? { iconColor: exported.iconColor } : {}),
                   includesData: exported.includesData,
                   includedDataFiles: exported.includedDataFiles || [],
                   warningsCount: exported.warnings?.length || 0,

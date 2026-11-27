@@ -11,6 +11,7 @@ import { AppUpdateAction } from "../features/settings/SettingsSubPanels";
 import type { SettingsTab } from "../features/settings/SettingsDialog";
 import { displayWorkspace } from "../lib/text";
 import { useLanShareStore } from "../state/lanShareStore";
+import { useLayoutStore } from "../state/layoutStore";
 import { useSettingsStore } from "../state/settingsStore";
 import { t } from "../i18n";
 import type { AppUpdateStatus, GitBranchesInfo, GitDiffStats, SessionRecord, WorkspaceContext } from "../types";
@@ -373,11 +374,14 @@ export function ShellChrome(props: ShellChromeProps) {
   );
 
   const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
+  const pluginBundleVisuals = useLayoutStore((s) => s.pluginBundleVisuals);
+  const activeBundleVisual = activeWorkspacePage ? pluginBundleVisuals[activeWorkspacePage.pluginId] : undefined;
   const activePageVisual = activeWorkspacePage
     ? resolvePluginVisual([activeWorkspacePage.pluginId, `${activeWorkspacePage.pluginId}:${activeWorkspacePage.key}`], pluginCustomizations, {
-      displayName: activeWorkspacePage.label,
-      icon: activeWorkspacePage.icon,
-      iconColor: activeWorkspacePage.iconColor,
+      displayName: activeBundleVisual?.displayName || activeWorkspacePage.label,
+      author: activeBundleVisual?.author || "",
+      icon: activeBundleVisual?.icon || activeWorkspacePage.icon,
+      iconColor: activeBundleVisual?.iconColor || activeWorkspacePage.iconColor,
     })
     : null;
 

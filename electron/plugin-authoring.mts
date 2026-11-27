@@ -10,7 +10,11 @@ import os from "node:os";
 import path from "node:path";
 import { analyzePlugin } from "./host/dsh-compat.mts";
 import { resolveClientEntries } from "./host/plugin-client.mts";
-import { exportPluginSharePackage, inspectPluginForExport } from "./plugin-share.mts";
+import {
+  exportPluginSharePackage,
+  inspectPluginForExport,
+  resolvePluginCustomizationFromSettings,
+} from "./plugin-share.mts";
 
 export const PLUGIN_AUTHORING_TOOL_NAMES = new Set(["plugin_inspect", "plugin_manage"]);
 
@@ -984,10 +988,16 @@ export async function executePluginManage(
       || (plugins?.dir ? path.join(plugins.dir, "data") : ""),
     ).trim();
 
+    const settings = await Promise.resolve(ctx?.get?.("settings")?.read?.()).catch(() => null);
     const inspection = await inspectPluginForExport(ctx, { target, dataDir, storageRoot });
     if (!inspection?.ok) {
       return { ok: false, error: inspection?.error || `无法导出插件：${target}` };
     }
+    const customization = resolvePluginCustomizationFromSettings(settings, [
+      inspection.packageName,
+      inspection.entryId,
+      target,
+    ]);
     if (inspection.shareKind === "remote") {
       return {
         ok: true,
@@ -1019,6 +1029,7 @@ export async function executePluginManage(
       includeData: Boolean(args?.includeData),
       dataDir,
       storageRoot,
+      ...(customization ? { customization } : {}),
     });
     if (!exported?.ok) {
       return { ok: false, error: exported?.error || "导出插件分享包失败" };
