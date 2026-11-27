@@ -149,6 +149,23 @@ export function SettingsDialog({
   const [locale] = useLocale();
   const settingsNav = useMemo(() => getSettingsNav(), [locale]);
   const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft((current) => ({
+      ...current,
+      identity: value.identity ?? current.identity,
+      pluginCustomizations: value.pluginCustomizations,
+      mcpServers: value.mcpServers,
+      channels: value.channels,
+      skillLibraries: value.skillLibraries,
+      approvalMode: value.approvalMode,
+      fullCdpAccess: value.fullCdpAccess,
+      reasoningOverrides: value.reasoningOverrides,
+      visionOverrides: value.visionOverrides,
+      contextLimitOverrides: value.contextLimitOverrides,
+      ...(tab !== "network" ? { lanShare: value.lanShare } : {}),
+    }));
+  }, [value, tab]);
   const [providerId, setProviderId] = useState(() => matchProvider(value.endpoint));
   const [saving, setSaving] = useState(false);
   // 保存结果就地提示：设置已是整页界面，保存后不关闭，因此需要有页面内的反馈
@@ -633,7 +650,67 @@ export function SettingsDialog({
     if (tab === "model" && !modelComplete) return;
     setSaving(true);
     setSaveStatus(null);
-    const nextDraft = tab === "model" ? saveCurrentModel(draft) : draft;
+    const latest = useSettingsStore.getState().settings;
+    let nextDraft: ProviderSettings;
+    if (tab === "network") {
+      nextDraft = { ...latest, lanShare: draft.lanShare };
+    } else if (tab === "power") {
+      nextDraft = { ...latest, preventSleep: draft.preventSleep };
+    } else if (tab === "updates") {
+      nextDraft = { ...latest, updateUrl: draft.updateUrl };
+    } else if (tab === "search") {
+      nextDraft = {
+        ...latest,
+        deepseekSearchApiKey: draft.deepseekSearchApiKey,
+        bochaApiKey: draft.bochaApiKey,
+        searxngEndpoint: draft.searxngEndpoint,
+        domesticSearchOnly: draft.domesticSearchOnly,
+      };
+    } else if (tab === "telemetry") {
+      nextDraft = { ...latest, telemetry: draft.telemetry };
+    } else if (tab === "voice") {
+      nextDraft = {
+        ...latest,
+        transcriptionEndpoint: draft.transcriptionEndpoint,
+        transcriptionModel: draft.transcriptionModel,
+        transcriptionEngine: draft.transcriptionEngine,
+        asrModel: draft.asrModel,
+        asrModelDir: draft.asrModelDir,
+        llamaServerPath: draft.llamaServerPath,
+        ttsEndpoint: draft.ttsEndpoint,
+        ttsModel: draft.ttsModel,
+        ttsEngine: draft.ttsEngine,
+        ttsLocalModel: draft.ttsLocalModel,
+        ttsModelDir: draft.ttsModelDir,
+        ttsVoicePath: draft.ttsVoicePath,
+        ttsApiKey: draft.ttsApiKey,
+      };
+    } else if (tab === "model") {
+      const modelSaved = saveCurrentModel(draft);
+      nextDraft = {
+        ...modelSaved,
+        identity: latest.identity ?? modelSaved.identity,
+        lanShare: latest.lanShare,
+        pluginCustomizations: latest.pluginCustomizations,
+        mcpServers: latest.mcpServers,
+        channels: latest.channels,
+        skillLibraries: latest.skillLibraries,
+        approvalMode: latest.approvalMode,
+        fullCdpAccess: latest.fullCdpAccess,
+        telemetry: latest.telemetry,
+        preventSleep: latest.preventSleep,
+        updateUrl: latest.updateUrl,
+        searxngEndpoint: latest.searxngEndpoint,
+        bochaApiKey: latest.bochaApiKey,
+        deepseekSearchApiKey: latest.deepseekSearchApiKey,
+        domesticSearchOnly: latest.domesticSearchOnly,
+        reasoningOverrides: latest.reasoningOverrides,
+        visionOverrides: latest.visionOverrides,
+        contextLimitOverrides: latest.contextLimitOverrides,
+      };
+    } else {
+      nextDraft = { ...latest, ...draft, identity: latest.identity ?? draft.identity };
+    }
     const saved = await onSave(
       nextDraft,
       tab === "model" ? t("common.modelSaved", "AI 模型已保存并启用") : t("common.saved", "设置已保存"),

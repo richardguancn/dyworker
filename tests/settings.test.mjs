@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { createHost, disposeHost } from "../electron/host/context.mts";
 import { countUndecryptableSecrets, deserializeSettings, needsSecretMigration, normalizeApprovalMode, normalizeIdentity, preserveUndecryptableSecrets, serializeSettings, unattendedApprovalMode, wakeApprovalMode } from "../electron/settings.mts";
 import { DEFAULT_UPDATE_URL } from "../electron/app-updater.mts";
 
@@ -480,4 +484,34 @@ test("pluginCustomizations 往返保存并过滤非法图标、非法色值与�
   const restored = deserializeSettings(stored, secretStorage);
   assert.deepEqual(restored.pluginCustomizations, stored.pluginCustomizations);
   assert.deepEqual(deserializeSettings({}, secretStorage).pluginCustomizations, {});
+});
+
+test("SettingsService.write 保留磁盘已选身份不被 null 覆盖，且支持两种身份间正常切换", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dyw-settings-id-"));
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+  const ctx = await createHost({ userDataDir: dir, safeStorage: { isEncryptionAvailable: () => false } });
+  t.after(async () => disposeHost(ctx));
+
+  await ctx.settings.write({ identity: "general", lanShare: { enabled: true, nickname: "", manualPeers: [] } });
+  assert.equal((await ctx.settings.read()).identity, "general");
+
+  // 即使保存请求里带了陈旧的 identity: null 或缺失 identity，磁盘已有有效身份也不能被清空回 null
+  await ctx.settings.write({ identity: null, lanShare: { enabled: false, nickname: "测试", manualPeers: [] } });
+  const afterStaleSave = await ctx.settings.read();
+  assert.equal(afterStaleSave.identity, "general");
+  assert.equal(afterStaleSave.lanShare.enabled, false);
+  assert.equal(afterStaleSave.lanShare.nickname, "测试");
+
+  // 在两种有效身份之间切换不受影响
+  await ctx.settings.write({ identity: "government", lanShare: afterStaleSave.lanShare });
+  assert.equal((await ctx.settings.read()).identity, "government");
+});
+
+test("SettingsDialog 按当前 tab 合并 useSettingsStore 最新状态提交，并同步外部更新", async () => {
+  const dialogSrc = await fs.readFile(new URL("../src/features/settings/SettingsDialog.tsx", import.meta.url), "utf8");
+  assert.match(dialogSrc, /const latest = useSettingsStore\.getState\(\)\.settings/);
+  assert.match(dialogSrc, /if \(tab === "network"\) \{\s*nextDraft = \{ \.\.\.latest, lanShare: draft\.lanShare \}/);
+  assert.match(dialogSrc, /identity:\s*value\.identity \?\? current\.identity/);
 });

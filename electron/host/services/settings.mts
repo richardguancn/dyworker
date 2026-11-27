@@ -12,6 +12,7 @@ import {
   preserveUndecryptableSecrets,
   serializeSettings,
   normalizeApprovalMode,
+  normalizeIdentity,
 } from "../../settings.mts";
 import { DEFAULT_UPDATE_URL, normalizeUpdateUrl, parseGithubUpdateUrl } from "../../app-updater.mts";
 import fs from "node:fs/promises";
@@ -80,8 +81,10 @@ export class SettingsService extends Service {
     const rawUpdateUrl = String(settings?.updateUrl || DEFAULT_UPDATE_URL).trim() || DEFAULT_UPDATE_URL;
     parseGithubUpdateUrl(rawUpdateUrl);
     const updateUrl = normalizeUpdateUrl(rawUpdateUrl);
-    const nextSettings = { ...settings, updateUrl };
     const stored = await readJson(this.settingsFile, {});
+    const storedIdentity = normalizeIdentity(stored?.identity);
+    const nextIdentity = normalizeIdentity(settings?.identity) ?? storedIdentity;
+    const nextSettings = { ...settings, identity: nextIdentity, updateUrl };
     // 曾经发生过"渲染端拿到空状态后保存，把模型配置一次性覆盖成空"的事故：
     // 落盘前若检测到凭据/档案由"有"变"无"，先留一份快照再覆盖（覆盖仍然执行，
     // 保证正常清空配置的流程不被阻断，但事后可从这里取回）。
