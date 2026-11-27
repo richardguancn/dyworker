@@ -64,14 +64,22 @@ export const DSH_SERVICES = [
 // 同名但语义不同的服务：inject 能满足，但按 DSH API 调用会失败——必须让用户知道
 const NAME_ONLY = new Set(["skills", "settings", "sessions", "fs", "tools"]);
 
+/** 判断是否为专门针对 DYWorker 宿主编写的原生插件（声明了 dyworker 字段且未声明 dsh 字段） */
+export function isDyworkerNativePackage(manifest: any): boolean {
+  return Boolean(manifest && typeof manifest === "object" && manifest.dyworker && typeof manifest.dyworker === "object" && !manifest.dsh);
+}
+
 /**
  * 一个服务名在本宿主里的状态：
  *   fulfilled  同名服务存在，语义按本宿主实现（DSH 插件直接调用可能不兼容）
  *   name-only  同名但语义明确不同
  *   missing    不存在 → inject 永不满足，插件不会 apply
  */
-export function classifyService(name) {
+export function classifyService(name, options: { nativeDyworker?: boolean } = {}) {
   if (HOST_SERVICES.includes(name)) {
+    if (options?.nativeDyworker === true) {
+      return { name, state: "fulfilled", reason: `由本宿主原生提供：${name}` };
+    }
     return NAME_ONLY.has(name)
       ? { name, state: "name-only", reason: `本宿主的 ${name} 与 DSH 同名服务语义不同，按 DSH API 调用会失败` }
       : { name, state: "fulfilled", reason: `由本宿主提供：${name}` };
@@ -182,6 +190,7 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir,
   const inject = Array.isArray(declared) ? declared : [];
 
   const isolated = isDshPackage(manifest);
+  const nativeDyworker = !isolated && isDyworkerNativePackage(manifest);
   const requiresSession = isolated && ([...inject, ...hints] as string[]).some(name =>
     !DSH_RUNTIME_SERVICES.includes(name) && DSH_SESSION_SERVICES.includes(name));
   const sessionCheck = requiresSession && !importError && inject.every(name => DSH_SESSION_SERVICES.includes(name))
@@ -191,7 +200,7 @@ export async function analyzePlugin(profileManifest, spec, manifest, pkgDir,
     ? available.includes(name)
       ? { name, state: "fulfilled", reason: "由固定版本的官方 DSH 运行环境提供" }
       : { name, state: "missing", reason: `独立运行环境暂未提供 ${name}` }
-    : classifyService(name));
+    : classifyService(name, { nativeDyworker }));
   const missingPackages = missingDshPackages(profileManifest, manifest);
   const client = manifest.dyworker?.client || manifest.dsh?.client || null;
 

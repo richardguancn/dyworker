@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, Edit3, Eye, EyeOff, Folder, Loader2, MessageSquare, Package, Radio, RefreshCw, Send, UserCheck, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Edit3, Eye, EyeOff, Folder, Link2, Loader2, MessageSquare, Package, Radio, RefreshCw, Send, UserCheck, X } from "lucide-react";
 import { useLanShareStore } from "../../state/lanShareStore";
 import type { LanIdentity, LanOutgoingTransfer, LanPeerRecord, LanShareKind } from "../../types";
 
@@ -34,6 +34,10 @@ export function LanShareSendDialog() {
   const [editingNick, setEditingNick] = useState(false);
   const [nickDraft, setNickDraft] = useState("");
   const [peers, setPeers] = useState<LanPeerRecord[]>([]);
+  const [localAddresses, setLocalAddresses] = useState<string[]>([]);
+  const [manualInput, setManualInput] = useState("");
+  const [connectingPeer, setConnectingPeer] = useState(false);
+  const [copiedIp, setCopiedIp] = useState(false);
   const [transfersByPeer, setTransfersByPeer] = useState<Record<string, LanOutgoingTransfer>>({});
   const [sendingPeerId, setSendingPeerId] = useState("");
   const [error, setError] = useState("");
@@ -67,6 +71,7 @@ export function LanShareSendDialog() {
           setDiscoverable(state.discoverable !== false);
           setNickname(state.nickname || "");
           setNickDraft(state.nickname || "");
+          setLocalAddresses(Array.isArray(state.localAddresses) ? state.localAddresses : []);
           setPeers(Array.isArray(state.peers) ? state.peers : []);
           setDiscoveryError(state.discoveryError || "");
         }
@@ -178,6 +183,35 @@ export function LanShareSendDialog() {
     await bridge.cancelLanShare({ transferId: transfer.transferId }).catch(() => null);
   };
 
+  const handleConnectManualPeer = async () => {
+    const addr = manualInput.trim();
+    if (!addr || !bridge?.addLanSharePeer || connectingPeer) return;
+    setConnectingPeer(true);
+    setError("");
+    try {
+      const res = await bridge.addLanSharePeer({ address: addr });
+      if (!res?.ok) {
+        setError(res?.error || "无法连接该地址");
+        return;
+      }
+      if (Array.isArray(res.peers)) setPeers(res.peers);
+      setManualInput("");
+    } catch (err: any) {
+      setError(String(err?.message || err));
+    } finally {
+      setConnectingPeer(false);
+    }
+  };
+
+  const handleCopyLocalIp = async (ip: string) => {
+    try {
+      if (bridge?.writeClipboardText) await bridge.writeClipboardText(ip);
+      else if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(ip);
+      setCopiedIp(true);
+      window.setTimeout(() => setCopiedIp(false), 1600);
+    } catch {}
+  };
+
   const KindIcon = sendTarget.kind === "project" ? Folder : sendTarget.kind === "plugin" ? Package : MessageSquare;
 
   return createPortal(
@@ -244,6 +278,19 @@ export function LanShareSendDialog() {
                 </>
               )}
             </div>
+            {localAddresses.length > 0 && (
+              <div className="lan-share-self-ip-row">
+                <span>本机 IP：{localAddresses[0]}</span>
+                <button
+                  type="button"
+                  className="lan-share-icon-link"
+                  title="复制本机 IP 发给跨网段同事"
+                  onClick={() => void handleCopyLocalIp(localAddresses[0])}
+                >
+                  {copiedIp ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="lan-share-self-controls">
@@ -281,6 +328,30 @@ export function LanShareSendDialog() {
           </div>
         ) : null}
 
+        <div className="lan-share-manual-connect">
+          <Link2 size={14} />
+          <input
+            type="text"
+            aria-label="跨网段直连 IP"
+            placeholder="跨子网找不到？直接输入对方 IP 连接（如 172.168.138.154）"
+            value={manualInput}
+            onChange={(e) => setManualInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleConnectManualPeer();
+            }}
+            disabled={connectingPeer}
+          />
+          <button
+            type="button"
+            className="plugins-text-button"
+            disabled={!manualInput.trim() || connectingPeer}
+            onClick={() => void handleConnectManualPeer()}
+          >
+            {connectingPeer ? <Loader2 size={13} className="spin" /> : null}
+            <span>{connectingPeer ? "连接中" : "连接"}</span>
+          </button>
+        </div>
+
         <div className="lan-share-peers-section">
           <div className="lan-share-peers-head">
             <span><Radio size={14} /> 局域网在线用户（{peers.length}）</span>
@@ -294,7 +365,7 @@ export function LanShareSendDialog() {
             <div className="lan-share-empty">
               <Radio size={22} />
               <strong>暂未发现其他在线用户</strong>
-              <p>请确认接收方已打开 DYWorker、处于同一局域网（Wi-Fi / 内网），且未关闭「可被发现」。</p>
+              <p>若双方在不同子网/VLAN（如 .139 与 .138 网段），路由器会拦截自动广播，请在上方直接输入对方 IP 连接（双方均需更新到最新版 DYWorker）。</p>
             </div>
           ) : (
             <div className="lan-share-peer-list">

@@ -56,6 +56,7 @@ export const defaultSettings: ProviderSettings = {
   lanShare: {
     enabled: true,
     nickname: "",
+    manualPeers: [],
   },
   pluginCustomizations: {},
   fullCdpAccess: false,

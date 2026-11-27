@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("dyworker", {
   getLanShareState: () => ipcRenderer.invoke("lan-share:get-state"),
   updateLanShareConfig: (payload) => ipcRenderer.invoke("lan-share:update-config", payload),
   refreshLanSharePeers: () => ipcRenderer.invoke("lan-share:refresh-peers"),
+  addLanSharePeer: (payload) => ipcRenderer.invoke("lan-share:add-peer", payload),
+  removeLanSharePeer: (payload) => ipcRenderer.invoke("lan-share:remove-peer", payload),
   sendLanShare: (payload) => ipcRenderer.invoke("lan-share:send", payload),
   cancelLanShare: (payload) => ipcRenderer.invoke("lan-share:cancel-send", payload),
   respondLanShareIncoming: (payload) => ipcRenderer.invoke("lan-share:respond-incoming", payload),

@@ -87,6 +87,7 @@ export function lanShareIpcPlugin(deps: any) {
           discoverable: cachedSettings?.lanShare?.enabled !== false,
           nickname: String(cachedSettings?.lanShare?.nickname || ""),
           loginAccount: resolveLanLoginAccount(cachedSettings),
+          manualPeers: Array.isArray(cachedSettings?.lanShare?.manualPeers) ? cachedSettings.lanShare.manualPeers : [],
         }),
         onPeersChanged: (peers) => {
           broadcast("lan-share:peers-updated", peers);
@@ -181,10 +182,11 @@ export function lanShareIpcPlugin(deps: any) {
       trustedHandle("lan-share:update-config", async (_event, payload) => {
         try {
           const current = await readSettings();
-          const prev = current?.lanShare || { enabled: true, nickname: "" };
+          const prev = current?.lanShare || { enabled: true, nickname: "", manualPeers: [] };
           const nextLanShare = {
             enabled: payload?.enabled !== undefined ? Boolean(payload.enabled) : prev.enabled !== false,
             nickname: payload?.nickname !== undefined ? String(payload.nickname || "").trim().slice(0, 40) : String(prev.nickname || ""),
+            manualPeers: Array.isArray(prev.manualPeers) ? prev.manualPeers : [],
           };
           const saved = await saveSettings({ ...current, lanShare: nextLanShare });
           cachedSettings = saved;
@@ -197,8 +199,63 @@ export function lanShareIpcPlugin(deps: any) {
 
       trustedHandle("lan-share:refresh-peers", async () => {
         await refreshSettingsSnapshot();
-        const peers = service.refreshPeers();
+        const peers = await service.refreshPeersAsync();
         return { ok: true, peers, self: service.getIdentity() };
+      });
+
+      trustedHandle("lan-share:add-peer", async (_event, payload) => {
+        try {
+          await refreshSettingsSnapshot();
+          const probe = await service.probeManualTarget(String(payload?.address || ""));
+          if (!probe.ok) {
+            return { ok: false, error: probe.error || "连接目标地址失败" };
+          }
+          const current = await readSettings();
+          const prev = current?.lanShare || { enabled: true, nickname: "", manualPeers: [] };
+          const nextList = [
+            probe.normalized!,
+            ...(Array.isArray(prev.manualPeers) ? prev.manualPeers : []).filter((item: string) => item !== probe.normalized),
+          ].slice(0, 20);
+          const saved = await saveSettings({
+            ...current,
+            lanShare: {
+              enabled: prev.enabled !== false,
+              nickname: String(prev.nickname || ""),
+              manualPeers: nextList,
+            },
+          });
+          cachedSettings = saved;
+          return {
+            ok: true,
+            peer: probe.peer,
+            peers: service.getPeers(),
+            manualPeers: nextList,
+            self: service.getIdentity(),
+          };
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
+      });
+
+      trustedHandle("lan-share:remove-peer", async (_event, payload) => {
+        try {
+          const target = String(payload?.address || "").trim();
+          const current = await readSettings();
+          const prev = current?.lanShare || { enabled: true, nickname: "", manualPeers: [] };
+          const nextList = (Array.isArray(prev.manualPeers) ? prev.manualPeers : []).filter((item: string) => item !== target);
+          const saved = await saveSettings({
+            ...current,
+            lanShare: {
+              enabled: prev.enabled !== false,
+              nickname: String(prev.nickname || ""),
+              manualPeers: nextList,
+            },
+          });
+          cachedSettings = saved;
+          return { ok: true, peers: service.getPeers(), manualPeers: nextList };
+        } catch (error: any) {
+          return { ok: false, error: String(error?.message || error) };
+        }
       });
 
       trustedHandle("lan-share:send", async (_event, payload) => {

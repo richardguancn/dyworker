@@ -598,7 +598,16 @@ export class PluginHostService extends Service {
         const config = rows.find(item => item.name === spec)?.config ?? {};
         const metadataOnly = described.declared && !includesModule(rows, spec);
         const analysis = await analyzePlugin(staging.profileManifest(), spec, manifest, described.dir, { config, metadataOnly });
-        if (analysis.verdict !== "runnable" && !allowIncompatible) return { ok: false, error: analysis.reasons.join("；"), analysis };
+        if (analysis.verdict !== "runnable" && !allowIncompatible) {
+          return {
+            ok: false,
+            incompatible: true,
+            verdict: analysis.verdict,
+            matrix: formatMatrix(analysis),
+            error: analysis.reasons.join("；"),
+            analysis,
+          };
+        }
         if (allowIncompatible && analysis.versionIssue && !analysis.versionIssue.exempted)
           await setProfileVersionExemption(stage, `${manifest.name}@${manifest.version}`, DSH_VERSION, true, true);
         if (!metadataOnly && isDshPackage(manifest) && analysis.runtime !== 'dsh-session') {

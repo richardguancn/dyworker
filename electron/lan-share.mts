@@ -15,6 +15,7 @@ import os from "node:os";
 export const LAN_SHARE_PROTOCOL = "dyworker-lan-share";
 export const LAN_SHARE_PROTOCOL_VERSION = 1;
 export const DEFAULT_DISCOVERY_PORT = Number(process.env.DYWORKER_LAN_DISCOVERY_PORT) || 41234;
+export const DEFAULT_HTTP_PORT = Number(process.env.DYWORKER_LAN_HTTP_PORT) || 41235;
 
 export const HEARTBEAT_INTERVAL_MS = 5000;
 export const PEER_TTL_MS = 16000;
@@ -116,6 +117,107 @@ export function isPrivateLanAddress(rawIp: string | undefined | null): boolean {
   const lower = ip.toLowerCase();
   if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) return true;
   return false;
+}
+
+function parseIpv4Octets(ip: string): [number, number, number, number] | null {
+  const parts = String(ip || "").trim().split(".");
+  if (parts.length !== 4 || !parts.every((seg) => /^\d{1,3}$/.test(seg))) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => n < 0 || n > 255)) return null;
+  return nums as [number, number, number, number];
+}
+
+export function collectLocalLanInterfaces(): Array<{ address: string; netmask: string }> {
+  const result: Array<{ address: string; netmask: string }> = [];
+  const ifaces = os.networkInterfaces();
+  for (const list of Object.values(ifaces)) {
+    for (const info of list || []) {
+      if (!info || info.internal || info.family !== "IPv4") continue;
+      const addr = normalizeIpAddress(info.address);
+      if (addr) result.push({ address: addr, netmask: String(info.netmask || "") });
+    }
+  }
+  return result;
+}
+
+export function collectLocalLanIpv4s(): string[] {
+  return [...new Set(collectLocalLanInterfaces().map((item) => item.address))];
+}
+
+/**
+ * 判定局域网节点 IP 是否允许通信：
+ * - 放行标准私网（RFC1918 / Loopback / Link-Local / IPv6 ULA）及 CGNAT (100.64.0.0/10)
+ * - 放行用户显式添加直连的节点 IP
+ * - 放行与本机任一局域网网卡同子网或同 /16 企业园区网段（如 172.168.139.63 ↔ 172.168.138.154）
+ */
+export function isAllowedLanPeerAddress(
+  rawIp: string | undefined | null,
+  options: {
+    localInterfaces?: Array<{ address: string; netmask?: string }>;
+    trustedHosts?: Iterable<string>;
+  } = {},
+): boolean {
+  const ip = normalizeIpAddress(rawIp);
+  if (!ip) return false;
+  if (isPrivateLanAddress(ip)) return true;
+
+  if (options.trustedHosts) {
+    for (const host of options.trustedHosts) {
+      if (normalizeIpAddress(host) === ip) return true;
+    }
+  }
+
+  const target = parseIpv4Octets(ip);
+  if (!target) return false;
+  const [ta, tb] = target;
+  // CGNAT / Tailscale 等虚拟内网段 100.64.0.0/10
+  if (ta === 100 && tb >= 64 && tb <= 127) return true;
+
+  const locals = options.localInterfaces || collectLocalLanInterfaces();
+  for (const iface of locals) {
+    const local = parseIpv4Octets(normalizeIpAddress(iface.address));
+    if (!local) continue;
+    const mask = parseIpv4Octets(String(iface.netmask || ""));
+    if (mask) {
+      const sameSubnet = target.every((oct, idx) => (oct & mask[idx]) === (local[idx] & mask[idx]));
+      if (sameSubnet) return true;
+    }
+    // 兼容使用非标内网 IP 段的多 VLAN 园区网络（如 172.168.139.x 与 172.168.138.x）
+    if (ta === local[0] && tb === local[1]) return true;
+  }
+
+  return false;
+}
+
+export function parseManualPeerAddress(raw: string): { host: string; port?: number; normalized: string } | null {
+  let value = String(raw || "").trim();
+  if (!value) return null;
+  value = value.replace(/^https?:\/\//i, "").split("/")[0].trim();
+  if (!value) return null;
+
+  let host = value;
+  let port: number | undefined;
+  const colonIdx = value.lastIndexOf(":");
+  if (colonIdx > 0 && !value.includes("]")) {
+    const hostPart = value.slice(0, colonIdx).trim();
+    const portPart = value.slice(colonIdx + 1).trim();
+    if (!/^\d{1,5}$/.test(portPart)) return null;
+    const parsedPort = Number(portPart);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) return null;
+    host = hostPart;
+    port = parsedPort;
+  }
+
+  const cleanHost = normalizeIpAddress(host);
+  const validIpv4 = Boolean(parseIpv4Octets(cleanHost));
+  const validHostname = /^(?:localhost|[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)$/.test(cleanHost);
+  if (!validIpv4 && !validHostname) return null;
+
+  return {
+    host: cleanHost,
+    ...(port ? { port } : {}),
+    normalized: port ? `${cleanHost}:${port}` : cleanHost,
+  };
 }
 
 export function resolveLocalIdentity(options: {
@@ -251,6 +353,36 @@ function postJson(
   });
 }
 
+function getJson(urlStr: string, timeoutMs = 3000): Promise<{ status: number; data: any }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(urlStr);
+    const req = http.get({
+      hostname: parsed.hostname,
+      port: Number(parsed.port),
+      path: `${parsed.pathname}${parsed.search}`,
+      timeout: timeoutMs,
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      res.on("data", (chunk: Buffer) => {
+        total += chunk.length;
+        if (total <= MAX_CONTROL_JSON_BYTES) chunks.push(chunk);
+      });
+      res.on("end", () => {
+        let data: any = {};
+        try {
+          data = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+        } catch {
+          data = {};
+        }
+        resolve({ status: res.statusCode || 500, data });
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("请求超时")));
+    req.on("error", reject);
+  });
+}
+
 function downloadBinary(
   urlStr: string,
   maxBytes: number,
@@ -325,12 +457,14 @@ export interface LanShareConfig {
   discoverable: boolean;
   nickname: string;
   loginAccount: string;
+  manualPeers?: string[];
 }
 
 export interface LanShareServiceOptions {
   deviceId?: string;
   appVersion?: string;
   discoveryPort?: number;
+  httpPort?: number;
   bindHost?: string;
   broadcastTargets?: string[];
   peerDiscoveryPorts?: number[];
@@ -353,6 +487,7 @@ export class LanShareService {
   readonly deviceId: string;
   readonly appVersion: string;
   private discoveryPort: number;
+  private customHttpPort?: number;
   private bindHost: string;
   private customBroadcastTargets?: string[];
   private customPeerPorts?: number[];
@@ -377,11 +512,13 @@ export class LanShareService {
   private peers = new Map<string, LanPeerRecord>();
   private incoming = new Map<string, IncomingInternal>();
   private outgoing = new Map<string, OutgoingInternal>();
+  private trustedHosts = new Set<string>();
 
   constructor(options: LanShareServiceOptions = {}) {
     this.deviceId = String(options.deviceId || randomBytes(16).toString("hex"));
     this.appVersion = String(options.appVersion || "");
     this.discoveryPort = options.discoveryPort ?? DEFAULT_DISCOVERY_PORT;
+    this.customHttpPort = options.httpPort;
     this.bindHost = options.bindHost || "0.0.0.0";
     this.customBroadcastTargets = options.broadcastTargets;
     this.customPeerPorts = options.peerDiscoveryPorts;
@@ -441,10 +578,25 @@ export class LanShareService {
       httpPort: this.httpPort,
       discoveryPort: this.boundDiscoveryPort,
       discoveryError: this.discoveryError,
+      localAddresses: collectLocalLanIpv4s(),
+      manualPeers: Array.isArray(cfg.manualPeers) ? cfg.manualPeers : [],
       peers: this.getPeers(),
       incoming: this.getIncomingOffers(),
       outgoing: this.getOutgoingTransfers(),
     };
+  }
+
+  private collectTrustedHosts(): Set<string> {
+    const set = new Set<string>(this.trustedHosts);
+    for (const raw of this.getConfig().manualPeers || []) {
+      const parsed = parseManualPeerAddress(raw);
+      if (parsed) set.add(parsed.host);
+    }
+    return set;
+  }
+
+  private isAllowedPeerIp(rawIp: string): boolean {
+    return isAllowedLanPeerAddress(rawIp, { trustedHosts: this.collectTrustedHosts() });
   }
 
   async start(): Promise<void> {
@@ -458,6 +610,7 @@ export class LanShareService {
       if (this.getConfig().discoverable !== false) {
         this.broadcastPacket({ type: "announce" });
       }
+      void this.probeConfiguredManualPeers();
     }, this.heartbeatIntervalMs);
     this.heartbeatTimer.unref?.();
 
@@ -465,6 +618,7 @@ export class LanShareService {
       this.broadcastPacket({ type: "announce" });
       this.broadcastPacket({ type: "discover" });
     }
+    void this.probeConfiguredManualPeers();
   }
 
   async stop(): Promise<void> {
@@ -533,23 +687,153 @@ export class LanShareService {
         this.broadcastPacket({ type: "announce" });
       }
       this.broadcastPacket({ type: "discover" });
+      void this.probeConfiguredManualPeers();
     }
     return this.getPeers();
   }
 
+  async refreshPeersAsync(): Promise<LanPeerRecord[]> {
+    this.evictStalePeers();
+    if (this.started) {
+      if (this.getConfig().discoverable !== false) {
+        this.broadcastPacket({ type: "announce" });
+      }
+      this.broadcastPacket({ type: "discover" });
+      await this.probeConfiguredManualPeers();
+    }
+    return this.getPeers();
+  }
+
+  private upsertDiscoveredPeer(peer: LanPeerRecord) {
+    const prev = this.peers.get(peer.deviceId);
+    this.peers.set(peer.deviceId, peer);
+    const changed = !prev
+      || prev.displayName !== peer.displayName
+      || prev.account !== peer.account
+      || prev.ip !== peer.ip
+      || prev.httpPort !== peer.httpPort;
+    if (changed) {
+      this.onPeersChanged?.(this.getPeers());
+    }
+  }
+
+  private sendUnicastPacket(type: "announce" | "discover", targetIp: string, targetPort: number) {
+    if (!this.udpSocket || !targetIp || !targetPort) return;
+    const identity = this.getIdentity();
+    const packet = Buffer.from(JSON.stringify({
+      protocol: LAN_SHARE_PROTOCOL,
+      version: LAN_SHARE_PROTOCOL_VERSION,
+      type,
+      deviceId: identity.deviceId,
+      displayName: identity.displayName,
+      account: identity.account,
+      host: identity.host,
+      platform: identity.platform,
+      appVersion: identity.appVersion,
+      httpPort: this.httpPort,
+    }), "utf8");
+    try {
+      this.udpSocket.send(packet, targetPort, targetIp, () => {});
+    } catch {}
+  }
+
+  /** 主动探测指定 IP（支持跨 /24 子网直连 HTTP /lan-share/info + 单播 UDP discover） */
+  async probeManualTarget(rawTarget: string): Promise<{ ok: boolean; peer?: LanPeerRecord; normalized?: string; error?: string }> {
+    const parsed = parseManualPeerAddress(rawTarget);
+    if (!parsed) {
+      return { ok: false, error: "请输入合法的局域网 IP 或 地址:端口（例如 172.168.138.154）" };
+    }
+    this.trustedHosts.add(parsed.host);
+
+    // 1. 尝试单播 UDP discover（若同主机名/同端口开启）
+    const discoveryPorts = (this.customPeerPorts && this.customPeerPorts.length)
+      ? this.customPeerPorts
+      : [this.boundDiscoveryPort || this.discoveryPort];
+    for (const port of discoveryPorts) {
+      if (port > 0) this.sendUnicastPacket("discover", parsed.host, port);
+    }
+
+    // 2. 直接通过 HTTP 探测 /lan-share/info（跨子网无广播必达路径）
+    const httpPorts = parsed.port ? [parsed.port] : [DEFAULT_HTTP_PORT];
+    let lastErr = "";
+    for (const port of httpPorts) {
+      try {
+        const resp = await getJson(`http://${parsed.host}:${port}/lan-share/info`, 3000);
+        if (resp.status === 200 && resp.data?.ok && resp.data?.protocol === LAN_SHARE_PROTOCOL) {
+          const peerId = String(resp.data?.deviceId || "").trim();
+          if (!peerId || peerId === this.deviceId) {
+            return { ok: false, error: "不能连接当前本机设备" };
+          }
+          if (resp.data?.discoverable === false) {
+            return { ok: false, error: "对方已开启隐身模式，请对方在局域网分享中打开「可被发现」" };
+          }
+          const resolvedPort = Number(resp.data?.httpPort || port);
+          const peer: LanPeerRecord = {
+            deviceId: peerId,
+            displayName: String(resp.data?.displayName || resp.data?.account || resp.data?.host || parsed.host).slice(0, 64),
+            account: String(resp.data?.account || "").slice(0, 64),
+            host: String(resp.data?.host || "").slice(0, 64),
+            platform: String(resp.data?.platform || ""),
+            appVersion: String(resp.data?.appVersion || ""),
+            ip: parsed.host,
+            httpPort: resolvedPort > 0 ? resolvedPort : port,
+            lastSeenAt: Date.now(),
+          };
+          this.upsertDiscoveredPeer(peer);
+          return { ok: true, peer, normalized: parsed.normalized };
+        }
+        lastErr = resp.data?.error || `HTTP ${resp.status}`;
+      } catch (err: any) {
+        lastErr = String(err?.message || err);
+      }
+    }
+
+    // 等待短暂窗口看 UDP 单播是否刚好把对端注册进来（比如对方随机端口但开了 UDP 41234）
+    await new Promise((r) => setTimeout(r, 250));
+    const udpMatched = [...this.peers.values()].find((p) => normalizeIpAddress(p.ip) === parsed.host);
+    if (udpMatched) {
+      return { ok: true, peer: udpMatched, normalized: parsed.normalized };
+    }
+
+    return {
+      ok: false,
+      error: `无法连接到 ${parsed.normalized}${lastErr ? `（${lastErr}）` : ""}。请确认对方已升级并打开 DYWorker、关闭隐身，且内网允许访问端口 ${httpPorts[0]}`,
+    };
+  }
+
+  private async probeConfiguredManualPeers() {
+    const list = this.getConfig().manualPeers || [];
+    if (!list.length) return;
+    await Promise.all(list.map((target) => this.probeManualTarget(target).catch(() => null)));
+  }
+
   private startHttpServer(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    const tryListen = (port: number) => new Promise<http.Server>((resolve, reject) => {
       const server = http.createServer((req, res) => {
         void this.handleHttpRequest(req, res);
       });
-      server.on("error", reject);
-      server.listen(0, this.bindHost, () => {
+      server.once("error", reject);
+      server.listen(port, this.bindHost, () => {
+        server.removeAllListeners("error");
+        server.on("error", () => {});
+        resolve(server);
+      });
+    });
+
+    const preferredPort = this.customHttpPort !== undefined
+      ? this.customHttpPort
+      : (this.discoveryPort === 0 ? 0 : DEFAULT_HTTP_PORT);
+
+    return tryListen(preferredPort)
+      .catch((err) => {
+        if (preferredPort > 0) return tryListen(0);
+        throw err;
+      })
+      .then((server) => {
         const addr = server.address();
         this.httpPort = typeof addr === "object" && addr ? addr.port : 0;
         this.httpServer = server;
-        resolve();
       });
-    });
   }
 
   private startUdpDiscovery(): Promise<void> {
@@ -633,7 +917,7 @@ export class LanShareService {
   }
 
   private handleUdpMessage(msg: Buffer, rinfo: dgram.RemoteInfo) {
-    if (!isPrivateLanAddress(rinfo.address)) return;
+    if (!this.isAllowedPeerIp(rinfo.address)) return;
     let parsed: any;
     try {
       parsed = JSON.parse(msg.toString("utf8"));
@@ -676,16 +960,7 @@ export class LanShareService {
         httpPort,
         lastSeenAt: Date.now(),
       };
-      const prev = this.peers.get(senderDeviceId);
-      this.peers.set(senderDeviceId, nextPeer);
-      const changed = !prev
-        || prev.displayName !== nextPeer.displayName
-        || prev.account !== nextPeer.account
-        || prev.ip !== nextPeer.ip
-        || prev.httpPort !== nextPeer.httpPort;
-      if (changed) {
-        this.onPeersChanged?.(this.getPeers());
-      }
+      this.upsertDiscoveredPeer(nextPeer);
     }
   }
 
@@ -705,7 +980,7 @@ export class LanShareService {
 
   private async handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const remoteIp = normalizeIpAddress(req.socket.remoteAddress);
-    if (!isPrivateLanAddress(remoteIp)) {
+    if (!this.isAllowedPeerIp(remoteIp)) {
       writeJsonResponse(res, 403, { ok: false, error: "仅允许局域网设备访问" });
       return;
     }
@@ -713,6 +988,20 @@ export class LanShareService {
     const reqUrl = new URL(req.url || "/", `http://127.0.0.1:${this.httpPort || 80}`);
 
     try {
+      if (req.method === "GET" && reqUrl.pathname === "/lan-share/info") {
+        const cfg = this.getConfig();
+        const identity = this.getIdentity();
+        writeJsonResponse(res, 200, {
+          ok: true,
+          protocol: LAN_SHARE_PROTOCOL,
+          version: LAN_SHARE_PROTOCOL_VERSION,
+          ...identity,
+          httpPort: this.httpPort,
+          discoverable: cfg.discoverable !== false,
+        });
+        return;
+      }
+
       if (req.method === "POST" && reqUrl.pathname === "/lan-share/offer") {
         if (this.getConfig().discoverable === false) {
           writeJsonResponse(res, 403, { ok: false, error: "对方当前已开启隐身，暂不接收局域网分享" });
@@ -886,8 +1175,8 @@ export class LanShareService {
     if (!peer) {
       return { ok: false, error: "该用户已离线或未在局域网列表中，请刷新后重试" };
     }
-    if (!isPrivateLanAddress(peer.ip)) {
-      return { ok: false, error: "目标地址不在局域网私网范围内" };
+    if (!this.isAllowedPeerIp(peer.ip)) {
+      return { ok: false, error: "目标地址不在局域网可信范围内" };
     }
 
     const maxSize = options.kind === "plugin" ? MAX_PLUGIN_TRANSFER_BYTES : MAX_SESSION_TRANSFER_BYTES;

@@ -778,10 +778,11 @@ export interface ProviderSettings {
   enableWebSearchBuiltin: boolean;
   // 使用统计与运营消息设置：统计默认关闭；统计上传与消息订阅分别开关
   telemetry: TelemetrySettings;
-  // 局域网发现与分享开关及自定义昵称
+  // 局域网发现与分享开关、自定义昵称及跨网段直连目标
   lanShare?: {
     enabled: boolean;
     nickname: string;
+    manualPeers?: string[];
   };
   // 用户自定义的插件外观与展示信息（图标、颜色、重命名、作者），键为插件 packageName 或 entryId
   pluginCustomizations?: Record<string, PluginCustomization>;
@@ -1124,6 +1125,8 @@ export interface DyworkerBridge {
   getLanShareState?(): Promise<LanShareState>;
   updateLanShareConfig?(payload: { enabled?: boolean; nickname?: string }): Promise<LanShareState>;
   refreshLanSharePeers?(): Promise<{ ok: boolean; peers: LanPeerRecord[]; self?: LanIdentity }>;
+  addLanSharePeer?(payload: { address: string }): Promise<{ ok: boolean; peer?: LanPeerRecord; peers?: LanPeerRecord[]; manualPeers?: string[]; self?: LanIdentity; error?: string }>;
+  removeLanSharePeer?(payload: { address: string }): Promise<{ ok: boolean; peers?: LanPeerRecord[]; manualPeers?: string[]; error?: string }>;
   sendLanShare?(payload: {
     peerId: string;
     kind: LanShareKind;
@@ -1787,6 +1790,8 @@ export interface LanShareState {
   httpPort?: number;
   discoveryPort?: number;
   discoveryError?: string;
+  localAddresses?: string[];
+  manualPeers?: string[];
   peers?: LanPeerRecord[];
   incoming?: LanIncomingOffer[];
   outgoing?: LanOutgoingTransfer[];

@@ -7,6 +7,7 @@ import path from "node:path";
 import AdmZip from "adm-zip";
 
 import { createHost, disposeHost } from "../electron/host/context.mts";
+import { analyzePlugin } from "../electron/host/dsh-compat.mts";
 import {
   SHARE_MANIFEST_FILE,
   SHARE_PACKAGE_FORMAT,
@@ -493,4 +494,76 @@ test("插件分享包导出与导入完整保留自定义名称、作者、图�
   assert.equal(unpackedPkg.dyworker?.displayName, "财务月报看板");
   assert.equal(unpackedPkg.dyworker?.icon, "bar-chart-3");
   assert.equal(unpackedPkg.dyworker?.iconColor, "#7c3aed");
+});
+
+test("原生 DYWorker 插件使用 tools 等宿主服务时导出与严格导入均可成功启用", async (t) => {
+  const root = await mkSandbox(t, "dyw-share-native-tools-");
+  const senderDir = path.join(root, "sender");
+  const receiverDir = path.join(root, "receiver");
+  await fs.mkdir(senderDir, { recursive: true });
+  await fs.mkdir(receiverDir, { recursive: true });
+
+  const pkgName = "weekly-report-dashboard";
+  const pluginDir = path.join(senderDir, pkgName);
+  await createSampleClientPlugin(pluginDir, pkgName, {
+    version: "0.2.1",
+    indexJs: [
+      `export const name = ${JSON.stringify(pkgName)};`,
+      `export const inject = ["storage", "connection", "tools", "scheduler"];`,
+      `export function apply(ctx) {`,
+      `  globalThis.__nativeWeeklyApplied = Boolean(ctx.tools);`,
+      `}`,
+    ].join("\n"),
+  });
+
+  const pkgManifest = JSON.parse(await fs.readFile(path.join(pluginDir, "package.json"), "utf8"));
+  const profilePkgPath = path.join(senderDir, "profile", "package.json");
+  await fs.mkdir(path.dirname(profilePkgPath), { recursive: true });
+  await fs.writeFile(profilePkgPath, "{}\n", "utf8");
+  const directAnalysis = await analyzePlugin(profilePkgPath, pkgName, pkgManifest, pluginDir);
+  assert.equal(directAnalysis.verdict, "runnable", directAnalysis.reasons.join("；"));
+  const toolsStatus = directAnalysis.services.find((item) => item.name === "tools");
+  assert.equal(toolsStatus?.state, "fulfilled");
+
+  const senderHost = await createHost({ userDataDir: senderDir, mountPlugins: true });
+  const receiverHost = await createHost({ userDataDir: receiverDir, mountPlugins: true });
+  t.after(async () => {
+    await disposeHost(senderHost);
+    await disposeHost(receiverHost);
+  });
+
+  await executePluginManage(senderHost, { action: "install", target: pluginDir }, { managedRoot: senderDir });
+  const shareFile = path.join(root, `${pkgName}.dyplugin`);
+  const exported = await exportPluginSharePackage(senderHost, {
+    target: pluginDir,
+    outputPath: shareFile,
+    dataDir: senderDir,
+  });
+  assert.equal(exported.ok, true, exported.error);
+
+  const unpacked = await unpackSharePackageToManagedDir({
+    filePath: shareFile,
+    dataDir: receiverDir,
+  });
+  assert.equal(unpacked.ok, true, unpacked.error);
+
+  const installed = await receiverHost.plugins.installPackage({
+    input: unpacked.pluginDir,
+    allowIncompatible: false,
+    npmPath: "/fake/npm",
+    run: async (_cmd, args) => {
+      if (args[0] === "install") {
+        const prefixDir = args[args.indexOf("--prefix") + 1];
+        const destDir = path.join(prefixDir, "node_modules", pkgName);
+        await fs.mkdir(path.dirname(destDir), { recursive: true });
+        await fs.cp(unpacked.pluginDir, destDir, { recursive: true, force: true });
+      }
+      return { code: 0, stdout: "ok", stderr: "" };
+    },
+  });
+  assert.equal(installed.ok, true, JSON.stringify(installed));
+  assert.equal(installed.analysis?.verdict, "runnable");
+  const receiverPlugin = receiverHost.plugins.entries().find((item) => item.name === pkgName);
+  assert.equal(receiverPlugin?.active, true);
+  assert.equal(globalThis.__nativeWeeklyApplied, true);
 });

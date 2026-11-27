@@ -102,9 +102,13 @@ export function normalizeIdentity(value) {
 
 export function normalizeLanShareSettings(value) {
   const source = value && typeof value === "object" ? value : {};
+  const manualPeers = Array.isArray(source.manualPeers)
+    ? [...new Set(source.manualPeers.map((item) => String(item || "").trim().slice(0, 64)).filter(Boolean))].slice(0, 20)
+    : [];
   return {
     enabled: source.enabled !== false,
     nickname: String(source.nickname || "").trim().slice(0, 40),
+    manualPeers,
   };
 }
 

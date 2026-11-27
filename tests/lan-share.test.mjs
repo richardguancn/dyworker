@@ -15,7 +15,9 @@ import AdmZip from "adm-zip";
 
 import {
   LanShareService,
+  isAllowedLanPeerAddress,
   isPrivateLanAddress,
+  parseManualPeerAddress,
   resolveLocalIdentity,
 } from "../electron/lan-share.mts";
 import { resolveLanLoginAccount } from "../electron/host/plugins/lan-share-ipc.mts";
@@ -89,6 +91,27 @@ test("私网 IP 白名单校验：放行局域网与环回，拒绝公网 IP", (
   for (const blocked of ["8.8.8.8", "1.1.1.1", "172.32.0.1", "172.15.0.1", "192.169.1.1", "11.0.0.1", ""]) {
     assert.equal(isPrivateLanAddress(blocked), false, `应拦截 ${blocked}`);
   }
+
+  // 非标企业园区内网段（如 172.168.139.63 与 172.168.138.154 同 /16 段）与手工直连地址
+  const localIfaces = [{ address: "172.168.139.63", netmask: "255.255.255.0" }];
+  assert.equal(isAllowedLanPeerAddress("172.168.138.154", { localInterfaces: localIfaces }), true);
+  assert.equal(isAllowedLanPeerAddress("100.64.12.8", { localInterfaces: localIfaces }), true);
+  assert.equal(isAllowedLanPeerAddress("172.169.1.1", { localInterfaces: localIfaces }), false);
+  assert.equal(isAllowedLanPeerAddress("8.8.8.8", { localInterfaces: localIfaces }), false);
+  assert.equal(
+    isAllowedLanPeerAddress("172.168.138.154", { localInterfaces: [], trustedHosts: ["172.168.138.154"] }),
+    true,
+  );
+  assert.deepEqual(parseManualPeerAddress("http://172.168.138.154:41235/"), {
+    host: "172.168.138.154",
+    port: 41235,
+    normalized: "172.168.138.154:41235",
+  });
+  assert.deepEqual(parseManualPeerAddress("172.168.138.154"), {
+    host: "172.168.138.154",
+    normalized: "172.168.138.154",
+  });
+  assert.equal(parseManualPeerAddress("bad host!"), null);
 });
 
 test("双节点局域网自动发现与会话直传闭环（含同意导入、完成后销毁、拒绝、取消与隐身拦截）", async (t) => {
@@ -404,18 +427,37 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
     encryptString: (v) => Buffer.from(v, "utf8"),
     decryptString: (v) => v.toString("utf8"),
   };
-  const stored = serializeSettings({ lanShare: { enabled: false, nickname: " 测试昵称 " } }, secretStorage);
-  assert.deepEqual(stored.lanShare, { enabled: false, nickname: "测试昵称" });
+  const stored = serializeSettings({
+    lanShare: {
+      enabled: false,
+      nickname: " 测试昵称 ",
+      manualPeers: ["172.168.138.154", "172.168.138.154:41235"],
+    },
+  }, secretStorage);
+  assert.deepEqual(stored.lanShare, {
+    enabled: false,
+    nickname: "测试昵称",
+    manualPeers: ["172.168.138.154", "172.168.138.154:41235"],
+  });
   const restored = deserializeSettings(stored, secretStorage);
-  assert.deepEqual(restored.lanShare, { enabled: false, nickname: "测试昵称" });
-  assert.deepEqual(deserializeSettings({}, secretStorage).lanShare, { enabled: true, nickname: "" });
+  assert.deepEqual(restored.lanShare, {
+    enabled: false,
+    nickname: "测试昵称",
+    manualPeers: ["172.168.138.154", "172.168.138.154:41235"],
+  });
+  assert.deepEqual(deserializeSettings({}, secretStorage).lanShare, {
+    enabled: true,
+    nickname: "",
+    manualPeers: [],
+  });
 
   const read = (rel) => fs.readFile(new URL(rel, import.meta.url), "utf8");
-  const [sidebar, shell, sharePlugin, appDialogs, preload, ipc, mainTs] = await Promise.all([
+  const [sidebar, shell, sharePlugin, appDialogs, sendDialog, preload, ipc, mainTs] = await Promise.all([
     read("../src/app/Sidebar.tsx"),
     read("../src/app/ShellLayout.tsx"),
     read("../src/SharePluginDialog.tsx"),
     read("../src/app/AppDialogs.tsx"),
+    read("../src/features/transfer/LanShareSendDialog.tsx"),
     read("../electron/preload.cjs"),
     read("../electron/host/plugins/lan-share-ipc.mts"),
     read("../electron/main.mts"),
@@ -427,10 +469,15 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(sharePlugin, /局域网分享…/);
   assert.match(appDialogs, /LanShareSendDialog/);
   assert.match(appDialogs, /LanShareIncomingDialog/);
+  assert.match(sendDialog, /跨网段直连 IP/);
   assert.match(preload, /lan-share:get-state/);
+  assert.match(preload, /lan-share:add-peer/);
+  assert.match(preload, /lan-share:remove-peer/);
   assert.match(preload, /lan-share:send/);
   assert.match(preload, /lan-share:respond-incoming/);
   assert.match(ipc, /lan-share:get-state/);
+  assert.match(ipc, /lan-share:add-peer/);
+  assert.match(ipc, /lan-share:remove-peer/);
   assert.match(ipc, /lan-share:send/);
   assert.match(ipc, /lan-share:respond-incoming/);
   assert.match(mainTs, /lanShareIpcPlugin/);
@@ -443,4 +490,82 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
     "lanShareIpcPlugin 必须在 app.whenReady() 之后、createWindow() 之前挂载",
   );
   assert.match(mainTs, /safeStorageForHost[\s\S]*?app\.isReady\(\)/);
+});
+
+test("跨网段无广播环境下支持手动输入 IP 探测并完成传输", async (t) => {
+  const incomingOffers = [];
+  const importedPayloads = [];
+
+  const sender = new LanShareService({
+    deviceId: "cross-subnet-sender",
+    appVersion: "0.4.0",
+    discoveryPort: 0,
+    httpPort: 0,
+    bindHost: "127.0.0.1",
+    broadcastTargets: [],
+    heartbeatIntervalMs: 60_000,
+    getConfig: () => ({ enabled: true, nickname: "发送端", manualPeers: [] }),
+  });
+
+  const receiver = new LanShareService({
+    deviceId: "cross-subnet-receiver",
+    appVersion: "0.4.0",
+    discoveryPort: 0,
+    httpPort: 0,
+    bindHost: "127.0.0.1",
+    broadcastTargets: [],
+    heartbeatIntervalMs: 60_000,
+    getConfig: () => ({ enabled: true, nickname: "跨网段接收端", manualPeers: [] }),
+    onIncomingOffer: (offer) => incomingOffers.push(offer),
+    onImportPayload: async (offer, buffer) => {
+      const parsed = parseTransferPackage(buffer.toString("utf8"));
+      importedPayloads.push({ offer, pkg: parsed.package });
+      return { ok: parsed.ok, added: parsed.package?.sessions.length || 0 };
+    },
+  });
+
+  await sender.start();
+  await receiver.start();
+  t.after(async () => {
+    await sender.stop();
+    await receiver.stop();
+  });
+
+  const receiverPort = receiver.getListeningHttpPort();
+  assert.ok(receiverPort > 0, "接收端 HTTP 服务应监听成功");
+  assert.equal(sender.getPeers().length, 0, "无广播模式下初始不应发现节点");
+
+  const probe = await sender.probeManualTarget(`127.0.0.1:${receiverPort}`);
+  assert.equal(probe.ok, true, probe.error);
+  assert.equal(probe.peer?.deviceId, "cross-subnet-receiver");
+  assert.equal(probe.peer?.displayName, "跨网段接收端");
+  assert.equal(probe.peer?.ip, "127.0.0.1");
+  assert.equal(probe.peer?.httpPort, receiverPort);
+  assert.equal(sender.getPeers().length, 1);
+
+  const pkg = buildTransferPackage({
+    kind: "session",
+    sessions: [
+      {
+        id: "cross-subnet-sess-1",
+        title: "跨网段传输测试",
+        workspacePath: "/tmp/proj",
+        messages: [{ role: "user", content: "ping" }],
+      },
+    ],
+  });
+  const offerRes = await sender.sendOffer({
+    peerId: "cross-subnet-receiver",
+    kind: "session",
+    title: "跨网段传输测试",
+    fileName: "cross-subnet.dyworker",
+    payloadBuffer: Buffer.from(JSON.stringify(pkg), "utf8"),
+  });
+  assert.equal(offerRes.ok, true, offerRes.error);
+
+  assert.equal(incomingOffers.length, 1);
+  const acceptRes = await receiver.respondIncoming(offerRes.transferId, { accepted: true });
+  assert.equal(acceptRes.ok, true, acceptRes.error);
+  assert.equal(importedPayloads.length, 1);
+  assert.equal(importedPayloads[0].pkg.sessions[0].title, "跨网段传输测试");
 });
