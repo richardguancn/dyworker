@@ -154,6 +154,12 @@ contextBridge.exposeInMainWorld("dyworker", {
   mcpStats: () => ipcRenderer.invoke("settings:mcp-stats"),
   importMcpBundle: () => ipcRenderer.invoke("settings:import-mcp-bundle"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  // 通用插件实时事件订阅：主进程插件通过 ctx.connection.emit(topic, payload) 推送
+  onPluginEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("plugin-events:emit", listener);
+    return () => ipcRenderer.removeListener("plugin-events:emit", listener);
+  },
   // ---- 外观自定义：独立存储， trustedHandle 在主进程校验来源 ----
   getAppearance: () => ipcRenderer.invoke("appearance:get"),
   saveAppearance: (payload) => ipcRenderer.invoke("appearance:save", payload),

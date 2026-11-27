@@ -91,6 +91,7 @@ export const HOST_SLOTS = [
   // 设置页分区
   "settings.section",
   "plugins.bundle.config",
+  "rail.footer.action",
   "sidebar.footer.action",
   "shell.overlay",
   "conversation.input.overlay",
@@ -141,6 +142,66 @@ class OwnedInputTriggers extends Service {
   sessionOf(scope: Context) { return this.host.inputController(scope); }
 }
 
+/**
+ * 客户端插件通用事件总线（ctx.pluginEvents）：
+ * - 懒订阅主进程推送的 plugin-events:emit（经 preload onPluginEvent）
+ * - 支持同宿主插件多个插槽间局部通知（emitLocal）
+ * - 通过 ctx.effect 绑定插件 fiber 生命周期，插件卸载即自动退订
+ * （注意：不能命名为 "events"，"events" 为 Cordis 内置核心服务保留名）
+ */
+class OwnedPluginEvents extends Service {
+  private readonly listeners = new Map<string, Set<(payload: unknown) => void>>();
+  private bridgeOff: (() => void) | null = null;
+
+  constructor(ctx: Context) {
+    super(ctx, "pluginEvents");
+    ctx.effect(() => () => {
+      this.bridgeOff?.();
+      this.bridgeOff = null;
+      this.listeners.clear();
+    });
+  }
+
+  private ensureBridge() {
+    if (this.bridgeOff) return;
+    const bridge = (globalThis as any).dyworker ?? (globalThis as any).window?.dyworker;
+    if (typeof bridge?.onPluginEvent !== "function") return;
+    this.bridgeOff = bridge.onPluginEvent((event: { topic?: string; payload?: unknown }) => {
+      const topic = String(event?.topic || "").trim();
+      if (topic) this.emitLocal(topic, event?.payload);
+    });
+  }
+
+  on(topic: string, listener: (payload: unknown) => void): () => void {
+    const key = String(topic || "").trim();
+    if (!key || typeof listener !== "function") return () => {};
+    this.ensureBridge();
+    return this.ctx.effect(() => {
+      const set = this.listeners.get(key) ?? new Set();
+      set.add(listener);
+      this.listeners.set(key, set);
+      return () => {
+        const current = this.listeners.get(key);
+        if (!current) return;
+        current.delete(listener);
+        if (!current.size) this.listeners.delete(key);
+      };
+    });
+  }
+
+  emitLocal(topic: string, payload?: unknown): void {
+    const key = String(topic || "").trim();
+    if (!key) return;
+    for (const listener of [...(this.listeners.get(key) ?? [])]) {
+      try {
+        listener(payload);
+      } catch (error) {
+        console.error(`[plugin] 事件订阅处理失败（${key}）：`, error);
+      }
+    }
+  }
+}
+
 export interface ClientHostOptions {
   locale?: string;
   slots?: readonly string[];
@@ -162,6 +223,10 @@ export interface ClientHostOptions {
    */
   onOpenSession?: (sessionId: string) => void;
   onInputSubmit?: (input: ConversationSubmission) => Promise<{kind:'success'|'error';text?:string}>;
+  /** 插件请求弹出全局提示条（Toast） */
+  onNotify?: (message: string) => void;
+  /** 插件请求打开设置页并定位到指定分区 */
+  onOpenSettings?: (tabId: string) => void;
 }
 
 export class ClientPluginHost {
@@ -286,6 +351,17 @@ export class ClientPluginHost {
     new OwnedClientSlots(this.ctx, this);
     this.sessionRemotes=createOwnedSessionRemotes(this.ctx);
     new OwnedInputTriggers(this.ctx, this);
+    new OwnedPluginEvents(this.ctx);
+    this.ctx.provide("shellUi", {
+      notify: (message: string) => {
+        const text = String(message || "").trim();
+        if (text) options.onNotify?.(text);
+      },
+      openSettings: (tabId: string) => {
+        const target = String(tabId || "").trim();
+        if (target) options.onOpenSettings?.(target);
+      },
+    });
     new BrowserFileUpload(this.ctx, input => {
       const bridge = (globalThis as any).dyworker ?? (globalThis as any).window?.dyworker;
       if (!bridge?.browserFileUpload) return Promise.reject(new Error('当前应用没有浏览器文件上传入口'));

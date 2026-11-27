@@ -24,11 +24,50 @@ export class StorageService extends Service {
   root;
   /** 主程序既有数据目录：插件可以显式读它（例如复用设置），但不作为默认落点 */
   hostDir;
+  safeStorage;
 
   constructor(ctx, config = {} as any) {
     super(ctx, "storage");
     this.root = config.root;
     this.hostDir = config.hostDir || config.root;
+    this.safeStorage = config.safeStorage;
+  }
+
+  /** 当前系统的安全存储（Electron safeStorage）是否可用 */
+  isEncryptionAvailable(): boolean {
+    try {
+      return Boolean(this.safeStorage?.isEncryptionAvailable?.());
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 加密敏感字符串（与主程序 settings 加密格式一致）。
+   * 空串返回 { value: "", encrypted: false }；安全存储不可用时抛错，绝不静默落明文。
+   */
+  encryptSecret(value: string): { value: string; encrypted: boolean } {
+    const plain = String(value || "").trim();
+    if (!plain) return { value: "", encrypted: false };
+    if (!this.isEncryptionAvailable()) {
+      throw new Error("当前系统的安全存储不可用，密钥未保存");
+    }
+    return {
+      value: this.safeStorage.encryptString(plain).toString("base64"),
+      encrypted: true,
+    };
+  }
+
+  /** 解密敏感字符串；安全存储不可用或密文损坏时返回空串 */
+  decryptSecret(value: unknown, encrypted: boolean): string {
+    if (!value) return "";
+    if (!this.isEncryptionAvailable()) return "";
+    if (!encrypted) return String(value);
+    try {
+      return this.safeStorage.decryptString(Buffer.from(String(value), "base64"));
+    } catch {
+      return "";
+    }
   }
 
   /**

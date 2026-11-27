@@ -495,6 +495,8 @@
 .sidebar-plugin-actions .plugin-slot-view { padding: 0; }
 .plugin-slot-view[data-slot="shell.overlay"] { display: contents; }
 .plugin-slot-view[data-slot="shell.overlay"] > .plugin-slot-item { display: contents; }
+.plugin-slot-view[data-slot="rail.footer.action"] { display: contents; }
+.plugin-slot-view[data-slot="rail.footer.action"] > .plugin-slot-item { display: contents; }
 .plugin-slot-view[data-slot="conversation.input.overlay"] { display: contents; }
 .plugin-slot-view[data-slot="conversation.input.overlay"] > .plugin-slot-item { display: contents; }
 .plugin-slot-item { min-width: 0; }

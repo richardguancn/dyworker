@@ -14,6 +14,11 @@ export interface PreToolDecision {
   reviewable?: boolean;
 }
 
+export interface CommandEnvResolution {
+  env?: Record<string, string>;
+  error?: string;
+}
+
 declare module "@deepseek-ai/cordis" {
   interface Events {
     "tools/pre-execute"(
@@ -22,5 +27,13 @@ declare module "@deepseek-ai/cordis" {
       current: PreToolDecision | null,
       next: () => PreToolDecision | null,
     ): PreToolDecision | null | Promise<PreToolDecision | null>;
+    "host/window-focus"(): void;
+    "host/power-resume"(): void;
+    "host/screen-unlock"(): void;
+    "command/resolve-env"(
+      command: string,
+      current: CommandEnvResolution | null,
+      next: () => CommandEnvResolution | null | Promise<CommandEnvResolution | null>,
+    ): CommandEnvResolution | null | Promise<CommandEnvResolution | null>;
   }
 }

@@ -89,6 +89,12 @@ export class ConnectionService extends Service {
     return this.registry.entries.has(`${method.toUpperCase()} ${url.pathname}`);
   }
   dispatch(input: Parameters<PluginRouteRegistry["dispatch"]>[0]) { return this.registry.dispatch(input); }
+  /** 通用插件实时事件推送：主进程插件通过 ctx.connection.emit(topic, payload) 广播给渲染端 */
+  emit(topic: string, payload?: unknown) {
+    const name = String(topic || "").trim();
+    if (!name) return 0;
+    return this.ctx.get("window")?.broadcast("plugin-events:emit", { topic: name, payload }) ?? 0;
+  }
 }
 
 // 纯函数调用者的独立注册表，不与任何 Cordis 宿主共享。

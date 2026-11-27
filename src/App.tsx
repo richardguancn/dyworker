@@ -44,7 +44,7 @@ indexConversation,
 skillTokensInText
 } from "./lib/text";
 import { useStableHandlers } from "./lib/useStableHandlers";
-import { clientHost,onOpenSessionRequest } from "./pluginRuntime/clientHostSingleton.ts";
+import { clientHost,onNotifyRequest,onOpenSessionRequest,onOpenSettingsRequest } from "./pluginRuntime/clientHostSingleton.ts";
 import type { RegisteredInputCandidate } from './pluginRuntime/inputTriggers.ts';
 import { detectTrigger } from './pluginRuntime/vendor/dsh-input-controller/index.js';
 import { PluginSlotView } from "./PluginSlotView";
@@ -1072,6 +1072,12 @@ export function App() {
       if (child) setDshChildHistory(child);
     }
   }), [sessions, selectSession]);
+
+  useEffect(() => onNotifyRequest((message) => setNotice(message)), []);
+  useEffect(() => onOpenSettingsRequest((tabId) => {
+    setSettingsTab(tabId);
+    setSettingsOpen(true);
+  }), []);
 
   // 「立即执行」后自动打开这次运行的会话：会话已在 run-started 时建好并进了 sessions，
   // 这里走和点侧栏列表项完全一样的切换流程（切工作区、刷新工作区文件），

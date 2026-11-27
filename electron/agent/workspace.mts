@@ -154,6 +154,7 @@ trustedSkillRoots;
 trustedWriteRoots;
 cancellationSignal;
 isCancelled;
+skillAuthEnv;
 constructor(root, options = {} as any) {
     this.root = String(root || "").trim();
     if (this.root) {
@@ -180,6 +181,7 @@ constructor(root, options = {} as any) {
     // 任务取消信号：runCommand 的长耗时命令据此立即终止，而不是等超时
     this.cancellationSignal = options.signal || null;
     this.isCancelled = typeof options.isCancelled === "function" ? options.isCancelled : null;
+    this.skillAuthEnv = typeof options.skillAuthEnv === "function" ? options.skillAuthEnv : null;
   }
 
   addTrustedWriteRoots(roots) {
@@ -558,10 +560,23 @@ constructor(root, options = {} as any) {
     if (!this.root) {
       return Promise.resolve({ ok: false, output: "还没有选择工作文件夹，无法运行命令。请先告诉用户选择工作文件夹后再继续。" });
     }
+    // 技能/插件授权环境变量注入：返回 { env } 注入子进程环境；返回 { error } 时提前终止并返回提示
+    let spawnEnv;
+    if (this.skillAuthEnv) {
+      let injection = null;
+      try {
+        injection = await this.skillAuthEnv(String(command || ""));
+      } catch (error) {
+        injection = { error: `读取授权环境变量失败：${error instanceof Error ? error.message : String(error)}` };
+      }
+      if (injection?.error) return { ok: false, output: injection.error };
+      if (injection?.env) spawnEnv = { ...process.env, ...injection.env };
+    }
     let confined;
     try { confined = await prepareCommandExecution(command, { workspacePath: this.root,
       mode: execution.mode || 'workspace-write', signal: this.cancellationSignal }); }
     catch (error: any) { return { ok: false, errorCode: error.code || 'SANDBOX_UNAVAILABLE', output: `执行保护暂时不可用，命令未执行：${error.message || error}` }; }
+    if (spawnEnv) confined.env = { ...(confined.env || {}), ...spawnEnv };
     return new Promise<any>((resolve) => {
       const win32 = process.platform === "win32";
       const [program, ...args] = confined.argv;

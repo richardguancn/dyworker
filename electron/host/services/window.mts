@@ -39,8 +39,12 @@ export class WindowService extends Service {
     return Boolean(win && !win.isDestroyed?.());
   }
 
-  /** 把窗口置前并聚焦（无窗口时静默返回 false） */
+  /** 把窗口置前并聚焦（优先走壳层注入的 showMainWindow，无窗口时静默返回 false） */
   focus() {
+    if (typeof this.deps.showMainWindow === "function") {
+      void this.deps.showMainWindow();
+      return true;
+    }
     const win = this.current;
     if (!win || win.isDestroyed?.()) return false;
     if (win.isMinimized?.()) win.restore?.();

@@ -15,7 +15,7 @@ const SENSITIVE_PATH_PATTERNS = [
   { re: /(^|[\\/])\.docker[\\/]config\.json$/, label: "Docker 凭据" },
   { re: /(^|[\\/])\.kube[\\/]config$/, label: "Kubernetes 凭据" },
   { re: /(^|[\\/])\.env(\.[A-Za-z0-9_-]+)?$/, label: "环境变量文件" },
-  { re: /(channel-credentials|imported-passwords)\.json$/i, label: "DYWorker 凭据库" },
+  { re: /(channel-credentials|imported-passwords|auth-credentials)\.json$|plugins[\\/]data[\\/][^\\s"'<>;|&()]+[\\/]credentials\.json$/i, label: "DYWorker 凭据库" },
 ];
 const FILE_TARGET_TOOLS = new Set(["read_file", "view_image", "write_file", "edit_file", "append_file", "delete_file", "make_directory",
   "list_files", "find_files", "search_in_files", "copy_file", "move_file", "scan_sensitive_info",

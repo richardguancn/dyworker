@@ -75,6 +75,7 @@ export interface HostOptions {
     ipcUnregister?: (channel: string) => void;
     getMainWindow?: () => any;
     getWebContents?: () => any[];
+    showMainWindow?: () => void | Promise<void>;
     dialog?: any;
     shell?: any;
     clipboard?: any;
@@ -100,6 +101,7 @@ export async function createHost(options: HostOptions) {
   new StorageService(ctx, {
     root: path.join(options.pluginsDir || path.join(options.userDataDir, "plugins"), "data"),
     hostDir: options.userDataDir,
+    safeStorage: options.safeStorage,
   });
   new WindowService(ctx, contracts);
   new ToolsService(ctx);

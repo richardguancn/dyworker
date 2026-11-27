@@ -356,6 +356,13 @@ const ctx = await createHost({
     ipcUnregister: (channel) => ipcMain.removeHandler(channel),
     getMainWindow: () => mainWindow,
     getWebContents: () => BrowserWindow.getAllWindows().map((win) => win.webContents),
+    showMainWindow: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) app.emit("activate");
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    },
     dialog, shell, clipboard, nativeImage, nativeTheme,
   },
   settingsMigrators: [applyReviewerModelDir, applyAsrSettings, applyTtsSettings, applyDecisionSettings],
@@ -2451,6 +2458,10 @@ app.whenReady().then(async () => {
     },
   }));
   createWindow();
+  // 宿主生命周期通用事件：插件可据此响应窗口聚焦
+  app.on("browser-window-focus", () => {
+    ctx.emit("host/window-focus");
+  });
   ctx.backgroundTasksManager.setBroadcastCallback((event) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("background-tasks:update", event);
@@ -2478,6 +2489,8 @@ app.whenReady().then(async () => {
     };
     powerMonitor.on("resume", catchUp);
     powerMonitor.on("unlock-screen", catchUp);
+    powerMonitor.on("resume", () => ctx.emit("host/power-resume"));
+    powerMonitor.on("unlock-screen", () => ctx.emit("host/screen-unlock"));
   }
   // 电源事件：睡眠/锁屏立即封口使用区间（区间恢复后不补记）；恢复/解锁后补拉消息
   if (typeof powerMonitor?.on === "function") {

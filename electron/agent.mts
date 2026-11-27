@@ -135,12 +135,15 @@ export async function runAgent({
   sleepGuard = null,
   sessionId = "",
   startBackgroundTask = null,
+  skillAuthEnv = null,
 }) {
   const beforeToolExecute = typeof extraBeforeToolExecute === "function"
     ? async (info: any) => (await extraBeforeToolExecute(info))
       || (typeof baseBeforeToolExecute === "function" ? await baseBeforeToolExecute(info) : null)
     : baseBeforeToolExecute;
   const workspace = new Workspace(workspacePath, { trustTempDirs, signal: cancellationSignal, isCancelled });
+  // 插件/技能环境变量注入：仅经子进程 env 传递，不进入命令文本与审计日志
+  workspace.skillAuthEnv = typeof skillAuthEnv === "function" ? skillAuthEnv : null;
   if (trustedWriteRoots?.length) workspace.addTrustedWriteRoots(trustedWriteRoots);
   const priorWorkingContext = limitWorkingContext(omitTransientDesktopWorkingRecords(String(workingContext || "").trim()));
   const carriedWorkingContext = remainingWorkingContext(priorWorkingContext, conversation);

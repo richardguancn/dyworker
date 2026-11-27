@@ -2,9 +2,11 @@
 // 机械搬运，不改类名/文案/aria；App 内部逻辑（selectSession、createTask、git 处理等）仍留在 App.tsx，
 // 这里只通过 props 接收状态与回调。
 import { AlarmClock, Bot, Check, ChevronRight, Folder, GitBranch, GitCommitHorizontal, History, House, Info, LayoutGrid, Minus, MoreHorizontal, Plus, Search, Settings, Sparkles, Square, SquarePen, Upload, UserRound, X } from "lucide-react";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useEffect, useReducer, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { AppLogo } from "../AppLogo";
 import { PluginIcon } from "../PluginIcon";
+import { PluginSlotView } from "../PluginSlotView";
+import { clientHost } from "../pluginRuntime/clientHostSingleton";
 import { PluginGlyph, resolvePluginVisual } from "../lib/pluginIcons";
 import { ConversationToolsIcon, PanelLeftIcon, PanelRightIcon } from "./icons";
 import { AppUpdateAction } from "../features/settings/SettingsSubPanels";
@@ -162,6 +164,11 @@ export function ShellChrome(props: ShellChromeProps) {
     setAppUpdateDialogOpen,
     downloadAppUpdate,
   } = props;
+
+  const host = clientHost();
+  const [, bumpRailPlugins] = useReducer((value: number) => value + 1, 0);
+  useEffect(() => host.subscribe(() => bumpRailPlugins()), [host]);
+  const hasRailFooterAction = host.contributionsFor("rail.footer.action").length > 0;
 
   const taskMenu = (
     <div className="topbar-menu-wrap" data-menu-root>
@@ -482,9 +489,13 @@ export function ShellChrome(props: ShellChromeProps) {
         <div className="rail-footer">
           <AppUpdateAction status={appUpdate} onOpen={() => setAppUpdateDialogOpen(true)}
             onDownload={downloadAppUpdate} onInstall={() => setAppUpdateDialogOpen(true)} />
-          <button className="rail-profile" aria-label="设置" title={t("nav.settings", "设置")} onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
-            <span className="avatar" data-auth-status="logged-out"><UserRound size={15} /></span>
-          </button>
+          {hasRailFooterAction ? (
+            <PluginSlotView slot="rail.footer.action" hideEmpty />
+          ) : (
+            <button className="rail-profile" aria-label="设置" title={t("nav.settings", "设置")} onClick={() => { setRailMenuOpen(false); setSettingsOpen(true); }}>
+              <span className="avatar" data-auth-status="logged-out"><UserRound size={15} /></span>
+            </button>
+          )}
         </div>
       </nav>
     </>

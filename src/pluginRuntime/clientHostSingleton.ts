@@ -21,6 +21,22 @@ export function onOpenSessionRequest(handler: (sessionId: string) => void): () =
   return () => sessionHandlers.delete(handler);
 }
 
+/** 插件请求弹出应用级提示条（Toast）的订阅 */
+const notifyHandlers = new Set<(message: string) => void>();
+
+export function onNotifyRequest(handler: (message: string) => void): () => void {
+  notifyHandlers.add(handler);
+  return () => notifyHandlers.delete(handler);
+}
+
+/** 插件请求打开设置页并切换到指定分区的订阅 */
+const settingsHandlers = new Set<(tabId: string) => void>();
+
+export function onOpenSettingsRequest(handler: (tabId: string) => void): () => void {
+  settingsHandlers.add(handler);
+  return () => settingsHandlers.delete(handler);
+}
+
 /** 取（必要时创建）客户端插件宿主 */
 export function clientHost(): ClientPluginHost {
   if (!current) {
@@ -30,6 +46,12 @@ export function clientHost(): ClientPluginHost {
       },
       onOpenSession: (sessionId) => {
         for (const handler of sessionHandlers) handler(sessionId);
+      },
+      onNotify: (message) => {
+        for (const handler of notifyHandlers) handler(message);
+      },
+      onOpenSettings: (tabId) => {
+        for (const handler of settingsHandlers) handler(tabId);
       },
     });
   }

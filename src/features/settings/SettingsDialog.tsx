@@ -1,5 +1,5 @@
-import { BarChart3, Bell, Check, Copy, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, Trash2, UserRound, Wifi } from "lucide-react";
-import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3, Bell, Check, Copy, FileCode2, Globe, History, Info, KeyRound, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, Trash2, UserRound, Wifi } from "lucide-react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { beginSession, discardSession } from "../../appearance/controller";
 import { hasConfiguredModel } from "../../../electron/host/dsh-runtime/model-settings.mts";
 import { matchProvider, providerPresets } from "../../providers";
@@ -8,6 +8,7 @@ import { McpSettingsPanel } from "../../McpSettingsPanel";
 import { PluginsPage } from "../../PluginsPage";
 import { PluginIcon } from "../../PluginIcon";
 import { PluginSlotView } from "../../PluginSlotView";
+import { clientHost } from "../../pluginRuntime/clientHostSingleton";
 import { MemoriesPanel } from "../memory/MemoryPanels";
 import { SkillLibrariesPanel, SkillsPanel } from "../skills/SkillPanels";
 import { PlansPanel } from "../plans/PlansPanel";
@@ -40,36 +41,51 @@ function withModelDownloadProgress<T extends { model: { id: string; sizeBytes: n
   return { ...current, model, models };
 }
 
+export type SettingsNavGroupId = "services" | "preferences" | "resources" | "advanced";
+
+export interface SettingsNavItem {
+  id: SettingsTab;
+  label: string;
+  icon: SettingsNavIcon;
+  keywords?: string[];
+  order?: number;
+}
+
 // Codex 风格设置导航:左侧分组 + 搜索,右侧分区内容
-export const getSettingsNav = (): { group: string; items: { id: SettingsTab; label: string; icon: SettingsNavIcon; keywords?: string[] }[] }[] => [
-  { group: t("nav.group.services", "基础服务"), items: [
-    { id: "model", label: t("nav.model.label", "AI模型"), icon: Settings },
-    { id: "voice", label: t("nav.voice.label", "语音声音"), icon: Mic },
-    { id: "search", label: t("nav.search.label", "联网搜索"), icon: Search },
-    { id: "network", label: t("nav.network.label", "网络配置"), icon: Wifi, keywords: ["网络", "局域网", "被发现", "隐身", "分享", "跨网段", "IP", "lan"] },
-    { id: "channels", label: t("nav.channels.label", "消息连接"), icon: MessagesSquare, keywords: ["消息渠道", "微信", "飞书", "QQ"] },
+export const getSettingsNav = (): { groupId: SettingsNavGroupId; group: string; items: SettingsNavItem[] }[] => [
+  { groupId: "services", group: t("nav.group.services", "基础服务"), items: [
+    { id: "model", label: t("nav.model.label", "AI模型"), icon: Settings, order: 10 },
+    { id: "voice", label: t("nav.voice.label", "语音声音"), icon: Mic, order: 20 },
+    { id: "search", label: t("nav.search.label", "联网搜索"), icon: Search, order: 30 },
+    { id: "network", label: t("nav.network.label", "网络配置"), icon: Wifi, keywords: ["网络", "局域网", "被发现", "隐身", "分享", "跨网段", "IP", "lan"], order: 40 },
+    { id: "channels", label: t("nav.channels.label", "消息连接"), icon: MessagesSquare, keywords: ["消息渠道", "微信", "飞书", "QQ"], order: 50 },
   ] },
-  { group: t("nav.group.preferences", "偏好设置"), items: [
-    { id: "identity", label: t("nav.identity.label", "角色设定"), icon: UserRound },
-    { id: "appearance", label: t("nav.appearance.label", "外观显示"), icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "语言", "language", "theme", "font"] },
-    { id: "power", label: t("nav.power.label", "休眠控制"), icon: Moon },
-    { id: "updates", label: t("nav.updates.label", "软件更新"), icon: RefreshCw },
-    { id: "about", label: t("nav.about.label", "关于软件"), icon: Info, keywords: ["开发者", "管灯余", "GitHub", "邮箱"] },
+  { groupId: "preferences", group: t("nav.group.preferences", "偏好设置"), items: [
+    { id: "identity", label: t("nav.identity.label", "角色设定"), icon: UserRound, order: 20 },
+    { id: "appearance", label: t("nav.appearance.label", "外观显示"), icon: Palette, keywords: ["外观", "主题", "背景", "透明", "玻璃", "字体", "字号", "语言", "language", "theme", "font"], order: 30 },
+    { id: "power", label: t("nav.power.label", "休眠控制"), icon: Moon, order: 40 },
+    { id: "updates", label: t("nav.updates.label", "软件更新"), icon: RefreshCw, order: 50 },
+    { id: "about", label: t("nav.about.label", "关于软件"), icon: Info, keywords: ["开发者", "管灯余", "GitHub", "邮箱"], order: 60 },
   ] },
-  { group: t("nav.group.resources", "能力扩展"), items: [
-    { id: "plugins", label: t("nav.plugins.label", "插件"), icon: PluginIcon, keywords: ["扩展", "MCP", "mcpb", "DSH", "Claude Mods"] },
-    { id: "memories", label: t("nav.memories.label", "长期记忆"), icon: History },
-    { id: "knowledge", label: t("nav.knowledge.label", "资料库"), icon: Network, keywords: ["知识图谱", "关系图谱", "资料"] },
-    { id: "skills", label: t("nav.skills.label", "快捷技能"), icon: FileCode2 },
-    { id: "skill-libraries", label: t("nav.skill-libraries.label", "技能市场"), icon: Globe },
-    { id: "plans", label: t("nav.plans.label", "定时任务"), icon: ListTodo },
+  { groupId: "resources", group: t("nav.group.resources", "能力扩展"), items: [
+    { id: "plugins", label: t("nav.plugins.label", "插件"), icon: PluginIcon, keywords: ["扩展", "MCP", "mcpb", "DSH", "Claude Mods"], order: 10 },
+    { id: "memories", label: t("nav.memories.label", "长期记忆"), icon: History, order: 20 },
+    { id: "knowledge", label: t("nav.knowledge.label", "资料库"), icon: Network, keywords: ["知识图谱", "关系图谱", "资料"], order: 30 },
+    { id: "skills", label: t("nav.skills.label", "快捷技能"), icon: FileCode2, order: 40 },
+    { id: "skill-libraries", label: t("nav.skill-libraries.label", "技能市场"), icon: Globe, order: 50 },
+    { id: "plans", label: t("nav.plans.label", "定时任务"), icon: ListTodo, order: 60 },
   ] },
-  { group: t("nav.group.advanced", "高级设置"), items: [
-    { id: "usage", label: t("nav.usage.label", "用量明细"), icon: BarChart3 },
-    { id: "telemetry", label: t("nav.telemetry.label", "通知反馈"), icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"] },
-    { id: "hooks", label: t("nav.hooks.label", "安全授权"), icon: ShieldAlert, keywords: ["权限", "钩子", "规则", "审计", "CDP", "Browser Use", "Chrome DevTools", "浏览器"] },
+  { groupId: "advanced", group: t("nav.group.advanced", "高级设置"), items: [
+    { id: "usage", label: t("nav.usage.label", "用量明细"), icon: BarChart3, order: 10 },
+    { id: "telemetry", label: t("nav.telemetry.label", "通知反馈"), icon: Bell, keywords: ["统计", "运营", "消息", "公告", "日活", "遥测", "telemetry"], order: 20 },
+    { id: "hooks", label: t("nav.hooks.label", "安全授权"), icon: ShieldAlert, keywords: ["权限", "钩子", "规则", "审计", "CDP", "Browser Use", "Chrome DevTools", "浏览器"], order: 30 },
   ] },
 ];
+
+function resolveSectionIcon(iconMeta: unknown): SettingsNavIcon {
+  if (iconMeta === "key") return KeyRound;
+  return PluginIcon;
+}
 
 export function SettingsDialog({
   sidebarWidth,
@@ -147,7 +163,62 @@ export function SettingsDialog({
   onCheckUpdate: () => void;
 }) {
   const [locale] = useLocale();
-  const settingsNav = useMemo(() => getSettingsNav(), [locale]);
+  const host = clientHost();
+  const [pluginRevision, bumpPluginRevision] = useReducer((value: number) => value + 1, 0);
+  useEffect(() => host.subscribe(() => bumpPluginRevision()), [host]);
+
+  const dynamicSections = useMemo(() => {
+    return host.contributionsFor("settings.section")
+      .map((contribution) => {
+        const meta = contribution.meta as Record<string, unknown>;
+        const key = String(meta.key ?? meta.id ?? "").trim();
+        const group = typeof meta.group === "string" ? meta.group.trim() : "";
+        // 知识库已由内置 "knowledge" tab 承接；仅注册了 group 的通用分区动态加入设置导航
+        if (!key || !group || key === "knowledge-base") return null;
+        const label = typeof meta.label === "function"
+          ? String((meta.label as () => unknown)())
+          : String(meta.label ?? key);
+        const keywords = Array.isArray(meta.keywords) ? meta.keywords.map(String) : undefined;
+        const order = typeof meta.order === "number" ? meta.order : 50;
+        return {
+          id: key as SettingsTab,
+          pluginId: contribution.pluginId || "",
+          key,
+          groupId: (["services", "preferences", "resources", "advanced"].includes(group) ? group : "resources") as SettingsNavGroupId,
+          label,
+          keywords,
+          order,
+          icon: resolveSectionIcon(meta.icon),
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [host, pluginRevision]);
+
+  const settingsNav = useMemo(() => {
+    const base = getSettingsNav().map((group) => ({ ...group, items: [...group.items] }));
+    for (const section of dynamicSections) {
+      const targetGroup = base.find((group) => group.groupId === section.groupId) || base[2];
+      if (!targetGroup.items.some((item) => item.id === section.id)) {
+        targetGroup.items.push({
+          id: section.id,
+          label: section.label,
+          icon: section.icon,
+          keywords: section.keywords,
+          order: section.order,
+        });
+      }
+    }
+    for (const group of base) {
+      group.items.sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
+    }
+    return base;
+  }, [locale, dynamicSections]);
+
+  const activeDynamicSection = dynamicSections.find((section) => section.id === tab) || null;
+  useEffect(() => {
+    const validIds = new Set(settingsNav.flatMap((group) => group.items.map((item) => item.id)));
+    if (!validIds.has(tab)) onTabChange("model");
+  }, [settingsNav, tab, onTabChange]);
   const [draft, setDraft] = useState(value);
 
   useEffect(() => {
@@ -795,6 +866,13 @@ export function SettingsDialog({
           </dl>
         ) : tab === "appearance" ? (
           <AppearanceSettingsPanel />
+        ) : activeDynamicSection ? (
+          <PluginSlotView
+            slot="settings.section"
+            pluginId={activeDynamicSection.pluginId}
+            pluginKey={activeDynamicSection.key}
+            emptyMessage="请在「插件」中启用该插件。"
+          />
         ) : tab === "plugins" ? (
           <PluginsPage onCreate={onCreatePlugin} sessionId={sessionId} onSkillsChanged={onRefreshSkills} mcpPanel={<McpSettingsPanel value={value} onSave={onSave} />} />
         ) : ["model", "voice", "search", "network", "power", "updates", "telemetry"].includes(tab) ? (

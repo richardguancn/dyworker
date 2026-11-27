@@ -257,7 +257,8 @@ export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-a
 
 // 设置面板页签。原定义在 features/settings/SettingsDialog，因设置状态迁入 state 层而
 // 上移到共享类型，SettingsDialog 继续 re-export 以保持既有引用路径不变。
-export type SettingsTab = "model" | "voice" | "search" | "network" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "knowledge" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
+export type BuiltinSettingsTab = "model" | "voice" | "search" | "network" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "knowledge" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
+export type SettingsTab = BuiltinSettingsTab | (string & {});
 
 export type AgentEvent =
   | { type: "dsh-conversation"; turns: DshVisibleTurn[] }
@@ -1238,6 +1239,8 @@ export interface DyworkerBridge {
   mcpStats(): Promise<Array<{ id: string; enabled: boolean; count?: number; tokens?: number }>>;
   importMcpBundle(): Promise<{ canceled?: boolean; ok?: boolean; error?: string; server?: McpServerConfig }>;
   saveSettings(settings: ProviderSettings): Promise<{ ok: boolean; error?: string; updateUrl?: string }>;
+  // 通用插件实时事件订阅：主进程插件通过 ctx.connection.emit(topic, payload) 推送
+  onPluginEvent?(callback: (event: { topic: string; payload?: unknown }) => void): () => void;
   // ---- 外观自定义（独立于模型设置存储；浏览器预览环境无此桥接，调用方需按 undefined 降级） ----
   getAppearance?(): Promise<AppearanceSnapshot>;
   saveAppearance?(payload: { settings: AppearanceSettings; revision: number }): Promise<AppearanceSnapshot>;

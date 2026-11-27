@@ -154,6 +154,13 @@ export class AgentService extends Service {
           isChannel: Boolean(options.isChannel),
           extraBeforeToolExecute: options.extraBeforeToolExecute || null,
           startBackgroundTask: (p) => this.startBackgroundTask({ ...p, sessionId: p.sessionId || sessionId }),
+          // 插件命令环境变量注入：优先经 Cordis command/resolve-env waterfall 事件由插件提供，
+          // 兼容测试直接传入 resolvers.skillAuthEnv；缺省时回退 null
+          skillAuthEnv: async (command: string) => {
+            const fromEvent = await this.ctx.waterfall("command/resolve-env", command, null, () => null);
+            if (fromEvent) return fromEvent;
+            return typeof this.resolvers.skillAuthEnv === "function" ? this.resolvers.skillAuthEnv(command) : null;
+          },
           requestApproval: permissions.request,
           requestUserInput: options.requestUserInput,
         });
