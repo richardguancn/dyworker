@@ -299,6 +299,9 @@ export function SharePluginDialog({
                     kind: "plugin",
                     pluginTarget: target,
                     includeData,
+                    icon: inspection.icon,
+                    iconColor: inspection.iconColor,
+                    author: inspection.author,
                     title: inspection.displayName || titleHint || inspection.packageName || target,
                     subtitle: `${inspection.version ? `v${inspection.version} · ` : ""}${includeData ? "含插件数据" : "仅插件本体"}`,
                   });

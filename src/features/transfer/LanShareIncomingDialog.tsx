@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Folder, Loader2, MessageSquare, Package, Radio, UserCheck, X } from "lucide-react";
+import { PluginGlyph, pluginTileStyle } from "../../lib/pluginIcons";
 import { formatShareBytes } from "../../lib/pluginShare";
 import { useLanShareStore } from "../../state/lanShareStore";
 import { useSessionStore } from "../../state/sessionStore";
@@ -127,6 +128,12 @@ export function LanShareIncomingDialog() {
   const KindIcon = current.kind === "project" ? Folder : current.kind === "plugin" ? Package : MessageSquare;
   const senderLabel = current.sender?.displayName || current.sender?.account || current.sender?.host || "局域网用户";
   const hasPluginData = current.kind === "plugin" && Boolean(current.meta?.includesData);
+  const pluginIconId = current.kind === "plugin" ? String(current.meta?.icon || "").trim() : "";
+  const pluginIconColor = current.kind === "plugin" ? String(current.meta?.iconColor || "").trim() : "";
+  const pluginAuthor = current.kind === "plugin" ? String(current.meta?.author || "").trim() : "";
+  const pluginTileCss = current.kind === "plugin"
+    ? pluginTileStyle(pluginIconColor, String(current.meta?.packageName || current.title))
+    : undefined;
 
   return createPortal(
     <div className="dialog-overlay" role="dialog" aria-label="收到局域网分享">
@@ -176,13 +183,16 @@ export function LanShareIncomingDialog() {
         </div>
 
         <div className="lan-share-target-card">
-          <div className="lan-share-target-icon">
-            <KindIcon size={18} />
+          <div className="lan-share-target-icon" style={pluginTileCss}>
+            {current.kind === "plugin"
+              ? <PluginGlyph iconId={pluginIconId} color={pluginIconColor} size={18} />
+              : <KindIcon size={18} />}
           </div>
           <div className="lan-share-target-body">
             <div className="lan-share-target-head">
               <span className="plugin-tag">{kindTitle(current.kind)}</span>
               <strong>{current.title}</strong>
+              {pluginAuthor ? <span className="plugin-tag">{pluginAuthor}</span> : null}
               <span className="plugin-tag">{formatShareBytes(current.sizeBytes)}</span>
             </div>
             <p>

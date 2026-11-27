@@ -452,14 +452,17 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   });
 
   const read = (rel) => fs.readFile(new URL(rel, import.meta.url), "utf8");
-  const [sidebar, shell, sharePlugin, appDialogs, sendDialog, preload, ipc, mainTs] = await Promise.all([
+  const [sidebar, shell, sharePlugin, appDialogs, sendDialog, incomingDialog, settingsDialog, preload, ipc, settingsIpc, mainTs] = await Promise.all([
     read("../src/app/Sidebar.tsx"),
     read("../src/app/ShellLayout.tsx"),
     read("../src/SharePluginDialog.tsx"),
     read("../src/app/AppDialogs.tsx"),
     read("../src/features/transfer/LanShareSendDialog.tsx"),
+    read("../src/features/transfer/LanShareIncomingDialog.tsx"),
+    read("../src/features/settings/SettingsDialog.tsx"),
     read("../electron/preload.cjs"),
     read("../electron/host/plugins/lan-share-ipc.mts"),
+    read("../electron/host/plugins/settings-ipc.mts"),
     read("../electron/main.mts"),
   ]);
 
@@ -470,6 +473,12 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(appDialogs, /LanShareSendDialog/);
   assert.match(appDialogs, /LanShareIncomingDialog/);
   assert.match(sendDialog, /跨网段直连 IP/);
+  assert.match(sendDialog, /PluginGlyph/);
+  assert.match(sendDialog, /pluginTileStyle/);
+  assert.match(incomingDialog, /PluginGlyph/);
+  assert.match(incomingDialog, /pluginTileStyle/);
+  assert.match(settingsDialog, /"network"/);
+  assert.match(settingsDialog, /允许在局域网内被发现/);
   assert.match(preload, /lan-share:get-state/);
   assert.match(preload, /lan-share:add-peer/);
   assert.match(preload, /lan-share:remove-peer/);
@@ -480,6 +489,10 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(ipc, /lan-share:remove-peer/);
   assert.match(ipc, /lan-share:send/);
   assert.match(ipc, /lan-share:respond-incoming/);
+  assert.doesNotMatch(ipc, /cachedSettings\s*=\s*saved/);
+  assert.match(ipc, /onLanShareReady/);
+  assert.match(settingsIpc, /applyLanShareSettings/);
+  assert.match(mainTs, /applyLanShareSettings/);
   assert.match(mainTs, /lanShareIpcPlugin/);
   const readyIndex = mainTs.indexOf("app.whenReady()");
   const lanMountIndex = mainTs.indexOf("ctx.plugin(lanShareIpcPlugin");
@@ -568,4 +581,80 @@ test("跨网段无广播环境下支持手动输入 IP 探测并完成传输", a
   assert.equal(acceptRes.ok, true, acceptRes.error);
   assert.equal(importedPayloads.length, 1);
   assert.equal(importedPayloads[0].pkg.sessions[0].title, "跨网段传输测试");
+});
+
+test("接收方导入失败时保留入站请求可重试，不会误报已过期或被取消", async (t) => {
+  let attempt = 0;
+  const incomingOffers = [];
+
+  const sender = new LanShareService({
+    deviceId: "retry-sender",
+    appVersion: "0.4.0",
+    discoveryPort: 0,
+    httpPort: 0,
+    bindHost: "127.0.0.1",
+    broadcastTargets: [],
+    heartbeatIntervalMs: 60_000,
+    getConfig: () => ({ discoverable: true, nickname: "发送端", manualPeers: [] }),
+  });
+
+  const receiver = new LanShareService({
+    deviceId: "retry-receiver",
+    appVersion: "0.4.0",
+    discoveryPort: 0,
+    httpPort: 0,
+    bindHost: "127.0.0.1",
+    broadcastTargets: [],
+    heartbeatIntervalMs: 60_000,
+    getConfig: () => ({ discoverable: true, nickname: "接收端", manualPeers: [] }),
+    onIncomingOffer: (offer) => incomingOffers.push(offer),
+    onImportPayload: async (_offer, buffer) => {
+      attempt += 1;
+      if (attempt === 1) {
+        return { ok: false, error: "模拟导入临时失败" };
+      }
+      const parsed = parseTransferPackage(buffer.toString("utf8"));
+      return { ok: parsed.ok, added: parsed.package?.sessions.length || 0 };
+    },
+  });
+
+  await sender.start();
+  await receiver.start();
+  t.after(async () => {
+    await sender.stop();
+    await receiver.stop();
+  });
+
+  const probe = await sender.probeManualTarget(`127.0.0.1:${receiver.getListeningHttpPort()}`);
+  assert.equal(probe.ok, true, probe.error);
+
+  const pkg = buildTransferPackage({
+    kind: "session",
+    sessions: [
+      {
+        id: "retry-sess-1",
+        title: "重试导入测试",
+        workspacePath: "/tmp/proj",
+        messages: [{ role: "user", content: "retry" }],
+      },
+    ],
+  });
+
+  const offerRes = await sender.sendOffer({
+    peerId: "retry-receiver",
+    kind: "session",
+    title: "重试导入测试",
+    fileName: "retry.dyworker",
+    payloadBuffer: Buffer.from(JSON.stringify(pkg), "utf8"),
+  });
+  assert.equal(offerRes.ok, true, offerRes.error);
+  assert.equal(incomingOffers.length, 1);
+
+  const firstAttempt = await receiver.respondIncoming(offerRes.transferId, { accepted: true });
+  assert.equal(firstAttempt.ok, false);
+  assert.equal(firstAttempt.error, "模拟导入临时失败");
+
+  const secondAttempt = await receiver.respondIncoming(offerRes.transferId, { accepted: true });
+  assert.equal(secondAttempt.ok, true, secondAttempt.error);
+  assert.equal(attempt, 2);
 });

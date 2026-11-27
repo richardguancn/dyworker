@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Copy, Edit3, Eye, EyeOff, Folder, Link2, Loader2, MessageSquare, Package, Radio, RefreshCw, Send, UserCheck, X } from "lucide-react";
+import { PluginGlyph, pluginTileStyle, resolvePluginVisual } from "../../lib/pluginIcons";
 import { useLanShareStore } from "../../state/lanShareStore";
+import { useLayoutStore } from "../../state/layoutStore";
+import { useSettingsStore } from "../../state/settingsStore";
 import type { LanIdentity, LanOutgoingTransfer, LanPeerRecord, LanShareKind } from "../../types";
 
 function kindLabel(kind: LanShareKind): string {
@@ -43,7 +46,23 @@ export function LanShareSendDialog() {
   const [error, setError] = useState("");
   const [discoveryError, setDiscoveryError] = useState("");
 
+  const pluginCustomizations = useSettingsStore((s) => s.settings.pluginCustomizations);
+  const pluginBundleVisuals = useLayoutStore((s) => s.pluginBundleVisuals);
   const bridge = typeof window !== "undefined" ? window.dyworker : undefined;
+
+  const syncLanSettingsToStore = (patch: { enabled?: boolean; nickname?: string; manualPeers?: string[] }) => {
+    const store = useSettingsStore.getState();
+    const cur = store.settings;
+    const prev = cur.lanShare || { enabled: true, nickname: "", manualPeers: [] };
+    store.setSettings({
+      ...cur,
+      lanShare: {
+        enabled: patch.enabled !== undefined ? patch.enabled : prev.enabled !== false,
+        nickname: patch.nickname !== undefined ? patch.nickname : (prev.nickname || ""),
+        manualPeers: patch.manualPeers !== undefined ? patch.manualPeers : (prev.manualPeers || []),
+      },
+    });
+  };
 
   useEffect(() => {
     if (!sendTarget) return;
@@ -133,8 +152,10 @@ export function LanShareSendDialog() {
     setDiscoverable(nextEnabled);
     const res = await bridge.updateLanShareConfig({ enabled: nextEnabled }).catch(() => null);
     if (res?.ok) {
-      setDiscoverable(res.discoverable !== false);
+      const resolved = res.discoverable !== false;
+      setDiscoverable(resolved);
       if (res.self) setSelfInfo(res.self);
+      syncLanSettingsToStore({ enabled: resolved });
     }
   };
 
@@ -142,9 +163,11 @@ export function LanShareSendDialog() {
     if (!bridge?.updateLanShareConfig) return;
     const res = await bridge.updateLanShareConfig({ nickname: nickDraft.trim() }).catch(() => null);
     if (res?.ok) {
-      setNickname(res.nickname || "");
-      setNickDraft(res.nickname || "");
+      const nextNick = res.nickname || "";
+      setNickname(nextNick);
+      setNickDraft(nextNick);
       if (res.self) setSelfInfo(res.self);
+      syncLanSettingsToStore({ nickname: nextNick });
     }
     setEditingNick(false);
   };
@@ -195,6 +218,7 @@ export function LanShareSendDialog() {
         return;
       }
       if (Array.isArray(res.peers)) setPeers(res.peers);
+      if (Array.isArray(res.manualPeers)) syncLanSettingsToStore({ manualPeers: res.manualPeers });
       setManualInput("");
     } catch (err: any) {
       setError(String(err?.message || err));
@@ -213,6 +237,24 @@ export function LanShareSendDialog() {
   };
 
   const KindIcon = sendTarget.kind === "project" ? Folder : sendTarget.kind === "plugin" ? Package : MessageSquare;
+  const pluginKey = String(sendTarget.pluginTarget || "").trim();
+  const bundleVisual = pluginKey ? pluginBundleVisuals[pluginKey] : undefined;
+  const pluginVisual = sendTarget.kind === "plugin"
+    ? resolvePluginVisual(
+      [pluginKey],
+      pluginCustomizations,
+      {
+        displayName: bundleVisual?.displayName || sendTarget.title,
+        author: sendTarget.author || bundleVisual?.author || "",
+        icon: sendTarget.icon || bundleVisual?.icon || "",
+        iconColor: sendTarget.iconColor || bundleVisual?.iconColor || "",
+      },
+    )
+    : null;
+  const targetDisplayTitle = pluginVisual?.displayName || sendTarget.title;
+  const targetIconStyle = sendTarget.kind === "plugin" && pluginVisual
+    ? pluginTileStyle(pluginVisual.iconColor, pluginKey || sendTarget.title)
+    : undefined;
 
   return createPortal(
     <div className="dialog-overlay" role="dialog" aria-label="局域网分享">
@@ -228,13 +270,18 @@ export function LanShareSendDialog() {
         </header>
 
         <div className="lan-share-target-card">
-          <div className="lan-share-target-icon">
-            <KindIcon size={18} />
+          <div className="lan-share-target-icon" style={targetIconStyle}>
+            {sendTarget.kind === "plugin" && pluginVisual
+              ? <PluginGlyph iconId={pluginVisual.iconId} color={pluginVisual.iconColor} size={18} />
+              : <KindIcon size={18} />}
           </div>
           <div className="lan-share-target-body">
             <div className="lan-share-target-head">
               <span className="plugin-tag">{kindLabel(sendTarget.kind)}</span>
-              <strong>{sendTarget.title}</strong>
+              <strong>{targetDisplayTitle}</strong>
+              {sendTarget.kind === "plugin" && pluginVisual?.author ? (
+                <span className="plugin-tag">{pluginVisual.author}</span>
+              ) : null}
             </div>
             {sendTarget.subtitle ? <p>{sendTarget.subtitle}</p> : null}
           </div>
@@ -297,11 +344,13 @@ export function LanShareSendDialog() {
             <button
               type="button"
               className={`plugins-text-button ${discoverable ? "is-on" : ""}`}
-              title={discoverable ? "当前允许局域网内其他设备发现和发送给你" : "当前处于隐身状态，其他设备不可见"}
+              title={discoverable
+                ? "当前允许局域网内其他设备发现并发送给你（也可在 设置 → 网络配置 中调整）"
+                : "当前处于隐身状态，其他设备无法发现或发送给你（点击可开启，也可在 设置 → 网络配置 中调整）"}
               onClick={() => void handleToggleDiscoverable()}
             >
               {discoverable ? <Eye size={14} /> : <EyeOff size={14} />}
-              <span>{discoverable ? "可被发现" : "已隐身"}</span>
+              <span>{discoverable ? "可被发现" : "已隐身（点此开启）"}</span>
             </button>
             <button
               type="button"

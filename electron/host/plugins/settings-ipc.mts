@@ -7,7 +7,7 @@ export function settingsIpcPlugin(deps) {
   return {
     name: "ipc:settings",
     apply(ctx) {
-      const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, applyDecisionSettings, warmDecisionService, reconcileChannels, applyTelemetrySettings } = deps;
+      const { trustedHandle, saveSettings, applyPreventSleep, applyReviewerModelDir, applyAsrSettings, applyTtsSettings, applyDecisionSettings, warmDecisionService, reconcileChannels, applyTelemetrySettings, applyLanShareSettings } = deps;
 
       trustedHandle("settings:mcp-stats", async () => deps.mcpStats());
 
@@ -32,6 +32,7 @@ export function settingsIpcPlugin(deps) {
           await reconcileChannels();
           // 统计/消息设置热生效：开关、服务地址、免打扰等即时应用
           await applyTelemetrySettings(settings);
+          applyLanShareSettings(settings);
           return { ok: true, updateUrl };
         } catch (error: any) {
           return { ok: false, error: error instanceof Error ? error.message : String(error) };

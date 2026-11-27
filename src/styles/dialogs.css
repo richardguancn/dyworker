@@ -735,4 +735,54 @@
   outline: none;
 }
 
+.network-lan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-strong, var(--surface));
+}
+
+.network-lan-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: calc(12.5px * var(--font-ui-scale, 1));
+  color: var(--ink);
+}
+
+.network-lan-info-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+  color: var(--muted);
+}
+
+.network-lan-peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.network-lan-peer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-ui-scale, 1));
+}
+
+
 

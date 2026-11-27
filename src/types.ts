@@ -257,7 +257,7 @@ export type ApprovalMode = "interactive" | "reviewer" | "allow-writes" | "full-a
 
 // 设置面板页签。原定义在 features/settings/SettingsDialog，因设置状态迁入 state 层而
 // 上移到共享类型，SettingsDialog 继续 re-export 以保持既有引用路径不变。
-export type SettingsTab = "model" | "voice" | "search" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "knowledge" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
+export type SettingsTab = "model" | "voice" | "search" | "network" | "power" | "plugins" | "updates" | "telemetry" | "channels" | "identity" | "appearance" | "memories" | "knowledge" | "skills" | "skill-libraries" | "plans" | "usage" | "hooks" | "about";
 
 export type AgentEvent =
   | { type: "dsh-conversation"; turns: DshVisibleTurn[] }

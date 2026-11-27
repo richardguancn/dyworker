@@ -1,4 +1,4 @@
-import { BarChart3, Bell, Check, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, UserRound } from "lucide-react";
+import { BarChart3, Bell, Check, Copy, FileCode2, Globe, History, Info, ListTodo, LoaderCircle, MessagesSquare, Mic, Moon, Network, Palette, RefreshCw, Search, Settings, ShieldAlert, Trash2, UserRound, Wifi } from "lucide-react";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { beginSession, discardSession } from "../../appearance/controller";
 import { hasConfiguredModel } from "../../../electron/host/dsh-runtime/model-settings.mts";
@@ -45,6 +45,7 @@ export const getSettingsNav = (): { group: string; items: { id: SettingsTab; lab
     { id: "model", label: t("nav.model.label", "AI模型"), icon: Settings },
     { id: "voice", label: t("nav.voice.label", "语音声音"), icon: Mic },
     { id: "search", label: t("nav.search.label", "联网搜索"), icon: Search },
+    { id: "network", label: t("nav.network.label", "网络配置"), icon: Wifi, keywords: ["网络", "局域网", "被发现", "隐身", "分享", "跨网段", "IP", "lan"] },
     { id: "channels", label: t("nav.channels.label", "消息连接"), icon: MessagesSquare, keywords: ["消息渠道", "微信", "飞书", "QQ"] },
   ] },
   { group: t("nav.group.preferences", "偏好设置"), items: [
@@ -175,6 +176,25 @@ export function SettingsDialog({
   const [modelsFetching, setModelsFetching] = useState(false);
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; contextLimit?: number }> | null>(null);
   const [modelsError, setModelsError] = useState("");
+  // 网络配置：本机局域网 IP、端口及发现通道状态（打开网络配置页时按需拉取）
+  const [lanStatus, setLanStatus] = useState<{ localAddresses: string[]; httpPort: number; discoveryError?: string } | null>(null);
+  const [copiedLanIp, setCopiedLanIp] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "network") return;
+    let cancelled = false;
+    void window.dyworker?.getLanShareState?.()
+      .then((state) => {
+        if (cancelled || !state?.ok) return;
+        setLanStatus({
+          localAddresses: Array.isArray(state.localAddresses) ? state.localAddresses : [],
+          httpPort: Number(state.httpPort || 0),
+          discoveryError: state.discoveryError || "",
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [tab]);
 
   // 外观会话：弹窗打开创建草稿（预览改动），关闭（取消/Esc/点遮罩/×）恢复已保存外观。
   // 放在弹窗层级而不是外观面板内：在设置内部切换栏目保留草稿。begin/discard 均幂等。
@@ -627,7 +647,7 @@ export function SettingsDialog({
           <AppearanceSettingsPanel />
         ) : tab === "plugins" ? (
           <PluginsPage onCreate={onCreatePlugin} sessionId={sessionId} onSkillsChanged={onRefreshSkills} mcpPanel={<McpSettingsPanel value={value} onSave={onSave} />} />
-        ) : ["model", "voice", "search", "power", "updates", "telemetry"].includes(tab) ? (
+        ) : ["model", "voice", "search", "network", "power", "updates", "telemetry"].includes(tab) ? (
           <form onSubmit={submit}>
         {tab === "model" && (
           <ModelSettingsPanel
@@ -752,6 +772,110 @@ export function SettingsDialog({
           {t("search.domesticOnly", "仅使用境内搜索（查询不出境）")}
         </label>
         <p className="dialog-note">{t("search.note", "配置联网搜索密钥，为大模型提供实时网络检索。")}</p>
+        </>)}
+        {tab === "network" && (<>
+        <div className="dialog-section-title">{t("network.lanTitle", "局域网发现与分享")}</div>
+        <label className="dialog-check">
+          <input
+            type="checkbox"
+            checked={draft.lanShare?.enabled !== false}
+            onChange={(event) => setDraft({
+              ...draft,
+              lanShare: {
+                enabled: event.target.checked,
+                nickname: draft.lanShare?.nickname || "",
+                manualPeers: Array.isArray(draft.lanShare?.manualPeers) ? draft.lanShare!.manualPeers : [],
+              },
+            })}
+          />
+          {t("network.lanDiscoverable", "允许在局域网内被发现（默认开启）")}
+        </label>
+        <p className="dialog-note">
+          {t("network.lanDiscoverableNote", "开启后，同一局域网或已配置的跨网段同事可以发现你的设备并向你发送任务、项目或插件（导入前仍需你手动确认）；关闭后本机进入隐身状态。")}
+        </p>
+        <label>
+          {t("network.lanNickname", "本机局域网显示名称")}
+          <input
+            type="text"
+            maxLength={40}
+            value={draft.lanShare?.nickname || ""}
+            placeholder={t("network.lanNicknamePlaceholder", "留空则默认使用登录账号或系统用户名")}
+            onChange={(event) => setDraft({
+              ...draft,
+              lanShare: {
+                enabled: draft.lanShare?.enabled !== false,
+                nickname: event.target.value,
+                manualPeers: Array.isArray(draft.lanShare?.manualPeers) ? draft.lanShare!.manualPeers : [],
+              },
+            })}
+          />
+        </label>
+        <div className="network-lan-card">
+          <div className="network-lan-info-row">
+            <span>{t("network.localIp", "本机局域网 IP")}</span>
+            <span className="network-lan-info-value">
+              <span>{lanStatus?.localAddresses?.length ? lanStatus.localAddresses.join(" · ") : t("common.detecting", "检测中…")}</span>
+              {lanStatus?.localAddresses?.[0] ? (
+                <button
+                  type="button"
+                  className="plugins-text-button"
+                  onClick={() => {
+                    const ip = lanStatus.localAddresses[0];
+                    if (!ip) return;
+                    void (window.dyworker?.writeClipboardText
+                      ? window.dyworker.writeClipboardText(ip)
+                      : navigator.clipboard?.writeText?.(ip)
+                    ).then(() => {
+                      setCopiedLanIp(true);
+                      window.setTimeout(() => setCopiedLanIp(false), 1600);
+                    }).catch(() => {});
+                  }}
+                >
+                  {copiedLanIp ? <Check size={12} /> : <Copy size={12} />}
+                  <span>{copiedLanIp ? t("common.copied", "已复制") : t("common.copy", "复制")}</span>
+                </button>
+              ) : null}
+            </span>
+          </div>
+          <div className="network-lan-info-row">
+            <span>{t("network.servicePort", "分享接收端口")}</span>
+            <span className="network-lan-info-value">
+              {lanStatus?.httpPort ? `TCP ${lanStatus.httpPort}` : "TCP 41235"}
+            </span>
+          </div>
+          {lanStatus?.discoveryError ? (
+            <p className="dialog-note">{t("network.discoveryErrorPrefix", "自动广播端口提示：")}{lanStatus.discoveryError}</p>
+          ) : null}
+        </div>
+
+        <div className="dialog-section-title">{t("network.manualPeersTitle", "已保存的跨网段直连设备")}</div>
+        {Array.isArray(draft.lanShare?.manualPeers) && draft.lanShare!.manualPeers!.length > 0 ? (
+          <div className="network-lan-peer-list">
+            {draft.lanShare!.manualPeers!.map((peerAddr) => (
+              <div className="network-lan-peer-row" key={peerAddr}>
+                <span>{peerAddr}</span>
+                <button
+                  type="button"
+                  className="plugins-text-button danger"
+                  onClick={() => setDraft({
+                    ...draft,
+                    lanShare: {
+                      enabled: draft.lanShare?.enabled !== false,
+                      nickname: draft.lanShare?.nickname || "",
+                      manualPeers: (draft.lanShare?.manualPeers || []).filter((item) => item !== peerAddr),
+                    },
+                  })}
+                >
+                  <Trash2 size={12} /> {t("common.remove", "移除")}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="dialog-note">
+            {t("network.manualPeersEmpty", "暂未保存跨网段设备。如与同事不在同一 /24 网段且无法自动发现，可在「局域网分享」弹窗中输入对方 IP 添加直连。")}
+          </p>
+        )}
         </>)}
         {tab === "voice" && (
           <VoiceSettingsPanel

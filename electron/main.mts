@@ -1772,6 +1772,8 @@ function clearUsageStats() {
   return writeJson(dataFile("usage-stats.json"), []).then(() => ({ ok: true }));
 }
 
+let syncLanShareSettings: (nextSettings?: any) => void = () => {};
+
 const shellDeps = {
   macStoreFileAccess,
   dataFile,
@@ -1846,6 +1848,7 @@ const shellDeps = {
   applyReviewerModelDir,
   reconcileChannels,
   applyTelemetrySettings,
+  applyLanShareSettings: (nextSettings) => syncLanShareSettings(nextSettings),
   providerMessageContent,
 };
 
@@ -2443,6 +2446,9 @@ app.whenReady().then(async () => {
     saveSettings,
     notifyPluginsUpdated: notifyAllWindowsPluginsUpdated,
     notifyLanIncoming,
+    onLanShareReady: (ctrl: { syncSettings?: (next?: any) => void } | null) => {
+      syncLanShareSettings = ctrl?.syncSettings ? (next) => ctrl.syncSettings?.(next) : () => {};
+    },
   }));
   createWindow();
   ctx.backgroundTasksManager.setBroadcastCallback((event) => {

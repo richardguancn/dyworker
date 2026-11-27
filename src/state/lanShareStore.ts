@@ -8,6 +8,9 @@ export interface LanShareSendTarget {
   workspacePath?: string;
   pluginTarget?: string;
   includeData?: boolean;
+  icon?: string;
+  iconColor?: string;
+  author?: string;
   title: string;
   subtitle?: string;
 }

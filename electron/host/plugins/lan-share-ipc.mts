@@ -176,7 +176,19 @@ export function lanShareIpcPlugin(deps: any) {
       } else {
         void refreshSettingsSnapshot().then(startService).catch(() => {});
       }
-      ctx.effect(() => () => service.stop());
+      deps.onLanShareReady?.({
+        syncSettings: (nextSettings: any) => {
+          if (nextSettings && typeof nextSettings === "object") {
+            cachedSettings = nextSettings;
+          }
+          service.syncVisibility();
+          void service.refreshPeersAsync().catch(() => {});
+        },
+      });
+      ctx.effect(() => () => {
+        deps.onLanShareReady?.(null);
+        return service.stop();
+      });
 
       trustedHandle("lan-share:get-state", async () => {
         await refreshSettingsSnapshot();
@@ -192,8 +204,9 @@ export function lanShareIpcPlugin(deps: any) {
             nickname: payload?.nickname !== undefined ? String(payload.nickname || "").trim().slice(0, 40) : String(prev.nickname || ""),
             manualPeers: Array.isArray(prev.manualPeers) ? prev.manualPeers : [],
           };
-          const saved = await saveSettings({ ...current, lanShare: nextLanShare });
-          cachedSettings = saved;
+          const nextSettings = { ...current, lanShare: nextLanShare };
+          await saveSettings(nextSettings);
+          cachedSettings = nextSettings;
           service.syncVisibility();
           return { ok: true, ...service.getState() };
         } catch (error: any) {
@@ -220,15 +233,16 @@ export function lanShareIpcPlugin(deps: any) {
             probe.normalized!,
             ...(Array.isArray(prev.manualPeers) ? prev.manualPeers : []).filter((item: string) => item !== probe.normalized),
           ].slice(0, 20);
-          const saved = await saveSettings({
+          const nextSettings = {
             ...current,
             lanShare: {
               enabled: prev.enabled !== false,
               nickname: String(prev.nickname || ""),
               manualPeers: nextList,
             },
-          });
-          cachedSettings = saved;
+          };
+          await saveSettings(nextSettings);
+          cachedSettings = nextSettings;
           return {
             ok: true,
             peer: probe.peer,
@@ -247,15 +261,16 @@ export function lanShareIpcPlugin(deps: any) {
           const current = await readSettings();
           const prev = current?.lanShare || { enabled: true, nickname: "", manualPeers: [] };
           const nextList = (Array.isArray(prev.manualPeers) ? prev.manualPeers : []).filter((item: string) => item !== target);
-          const saved = await saveSettings({
+          const nextSettings = {
             ...current,
             lanShare: {
               enabled: prev.enabled !== false,
               nickname: String(prev.nickname || ""),
               manualPeers: nextList,
             },
-          });
-          cachedSettings = saved;
+          };
+          await saveSettings(nextSettings);
+          cachedSettings = nextSettings;
           return { ok: true, peers: service.getPeers(), manualPeers: nextList };
         } catch (error: any) {
           return { ok: false, error: String(error?.message || error) };

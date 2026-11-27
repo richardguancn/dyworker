@@ -19,7 +19,7 @@ export const DEFAULT_HTTP_PORT = Number(process.env.DYWORKER_LAN_HTTP_PORT) || 4
 
 export const HEARTBEAT_INTERVAL_MS = 5000;
 export const PEER_TTL_MS = 16000;
-export const OFFER_TTL_MS = 120_000;
+export const OFFER_TTL_MS = 600_000;
 export const MAX_CONTROL_JSON_BYTES = 64 * 1024;
 export const MAX_SESSION_TRANSFER_BYTES = 512 * 1024 * 1024;
 export const MAX_PLUGIN_TRANSFER_BYTES = 50 * 1024 * 1024;
@@ -451,6 +451,7 @@ interface OutgoingInternal {
 interface IncomingInternal {
   offer: LanIncomingOffer;
   timer: ReturnType<typeof setTimeout> | null;
+  processing?: boolean;
 }
 
 export interface LanShareConfig {
@@ -1275,7 +1276,7 @@ export class LanShareService {
     return { ok: true };
   }
 
-  /** 接收方处理入站分享请求：拒绝直接回告；同意则拉取、SHA-256 校验并交由业务导入 */
+  /** 接收方处理入站分享请求：拒绝直接回告；同意则拉取、SHA-256 校验并交由业务导入（导入或传输临时失败时保留请求以便重试） */
   async respondIncoming(
     transferId: string,
     options: { accepted: boolean; importOptions?: Record<string, any> },
@@ -1284,14 +1285,18 @@ export class LanShareService {
     if (!item) {
       return { ok: false, error: "该分享请求已过期或被发送方取消" };
     }
+    if (item.processing) {
+      return { ok: false, error: "正在传输并导入中，请稍候" };
+    }
     const { offer } = item;
-    if (item.timer) clearTimeout(item.timer);
-    this.incoming.delete(transferId);
 
     const decisionUrl = `http://${offer.senderIp}:${offer.sender.httpPort}/lan-share/decision`;
     const completeUrl = `http://${offer.senderIp}:${offer.sender.httpPort}/lan-share/complete`;
 
     if (!options.accepted) {
+      if (item.timer) clearTimeout(item.timer);
+      item.timer = null;
+      this.incoming.delete(transferId);
       try {
         await postJson(decisionUrl, {
           transferId: offer.transferId,
@@ -1302,6 +1307,25 @@ export class LanShareService {
       } catch {}
       return { ok: true, accepted: false };
     }
+
+    item.processing = true;
+    if (item.timer) {
+      clearTimeout(item.timer);
+      item.timer = null;
+    }
+
+    const restoreIncomingForRetry = () => {
+      if (this.incoming.get(transferId) !== item) return;
+      item.processing = false;
+      const remainingMs = Math.max(30_000, offer.expiresAt - Date.now());
+      const timer = setTimeout(() => {
+        if (this.incoming.delete(transferId)) {
+          this.onIncomingCancelled?.(transferId);
+        }
+      }, remainingMs);
+      timer.unref?.();
+      item.timer = timer;
+    };
 
     try {
       await postJson(decisionUrl, {
@@ -1319,14 +1343,19 @@ export class LanShareService {
       downloaded = await downloadBinary(dlUrl, maxBytes);
     } catch (error: any) {
       const msg = String(error?.message || error);
-      try {
-        await postJson(completeUrl, { transferId: offer.transferId, token: offer.downloadToken, ok: false, error: msg }, 5000);
-      } catch {}
+      // 发送方载荷已失效/令牌无效（HTTP 404/403）说明发送方已超时销毁或取消，清理本端并给出明确引导
+      if (/\bHTTP\s*(?:403|404)\b/.test(msg)) {
+        this.incoming.delete(transferId);
+        this.onIncomingCancelled?.(transferId);
+        return { ok: false, accepted: true, error: "发送方已取消或该分享已失效，请让对方重新发送" };
+      }
+      restoreIncomingForRetry();
       return { ok: false, accepted: true, error: msg };
     }
 
     const actualSha = createHash("sha256").update(downloaded).digest("hex");
     if (!safeTimingEqual(actualSha, offer.sha256)) {
+      this.incoming.delete(transferId);
       const errMsg = "文件完整性校验失败（SHA-256 不匹配），已取消导入";
       try {
         await postJson(completeUrl, { transferId: offer.transferId, token: offer.downloadToken, ok: false, error: errMsg }, 5000);
@@ -1339,28 +1368,37 @@ export class LanShareService {
         ? await this.onImportPayload(offer, downloaded, options.importOptions || {})
         : { ok: true, buffer: downloaded };
       const ok = importResult?.ok !== false;
-      try {
-        await postJson(completeUrl, {
-          transferId: offer.transferId,
-          token: offer.downloadToken,
-          ok,
-          ...(ok ? {} : { error: importResult?.error || "导入失败" }),
-        }, 5000);
-      } catch {}
+      if (ok) {
+        this.incoming.delete(transferId);
+        try {
+          await postJson(completeUrl, {
+            transferId: offer.transferId,
+            token: offer.downloadToken,
+            ok: true,
+          }, 5000);
+        } catch {}
+        return {
+          ok: true,
+          accepted: true,
+          kind: offer.kind,
+          offer,
+          buffer: this.onImportPayload ? undefined : downloaded,
+          importResult,
+        };
+      }
+      restoreIncomingForRetry();
       return {
-        ok,
+        ok: false,
         accepted: true,
         kind: offer.kind,
         offer,
         buffer: this.onImportPayload ? undefined : downloaded,
         importResult,
-        ...(ok ? {} : { error: importResult?.error || "导入失败" }),
+        error: importResult?.error || "导入失败",
       };
     } catch (error: any) {
       const msg = String(error?.message || error);
-      try {
-        await postJson(completeUrl, { transferId: offer.transferId, token: offer.downloadToken, ok: false, error: msg }, 5000);
-      } catch {}
+      restoreIncomingForRetry();
       return { ok: false, accepted: true, error: msg };
     }
   }
