@@ -479,6 +479,8 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(incomingDialog, /pluginTileStyle/);
   assert.match(settingsDialog, /"network"/);
   assert.match(settingsDialog, /允许在局域网内被发现/);
+  assert.match(settingsDialog, /updateLanShareConfig/);
+  assert.match(settingsDialog, /getLanShareState/);
   assert.match(preload, /lan-share:get-state/);
   assert.match(preload, /lan-share:add-peer/);
   assert.match(preload, /lan-share:remove-peer/);

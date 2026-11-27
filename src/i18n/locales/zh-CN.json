@@ -206,7 +206,7 @@
   "plugins.title": "扩展插件",
   "plugins.subtitle": "管理已安装功能，按需添加新扩展。",
   "plugins.create": "制作插件",
-  "plugins.installLocal": "安装本地",
+  "plugins.installLocal": "导入 / 安装",
   "plugins.add": "添加插件",
   "plugins.refreshCatalog": "刷新清单",
   "plugins.installed": "已安装",

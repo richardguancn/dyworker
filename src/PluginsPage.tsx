@@ -388,14 +388,11 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
         </div>
         <div className="plugins-page-actions">
           <button className="plugins-text-button" onClick={() => setGuideOpen(true)}><Sparkles size={14} /> 使用指南</button>
-          <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> {t("plugins.create", "创建插件")}</button>
-          <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>{t("plugins.installLocal", "安装本地插件")}</button>
+          <button className="plugins-text-button" onClick={() => setLocalInstallOpen(true)}>{t("plugins.installLocal", "导入 / 安装")}</button>
           <button className="icon-button subtle" onClick={() => void refresh(true)} disabled={Boolean(busy)||catalogLoading} aria-label={t("plugins.refreshCatalog", "刷新插件清单")} title={t("plugins.refreshCatalog", "刷新插件清单")}>
             {catalogLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
           </button>
-          <button className="plugins-add-button" onClick={() => {setView('available');setMarketQuery('');setMarketCategory('');}}>
-            <Plus size={15} /> {t("plugins.add", "添加插件")}
-          </button>
+          <button className="plugins-add-button" onClick={onCreate}><Plus size={15} /> {t("plugins.create", "制作插件")}</button>
         </div>
       </header>
 

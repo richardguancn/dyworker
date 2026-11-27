@@ -19,6 +19,7 @@ import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import type { ApprovalMode, AppUpdateStatus, DecisionLocalStatus, ModelProfile, ProviderSettings, ReviewerLocalStatus, ScheduleRecord, SettingsTab, SkillRecord, TtsLocalStatus, UsageRecord, VoiceLocalStatus, WikiMemoryPage, WikiMemoryRow } from "../../types";
 import { blobToWavMono } from "../../lib/audio";
 import { settingsWithProfile } from "../../lib/settings";
+import { useSettingsStore } from "../../state/settingsStore";
 import { t, useLocale } from "../../i18n";
 
 export type { SettingsTab } from "../../types";
@@ -191,10 +192,82 @@ export function SettingsDialog({
           httpPort: Number(state.httpPort || 0),
           discoveryError: state.discoveryError || "",
         });
+        const syncedLanShare = {
+          enabled: state.discoverable !== false,
+          nickname: String(state.nickname || ""),
+          manualPeers: Array.isArray(state.manualPeers) ? state.manualPeers : [],
+        };
+        setDraft((current) => ({ ...current, lanShare: syncedLanShare }));
+        const store = useSettingsStore.getState();
+        store.setSettings({ ...store.settings, lanShare: syncedLanShare });
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [tab]);
+
+  const toggleLanDiscoverable = async (nextEnabled: boolean) => {
+    const prevLanShare = {
+      enabled: draft.lanShare?.enabled !== false,
+      nickname: draft.lanShare?.nickname || "",
+      manualPeers: Array.isArray(draft.lanShare?.manualPeers) ? draft.lanShare!.manualPeers! : [],
+    };
+    setDraft((current) => ({
+      ...current,
+      lanShare: { ...prevLanShare, enabled: nextEnabled },
+    }));
+    try {
+      const res = await window.dyworker?.updateLanShareConfig?.({ enabled: nextEnabled });
+      if (!res?.ok) {
+        setDraft((current) => ({ ...current, lanShare: prevLanShare }));
+        flashSaveStatus(res?.error || t("network.toggleFail", "切换局域网可见状态失败"), true);
+        return;
+      }
+      const syncedLanShare = {
+        enabled: res.discoverable !== false,
+        nickname: String(res.nickname ?? prevLanShare.nickname),
+        manualPeers: Array.isArray(res.manualPeers) ? res.manualPeers : prevLanShare.manualPeers,
+      };
+      setDraft((current) => ({ ...current, lanShare: syncedLanShare }));
+      const store = useSettingsStore.getState();
+      store.setSettings({ ...store.settings, lanShare: syncedLanShare });
+      flashSaveStatus(syncedLanShare.enabled
+        ? t("network.discoverableOnSaved", "已开启局域网可被发现")
+        : t("network.discoverableOffSaved", "已切换为局域网隐身"));
+    } catch (err: any) {
+      setDraft((current) => ({ ...current, lanShare: prevLanShare }));
+      flashSaveStatus(String(err?.message || err || t("network.toggleFail", "切换局域网可见状态失败")), true);
+    }
+  };
+
+  const removeLanManualPeer = async (peerAddr: string) => {
+    const prevLanShare = {
+      enabled: draft.lanShare?.enabled !== false,
+      nickname: draft.lanShare?.nickname || "",
+      manualPeers: Array.isArray(draft.lanShare?.manualPeers) ? draft.lanShare!.manualPeers! : [],
+    };
+    const optimisticList = prevLanShare.manualPeers.filter((item) => item !== peerAddr);
+    setDraft((current) => ({
+      ...current,
+      lanShare: { ...prevLanShare, manualPeers: optimisticList },
+    }));
+    try {
+      const res = await window.dyworker?.removeLanSharePeer?.({ address: peerAddr });
+      if (res && !res.ok) {
+        setDraft((current) => ({ ...current, lanShare: prevLanShare }));
+        flashSaveStatus(res.error || t("network.removePeerFail", "移除跨网段设备失败"), true);
+        return;
+      }
+      const finalPeers = Array.isArray(res?.manualPeers) ? res.manualPeers : optimisticList;
+      const nextLanShare = { ...prevLanShare, manualPeers: finalPeers };
+      setDraft((current) => ({ ...current, lanShare: nextLanShare }));
+      const store = useSettingsStore.getState();
+      store.setSettings({ ...store.settings, lanShare: nextLanShare });
+      flashSaveStatus(t("network.removePeerOk", "已移除该跨网段设备"));
+    } catch (err: any) {
+      setDraft((current) => ({ ...current, lanShare: prevLanShare }));
+      flashSaveStatus(String(err?.message || err || t("network.removePeerFail", "移除跨网段设备失败")), true);
+    }
+  };
 
   // 外观会话：弹窗打开创建草稿（预览改动），关闭（取消/Esc/点遮罩/×）恢复已保存外观。
   // 放在弹窗层级而不是外观面板内：在设置内部切换栏目保留草稿。begin/discard 均幂等。
@@ -779,14 +852,7 @@ export function SettingsDialog({
           <input
             type="checkbox"
             checked={draft.lanShare?.enabled !== false}
-            onChange={(event) => setDraft({
-              ...draft,
-              lanShare: {
-                enabled: event.target.checked,
-                nickname: draft.lanShare?.nickname || "",
-                manualPeers: Array.isArray(draft.lanShare?.manualPeers) ? draft.lanShare!.manualPeers : [],
-              },
-            })}
+            onChange={(event) => { void toggleLanDiscoverable(event.target.checked); }}
           />
           {t("network.lanDiscoverable", "允许在局域网内被发现（默认开启）")}
         </label>
@@ -811,6 +877,14 @@ export function SettingsDialog({
           />
         </label>
         <div className="network-lan-card">
+          <div className="network-lan-info-row">
+            <span>{t("network.lanVisibilityStatus", "当前可见状态")}</span>
+            <span className="network-lan-info-value">
+              {draft.lanShare?.enabled !== false
+                ? t("network.statusVisible", "可被发现")
+                : t("network.statusHidden", "已隐身")}
+            </span>
+          </div>
           <div className="network-lan-info-row">
             <span>{t("network.localIp", "本机局域网 IP")}</span>
             <span className="network-lan-info-value">
@@ -857,14 +931,7 @@ export function SettingsDialog({
                 <button
                   type="button"
                   className="plugins-text-button danger"
-                  onClick={() => setDraft({
-                    ...draft,
-                    lanShare: {
-                      enabled: draft.lanShare?.enabled !== false,
-                      nickname: draft.lanShare?.nickname || "",
-                      manualPeers: (draft.lanShare?.manualPeers || []).filter((item) => item !== peerAddr),
-                    },
-                  })}
+                  onClick={() => { void removeLanManualPeer(peerAddr); }}
                 >
                   <Trash2 size={12} /> {t("common.remove", "移除")}
                 </button>
