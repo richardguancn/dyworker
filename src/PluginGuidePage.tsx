@@ -36,7 +36,7 @@ const GUIDE_STEPS: GuideStep[] = [
     description:
       "不用懂代码或技术名词。开启输入框下方的「创造模式」开关（或发 /create），说明你想做什么独立页面、看板或工具，助手会自动生成、校验并热挂载到左侧边栏或右侧工具栏。",
     bullets: [
-      "说「做个独立页面接入飞书项目计划」会直接生成左侧原生独立页",
+      "说「帮我做个个人工作驾驶舱看板」会直接生成左侧原生独立页",
       "把上期 Excel/CSV 报表或截图拖进对话框，助手会按真实表头建模画图",
       "纯本地插件通过安全校验后自动安装打开，无需手动配环境",
     ],
@@ -85,22 +85,25 @@ const GUIDE_STEPS: GuideStep[] = [
   },
 ];
 
+const DEFAULT_SANDBOX_NAME = "个人工作驾驶舱";
+const DEFAULT_SANDBOX_AUTHOR = "林辰";
+
 const SANDBOX_ICONS = PLUGIN_ICON_PRESETS.filter((item) =>
-  ["layout-grid", "file-spreadsheet", "folder-kanban", "bar-chart-3", "clipboard-check", "globe", "sparkles"].includes(item.id),
+  ["gauge", "layout-grid", "folder-kanban", "bar-chart-3", "file-spreadsheet", "clipboard-check", "sparkles"].includes(item.id),
 );
 
 const PROMPT_EXAMPLES = [
   {
-    id: "feishu-page",
-    title: "接入飞书/外部系统独立页面",
+    id: "personal-cockpit",
+    title: "打造专属个人驾驶舱看板",
     tag: "左侧独立页",
-    prompt: "开启创造模式：帮我做一个左侧独立页面，接入飞书项目计划表格，支持按阶段筛选、展示里程碑进度卡片，关闭软件后配置不丢。",
+    prompt: "开启创造模式：帮我做一个左侧独立页面「个人工作驾驶舱」，顶部展示今日重点指标与待办进度，下方用看板按待办/进行中/已完成管理事项并配趋势统计图，关闭软件后数据不丢。",
   },
   {
     id: "iterate-plugin",
-    title: "给已有插件加功能并升级版本",
+    title: "给已有驾驶舱加图表并升级版本",
     tag: "迭代升级",
-    prompt: "帮我更新「项目计划看板」插件：顶部新增按负责人筛选和状态分布柱状图，保留当前图标和名字，改完同步升级一个版本号。",
+    prompt: "帮我更新「个人工作驾驶舱」插件：顶部新增本周专注趋势折线图和按优先级筛选，保留当前图标和名字，改完同步升级一个版本号。",
   },
   {
     id: "side-checklist",
@@ -112,7 +115,7 @@ const PROMPT_EXAMPLES = [
     id: "share-team",
     title: "打包分享给部门同事复用",
     tag: "团队分享",
-    prompt: "帮我把刚才做好的看板插件打包导出为 .dyplugin 分享包，包含默认模板数据但先扫描排查一下敏感路径。",
+    prompt: "帮我把刚才做好的驾驶舱看板插件打包导出为 .dyplugin 分享包，包含默认示例模板数据但先扫描排查一下敏感路径。",
   },
 ];
 
@@ -128,17 +131,17 @@ export function PluginGuidePage({
   const [copiedId, setCopiedId] = useState("");
 
   // 交互式沙盒状态（第 2 步可实时点击体验）
-  const [sandboxName, setSandboxName] = useState("飞书项目计划台");
-  const [sandboxAuthor, setSandboxAuthor] = useState("产品研发部");
-  const [sandboxIcon, setSandboxIcon] = useState("file-spreadsheet");
+  const [sandboxName, setSandboxName] = useState(DEFAULT_SANDBOX_NAME);
+  const [sandboxAuthor, setSandboxAuthor] = useState(DEFAULT_SANDBOX_AUTHOR);
+  const [sandboxIcon, setSandboxIcon] = useState("gauge");
   const [sandboxColor, setSandboxColor] = useState("#2563eb");
 
   // 第 3 步版本号滚动体验状态
   const [versionIndex, setVersionIndex] = useState(1);
   const versionStages = [
-    { ver: "v0.1.0", desc: "初版上线 · 基础数据看板" },
-    { ver: "v0.1.1", desc: "修订更新 · 优化表格筛选与布局" },
-    { ver: "v0.2.0", desc: "功能升级 · 新增里程碑统计图" },
+    { ver: "v0.1.0", desc: "初版上线 · 今日聚焦与核心指标看板" },
+    { ver: "v0.1.1", desc: "修订更新 · 优化看板筛选与暗色布局" },
+    { ver: "v0.2.0", desc: "功能升级 · 新增周度趋势与任务分布图" },
   ];
 
   useEffect(() => {
@@ -220,8 +223,8 @@ export function PluginGuidePage({
                 <PluginGlyph iconId={sandboxIcon} color={sandboxColor} size={22} />
               </div>
               <div className="plugin-guide-float-meta">
-                <strong>{sandboxName || "飞书项目计划台"}</strong>
-                <span>作者：{sandboxAuthor || "产品研发部"} · 左侧独立页</span>
+                <strong>{sandboxName || DEFAULT_SANDBOX_NAME}</strong>
+                <span>作者：{sandboxAuthor || DEFAULT_SANDBOX_AUTHOR} · 左侧独立页</span>
               </div>
               <span className="plugin-guide-ver-pill">{versionStages[versionIndex].ver}</span>
             </div>
@@ -291,7 +294,7 @@ export function PluginGuidePage({
                   <span className="guide-flow-badge"><Blocks size={15} /></span>
                   <div>
                     <strong>1. 打开「创造模式」提需求</strong>
-                    <small>“帮我做个左侧独立页面，接入飞书项目计划表格”</small>
+                    <small>“帮我做个左侧独立页面：个人工作驾驶舱与任务看板”</small>
                   </div>
                 </div>
                 <div className="guide-flow-node">
@@ -409,7 +412,7 @@ export function PluginGuidePage({
                   <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                     <Share2 size={14} /> 同网段同事的 DYWorker
                   </strong>
-                  <span>已打包：{sandboxName || "飞书项目计划台"} ({versionStages[versionIndex].ver})</span>
+                  <span>已打包：{sandboxName || DEFAULT_SANDBOX_NAME} ({versionStages[versionIndex].ver})</span>
                   <small style={{ color: "var(--muted)", fontSize: "calc(11px * var(--font-ui-scale, 1))" }}>
                     携带图标配色与作者信息 · 对方同意即装
                   </small>

@@ -282,6 +282,7 @@ export function pluginsIpcPlugin(deps: any = {}) {
             target,
             outputPath: saved.filePath,
             includeData,
+            includeConfig: Boolean(payload?.includeConfig),
             dataDir,
             storageRoot,
             appVersion: String(deps.appVersion || ""),
@@ -330,6 +331,7 @@ export function pluginsIpcPlugin(deps: any = {}) {
             storageRoot,
             importData: payload?.importData !== false,
             overwriteData: Boolean(payload?.overwriteData),
+            importConfig: payload?.importConfig !== false,
           });
           if (!unpacked?.ok || !unpacked.pluginDir) {
             return unpacked;
@@ -361,6 +363,9 @@ export function pluginsIpcPlugin(deps: any = {}) {
           if (matched?.disabled) {
             await host.setEnabled(entryId, true).catch(() => null);
           }
+          if (unpacked.pluginConfig !== undefined && typeof host.configure === "function") {
+            await host.configure(entryId, unpacked.pluginConfig).catch(() => null);
+          }
           deps.notifyPluginsUpdated?.();
 
           return {
@@ -373,6 +378,7 @@ export function pluginsIpcPlugin(deps: any = {}) {
             pluginDir: unpacked.pluginDir,
             importedDataFiles: unpacked.importedDataFiles,
             skippedDataFiles: unpacked.skippedDataFiles,
+            importedConfig: unpacked.pluginConfig !== undefined,
           };
         } catch (error: any) {
           return { ok: false, error: String(error?.message || error) };

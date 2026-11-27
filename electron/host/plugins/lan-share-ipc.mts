@@ -50,7 +50,8 @@ export function resolveLanLoginAccount(settings: any): string {
 export function lanShareIpcPlugin(deps: any) {
   return {
     name: "ipc:lan-share",
-    inject: ["sessions", "plugins"],
+    // 调用 ctx.plugins.installPackage / setEnabled 时，cordis 4 会校验当前 fiber 是否声明了 loader
+    inject: ["sessions", "plugins", "loader"],
     apply(ctx: any) {
       const {
         trustedHandle,
@@ -87,6 +88,7 @@ export function lanShareIpcPlugin(deps: any) {
       const service = new LanShareService({
         deviceId,
         appVersion: String(appVersion || app?.getVersion?.() || ""),
+        ...(deps.serviceOptions || {}),
         getConfig: () => ({
           discoverable: cachedSettings?.lanShare?.enabled !== false,
           nickname: String(cachedSettings?.lanShare?.nickname || ""),
@@ -120,6 +122,7 @@ export function lanShareIpcPlugin(deps: any) {
               storageRoot,
               importData: importOptions?.importData !== false,
               overwriteData: Boolean(importOptions?.overwriteData),
+              importConfig: importOptions?.importConfig !== false,
             });
             if (!unpacked?.ok || !unpacked.pluginDir) {
               return unpacked;
@@ -141,6 +144,9 @@ export function lanShareIpcPlugin(deps: any) {
             if (matched?.disabled) {
               await ctx.plugins.setEnabled(entryId, true).catch(() => null);
             }
+            if (unpacked.pluginConfig !== undefined && typeof ctx.plugins.configure === "function") {
+              await ctx.plugins.configure(entryId, unpacked.pluginConfig).catch(() => null);
+            }
             notifyPluginsUpdated?.();
             const result = {
               ...installed,
@@ -152,6 +158,7 @@ export function lanShareIpcPlugin(deps: any) {
               pluginDir: unpacked.pluginDir,
               importedDataFiles: unpacked.importedDataFiles,
               skippedDataFiles: unpacked.skippedDataFiles,
+              importedConfig: unpacked.pluginConfig !== undefined,
             };
             broadcast("lan-share:imported", { kind: "plugin", offer, result });
             return result;
@@ -305,6 +312,7 @@ export function lanShareIpcPlugin(deps: any) {
                 target,
                 outputPath: tempFile,
                 includeData: Boolean(payload?.includeData),
+                includeConfig: Boolean(payload?.includeConfig),
                 dataDir,
                 storageRoot,
                 appVersion: String(appVersion || app?.getVersion?.() || ""),
@@ -327,6 +335,7 @@ export function lanShareIpcPlugin(deps: any) {
                   ...(exported.iconColor ? { iconColor: exported.iconColor } : {}),
                   includesData: exported.includesData,
                   includedDataFiles: exported.includedDataFiles || [],
+                  includesConfig: Boolean(exported.includesConfig),
                   warningsCount: exported.warnings?.length || 0,
                 },
                 payloadBuffer: buffer,
@@ -376,6 +385,7 @@ export function lanShareIpcPlugin(deps: any) {
           importOptions: {
             importData: payload?.importData !== false,
             overwriteData: Boolean(payload?.overwriteData),
+            importConfig: payload?.importConfig !== false,
             allowIncompatible: Boolean(payload?.allowIncompatible),
           },
         });

@@ -286,12 +286,200 @@ test("导出前敏感信息与本机绝对路径检测并脱敏，第三方与�
   });
   assert.equal(remoteExport.ok, false);
   assert.equal(remoteExport.shareKind, "remote");
+});
 
-  // 内置插件：拒绝分享导出
-  host.plugins.rows = [{ id: "builtin-kb", name: "builtin-kb", builtin: true }];
-  const builtinInspect = await inspectPluginForExport(host, { target: "builtin-kb", dataDir: root });
-  assert.equal(builtinInspect.ok, false);
-  assert.match(builtinInspect.error, /内置插件/);
+test("内置插件支持分享导出与配置同步，且接收方无冲突安装/同名覆盖均不破坏原始内置目录", async (t) => {
+  const senderRoot = await mkSandbox(t, "dyw-builtin-sender-");
+  const senderBuiltinRoot = path.join(senderRoot, "app-builtin-plugins");
+  const receiverPlainRoot = await mkSandbox(t, "dyw-builtin-recv-plain-");
+  const receiverSameRoot = await mkSandbox(t, "dyw-builtin-recv-same-");
+  const receiverSameBuiltinRoot = path.join(receiverSameRoot, "app-builtin-plugins");
+
+  const pkgName = "oidc-builtin-auth";
+  const createBuiltinSample = async (dir, version) => {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({
+        name: pkgName,
+        version,
+        type: "module",
+        main: "index.js",
+        description: "统一身份认证内置插件示例",
+        exports: { ".": "./index.js", "./client": "./client.js" },
+        dsh: { client: { platform: "web" } },
+        dyworker: { builtin: true, defaultEnabled: true },
+      }, null, 2),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(dir, "index.js"),
+      [
+        `export const name = ${JSON.stringify(pkgName)};`,
+        `export const inject = ["tools"];`,
+        `export function apply(ctx, config) {`,
+        `  ctx.tools.register({`,
+        `    plugin: name,`,
+        `    name: "auth_status",`,
+        `    description: "查看认证状态",`,
+        `    parameters: { type: "object", properties: {} },`,
+        `    handler: async () => ({ version: ${JSON.stringify(version)}, config }),`,
+        `  });`,
+        `}`,
+      ].join("\n"),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(dir, "client.js"),
+      [
+        `window.__ModuleLoader__.load({`,
+        `  id: ${JSON.stringify(pkgName)},`,
+        `  factory() {`,
+        `    return { name: ${JSON.stringify(pkgName)}, apply() {} };`,
+        `  }`,
+        `});`,
+      ].join("\n"),
+      "utf8",
+    );
+  };
+
+  await createBuiltinSample(path.join(senderBuiltinRoot, pkgName), "1.2.0");
+  await createBuiltinSample(path.join(receiverSameBuiltinRoot, pkgName), "1.0.0");
+
+  const senderHost = await createHost({
+    userDataDir: senderRoot,
+    mountPlugins: true,
+    builtinPluginsDir: senderBuiltinRoot,
+  });
+  const receiverPlainHost = await createHost({
+    userDataDir: receiverPlainRoot,
+    mountPlugins: true,
+  });
+  const receiverSameHost = await createHost({
+    userDataDir: receiverSameRoot,
+    mountPlugins: true,
+    builtinPluginsDir: receiverSameBuiltinRoot,
+  });
+  t.after(async () => {
+    await disposeHost(senderHost);
+    await disposeHost(receiverPlainHost);
+    await disposeHost(receiverSameHost);
+  });
+
+  // 为发送方内置插件写入自定义设置配置
+  const secretToken = "sk-proj-oidcsecret1234567890abcdef";
+  const cfgPayload = { issuer: "https://sso.corp.example.com", clientSecret: secretToken };
+  const cfgRes = await senderHost.plugins.configure(pkgName, cfgPayload);
+  assert.equal(cfgRes.ok, true, cfgRes.error);
+
+  // 1. 导出预检：识别为可导出的内置插件、带配置且能扫出配置里的敏感凭据告警
+  const inspected = await inspectPluginForExport(senderHost, {
+    target: pkgName,
+    dataDir: senderRoot,
+    storageRoot: senderHost.get("storage").root,
+    customization: { displayName: "统一身份认证", author: "安全团队", icon: "users", iconColor: "#2563eb" },
+  });
+  assert.equal(inspected.ok, true, inspected.error);
+  assert.equal(inspected.shareKind, "local");
+  assert.equal(inspected.isBuiltin, true);
+  assert.equal(inspected.hasConfig, true);
+  assert.equal(inspected.displayName, "统一身份认证");
+  assert.ok(inspected.configWarnings.some((w) => w.kind === "secret" && !w.preview.includes("oidcsecret1234567890")));
+
+  // 2. 导出 .dyplugin（附带配置）
+  const outPath = path.join(senderRoot, "oidc-builtin.dyplugin");
+  const exported = await exportPluginSharePackage(senderHost, {
+    target: pkgName,
+    outputPath: outPath,
+    includeData: false,
+    includeConfig: true,
+    dataDir: senderRoot,
+    storageRoot: senderHost.get("storage").root,
+    customization: { displayName: "统一身份认证", author: "安全团队", icon: "users", iconColor: "#2563eb" },
+  });
+  assert.equal(exported.ok, true, exported.error);
+  assert.equal(exported.includesConfig, true);
+
+  const archive = readSafeArchiveEntries(await fs.readFile(outPath));
+  assert.equal(archive.shareManifest?.includesConfig, true);
+  assert.deepEqual(archive.shareManifest?.pluginConfig, cfgPayload);
+  const exportedPkgFile = archive.pluginFiles.find((f) => f.relativePath === "package.json");
+  assert.ok(exportedPkgFile);
+  const exportedPkg = JSON.parse(exportedPkgFile.data.toString("utf8"));
+  assert.equal(exportedPkg.dyworker?.builtin, undefined);
+  assert.equal(exportedPkg.dyworker?.defaultEnabled, undefined);
+  assert.deepEqual(exportedPkg.dyworker?.client, { platform: "web" });
+  assert.equal(exportedPkg.dsh, undefined);
+
+  // 3. 接收方 A（普通版未内置）：导入、安装并应用配置成功
+  const plainPreview = await inspectSharePackage({
+    filePath: outPath,
+    ctx: receiverPlainHost,
+    dataDir: receiverPlainRoot,
+    storageRoot: receiverPlainHost.get("storage").root,
+  });
+  assert.equal(plainPreview.ok, true, plainPreview.error);
+  assert.equal(plainPreview.alreadyInstalled, false);
+  assert.equal(plainPreview.alreadyBuiltin, false);
+  assert.equal(plainPreview.includesConfig, true);
+
+  const plainUnpacked = await unpackSharePackageToManagedDir({
+    filePath: outPath,
+    dataDir: receiverPlainRoot,
+    storageRoot: receiverPlainHost.get("storage").root,
+    importConfig: true,
+  });
+  assert.equal(plainUnpacked.ok, true, plainUnpacked.error);
+  assert.deepEqual(plainUnpacked.pluginConfig, cfgPayload);
+
+  const plainInstalled = await executePluginManage(receiverPlainHost, {
+    action: "install",
+    target: plainUnpacked.pluginDir,
+  }, { managedRoot: managedCreatedPluginsRoot(receiverPlainRoot) });
+  assert.equal(plainInstalled.ok, true, plainInstalled.error);
+  await receiverPlainHost.plugins.configure(pkgName, plainUnpacked.pluginConfig);
+  const plainEntries = receiverPlainHost.plugins.entries().filter((item) => item.name === pkgName);
+  assert.equal(plainEntries.length, 1);
+  assert.equal(plainEntries[0].active, true);
+  assert.deepEqual(plainEntries[0].config, cfgPayload);
+
+  // 4. 接收方 B（已自带 v1.0.0 同名内置插件）：可预览并覆盖安装 v1.2.0，且不破坏原 builtinDir 文件
+  const samePreview = await inspectSharePackage({
+    filePath: outPath,
+    ctx: receiverSameHost,
+    dataDir: receiverSameRoot,
+    storageRoot: receiverSameHost.get("storage").root,
+  });
+  assert.equal(samePreview.ok, true, samePreview.error);
+  assert.equal(samePreview.alreadyInstalled, true);
+  assert.equal(samePreview.alreadyBuiltin, true);
+  assert.equal(samePreview.includesConfig, true);
+
+  const sameUnpacked = await unpackSharePackageToManagedDir({
+    filePath: outPath,
+    dataDir: receiverSameRoot,
+    storageRoot: receiverSameHost.get("storage").root,
+    importConfig: true,
+  });
+  assert.equal(sameUnpacked.ok, true, sameUnpacked.error);
+
+  const sameInstalled = await executePluginManage(receiverSameHost, {
+    action: "install",
+    target: sameUnpacked.pluginDir,
+  }, { managedRoot: managedCreatedPluginsRoot(receiverSameRoot) });
+  assert.equal(sameInstalled.ok, true, sameInstalled.error);
+  await receiverSameHost.plugins.configure(pkgName, sameUnpacked.pluginConfig);
+
+  const sameEntries = receiverSameHost.plugins.entries().filter((item) => item.name === pkgName);
+  assert.equal(sameEntries.length, 1);
+  assert.equal(sameEntries[0].active, true);
+  assert.deepEqual(sameEntries[0].config, cfgPayload);
+  const sameBundle = receiverSameHost.plugins.bundles_().find((item) => item.packageName === pkgName);
+  assert.equal(sameBundle?.version, "1.2.0");
+
+  // 原始 builtin 目录保持 v1.0.0 未被修改
+  const origBuiltinPkg = JSON.parse(await fs.readFile(path.join(receiverSameBuiltinRoot, pkgName, "package.json"), "utf8"));
+  assert.equal(origBuiltinPkg.version, "1.0.0");
 });
 
 test("普通 .zip 兼容（根目录与单层子目录）及安全防线拦截恶意包", async (t) => {
@@ -424,11 +612,12 @@ test("前端组件、Preload 与 IPC 接线契约完整", async () => {
 
   assert.match(pluginsPage, /SharePluginDialog/);
   assert.match(pluginsPage, /plugin-drop-overlay/);
-  assert.match(detailPage, /onShare/);
+  assert.match(detailPage, /onShare &&/);
   assert.match(addDialog, /inspectPluginSharePackage/);
   assert.match(addDialog, /importPluginSharePackage/);
   assert.match(shareDialog, /inspectPluginExport/);
   assert.match(shareDialog, /exportPluginPackage/);
+  assert.match(shareDialog, /includeConfig/);
   assert.match(actionCard, /SharePluginDialog/);
   assert.match(preload, /webUtils/);
   assert.match(preload, /getPathForFile/);
@@ -637,4 +826,72 @@ test("原生 DYWorker 插件使用 tools 等宿主服务时导出与严格导入
   const receiverPlugin = receiverHost.plugins.entries().find((item) => item.name === pkgName);
   assert.equal(receiverPlugin?.active, true);
   assert.equal(globalThis.__nativeWeeklyApplied, true);
+});
+
+test("原生插件注册工具未手动包 ctx.effect 时，连续覆盖导入仍可成功启用且失败界面保留 error", async (t) => {
+  const root = await mkSandbox(t, "dyw-share-reimport-tools-");
+  const senderDir = path.join(root, "sender");
+  const receiverDir = path.join(root, "receiver");
+  await fs.mkdir(senderDir, { recursive: true });
+  await fs.mkdir(receiverDir, { recursive: true });
+
+  const pkgName = "reimport-tools-plugin";
+  const pluginDir = path.join(senderDir, pkgName);
+  await createSampleClientPlugin(pluginDir, pkgName, {
+    version: "0.2.1",
+    indexJs: [
+      `export const name = ${JSON.stringify(pkgName)};`,
+      `export const inject = ["storage", "tools"];`,
+      `export function apply(ctx) {`,
+      `  ctx.tools.register({`,
+      `    plugin: name,`,
+      `    name: "collect_monthly_report",`,
+      `    description: "采集测试",`,
+      `    handler: async () => ({ ok: true }),`,
+      `  });`,
+      `}`,
+    ].join("\n"),
+  });
+
+  const senderHost = await createHost({ userDataDir: senderDir, mountPlugins: true });
+  const receiverHost = await createHost({ userDataDir: receiverDir, mountPlugins: true });
+  t.after(async () => {
+    await disposeHost(senderHost);
+    await disposeHost(receiverHost);
+  });
+
+  await executePluginManage(senderHost, { action: "install", target: pluginDir }, { managedRoot: senderDir });
+  const shareFile = path.join(root, `${pkgName}.dyplugin`);
+  const exported = await exportPluginSharePackage(senderHost, {
+    target: pluginDir,
+    outputPath: shareFile,
+    dataDir: senderDir,
+  });
+  assert.equal(exported.ok, true, exported.error);
+
+  for (const round of [1, 2]) {
+    const unpacked = await unpackSharePackageToManagedDir({ filePath: shareFile, dataDir: receiverDir });
+    assert.equal(unpacked.ok, true, `第 ${round} 次解包失败: ${unpacked.error}`);
+    const installed = await receiverHost.plugins.installPackage({
+      input: unpacked.pluginDir,
+      allowIncompatible: false,
+      npmPath: "/fake/npm",
+      run: async (_cmd, args) => {
+        if (args[0] === "install") {
+          const prefixDir = args[args.indexOf("--prefix") + 1];
+          const destDir = path.join(prefixDir, "node_modules", pkgName);
+          await fs.mkdir(path.dirname(destDir), { recursive: true });
+          await fs.cp(unpacked.pluginDir, destDir, { recursive: true, force: true });
+        }
+        return { code: 0, stdout: "ok", stderr: "" };
+      },
+    });
+    assert.equal(installed.ok, true, `第 ${round} 次导入失败: ${JSON.stringify(installed)}`);
+    const entry = receiverHost.plugins.entries().find((item) => item.name === pkgName);
+    assert.equal(entry?.active, true, `第 ${round} 次导入后插件未处于激活状态`);
+  }
+
+  const addDialogSrc = await fs.readFile(new URL("../src/AddPluginDialog.tsx", import.meta.url), "utf8");
+  assert.match(addDialogSrc, /mergeInstallFailureReasons/);
+  assert.doesNotMatch(addDialogSrc, /analysis\?\.reasons\s*\|\|\s*\([^)]*\.error/);
 });

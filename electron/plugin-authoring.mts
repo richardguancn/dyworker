@@ -203,7 +203,10 @@ export interface LocalPluginValidationResult {
 }
 
 /** 对本地插件目录执行静态安全检查与清单、入口完整性校验 */
-export async function validateLocalPluginDirectory(dirPath: string): Promise<LocalPluginValidationResult> {
+export async function validateLocalPluginDirectory(
+  dirPath: string,
+  options: { allowBuiltinManifest?: boolean } = {},
+): Promise<LocalPluginValidationResult> {
   const raw = String(dirPath || "").trim();
   if (!raw) return { ok: false, error: "插件目录路径不能为空" };
   const resolvedDir = path.resolve(raw);
@@ -231,7 +234,7 @@ export async function validateLocalPluginDirectory(dirPath: string): Promise<Loc
   if (!version) {
     return { ok: false, error: "package.json 缺少 version 字段（如 0.1.0）" };
   }
-  if (manifest?.dyworker?.builtin || manifest?.dsh?.builtin) {
+  if (!options?.allowBuiltinManifest && (manifest?.dyworker?.builtin || manifest?.dsh?.builtin)) {
     return { ok: false, error: "安全限制：不允许声明 dyworker.builtin 或 dsh.builtin" };
   }
 

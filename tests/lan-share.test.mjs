@@ -20,7 +20,8 @@ import {
   parseManualPeerAddress,
   resolveLocalIdentity,
 } from "../electron/lan-share.mts";
-import { resolveLanLoginAccount } from "../electron/host/plugins/lan-share-ipc.mts";
+import { lanShareIpcPlugin, resolveLanLoginAccount } from "../electron/host/plugins/lan-share-ipc.mts";
+import { createHost, disposeHost } from "../electron/host/context.mts";
 import { deserializeSettings, serializeSettings } from "../electron/settings.mts";
 import { buildTransferPackage, parseTransferPackage } from "../electron/session-transfer.mts";
 import {
@@ -491,6 +492,7 @@ test("设置序列化与前端/Preload/主进程局域网分享接线契约", as
   assert.match(ipc, /lan-share:remove-peer/);
   assert.match(ipc, /lan-share:send/);
   assert.match(ipc, /lan-share:respond-incoming/);
+  assert.match(ipc, /inject:\s*\[["']sessions["'],\s*["']plugins["'],\s*["']loader["']\]/);
   assert.doesNotMatch(ipc, /cachedSettings\s*=\s*saved/);
   assert.match(ipc, /onLanShareReady/);
   assert.match(settingsIpc, /applyLanShareSettings/);
@@ -659,4 +661,103 @@ test("接收方导入失败时保留入站请求可重试，不会误报已过�
   const secondAttempt = await receiver.respondIncoming(offerRes.transferId, { accepted: true });
   assert.equal(secondAttempt.ok, true, secondAttempt.error);
   assert.equal(attempt, 2);
+});
+
+test("真实宿主挂载 lanShareIpcPlugin 接收并安装插件不报 loader 未注入错误", async (t) => {
+  const receiverDataDir = await mkSandbox(t, "dyw-lan-ipc-host-");
+  const handlers = new Map();
+  const broadcasts = [];
+  let updatedNotified = 0;
+
+  const receiverHost = await createHost({ userDataDir: receiverDataDir, mountPlugins: true });
+  await receiverHost.plugin(lanShareIpcPlugin({
+    trustedHandle: (channel, handler) => handlers.set(channel, handler),
+    dataDir: receiverDataDir,
+    appVersion: "0.4.0",
+    initialSettings: { lanShare: { enabled: true, nickname: "接收宿主", manualPeers: [] } },
+    readSettings: async () => ({ lanShare: { enabled: true, nickname: "接收宿主", manualPeers: [] } }),
+    saveSettings: async () => "",
+    getWebContents: () => [{ isDestroyed: () => false, send: (ch, payload) => broadcasts.push({ ch, payload }) }],
+    notifyPluginsUpdated: () => { updatedNotified += 1; },
+    serviceOptions: { discoveryPort: 0, httpPort: 0, bindHost: "127.0.0.1", broadcastTargets: [], heartbeatIntervalMs: 60_000 },
+  }));
+
+  const getState = handlers.get("lan-share:get-state");
+  const respondIncoming = handlers.get("lan-share:respond-incoming");
+  assert.ok(typeof getState === "function");
+  assert.ok(typeof respondIncoming === "function");
+
+  const state = await waitUntil(async () => {
+    const s = await getState();
+    return s?.httpPort > 0 ? s : null;
+  });
+
+  const sender = new LanShareService({
+    deviceId: "ipc-plugin-sender",
+    appVersion: "0.4.0",
+    discoveryPort: 0,
+    httpPort: 0,
+    bindHost: "127.0.0.1",
+    broadcastTargets: [],
+    heartbeatIntervalMs: 60_000,
+    getConfig: () => ({ discoverable: true, nickname: "发送宿主", manualPeers: [] }),
+  });
+  await sender.start();
+  t.after(async () => {
+    await sender.stop();
+    await disposeHost(receiverHost);
+  });
+
+  const probe = await sender.probeManualTarget(`127.0.0.1:${state.httpPort}`);
+  assert.equal(probe.ok, true, probe.error);
+
+  const zip = new AdmZip();
+  zip.addFile("plugin/package.json", Buffer.from(JSON.stringify({
+    name: "lan-ipc-demo",
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+    dyworker: { displayName: "IPC集成插件", icon: "layers", iconColor: "#0891b2" },
+  }), "utf8"));
+  zip.addFile("plugin/index.js", Buffer.from([
+    `export const name = "lan-ipc-demo";`,
+    `export const inject = ["storage", "tools"];`,
+    `export function apply(ctx) { globalThis.__lanIpcInstalled = Boolean(ctx.tools); }`,
+  ].join("\n"), "utf8"));
+  zip.addFile(SHARE_MANIFEST_FILE, Buffer.from(JSON.stringify({
+    format: SHARE_PACKAGE_FORMAT,
+    version: SHARE_PACKAGE_VERSION,
+    exportedAt: new Date().toISOString(),
+    appVersion: "0.4.0",
+    packageName: "lan-ipc-demo",
+    displayName: "IPC集成插件",
+    icon: "layers",
+    iconColor: "#0891b2",
+    pluginVersion: "1.0.0",
+    description: "IPC 集成测试",
+    hasClient: false,
+    hasThirdPartyDeps: false,
+    includesData: false,
+    dataFiles: [],
+  }), "utf8"));
+
+  const offerRes = await sender.sendOffer({
+    peerId: probe.peer.deviceId,
+    kind: "plugin",
+    title: "IPC集成插件",
+    fileName: "lan-ipc-demo-v1.0.0.dyplugin",
+    meta: { packageName: "lan-ipc-demo", pluginVersion: "1.0.0", icon: "layers", iconColor: "#0891b2", includesData: false },
+    payloadBuffer: zip.toBuffer(),
+  });
+  assert.equal(offerRes.ok, true, offerRes.error);
+
+  const incomingEvt = await waitUntil(() => broadcasts.find((b) => b.ch === "lan-share:incoming-request"));
+  const respondRes = await respondIncoming(null, { transferId: incomingEvt.payload.transferId, accepted: true });
+  assert.equal(respondRes.ok, true, respondRes?.error);
+
+  const entry = receiverHost.plugins.entries().find((item) => item.name === "lan-ipc-demo");
+  assert.equal(entry?.active, true);
+  assert.equal(globalThis.__lanIpcInstalled, true);
+  assert.ok(updatedNotified >= 1);
+  assert.ok(broadcasts.some((b) => b.ch === "lan-share:imported" && b.payload?.kind === "plugin"));
 });

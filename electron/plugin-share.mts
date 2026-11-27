@@ -62,6 +62,8 @@ export interface PluginShareManifest {
   hasThirdPartyDeps: boolean;
   includesData: boolean;
   dataFiles: string[];
+  includesConfig?: boolean;
+  pluginConfig?: any;
 }
 
 export function safeManagedFolderName(pkgName: string): string {
@@ -223,10 +225,12 @@ async function collectDirectoryFiles(
   rootDir: string,
   options: { allowLogs?: boolean } = {},
 ): Promise<Array<{ relativePath: string; absolutePath: string; size: number }>> {
-  const realRoot = await fs.realpath(rootDir).catch(() => "");
+  const isAsarPath = /\.asar(?:[\\/]|$)/i.test(rootDir);
+  const resolvedRoot = path.resolve(rootDir);
+  const realRoot = (await fs.realpath(resolvedRoot).catch(() => "")) || (isAsarPath ? resolvedRoot : "");
   if (!realRoot) return [];
   const out: Array<{ relativePath: string; absolutePath: string; size: number }> = [];
-  const queue: string[] = [rootDir];
+  const queue: string[] = [resolvedRoot];
 
   while (queue.length) {
     const current = queue.shift()!;
@@ -244,9 +248,10 @@ async function collectDirectoryFiles(
       if (!lstat.isFile()) continue;
       if (SKIP_FILE_NAMES.has(dirent.name) || dirent.name.endsWith(".tmp")) continue;
       if (!options.allowLogs && dirent.name.endsWith(".log")) continue;
-      const realFile = await fs.realpath(fullPath).catch(() => "");
+      const resolvedFile = path.resolve(fullPath);
+      const realFile = (await fs.realpath(resolvedFile).catch(() => "")) || (isAsarPath ? resolvedFile : "");
       if (!realFile || !isInsideRoot(realRoot, realFile)) continue;
-      const rel = path.relative(rootDir, fullPath).split(path.sep).join("/");
+      const rel = path.relative(resolvedRoot, fullPath).split(path.sep).join("/");
       if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) continue;
       out.push({ relativePath: rel, absolutePath: fullPath, size: lstat.size || 0 });
     }
@@ -408,6 +413,22 @@ function findMatchedBundle(ctx: any, target: string, entryName?: string) {
   )) || null;
 }
 
+function hasShareablePluginConfig(value: any): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value !== "object") return true;
+  if (Array.isArray(value)) return value.length > 0;
+  return Object.keys(value).length > 0;
+}
+
+function scanConfigForWarnings(config: any): PluginSensitiveFinding[] {
+  if (!hasShareablePluginConfig(config)) return [];
+  try {
+    return scanSensitiveFindings([{ label: "插件设置配置", content: JSON.stringify(config, null, 2) }]);
+  } catch {
+    return [];
+  }
+}
+
 export async function resolveShareablePluginInfo(
   ctx: any,
   options: { target: string; dataDir?: string; storageRoot?: string },
@@ -429,10 +450,6 @@ export async function resolveShareablePluginInfo(
     : null;
 
   const entry = directDir ? null : findMatchedEntry(ctx, target);
-  if (entry?.builtin) {
-    return { ok: false, error: "内置插件随应用自带，无需导出分享" };
-  }
-
   const bundle = directDir
     ? null
     : findMatchedBundle(ctx, target, entry?.name);
@@ -441,9 +458,6 @@ export async function resolveShareablePluginInfo(
   let resolvedDir = directDir;
   let pkgManifest = resolvedDir ? await readJsonSafe(path.join(resolvedDir, "package.json")) : null;
   const matchedEntry = entry || (pkgManifest?.name ? findMatchedEntry(ctx, String(pkgManifest.name)) : null);
-  if (matchedEntry?.builtin) {
-    return { ok: false, error: "内置插件随应用自带，无需导出分享" };
-  }
   const matchedBundle = bundle || (pkgManifest?.name ? findMatchedBundle(ctx, String(pkgManifest.name), matchedEntry?.name) : null);
 
   const pkgNameHint = String(
@@ -457,7 +471,7 @@ export async function resolveShareablePluginInfo(
   const sourceKind = String(matchedBundle?.source?.kind || "").trim();
 
   // 2. 第三方来源（npm / github）：返回复制来源地址分享模式
-  if (!resolvedDir && (sourceKind === "npm" || sourceKind === "github")) {
+  if (!resolvedDir && !matchedEntry?.builtin && (sourceKind === "npm" || sourceKind === "github")) {
     let installedDir = "";
     try {
       installedDir = ctx?.plugins?.packageDirOf?.(pkgNameHint) || "";
@@ -489,7 +503,7 @@ export async function resolveShareablePluginInfo(
     };
   }
 
-  // 3. 解析本地源码目录（source.input/path → 受管创建目录 → packageDirOf 兜底）
+  // 3. 解析本地源码目录（source.input/path → 受管创建目录 → packageDirOf / builtinPlugins 兜底）
   if (!resolvedDir) {
     const rawLocalSource = sourceKind === "local"
       ? String(
@@ -504,7 +518,7 @@ export async function resolveShareablePluginInfo(
       resolvedDir = await pathIsDir(rawLocalSource);
     }
   }
-  if (!resolvedDir && managedRoot) {
+  if (!resolvedDir && managedRoot && !matchedEntry?.builtin) {
     const candidates = [
       path.join(managedRoot, target),
       path.join(managedRoot, pkgNameHint),
@@ -531,17 +545,27 @@ export async function resolveShareablePluginInfo(
       }
     }
   }
-  if (!resolvedDir && matchedEntry && !matchedEntry.builtin) {
+  if (!resolvedDir && matchedEntry) {
     try {
       const pkgDir = ctx?.plugins?.packageDirOf?.(matchedEntry.name);
       if (pkgDir) resolvedDir = await pathIsDir(pkgDir);
     } catch {
       resolvedDir = null;
     }
+    if (!resolvedDir && matchedEntry.builtin && typeof ctx?.plugins?.builtinPlugins === "function") {
+      try {
+        const builtinHit = ctx.plugins.builtinPlugins().find((item: any) =>
+          item && (item.id === matchedEntry.id || item.name === matchedEntry.name || item.name === pkgNameHint),
+        );
+        if (builtinHit?.dir) resolvedDir = await pathIsDir(builtinHit.dir);
+      } catch {
+        resolvedDir = null;
+      }
+    }
   }
 
   if (!resolvedDir) {
-    if (matchedEntry || matchedBundle) {
+    if (!matchedEntry?.builtin && (matchedEntry || matchedBundle)) {
       const version = String(matchedBundle?.version || "");
       const installSpec = version ? `${pkgNameHint}@${version}` : pkgNameHint;
       return {
@@ -568,7 +592,8 @@ export async function resolveShareablePluginInfo(
     return { ok: false, error: `找不到要分享的插件：${target}` };
   }
 
-  const validation = await validateLocalPluginDirectory(resolvedDir);
+  const isBuiltin = Boolean(matchedEntry?.builtin);
+  const validation = await validateLocalPluginDirectory(resolvedDir, { allowBuiltinManifest: isBuiltin });
   if (!validation.ok || !validation.manifest) {
     return { ok: false, error: validation.error || `本地插件目录无效：${resolvedDir}` };
   }
@@ -579,6 +604,7 @@ export async function resolveShareablePluginInfo(
   const description = String(manifest.description || "").trim();
   const displayName = resolveDisplayName(manifest, matchedEntry?.id || packageName);
   const entryId = String(matchedEntry?.id || packageName);
+  const pluginConfig = matchedEntry?.config ?? null;
 
   const dataFiles = await discoverPluginStorageFiles({
     pluginDir: resolvedDir,
@@ -590,6 +616,7 @@ export async function resolveShareablePluginInfo(
   return {
     ok: true,
     shareKind: "local" as const,
+    isBuiltin,
     sourceDir: resolvedDir,
     packageName,
     entryId,
@@ -601,6 +628,7 @@ export async function resolveShareablePluginInfo(
     defaultFileName: defaultExportFileName(packageName, version),
     dataFiles,
     dataTotalBytes: dataFiles.reduce((sum, item) => sum + item.size, 0),
+    pluginConfig,
     storageRoot,
     manifest,
   };
@@ -695,11 +723,14 @@ export async function inspectPluginForExport(
   const pluginFiles = await collectDirectoryFiles(info.sourceDir);
   const pluginWarnings = await scanFilesForWarnings(pluginFiles);
   const dataWarnings = await scanFilesForWarnings(info.dataFiles, "data/");
+  const hasConfig = hasShareablePluginConfig(info.pluginConfig);
+  const configWarnings = hasConfig ? scanConfigForWarnings(info.pluginConfig) : [];
   const visuals = mergeExportVisuals(info, options.customization);
 
   return {
     ok: true,
     shareKind: "local" as const,
+    isBuiltin: Boolean(info.isBuiltin),
     packageName: info.packageName,
     entryId: info.entryId,
     displayName: visuals.displayName,
@@ -718,18 +749,21 @@ export async function inspectPluginForExport(
       size: item.size,
     })),
     dataTotalBytes: info.dataTotalBytes,
+    hasConfig,
     pluginWarnings,
     dataWarnings,
+    configWarnings,
   };
 }
 
-/** 导出本地插件为单文件 .dyplugin 分享包 */
+/** 导出本地或内置插件为单文件 .dyplugin 分享包 */
 export async function exportPluginSharePackage(
   ctx: any,
   options: {
     target: string;
     outputPath: string;
     includeData?: boolean;
+    includeConfig?: boolean;
     dataDir?: string;
     storageRoot?: string;
     appVersion?: string;
@@ -769,9 +803,11 @@ export async function exportPluginSharePackage(
   const finalIconColor = visuals.iconColor;
 
   const includeData = Boolean(options.includeData);
+  const includeConfig = Boolean(options.includeConfig) && hasShareablePluginConfig(info.pluginConfig);
   const dataFiles: PluginStorageFileItem[] = includeData ? info.dataFiles : [];
   const pluginWarnings = await scanFilesForWarnings(pluginFiles);
   const dataWarnings = includeData ? await scanFilesForWarnings(dataFiles, "data/") : [];
+  const configWarnings = includeConfig ? scanConfigForWarnings(info.pluginConfig) : [];
 
   const zip = new AdmZip();
   let totalBytes = 0;
@@ -782,10 +818,30 @@ export async function exportPluginSharePackage(
       try {
         const parsedPkg = JSON.parse(buf.toString("utf8"));
         const dy = parsedPkg.dyworker && typeof parsedPkg.dyworker === "object" ? { ...parsedPkg.dyworker } : {};
+        const wasBuiltin = Boolean(info.isBuiltin || parsedPkg.dyworker?.builtin || parsedPkg.dsh?.builtin);
+        if (wasBuiltin) {
+          delete dy.builtin;
+          delete dy.defaultEnabled;
+          delete dy.defaultEnabledPlatforms;
+          if (parsedPkg.dsh && typeof parsedPkg.dsh === "object") {
+            const nextDsh = { ...parsedPkg.dsh };
+            if (nextDsh.client && !dy.client) {
+              dy.client = nextDsh.client;
+            }
+            delete nextDsh.builtin;
+            delete nextDsh.client;
+            if (Object.keys(nextDsh).length === 0) {
+              delete parsedPkg.dsh;
+            } else {
+              parsedPkg.dsh = nextDsh;
+            }
+          }
+        }
         if (finalDisplayName) dy.displayName = finalDisplayName;
         if (finalIcon) dy.icon = finalIcon;
         if (finalIconColor) dy.iconColor = finalIconColor;
-        if (Object.keys(dy).length) parsedPkg.dyworker = dy;
+        // 内置插件导出时保留 dyworker 字段，避免接收方将原本针对本宿主运行的内置插件误判为 DSH 隔离包
+        if (wasBuiltin || Object.keys(dy).length) parsedPkg.dyworker = dy;
         if (finalAuthor) parsedPkg.author = finalAuthor;
         buf = Buffer.from(`${JSON.stringify(parsedPkg, null, 2)}\n`, "utf8");
       } catch {}
@@ -822,6 +878,7 @@ export async function exportPluginSharePackage(
     hasThirdPartyDeps: info.hasThirdPartyDeps,
     includesData: dataFiles.length > 0,
     dataFiles: dataFiles.map((item) => item.relativePath),
+    ...(includeConfig ? { includesConfig: true, pluginConfig: info.pluginConfig } : {}),
   };
 
   zip.addFile(SHARE_MANIFEST_FILE, Buffer.from(`${JSON.stringify(shareManifest, null, 2)}\n`, "utf8"));
@@ -848,9 +905,10 @@ export async function exportPluginSharePackage(
     version: info.version,
     includesData: dataFiles.length > 0,
     includedDataFiles: dataFiles.map((item) => item.relativePath),
+    includesConfig: includeConfig,
     fileCount: pluginFiles.length + dataFiles.length + 1,
     bytes: archiveBuffer.length,
-    warnings: [...pluginWarnings, ...dataWarnings],
+    warnings: [...pluginWarnings, ...dataWarnings, ...configWarnings],
   };
 }
 
@@ -1110,12 +1168,7 @@ export async function inspectSharePackage(options: {
 
     const existingEntry = findMatchedEntry(options.ctx, packageName);
     const existingBundle = findMatchedBundle(options.ctx, packageName, existingEntry?.name);
-    if (existingEntry?.builtin) {
-      return {
-        ok: false,
-        error: `包名 ${packageName} 与应用内置插件冲突，无法覆盖导入`,
-      };
-    }
+    const alreadyBuiltin = Boolean(existingEntry?.builtin);
 
     const storageRoot = String(
       options.storageRoot
@@ -1138,6 +1191,10 @@ export async function inspectSharePackage(options: {
       }
     }
 
+    const includesConfig = Boolean(
+      parsed.shareManifest?.includesConfig && hasShareablePluginConfig(parsed.shareManifest?.pluginConfig),
+    );
+
     return {
       ok: true,
       format: parsed.format,
@@ -1158,12 +1215,14 @@ export async function inspectSharePackage(options: {
       warnings: validation.warnings || [],
       pluginFileCount: parsed.pluginFiles.length,
       includesData: parsed.dataFiles.length > 0,
+      includesConfig,
       dataFiles: parsed.dataFiles.map((item) => ({
         relativePath: item.relativePath,
         size: item.data.length,
       })),
       conflictingDataFiles,
       alreadyInstalled: Boolean(existingEntry || existingBundle),
+      alreadyBuiltin,
       installedVersion: String(existingBundle?.version || ""),
       managedDirExists,
     };
@@ -1171,6 +1230,20 @@ export async function inspectSharePackage(options: {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+export type UnpackSharePackageResult =
+  | { ok: false; error: string }
+  | {
+    ok: true;
+    pluginDir: string;
+    packageName: string;
+    displayName: string;
+    version: string;
+    hasThirdPartyDeps: boolean;
+    importedDataFiles: string[];
+    skippedDataFiles: string[];
+    pluginConfig?: any;
+  };
 
 /** 校验后解包到受管目录（<userData>/created-plugins/<folder>）并按需导入附带数据 */
 export async function unpackSharePackageToManagedDir(options: {
@@ -1181,7 +1254,8 @@ export async function unpackSharePackageToManagedDir(options: {
   storageRoot?: string;
   importData?: boolean;
   overwriteData?: boolean;
-}) {
+  importConfig?: boolean;
+}): Promise<UnpackSharePackageResult> {
   const { buffer } = await resolveShareInputBuffer(options);
   const parsed = readSafeArchiveEntries(buffer);
 
@@ -1290,6 +1364,12 @@ export async function unpackSharePackageToManagedDir(options: {
       }
     }
 
+    const hasSharedConfig = Boolean(
+      options.importConfig !== false
+      && parsed.shareManifest?.includesConfig
+      && hasShareablePluginConfig(parsed.shareManifest?.pluginConfig),
+    );
+
     return {
       ok: true,
       pluginDir: targetDir,
@@ -1299,6 +1379,7 @@ export async function unpackSharePackageToManagedDir(options: {
       hasThirdPartyDeps: Boolean(validation.hasThirdPartyDeps),
       importedDataFiles,
       skippedDataFiles,
+      ...(hasSharedConfig ? { pluginConfig: parsed.shareManifest!.pluginConfig } : {}),
     };
   } finally {
     await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});

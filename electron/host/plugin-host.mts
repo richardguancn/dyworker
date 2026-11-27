@@ -296,8 +296,23 @@ export class PluginHostService extends Service {
     const builtins = this.builtinPlugins();
     const builtinNames = new Set(builtins.map((entry) => entry.name));
     const builtinIds = new Set(builtins.map((entry) => entry.id));
+    const bundleProvided = new Set<string>();
+    for (const bundle of this.bundles) {
+      if (bundle?.name) bundleProvided.add(String(bundle.name));
+      if (bundle?.packageName) bundleProvided.add(String(bundle.packageName));
+      for (const patch of bundle?.patches || []) {
+        for (const item of Array.isArray(patch?.insert) ? patch.insert : []) {
+          if (item?.id) bundleProvided.add(String(item.id));
+          if (item?.name) bundleProvided.add(String(item.name));
+        }
+      }
+    }
     const extraRows = builtins
-      .filter((entry) => !this.baseRows.some((row) => row.id === entry.id || row.name === entry.name))
+      .filter((entry) =>
+        !this.baseRows.some((row) => row.id === entry.id || row.name === entry.name)
+        && !bundleProvided.has(entry.id)
+        && !bundleProvided.has(entry.name),
+      )
       .map((entry) => ({ id: entry.id, name: entry.name, ...(entry.defaultDisabled ? { disabled: true } : {}) }));
     const rows = composeRows([...this.baseRows, ...extraRows], layers, (message: any, ...args: any[]) => {
       warnings.push(`${message}${args.length ? ` ${args.join(" ")}` : ""}`);

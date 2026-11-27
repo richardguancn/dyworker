@@ -184,6 +184,7 @@ export function LanShareSendDialog() {
         workspacePath: sendTarget.workspacePath,
         pluginTarget: sendTarget.pluginTarget,
         includeData: sendTarget.includeData,
+        includeConfig: sendTarget.includeConfig,
       });
       if (res?.transfer) {
         setTransfersByPeer((prev) => ({

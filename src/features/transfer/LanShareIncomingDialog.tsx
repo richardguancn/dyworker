@@ -31,6 +31,7 @@ export function LanShareIncomingDialog() {
   const [busyAction, setBusyAction] = useState<"" | "accept" | "reject">("");
   const [importData, setImportData] = useState(true);
   const [overwriteData, setOverwriteData] = useState(false);
+  const [importConfig, setImportConfig] = useState(true);
   const [error, setError] = useState("");
 
   const current = incomingQueue[0] || null;
@@ -40,6 +41,7 @@ export function LanShareIncomingDialog() {
     if (!current) return;
     setImportData(Boolean(current.meta?.includesData));
     setOverwriteData(false);
+    setImportConfig(Boolean(current.meta?.includesConfig));
     setError("");
   }, [current?.transferId]);
 
@@ -108,6 +110,7 @@ export function LanShareIncomingDialog() {
         accepted,
         importData,
         overwriteData,
+        importConfig,
       });
       if (!accepted) {
         removeIncomingOffer(current.transferId);
@@ -128,6 +131,7 @@ export function LanShareIncomingDialog() {
   const KindIcon = current.kind === "project" ? Folder : current.kind === "plugin" ? Package : MessageSquare;
   const senderLabel = current.sender?.displayName || current.sender?.account || current.sender?.host || "局域网用户";
   const hasPluginData = current.kind === "plugin" && Boolean(current.meta?.includesData);
+  const hasPluginConfig = current.kind === "plugin" && Boolean(current.meta?.includesConfig);
   const pluginIconId = current.kind === "plugin" ? String(current.meta?.icon || "").trim() : "";
   const pluginIconColor = current.kind === "plugin" ? String(current.meta?.iconColor || "").trim() : "";
   const pluginAuthor = current.kind === "plugin" ? String(current.meta?.author || "").trim() : "";
@@ -203,26 +207,41 @@ export function LanShareIncomingDialog() {
           </div>
         </div>
 
-        {hasPluginData ? (
+        {hasPluginData || hasPluginConfig ? (
           <div className="plugin-share-data-box">
-            <label className="plugin-share-checkbox">
-              <input
-                type="checkbox"
-                checked={importData}
-                disabled={busyAction !== ""}
-                onChange={(e) => setImportData(e.target.checked)}
-              />
-              <span>导入发送方附带的插件数据（{Array.isArray(current.meta?.includedDataFiles) ? current.meta.includedDataFiles.length : 1} 个文件）</span>
-            </label>
-            {importData ? (
-              <label className="plugin-share-checkbox plugin-share-overwrite">
+            {hasPluginData ? (
+              <>
+                <label className="plugin-share-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={importData}
+                    disabled={busyAction !== ""}
+                    onChange={(e) => setImportData(e.target.checked)}
+                  />
+                  <span>导入发送方附带的插件数据（{Array.isArray(current.meta?.includedDataFiles) ? current.meta.includedDataFiles.length : 1} 个文件）</span>
+                </label>
+                {importData ? (
+                  <label className="plugin-share-checkbox plugin-share-overwrite">
+                    <input
+                      type="checkbox"
+                      checked={overwriteData}
+                      disabled={busyAction !== ""}
+                      onChange={(e) => setOverwriteData(e.target.checked)}
+                    />
+                    <span>如本机已有同名数据文件，允许覆盖（默认跳过保留本机数据）</span>
+                  </label>
+                ) : null}
+              </>
+            ) : null}
+            {hasPluginConfig ? (
+              <label className="plugin-share-checkbox">
                 <input
                   type="checkbox"
-                  checked={overwriteData}
+                  checked={importConfig}
                   disabled={busyAction !== ""}
-                  onChange={(e) => setOverwriteData(e.target.checked)}
+                  onChange={(e) => setImportConfig(e.target.checked)}
                 />
-                <span>如本机已有同名数据文件，允许覆盖（默认跳过保留本机数据）</span>
+                <span>导入发送方附带的插件设置配置</span>
               </label>
             ) : null}
           </div>

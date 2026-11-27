@@ -112,7 +112,7 @@ export function PluginDetailPage({ entry, bundle, catalog, busy, error, notice, 
       <div className="plugin-detail-actions">{entry ? <>
         <button className="plugins-add-button" disabled={busy || checking || Boolean(entry.unsupportedReason)} onClick={onToggle}>{entry.disabled ? t("plugins.enable", "启用") : t("plugins.disable", "停用")}</button>
         {onEditAppearance && <button className="plugins-text-button" disabled={busy || checking} onClick={() => onEditAppearance({ displayName: defaultTitle, author: defaultAuthor, icon: defaultIcon, iconColor: defaultIconColor })}><Pencil size={13} /> 外观与信息</button>}
-        {!entry.builtin && onShare && <button className="plugins-text-button" disabled={busy || checking} onClick={onShare}><Share2 size={14} /> {t("plugins.share", "分享")}</button>}
+        {onShare && <button className="plugins-text-button" disabled={busy || checking} onClick={onShare}><Share2 size={14} /> {t("plugins.share", "分享")}</button>}
         {!entry.builtin && <button className="plugins-text-button danger" disabled={busy || checking} onClick={onUninstall}>{t("plugins.uninstall", "卸载")}</button>}
       </> : <button className="plugins-add-button" disabled={busy} onClick={onInstall}>{t("plugins.installAction", "安装")}</button>}</div>
     </header>

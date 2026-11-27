@@ -1134,6 +1134,7 @@ export interface DyworkerBridge {
     workspacePath?: string;
     pluginTarget?: string;
     includeData?: boolean;
+    includeConfig?: boolean;
   }): Promise<{ ok: boolean; transferId?: string; transfer?: LanOutgoingTransfer; error?: string }>;
   cancelLanShare?(payload: { transferId: string }): Promise<{ ok: boolean; error?: string }>;
   respondLanShareIncoming?(payload: {
@@ -1141,6 +1142,7 @@ export interface DyworkerBridge {
     accepted: boolean;
     importData?: boolean;
     overwriteData?: boolean;
+    importConfig?: boolean;
   }): Promise<{ ok: boolean; accepted?: boolean; kind?: LanShareKind; importResult?: any; error?: string }>;
   onLanSharePeersUpdated?(callback: (peers: LanPeerRecord[]) => void): () => void;
   onLanShareIncoming?(callback: (offer: LanIncomingOffer) => void): () => void;
@@ -1440,7 +1442,7 @@ export interface DyworkerBridge {
   choosePluginDirectory?(): Promise<string | null>;
   listCreatedPlugins?(): Promise<CreatedLocalPluginRecord[]>;
   inspectPluginExport?(target: string): Promise<PluginExportInspection>;
-  exportPluginPackage?(payload: { target: string; includeData?: boolean }): Promise<PluginExportResult>;
+  exportPluginPackage?(payload: { target: string; includeData?: boolean; includeConfig?: boolean }): Promise<PluginExportResult>;
   choosePluginShareFile?(): Promise<string | null>;
   inspectPluginSharePackage?(payload: { filePath?: string; dataBase64?: string; fileName?: string }): Promise<PluginSharePackagePreview>;
   importPluginSharePackage?(payload: {
@@ -1449,6 +1451,7 @@ export interface DyworkerBridge {
     fileName?: string;
     importData?: boolean;
     overwriteData?: boolean;
+    importConfig?: boolean;
     allowIncompatible?: boolean;
   }): Promise<PluginShareImportResult>;
   getPathForFile?(file: File): string;
@@ -1648,6 +1651,7 @@ export interface PluginExportInspection {
   ok: boolean;
   error?: string;
   shareKind?: "local" | "remote";
+  isBuiltin?: boolean;
   packageName?: string;
   entryId?: string;
   displayName?: string;
@@ -1663,8 +1667,10 @@ export interface PluginExportInspection {
   pluginFileCount?: number;
   dataFiles?: Array<{ relativePath: string; size: number }>;
   dataTotalBytes?: number;
+  hasConfig?: boolean;
   pluginWarnings?: PluginSensitiveFinding[];
   dataWarnings?: PluginSensitiveFinding[];
+  configWarnings?: PluginSensitiveFinding[];
   sourceKind?: string;
   installSpec?: string;
   homepage?: string;
@@ -1686,6 +1692,7 @@ export interface PluginExportResult {
   version?: string;
   includesData?: boolean;
   includedDataFiles?: string[];
+  includesConfig?: boolean;
   fileCount?: number;
   bytes?: number;
   warnings?: PluginSensitiveFinding[];
@@ -1714,9 +1721,11 @@ export interface PluginSharePackagePreview {
   warnings?: string[];
   pluginFileCount?: number;
   includesData?: boolean;
+  includesConfig?: boolean;
   dataFiles?: Array<{ relativePath: string; size: number }>;
   conflictingDataFiles?: string[];
   alreadyInstalled?: boolean;
+  alreadyBuiltin?: boolean;
   installedVersion?: string;
   managedDirExists?: boolean;
 }
@@ -1729,6 +1738,7 @@ export interface PluginShareImportResult extends PluginInstallResult {
   pluginDir?: string;
   importedDataFiles?: string[];
   skippedDataFiles?: string[];
+  importedConfig?: boolean;
 }
 
 export type LanShareKind = "session" | "project" | "plugin";

@@ -23,6 +23,7 @@ export function SharePluginDialog({
   const [loading, setLoading] = useState(true);
   const [inspection, setInspection] = useState<PluginExportInspection | null>(null);
   const [includeData, setIncludeData] = useState(false);
+  const [includeConfig, setIncludeConfig] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState<PluginExportResult | null>(null);
   const [error, setError] = useState("");
@@ -41,6 +42,7 @@ export function SharePluginDialog({
     setError("");
     setExported(null);
     setIncludeData(false);
+    setIncludeConfig(false);
 
     void bridge.inspectPluginExport(target)
       .then((res) => {
@@ -75,7 +77,7 @@ export function SharePluginDialog({
     setExporting(true);
     setError("");
     try {
-      const res = await bridge.exportPluginPackage({ target, includeData });
+      const res = await bridge.exportPluginPackage({ target, includeData, includeConfig });
       if (res?.canceled) return;
       if (!res?.ok) {
         setError(res?.error || "导出分享包失败");
@@ -92,8 +94,20 @@ export function SharePluginDialog({
   const activeWarnings = [
     ...(inspection?.pluginWarnings || []),
     ...(includeData ? (inspection?.dataWarnings || []) : []),
+    ...(includeConfig ? (inspection?.configWarnings || []) : []),
   ];
   const hasDataFiles = Boolean(inspection?.dataFiles?.length);
+  const hasConfig = Boolean(inspection?.hasConfig);
+  const shareSubtitleParts = [
+    inspection?.version ? `v${inspection.version}` : "",
+    includeData && includeConfig
+      ? "含插件数据与设置配置"
+      : includeData
+        ? "含插件数据"
+        : includeConfig
+          ? "含设置配置"
+          : "仅插件本体",
+  ].filter(Boolean);
 
   return createPortal(
     <div className="dialog-overlay" role="dialog" aria-label={t("plugins.shareDialogAria", "分享插件")}>
@@ -146,9 +160,13 @@ export function SharePluginDialog({
               <p className="plugin-share-path">{exported.path}</p>
             </div>
             <div className="plugin-share-meta-note">
-              {exported.includesData
-                ? `已附带 ${exported.includedDataFiles?.length || 0} 个插件数据文件。接收方导入时可选择是否还原数据。`
-                : "仅包含插件源码本体（未附带个人运行数据），对方导入后还可使用「创造模式」继续修改。"}
+              {exported.includesData || exported.includesConfig
+                ? [
+                    exported.includesData ? `已附带 ${exported.includedDataFiles?.length || 0} 个插件数据文件` : "",
+                    exported.includesConfig ? "已附带插件设置配置" : "",
+                    "接收方导入时可选择是否应用。",
+                  ].filter(Boolean).join("；")
+                : "仅包含插件源码本体（未附带个人运行数据或设置），对方导入后还可使用「创造模式」继续修改。"}
             </div>
             <div className="install-result-actions">
               {exported.path && bridge?.revealInFolder ? (
@@ -222,6 +240,7 @@ export function SharePluginDialog({
                 <strong>{inspection.displayName || titleHint || inspection.packageName}</strong>
                 {inspection.version ? <span className="plugin-tag">v{inspection.version}</span> : null}
                 {inspection.author ? <span className="plugin-tag">{inspection.author}</span> : null}
+                {inspection.isBuiltin ? <span className="plugin-tag">内置</span> : null}
                 {inspection.hasClient ? <span className="plugin-tag">含界面</span> : <span className="plugin-tag">纯工具</span>}
               </div>
               {inspection.description ? <p>{inspection.description}</p> : null}
@@ -261,6 +280,17 @@ export function SharePluginDialog({
               ) : (
                 <p className="plugin-share-data-empty">当前插件未检测到独立保存的数据文件，仅导出插件本体。</p>
               )}
+              {hasConfig ? (
+                <label className="plugin-share-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={includeConfig}
+                    disabled={exporting}
+                    onChange={(event) => setIncludeConfig(event.target.checked)}
+                  />
+                  <span>附带当前插件设置配置（如服务端地址等，导出前请核查是否含敏感凭据）</span>
+                </label>
+              ) : null}
             </div>
 
             {activeWarnings.length > 0 ? (
@@ -299,11 +329,12 @@ export function SharePluginDialog({
                     kind: "plugin",
                     pluginTarget: target,
                     includeData,
+                    includeConfig,
                     icon: inspection.icon,
                     iconColor: inspection.iconColor,
                     author: inspection.author,
                     title: inspection.displayName || titleHint || inspection.packageName || target,
-                    subtitle: `${inspection.version ? `v${inspection.version} · ` : ""}${includeData ? "含插件数据" : "仅插件本体"}`,
+                    subtitle: shareSubtitleParts.join(" · "),
                   });
                   onClose();
                 }}

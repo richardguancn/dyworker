@@ -320,11 +320,12 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
     <PluginDetailPage entry={detailEntry} bundle={detailEntry ? bundleOf.get(detailEntry.name) : undefined} catalog={detailCatalog || catalog.find(plugin => plugin.packageName === detailEntry?.name)}
       busy={Boolean(busy)} error={error} notice={notice} refreshKey={refreshKey} configuration={detailEntry ? configurationFor(detailEntry) : undefined}
       onBack={() => { setDetailSelection(null); setEditing(null); }} onToggle={() => { if (detailEntry) void toggle(detailEntry); }}
-      onShare={detailEntry && !detailEntry.builtin ? () => {
+      onShare={detailEntry ? () => {
         const bundle = bundleOf.get(detailEntry.name);
+        const builtin = detailEntry.builtin ? BUILTIN_PLUGIN_LABELS[detailEntry.name] : undefined;
         const approved = catalog.find(plugin => plugin.packageName === detailEntry.name);
-        const visual = resolvePluginVisual([detailEntry.id, bundle?.packageName, detailEntry.name, approved?.packageName], pluginCustomizations, { displayName: approved?.displayName || bundle?.displayName || detailEntry.id });
-        setShareTarget({ target: bundle?.packageName || detailEntry.name || detailEntry.id, title: visual.displayName || approved?.displayName || detailEntry.id });
+        const visual = resolvePluginVisual([detailEntry.id, bundle?.packageName, detailEntry.name, approved?.packageName], pluginCustomizations, { displayName: builtin?.name || approved?.displayName || bundle?.displayName || detailEntry.id });
+        setShareTarget({ target: bundle?.packageName || detailEntry.name || detailEntry.id, title: visual.displayName || builtin?.name || approved?.displayName || detailEntry.id });
       } : undefined}
       onEditAppearance={detailEntry ? (defaults) => {
         const bundle = bundleOf.get(detailEntry.name);
@@ -501,15 +502,13 @@ function DshPluginsPage({onCreate}:{onCreate:()=>void}) {
                   <button className="plugins-text-button" onClick={() => setDetailSelection({entryId:entry.id})}>
                     {t("plugins.settings", "设置")}
                   </button>
-                  {entry.builtin ? null : (
-                    <button
-                      className="plugins-text-button"
-                      disabled={Boolean(busy)}
-                      onClick={() => setShareTarget({ target: bundle?.packageName || entry.name || entry.id, title: displayTitle })}
-                    >
-                      <Share2 size={13} /> {t("plugins.share", "分享")}
-                    </button>
-                  )}
+                  <button
+                    className="plugins-text-button"
+                    disabled={Boolean(busy)}
+                    onClick={() => setShareTarget({ target: bundle?.packageName || entry.name || entry.id, title: displayTitle })}
+                  >
+                    <Share2 size={13} /> {t("plugins.share", "分享")}
+                  </button>
                   {entry.builtin ? null : (
                     <button className="plugins-text-button danger" disabled={Boolean(busy)} onClick={() => run("已卸载", async () => {
                       const result=await bridge!.uninstallPlugin(bundle?.name||entry.id);

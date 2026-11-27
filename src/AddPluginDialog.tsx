@@ -30,6 +30,18 @@ function verdictClass(verdict?: string) {
   return "bad";
 }
 
+function mergeInstallFailureReasons(res: any): string[] {
+  const list: string[] = [];
+  const err = String(res?.error || "").trim();
+  if (err) list.push(err);
+  const reasons = Array.isArray(res?.analysis?.reasons) ? res.analysis.reasons : [];
+  for (const r of reasons) {
+    const text = String(r || "").trim();
+    if (text && !list.includes(text)) list.push(text);
+  }
+  return list;
+}
+
 function isLocalPathLike(value: string): boolean {
   const trimmed = String(value || "").trim();
   return /^[.~/]/.test(trimmed) || /^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("\\\\");
@@ -73,6 +85,7 @@ export function AddPluginDialog({
   const [sharePreview, setSharePreview] = useState<PluginSharePackagePreview | null>(null);
   const [importData, setImportData] = useState(true);
   const [overwriteData, setOverwriteData] = useState(false);
+  const [importConfig, setImportConfig] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const [inlineShareTarget, setInlineShareTarget] = useState<{ target: string; title?: string } | null>(null);
   const [busy, setBusy] = useState("");
@@ -188,7 +201,7 @@ export function AddPluginDialog({
           ok: false,
           name: installed?.analysis?.name || target,
           verdict: installed?.verdict,
-          reasons: installed?.analysis?.reasons || (installed?.error ? [installed.error] : []),
+          reasons: mergeInstallFailureReasons(installed),
           matrix: installed?.matrix,
           incompatible: installed?.incompatible,
           source: installed?.source?.kind || installed?.downloaded?.kind,
@@ -258,6 +271,7 @@ export function AddPluginDialog({
       setSharePreview(preview);
       setImportData(Boolean(preview.includesData));
       setOverwriteData(false);
+      setImportConfig(Boolean(preview.includesConfig));
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {
@@ -290,6 +304,7 @@ export function AddPluginDialog({
         ...shareInput,
         importData,
         overwriteData,
+        importConfig,
         allowIncompatible: force || allowIncompatible,
       });
       if (!imported?.ok) {
@@ -297,7 +312,7 @@ export function AddPluginDialog({
           ok: false,
           name: imported?.analysis?.name || sharePreview?.displayName || sharePreview?.packageName || "分享包插件",
           verdict: imported?.verdict,
-          reasons: imported?.analysis?.reasons || (imported?.error ? [imported.error] : []),
+          reasons: mergeInstallFailureReasons(imported),
           matrix: imported?.matrix,
           incompatible: imported?.incompatible,
           source: "local",
@@ -361,7 +376,7 @@ export function AddPluginDialog({
           ok: false,
           name: installed?.analysis?.name || item.displayName || item.packageName,
           verdict: installed?.verdict,
-          reasons: installed?.analysis?.reasons || (installed?.error ? [installed.error] : []),
+          reasons: mergeInstallFailureReasons(installed),
           matrix: installed?.matrix,
           incompatible: installed?.incompatible,
           source: "local",
@@ -492,7 +507,9 @@ export function AddPluginDialog({
 
             {sharePreview.alreadyInstalled ? (
               <div className="plugins-message warn">
-                当前已安装同名插件{sharePreview.installedVersion ? `（v${sharePreview.installedVersion}）` : ""}，继续导入将替换为分享包版本（v{sharePreview.version || "—"}）。
+                {sharePreview.alreadyBuiltin
+                  ? "本机已内置同名插件，继续导入将以分享包版本覆盖运行（不影响应用原始内置文件）。"
+                  : `当前已安装同名插件${sharePreview.installedVersion ? `（v${sharePreview.installedVersion}）` : ""}，继续导入将替换为分享包版本（v${sharePreview.version || "—"}）。`}
               </div>
             ) : null}
 
@@ -502,36 +519,51 @@ export function AddPluginDialog({
               </div>
             ) : null}
 
-            {sharePreview.includesData && sharePreview.dataFiles?.length ? (
+            {(sharePreview.includesData && sharePreview.dataFiles?.length) || sharePreview.includesConfig ? (
               <div className="plugin-share-data-box">
-                <label className="plugin-share-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={importData}
-                    disabled={Boolean(busy)}
-                    onChange={(event) => setImportData(event.target.checked)}
-                  />
-                  <span>导入分享包附带的插件数据（{sharePreview.dataFiles.length} 个文件）</span>
-                </label>
-                <div className="plugin-share-data-list">
-                  <ul>
-                    {sharePreview.dataFiles.slice(0, 8).map((item) => (
-                      <li key={item.relativePath}>
-                        <code>{item.relativePath}</code>
-                        <span>{formatShareBytes(item.size)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                {importData && sharePreview.conflictingDataFiles?.length ? (
-                  <label className="plugin-share-checkbox plugin-share-overwrite">
+                {sharePreview.includesData && sharePreview.dataFiles?.length ? (
+                  <>
+                    <label className="plugin-share-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={importData}
+                        disabled={Boolean(busy)}
+                        onChange={(event) => setImportData(event.target.checked)}
+                      />
+                      <span>导入分享包附带的插件数据（{sharePreview.dataFiles.length} 个文件）</span>
+                    </label>
+                    <div className="plugin-share-data-list">
+                      <ul>
+                        {sharePreview.dataFiles.slice(0, 8).map((item) => (
+                          <li key={item.relativePath}>
+                            <code>{item.relativePath}</code>
+                            <span>{formatShareBytes(item.size)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {importData && sharePreview.conflictingDataFiles?.length ? (
+                      <label className="plugin-share-checkbox plugin-share-overwrite">
+                        <input
+                          type="checkbox"
+                          checked={overwriteData}
+                          disabled={Boolean(busy)}
+                          onChange={(event) => setOverwriteData(event.target.checked)}
+                        />
+                        <span>覆盖本机已有的 {sharePreview.conflictingDataFiles.length} 个同名数据文件（默认保留本机数据）</span>
+                      </label>
+                    ) : null}
+                  </>
+                ) : null}
+                {sharePreview.includesConfig ? (
+                  <label className="plugin-share-checkbox">
                     <input
                       type="checkbox"
-                      checked={overwriteData}
+                      checked={importConfig}
                       disabled={Boolean(busy)}
-                      onChange={(event) => setOverwriteData(event.target.checked)}
+                      onChange={(event) => setImportConfig(event.target.checked)}
                     />
-                    <span>覆盖本机已有的 {sharePreview.conflictingDataFiles.length} 个同名数据文件（默认保留本机数据）</span>
+                    <span>导入分享包附带的插件设置配置</span>
                   </label>
                 ) : null}
               </div>

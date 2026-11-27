@@ -105,9 +105,12 @@ export class ToolsService extends Service {
       handler,
     };
     this.registry.set(finalName, entry);
-    return () => {
+    const dispose = () => {
       if (this.registry.get(finalName) === entry) this.registry.delete(finalName);
     };
+    // 注册自身受调用方 fiber 生命周期管理，插件重载/覆盖安装时自动注销旧工具，避免报「工具已注册」
+    this.ctx?.effect?.(() => dispose);
+    return dispose;
   }
 
   owns(name) {
