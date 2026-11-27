@@ -46,10 +46,24 @@ test('超限后的强制压缩与重试都计入用量', async t => {
   assert.equal(usageEvents(events).length, 2);
   assert.equal(usageEvents(events).reduce((sum, e) => sum + e.prompt + e.completion, 0), 220);
 });
+// 按大括号配对截取函数源码，避免切片区间混入相邻的 TypeScript 声明
+function sliceFunction(source, signature) {
+  const start = source.indexOf(signature);
+  if (start < 0) throw new Error(`源码中找不到 ${signature}`);
+  let depth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error(`${signature} 的函数体没有闭合`);
+}
 async function storageHarness(seed = []) {
   const source = await readModuleSource(new URL('../electron/main.mts', import.meta.url));
   const block = source.slice(source.indexOf('let usageStatsCache ='), source.indexOf('// ---- 跨会话历史搜索 ----'));
-  const clear = source.slice(source.indexOf('function clearUsageStats()'), source.indexOf('\nconst shellDeps ='));
+  const clear = sliceFunction(source, 'function clearUsageStats()');
   let reads = 0; let release;
   let persisted = structuredClone(seed);
   const loaded = new Promise(resolve => { release = resolve; });
